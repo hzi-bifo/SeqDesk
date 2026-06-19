@@ -40,6 +40,8 @@ export interface StudyTableColumn {
   editable?: boolean;
   /** Choices for a `select` editor. */
   options?: Array<{ value: string; label: string }>;
+  /** True for user-added MIxS columns that can be removed from the view. */
+  removable?: boolean;
 }
 
 // Per-sample field types we render an inline editor for. Special types
@@ -101,6 +103,8 @@ export interface StudyTableData {
    * (sequencer / library settings). Shown as a header above the table.
    */
   info: StudyInfoPanel[];
+  /** MIxS checklist fields not yet shown, for the "+ Add MIxS field" picker. */
+  availableMixsFields: Array<{ name: string; label: string }>;
   /** True when the per-sample columns came from the study's OWN questionnaire. */
   perStudy: boolean;
 }
@@ -357,6 +361,7 @@ export async function buildStudyTableData(
   // The form uses slugs ("geographic_location") while the registry uses full ENA
   // names ("geographic location (country and/or sea)"), so we match on a normalised
   // form too (drop parentheticals + punctuation).
+  const studyMetadata = parseJsonObject(study.studyMetadata);
   const normalizeMixs = (name: string) =>
     name
       .replace(/\([^)]*\)/g, "")
@@ -364,6 +369,13 @@ export async function buildStudyTableData(
       .replace(/[^a-z0-9]/g, "");
   let mixsFieldNames = new Set<string>();
   let mixsNormalized = new Set<string>();
+  let mixsChecklistFields: Array<{
+    name: string;
+    label: string;
+    type: string;
+    helpText?: string;
+    options?: Array<{ value: string; label: string }>;
+  }> = [];
   if (study.checklistType) {
     try {
       const ref = resolveChecklistRef(study.checklistType);
@@ -372,15 +384,29 @@ export async function buildStudyTableData(
         version: study.mixsVersion,
       });
       if (checklist) {
-        mixsFieldNames = new Set(checklist.fields.map((field) => field.name));
-        mixsNormalized = new Set(
-          checklist.fields.map((field) => normalizeMixs(field.name))
-        );
+        const visible = checklist.fields.filter((field) => field.visible !== false);
+        mixsFieldNames = new Set(visible.map((field) => field.name));
+        mixsNormalized = new Set(visible.map((field) => normalizeMixs(field.name)));
+        mixsChecklistFields = visible.map((field) => ({
+          name: field.name,
+          label: field.label,
+          type: field.type,
+          helpText: field.helpText,
+          options: Array.isArray(field.options)
+            ? field.options.map((option) => ({
+                value: String(option.value),
+                label: String(option.label),
+              }))
+            : undefined,
+        }));
       }
     } catch {
       // Leave MIxS columns in the generic study group.
     }
   }
+  const mixsFieldByName = new Map(
+    mixsChecklistFields.map((field) => [field.name, field])
+  );
   const mixsNormalizedList = [...mixsNormalized];
   const isMixsName = (fieldName: string): boolean => {
     if (mixsFieldNames.has(fieldName)) return true;
@@ -495,6 +521,39 @@ export async function buildStudyTableData(
   addExtraKeys("custom", "order");
   addExtraKeys("checklist", "study");
 
+  // MIxS columns the user added from the table's "+ Add MIxS field" picker
+  // (stored on the study). The registry field name IS the checklistData key, so
+  // these stay in sync with the per-sample MIxS metadata editor.
+  const addedMixsColumns = Array.isArray(studyMetadata._mixsColumns)
+    ? (studyMetadata._mixsColumns as unknown[]).filter(
+        (entry): entry is string => typeof entry === "string"
+      )
+    : [];
+  for (const name of addedMixsColumns) {
+    const columnKey = `checklist:${name}`;
+    if (seen.has(columnKey)) continue;
+    seen.add(columnKey);
+    const def = mixsFieldByName.get(name);
+    const fieldType = def?.type || "text";
+    columns.push({
+      key: columnKey,
+      label: def?.label || humanizeKey(name),
+      kind: "field",
+      group: "mixs",
+      fieldType,
+      helpText: def?.helpText,
+      editable: EDITABLE_FIELD_TYPES.has(fieldType),
+      options: def?.options,
+      removable: true,
+    });
+    fieldColumns.push({ key: columnKey, source: "study", fieldName: name });
+  }
+
+  // MIxS checklist fields not yet shown — offered by the "+ Add MIxS field" picker.
+  const availableMixsFields = mixsChecklistFields
+    .filter((field) => !seen.has(`checklist:${field.name}`))
+    .map((field) => ({ name: field.name, label: field.label }));
+
   // Pipeline outputs (read-only) come last.
   columns.push(...OUTPUT_COLUMNS);
 
@@ -565,7 +624,6 @@ export async function buildStudyTableData(
   });
 
   // ── "Not per-row" information, grouped into header panels ──
-  const studyMetadata = parseJsonObject(study.studyMetadata);
   const studyFields: StudyInfoField[] = [];
   if (study.checklistType) {
     studyFields.push({ label: "MIxS checklist", value: study.checklistType });
@@ -644,6 +702,7 @@ export async function buildStudyTableData(
     columns,
     rows,
     info,
+    availableMixsFields,
     perStudy: dynamicStudiesEnabled && hasOwnForm,
   };
 }

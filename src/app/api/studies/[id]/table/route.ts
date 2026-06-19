@@ -58,18 +58,27 @@ function parseJsonObject(value: string | null): Record<string, unknown> {
 async function resolveStudy(idOrAlias: string) {
   const byId = await db.study.findUnique({
     where: { id: idOrAlias },
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, studyMetadata: true },
   });
   if (byId) return byId;
   try {
     return await db.study.findFirst({
       where: { alias: idOrAlias },
       orderBy: { createdAt: "desc" },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, studyMetadata: true },
     });
   } catch {
     return null;
   }
+}
+
+function addedMixsColumnsOf(studyMetadata: string | null): string[] {
+  const parsed = parseJsonObject(studyMetadata);
+  return Array.isArray(parsed._mixsColumns)
+    ? (parsed._mixsColumns as unknown[]).filter(
+        (entry): entry is string => typeof entry === "string"
+      )
+    : [];
 }
 
 // PATCH a single per-sample cell: { sampleId, columnKey, value }. The columnKey
@@ -129,13 +138,23 @@ export async function PATCH(
         applyModuleFilter: true,
       });
       const field = schema.perSampleFields.find((f) => f.name === name);
-      if (!field || !EDITABLE_FIELD_TYPES.has(field.type)) {
+      const isAddedMixs = addedMixsColumnsOf(study.studyMetadata).includes(name);
+      if (field) {
+        if (!EDITABLE_FIELD_TYPES.has(field.type)) {
+          return NextResponse.json(
+            { error: "Field is not editable" },
+            { status: 400 }
+          );
+        }
+      } else if (!isAddedMixs) {
         return NextResponse.json(
           { error: "Field is not editable" },
           { status: 400 }
         );
       }
-      const merged = { ...parseJsonObject(sample.checklistData), [name]: value };
+      const merged = { ...parseJsonObject(sample.checklistData) };
+      if (value === "") delete merged[name];
+      else merged[name] = value;
       await db.sample.update({
         where: { id: sampleId },
         data: { checklistData: JSON.stringify(merged) },
@@ -150,7 +169,9 @@ export async function PATCH(
           { status: 400 }
         );
       }
-      const merged = { ...parseJsonObject(sample.customFields), [name]: value };
+      const merged = { ...parseJsonObject(sample.customFields) };
+      if (value === "") delete merged[name];
+      else merged[name] = value;
       await db.sample.update({
         where: { id: sampleId },
         data: { customFields: JSON.stringify(merged) },

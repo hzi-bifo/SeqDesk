@@ -20,7 +20,9 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
+  Plus,
   Table2,
+  X,
 } from "lucide-react";
 import {
   FACILITY_SAMPLE_STATUSES,
@@ -47,6 +49,7 @@ interface StudyTableColumn {
   required?: boolean;
   editable?: boolean;
   options?: Array<{ value: string; label: string }>;
+  removable?: boolean;
 }
 
 interface StudyTableRow {
@@ -73,6 +76,7 @@ interface StudyTableData {
   columns: StudyTableColumn[];
   rows: StudyTableRow[];
   info: StudyInfoPanel[];
+  availableMixsFields: Array<{ name: string; label: string }>;
   perStudy: boolean;
 }
 
@@ -261,6 +265,9 @@ export default function StudyTablePage({
   const [error, setError] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(true);
+  const [mixsPickerOpen, setMixsPickerOpen] = useState(false);
+  const [mixsSearch, setMixsSearch] = useState("");
+  const [mixsBusy, setMixsBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -326,6 +333,43 @@ export default function StudyTablePage({
 
   const { study, columns, rows, info, perStudy } = data;
 
+  const refetch = async () => {
+    try {
+      const res = await fetch(`/api/studies/${id}/table`);
+      if (res.ok) setData((await res.json()) as StudyTableData);
+    } catch {
+      // keep the current view on a transient failure
+    }
+  };
+
+  const addMixsColumn = async (fieldName: string) => {
+    setMixsBusy(true);
+    try {
+      const res = await fetch(`/api/studies/${id}/table/columns`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fieldName }),
+      });
+      if (res.ok) {
+        await refetch();
+        setMixsPickerOpen(false);
+        setMixsSearch("");
+      }
+    } finally {
+      setMixsBusy(false);
+    }
+  };
+
+  const removeMixsColumn = async (columnKey: string) => {
+    const fieldName = columnKey.replace(/^checklist:/, "");
+    await fetch(`/api/studies/${id}/table/columns`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fieldName }),
+    });
+    await refetch();
+  };
+
   // Reflect a saved edit in local state so the cell updates without a refetch.
   const updateCell = (rowId: string, key: string, next: string) => {
     setData((prev) =>
@@ -341,6 +385,65 @@ export default function StudyTablePage({
         : prev
     );
   };
+
+  const mixsMatches = data.availableMixsFields
+    .filter((field) => {
+      const query = mixsSearch.trim().toLowerCase();
+      return (
+        !query ||
+        field.label.toLowerCase().includes(query) ||
+        field.name.toLowerCase().includes(query)
+      );
+    })
+    .slice(0, 100);
+
+  const mixsPicker = (
+    <div className="relative">
+      <Button
+        variant="outline"
+        onClick={() => setMixsPickerOpen((open) => !open)}
+        disabled={data.availableMixsFields.length === 0}
+        title={
+          data.availableMixsFields.length === 0
+            ? "All MIxS checklist fields are already shown"
+            : "Add a MIxS metadata column"
+        }
+      >
+        <Plus className="mr-2 h-4 w-4" /> MIxS field
+      </Button>
+      {mixsPickerOpen && (
+        <div className="absolute right-0 z-40 mt-1 w-72 rounded-lg border bg-popover p-2 text-popover-foreground shadow-lg">
+          <input
+            autoFocus
+            value={mixsSearch}
+            onChange={(event) => setMixsSearch(event.target.value)}
+            placeholder="Search MIxS fields…"
+            className="mb-2 w-full rounded border bg-background px-2 py-1 text-sm outline-none"
+          />
+          <div className="max-h-72 overflow-auto">
+            {mixsMatches.length === 0 ? (
+              <p className="px-2 py-2 text-sm text-muted-foreground">
+                No matching fields
+              </p>
+            ) : (
+              mixsMatches.map((field) => (
+                <button
+                  key={field.name}
+                  type="button"
+                  disabled={mixsBusy}
+                  onClick={() => addMixsColumn(field.name)}
+                  title={field.name}
+                  className="block w-full truncate rounded px-2 py-1 text-left text-sm hover:bg-muted disabled:opacity-50"
+                >
+                  {field.label}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   const exportButton = (
     <Button asChild disabled={rows.length === 0}>
@@ -426,6 +529,17 @@ export default function StudyTablePage({
                         {column.helpText}
                       </TooltipContent>
                     </Tooltip>
+                  )}
+                  {column.removable && (
+                    <button
+                      type="button"
+                      onClick={() => removeMixsColumn(column.key)}
+                      aria-label={`Remove ${column.label} column`}
+                      title="Remove this column"
+                      className="inline-flex text-muted-foreground/50 hover:text-destructive"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
                   )}
                 </span>
               </th>
@@ -524,6 +638,7 @@ export default function StudyTablePage({
               </p>
             </div>
             <div className="flex flex-shrink-0 items-center gap-2">
+              {mixsPicker}
               <Button variant="outline" onClick={() => setFullscreen(true)}>
                 <Maximize2 className="mr-2 h-4 w-4" /> Fullscreen
               </Button>
