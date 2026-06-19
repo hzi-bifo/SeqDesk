@@ -184,9 +184,11 @@ function EditableCell({
   // as focus leaves doesn't PATCH the same value a second time.
   const skipBlur = useRef(false);
 
+  // Sync the draft from the server value, but never clobber an in-progress edit
+  // (a background refetch must not overwrite what the user is typing).
   useEffect(() => {
-    setDraft(value);
-  }, [value]);
+    if (!editing) setDraft(value);
+  }, [value, editing]);
 
   // Pull focus to the trigger when this becomes the active, non-editing cell, so
   // arrow navigation always lands on something focusable.
@@ -198,6 +200,31 @@ function EditableCell({
   useEffect(() => {
     if (editing) skipBlur.current = false;
   }, [editing]);
+
+  // Persist an in-progress edit if this cell unmounts before a blur can commit it
+  // — e.g. its row is filtered out or its column hidden mid-edit. A ref holds the
+  // latest values so the unmount-only cleanup sees them.
+  const latest = useRef({ draft, value, editing, columnKey: column.key });
+  useEffect(() => {
+    latest.current = { draft, value, editing, columnKey: column.key };
+  });
+  useEffect(
+    () => () => {
+      const l = latest.current;
+      if (l.editing && l.draft !== l.value) {
+        fetch(`/api/studies/${studyId}/table`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sampleId,
+            columnKey: l.columnKey,
+            value: l.draft,
+          }),
+        }).catch(() => {});
+      }
+    },
+    [studyId, sampleId]
+  );
 
   const commit = async (): Promise<boolean> => {
     if (draft === value) return true;
@@ -710,6 +737,17 @@ export default function StudyTablePage({
   const navColKeys = renderColumns
     .filter((column) => column.editable && column.key !== ADD_MIXS_KEY)
     .map((column) => column.key);
+  // If the active cell's row/column has left the view (filtered out, hidden, or
+  // sorted away), drop the stale pointer so navigation isn't trapped. Any pending
+  // edit on that cell is persisted by the cell's own unmount handler.
+  if (
+    activeCell &&
+    (!navRowIds.includes(activeCell.rowId) ||
+      !navColKeys.includes(activeCell.colKey))
+  ) {
+    setActiveCell(null);
+    if (cellEditing) setCellEditing(false);
+  }
   const isActiveCell = (rowId: string, colKey: string) =>
     activeCell?.rowId === rowId && activeCell?.colKey === colKey;
   const focusCell = (rowId: string, colKey: string) =>
