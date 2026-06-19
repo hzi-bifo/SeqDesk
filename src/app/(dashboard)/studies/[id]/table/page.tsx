@@ -725,6 +725,19 @@ export default function StudyTablePage({
               );
             })
           )}
+          {/* Append-a-row affordance: starts a new sequencing order for this study. */}
+          <tr className="border-t">
+            <td colSpan={renderColumns.length} className="p-0">
+              <Link
+                href={`/orders/new?study=${id}`}
+                className="block transition-colors hover:bg-muted/50"
+              >
+                <span className="sticky left-0 flex w-fit items-center gap-2 px-3 py-2 text-sm font-medium text-muted-foreground">
+                  <Plus className="h-4 w-4" /> Add samples
+                </span>
+              </Link>
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -816,38 +829,31 @@ export default function StudyTablePage({
             </div>
           )}
 
-          {/* Toolbar: filter + add row */}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  value={filterQuery}
-                  onChange={(event) => setFilterQuery(event.target.value)}
-                  placeholder="Filter rows…"
-                  className="w-56 rounded-md border bg-background py-1.5 pl-8 pr-2 text-sm outline-none focus:ring-1 focus:ring-primary/30"
-                />
-              </div>
-              {filterText && (
-                <span className="text-xs text-muted-foreground">
-                  {displayRows.length} of {rows.length}
-                </span>
-              )}
-              {sort && (
-                <button
-                  type="button"
-                  onClick={() => setSort(null)}
-                  className="text-xs text-muted-foreground underline hover:text-foreground"
-                >
-                  clear sort
-                </button>
-              )}
+          {/* Toolbar: filter (the "Add samples" action lives in the table as a row) */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={filterQuery}
+                onChange={(event) => setFilterQuery(event.target.value)}
+                placeholder="Filter rows…"
+                className="w-56 rounded-md border bg-background py-1.5 pl-8 pr-2 text-sm outline-none focus:ring-1 focus:ring-primary/30"
+              />
             </div>
-            <Button variant="outline" asChild>
-              <Link href={`/orders/new?study=${id}`}>
-                <Plus className="mr-2 h-4 w-4" /> Add samples
-              </Link>
-            </Button>
+            {filterText && (
+              <span className="text-xs text-muted-foreground">
+                {displayRows.length} of {rows.length}
+              </span>
+            )}
+            {sort && (
+              <button
+                type="button"
+                onClick={() => setSort(null)}
+                className="text-xs text-muted-foreground underline hover:text-foreground"
+              >
+                clear sort
+              </button>
+            )}
           </div>
 
           {grid("calc(100vh - 360px)")}

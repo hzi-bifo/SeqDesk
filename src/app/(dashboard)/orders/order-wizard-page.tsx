@@ -1366,8 +1366,14 @@ export function OrderWizardPage({
     (f) => !f.groupId && f.type !== "mixs"
   );
 
+  // Arriving from a study's "Add samples" (?study=<id>) means the study is already
+  // known (preselected by the effect above), so skip the study-association step
+  // and open the wizard directly on the first form step.
+  const studyPreselectedFromParam =
+    dynamicStudiesEnabled && !isEditMode && Boolean(searchParams.get("study"));
+
   const steps = [
-    ...((dynamicStudiesEnabled && !isEditMode)
+    ...((dynamicStudiesEnabled && !isEditMode && !studyPreselectedFromParam)
       ? [
           {
             id: "_study",
