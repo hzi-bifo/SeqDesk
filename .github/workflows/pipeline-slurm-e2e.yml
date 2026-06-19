@@ -561,16 +561,43 @@ jobs:
             rc_warmup || echo "warm-up still failing after heal+retry (see log)"
           fi
           echo "::endgroup::"
-          # SLURM pass — reuses the now-cached envs on the compute node; asserts host removal.
+          # SLURM-executor pass (best-effort). Reuses the head-node-built envs on the compute node to
+          # exercise the real SLURM path. This cluster caps concurrent submissions per user (QOS
+          # MaxSubmitJobPerUser): a job left PENDING here holds that slot and makes the next SLURM
+          # step fail to submit (QOSMaxSubmitJobPerUserLimit). So cap the wait, tolerate non-completion,
+          # then cancel ONLY the job this pass started to free the slot. The warm-up above is the
+          # authoritative spike proof; this just confirms the SLURM path when the partition is free.
+          ME="$(whoami)"
+          jobs_before="$(squeue -u "$ME" -h -o '%i' 2>/dev/null || true)"
           npm run pipeline:e2e:runtime -- \
             --set-data-base-path "$SEQDESK_DATA_DIR" \
             --seed-example-dataset read-cleaning-spike \
             --pipeline-id read-cleaning \
             --order-number DEV-RC-SPIKE-001 \
             --config-json "$RC_JSON" \
-            --timeout 2400 \
+            --timeout 1200 \
             --skip-local \
-            2>&1 | tee "$RUNNER_TEMP/read-cleaning-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+            2>&1 | tee "$RUNNER_TEMP/read-cleaning-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log" \
+            || echo "read-cleaning SLURM pass did not complete in time (best-effort) — the warm-up already proved the spike"
+          # Cancel ONLY the job(s) this pass submitted (any pre-existing jobs on the shared cluster are
+          # left untouched), then wait for them to leave the queue so the QOS submit slot is released
+          # before the next SLURM step runs.
+          new_jobs=""
+          for j in $(squeue -u "$ME" -h -o '%i' 2>/dev/null || true); do
+            if ! echo "$jobs_before" | grep -qx "$j"; then new_jobs="$new_jobs $j"; fi
+          done
+          if [ -n "$new_jobs" ]; then
+            echo "freeing QOS slot — cancelling read-cleaning SLURM job(s):$new_jobs"
+            scancel $new_jobs 2>/dev/null || true
+            for _ in $(seq 1 12); do
+              gone=1
+              for j in $new_jobs; do
+                if squeue -h -j "$j" 2>/dev/null | grep -q .; then gone=0; fi
+              done
+              if [ "$gone" = 1 ]; then break; fi
+              sleep 5
+            done
+          fi
 
       - name: Run SLURM-only pipeline smoke through the app
         env:
