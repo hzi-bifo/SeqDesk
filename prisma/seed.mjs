@@ -326,11 +326,11 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
   // 4. Create default ORDER form configuration
   const defaultOrderFormSchema = {
     fields: [
-      // Order-level field: Order Name
+      // Order-level field: Sequencing Order Name
       {
         id: "system_name",
         type: "text",
-        label: "Order Name",
+        label: "Sequencing Order Name",
         name: "name",
         required: true,
         visible: true,
