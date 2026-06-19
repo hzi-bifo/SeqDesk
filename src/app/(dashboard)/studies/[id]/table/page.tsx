@@ -22,7 +22,9 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  Columns3,
   Download,
+  Filter,
   Info,
   Loader2,
   Maximize2,
@@ -116,6 +118,26 @@ const GROUP_LEGEND: Array<{ group: StudyTableColumnGroup; label: string }> = [
   { group: "study", label: "Study metadata" },
   { group: "output", label: "Pipeline outputs" },
 ];
+
+// Group labels + order for the "Columns" show/hide menu (covers all six groups).
+const COLUMN_GROUP_LABEL: Record<StudyTableColumnGroup, string> = {
+  identity: "Identity",
+  status: "Status",
+  order: "Sequencing Order",
+  mixs: "MIxS metadata",
+  study: "Study metadata",
+  output: "Pipeline outputs",
+};
+const COLUMN_GROUP_ORDER: StudyTableColumnGroup[] = [
+  "identity",
+  "status",
+  "order",
+  "mixs",
+  "study",
+  "output",
+];
+
+type TableDensity = "comfortable" | "compact";
 
 // A single inline-editable metadata cell. Click to edit; Enter/blur saves (PATCH
 // merges into the real Sample, so the change shows everywhere), Esc cancels.
@@ -280,6 +302,70 @@ export default function StudyTablePage({
     null
   );
   const [filterQuery, setFilterQuery] = useState("");
+  // "Tame the wide table" view controls. Column visibility + density persist
+  // per-study in localStorage; the status filter is transient like the text filter.
+  const [statusFilter, setStatusFilter] = useState<Set<FacilitySampleStatus>>(
+    new Set()
+  );
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [density, setDensity] = useState<TableDensity>("comfortable");
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+
+  const hiddenKey = `seqdesk:study-table:${id}:hidden`;
+  const densityKey = `seqdesk:study-table:${id}:density`;
+
+  // Restore persisted view preferences once per study (in an effect, to avoid a
+  // hydration mismatch from reading localStorage during render).
+  useEffect(() => {
+    try {
+      const rawHidden = localStorage.getItem(hiddenKey);
+      if (rawHidden) {
+        const parsed = JSON.parse(rawHidden);
+        if (Array.isArray(parsed)) {
+          setHiddenColumns(new Set(parsed.filter((v) => typeof v === "string")));
+        }
+      }
+      const rawDensity = localStorage.getItem(densityKey);
+      if (rawDensity === "compact" || rawDensity === "comfortable") {
+        setDensity(rawDensity);
+      }
+    } catch {
+      // ignore unreadable/disabled storage
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const persistHidden = (next: Set<string>) => {
+    setHiddenColumns(next);
+    try {
+      localStorage.setItem(hiddenKey, JSON.stringify([...next]));
+    } catch {
+      // ignore
+    }
+  };
+  const toggleColumnHidden = (key: string) => {
+    const next = new Set(hiddenColumns);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    persistHidden(next);
+  };
+  const persistDensity = (next: TableDensity) => {
+    setDensity(next);
+    try {
+      localStorage.setItem(densityKey, next);
+    } catch {
+      // ignore
+    }
+  };
+  const toggleStatusFilter = (status: FacilitySampleStatus) => {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -357,14 +443,19 @@ export default function StudyTablePage({
   // Filter + sort are derived (cheap for a study's worth of rows); cell editing
   // still targets rows by id, so order/visibility changes don't affect saves.
   const filterText = filterQuery.trim().toLowerCase();
+  const isFiltered = filterText !== "" || statusFilter.size > 0;
   const displayRows = (() => {
-    let result = filterText
-      ? rows.filter((row) =>
-          Object.values(row.cells).some((value) =>
-            String(value).toLowerCase().includes(filterText)
-          )
+    let result = rows;
+    if (statusFilter.size > 0) {
+      result = result.filter((row) => statusFilter.has(row.status));
+    }
+    if (filterText) {
+      result = result.filter((row) =>
+        Object.values(row.cells).some((value) =>
+          String(value).toLowerCase().includes(filterText)
         )
-      : rows;
+      );
+    }
     if (sort) {
       const { key, dir } = sort;
       result = [...result].sort((a, b) => {
@@ -483,17 +574,24 @@ export default function StudyTablePage({
     </>
   );
 
+  // Column visibility — the first column (Sample ID) is the sticky row anchor and
+  // always stays; everything else can be toggled from the "Columns" menu.
+  const hideableColumns = columns.slice(1);
+  const visibleColumns = columns.filter(
+    (column, index) => index === 0 || !hiddenColumns.has(column.key)
+  );
+
   // Inject a "+" column right after the last MIxS column (falling back to after
   // the Sequencing Order block), so adding a MIxS field feels like a table action.
   const ADD_MIXS_KEY = "__add_mixs__";
   const showAddMixs = data.availableMixsFields.length > 0;
   let addMixsAfter = -1;
   if (showAddMixs) {
-    columns.forEach((column, index) => {
+    visibleColumns.forEach((column, index) => {
       if (column.group === "mixs") addMixsAfter = index;
     });
     if (addMixsAfter === -1) {
-      columns.forEach((column, index) => {
+      visibleColumns.forEach((column, index) => {
         if (column.group === "order") addMixsAfter = index;
       });
     }
@@ -501,11 +599,15 @@ export default function StudyTablePage({
   const renderColumns: StudyTableColumn[] =
     showAddMixs && addMixsAfter >= 0
       ? [
-          ...columns.slice(0, addMixsAfter + 1),
+          ...visibleColumns.slice(0, addMixsAfter + 1),
           { key: ADD_MIXS_KEY, label: "", kind: "field", group: "mixs" },
-          ...columns.slice(addMixsAfter + 1),
+          ...visibleColumns.slice(addMixsAfter + 1),
         ]
-      : columns;
+      : visibleColumns;
+
+  // Row/header padding by density (Comfortable vs. Compact).
+  const cellPad = density === "compact" ? "px-2 py-0.5" : "px-3 py-1.5";
+  const headPad = density === "compact" ? "px-2 py-1" : "px-3 py-2";
 
   const exportButton = (
     <Button asChild disabled={rows.length === 0}>
@@ -549,6 +651,173 @@ export default function StudyTablePage({
           click a metadata cell to edit
         </span>
       </div>
+    </div>
+  );
+
+  const columnsMenu = (
+    <Popover open={columnsMenuOpen} onOpenChange={setColumnsMenuOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm">
+          <Columns3 className="mr-2 h-4 w-4" /> Columns
+          {hiddenColumns.size > 0 && (
+            <span className="ml-1.5 rounded bg-muted px-1 text-xs text-muted-foreground">
+              {hiddenColumns.size} hidden
+            </span>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-64 p-2">
+        <div className="mb-1 flex items-center justify-between px-1">
+          <span className="text-xs font-medium text-muted-foreground">
+            Show columns
+          </span>
+          {hiddenColumns.size > 0 && (
+            <button
+              type="button"
+              onClick={() => persistHidden(new Set())}
+              className="text-xs text-muted-foreground underline hover:text-foreground"
+            >
+              Show all
+            </button>
+          )}
+        </div>
+        <div className="max-h-80 overflow-auto">
+          {COLUMN_GROUP_ORDER.map((group) => {
+            const cols = hideableColumns.filter((c) => c.group === group);
+            if (cols.length === 0) return null;
+            return (
+              <div key={group} className="mb-1.5">
+                <div className="px-1 py-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+                  {COLUMN_GROUP_LABEL[group]}
+                </div>
+                {cols.map((c) => (
+                  <label
+                    key={c.key}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-muted"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!hiddenColumns.has(c.key)}
+                      onChange={() => toggleColumnHidden(c.key)}
+                      className="h-3.5 w-3.5"
+                    />
+                    <span className="truncate">{c.label}</span>
+                  </label>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+
+  const statusMenu = (
+    <Popover open={statusMenuOpen} onOpenChange={setStatusMenuOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm">
+          <Filter className="mr-2 h-4 w-4" /> Status
+          {statusFilter.size > 0 && (
+            <span className="ml-1.5 rounded bg-primary/10 px-1 text-xs text-primary">
+              {statusFilter.size}
+            </span>
+          )}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-56 p-2">
+        <div className="mb-1 flex items-center justify-between px-1">
+          <span className="text-xs font-medium text-muted-foreground">
+            Filter by status
+          </span>
+          {statusFilter.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setStatusFilter(new Set())}
+              className="text-xs text-muted-foreground underline hover:text-foreground"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        {FACILITY_SAMPLE_STATUSES.map((status) => {
+          const count = rows.filter((r) => r.status === status).length;
+          return (
+            <label
+              key={status}
+              className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-muted"
+            >
+              <input
+                type="checkbox"
+                checked={statusFilter.has(status)}
+                onChange={() => toggleStatusFilter(status)}
+                className="h-3.5 w-3.5"
+              />
+              <span
+                className={cn(
+                  "inline-flex rounded-full border px-2 py-0.5 text-xs font-medium",
+                  FACILITY_SAMPLE_STATUS_BADGE_CLASSNAMES[status]
+                )}
+              >
+                {FACILITY_SAMPLE_STATUS_LABELS[status]}
+              </span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {count}
+              </span>
+            </label>
+          );
+        })}
+      </PopoverContent>
+    </Popover>
+  );
+
+  const densityToggle = (
+    <div className="inline-flex overflow-hidden rounded-md border">
+      {(["comfortable", "compact"] as const).map((d) => (
+        <button
+          key={d}
+          type="button"
+          onClick={() => persistDensity(d)}
+          className={cn(
+            "px-2.5 py-1.5 text-xs capitalize",
+            density === d
+              ? "bg-muted font-medium text-foreground"
+              : "text-muted-foreground hover:bg-muted/50"
+          )}
+        >
+          {d}
+        </button>
+      ))}
+    </div>
+  );
+
+  const toolbar = (
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <input
+          value={filterQuery}
+          onChange={(event) => setFilterQuery(event.target.value)}
+          placeholder="Filter rows…"
+          className="w-56 rounded-md border bg-background py-1.5 pl-8 pr-2 text-sm outline-none focus:ring-1 focus:ring-primary/30"
+        />
+      </div>
+      {columnsMenu}
+      {statusMenu}
+      {densityToggle}
+      {isFiltered && (
+        <span className="text-xs text-muted-foreground">
+          {displayRows.length} of {rows.length}
+        </span>
+      )}
+      {sort && (
+        <button
+          type="button"
+          onClick={() => setSort(null)}
+          className="text-xs text-muted-foreground underline hover:text-foreground"
+        >
+          clear sort
+        </button>
+      )}
     </div>
   );
 
@@ -597,7 +866,8 @@ export default function StudyTablePage({
               <th
                 key={column.key}
                 className={cn(
-                  "sticky top-0 z-20 whitespace-nowrap border-b px-3 py-2 text-left font-semibold text-foreground/80",
+                  "sticky top-0 z-20 whitespace-nowrap border-b text-left font-semibold text-foreground/80",
+                  headPad,
                   GROUP_HEADER_TINT[column.group],
                   index === 0 && "left-0 z-30"
                 )}
@@ -691,7 +961,8 @@ export default function StudyTablePage({
                     <td
                       key={column.key}
                       className={cn(
-                        "whitespace-nowrap px-3 py-1.5 align-top",
+                        "whitespace-nowrap align-top",
+                        cellPad,
                         index === 0 &&
                           cn("sticky left-0 z-10 font-medium", tint)
                       )}
@@ -829,34 +1100,11 @@ export default function StudyTablePage({
             </div>
           )}
 
-          {/* Toolbar: filter (the "Add samples" action lives in the table as a row) */}
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={filterQuery}
-                onChange={(event) => setFilterQuery(event.target.value)}
-                placeholder="Filter rows…"
-                className="w-56 rounded-md border bg-background py-1.5 pl-8 pr-2 text-sm outline-none focus:ring-1 focus:ring-primary/30"
-              />
-            </div>
-            {filterText && (
-              <span className="text-xs text-muted-foreground">
-                {displayRows.length} of {rows.length}
-              </span>
-            )}
-            {sort && (
-              <button
-                type="button"
-                onClick={() => setSort(null)}
-                className="text-xs text-muted-foreground underline hover:text-foreground"
-              >
-                clear sort
-              </button>
-            )}
-          </div>
+          {/* Toolbar: filter + columns + status + density (the "Add samples"
+              action lives in the table as a row) */}
+          {toolbar}
 
-          {grid("calc(100vh - 360px)")}
+          {grid("calc(100vh - 400px)")}
 
           {legends}
         </div>
@@ -887,9 +1135,12 @@ export default function StudyTablePage({
               </Button>
             </div>
           </div>
-          <div className="border-b px-4 py-2">{legends}</div>
+          <div className="space-y-2 border-b px-4 py-2">
+            {toolbar}
+            {legends}
+          </div>
           <div className="flex-1 overflow-hidden p-4">
-            {grid("calc(100vh - 180px)")}
+            {grid("calc(100vh - 230px)")}
           </div>
         </div>
       )}
