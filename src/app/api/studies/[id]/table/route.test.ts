@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   loadStudyFormSchema: vi.fn(),
   loadOrderFormSchema: vi.fn(),
+  getChecklistForStudy: vi.fn(),
   parseStudyModulesConfig: vi.fn(),
   isStudyModuleEnabled: vi.fn(),
   db: {
@@ -35,6 +36,9 @@ vi.mock("@/lib/studies/schema", () => ({
 }));
 vi.mock("@/lib/orders/order-form", () => ({
   loadOrderFormSchema: mocks.loadOrderFormSchema,
+}));
+vi.mock("@/lib/mixs/config", () => ({
+  getChecklistForStudy: mocks.getChecklistForStudy,
 }));
 
 import { GET, PATCH } from "./route";
@@ -135,6 +139,9 @@ beforeEach(() => {
   mocks.db.sample.update.mockResolvedValue({});
   mocks.parseStudyModulesConfig.mockReturnValue({});
   mocks.isStudyModuleEnabled.mockReturnValue(false);
+  mocks.getChecklistForStudy.mockResolvedValue({
+    fields: [{ name: "collection_date" }],
+  });
   mocks.loadOrderFormSchema.mockResolvedValue({
     fields: [],
     groups: [],
@@ -193,7 +200,7 @@ describe("GET /api/studies/[id]/table", () => {
       ["Sequencing Order", "order"],
       ["Volume", "order"], // order form per-sample field (customFields)
       ["Title", "order"], // order field mapping to the sampleTitle column
-      ["Collection Date", "study"], // study form per-sample field (checklistData)
+      ["Collection Date", "mixs"], // MIxS checklist field → distinct group
       ["Legacy Field", "order"], // stray customFields key, surfaced anyway
       ["Read type", "output"], // pipeline outputs come last
       ["Read files", "output"],

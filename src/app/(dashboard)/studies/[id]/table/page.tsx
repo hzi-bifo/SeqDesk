@@ -29,6 +29,7 @@ type StudyTableColumnGroup =
   | "status"
   | "order"
   | "study"
+  | "mixs"
   | "output";
 
 interface StudyTableColumn {
@@ -87,12 +88,14 @@ const GROUP_HEADER_TINT: Record<StudyTableColumnGroup, string> = {
   status: "bg-muted",
   order: "bg-amber-100/70",
   study: "bg-sky-100/70",
+  mixs: "bg-violet-100/70",
   output: "bg-emerald-100/70",
 };
 
 const GROUP_LEGEND: Array<{ group: StudyTableColumnGroup; label: string }> = [
   { group: "identity", label: "Identity" },
   { group: "order", label: "Sequencing Order fields" },
+  { group: "mixs", label: "MIxS metadata" },
   { group: "study", label: "Study metadata" },
   { group: "output", label: "Pipeline outputs" },
 ];

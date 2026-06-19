@@ -5,6 +5,8 @@ import {
   parseStudyModulesConfig,
 } from "@/lib/studies/schema";
 import { loadOrderFormSchema } from "@/lib/orders/order-form";
+import { getChecklistForStudy } from "@/lib/mixs/config";
+import { resolveChecklistRef } from "@/lib/mixs/checklist-aliases";
 import { FIELD_TO_COLUMN_MAP } from "@/lib/sample-fields";
 import {
   FACILITY_SAMPLE_STATUS_LABELS,
@@ -22,6 +24,7 @@ export type StudyTableColumnGroup =
   | "status"
   | "order"
   | "study"
+  | "mixs"
   | "output";
 
 export interface StudyTableColumn {
@@ -349,6 +352,59 @@ export async function buildStudyTableData(
       )
     : false;
 
+  // Names of the study's MIxS checklist fields, so MIxS columns can be coloured
+  // distinctly (best-effort — generic study colour if the checklist can't resolve).
+  // The form uses slugs ("geographic_location") while the registry uses full ENA
+  // names ("geographic location (country and/or sea)"), so we match on a normalised
+  // form too (drop parentheticals + punctuation).
+  const normalizeMixs = (name: string) =>
+    name
+      .replace(/\([^)]*\)/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+  let mixsFieldNames = new Set<string>();
+  let mixsNormalized = new Set<string>();
+  if (study.checklistType) {
+    try {
+      const ref = resolveChecklistRef(study.checklistType);
+      const checklist = await getChecklistForStudy(db, {
+        ...ref,
+        version: study.mixsVersion,
+      });
+      if (checklist) {
+        mixsFieldNames = new Set(checklist.fields.map((field) => field.name));
+        mixsNormalized = new Set(
+          checklist.fields.map((field) => normalizeMixs(field.name))
+        );
+      }
+    } catch {
+      // Leave MIxS columns in the generic study group.
+    }
+  }
+  const mixsNormalizedList = [...mixsNormalized];
+  const isMixsName = (fieldName: string): boolean => {
+    if (mixsFieldNames.has(fieldName)) return true;
+    const normalized = normalizeMixs(fieldName);
+    if (!normalized) return false;
+    if (mixsNormalized.has(normalized)) return true;
+    // The form slug is often a prefix of a more specific registry term
+    // (e.g. geographic_location → geographic_location_country_and_or_sea).
+    return (
+      normalized.length >= 5 &&
+      mixsNormalizedList.some((registry) => registry.startsWith(normalized))
+    );
+  };
+  const studyGroupFor = (
+    fieldName: string,
+    moduleSource?: string,
+    fieldType?: string
+  ): StudyTableColumnGroup =>
+    isMixsName(fieldName) ||
+    moduleSource === "mixs-metadata" ||
+    fieldType === "mixs"
+      ? "mixs"
+      : "study";
+
   const columns: StudyTableColumn[] = [...IDENTITY_COLUMNS];
   const fieldColumns: FieldColumnSource[] = [];
 
@@ -371,11 +427,15 @@ export async function buildStudyTableData(
       const editable = coreColumn
         ? EDITABLE_CORE_COLUMNS.has(coreColumn)
         : EDITABLE_FIELD_TYPES.has(field.type);
+      const group =
+        source === "study"
+          ? studyGroupFor(field.name, field.moduleSource, field.type)
+          : source;
       columns.push({
         key,
         label: field.label,
         kind: "field",
-        group: source,
+        group,
         fieldType: field.type,
         helpText: field.helpText,
         required: field.required,
@@ -426,7 +486,7 @@ export async function buildStudyTableData(
         key: columnKey,
         label: humanizeKey(key),
         kind: "field",
-        group: source,
+        group: source === "study" ? studyGroupFor(key) : source,
         helpText: "Stored on samples but not part of the current form.",
       });
       fieldColumns.push({ key: columnKey, source, fieldName: key });
