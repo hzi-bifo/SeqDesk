@@ -32,20 +32,20 @@ fi
 
 before="$(squeue -u "$ME" -h -o '%i' 2>/dev/null || true)"
 
-# Speed comes from two levers: (1) data subset — driven by the dispatch's subsample_reads, so a
-# subsampled run scans far fewer reads; (2) parallelism — 16 cores + 256 GB lets metaxpath's ~3
-# big tasks (48 GB each) run at once instead of serialized as they were under the old 4-core/64 GB
-# allocation. Short cap (90 min): a subsampled dispatch should finish well within it (→ green); the
-# scheduled FULL run won't, and warns without bloating the nightly. --skip-local forces SLURM only.
-if SEQDESK_RUNTIME_E2E_SLURM_CORES=16 \
-   SEQDESK_RUNTIME_E2E_SLURM_MEMORY=256G \
-   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=120 \
+# Keep the sbatch request SMALL so it schedules promptly: a 256 GB/16-core request sat PENDING the
+# whole window and never ran. metaxpath only parallelizes ~2-way (peakRunning=2, peakCpus=4), so
+# 4 cores/64 GB is enough AND schedulable (this size ran fine before). Speed instead comes from the
+# DATA SUBSET (dispatch subsample_reads) — it's sample-size-bound, so 0.05 ≈ half of 0.1's ~3 h ≈
+# ~1.5 h. Timeout 9000 s (2.5 h) covers the run + a little queue; sbatch cap 180 min. --skip-local.
+if SEQDESK_RUNTIME_E2E_SLURM_CORES=4 \
+   SEQDESK_RUNTIME_E2E_SLURM_MEMORY=64G \
+   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=180 \
    node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
      --base-url "http://127.0.0.1:${PORT}" \
      --email "admin@example.com" --password "admin" \
      --pipeline-id metaxpath --study-alias gemma-nanopore-metaxpath \
      --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}' \
-     --skip-local --skip-if-disabled --timeout 5400; then
+     --skip-local --skip-if-disabled --timeout 9000; then
   echo "metaxpath SLURM leg OK"
 else
   echo "WARN (warn-only): metaxpath SLURM leg did not pass — not failing the suite"
