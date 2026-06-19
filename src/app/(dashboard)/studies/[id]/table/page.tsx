@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 import {
   AlertCircle,
   ArrowLeft,
+  ChevronDown,
+  ChevronRight,
   Download,
   Info,
   Loader2,
@@ -41,6 +43,12 @@ interface StudyTableRow {
   cells: Record<string, string>;
 }
 
+interface StudyInfoPanel {
+  heading: string;
+  subheading?: string;
+  fields: Array<{ label: string; value: string }>;
+}
+
 interface StudyTableData {
   study: {
     id: string;
@@ -51,7 +59,7 @@ interface StudyTableData {
   };
   columns: StudyTableColumn[];
   rows: StudyTableRow[];
-  studySummary: Array<{ label: string; value: string }>;
+  info: StudyInfoPanel[];
   perStudy: boolean;
 }
 
@@ -90,6 +98,7 @@ export default function StudyTablePage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,7 +162,7 @@ export default function StudyTablePage({
     );
   }
 
-  const { study, columns, rows, studySummary, perStudy } = data;
+  const { study, columns, rows, info, perStudy } = data;
 
   const exportButton = (
     <Button asChild disabled={rows.length === 0}>
@@ -323,15 +332,57 @@ export default function StudyTablePage({
             </div>
           </div>
 
-          {/* Study-level summary */}
-          {studySummary.length > 0 && (
-            <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-lg border bg-muted/40 px-4 py-3 text-sm">
-              {studySummary.map((entry) => (
-                <div key={entry.label} className="min-w-0">
-                  <span className="text-muted-foreground">{entry.label}: </span>
-                  <span className="font-medium">{entry.value}</span>
+          {/* Study & sequencing information (everything that is not per-sample) */}
+          {info.length > 0 && (
+            <div className="rounded-lg border">
+              <button
+                type="button"
+                onClick={() => setInfoOpen((open) => !open)}
+                className="flex w-full items-center gap-2 px-4 py-2 text-sm font-medium hover:bg-muted/40"
+              >
+                {infoOpen ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+                Study &amp; sequencing information
+                <span className="text-xs font-normal text-muted-foreground">
+                  (not per-sample)
+                </span>
+              </button>
+              {infoOpen && (
+                <div className="grid gap-3 border-t p-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {info.map((panel, index) => (
+                    <div
+                      key={`${panel.heading}-${panel.subheading ?? index}`}
+                      className="rounded-lg border bg-muted/30 p-3"
+                    >
+                      <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+                        <span className="text-sm font-semibold">
+                          {panel.heading}
+                        </span>
+                        {panel.subheading && (
+                          <span className="truncate text-xs text-muted-foreground">
+                            {panel.subheading}
+                          </span>
+                        )}
+                      </div>
+                      <dl className="space-y-1 text-sm">
+                        {panel.fields.map((field) => (
+                          <div key={field.label} className="flex gap-2">
+                            <dt className="shrink-0 text-muted-foreground">
+                              {field.label}:
+                            </dt>
+                            <dd className="min-w-0 break-words font-medium">
+                              {field.value}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           )}
 

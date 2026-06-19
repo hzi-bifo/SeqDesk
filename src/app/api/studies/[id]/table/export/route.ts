@@ -42,20 +42,23 @@ export async function GET(
     sheet.views = [{ state: "frozen", ySplit: 1 }];
     sheet.addRows(data.rows.map((row) => row.cells));
 
-    if (data.studySummary.length > 0) {
-      const metaSheet = workbook.addWorksheet("Study Metadata");
+    if (data.info.length > 0) {
+      const metaSheet = workbook.addWorksheet("Study Info");
       metaSheet.columns = [
-        { header: "Field", key: "field", width: 32 },
+        { header: "Section", key: "section", width: 22 },
+        { header: "Field", key: "field", width: 30 },
         { header: "Value", key: "value", width: 56 },
       ];
       metaSheet.getRow(1).font = { bold: true };
-      metaSheet.addRows([
-        { field: "Study", value: data.study.title },
-        ...data.studySummary.map((entry) => ({
-          field: entry.label,
-          value: entry.value,
-        })),
-      ]);
+      metaSheet.addRow({ section: "Study", field: "Title", value: data.study.title });
+      for (const panel of data.info) {
+        const section = panel.subheading
+          ? `${panel.heading} — ${panel.subheading}`
+          : panel.heading;
+        for (const field of panel.fields) {
+          metaSheet.addRow({ section, field: field.label, value: field.value });
+        }
+      }
     }
 
     const buffer = await workbook.xlsx.writeBuffer();

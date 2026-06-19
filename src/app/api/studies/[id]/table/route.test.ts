@@ -72,7 +72,17 @@ beforeEach(() => {
       checklistData: JSON.stringify({ collection_date: "2024-01-01" }),
       customFields: JSON.stringify({ sample_volume: "5", legacy_field: "x" }),
       facilityStatus: "SEQUENCED",
-      order: { orderNumber: "ORD-1", name: "My Order" },
+      order: {
+        id: "o1",
+        orderNumber: "ORD-1",
+        name: "My Order",
+        platform: "Illumina",
+        instrumentModel: "NovaSeq",
+        libraryStrategy: null,
+        librarySource: null,
+        librarySelection: null,
+        customFields: null,
+      },
     },
     {
       id: "s2",
@@ -86,7 +96,17 @@ beforeEach(() => {
       checklistData: null,
       customFields: null,
       facilityStatus: "NONSENSE",
-      order: { orderNumber: "ORD-2", name: null },
+      order: {
+        id: "o2",
+        orderNumber: "ORD-2",
+        name: null,
+        platform: null,
+        instrumentModel: null,
+        libraryStrategy: null,
+        librarySource: null,
+        librarySelection: null,
+        customFields: null,
+      },
     },
   ]);
   mocks.db.siteSettings.findUnique.mockResolvedValue({ modulesConfig: null });
@@ -175,12 +195,26 @@ describe("GET /api/studies/[id]/table", () => {
     expect(r2.cells["custom:sample_volume"]).toBe("");
   });
 
-  it("exposes study-level fields as a summary and reports perStudy=false by default", async () => {
+  it("groups not-per-sample info into a Study panel and a per-order Sequencing panel", async () => {
     const res = await GET(req(), { params });
     const body = await res.json();
     expect(body.perStudy).toBe(false);
-    expect(body.studySummary).toEqual([
+
+    const studyPanel = body.info.find((p: { heading: string }) => p.heading === "Study");
+    expect(studyPanel.fields).toEqual([
+      { label: "MIxS checklist", value: "soil" },
       { label: "Study Abstract", value: "An abstract" },
+    ]);
+
+    // Only the order that has sequencer info gets a panel (ORD-1 → Illumina/NovaSeq).
+    const orderPanels = body.info.filter(
+      (p: { heading: string }) => p.heading === "Sequencing Order"
+    );
+    expect(orderPanels).toHaveLength(1);
+    expect(orderPanels[0].subheading).toBe("ORD-1 · My Order");
+    expect(orderPanels[0].fields).toEqual([
+      { label: "Platform", value: "Illumina" },
+      { label: "Instrument", value: "NovaSeq" },
     ]);
   });
 

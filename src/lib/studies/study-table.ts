@@ -39,6 +39,19 @@ export interface StudyTableRow {
   cells: Record<string, string>;
 }
 
+export interface StudyInfoField {
+  label: string;
+  value: string;
+}
+
+/** A panel of "not per-row" information shown above the table. */
+export interface StudyInfoPanel {
+  heading: string;
+  /** Optional sub-heading, e.g. an order's display name. */
+  subheading?: string;
+  fields: StudyInfoField[];
+}
+
 export interface StudyTableData {
   study: {
     id: string;
@@ -50,8 +63,12 @@ export interface StudyTableData {
   };
   columns: StudyTableColumn[];
   rows: StudyTableRow[];
-  /** Study-level (per-study, not per-sample) fields rendered as a summary strip. */
-  studySummary: Array<{ label: string; value: string }>;
+  /**
+   * Information that is NOT per-sample, grouped into panels: the study itself
+   * (incl. MIxS checklist) and each Sequencing Order the samples came from
+   * (sequencer / library settings). Shown as a header above the table.
+   */
+  info: StudyInfoPanel[];
   /** True when the per-sample columns came from the study's OWN questionnaire. */
   perStudy: boolean;
 }
@@ -99,8 +116,10 @@ const studyTableSelect = {
   id: true,
   title: true,
   alias: true,
+  description: true,
   userId: true,
   checklistType: true,
+  mixsVersion: true,
   studyMetadata: true,
 } as const;
 
@@ -196,7 +215,19 @@ export async function buildStudyTableData(
         checklistData: true,
         customFields: true,
         facilityStatus: true,
-        order: { select: { orderNumber: true, name: true } },
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+            name: true,
+            platform: true,
+            instrumentModel: true,
+            libraryStrategy: true,
+            librarySource: true,
+            librarySelection: true,
+            customFields: true,
+          },
+        },
       },
     }),
     db.siteSettings.findUnique({
@@ -338,20 +369,73 @@ export async function buildStudyTableData(
     };
   });
 
+  // ── "Not per-row" information, grouped into header panels ──
   const studyMetadata = parseJsonObject(study.studyMetadata);
-  const studySummary = studySchema.studyFields
-    .filter(
-      (field) =>
-        field.visible !== false &&
-        field.type !== "mixs" &&
-        field.type !== "funding" &&
-        field.name !== "_sample_association"
-    )
-    .map((field) => ({
-      label: field.label,
-      value: formatCell(studyMetadata[field.name]),
-    }))
-    .filter((entry) => entry.value);
+  const studyFields: StudyInfoField[] = [];
+  if (study.checklistType) {
+    studyFields.push({ label: "MIxS checklist", value: study.checklistType });
+  }
+  if (study.mixsVersion !== null && study.mixsVersion !== undefined) {
+    studyFields.push({ label: "MIxS version", value: String(study.mixsVersion) });
+  }
+  if (study.description) {
+    studyFields.push({ label: "Description", value: study.description });
+  }
+  for (const field of studySchema.studyFields) {
+    if (field.visible === false) continue;
+    if (field.type === "mixs" || field.type === "funding") continue;
+    if (field.name === "_sample_association") continue;
+    const value = formatCell(studyMetadata[field.name]);
+    if (value) studyFields.push({ label: field.label, value });
+  }
+
+  // Labels for order-level custom fields come from the order form's non-per-sample
+  // fields; sequencer/library settings are explicit Order columns.
+  const orderFieldLabels = new Map<string, string>();
+  for (const field of orderSchema.fields) {
+    if (!field.perSample) orderFieldLabels.set(field.name, field.label);
+  }
+
+  const distinctOrders = new Map<string, (typeof samples)[number]["order"]>();
+  for (const sample of samples) {
+    if (sample.order && !distinctOrders.has(sample.order.id)) {
+      distinctOrders.set(sample.order.id, sample.order);
+    }
+  }
+
+  const orderPanels: StudyInfoPanel[] = [];
+  for (const order of distinctOrders.values()) {
+    if (!order) continue;
+    const fields: StudyInfoField[] = [];
+    const sequencer: Array<[string, string | null]> = [
+      ["Platform", order.platform],
+      ["Instrument", order.instrumentModel],
+      ["Library strategy", order.libraryStrategy],
+      ["Library source", order.librarySource],
+      ["Library selection", order.librarySelection],
+    ];
+    for (const [label, value] of sequencer) {
+      const formatted = formatCell(value);
+      if (formatted) fields.push({ label, value: formatted });
+    }
+    for (const [key, value] of Object.entries(parseJsonObject(order.customFields))) {
+      const formatted = formatCell(value);
+      if (formatted) {
+        fields.push({ label: orderFieldLabels.get(key) ?? humanizeKey(key), value: formatted });
+      }
+    }
+    if (fields.length > 0) {
+      orderPanels.push({
+        heading: "Sequencing Order",
+        subheading: order.name ? `${order.orderNumber} · ${order.name}` : order.orderNumber,
+        fields,
+      });
+    }
+  }
+
+  const info: StudyInfoPanel[] = [];
+  if (studyFields.length > 0) info.push({ heading: "Study", fields: studyFields });
+  info.push(...orderPanels);
 
   return {
     study: {
@@ -364,7 +448,7 @@ export async function buildStudyTableData(
     },
     columns,
     rows,
-    studySummary,
+    info,
     perStudy: dynamicStudiesEnabled && hasOwnForm,
   };
 }
