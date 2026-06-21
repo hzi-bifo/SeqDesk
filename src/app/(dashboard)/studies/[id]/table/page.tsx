@@ -1273,7 +1273,7 @@ export default function StudyTablePage({
   // per-column help), and a spanning placeholder row when there are no samples.
   const grid = (maxHeight: string) => (
     <div
-      className="overflow-auto rounded-lg border bg-card"
+      className="overflow-auto rounded-lg border bg-card [container-type:inline-size]"
       style={{ maxHeight }}
     >
       <table className="w-full border-collapse text-sm">
@@ -1322,52 +1322,48 @@ export default function StudyTablePage({
                 )}
               >
                 <span className="inline-flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => toggleSort(column.key)}
-                    title="Sort by this column"
-                    className="inline-flex items-center gap-1 hover:text-foreground"
-                  >
-                    {column.label}
-                    {(() => {
-                      const sortIndex = sortLevels.findIndex(
-                        (level) => level.key === column.key
-                      );
-                      if (sortIndex < 0) return null;
-                      return (
-                        <span className="inline-flex items-center text-primary">
-                          {sortLevels[sortIndex].dir === "asc" ? (
-                            <ArrowUp className="h-3 w-3" />
-                          ) : (
-                            <ArrowDown className="h-3 w-3" />
-                          )}
-                          {sortLevels.length > 1 && (
-                            <span className="text-[9px] font-semibold">
-                              {sortIndex + 1}
-                            </span>
-                          )}
-                        </span>
-                      );
-                    })()}
-                  </button>
+                  {(() => {
+                    const sortIndex = sortLevels.findIndex(
+                      (level) => level.key === column.key
+                    );
+                    // The help text now shows on hovering the column name itself —
+                    // no separate (i) icon.
+                    const labelButton = (
+                      <button
+                        type="button"
+                        onClick={() => toggleSort(column.key)}
+                        className="inline-flex items-center gap-1 hover:text-foreground"
+                      >
+                        {column.label}
+                        {sortIndex >= 0 && (
+                          <span className="inline-flex items-center text-primary">
+                            {sortLevels[sortIndex].dir === "asc" ? (
+                              <ArrowUp className="h-3 w-3" />
+                            ) : (
+                              <ArrowDown className="h-3 w-3" />
+                            )}
+                            {sortLevels.length > 1 && (
+                              <span className="text-[9px] font-semibold">
+                                {sortIndex + 1}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </button>
+                    );
+                    return column.helpText ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>{labelButton}</TooltipTrigger>
+                        <TooltipContent className="max-w-xs font-normal">
+                          {column.helpText}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      labelButton
+                    );
+                  })()}
                   {column.required && (
                     <span className="text-muted-foreground/60">*</span>
-                  )}
-                  {column.helpText && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          aria-label={`About ${column.label}`}
-                          className="inline-flex cursor-help align-middle"
-                        >
-                          <Info className="h-3 w-3 text-muted-foreground/50 hover:text-foreground" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs font-normal">
-                        {column.helpText}
-                      </TooltipContent>
-                    </Tooltip>
                   )}
                   {column.removable && (
                     <button
@@ -1390,26 +1386,26 @@ export default function StudyTablePage({
         <tbody>
           {displayRows.length === 0 ? (
             <tr>
-              <td
-                colSpan={renderColumns.length}
-                className="px-4 py-16 text-center text-muted-foreground"
-              >
-                <Table2 className="mx-auto h-6 w-6" />
-                {rows.length === 0 ? (
-                  <>
-                    <p className="mt-2 text-sm font-medium text-foreground">
-                      No samples in this study yet
-                    </p>
-                    <p className="mt-1 text-sm">
-                      Assign samples to this study to see them here. The columns
-                      above show what will be captured for each sample.
-                    </p>
-                  </>
-                ) : (
-                  <p className="mt-2 text-sm">
-                    No rows match “{filterQuery}”.
-                  </p>
-                )}
+              <td colSpan={renderColumns.length} className="p-0">
+                {/* Pinned to the left of the visible scroll area and sized to it
+                    (100cqw), so the message stays centered in the viewport rather
+                    than the full — possibly very wide — table. */}
+                <div className="sticky left-0 w-[100cqw] px-4 py-16 text-center text-muted-foreground">
+                  <Table2 className="mx-auto mb-2 h-6 w-6" />
+                  {rows.length === 0 ? (
+                    <>
+                      <p className="text-sm font-medium text-foreground">
+                        No samples in this study yet
+                      </p>
+                      <p className="mt-1 text-sm">
+                        Assign samples to this study to see them here. The columns
+                        above show what will be captured for each sample.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm">No rows match “{filterQuery}”.</p>
+                  )}
+                </div>
               </td>
             </tr>
           ) : (
@@ -1502,7 +1498,6 @@ export default function StudyTablePage({
                 </Link>
               </Button>
               <div className="flex flex-wrap items-center gap-2">
-                <Table2 className="h-5 w-5 text-muted-foreground" />
                 <h1 className="text-xl font-semibold">Table Overview</h1>
                 {perStudy && (
                   <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
