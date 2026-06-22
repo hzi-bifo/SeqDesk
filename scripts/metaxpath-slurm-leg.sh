@@ -48,15 +48,16 @@ if [ -n "${PROFILE_DATA_DIR:-}" ]; then
     echo "shrank Gemma reads ~50% for the SLURM leg (shorter job -> backfill-schedulable)" ) || true
 fi
 
-# THE fix: the SLURM time limit must stay within the cpu partition's MaxTime. Every earlier attempt
-# requested 90-360 min and sat PENDING forever with reason "(PartitionTimeLimit)" — the request
-# exceeded the partition cap, so it could never be scheduled. read-cleaning requests 60 min and runs
-# fine, so the cap is >=60 and <90; use 60. 32 GB/2-core (metaxpath's actual peak is ~3 GB), memory
-# override 24 GB inside the allocation, and the ~50% reads above keep the run (~25 min) well under
-# the 60 min wall. e2e timeout 3600 s covers the run plus scheduling.
+# THE fix: SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT is in HOURS, not minutes. The inline executor writes
+# it verbatim into the wrapper as "#SBATCH -t <N>:0:0", so the earlier 60 meant 60 HOURS (-t 60:0:0) —
+# far past the cpu partition's MaxTime, so the job sat PENDING forever with reason "(PartitionTimeLimit)".
+# (read-cleaning schedules at "60" only because it uses the per-process executor, where this blanket is
+# overridden by detaxizer's own nf-core per-process times — it is never actually limited by it.) Use 2
+# (= -t 2:0:0 = 2 h): comfortably above the ~25 min subsampled run, comfortably below the partition cap.
+# 32 GB/2-core (metaxpath's actual peak is ~3 GB), memory override 24 GB inside it. e2e timeout 3600 s.
 if SEQDESK_RUNTIME_E2E_SLURM_CORES=2 \
    SEQDESK_RUNTIME_E2E_SLURM_MEMORY=32G \
-   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=60 \
+   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=2 \
    node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
      --base-url "http://127.0.0.1:${PORT}" \
      --email "admin@example.com" --password "admin" \
