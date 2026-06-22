@@ -48,19 +48,21 @@ if [ -n "${PROFILE_DATA_DIR:-}" ]; then
     echo "shrank Gemma reads ~50% for the SLURM leg (shorter job -> backfill-schedulable)" ) || true
 fi
 
-# Request the SAME tiny slot as the read-cleaning SLURM leg, which schedules reliably: 32 GB/2-core
-# (bigger requests sat PENDING for hours; metaxpath's ACTUAL peak is ~3 GB). The decisive change is the
-# SHORTER time limit (90 min, vs 150) so the scheduler can backfill it — paired with the ~50% reads
-# above so the run fits. Memory override 24 GB stays inside the 32 GB allocation. Timeout 6000 s.
+# THE fix: the SLURM time limit must stay within the cpu partition's MaxTime. Every earlier attempt
+# requested 90-360 min and sat PENDING forever with reason "(PartitionTimeLimit)" — the request
+# exceeded the partition cap, so it could never be scheduled. read-cleaning requests 60 min and runs
+# fine, so the cap is >=60 and <90; use 60. 32 GB/2-core (metaxpath's actual peak is ~3 GB), memory
+# override 24 GB inside the allocation, and the ~50% reads above keep the run (~25 min) well under
+# the 60 min wall. e2e timeout 3600 s covers the run plus scheduling.
 if SEQDESK_RUNTIME_E2E_SLURM_CORES=2 \
    SEQDESK_RUNTIME_E2E_SLURM_MEMORY=32G \
-   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=90 \
+   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=60 \
    node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
      --base-url "http://127.0.0.1:${PORT}" \
      --email "admin@example.com" --password "admin" \
      --pipeline-id metaxpath --study-alias gemma-nanopore-metaxpath \
      --config-json '{"metaxProfileMemory":"24 GB","predVfsAmrsMemory":"24 GB"}' \
-     --skip-local --skip-if-disabled --timeout 6000; then
+     --skip-local --skip-if-disabled --timeout 3600; then
   echo "metaxpath SLURM leg OK"
 else
   echo "WARN (warn-only): metaxpath SLURM leg did not pass — not failing the suite"
