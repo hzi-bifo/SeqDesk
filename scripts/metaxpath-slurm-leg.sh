@@ -32,21 +32,35 @@ fi
 
 before="$(squeue -u "$ME" -h -o '%i' 2>/dev/null || true)"
 
-# Request the SAME tiny slot as the read-cleaning SLURM leg, which schedules reliably on this cluster:
-# 32 GB/2-core. Bigger requests (64 GB, 256 GB) sat PENDING for hours waiting for a large gap. metaxpath
-# only parallelizes ~2-way and its ACTUAL peak is ~3 GB, so 32 GB is ample (the 48/96 GB figures are
-# just declarations, checked against the 1.3 TB node, not the cgroup). Memory override dropped to 24 GB
-# to stay safely inside the 32 GB allocation. Speed comes from the data subset (dispatch subsample_reads,
-# sample-size-bound). Timeout 7200 s (2 h) covers a scheduled run (~1.5 h at 0.05); sbatch cap 150 min.
+# Shrink the Gemma reads for the SLURM run ONLY — the local hard gate already ran on the full 0.05
+# subset, and the later mag/read-cleaning legs use different data, so this is safe. A shorter job fits
+# a read-cleaning-sized time limit (90 min), which the scheduler BACKFILLS into small gaps far more
+# readily than metaxpath's old 150 min — that long slot is why it kept sitting PENDING for hours.
+# Keep ~50% of reads per file (fixed seed). FULLY non-fatal.
+if [ -n "${PROFILE_DATA_DIR:-}" ]; then
+  ( set +e +o pipefail
+    while IFS= read -r fq; do
+      case "$fq" in
+        *.gz) zcat "$fq" 2>/dev/null | awk 'BEGIN{srand(11)} NR%4==1{k=(rand()<0.5)} k' | gzip > "$fq.sub" 2>/dev/null && mv -f "$fq.sub" "$fq" ;;
+        *)    awk 'BEGIN{srand(11)} NR%4==1{k=(rand()<0.5)} k' "$fq" > "$fq.sub" 2>/dev/null && mv -f "$fq.sub" "$fq" ;;
+      esac
+    done < <(find "$PROFILE_DATA_DIR" -path '*gemma-nanopore-metaxpath*' \( -name '*.fastq.gz' -o -name '*.fq.gz' -o -name '*.fastq' -o -name '*.fq' \) -type f 2>/dev/null)
+    echo "shrank Gemma reads ~50% for the SLURM leg (shorter job -> backfill-schedulable)" ) || true
+fi
+
+# Request the SAME tiny slot as the read-cleaning SLURM leg, which schedules reliably: 32 GB/2-core
+# (bigger requests sat PENDING for hours; metaxpath's ACTUAL peak is ~3 GB). The decisive change is the
+# SHORTER time limit (90 min, vs 150) so the scheduler can backfill it — paired with the ~50% reads
+# above so the run fits. Memory override 24 GB stays inside the 32 GB allocation. Timeout 6000 s.
 if SEQDESK_RUNTIME_E2E_SLURM_CORES=2 \
    SEQDESK_RUNTIME_E2E_SLURM_MEMORY=32G \
-   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=150 \
+   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=90 \
    node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
      --base-url "http://127.0.0.1:${PORT}" \
      --email "admin@example.com" --password "admin" \
      --pipeline-id metaxpath --study-alias gemma-nanopore-metaxpath \
      --config-json '{"metaxProfileMemory":"24 GB","predVfsAmrsMemory":"24 GB"}' \
-     --skip-local --skip-if-disabled --timeout 7200; then
+     --skip-local --skip-if-disabled --timeout 6000; then
   echo "metaxpath SLURM leg OK"
 else
   echo "WARN (warn-only): metaxpath SLURM leg did not pass — not failing the suite"
