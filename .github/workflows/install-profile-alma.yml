@@ -1004,13 +1004,17 @@ jobs:
             # metaxpath actually classify on the test data instead of being rejected before it runs.
             run_gemma metaxpath   10800 --study-alias gemma-nanopore-metaxpath \
               --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}'
-            # metaxpath SLURM leg (warn-only) — extracted to scripts/metaxpath-slurm-leg.sh so this
-            # large run block stays under GitHub's per-segment expression-template limit. Gated on a
-            # SLURM-configured app (shared conda) + sbatch; the script always exits 0 (warn-only).
-            if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ] && command -v sbatch >/dev/null 2>&1; then
+            # metaxpath SLURM leg (warn-only, MANUAL-DISPATCH ONLY) — scripts/metaxpath-slurm-leg.sh.
+            # metaxpath provably runs under SLURM (run 27823876808: 36 procs, exit 0, reports), but the
+            # job's scheduling is at the mercy of the shared cluster: across every allocation tried
+            # (256/64/32 GB, 16/4/2 cores, 150/90 min limits, smaller subsets) it usually sits PENDING
+            # for hours and never starts. So it can't be a reliable gate. Gate it to manual dispatch
+            # (subsample_reads set) so the scheduled nightly isn't bloated by ~hours of pending; a
+            # manual run can still get a green when the cluster happens to be free. Always exits 0.
+            if [ -n "${GEMMA_SUBSAMPLE:-}" ] && [ -n "${SLURM_SHARED_CONDA_BASE:-}" ] && command -v sbatch >/dev/null 2>&1; then
               bash "$GITHUB_WORKSPACE/scripts/metaxpath-slurm-leg.sh" "$PORT" || true
             else
-              echo "metaxpath SLURM leg SKIPPED (SLURM_SHARED_CONDA_BASE unset or sbatch unavailable)."
+              echo "metaxpath SLURM leg SKIPPED (manual-dispatch only, or no shared conda / sbatch)."
             fi
             # Surface metaxpath's taxonomy output so we can read the classified taxa (it's not a
             # curated artifact). List its non-conda output files, dump the best report candidate,
