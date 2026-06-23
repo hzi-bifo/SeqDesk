@@ -48,48 +48,63 @@ if [ -n "${PROFILE_DATA_DIR:-}" ]; then
     echo "shrank Gemma reads ~50% for the SLURM leg (shorter job -> backfill-schedulable)" ) || true
 fi
 
-# THE fix: SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT is in HOURS, not minutes. The inline executor writes
-# it verbatim into the wrapper as "#SBATCH -t <N>:0:0", so the earlier 60 meant 60 HOURS (-t 60:0:0) —
-# far past the cpu partition's MaxTime, so the job sat PENDING forever with reason "(PartitionTimeLimit)".
-# (read-cleaning schedules at "60" only because it uses the per-process executor, where this blanket is
-# overridden by detaxizer's own nf-core per-process times — it is never actually limited by it.) Use 2
-# (= -t 2:0:0 = 2 h): comfortably above the ~25 min subsampled run, comfortably below the partition cap.
-# 32 GB/2-core (metaxpath's actual peak is ~3 GB), memory override 24 GB inside it. e2e timeout 3600 s.
-if SEQDESK_RUNTIME_E2E_SLURM_CORES=2 \
-   SEQDESK_RUNTIME_E2E_SLURM_MEMORY=32G \
-   SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=2 \
-   node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
-     --base-url "http://127.0.0.1:${PORT}" \
-     --email "admin@example.com" --password "admin" \
-     --pipeline-id metaxpath --study-alias gemma-nanopore-metaxpath \
-     --config-json '{"metaxProfileMemory":"24 GB","predVfsAmrsMemory":"24 GB"}' \
-     --skip-local --skip-if-disabled --timeout 3600; then
-  echo "metaxpath SLURM leg OK"
-else
-  echo "WARN (warn-only): metaxpath SLURM leg did not pass — not failing the suite"
-fi
-
-# Free the slot: cancel only the job(s) this leg submitted (leave any other jobs untouched).
-new=""
-for j in $(squeue -u "$ME" -h -o '%i' 2>/dev/null || true); do
-  if ! echo "$before" | grep -qx "$j"; then new="$new $j"; fi
-done
-if [ -n "$new" ]; then
-  echo "freeing QOS slot — cancelling metaxpath SLURM job(s):$new"
-  scancel $new 2>/dev/null || true
-fi
-
-# Forensics (non-fatal): surface how far the newest metaxpath run got, so a timeout is diagnosable
-# (queued vs slow vs failed) without another blind multi-hour iteration. PROFILE_RUN_DIR (the runs
-# root) is inherited from the workflow step env.
-( set +e +o pipefail
-  mxdir="$(find "${PROFILE_RUN_DIR:-/nonexistent}" -maxdepth 1 -type d -name 'METAXPATH-*' 2>/dev/null | sort | tail -1)"
-  if [ -n "$mxdir" ] && [ -f "$mxdir/logs/pipeline.out" ]; then
+# THE scheduling fix: SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT is in HOURS, not minutes. The inline
+# executor writes it verbatim into the wrapper as "#SBATCH -t <N>:0:0", so the earlier 60 meant 60
+# HOURS (-t 60:0:0) — far past the cpu partition's MaxTime, so the job sat PENDING forever with reason
+# "(PartitionTimeLimit)". (read-cleaning schedules at the same value only because its per-process
+# executor overrides this blanket with detaxizer's own nf-core per-process times.) 2 (= -t 2:0:0 =
+# 2 h) sits above the ~25 min subsampled run and below the cap. 32 GB/2-core (peak ~3 GB), mem 24 GB.
+#
+# Retry up to 3x: the inline job runs on a shared-cluster compute node where setup (NFS propagation of
+# the just-created run dir, conda activation) occasionally hiccups and the job dies in <1 min before
+# Nextflow starts. A failed setup is fast, so a retry is cheap and may land on a healthy node; a real
+# completion (~25 min) breaks on the first pass. dump_forensics surfaces the exit code + Nextflow/conda
+# stream + SLURM preamble stderr so a PERSISTENT failure is diagnosable without another blind iteration.
+dump_forensics() {
+  ( set +e +o pipefail
+    sleep 8  # let the compute node copy its node-local slurm-<job>.err back over NFS before we read
+    mxdir="$(find "${PROFILE_RUN_DIR:-/nonexistent}" -maxdepth 1 -type d -name 'METAXPATH-*' 2>/dev/null | sort | tail -1)"
+    [ -n "$mxdir" ] || return 0
     echo "--- SLURM metaxpath run forensics: $mxdir ---"
-    echo "tasks COMPLETED so far: $(grep -c 'status: COMPLETED' "$mxdir/logs/pipeline.out" 2>/dev/null)"
-    grep -iE "Workflow completed|Submitted process|terminated|ERROR ~|Creating env using conda|peakMemory" "$mxdir/logs/pipeline.out" 2>/dev/null | tail -15
+    if [ -f "$mxdir/logs/pipeline.out" ]; then
+      echo "tasks COMPLETED so far: $(grep -c 'status: COMPLETED' "$mxdir/logs/pipeline.out" 2>/dev/null)"
+      grep -E "Pipeline completed with exit code" "$mxdir/logs/pipeline.out" 2>/dev/null | tail -2 \
+        || echo "NO EXIT MARKER — run.sh died before its trap (run dir not visible on the node?)"
+      grep -iE "Workflow completed|Submitted process|terminated|ERROR ~|Creating env using conda|peakMemory" "$mxdir/logs/pipeline.out" 2>/dev/null | tail -15
+    fi
+    echo "--- pipeline.err tail (Nextflow startup / conda) ---"
+    [ -f "$mxdir/logs/pipeline.err" ] && tail -40 "$mxdir/logs/pipeline.err" 2>/dev/null
+    echo "--- SLURM stderr tail (preamble: NFS-wait / conda bootstrap before Nextflow) ---"
+    for e in "$mxdir"/logs/slurm-*.err; do [ -f "$e" ] && { echo "[$e]"; tail -40 "$e" 2>/dev/null; }; done
+  ) || true
+}
+
+ok=0
+for attempt in 1 2 3; do
+  echo "metaxpath SLURM attempt ${attempt}/3"
+  before="$(squeue -u "$ME" -h -o '%i' 2>/dev/null || true)"
+  if SEQDESK_RUNTIME_E2E_SLURM_CORES=2 \
+     SEQDESK_RUNTIME_E2E_SLURM_MEMORY=32G \
+     SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=2 \
+     node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
+       --base-url "http://127.0.0.1:${PORT}" \
+       --email "admin@example.com" --password "admin" \
+       --pipeline-id metaxpath --study-alias gemma-nanopore-metaxpath \
+       --config-json '{"metaxProfileMemory":"24 GB","predVfsAmrsMemory":"24 GB"}' \
+       --skip-local --skip-if-disabled --timeout 3600; then
+    ok=1
   fi
-) || true
+  # Free the per-user QOS slot: cancel only the job(s) THIS attempt submitted (leave others untouched).
+  newjobs=""
+  for j in $(squeue -u "$ME" -h -o '%i' 2>/dev/null || true); do
+    echo "$before" | grep -qx "$j" || newjobs="$newjobs $j"
+  done
+  [ -n "$newjobs" ] && { echo "freeing QOS slot — cancelling metaxpath SLURM job(s):$newjobs"; scancel $newjobs 2>/dev/null || true; }
+  if [ "$ok" = 1 ]; then echo "metaxpath SLURM leg OK"; break; fi
+  echo "attempt ${attempt} did not pass"
+  dump_forensics
+done
+[ "$ok" = 1 ] || echo "WARN (warn-only): metaxpath SLURM leg did not pass after 3 attempts — not failing the suite"
 
 echo "::endgroup::"
 exit 0
