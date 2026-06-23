@@ -42,8 +42,14 @@ echo "metaxpath SLURM leg: full 0.05 Gemma subset (no extra subsampling)"
 # HOURS (-t 60:0:0) — far past the cpu partition's MaxTime, so the job sat PENDING forever with reason
 # "(PartitionTimeLimit)". (read-cleaning schedules at the same value only because its per-process
 # executor overrides this blanket with detaxizer's own nf-core per-process times.) 2 (= -t 2:0:0 =
-# 2 h) sits above the ~45 min full run and below the cap. 64 GB / 2-core, memory override 48 GB —
-# MATCHING the local hard gate's config so memory is not a local-vs-SLURM variable.
+# 2 h) sits above the ~45 min full run and below the cap. 64 GB / 4-core, memory override 48 GB.
+#
+# CPU admission: metaxpath's METAX_PROFILE/SYLPH_PROFILE/PRED_VFS_AMRS declare cpus={params.threads}
+# (default 20), and SAM2BAM hardcodes cpus=4. The LOCAL run admits these because resourceLimits caps
+# cpus to the host core count; the inline-SLURM path does NOT apply resourceLimits, so a cpus=20
+# process is rejected pre-flight ("requirement exceeds available CPUs") inside a small -c cgroup —
+# an instant exit-1 with 0 tasks (the failure we saw). Fix: -c 4 AND threads=4 (-> --threads, capping
+# the param-driven processes to 4) so every declaration fits the allocation.
 #
 # Retry up to 2x: a genuine compute-node setup hiccup (NFS propagation of the just-created run dir,
 # conda activation) dies in <1 min, so one retry is cheap and may land on a healthy node; a real
@@ -80,14 +86,14 @@ ok=0
 for attempt in 1 2; do
   echo "metaxpath SLURM attempt ${attempt}/2"
   before="$(squeue -u "$ME" -h -o '%i' 2>/dev/null || true)"
-  if SEQDESK_RUNTIME_E2E_SLURM_CORES=2 \
+  if SEQDESK_RUNTIME_E2E_SLURM_CORES=4 \
      SEQDESK_RUNTIME_E2E_SLURM_MEMORY=64G \
      SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=2 \
      node "$GITHUB_WORKSPACE/scripts/run-pipeline-runtime-e2e.mjs" \
        --base-url "http://127.0.0.1:${PORT}" \
        --email "admin@example.com" --password "admin" \
        --pipeline-id metaxpath --study-alias gemma-nanopore-metaxpath \
-       --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}' \
+       --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB","threads":4}' \
        --skip-local --skip-if-disabled --timeout 5400; then
     ok=1
   fi
