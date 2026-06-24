@@ -1100,6 +1100,21 @@ jobs:
               [ -n "$magdir" ] && [ -f "$magdir/logs/pipeline.out" ] && grep -A4 'Caused by' "$magdir/logs/pipeline.out" 2>/dev/null | head -12
               echo "::endgroup::"
             ) || true
+            # mag SLURM leg (warn-only, Tier 1, MANUAL-DISPATCH ONLY) — scripts/mag-slurm-leg.sh.
+            # Re-runs the SAME MEGAHIT-only smoke through the SLURM executor (inline: one sbatch on an
+            # OFFLINE compute node) AFTER the LOCAL mag leg above has seeded DEV-MAG-ILMN-001 onto the
+            # shared FS and warmed mag's per-process conda envs into the shared cacheDir — the SLURM
+            # leg reuses both by hash. Gated to manual dispatch (GEMMA_SUBSAMPLE set) like the metaxpath
+            # leg so the scheduled nightly isn't bloated by ~hours of cluster PENDING; a manual run can
+            # still green when the cluster is free. Resource admission (the metaxpath cpus trap recast):
+            # the inline path skips process.resourceLimits, so the leg passes --max_cpus 4 / --max_memory
+            # to cap mag's check_max() ceiling (MEGAHIT wants 8 cpus / 40.GB) to the -c 4 / 48G sbatch
+            # allocation. Always exits 0.
+            if [ -n "${GEMMA_SUBSAMPLE:-}" ] && [ -n "${SLURM_SHARED_CONDA_BASE:-}" ] && command -v sbatch >/dev/null 2>&1; then
+              bash "$GITHUB_WORKSPACE/scripts/mag-slurm-leg.sh" "$PORT" || true
+            else
+              echo "mag SLURM leg SKIPPED (manual-dispatch only, or no shared conda / sbatch)."
+            fi
 
             # read-cleaning (nf-core/detaxizer) — screen RAW reads for host/contaminant and stage
             # cleaned reads. The Gemma reads are already CLEANED (dataClassIn:[raw,unknown] rejects
