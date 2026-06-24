@@ -176,22 +176,28 @@ export async function syncRun(run: {
         });
       }
 
+      // SLURM runs are identified by a numeric queueJobId (local runs use a 'local-<pid>' id).
+      const isSlurmRun = /^\d+$/.test(run.queueJobId || '');
       const runningSteps = Array.from(stepMap.values()).filter((s) => s.status === 'running');
       const completedSteps = Array.from(stepMap.values()).filter((s) => s.status === 'completed').length;
       if (runningSteps.length > 0) {
         currentStep = runningSteps[0].stepName;
         derivedStatus = 'running';
-      } else if (totalSteps > 0 && completedSteps >= totalSteps) {
-        // Conclude 'completed' ONLY when ALL defined steps have completed (completedSteps >= the
-        // package's totalSteps), NOT merely "every step that has so far APPEARED in the trace". stepMap
-        // holds only the steps whose processes have already run; early in the run that is just the
-        // input-prep steps (metaxpath: input + move_fastq -- both completed), and the old
-        // `stepMap.size > 0 && every entry completed` check read that as done, finalizing the run
-        // 'completed' after 2 of 13 steps -- before classification, while the SLURM job was still
-        // RUNNING (cancelled by the e2e). This mirrors the ops-service traceCompletedKnownWork
-        // completedKnownSteps>=totalSteps guard. Runs with no/partial step coverage (totalSteps === 0,
-        // or skipped steps e.g. the mag MEGAHIT-only smoke) finalize from the scheduler / exit marker
-        // via reconcileRunStatus(null, schedulerStatus) below instead.
+      } else if (
+        stepMap.size > 0 &&
+        Array.from(stepMap.values()).every((s) => s.status === 'completed') &&
+        (!isSlurmRun || (totalSteps > 0 && completedSteps >= totalSteps))
+      ) {
+        // "Every step that has appeared in the trace is completed" — but stepMap holds only steps whose
+        // processes have already run. For a SLURM run that is dangerous: the inline job ingests reads in
+        // an early wave (metaxpath: input + move_fastq), the gap before the next step is submitted reads
+        // as "all known steps done", and the run was falsely finalized 'completed' after 2 of 13 steps
+        // while the sbatch job was still RUNNING (cancelled by the e2e). So for SLURM runs ALSO require
+        // completedSteps >= the package's totalSteps (mirrors the ops-service traceCompletedKnownWork
+        // guard); a SLURM run with partial step coverage instead finalizes from the scheduler/exit
+        // marker via reconcileRunStatus(null, schedulerStatus) below. LOCAL runs keep the original
+        // every-appeared behaviour: their finalize path ingests outputs (e.g. read-cleaning's cleaned
+        // reads); routing them through the scheduler/marker path instead drops that ingestion.
         derivedStatus = 'completed';
         currentStep = 'Completed';
       } else if (Array.from(stepMap.values()).some((s) => s.status === 'failed')) {

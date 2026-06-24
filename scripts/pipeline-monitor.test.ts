@@ -114,7 +114,8 @@ describe("pipeline-monitor syncRun", () => {
     // MV_FASTQ -> move_fastq), both completed, so stepMap holds 2 completed entries. The old
     // `stepMap.size > 0 && every entry completed` check read that as done and finalized the run
     // 'completed' after 2 of 13 steps -- before classification, while the inline SLURM job was still
-    // RUNNING (cancelled by the e2e). With completedSteps >= totalSteps it must stay non-completed.
+    // RUNNING (cancelled by the e2e). For a SLURM run, completion now also requires
+    // completedSteps >= totalSteps, so it must stay non-completed at 2 of 13.
     const slurmRun = {
       ...completedLocalRun,
       id: "run-2",
@@ -151,5 +152,45 @@ describe("pipeline-monitor syncRun", () => {
       (call) => (call[0] as { data?: { status?: string } })?.data?.status === "completed"
     );
     expect(wroteCompleted).toBe(false);
+  });
+
+  it("DOES complete a LOCAL run on the every-appeared step path (read-cleaning ingestion guard)", async () => {
+    // read-cleaning is a LOCAL run that does NOT run all its defined steps (4 defs; detaxizer's trace
+    // doesn't match multiqc/pipeline_info), so completedSteps < totalSteps. It must STILL complete via
+    // the every-appeared step path: THAT finalize path ingests its cleaned-read candidates, whereas
+    // routing a local run through the scheduler/marker path drops the ingestion (the regression this
+    // guards). The completedSteps>=totalSteps tightening is SLURM-only and must not apply to local runs.
+    const localRun = { ...completedLocalRun, id: "run-3", pipelineId: "read-cleaning", queueJobId: "local-555" };
+    mocks.getStepsForPipeline.mockReturnValue([
+      { id: "classification", name: "Classification" },
+      { id: "filter", name: "Filter" },
+      { id: "multiqc", name: "MultiQC" },
+      { id: "pipeline_info", name: "Pipeline info" },
+    ]); // totalSteps 4
+    mocks.findStepByProcess.mockImplementation((_pipelineId: string, processName: string) =>
+      /KRAKEN2|CLASSIFICATION/.test(processName)
+        ? { id: "classification", name: "Classification" }
+        : /FILTER/.test(processName)
+          ? { id: "filter", name: "Filter" }
+          : null
+    );
+    mocks.inferPipelineExitCode.mockResolvedValue(null); // no marker; pid 555 gone => scheduler null
+    mocks.processCompletedPipelineRun.mockResolvedValue(undefined); // ingestion succeeds (clearAllMocks keeps prior impl)
+    mocks.findTraceFile.mockResolvedValue("/runs/run-3/trace.txt");
+    mocks.parseTraceFile.mockResolvedValue({
+      tasks: [
+        { process: "KRAKEN2_CLASSIFICATION", status: "COMPLETED", complete: new Date("2026-03-03T10:00:01Z") },
+        { process: "DETAXIZER_FILTER", status: "COMPLETED", complete: new Date("2026-03-03T10:00:02Z") },
+      ],
+      overallProgress: 100,
+    });
+
+    await syncRun(localRun);
+
+    // 2 of 4 steps, but a LOCAL run -> every-appeared completion holds (no scheduler signal demotes it),
+    // so it is marked completed and its outputs are ingested.
+    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "completed" }) })
+    );
   });
 });
