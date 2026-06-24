@@ -1513,11 +1513,23 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   // local run is demoted back to running rather than pinned complete. SLURM runs are unaffected
   // (terminal state comes from the scheduler), and bug #5's lingering inline-wrapper case has the
   // marker by the time its sbatch lingers, so this clause is false there.
+  // A WRAPPER run is a LOCAL run OR an inline-SLURM run (the whole pipeline wrapped in one sbatch
+  // job whose run.sh drives Nextflow's local executor). generic-executor writes the SAME canonical
+  // exit marker from run.sh's EXIT trap for the local script and the sbatch wrapper script, so
+  // inferredExitCode===null reliably means "run.sh has not finished yet" for inline-SLURM too.
+  // Scope to no-step-def runs (totalSteps===0): only those have the trivially-100% trace problem
+  // (a single early INPUT_CHECK/MV_FASTQ wave reads 100% mid-run). Step-def SLURM pipelines (mag,
+  // read-cleaning) keep their step-accounted completion, and bug #5's lingering-wrapper case has
+  // step defs OR its exit marker by then, so this term is false there and the completed run is kept.
+  // run.executionMode is omitted from the sync select, so SLURM is inferred from a numeric
+  // queueJobId — the file's existing convention (lines 904, 2074) — vs local's 'local-' prefix.
   const isLocalRun = (run.queueJobId || '').startsWith('local-');
+  const isSlurmRun = /^\d+$/.test(run.queueJobId || '');
+  const isWrapperRun = isLocalRun || isSlurmRun;
   const traceShowsOutstandingWork =
     hasRunning ||
     traceResult.overallProgress < 100 ||
-    (isLocalRun && inferredExitCode === null);
+    (isWrapperRun && totalSteps === 0 && inferredExitCode === null);
   const forceRunningFromQueue =
     (nextStatus === 'completed' || nextStatus === 'failed') &&
     queueIsActive &&

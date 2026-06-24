@@ -79,6 +79,11 @@ dump_forensics() {
     [ -f "$mxdir/logs/pipeline.err" ] && tail -40 "$mxdir/logs/pipeline.err" 2>/dev/null
     echo "--- SLURM stderr tail (preamble: NFS-wait / conda bootstrap before Nextflow) ---"
     for e in "$mxdir"/logs/slurm-*.err; do [ -f "$e" ] && { echo "[$e]"; tail -40 "$e" 2>/dev/null; }; done
+    # The app's finalize decision is the ground truth for a false-completion: it prints totalSteps,
+    # completedKnownSteps, queueState, statusDeterminedByQueue, inferredExitCode + forceRunningFromQueue.
+    # Captured from the installed app's server log so a recurrence pinpoints the exact completion path.
+    echo "--- app RUN-FINALIZE decisions for metaxpath (server log) ---"
+    [ -n "${SERVER_LOG:-}" ] && [ -f "${SERVER_LOG:-}" ] && grep -aE 'RUN-FINALIZE' "${SERVER_LOG}" 2>/dev/null | grep -a 'metaxpath' | tail -10
   ) || true
 }
 
