@@ -35,7 +35,7 @@ Legend: ✅ covered · ⚠️ warn-only · 🔄 in flight · 📋 planned (block
 4. **Installed-app (facility) flow** — install via npm launcher, apply a profile, run the same matrix on the installed instance. — ✅ SLURM matrix + submg; the **Alma install** runs metaxpath + mag + read-cleaning on the installed app (hosted profile, real + spiked data).
 5. **Managed config flows** — install profile / in-app DB manager writes `PipelineConfig.config.<key>`, asserted persisted **and** applied at run time. — ✅ `kraken2Db`. **TODO:** `gtdbDb` (mag); in-app DB-download button.
 6. **App-feature resilience** — failure→`failed`, cancel→`cancelled`, stuck-run reconcile via `/sync`, empty input→clean 400, owner/permission 403·401, `pipeline.completed` notification, artifact/log retrieval. — ✅ source-boot **and** installed app (the resilience scripts run against both).
-7. **Promote warn-only → hard gates** once green across a few scheduled runs — read-cleaning's real-data minigut leg (its spike count proof is already hard), mag, submg (reads+assembly).
+7. **Promote warn-only → hard gates** once green across a few scheduled runs — read-cleaning's real-data minigut leg (its spike count proof is already hard), mag (local), submg (reads+assembly), and the new **metaxpath + mag SLURM legs** (both green on the install path; keep warn-only until stable across several manual dispatches, then gate).
 8. **Researcher data lifecycle** — order → samples → file → study via the installed app's API. — **TODO** (uncovered).
 9. **Software update + rollback** — install-unique. — ✅ `update-rollback-e2e-ubuntu.yml` drives `/api/admin/updates/install` + `/rollback` (data preserved).
 
