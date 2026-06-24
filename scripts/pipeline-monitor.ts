@@ -180,7 +180,16 @@ export async function syncRun(run: {
       if (runningSteps.length > 0) {
         currentStep = runningSteps[0].stepName;
         derivedStatus = 'running';
-      } else if (stepMap.size > 0 && Array.from(stepMap.values()).every((s) => s.status === 'completed')) {
+      } else if (totalSteps > 0 && stepMap.size > 0 && Array.from(stepMap.values()).every((s) => s.status === 'completed')) {
+        // Conclude 'completed' from the steps ONLY when we know the full DAG (totalSteps > 0). For a
+        // no-step-def pipeline (metaxpath: getStepsForPipeline -> [], totalSteps === 0) stepMap is keyed
+        // by the raw trace PROCESS name (stepId = stepDef?.id || task.process), so "every entry
+        // completed" is trivially true in the gap after the first wave (INPUT_CHECK + MV_FASTQ) and
+        // BEFORE classification is submitted -- which falsely finalized the run 'completed' mid-run
+        // (the SLURM job was still RUNNING and got cancelled by the e2e). Such runs must instead
+        // finalize from the scheduler / exit marker via reconcileRunStatus(null, schedulerStatus)
+        // below, mirroring the ops-service traceCompletedKnownWork totalSteps>0 gate. Step-def
+        // pipelines (mag, read-cleaning) are unaffected -- totalSteps>0 is already true for them.
         derivedStatus = 'completed';
         currentStep = 'Completed';
       } else if (Array.from(stepMap.values()).some((s) => s.status === 'failed')) {

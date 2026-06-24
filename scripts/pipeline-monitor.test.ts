@@ -107,4 +107,37 @@ describe("pipeline-monitor syncRun", () => {
     );
     expect(wroteCompleted).toBe(false);
   });
+
+  it("does NOT complete a no-step-def SLURM run from a trivially-100% trace (metaxpath false-completion)", async () => {
+    // metaxpath ships no step defs => getStepsForPipeline -> [] (totalSteps 0). The monitor keys
+    // stepMap by raw trace PROCESS name, so after the fast input-prep wave (INPUT_CHECK + MV_FASTQ)
+    // "every step completed" is trivially true mid-run -> the run was finalized 'completed' before
+    // classification while the inline sbatch job was still RUNNING (and got cancelled by the e2e).
+    // With the totalSteps>0 guard the step branch is skipped; the fake job id has no squeue/sacct
+    // record so checkSlurmStatus -> null, leaving the run unfinalized (the real run would read RUNNING
+    // and stay running). Either way it must NOT be written 'completed'.
+    const slurmRun = {
+      ...completedLocalRun,
+      id: "run-2",
+      pipelineId: "metaxpath",
+      queueJobId: "6397", // numeric => inline-SLURM sbatch job id
+    };
+    mocks.getStepsForPipeline.mockReturnValue([]); // no step defs => totalSteps 0
+    mocks.findStepByProcess.mockReturnValue(null);
+    mocks.findTraceFile.mockResolvedValue("/runs/run-2/trace.txt");
+    mocks.parseTraceFile.mockResolvedValue({
+      tasks: [
+        { process: "INPUT_CHECK", status: "COMPLETED", complete: new Date("2026-03-03T10:00:01Z") },
+        { process: "MV_FASTQ", status: "COMPLETED", complete: new Date("2026-03-03T10:00:02Z") },
+      ],
+      overallProgress: 100,
+    });
+
+    await syncRun(slurmRun);
+
+    const wroteCompleted = mocks.db.pipelineRun.update.mock.calls.some(
+      (call) => (call[0] as { data?: { status?: string } })?.data?.status === "completed"
+    );
+    expect(wroteCompleted).toBe(false);
+  });
 });
