@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   resolveOutputs: vi.fn(),
   saveRunResults: vi.fn(),
   processSubmgRunResults: vi.fn(),
+  getPackage: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -37,6 +38,10 @@ vi.mock("./output-resolver", () => ({
 
 vi.mock("./submg/submg-runner", () => ({
   processSubmgRunResults: mocks.processSubmgRunResults,
+}));
+
+vi.mock("./package-loader", () => ({
+  getPackage: mocks.getPackage,
 }));
 
 import {
@@ -180,6 +185,143 @@ describe("run-completion", () => {
       target: { type: "order", orderId: "order-9" },
       samples: [{ id: "sample-9", sampleId: "ORDER-SAMPLE-9" }],
     });
+  });
+
+  it("re-scans for a run-scoped summary that is not yet flushed when finalizing (NFS-flush race)", async () => {
+    // Reproduces the documented monitor flake: the run-scoped summary artifact
+    // (fastqc 'summary', manifest scope:'run') is written by the LAST process and
+    // is not yet visible on shared NFS at the instant the finalizer scans. The
+    // first discoverOutputs returns only the per-sample report; the summary file
+    // becomes visible on a later scan. The settle-retry must pick it up so the
+    // run-scoped row is ingested instead of being permanently missing.
+    const perSampleOnly = {
+      files: [
+        {
+          type: "report",
+          name: "SAMPLE-1_R1_fastqc.html",
+          path: "/tmp/run-1/output/fastqc_reports/SAMPLE-1_R1_fastqc.html",
+          outputId: "sample_qc_reports",
+          sampleId: "sample-1",
+        },
+      ],
+      errors: [],
+      summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 0, reportsFound: 1 },
+    };
+    const withSummary = {
+      files: [
+        ...perSampleOnly.files,
+        {
+          type: "artifact",
+          name: "fastqc-summary.tsv",
+          path: "/tmp/run-1/output/summary/fastqc-summary.tsv",
+          outputId: "summary",
+        },
+      ],
+      errors: [],
+      summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 1 },
+    };
+
+    const adapter = {
+      // First scan: summary not yet flushed. Second scan: it has appeared.
+      discoverOutputs: vi
+        .fn()
+        .mockResolvedValueOnce(perSampleOnly)
+        .mockResolvedValueOnce(withSummary),
+    };
+
+    // fastqc declares a run-scoped output id 'summary' that must be present.
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          { id: "sample_qc_reports", scope: "sample" },
+          { id: "summary", scope: "run" },
+        ],
+      },
+    });
+
+    mocks.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder: "/tmp/run-1",
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+      order: null,
+    });
+    mocks.resolveOutputs.mockResolvedValue({
+      success: true,
+      assembliesCreated: 0,
+      binsCreated: 0,
+      artifactsCreated: 2,
+      errors: [],
+      warnings: [],
+    });
+    mocks.saveRunResults.mockResolvedValue(undefined);
+
+    // Drive the bounded settle delay with fake timers so the test is instant.
+    vi.useFakeTimers();
+    try {
+      const promise = processCompletedPipelineRun("run-1", "fastqc");
+      await vi.runAllTimersAsync();
+      await promise;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // It re-scanned (the first scan missed the late summary).
+    expect(adapter.discoverOutputs).toHaveBeenCalledTimes(2);
+    // resolveOutputs received the SECOND (complete) discovery, so the run-scoped
+    // summary artifact is ingested rather than being permanently dropped.
+    expect(mocks.resolveOutputs).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveOutputs).toHaveBeenCalledWith("fastqc", "run-1", withSummary);
+    expect(
+      withSummary.files.some((f) => f.outputId === "summary")
+    ).toBe(true);
+  });
+
+  it("does not re-scan when all declared run-scoped outputs are present on the first scan", async () => {
+    const complete = {
+      files: [
+        {
+          type: "artifact",
+          name: "fastqc-summary.tsv",
+          path: "/tmp/run-1/output/summary/fastqc-summary.tsv",
+          outputId: "summary",
+        },
+      ],
+      errors: [],
+      summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 0 },
+    };
+    const adapter = { discoverOutputs: vi.fn().mockResolvedValue(complete) };
+
+    mocks.getPackage.mockReturnValue({
+      manifest: { outputs: [{ id: "summary", scope: "run" }] },
+    });
+    mocks.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder: "/tmp/run-1",
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+      order: null,
+    });
+    mocks.resolveOutputs.mockResolvedValue({
+      success: true,
+      assembliesCreated: 0,
+      binsCreated: 0,
+      artifactsCreated: 1,
+      errors: [],
+      warnings: [],
+    });
+    mocks.saveRunResults.mockResolvedValue(undefined);
+
+    await processCompletedPipelineRun("run-1", "fastqc");
+
+    // Healthy run: present on first scan -> exactly one scan, no settle delay.
+    expect(adapter.discoverOutputs).toHaveBeenCalledTimes(1);
   });
 
   it("returns when run has no folder or no samples", async () => {
