@@ -177,19 +177,21 @@ export async function syncRun(run: {
       }
 
       const runningSteps = Array.from(stepMap.values()).filter((s) => s.status === 'running');
+      const completedSteps = Array.from(stepMap.values()).filter((s) => s.status === 'completed').length;
       if (runningSteps.length > 0) {
         currentStep = runningSteps[0].stepName;
         derivedStatus = 'running';
-      } else if (totalSteps > 0 && stepMap.size > 0 && Array.from(stepMap.values()).every((s) => s.status === 'completed')) {
-        // Conclude 'completed' from the steps ONLY when we know the full DAG (totalSteps > 0). For a
-        // no-step-def pipeline (metaxpath: getStepsForPipeline -> [], totalSteps === 0) stepMap is keyed
-        // by the raw trace PROCESS name (stepId = stepDef?.id || task.process), so "every entry
-        // completed" is trivially true in the gap after the first wave (INPUT_CHECK + MV_FASTQ) and
-        // BEFORE classification is submitted -- which falsely finalized the run 'completed' mid-run
-        // (the SLURM job was still RUNNING and got cancelled by the e2e). Such runs must instead
-        // finalize from the scheduler / exit marker via reconcileRunStatus(null, schedulerStatus)
-        // below, mirroring the ops-service traceCompletedKnownWork totalSteps>0 gate. Step-def
-        // pipelines (mag, read-cleaning) are unaffected -- totalSteps>0 is already true for them.
+      } else if (totalSteps > 0 && completedSteps >= totalSteps) {
+        // Conclude 'completed' ONLY when ALL defined steps have completed (completedSteps >= the
+        // package's totalSteps), NOT merely "every step that has so far APPEARED in the trace". stepMap
+        // holds only the steps whose processes have already run; early in the run that is just the
+        // input-prep steps (metaxpath: input + move_fastq -- both completed), and the old
+        // `stepMap.size > 0 && every entry completed` check read that as done, finalizing the run
+        // 'completed' after 2 of 13 steps -- before classification, while the SLURM job was still
+        // RUNNING (cancelled by the e2e). This mirrors the ops-service traceCompletedKnownWork
+        // completedKnownSteps>=totalSteps guard. Runs with no/partial step coverage (totalSteps === 0,
+        // or skipped steps e.g. the mag MEGAHIT-only smoke) finalize from the scheduler / exit marker
+        // via reconcileRunStatus(null, schedulerStatus) below instead.
         derivedStatus = 'completed';
         currentStep = 'Completed';
       } else if (Array.from(stepMap.values()).some((s) => s.status === 'failed')) {
@@ -197,7 +199,6 @@ export async function syncRun(run: {
         currentStep = 'Failed';
       }
 
-      const completedSteps = Array.from(stepMap.values()).filter((s) => s.status === 'completed').length;
       if (totalSteps > 0) {
         progress = Math.min(99, Math.round((completedSteps / totalSteps) * 100));
       } else {

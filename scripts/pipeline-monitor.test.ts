@@ -108,30 +108,42 @@ describe("pipeline-monitor syncRun", () => {
     expect(wroteCompleted).toBe(false);
   });
 
-  it("does NOT complete a no-step-def SLURM run from a trivially-100% trace (metaxpath false-completion)", async () => {
-    // metaxpath ships no step defs => getStepsForPipeline -> [] (totalSteps 0). The monitor keys
-    // stepMap by raw trace PROCESS name, so after the fast input-prep wave (INPUT_CHECK + MV_FASTQ)
-    // "every step completed" is trivially true mid-run -> the run was finalized 'completed' before
-    // classification while the inline sbatch job was still RUNNING (and got cancelled by the e2e).
-    // With the totalSteps>0 guard the step branch is skipped; the fake job id has no squeue/sacct
-    // record so checkSlurmStatus -> null, leaving the run unfinalized (the real run would read RUNNING
-    // and stay running). Either way it must NOT be written 'completed'.
+  it("does NOT complete a step-def run when only the early steps have appeared (metaxpath 2-of-13)", async () => {
+    // metaxpath ships 13 step defs (definition.json: input, move_fastq, metax_profile, ... 13 total).
+    // Early in the run only the input-prep steps' processes have run (INPUT_CHECK -> input,
+    // MV_FASTQ -> move_fastq), both completed, so stepMap holds 2 completed entries. The old
+    // `stepMap.size > 0 && every entry completed` check read that as done and finalized the run
+    // 'completed' after 2 of 13 steps -- before classification, while the inline SLURM job was still
+    // RUNNING (cancelled by the e2e). With completedSteps >= totalSteps it must stay non-completed.
     const slurmRun = {
       ...completedLocalRun,
       id: "run-2",
       pipelineId: "metaxpath",
       queueJobId: "6397", // numeric => inline-SLURM sbatch job id
     };
-    mocks.getStepsForPipeline.mockReturnValue([]); // no step defs => totalSteps 0
-    mocks.findStepByProcess.mockReturnValue(null);
+    // 13 defined steps => totalSteps 13.
+    mocks.getStepsForPipeline.mockReturnValue(
+      Array.from({ length: 13 }, (_, i) => ({ id: `step-${i}`, name: `Step ${i}` }))
+    );
+    // Only the two input-prep processes map to a step; the rest haven't run yet.
+    mocks.findStepByProcess.mockImplementation((_pipelineId: string, processName: string) =>
+      processName === "INPUT_CHECK"
+        ? { id: "input", name: "Input Validation" }
+        : processName === "MV_FASTQ"
+          ? { id: "move_fastq", name: "Prepare No-Human FASTQ" }
+          : null
+    );
     mocks.findTraceFile.mockResolvedValue("/runs/run-2/trace.txt");
     mocks.parseTraceFile.mockResolvedValue({
       tasks: [
         { process: "INPUT_CHECK", status: "COMPLETED", complete: new Date("2026-03-03T10:00:01Z") },
-        { process: "MV_FASTQ", status: "COMPLETED", complete: new Date("2026-03-03T10:00:02Z") },
+        { process: "MV_FASTQ", status: "COMPLETED", tag: "S10", complete: new Date("2026-03-03T10:00:02Z") },
       ],
       overallProgress: 100,
     });
+    // The fake job id has no squeue/sacct record -> checkSlurmStatus -> null, so the run stays
+    // unfinalized this pass (the real run reads RUNNING and stays running). Either way it must NOT be
+    // written 'completed' from only 2 of 13 steps.
 
     await syncRun(slurmRun);
 
