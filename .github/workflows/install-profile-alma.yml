@@ -435,23 +435,6 @@ jobs:
             --expected-role "FACILITY_ADMIN" \
             --check-path "/api/admin/users"
 
-          # Researcher data lifecycle E2E (warn-only) — the full data-management loop through the app
-          # API: researcher creates an order, adds samples, submits it; the facility admin attaches a
-          # reads file (the sequencing/* surface is admin-only); the researcher creates a study, joins
-          # the samples, and the attached file rolls up into the study (samplesWithReads). Both seed
-          # users (user@example.com RESEARCHER, admin@example.com FACILITY_ADMIN) exist on this leg.
-          # Warn-only while we bring it up (md item 8: researcher data lifecycle).
-          echo "::group::researcher data lifecycle E2E (warn-only)"
-          if node "$GITHUB_WORKSPACE/scripts/researcher-lifecycle-e2e.mjs" \
-               --base-url "http://127.0.0.1:${PORT}" \
-               --researcher-email "user@example.com" --researcher-password "user" \
-               --admin-email "admin@example.com" --admin-password "admin"; then
-            echo "researcher lifecycle E2E OK"
-          else
-            echo "WARN (warn-only): researcher lifecycle E2E did not pass — not failing the suite"
-          fi
-          echo "::endgroup::"
-
       - name: Upload install e2e artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -918,6 +901,27 @@ jobs:
             --password "admin" \
             --set-endpoint "https://seqdesk.org/api/telemetry/heartbeat" \
             --output "$TELEMETRY_JSON"
+
+          # Researcher data lifecycle E2E (warn-only, md item 8) — the full data-management loop through
+          # the app API: a RESEARCHER (user@example.com) creates an order, adds samples, submits it; the
+          # FACILITY admin (admin@example.com) attaches a reads file (the sequencing/* surface is
+          # admin-only — a genuinely two-actor flow); the researcher creates a study, joins the samples,
+          # and the attached file rolls up into the study (samplesWithReads >= 1). Runs on the
+          # WITH-PROFILE leg because the file upload needs a configured sequencing dataBasePath
+          # (--data-path PROFILE_DATA_DIR), which the no-profile install lacks; both seed users have
+          # their known passwords here (the researcher auth above passes user/user). Warn-only while we
+          # bring it up.
+          echo "::group::researcher data lifecycle E2E (warn-only)"
+          if node "$GITHUB_WORKSPACE/scripts/researcher-lifecycle-e2e.mjs" \
+               --base-url "http://127.0.0.1:${PORT}" \
+               --researcher-email "user@example.com" --researcher-password "user" \
+               --admin-email "admin@example.com" --admin-password "admin"; then
+            echo "researcher lifecycle E2E OK"
+          else
+            echo "WARN (warn-only): researcher lifecycle E2E did not pass — not failing the suite"
+          fi
+          echo "::endgroup::"
+
           if [ "$PROFILE_ID" = "ci-runner" ]; then
             node "$GITHUB_WORKSPACE/scripts/run-install-profile-pipeline-smoke.mjs" \
               --dir "$INSTALL_DIR" \
