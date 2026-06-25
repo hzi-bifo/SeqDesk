@@ -118,7 +118,7 @@ jobs:
           # in the user data dir, so the later app run must share $HOME — it does).
           conda create -y -n "$SUBMG_CONDA_ENV" \
             --override-channels -c conda-forge -c bioconda \
-            python=3.11 'openjdk>=17' pip wheel pysam tk
+            python=3.11 'openjdk>=17' pip wheel pysam tk megahit=1.2.9
           rm -rf "$RUNNER_TEMP/submg-src"
           git clone --depth 1 --branch "$SUBMG_VERSION" https://github.com/ttubb/submg "$RUNNER_TEMP/submg-src"
           conda run -n "$SUBMG_CONDA_ENV" python -m pip install "$RUNNER_TEMP/submg-src"
@@ -185,6 +185,7 @@ jobs:
           SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
+          SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
           SEQDESK_SUBMG_E2E_SUBMIT_READS: ${{ github.event.inputs.submit_reads || 'false' }}
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: ${{ github.event.inputs.submit_assembly || 'false' }}
         run: |
@@ -206,6 +207,7 @@ jobs:
           SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
+          SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
           SEQDESK_SUBMG_E2E_SUBMIT_READS: "true"
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: "true"
         run: |
@@ -223,6 +225,7 @@ jobs:
           SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
+          SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
           SEQDESK_SUBMG_E2E_SUBMIT_READS: ${{ github.event.inputs.submit_reads || 'false' }}
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: ${{ github.event.inputs.submit_assembly || 'false' }}
         run: |

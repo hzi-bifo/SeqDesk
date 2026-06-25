@@ -40,9 +40,12 @@
  *     --webin-username "$ENA_USERNAME" --webin-password "$ENA_PWD"
  */
 
+import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import zlib from "node:zlib";
 
 import { PrismaClient } from "@prisma/client";
 
@@ -235,6 +238,38 @@ function buildAssemblyFasta() {
   return `${contigs.join("\n")}\n`;
 }
 
+const MEGAHIT_MIN_CONTIG_LEN = 1000; // mag-style; comfortably above ENA's 200 bp floor
+
+// Produce a REAL mag-style assembly: run MEGAHIT (nf-core/mag's assembler) on the
+// seeded paired reads, deterministically (--num-cpu-threads 1). Returns gzip bytes
+// of final.contigs.fa when it yields >=1 contig >= MEGAHIT_MIN_CONTIG_LEN, else null
+// (caller falls back to the synthetic FASTA so the warn-only leg never regresses).
+// The megahit binary comes from the submg conda env via SEQDESK_SUBMG_E2E_MEGAHIT_BIN;
+// when unset/missing (local/dev), this returns null and the synthetic FASTA is used.
+function buildMegahitAssemblyGz(r1Abs, r2Abs) {
+  const bin = process.env.SEQDESK_SUBMG_E2E_MEGAHIT_BIN || "megahit";
+  if (spawnSync(bin, ["--version"], { stdio: "ignore" }).status !== 0) return null;
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "submg-megahit-"));
+  const runOut = path.join(outDir, "asm"); // MEGAHIT requires its -o dir NOT pre-exist
+  const res = spawnSync(
+    bin,
+    [
+      "-1", r1Abs,
+      "-2", r2Abs,
+      "--num-cpu-threads", "1",
+      "--min-contig-len", String(MEGAHIT_MIN_CONTIG_LEN),
+      "-o", runOut,
+    ],
+    { stdio: "inherit", timeout: 5 * 60 * 1000 },
+  );
+  const contigs = path.join(runOut, "final.contigs.fa");
+  if (res.status !== 0 || !fs.existsSync(contigs)) return null;
+  // Guard ENA validation: require a real header + IUPAC sequence (>=1 contig).
+  const text = fs.readFileSync(contigs, "utf8");
+  if (!/^>.+\n[ACGTNacgtn]/m.test(text)) return null;
+  return zlib.gzipSync(Buffer.from(text));
+}
+
 const ACCESSION_RE = /^(ERS|SAMEA|SAMN|ERR|ERX|ERZ|GCA)/i;
 
 async function main() {
@@ -360,10 +395,25 @@ async function main() {
     );
     if (!hasAssemblyOnDisk) {
       const relDir = path.join("submg-e2e-assemblies", study.id);
-      const relPath = path.join(relDir, `${targetSample.id}.fasta`);
+      // Try a REAL MEGAHIT assembly (nf-core/mag's assembler) of the seeded paired
+      // reads, exactly what a mag run leaves behind. Fall back to the synthetic FASTA
+      // when MEGAHIT is unavailable or yields no usable contig — keeps the leg green.
+      const r1Abs = resolveOnDisk(dataBasePath, pairedRead.file1);
+      const r2Abs = resolveOnDisk(dataBasePath, pairedRead.file2);
+      const megahitGz = r1Abs && r2Abs ? buildMegahitAssemblyGz(r1Abs, r2Abs) : null;
+      const useReal = Boolean(megahitGz);
+      const relPath = path.join(
+        relDir,
+        useReal ? `${targetSample.id}.contigs.fa.gz` : `${targetSample.id}.fasta`,
+      );
       const absPath = path.resolve(dataBasePath, relPath);
       fs.mkdirSync(path.dirname(absPath), { recursive: true });
-      fs.writeFileSync(absPath, buildAssemblyFasta());
+      fs.writeFileSync(absPath, useReal ? megahitGz : buildAssemblyFasta());
+      console.log(
+        useReal
+          ? `Built REAL mag MEGAHIT assembly: ${relPath}`
+          : `MEGAHIT unavailable/empty — using synthetic assembly fallback: ${relPath}`,
+      );
       // Simulate the upstream mag run that generated this assembly.
       let magRunId = null;
       if (adminUserId) {
