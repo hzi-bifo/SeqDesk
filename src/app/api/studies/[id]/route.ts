@@ -206,6 +206,7 @@ async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
       id: string;
       assemblyName: string | null;
       assemblyFile: string | null;
+      assemblyAccession: string | null;
       createdByPipelineRunId: string | null;
       createdByPipelineRun: {
         id: string;
@@ -230,6 +231,7 @@ async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
           sampleId: true,
           assemblyName: true,
           assemblyFile: true,
+          assemblyAccession: true,
           createdByPipelineRunId: true,
           createdByPipelineRun: {
             select: {
@@ -249,6 +251,7 @@ async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
           id: assembly.id,
           assemblyName: assembly.assemblyName ?? null,
           assemblyFile: assembly.assemblyFile ?? null,
+          assemblyAccession: assembly.assemblyAccession ?? null,
           createdByPipelineRunId: assembly.createdByPipelineRunId ?? null,
           createdByPipelineRun: assembly.createdByPipelineRun
             ? {
@@ -283,6 +286,7 @@ async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
             id: assembly.id,
             assemblyName: assembly.assemblyName ?? null,
             assemblyFile: assembly.assemblyFile ?? null,
+            assemblyAccession: null,
             createdByPipelineRunId: null,
             createdByPipelineRun: null,
           });
