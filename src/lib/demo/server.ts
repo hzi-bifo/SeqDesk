@@ -31,8 +31,14 @@ import {
   SAMPLE_HS_02,
   SAMPLE_SR_01,
   SAMPLE_SR_02,
+  SAMPLE_SOIL_01,
+  SAMPLE_SOIL_02,
+  SAMPLE_WATER_01,
+  SAMPLE_WATER_02,
   STUDY_GUT_RECOVERY,
   STUDY_SURFACE_RESISTOME,
+  STUDY_SOIL_RESILIENCE,
+  STUDY_RIVER_WATER,
   type PlatformProfile,
   type SampleTemplate,
 } from "@/lib/seed/templates";
@@ -340,6 +346,40 @@ async function createDemoWorkspaceInternal(
       },
     });
 
+    const soilStudy = await tx.study.create({
+      data: {
+        title: STUDY_SOIL_RESILIENCE.titleBase,
+        alias: `${STUDY_SOIL_RESILIENCE.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_SOIL_RESILIENCE.description,
+        checklistType: STUDY_SOIL_RESILIENCE.checklistType,
+        studyMetadata: JSON.stringify(
+          getStudyMetadata(
+            STUDY_SOIL_RESILIENCE.principalInvestigator,
+            STUDY_SOIL_RESILIENCE.abstract
+          )
+        ),
+        readyForSubmission: true,
+        readyAt: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000),
+        userId: researcher.id,
+      },
+    });
+
+    const waterStudy = await tx.study.create({
+      data: {
+        title: STUDY_RIVER_WATER.titleBase,
+        alias: `${STUDY_RIVER_WATER.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_RIVER_WATER.description,
+        checklistType: STUDY_RIVER_WATER.checklistType,
+        studyMetadata: JSON.stringify(
+          getStudyMetadata(
+            STUDY_RIVER_WATER.principalInvestigator,
+            STUDY_RIVER_WATER.abstract
+          )
+        ),
+        userId: researcher.id,
+      },
+    });
+
     const draftOrder = await tx.order.create({
       data: {
         orderNumber: createOrderNumber(prefix, 1),
@@ -548,6 +588,35 @@ async function createDemoWorkspaceInternal(
         content: "Demo samples marked as sent to the institution.",
         orderId: completedOrder.id,
         userId: facilityAdmin.id,
+      },
+    });
+
+    // Environmental metagenome batch — soil + freshwater samples with full MIxS
+    // checklist metadata, linked to the soil/water demo studies (no pipeline output;
+    // these showcase metadata depth across environment packages).
+    await tx.order.create({
+      data: {
+        orderNumber: createOrderNumber(prefix, 4),
+        name: "Environmental metagenome batch (soil + water)",
+        status: "SUBMITTED",
+        statusUpdatedAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
+        numberOfSamples: 4,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
+        billingAddress: "SeqDesk Demo Workspace",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_NOVASEQ_WGS),
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_NOVASEQ_WGS, {
+          _projects: "Soil resilience\nRiver microbiome",
+        }),
+        userId: researcher.id,
+        samples: {
+          create: [
+            buildSampleCreate(SAMPLE_SOIL_01, 4, 1, { studyId: soilStudy.id }),
+            buildSampleCreate(SAMPLE_SOIL_02, 4, 2, { studyId: soilStudy.id }),
+            buildSampleCreate(SAMPLE_WATER_01, 4, 3, { studyId: waterStudy.id }),
+            buildSampleCreate(SAMPLE_WATER_02, 4, 4, { studyId: waterStudy.id }),
+          ],
+        },
       },
     });
 
