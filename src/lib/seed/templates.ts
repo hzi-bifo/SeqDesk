@@ -49,7 +49,7 @@ export const STUDY_GUT_RECOVERY: StudyTemplate = {
   aliasSlug: "gut-recovery",
   description:
     "Longitudinal metagenome study tracking recovery after treatment.",
-  checklistType: "Human Gut",
+  checklistType: "human-gut",
   principalInvestigator: "Dr. Lena Hartmann",
   abstract:
     "Longitudinal study following gut microbiome recovery after antibiotic treatment.",
@@ -60,7 +60,7 @@ export const STUDY_SURFACE_RESISTOME: StudyTemplate = {
   aliasSlug: "surface-pilot",
   description:
     "Pilot study comparing resistome profiles from surface swab collections.",
-  checklistType: "Built Environment",
+  checklistType: "misc-environment",
   principalInvestigator: "Dr. Maya Nguyen",
   abstract:
     "Pilot screen of resistome markers across public-touch surface samples.",
@@ -355,7 +355,7 @@ export const STUDY_SOIL_RESILIENCE: StudyTemplate = {
   aliasSlug: "soil-resilience",
   description:
     "Agricultural soil metagenomes profiling microbial resilience across a tillage gradient.",
-  checklistType: "Soil",
+  checklistType: "soil",
   principalInvestigator: "Dr. Aisha Okonkwo",
   abstract:
     "Shotgun metagenomes of arable topsoil sampled along a reduced-tillage management gradient.",
@@ -366,7 +366,7 @@ export const STUDY_RIVER_WATER: StudyTemplate = {
   aliasSlug: "river-water",
   description:
     "Freshwater metagenomes tracking the river microbiome across an urban-to-rural transect.",
-  checklistType: "Water",
+  checklistType: "water",
   principalInvestigator: "Dr. Tomas Eriksson",
   abstract:
     "Time-series shotgun metagenomes of surface river water along an urbanisation gradient.",

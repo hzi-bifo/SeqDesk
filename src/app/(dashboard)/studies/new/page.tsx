@@ -51,6 +51,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import {
+  resolveStudyChecklistTypeId,
+  studyChecklistTypeToAccession,
+} from "@/lib/studies/checklist-types";
 import { useFieldHelp } from "@/lib/contexts/FieldHelpContext";
 import { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
 import { FundingFormRenderer } from "@/lib/field-types/funding/FundingFormRenderer";
@@ -1073,7 +1077,11 @@ export default function NewStudyPage() {
     const fetchMixsTemplate = async () => {
       setLoadingMixs(true);
       try {
-        const res = await fetch(`/api/mixs-checklists?accession=${encodeURIComponent(checklistType)}`);
+        // checklistType is now a canonical slug for standard checklists; the registry
+        // is keyed by accession, so map slug -> accession (passes accessions through).
+        const res = await fetch(
+          `/api/mixs-checklists?accession=${encodeURIComponent(studyChecklistTypeToAccession(checklistType))}`
+        );
         if (res.ok) {
           const data = await res.json();
           setMixsTemplate(data);
@@ -2321,13 +2329,18 @@ export default function NewStudyPage() {
                 >
                   {registryChecklists.map((checklist) => {
                     const Icon = iconForChecklist(checklist);
-                    const isSelected = checklistType === checklist.accession;
+                    // Store the canonical slug for standard checklists (so new + edit
+                    // agree); fall back to the accession for custom registry entries.
+                    const checklistValue =
+                      resolveStudyChecklistTypeId(checklist.accession) ||
+                      checklist.accession;
+                    const isSelected = checklistType === checklistValue;
                     return (
                       <button
                         key={checklist.accession}
                         type="button"
                         onClick={() => {
-                          setChecklistType(checklist.accession);
+                          setChecklistType(checklistValue);
                           markTouched("checklistType");
                         }}
                         disabled={isLoading}
