@@ -834,6 +834,7 @@ export function StudyPipelinesSection({
 }: StudyPipelinesSectionProps) {
   const { data: session } = useSession();
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const isDemoUser = session?.user?.isDemo === true;
 
   // --- Data fetching ---
   const { data: pipelinesData, isLoading: pipelinesLoading } = useSWR<{
@@ -1124,6 +1125,23 @@ export function StudyPipelinesSection({
   useEffect(() => {
     if (!selectedPipeline) return;
     let cancelled = false;
+
+    // In the public demo there is no pipeline runtime (no Nextflow/conda/run
+    // dir), and launching is blocked anyway. Skip the prerequisite probe so the
+    // UI doesn't surface a "Missing: Nextflow / Conda/Mamba / ..." checklist that
+    // looks like a broken install; the run controls render disabled instead.
+    if (isDemoUser) {
+      setPrerequisites({
+        requiredPassed: true,
+        allPassed: true,
+        summary: "",
+        checks: [],
+      });
+      setMetadataValidation(null);
+      setLoadingPrereqs(false);
+      setLoadingMetadata(false);
+      return;
+    }
 
     setLoadingPrereqs(true);
     setLoadingMetadata(true);
@@ -1744,7 +1762,7 @@ export function StudyPipelinesSection({
               <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               Checking environment...
             </Button>
-          ) : systemBlocked ? (
+          ) : systemBlocked && !isDemoUser ? (
             <Button
               size="sm"
               variant="outline"
@@ -1764,6 +1782,7 @@ export function StudyPipelinesSection({
             <Button
               size="sm"
               disabled={
+                isDemoUser ||
                 !selectedPipeline ||
                 readinessIssues.length > 0 ||
                 startingPipelineId !== null ||
@@ -1773,9 +1792,11 @@ export function StudyPipelinesSection({
               }
               onClick={() => void handleStartPipeline()}
               title={
-                readinessIssues.length > 0
-                  ? readinessIssues[0]
-                  : executionTargetBlockMessage || undefined
+                isDemoUser
+                  ? "Pipeline execution isn't available in the public demo — this is a view-only showcase of example results."
+                  : readinessIssues.length > 0
+                    ? readinessIssues[0]
+                    : executionTargetBlockMessage || undefined
               }
             >
               {startingPipelineId === selectedPipeline?.pipelineId || loadingPrereqs || loadingMetadata ? (
