@@ -790,6 +790,12 @@ export const SAMPLE_MOUSE_01: SampleTemplate = {
     run_accession: "DRR099973",
     experiment_accession: "DRX093417",
     read_count: "91795",
+    sample_volume: "45",
+    sample_concentration: "28.4",
+    a260_280_ratio: "1.92",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    concentration_device: "Qubit 4 Fluorometer",
+    storage_temperature: "-80 °C",
   },
 };
 
@@ -810,6 +816,12 @@ export const SAMPLE_MOUSE_02: SampleTemplate = {
     run_accession: "DRR099974",
     experiment_accession: "DRX093418",
     read_count: "90723",
+    sample_volume: "48",
+    sample_concentration: "31.2",
+    a260_280_ratio: "1.95",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    concentration_device: "Qubit 4 Fluorometer",
+    storage_temperature: "-80 °C",
   },
 };
 
@@ -830,6 +842,12 @@ export const SAMPLE_MOUSE_03: SampleTemplate = {
     run_accession: "DRR099975",
     experiment_accession: "DRX093419",
     read_count: "107329",
+    sample_volume: "42",
+    sample_concentration: "24.7",
+    a260_280_ratio: "1.88",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    concentration_device: "Qubit 4 Fluorometer",
+    storage_temperature: "-80 °C",
   },
 };
 
@@ -850,6 +868,12 @@ export const SAMPLE_MOUSE_04: SampleTemplate = {
     run_accession: "DRR099976",
     experiment_accession: "DRX093420",
     read_count: "82174",
+    sample_volume: "50",
+    sample_concentration: "33.5",
+    a260_280_ratio: "1.97",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    concentration_device: "Qubit 4 Fluorometer",
+    storage_temperature: "-80 °C",
   },
 };
 
@@ -870,6 +894,12 @@ export const SAMPLE_MOUSE_05: SampleTemplate = {
     run_accession: "DRR099977",
     experiment_accession: "DRX093421",
     read_count: "99093",
+    sample_volume: "38",
+    sample_concentration: "19.8",
+    a260_280_ratio: "1.83",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    concentration_device: "Qubit 4 Fluorometer",
+    storage_temperature: "-80 °C",
   },
 };
 
@@ -890,6 +920,12 @@ export const SAMPLE_MOUSE_06: SampleTemplate = {
     run_accession: "DRR099978",
     experiment_accession: "DRX093422",
     read_count: "117186",
+    sample_volume: "52",
+    sample_concentration: "34.1",
+    a260_280_ratio: "1.96",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    concentration_device: "Qubit 4 Fluorometer",
+    storage_temperature: "-80 °C",
   },
 };
 
@@ -910,6 +946,12 @@ export const SAMPLE_MOUSE_07: SampleTemplate = {
     run_accession: "DRR099979",
     experiment_accession: "DRX093423",
     read_count: "99911",
+    sample_volume: "40",
+    sample_concentration: "22.6",
+    a260_280_ratio: "1.86",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    concentration_device: "Qubit 4 Fluorometer",
+    storage_temperature: "-80 °C",
   },
 };
 
@@ -930,6 +972,12 @@ export const SAMPLE_MOUSE_08: SampleTemplate = {
     run_accession: "DRR099980",
     experiment_accession: "DRX093424",
     read_count: "90527",
+    sample_volume: "36",
+    sample_concentration: "17.9",
+    a260_280_ratio: "1.80",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    concentration_device: "Qubit 4 Fluorometer",
+    storage_temperature: "-80 °C",
   },
 };
 
