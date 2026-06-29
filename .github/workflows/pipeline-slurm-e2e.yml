@@ -1041,7 +1041,7 @@ jobs:
             # the upload hang ~1h). The per-process logs are echoed by the diagnostics step.
             !${{ env.SEQDESK_RUN_DIR }}/**/work/**
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup resources
         if: always()

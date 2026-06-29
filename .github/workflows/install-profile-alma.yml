@@ -74,7 +74,7 @@ jobs:
           name: alma-release-tarball
           path: ${{ runner.temp }}/alma-release-artifact/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 5
 
       - name: Upload npm launcher package
         uses: actions/upload-artifact@v4
@@ -82,7 +82,7 @@ jobs:
           name: alma-npm-launcher
           path: ${{ runner.temp }}/alma-npm-launcher/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 5
 
   install-without-profile:
     name: Install without profile on AlmaLinux
@@ -449,7 +449,7 @@ jobs:
             ${{ env.MOCK_SERVER_LOG }}
             ${{ env.NPM_PACK_METADATA }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup canary resources
         if: always()
@@ -1226,7 +1226,7 @@ jobs:
             ${{ env.NPM_PACK_METADATA }}
             ${{ runner.temp }}/metaxpath-report-*
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup canary resources
         if: always()

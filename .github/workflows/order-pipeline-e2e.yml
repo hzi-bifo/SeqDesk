@@ -107,7 +107,7 @@ jobs:
           name: order-pipeline-e2e-github-hosted
           path: ${{ runner.temp }}/order-pipeline-e2e-gh
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup Conda environment
         if: ${{ always() }}
@@ -206,7 +206,7 @@ jobs:
           name: order-pipeline-e2e-self-hosted
           path: ${{ runner.temp }}/order-pipeline-e2e-twincore
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup Conda environment
         if: ${{ always() }}

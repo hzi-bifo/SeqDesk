@@ -358,4 +358,4 @@ jobs:
             ${{ runner.temp }}/install-submg/server.log
             ${{ runner.temp }}/install-submg/install.log
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5

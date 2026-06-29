@@ -47,7 +47,7 @@ jobs:
           name: update-from-tarball
           path: ${{ runner.temp }}/update-from-tarball/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 5
 
   update-rollback-gate:
     needs: build-from-artifact
@@ -337,7 +337,7 @@ jobs:
             ${{ env.MOCK_RELEASE_ROOT }}/api/version
             ${{ env.MOCK_RELEASE_ROOT }}/install-api/version
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup
         if: always()

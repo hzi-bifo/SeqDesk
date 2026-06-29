@@ -254,7 +254,7 @@ jobs:
             ${{ env.MOCK_SERVER_LOG }}
             ${{ env.NPM_PACK_METADATA }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup canary resources
         if: always()
