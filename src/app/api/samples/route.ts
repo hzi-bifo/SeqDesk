@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 
 // GET all samples for the current user (for study assignment)
 export async function GET(request: NextRequest) {
@@ -16,12 +17,15 @@ export async function GET(request: NextRequest) {
     const orderId = searchParams.get("orderId");
 
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
     const where: Record<string, unknown> = {};
 
     // Filter by user ownership (unless facility admin)
     if (!isFacilityAdmin) {
       where.order = { userId: session.user.id };
+    } else if (demoWsUserIds) {
+      where.order = { userId: { in: demoWsUserIds } };
     }
 
     // Filter by specific order

@@ -26,7 +26,6 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/toast";
 import { Loader2, RefreshCw, Dna, FlaskConical, Upload, Square, Search, ChevronDown } from "lucide-react";
 import Link from "next/link";
-import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -198,9 +197,11 @@ export default function AnalysisDashboardPage() {
   const params = new URLSearchParams();
   if (pipelineFilter !== "all") params.set("pipelineId", pipelineFilter);
   if (statusFilter !== "all") params.set("status", statusFilter);
-  const runsEndpoint = isResearcherDemo
-    ? null
-    : `/api/pipelines/runs?${params.toString()}`;
+  // The researcher demo gets a read-only list of its owned + published runs
+  // (the runs service restricts non-admins to owned + selected-as-final runs),
+  // so the seeded, published MAG run and its MultiQC are browsable.
+  if (isResearcherDemo) params.set("userVisible", "true");
+  const runsEndpoint = `/api/pipelines/runs?${params.toString()}`;
 
   const {
     data,
@@ -310,15 +311,6 @@ export default function AnalysisDashboardPage() {
       clearInterval(interval);
     };
   }, [activeKey, mutate, syncDisabled, syncRun]);
-
-  if (isResearcherDemo) {
-    return (
-      <DemoFeatureNotice
-        title="Analysis is disabled in the public demo"
-        description="Pipeline execution is intentionally blocked here because it depends on local infrastructure, queueing, and pipeline runtimes that are not part of the hosted researcher demo. Later we can show example outputs and finished runs here without pretending the live pipeline stack is available."
-      />
-    );
-  }
 
   return (
     <PageContainer>

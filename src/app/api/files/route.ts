@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import { scanDirectory, ScanOptions, FileInfo } from "@/lib/files";
 import * as fs from "fs";
@@ -96,6 +97,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
+
     const { searchParams } = new URL(request.url);
     const force = searchParams.get("force") === "true";
     const autoChecksumRequested =
@@ -148,6 +151,11 @@ export async function GET(request: NextRequest) {
           { file1: { not: null } },
           { file2: { not: null } },
         ],
+        // Scope a facility-demo session to reads whose sample's order belongs to
+        // its own workspace (Read → Sample.order.userId is the ownership path).
+        ...(demoWsUserIds
+          ? { sample: { order: { userId: { in: demoWsUserIds } } } }
+          : {}),
       },
       select: {
         id: true,

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { notifyOrderCreatedInApp } from "@/lib/notifications/in-app";
 
 // Generate order number: ORD-YYYYMMDD-XXXX
@@ -60,6 +61,7 @@ export async function GET() {
     }
 
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
     // Build the where clause based on role and settings
     let whereClause = {};
@@ -67,7 +69,7 @@ export async function GET() {
 
     if (isFacilityAdmin) {
       // Admins see all orders
-      whereClause = {};
+      whereClause = demoWsUserIds ? { userId: { in: demoWsUserIds } } : {};
       sharingMode = "all";
     } else {
       // Check if department sharing is enabled

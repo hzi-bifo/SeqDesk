@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 
 // Statuses where files can be assigned
 const FILES_ASSIGNABLE_STATUSES = ["SUBMITTED", "COMPLETED"];
@@ -98,6 +99,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
+
     const { searchParams } = new URL(request.url);
     const search = searchParams.get("search") || "";
     const needsR1 = searchParams.get("needsR1") === "true";
@@ -111,6 +114,15 @@ export async function GET(request: NextRequest) {
         status: { in: FILES_ASSIGNABLE_STATUSES },
       },
     };
+
+    // Scope a facility-demo session to samples whose order belongs to its own
+    // workspace, preserving the existing order.status filter.
+    if (demoWsUserIds) {
+      whereClause.order = {
+        ...(whereClause.order as Record<string, unknown> | undefined),
+        userId: { in: demoWsUserIds },
+      };
+    }
 
     if (search) {
       whereClause.OR = [

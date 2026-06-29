@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 
 // GET /api/sidebar/entities - Get recent orders and studies for the entity switcher
 export async function GET(request: Request) {
@@ -14,6 +15,7 @@ export async function GET(request: Request) {
   try {
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
     const userId = session.user.id;
+    const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
     const url = new URL(request.url);
     const search = url.searchParams.get("q")?.toLowerCase() || "";
@@ -21,7 +23,7 @@ export async function GET(request: Request) {
     // Fetch recent orders
     const orders = await db.order.findMany({
       where: {
-        ...(isFacilityAdmin ? {} : { userId }),
+        ...(isFacilityAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId }),
         ...(search
           ? {
               OR: [
@@ -44,7 +46,7 @@ export async function GET(request: Request) {
     // Fetch recent studies
     const studies = await db.study.findMany({
       where: {
-        ...(isFacilityAdmin ? {} : { userId }),
+        ...(isFacilityAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId }),
         ...(search
           ? {
               OR: [

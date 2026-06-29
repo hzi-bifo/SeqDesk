@@ -58,6 +58,9 @@ const mocks = vi.hoisted(() => ({
     pipelineArtifact: {
       create: vi.fn(),
     },
+    pipelineResultSelection: {
+      create: vi.fn(),
+    },
     assembly: {
       create: vi.fn(),
     },
@@ -182,6 +185,7 @@ describe("demo workspace server helpers", () => {
     mocks.db.pipelineRunStep.create.mockResolvedValue({});
     mocks.db.pipelineRunEvent.create.mockResolvedValue({});
     mocks.db.pipelineArtifact.create.mockResolvedValue({});
+    mocks.db.pipelineResultSelection.create.mockResolvedValue({ id: "selection-1" });
     mocks.db.assembly.create.mockResolvedValue({});
     mocks.db.bin.create.mockResolvedValue({});
     mocks.db.read.create.mockResolvedValue({});
@@ -243,6 +247,7 @@ describe("demo workspace server helpers", () => {
     });
     expect(mocks.db.statusNote.create).toHaveBeenCalledTimes(5);
     expect(mocks.db.pipelineRun.create).toHaveBeenCalledTimes(4);
+    expect(mocks.db.pipelineResultSelection.create).toHaveBeenCalledTimes(1);
     expect(mocks.db.pipelineRunStep.create).toHaveBeenCalledTimes(3);
     expect(mocks.db.pipelineRunEvent.create).toHaveBeenCalledTimes(3);
   });

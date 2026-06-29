@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { getActiveMixsConfig } from "@/lib/mixs/config";
 
 // GET all studies for the current user
@@ -14,9 +15,10 @@ export async function GET() {
     }
 
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
     const studies = await db.study.findMany({
-      where: isFacilityAdmin ? {} : { userId: session.user.id },
+      where: isFacilityAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId: session.user.id },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,

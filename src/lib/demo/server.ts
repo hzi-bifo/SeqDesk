@@ -936,6 +936,19 @@ async function createDemoWorkspaceInternal(
       },
     });
 
+    // Publish the MAG run as the study's selected final result, so the demo
+    // RESEARCHER persona (who owns pilotStudy) can browse its results read-only —
+    // not just the facility admin. Mirrors PUT /api/pipelines/runs/[id]/selection.
+    await tx.pipelineResultSelection.create({
+      data: {
+        pipelineId: "mag",
+        targetKey: `study:${pilotStudy.id}`,
+        studyId: pilotStudy.id,
+        selectedRunId: pipelineRun.id,
+        selectedById: facilityAdmin.id,
+      },
+    });
+
     await tx.pipelineRunStep.create({
       data: {
         pipelineRunId: pipelineRun.id,
@@ -1337,6 +1350,27 @@ export function isFacilityDemoSession(
   session: Session | null | undefined
 ): boolean {
   return getDemoExperience(session) === "facility";
+}
+
+// Returns the workspace-owner user ids ([researcherUserId, adminUserId]) for a
+// facility-DEMO session, or null when the session is not a facility demo. The
+// public demo's facility persona has role FACILITY_ADMIN, so admin list
+// endpoints would otherwise return rows from EVERY ephemeral demo workspace.
+// Scoping list queries to these ids isolates each demo session. Returns null for
+// a real (non-demo) FACILITY_ADMIN, so their unfiltered cross-account access is
+// unchanged, and null for the researcher demo (already scoped by its own userId).
+export async function getDemoFacilityWorkspaceUserIds(
+  session: Session | null | undefined
+): Promise<string[] | null> {
+  if (!isFacilityDemoSession(session) || !session?.user?.id) return null;
+  const workspace = await db.demoWorkspace.findUnique({
+    where: { adminUserId: session.user.id },
+    select: { userId: true, adminUserId: true },
+  });
+  if (!workspace) return null;
+  return [workspace.userId, workspace.adminUserId].filter(
+    (value): value is string => Boolean(value)
+  );
 }
 
 export async function authorizeDemoWorkspaceToken(
