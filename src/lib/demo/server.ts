@@ -1073,7 +1073,9 @@ async function createDemoWorkspaceInternal(
     ) => {
       const run = await tx.pipelineRun.create({
         data: {
-          runNumber: createRunNumber(prefix, pipelineId.toUpperCase()),
+          // index 2 so showcase runs don't collide on the unique runNumber with
+          // the existing fastqc/simulate-reads/fastq-checksum runs (which use 1).
+          runNumber: createRunNumber(prefix, pipelineId.toUpperCase(), 2),
           pipelineId,
           status: "completed",
           progress: 100,
