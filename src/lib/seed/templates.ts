@@ -431,22 +431,24 @@ export const SAMPLE_WATER_02: SampleTemplate = {
   customFields: { sample_volume: "1000", sample_concentration: "12" },
 };
 
-// ── Clinical IBD gut-metagenome case-control cohort (fully synthetic demo data) ──
-// A realistic-looking but entirely fictitious inflammatory-bowel-disease cohort: Crohn's
-// disease + ulcerative colitis cases vs age/sex-matched healthy controls, with a week-12
-// follow-up timepoint and a planned long-read validation batch. checklistData keys are
-// verbatim human-gut MIxS registry names (ERC000015, mixs-humangut.json) so they render in
-// the per-sample MIxS grid; IBD-specific values (calprotectin, Montreal class, biologic)
-// live in customFields only so they never pollute the registry-keyed checklist render.
+// ── IBD gut-metagenome case-control cohort (fully synthetic demo data) ──
+// A fictitious inflammatory-bowel-disease microbiome study: Crohn's disease + ulcerative
+// colitis cases vs matched healthy controls, with a week-12 follow-up timepoint and a
+// planned long-read validation batch. Sample metadata is deliberately TECHNICAL and
+// environmental (sample collection, processing, sequencing) plus a coarse study_cohort
+// label — NO patient clinical records (no demographics, diagnoses, lab values,
+// medications, or disease staging), to keep clear that SeqDesk is not for private patient
+// data. checklistData keys are verbatim human-gut MIxS registry names (ERC000015,
+// mixs-humangut.json) so they render in the per-sample MIxS grid.
 export const STUDY_IBD_COHORT: StudyTemplate = {
   titleBase: "IBD Gut Metagenome Cohort",
   aliasSlug: "ibd-gut-cohort",
   description:
-    "Synthetic shotgun-metagenomics case-control cohort of the inflammatory-bowel-disease (IBD) gut microbiome, contrasting Crohn's disease and ulcerative colitis against age- and sex-matched healthy controls across faecal and colonic-biopsy specimens. Demo data only — no real patient information.",
+    "Synthetic shotgun-metagenomics case-control cohort of the inflammatory-bowel-disease (IBD) gut microbiome, contrasting Crohn's disease and ulcerative colitis against matched healthy controls across faecal and colonic-biopsy specimens, annotated with technical sequencing and sample-processing metadata. Demo data only — no private patient information.",
   checklistType: "human-gut",
   principalInvestigator: "Dr. Hannah Weiss",
   abstract:
-    "A fully synthetic demonstration cohort profiling the gut metagenome across a classic IBD case-control design: Crohn's disease (active ileocolonic and quiescent colonic), ulcerative colitis (active left-sided and pancolitis in remission), and age- and sex-matched healthy controls. Each de-identified subject carries host demographics, Montreal classification, biologic-therapy exposure, and faecal calprotectin to enable disease-state stratification. All identifiers, accessions, and values are fictitious and for demonstration only.",
+    "A fully synthetic demonstration cohort profiling the gut metagenome across an IBD case-control design (Crohn's disease, ulcerative colitis, and matched healthy controls) with a week-12 follow-up timepoint. Samples are annotated with technical sequencing, library-preparation and QC metadata plus standard environmental and sample-collection descriptors — deliberately no patient clinical records (no demographics, diagnoses, lab values, medications, or disease staging). All identifiers, accessions, and values are fictitious and for demonstration only.",
 };
 
 const IBD_COHORT_MIXS = {
@@ -456,8 +458,6 @@ const IBD_COHORT_MIXS = {
   geographic_location_longitude: "9.71",
   geographic_location_region_and_locality: "Lower Saxony, Hannover",
   broad_scale_environmental_context: "human-associated habitat [ENVO:00009003]",
-  ethnicity: "European",
-  medical_history_performed: "Yes",
   sample_storage_temperature: "-80",
   oxygenation_status_of_sample: "anaerobic",
   sequencing_method: "Illumina NovaSeq 6000",
@@ -469,7 +469,7 @@ const IBD_GUT_BASE = { scientificName: "human gut metagenome", taxId: "408170" }
 
 export const SAMPLE_IBD_CD_01: SampleTemplate = {
   sampleAlias: "IBD-CD-01",
-  sampleTitle: "Crohn's disease faecal metagenome (ileocolonic, active; subject IBD-0042, baseline)",
+  sampleTitle: "Crohn's disease gut metagenome (subject IBD-0042, stool, baseline)",
   scientificName: IBD_GUT_BASE.scientificName,
   taxId: IBD_GUT_BASE.taxId,
   checklistData: {
@@ -480,17 +480,6 @@ export const SAMPLE_IBD_CD_01: SampleTemplate = {
     host_subject_id: "IBD-0042",
     host_body_site: "feces [UBERON:0001988]",
     host_body_product: "feces",
-    host_disease_status: "Crohn's disease [DOID:8778]",
-    gastrointestinal_tract_disorder: "Crohn's disease, ileocolonic",
-    host_age: "29",
-    host_sex: "female",
-    host_body_mass_index: "21.7",
-    host_height: "1.66",
-    host_total_mass: "59.8",
-    host_diet: "omnivore, Western diet",
-    special_diet: "none",
-    host_phenotype: "IBD, Montreal classification A2L3B1, active inflammation",
-    chemical_administration: "infliximab [CHEBI:80132]; azathioprine [CHEBI:2948]",
     sample_collection_method: "self-collected stool, OMNIgene-GUT collection tube",
     sample_material_processing: "snap-frozen at collection; DNA extracted with QIAamp PowerFecal Pro",
     nucleic_acid_extraction: "QIAamp PowerFecal Pro DNA Kit",
@@ -498,11 +487,7 @@ export const SAMPLE_IBD_CD_01: SampleTemplate = {
   customFields: {
     sample_volume: "50",
     sample_concentration: "24",
-    disease_subtype: "Crohn's disease (ileocolonic)",
-    calprotectin_ug_g: "612",
-    biologic_therapy: "infliximab (anti-TNF)",
-    montreal_classification: "A2L3B1",
-    disease_activity: "active",
+    study_cohort: "Crohn's disease (case)",
     specimen_type: "stool",
     timepoint: "baseline",
   },
@@ -510,7 +495,7 @@ export const SAMPLE_IBD_CD_01: SampleTemplate = {
 
 export const SAMPLE_IBD_CD_02: SampleTemplate = {
   sampleAlias: "IBD-CD-02",
-  sampleTitle: "Crohn's disease colonic-mucosa biopsy metagenome (remission; subject IBD-0057, baseline)",
+  sampleTitle: "Crohn's disease gut metagenome (subject IBD-0057, mucosal biopsy, baseline)",
   scientificName: IBD_GUT_BASE.scientificName,
   taxId: IBD_GUT_BASE.taxId,
   checklistData: {
@@ -521,17 +506,6 @@ export const SAMPLE_IBD_CD_02: SampleTemplate = {
     host_subject_id: "IBD-0057",
     host_body_site: "colonic mucosa [UBERON:0000317]",
     host_body_product: "mucosal biopsy",
-    host_disease_status: "Crohn's disease [DOID:8778]",
-    gastrointestinal_tract_disorder: "Crohn's disease, colonic",
-    host_age: "41",
-    host_sex: "male",
-    host_body_mass_index: "25.9",
-    host_height: "1.79",
-    host_total_mass: "83.0",
-    host_diet: "omnivore, Western diet",
-    special_diet: "exclusive enteral nutrition",
-    host_phenotype: "IBD, Montreal classification A2L2B2, mucosal healing",
-    chemical_administration: "adalimumab [CHEBI:85182]; mesalazine [CHEBI:6775]",
     sample_collection_method: "endoscopic forceps biopsy during colonoscopy",
     sample_material_processing: "biopsy snap-frozen in liquid nitrogen; DNA extracted with QIAamp DNA Microbiome Kit",
     nucleic_acid_extraction: "QIAamp DNA Microbiome Kit",
@@ -539,11 +513,7 @@ export const SAMPLE_IBD_CD_02: SampleTemplate = {
   customFields: {
     sample_volume: "30",
     sample_concentration: "12",
-    disease_subtype: "Crohn's disease (colonic)",
-    calprotectin_ug_g: "98",
-    biologic_therapy: "adalimumab (anti-TNF)",
-    montreal_classification: "A2L2B2",
-    disease_activity: "remission",
+    study_cohort: "Crohn's disease (case)",
     specimen_type: "mucosal_biopsy",
     biopsy_site: "descending colon",
     timepoint: "baseline",
@@ -552,7 +522,7 @@ export const SAMPLE_IBD_CD_02: SampleTemplate = {
 
 export const SAMPLE_IBD_UC_01: SampleTemplate = {
   sampleAlias: "IBD-UC-01",
-  sampleTitle: "Ulcerative colitis faecal metagenome (left-sided, active; subject IBD-0061, baseline)",
+  sampleTitle: "Ulcerative colitis gut metagenome (subject IBD-0061, stool, baseline)",
   scientificName: IBD_GUT_BASE.scientificName,
   taxId: IBD_GUT_BASE.taxId,
   checklistData: {
@@ -563,17 +533,6 @@ export const SAMPLE_IBD_UC_01: SampleTemplate = {
     host_subject_id: "IBD-0061",
     host_body_site: "feces [UBERON:0001988]",
     host_body_product: "feces",
-    host_disease_status: "ulcerative colitis [DOID:8577]",
-    gastrointestinal_tract_disorder: "ulcerative colitis, left-sided",
-    host_age: "36",
-    host_sex: "female",
-    host_body_mass_index: "23.4",
-    host_height: "1.70",
-    host_total_mass: "67.6",
-    host_diet: "omnivore, Western diet",
-    special_diet: "low-FODMAP",
-    host_phenotype: "IBD, Montreal classification E2S2, active flare",
-    chemical_administration: "vedolizumab [CHEBI:90928]; mesalazine [CHEBI:6775]",
     sample_collection_method: "self-collected stool, OMNIgene-GUT collection tube",
     sample_material_processing: "snap-frozen at collection; DNA extracted with QIAamp PowerFecal Pro",
     nucleic_acid_extraction: "QIAamp PowerFecal Pro DNA Kit",
@@ -581,11 +540,7 @@ export const SAMPLE_IBD_UC_01: SampleTemplate = {
   customFields: {
     sample_volume: "48",
     sample_concentration: "22",
-    disease_subtype: "ulcerative colitis (left-sided)",
-    calprotectin_ug_g: "487",
-    biologic_therapy: "vedolizumab (anti-integrin)",
-    montreal_classification: "E2S2",
-    disease_activity: "active",
+    study_cohort: "ulcerative colitis (case)",
     specimen_type: "stool",
     timepoint: "baseline",
   },
@@ -593,7 +548,7 @@ export const SAMPLE_IBD_UC_01: SampleTemplate = {
 
 export const SAMPLE_IBD_UC_02: SampleTemplate = {
   sampleAlias: "IBD-UC-02",
-  sampleTitle: "Ulcerative colitis faecal metagenome (pancolitis, remission; subject IBD-0073, baseline)",
+  sampleTitle: "Ulcerative colitis gut metagenome (subject IBD-0073, stool, baseline)",
   scientificName: IBD_GUT_BASE.scientificName,
   taxId: IBD_GUT_BASE.taxId,
   checklistData: {
@@ -604,17 +559,6 @@ export const SAMPLE_IBD_UC_02: SampleTemplate = {
     host_subject_id: "IBD-0073",
     host_body_site: "feces [UBERON:0001988]",
     host_body_product: "feces",
-    host_disease_status: "ulcerative colitis [DOID:8577]",
-    gastrointestinal_tract_disorder: "ulcerative colitis, pancolitis",
-    host_age: "52",
-    host_sex: "male",
-    host_body_mass_index: "27.1",
-    host_height: "1.81",
-    host_total_mass: "88.8",
-    host_diet: "omnivore, low-fibre",
-    special_diet: "none",
-    host_phenotype: "IBD, Montreal classification E3S1, clinical remission",
-    chemical_administration: "ustekinumab [CHEBI:90929]",
     sample_collection_method: "self-collected stool, OMNIgene-GUT collection tube",
     sample_material_processing: "snap-frozen at collection; DNA extracted with QIAamp PowerFecal Pro",
     nucleic_acid_extraction: "QIAamp PowerFecal Pro DNA Kit",
@@ -622,11 +566,7 @@ export const SAMPLE_IBD_UC_02: SampleTemplate = {
   customFields: {
     sample_volume: "46",
     sample_concentration: "21",
-    disease_subtype: "ulcerative colitis (pancolitis)",
-    calprotectin_ug_g: "63",
-    biologic_therapy: "ustekinumab (anti-IL-12/23)",
-    montreal_classification: "E3S1",
-    disease_activity: "remission",
+    study_cohort: "ulcerative colitis (case)",
     specimen_type: "stool",
     timepoint: "baseline",
   },
@@ -634,7 +574,7 @@ export const SAMPLE_IBD_UC_02: SampleTemplate = {
 
 export const SAMPLE_IBD_HC_01: SampleTemplate = {
   sampleAlias: "IBD-HC-01",
-  sampleTitle: "Healthy control faecal metagenome (age/sex-matched; subject CTRL-0008, baseline)",
+  sampleTitle: "Healthy control gut metagenome (subject CTRL-0008, stool, baseline)",
   scientificName: IBD_GUT_BASE.scientificName,
   taxId: IBD_GUT_BASE.taxId,
   checklistData: {
@@ -645,17 +585,6 @@ export const SAMPLE_IBD_HC_01: SampleTemplate = {
     host_subject_id: "CTRL-0008",
     host_body_site: "feces [UBERON:0001988]",
     host_body_product: "feces",
-    host_disease_status: "healthy control",
-    gastrointestinal_tract_disorder: "none",
-    host_age: "31",
-    host_sex: "female",
-    host_body_mass_index: "22.0",
-    host_height: "1.68",
-    host_total_mass: "62.1",
-    host_diet: "omnivore, Western diet",
-    special_diet: "none",
-    host_phenotype: "no gastrointestinal disease, no recent antibiotics",
-    chemical_administration: "none",
     sample_collection_method: "self-collected stool, OMNIgene-GUT collection tube",
     sample_material_processing: "snap-frozen at collection; DNA extracted with QIAamp PowerFecal Pro",
     nucleic_acid_extraction: "QIAamp PowerFecal Pro DNA Kit",
@@ -663,10 +592,7 @@ export const SAMPLE_IBD_HC_01: SampleTemplate = {
   customFields: {
     sample_volume: "52",
     sample_concentration: "25",
-    disease_subtype: "healthy control",
-    calprotectin_ug_g: "18",
-    biologic_therapy: "none",
-    disease_activity: "not applicable",
+    study_cohort: "healthy control",
     specimen_type: "stool",
     timepoint: "baseline",
   },
@@ -674,7 +600,7 @@ export const SAMPLE_IBD_HC_01: SampleTemplate = {
 
 export const SAMPLE_IBD_HC_02: SampleTemplate = {
   sampleAlias: "IBD-HC-02",
-  sampleTitle: "Healthy control faecal metagenome (age/sex-matched; subject CTRL-0015, baseline)",
+  sampleTitle: "Healthy control gut metagenome (subject CTRL-0015, stool, baseline)",
   scientificName: IBD_GUT_BASE.scientificName,
   taxId: IBD_GUT_BASE.taxId,
   checklistData: {
@@ -685,17 +611,6 @@ export const SAMPLE_IBD_HC_02: SampleTemplate = {
     host_subject_id: "CTRL-0015",
     host_body_site: "feces [UBERON:0001988]",
     host_body_product: "feces",
-    host_disease_status: "healthy control",
-    gastrointestinal_tract_disorder: "none",
-    host_age: "47",
-    host_sex: "male",
-    host_body_mass_index: "24.6",
-    host_height: "1.77",
-    host_total_mass: "77.1",
-    host_diet: "omnivore, Mediterranean diet",
-    special_diet: "none",
-    host_phenotype: "no gastrointestinal disease, no recent antibiotics",
-    chemical_administration: "none",
     sample_collection_method: "self-collected stool, OMNIgene-GUT collection tube",
     sample_material_processing: "snap-frozen at collection; DNA extracted with QIAamp PowerFecal Pro",
     nucleic_acid_extraction: "QIAamp PowerFecal Pro DNA Kit",
@@ -703,19 +618,16 @@ export const SAMPLE_IBD_HC_02: SampleTemplate = {
   customFields: {
     sample_volume: "49",
     sample_concentration: "23",
-    disease_subtype: "healthy control",
-    calprotectin_ug_g: "22",
-    biologic_therapy: "none",
-    disease_activity: "not applicable",
+    study_cohort: "healthy control",
     specimen_type: "stool",
     timepoint: "baseline",
   },
 };
 
-// Week-12 longitudinal follow-up specimens — same subjects, falling calprotectin (therapy response).
+// Week-12 longitudinal follow-up specimens — the same subjects re-sequenced at a later timepoint.
 export const SAMPLE_IBD_CD_01_W12: SampleTemplate = {
   sampleAlias: "IBD-CD-01-W12",
-  sampleTitle: "Crohn's disease faecal metagenome (ileocolonic; subject IBD-0042, week 12 follow-up)",
+  sampleTitle: "Crohn's disease gut metagenome (subject IBD-0042, stool, week 12 follow-up)",
   scientificName: IBD_GUT_BASE.scientificName,
   taxId: IBD_GUT_BASE.taxId,
   checklistData: {
@@ -726,17 +638,6 @@ export const SAMPLE_IBD_CD_01_W12: SampleTemplate = {
     host_subject_id: "IBD-0042",
     host_body_site: "feces [UBERON:0001988]",
     host_body_product: "feces",
-    host_disease_status: "Crohn's disease [DOID:8778]",
-    gastrointestinal_tract_disorder: "Crohn's disease, ileocolonic",
-    host_age: "29",
-    host_sex: "female",
-    host_body_mass_index: "21.7",
-    host_height: "1.66",
-    host_total_mass: "59.8",
-    host_diet: "omnivore, Western diet",
-    special_diet: "none",
-    host_phenotype: "IBD, Montreal classification A2L3B1, week-12 follow-up, clinical response",
-    chemical_administration: "infliximab [CHEBI:80132]; azathioprine [CHEBI:2948]",
     sample_collection_method: "self-collected stool, OMNIgene-GUT collection tube",
     sample_material_processing: "snap-frozen at collection; DNA extracted with QIAamp PowerFecal Pro",
     nucleic_acid_extraction: "QIAamp PowerFecal Pro DNA Kit",
@@ -744,11 +645,7 @@ export const SAMPLE_IBD_CD_01_W12: SampleTemplate = {
   customFields: {
     sample_volume: "50",
     sample_concentration: "24",
-    disease_subtype: "Crohn's disease (ileocolonic)",
-    calprotectin_ug_g: "187",
-    biologic_therapy: "infliximab (anti-TNF)",
-    montreal_classification: "A2L3B1",
-    disease_activity: "responding",
+    study_cohort: "Crohn's disease (case)",
     specimen_type: "stool",
     timepoint: "week 12",
   },
@@ -756,7 +653,7 @@ export const SAMPLE_IBD_CD_01_W12: SampleTemplate = {
 
 export const SAMPLE_IBD_UC_01_W12: SampleTemplate = {
   sampleAlias: "IBD-UC-01-W12",
-  sampleTitle: "Ulcerative colitis faecal metagenome (left-sided; subject IBD-0061, week 12 follow-up)",
+  sampleTitle: "Ulcerative colitis gut metagenome (subject IBD-0061, stool, week 12 follow-up)",
   scientificName: IBD_GUT_BASE.scientificName,
   taxId: IBD_GUT_BASE.taxId,
   checklistData: {
@@ -767,17 +664,6 @@ export const SAMPLE_IBD_UC_01_W12: SampleTemplate = {
     host_subject_id: "IBD-0061",
     host_body_site: "feces [UBERON:0001988]",
     host_body_product: "feces",
-    host_disease_status: "ulcerative colitis [DOID:8577]",
-    gastrointestinal_tract_disorder: "ulcerative colitis, left-sided",
-    host_age: "36",
-    host_sex: "female",
-    host_body_mass_index: "23.4",
-    host_height: "1.70",
-    host_total_mass: "67.6",
-    host_diet: "omnivore, Western diet",
-    special_diet: "low-FODMAP",
-    host_phenotype: "IBD, Montreal classification E2S2, week-12 follow-up, partial response",
-    chemical_administration: "vedolizumab [CHEBI:90928]; mesalazine [CHEBI:6775]",
     sample_collection_method: "self-collected stool, OMNIgene-GUT collection tube",
     sample_material_processing: "snap-frozen at collection; DNA extracted with QIAamp PowerFecal Pro",
     nucleic_acid_extraction: "QIAamp PowerFecal Pro DNA Kit",
@@ -785,11 +671,7 @@ export const SAMPLE_IBD_UC_01_W12: SampleTemplate = {
   customFields: {
     sample_volume: "48",
     sample_concentration: "22",
-    disease_subtype: "ulcerative colitis (left-sided)",
-    calprotectin_ug_g: "152",
-    biologic_therapy: "vedolizumab (anti-integrin)",
-    montreal_classification: "E2S2",
-    disease_activity: "responding",
+    study_cohort: "ulcerative colitis (case)",
     specimen_type: "stool",
     timepoint: "week 12",
   },
@@ -798,7 +680,7 @@ export const SAMPLE_IBD_UC_01_W12: SampleTemplate = {
 // Planned long-read confirmation specimens — DRAFT order, not yet sequenced (no reads attached).
 export const SAMPLE_IBD_CD_01_LR: SampleTemplate = {
   sampleAlias: "IBD-CD-01-LR",
-  sampleTitle: "Crohn's disease long-read validation specimen (subject IBD-0042, planned)",
+  sampleTitle: "Crohn's disease gut metagenome — long-read validation (subject IBD-0042, planned)",
   scientificName: IBD_GUT_BASE.scientificName,
   taxId: IBD_GUT_BASE.taxId,
   checklistData: {
@@ -809,17 +691,6 @@ export const SAMPLE_IBD_CD_01_LR: SampleTemplate = {
     host_subject_id: "IBD-0042",
     host_body_site: "feces [UBERON:0001988]",
     host_body_product: "feces",
-    host_disease_status: "Crohn's disease [DOID:8778]",
-    gastrointestinal_tract_disorder: "Crohn's disease, ileocolonic",
-    host_age: "29",
-    host_sex: "female",
-    host_body_mass_index: "21.7",
-    host_height: "1.66",
-    host_total_mass: "59.8",
-    host_diet: "omnivore, Western diet",
-    special_diet: "none",
-    host_phenotype: "IBD, Montreal classification A2L3B1, active inflammation",
-    chemical_administration: "infliximab [CHEBI:80132]; azathioprine [CHEBI:2948]",
     sample_collection_method: "self-collected stool, OMNIgene-GUT collection tube",
     sample_material_processing: "snap-frozen at collection; DNA extracted with QIAamp PowerFecal Pro",
     nucleic_acid_extraction: "QIAamp PowerFecal Pro DNA Kit",
@@ -829,11 +700,7 @@ export const SAMPLE_IBD_CD_01_LR: SampleTemplate = {
   customFields: {
     sample_volume: "50",
     sample_concentration: "24",
-    disease_subtype: "Crohn's disease (ileocolonic)",
-    calprotectin_ug_g: "612",
-    biologic_therapy: "infliximab (anti-TNF)",
-    montreal_classification: "A2L3B1",
-    disease_activity: "active",
+    study_cohort: "Crohn's disease (case)",
     specimen_type: "stool",
     timepoint: "validation (long-read)",
     sequencing_plan: "ONT PromethION confirmation",
@@ -842,7 +709,7 @@ export const SAMPLE_IBD_CD_01_LR: SampleTemplate = {
 
 export const SAMPLE_IBD_CD_02_LR: SampleTemplate = {
   sampleAlias: "IBD-CD-02-LR",
-  sampleTitle: "Crohn's disease long-read validation specimen (subject IBD-0057, planned)",
+  sampleTitle: "Crohn's disease gut metagenome — long-read validation (subject IBD-0057, planned)",
   scientificName: IBD_GUT_BASE.scientificName,
   taxId: IBD_GUT_BASE.taxId,
   checklistData: {
@@ -853,17 +720,6 @@ export const SAMPLE_IBD_CD_02_LR: SampleTemplate = {
     host_subject_id: "IBD-0057",
     host_body_site: "colonic mucosa [UBERON:0000317]",
     host_body_product: "mucosal biopsy",
-    host_disease_status: "Crohn's disease [DOID:8778]",
-    gastrointestinal_tract_disorder: "Crohn's disease, colonic",
-    host_age: "41",
-    host_sex: "male",
-    host_body_mass_index: "25.9",
-    host_height: "1.79",
-    host_total_mass: "83.0",
-    host_diet: "omnivore, Western diet",
-    special_diet: "exclusive enteral nutrition",
-    host_phenotype: "IBD, Montreal classification A2L2B2, mucosal healing",
-    chemical_administration: "adalimumab [CHEBI:85182]; mesalazine [CHEBI:6775]",
     sample_collection_method: "endoscopic forceps biopsy during colonoscopy",
     sample_material_processing: "biopsy snap-frozen in liquid nitrogen; DNA extracted with QIAamp DNA Microbiome Kit",
     nucleic_acid_extraction: "QIAamp DNA Microbiome Kit",
@@ -873,11 +729,7 @@ export const SAMPLE_IBD_CD_02_LR: SampleTemplate = {
   customFields: {
     sample_volume: "30",
     sample_concentration: "12",
-    disease_subtype: "Crohn's disease (colonic)",
-    calprotectin_ug_g: "98",
-    biologic_therapy: "adalimumab (anti-TNF)",
-    montreal_classification: "A2L2B2",
-    disease_activity: "remission",
+    study_cohort: "Crohn's disease (case)",
     specimen_type: "mucosal_biopsy",
     biopsy_site: "descending colon",
     timepoint: "validation (long-read)",
