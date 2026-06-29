@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ensureWithinBase } from "@/lib/files";
 import { canReadPipelineRun } from "@/lib/pipelines/run-visibility";
+import { isDemoSession } from "@/lib/demo/server";
+import { serveDemoPipelineFile } from "@/lib/demo/pipeline-preview";
 import fs from "fs/promises";
 import { createReadStream } from "fs";
 import path from "path";
@@ -101,6 +103,20 @@ export async function GET(
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Demo sessions have no persistent run folder on disk; serve the bundled
+    // demo artifact (public/demo/...) by basename instead of reading runFolder.
+    if (isDemoSession(session)) {
+      const demoTarget = new URL(request.url).searchParams.get("path");
+      const demoResponse = demoTarget
+        ? await serveDemoPipelineFile(demoTarget)
+        : null;
+      if (demoResponse) return demoResponse;
+      return NextResponse.json(
+        { error: "Preview is not available for this file in the demo." },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;
