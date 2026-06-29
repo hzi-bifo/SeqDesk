@@ -771,7 +771,7 @@ const MOUSE_GUT_MIXS = {
   host_diet: "high-fat diet",
 };
 
-const MOUSE_GUT_BASE = { scientificName: "mouse gut metagenome", taxId: "410661" };
+export const MOUSE_GUT_BASE = { scientificName: "mouse gut metagenome", taxId: "410661" };
 
 export const SAMPLE_MOUSE_01: SampleTemplate = {
   sampleAlias: "SAMD00089915",

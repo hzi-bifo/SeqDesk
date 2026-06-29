@@ -26,6 +26,11 @@ on:
         required: true
         default: "fastq-checksum"
         type: string
+      run_mouse_real_data:
+        description: "Also run the public pipelines on the REAL ENA mouse-gut dataset (PRJDB6165) and upload their reports for the demo viewer"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -495,6 +500,59 @@ jobs:
             --ensure-dummy-data \
             --pipeline-id reads-qc \
             2>&1 | tee "$RUNNER_TEMP/reads-qc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+
+      # --- Opt-in: run the PUBLIC pipelines on the REAL ENA mouse-gut dataset (PRJDB6165) ---
+      # Gated to an explicit workflow_dispatch with run_mouse_real_data=true — the nightly schedule
+      # skips it (it downloads ~130 MB of real reads from ENA and runs extra pipelines). Seeds the
+      # eight real mouse-gut read pairs as a real order/study, then runs fastqc + fastq-checksum
+      # (order-scoped) and reads-qc + study-demo-report (study-scoped) on them in BOTH modes. The
+      # per-process conda envs (fastqc/seqkit) were already warmed into the shared cache by the dummy
+      # fastqc/reads-qc steps above, so the SLURM runs here reuse them by hash (same data-independent
+      # env hash). The human-readable report outputs are collected into $MOUSE_REPORTS_DIR and
+      # uploaded as part of the artifact, for bundling into the SeqDesk demo viewer.
+      - name: Run public pipelines on REAL mouse-gut data (PRJDB6165) — opt-in
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_mouse_real_data == true }}
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          MOUSE_REPORTS_DIR="$RUNNER_TEMP/mouse-gut-reports"
+          mkdir -p "$MOUSE_REPORTS_DIR"
+          echo "MOUSE_REPORTS_DIR=$MOUSE_REPORTS_DIR" >> "$GITHUB_ENV"
+          ORDER="DEV-MOUSE-PRJDB6165-001"
+          STUDY_ALIAS="mouse-gut-prjdb6165-ci"
+          run_mouse() {
+            local label="$1"; shift
+            echo "::group::mouse-gut pipeline: $label"
+            npm run pipeline:e2e:runtime -- "$@" \
+              2>&1 | tee "$RUNNER_TEMP/mouse-$label-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+            echo "::endgroup::"
+          }
+          # Seed ONCE on the first run (the harness re-downloads on every --seed-example-dataset, so
+          # passing it on all four would re-fetch the ~130 MB four times). --set-data-base-path
+          # points the bundle extractor at the shared FS the compute nodes see (read-cleaning-spike
+          # pattern) and persists in SiteSettings; --seed-example-dataset downloads the 8 ENA pairs
+          # and creates the order/study. The later runs just target that existing order/study.
+          run_mouse fastq-checksum    --set-data-base-path "$SEQDESK_DATA_DIR" \
+            --seed-example-dataset mouse-gut-prjdb6165 --pipeline-id fastq-checksum --order-number "$ORDER"
+          run_mouse fastqc            --pipeline-id fastqc            --order-number "$ORDER"
+          run_mouse reads-qc          --pipeline-id reads-qc          --study-alias "$STUDY_ALIAS"
+          run_mouse study-demo-report --pipeline-id study-demo-report --study-alias "$STUDY_ALIAS"
+          # Collect the human-readable report outputs (HTML/TSV/CSV/TXT) from the mouse run dirs for
+          # bundling into the demo viewer; skip the heavy nextflow `work/` intermediates. Each file
+          # is renamed by its run-relative path so per-pipeline outputs don't collide on basename.
+          echo "=== collecting mouse-gut reports ==="
+          find "$SEQDESK_RUN_DIR" -type d -path '*/work' -prune -o \
+            -type f \( -iname '*.html' -o -iname '*.tsv' -o -iname '*.csv' -o -iname '*.txt' \) -print 2>/dev/null \
+            | while IFS= read -r f; do
+                rel="${f#"$SEQDESK_RUN_DIR"/}"
+                safe="$(printf '%s' "$rel" | tr '/' '__')"
+                cp "$f" "$MOUSE_REPORTS_DIR/$safe" 2>/dev/null || true
+              done
+          echo "collected $(find "$MOUSE_REPORTS_DIR" -type f | wc -l) report file(s):"
+          find "$MOUSE_REPORTS_DIR" -type f -printf '  %f\n' 2>/dev/null | sort | head -80
 
       # read-cleaning UNDER SLURM (source-boot, local + SLURM). The LOCAL run builds detaxizer's
       # conda env into the shared cache on the networked head node; the SLURM run reuses it by
@@ -1036,6 +1094,9 @@ jobs:
             ${{ env.PG_LOG }}
             ${{ env.SEQDESK_RUN_DIR }}
             ${{ runner.temp }}/slurm-diag
+            # Real mouse-gut (PRJDB6165) pipeline reports — only present when the opt-in step ran
+            # (workflow_dispatch + run_mouse_real_data=true). Collected for the demo viewer.
+            ${{ runner.temp }}/mouse-gut-reports
             # Nextflow work dirs are intermediates, not useful as artifacts — and they get
             # huge (read-cleaning's detaxizer un-tars a ~20 GB kraken2 DB into one, which made
             # the upload hang ~1h). The per-process logs are echoed by the diagnostics step.
