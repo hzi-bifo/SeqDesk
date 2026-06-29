@@ -67,6 +67,9 @@ const mocks = vi.hoisted(() => ({
     read: {
       create: vi.fn(),
     },
+    studyFormConfig: {
+      create: vi.fn(),
+    },
     ticket: {
       deleteMany: vi.fn(),
     },
@@ -182,6 +185,7 @@ describe("demo workspace server helpers", () => {
     mocks.db.assembly.create.mockResolvedValue({});
     mocks.db.bin.create.mockResolvedValue({});
     mocks.db.read.create.mockResolvedValue({});
+    mocks.db.studyFormConfig.create.mockResolvedValue({});
 
     mocks.db.demoWorkspace.findUnique.mockResolvedValue(null);
     mocks.db.demoWorkspace.update.mockResolvedValue({});
@@ -215,6 +219,7 @@ describe("demo workspace server helpers", () => {
     expect(mocks.db.orderFormConfig.update).toHaveBeenCalledTimes(1);
     expect(mocks.db.user.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.study.create).toHaveBeenCalledTimes(5);
+    expect(mocks.db.studyFormConfig.create).toHaveBeenCalledTimes(1);
     expect(mocks.db.order.create).toHaveBeenCalledTimes(7);
     const draftOrder = mocks.db.order.create.mock.calls[0][0].data;
     const submittedOrder = mocks.db.order.create.mock.calls[1][0].data;

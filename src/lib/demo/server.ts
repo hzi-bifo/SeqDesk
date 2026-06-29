@@ -54,6 +54,16 @@ import {
   type PlatformProfile,
   type SampleTemplate,
 } from "@/lib/seed/templates";
+import {
+  IBD_STUDY_FORM_FIELDS,
+  IBD_STUDY_FORM_SAMPLE_VALUES,
+  IBD_STUDY_FORM_STUDY_VALUES,
+} from "@/lib/seed/ibd-study-form";
+import {
+  getFixedStudySections,
+  normalizeStudyFormSchema,
+} from "@/lib/studies/fixed-sections";
+import { STUDY_FORM_DEFAULTS_VERSION } from "@/lib/modules/default-form-fields";
 
 function orderPlatformFields(profile: PlatformProfile) {
   return {
@@ -305,6 +315,9 @@ async function createDemoWorkspaceInternal(
       extras?: {
         studyId?: string;
         facilityStatus?: string;
+        // Extra per-sample answers (e.g. dynamic per-study form fields) merged into
+        // Sample.checklistData alongside the template's MIxS keys, keyed by field name.
+        extraChecklistData?: Record<string, string>;
         reads?: {
           file1: string;
           file2?: string;
@@ -320,14 +333,19 @@ async function createDemoWorkspaceInternal(
           fastqcReport2?: string;
         };
       }
-    ) => ({
+    ) => {
+      const checklistData = {
+        ...template.checklistData,
+        ...(extras?.extraChecklistData ?? {}),
+      };
+      return {
       sampleId: createSampleId(prefix, orderIndex, sampleIndex),
       sampleAlias: template.sampleAlias,
       sampleTitle: template.sampleTitle,
       scientificName: template.scientificName,
       taxId: template.taxId,
-      ...(Object.keys(template.checklistData).length > 0
-        ? { checklistData: JSON.stringify(template.checklistData) }
+      ...(Object.keys(checklistData).length > 0
+        ? { checklistData: JSON.stringify(checklistData) }
         : {}),
       customFields: JSON.stringify(template.customFields),
       ...(extras?.facilityStatus
@@ -339,7 +357,8 @@ async function createDemoWorkspaceInternal(
       ...(extras?.reads
         ? { reads: { create: extras.reads } }
         : {}),
-    });
+      };
+    };
 
     const readyStudy = await tx.study.create({
       data: {
@@ -417,15 +436,34 @@ async function createDemoWorkspaceInternal(
         alias: `${STUDY_IBD_COHORT.aliasSlug}-${prefix.toLowerCase()}`,
         description: STUDY_IBD_COHORT.description,
         checklistType: STUDY_IBD_COHORT.checklistType,
-        studyMetadata: JSON.stringify(
-          getStudyMetadata(
+        studyMetadata: JSON.stringify({
+          ...getStudyMetadata(
             STUDY_IBD_COHORT.principalInvestigator,
             STUDY_IBD_COHORT.abstract
-          )
-        ),
+          ),
+          ...IBD_STUDY_FORM_STUDY_VALUES,
+        }),
         readyForSubmission: true,
         readyAt: new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000),
         userId: researcher.id,
+      },
+    });
+
+    // Per-study dynamic questionnaire (the `dynamic-studies` module): give the IBD
+    // study a custom form of TECHNICAL sequencing/library/QC fields (deliberately not
+    // patient characteristics). Stored normalized; rendered only when the
+    // dynamic-studies module is enabled (see getDemoSiteSettingsUpdate). Use tx —
+    // not the global-db saveStudyFormConfig helper — to stay inside this transaction.
+    const ibdStudyForm = normalizeStudyFormSchema({
+      fields: IBD_STUDY_FORM_FIELDS,
+      groups: getFixedStudySections(),
+    });
+    await tx.studyFormConfig.create({
+      data: {
+        studyId: ibdStudy.id,
+        fields: JSON.stringify(ibdStudyForm.fields),
+        groups: JSON.stringify(ibdStudyForm.groups),
+        defaultsVersion: STUDY_FORM_DEFAULTS_VERSION,
       },
     });
 
@@ -716,31 +754,37 @@ async function createDemoWorkspaceInternal(
             buildSampleCreate(SAMPLE_IBD_CD_01, 5, 1, {
               studyId: ibdStudy.id,
               facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-01"],
               reads: ibdRead("IBD-CD-01", "ERR9914501", "ERX8471501", 41250433, 35.8),
             }),
             buildSampleCreate(SAMPLE_IBD_CD_02, 5, 2, {
               studyId: ibdStudy.id,
               facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-02"],
               reads: ibdRead("IBD-CD-02", "ERR9914502", "ERX8471502", 28117905, 35.1),
             }),
             buildSampleCreate(SAMPLE_IBD_UC_01, 5, 3, {
               studyId: ibdStudy.id,
               facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-UC-01"],
               reads: ibdRead("IBD-UC-01", "ERR9914503", "ERX8471503", 39884217, 35.6),
             }),
             buildSampleCreate(SAMPLE_IBD_UC_02, 5, 4, {
               studyId: ibdStudy.id,
               facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-UC-02"],
               reads: ibdRead("IBD-UC-02", "ERR9914504", "ERX8471504", 37551060, 35.9),
             }),
             buildSampleCreate(SAMPLE_IBD_HC_01, 5, 5, {
               studyId: ibdStudy.id,
               facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-HC-01"],
               reads: ibdRead("IBD-HC-01", "ERR9914505", "ERX8471505", 43002884, 36.2),
             }),
             buildSampleCreate(SAMPLE_IBD_HC_02, 5, 6, {
               studyId: ibdStudy.id,
               facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-HC-02"],
               reads: ibdRead("IBD-HC-02", "ERR9914506", "ERX8471506", 40119673, 36.0),
             }),
           ],
@@ -778,11 +822,13 @@ async function createDemoWorkspaceInternal(
             buildSampleCreate(SAMPLE_IBD_CD_01_W12, 6, 1, {
               studyId: ibdStudy.id,
               facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-01-W12"],
               reads: ibdRead("IBD-CD-01-W12", "ERR9921071", "ERX8479071", 38760221, 35.7),
             }),
             buildSampleCreate(SAMPLE_IBD_UC_01_W12, 6, 2, {
               studyId: ibdStudy.id,
               facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-UC-01-W12"],
               reads: ibdRead("IBD-UC-01-W12", "ERR9921072", "ERX8479072", 41002558, 35.5),
             }),
           ],
@@ -816,8 +862,14 @@ async function createDemoWorkspaceInternal(
         userId: researcher.id,
         samples: {
           create: [
-            buildSampleCreate(SAMPLE_IBD_CD_01_LR, 7, 1, { studyId: ibdStudy.id }),
-            buildSampleCreate(SAMPLE_IBD_CD_02_LR, 7, 2, { studyId: ibdStudy.id }),
+            buildSampleCreate(SAMPLE_IBD_CD_01_LR, 7, 1, {
+              studyId: ibdStudy.id,
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-01-LR"],
+            }),
+            buildSampleCreate(SAMPLE_IBD_CD_02_LR, 7, 2, {
+              studyId: ibdStudy.id,
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-02-LR"],
+            }),
           ],
         },
       },
