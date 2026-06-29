@@ -62,6 +62,16 @@ export async function serveDemoPipelineFile(
 
   const fastqc = base.match(/_(R[12])_fastqc\.html$/);
   if (fastqc) {
+    // Prefer a real per-sample report bundled under public/demo/pipeline/ (e.g. the
+    // mouse-gut DRR######_R1_fastqc.html reports). Studies whose per-sample reports
+    // aren't bundled fall back to the shared per-direction report.
+    if (/^[A-Za-z0-9._-]+$/.test(base)) {
+      const perSample = await serveBundled(
+        path.join(DEMO_PIPELINE_DIR, base),
+        "text/html"
+      );
+      if (perSample) return perSample;
+    }
     return serveBundled(
       path.join(DEMO_PUBLIC_DIR, `fastqc_${fastqc[1]}.html`),
       "text/html"

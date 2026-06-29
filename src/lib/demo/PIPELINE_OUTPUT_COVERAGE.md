@@ -1,9 +1,11 @@
 # Demo pipeline-output coverage
 
 Tracks which pipeline example output is wired into the public demo
-(demo.seqdesk.org) for browsing. All reports are **real self-hosted CI output run
-on dummy data**; pipelines can't be launched in the demo (view-only). MetaxPath is
-excluded on purpose (private).
+(demo.seqdesk.org) for browsing. Reports are **real self-hosted SLURM-runner
+output**: the Surface Resistome / Gut Recovery showcase runs on synthetic dummy
+data, and the **Mouse Gut Metagenome (PRJDB6165) study on genuine public ENA
+data** (eight real mouse-fecal Illumina MiSeq read pairs). Pipelines can't be
+launched in the demo (view-only). MetaxPath is excluded on purpose (private).
 
 How it's wired: reports are bundled under `public/demo/pipeline/` and served by
 basename via `src/lib/demo/pipeline-preview.ts` (the demo runs on Vercel with no
@@ -26,6 +28,20 @@ browse it.
 | `submg` | Submit to ENA | ◐ partial | samples (ENA accessions) | n/a — submission, not a report | IBD + others |
 | `metaxpath` | MetaxPath | ⛔ excluded | — | private | — |
 
+### Real ENA data — Mouse Gut Metagenome (PRJDB6165)
+
+Eight real public mouse-fecal Illumina MiSeq read pairs (DRR099973–DRR099980),
+run on the self-hosted SLURM runner via the opt-in `run_mouse_real_data`
+workflow input; reports bundled under `public/demo/pipeline/` with `mouse-*`
+basenames (study-level) and per-sample `DRR######_R[12]_fastqc.html`.
+
+| Pipeline | Display name | In demo? | Surfaced on | Bundled report | Sample data |
+|---|---|---|---|---|---|
+| `reads-qc` | Quality Overview | ✅ | Mouse Gut Metagenome (**study**) | `mouse-reads-qc-report.html` | DRR099973–80 (real) |
+| `study-demo-report` | Study Demo Report | ✅ | Mouse Gut Metagenome (**study**) | `mouse-demo-report.html` | DRR099973–80 (real) |
+| `fastqc` | FastQC | ✅ | Mouse Gut Metagenome (**study**) + per sample | `mouse-fastqc-summary.tsv` + 16 real per-sample HTML | DRR099973–80 (real) |
+| `fastq-checksum` | FASTQ Checksum | ✅ | Mouse Gut Metagenome (**study**) | `mouse-checksum-summary.tsv` | DRR099973–80 (real) |
+
 All current example data is **short-read (Illumina)**. There is no long-read
 showcase.
 
@@ -43,7 +59,7 @@ showcase.
       from CI yet).
 - [ ] **submg** — ENA accessions are on samples, but there's no submission-summary
       report view.
-- [ ] Reports are all wired to one study (Surface Resistome) using its SR samples;
-      could spread across more studies for variety.
-- [ ] Report data is the CI dummy run (e.g. `study-demo-report` shows a CI run
-      title like `e2e-config-plumb-report-…`); could regenerate with nicer labels.
+- [x] ~~Reports are all wired to one study using dummy data~~ — the Mouse Gut
+      (PRJDB6165) study now showcases four pipelines on **real ENA data**.
+- [ ] `read-cleaning` + a long-read pipeline still missing for the mouse study
+      (read-cleaning has no standalone report; no long-read mouse data).

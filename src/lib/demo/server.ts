@@ -1110,7 +1110,7 @@ async function createDemoWorkspaceInternal(
       };
     };
 
-    await tx.order.create({
+    const mouseOrder = await tx.order.create({
       data: {
         orderNumber: createOrderNumber(prefix, 8),
         name: "PRJDB6165 mouse gut metagenomes (real ENA data)",
@@ -1136,6 +1136,13 @@ async function createDemoWorkspaceInternal(
             buildSampleCreate(SAMPLE_MOUSE_07, 8, 7, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_07) }),
             buildSampleCreate(SAMPLE_MOUSE_08, 8, 8, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_08) }),
           ],
+        },
+      },
+      include: {
+        samples: {
+          select: {
+            id: true,
+          },
         },
       },
     });
@@ -1206,6 +1213,71 @@ async function createDemoWorkspaceInternal(
     await seedShowcaseRun("fastqc", "FastQC summary", "fastqc-summary.tsv", "qc_report");
     await seedShowcaseRun("simulate-reads", "Simulation summary", "simulation-summary.tsv", "report");
     await seedShowcaseRun("fastq-checksum", "Checksum summary", "checksum-summary.tsv", "report");
+
+    // ── Real ENA mouse-gut (PRJDB6165) pipeline output ────────────────
+    // Genuine reports produced by running the public pipelines on the eight real
+    // PRJDB6165 read pairs on the self-hosted SLURM runner (see the opt-in
+    // pipeline-slurm-e2e step). The report basenames map to the real files bundled
+    // under public/demo/pipeline/. These hang off the mouse study (owned by the demo
+    // researcher) and use runNumber index 3 so they don't collide with the index-1
+    // order runs or the index-2 showcase runs of the same pipelines.
+    const seedMouseShowcaseRun = async (
+      pipelineId: string,
+      artifactName: string,
+      reportBasename: string,
+      artifactType: string
+    ) => {
+      const run = await tx.pipelineRun.create({
+        data: {
+          runNumber: createRunNumber(prefix, pipelineId.toUpperCase(), 3),
+          pipelineId,
+          status: "completed",
+          progress: 100,
+          currentStep: "Completed",
+          studyId: mouseStudy.id,
+          userId: researcher.id,
+          inputSampleIds: JSON.stringify(
+            (mouseOrder.samples ?? []).map((sample) => sample.id)
+          ),
+          config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJDB6165" }),
+          runFolder: `${demoRoot}/runs/mouse-${pipelineId}-demo`,
+          queuedAt: runQueuedAt,
+          startedAt: runStartedAt,
+          completedAt: runCompletedAt,
+          lastEventAt: runCompletedAt,
+          statusSource: "process",
+          results: JSON.stringify({
+            note: "Real ENA PRJDB6165 mouse-gut pipeline output, run on the self-hosted SLURM runner.",
+          }),
+          queueStatus: "COMPLETED",
+          queueUpdatedAt: runCompletedAt,
+        },
+      });
+      await tx.pipelineArtifact.create({
+        data: {
+          pipelineRunId: run.id,
+          studyId: mouseStudy.id,
+          type: artifactType,
+          name: artifactName,
+          path: `${demoRoot}/runs/mouse-${pipelineId}-demo/output/report/${reportBasename}`,
+          metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJDB6165" }),
+        },
+      });
+      await tx.pipelineResultSelection.create({
+        data: {
+          pipelineId,
+          targetKey: `study:${mouseStudy.id}`,
+          studyId: mouseStudy.id,
+          selectedRunId: run.id,
+          selectedById: researcher.id,
+        },
+      });
+    };
+
+    await seedMouseShowcaseRun("reads-qc", "Quality Overview (real ENA mouse-gut data)", "mouse-reads-qc-report.html", "qc_report");
+    await seedMouseShowcaseRun("study-demo-report", "Study report (real ENA mouse-gut data)", "mouse-demo-report.html", "report");
+    await seedMouseShowcaseRun("fastqc", "FastQC summary (real ENA mouse-gut data)", "mouse-fastqc-summary.tsv", "qc_report");
+    await seedMouseShowcaseRun("fastq-checksum", "Checksum summary (real ENA mouse-gut data)", "mouse-checksum-summary.tsv", "report");
 
     return {
       workspaceId: workspace.id,
