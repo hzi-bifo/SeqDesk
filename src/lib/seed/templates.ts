@@ -736,3 +736,212 @@ export const SAMPLE_IBD_CD_02_LR: SampleTemplate = {
     sequencing_plan: "ONT PromethION confirmation",
   },
 };
+
+// ── REAL data: ENA mouse gut metagenome study PRJDB6165 ──────────────────────
+// Real public dataset (Tokyo Medical and Dental University): gut microbiota of
+// high-fat-diet mice, control vs Aggregatibacter actinomycetemcomitans infection.
+// Accessions, md5 checksums, read counts, sample names, geography and collection
+// year are the REAL ENA values; host/environment context fields are filled with
+// MIxS-valid values to render well. checklistType is the host-associated checklist.
+export const STUDY_MOUSE_GUT_PRJDB6165: StudyTemplate = {
+  titleBase: "Mouse Gut Metagenome (PRJDB6165)",
+  aliasSlug: "mouse-gut-prjdb6165",
+  description:
+    "Real public ENA study PRJDB6165 — shotgun metagenomes of mouse faecal microbiota under a high-fat diet, contrasting controls with Aggregatibacter actinomycetemcomitans infection. Accessions, checksums and core metadata are the real ENA values.",
+  checklistType: "host-associated",
+  principalInvestigator: "Tokyo Medical and Dental University",
+  abstract:
+    "Aggregatibacter actinomycetemcomitans and the gut microbiota of mice eating a high-fat diet (ENA PRJDB6165). Eight faecal shotgun-metagenome libraries (Illumina MiSeq): four high-fat-diet controls (HFco1-4) and four high-fat-diet + A. actinomycetemcomitans (HFAa1-4). Loaded into the demo from the real ENA submission; reads and pipeline outputs are wired from the real data.",
+};
+
+const MOUSE_GUT_MIXS = {
+  project_name: "Aggregatibacter actinomycetemcomitans, gut microbiota in mice eating a high-fat diet",
+  geographic_location_country_and_or_sea: "Japan",
+  geographic_location_region_and_locality: "Tokyo",
+  geographic_location_latitude: "35.70",
+  geographic_location_longitude: "139.76",
+  collection_date: "2016",
+  broad_scale_environmental_context: "host-associated habitat [ENVO:00009003]",
+  local_environmental_context: "gastrointestinal tract environment [ENVO:2100002]",
+  environmental_medium: "feces [ENVO:00002003]",
+  host_body_site: "gastrointestinal tract [UBERON:0001555]",
+  host_scientific_name: "Mus musculus",
+  host_common_name: "house mouse",
+  host_taxid: "10090",
+  host_diet: "high-fat diet",
+};
+
+const MOUSE_GUT_BASE = { scientificName: "mouse gut metagenome", taxId: "410661" };
+
+export const SAMPLE_MOUSE_01: SampleTemplate = {
+  sampleAlias: "SAMD00089915",
+  sampleTitle: "16S rRNA isolated from mice fecal in HFco1",
+  scientificName: MOUSE_GUT_BASE.scientificName,
+  taxId: MOUSE_GUT_BASE.taxId,
+  checklistData: {
+    ...MOUSE_GUT_MIXS,
+    host_subject_id: "HFco1",
+  },
+  customFields: {
+    sample_name: "HFco1",
+    treatment: "control (high-fat diet)",
+    biosample_accession: "SAMD00089915",
+    bioproject_accession: "PRJDB6165",
+    run_accession: "DRR099973",
+    experiment_accession: "DRX093417",
+    read_count: "91795",
+  },
+};
+
+export const SAMPLE_MOUSE_02: SampleTemplate = {
+  sampleAlias: "SAMD00089916",
+  sampleTitle: "16S rRNA isolated from mice fecal in HFco2",
+  scientificName: MOUSE_GUT_BASE.scientificName,
+  taxId: MOUSE_GUT_BASE.taxId,
+  checklistData: {
+    ...MOUSE_GUT_MIXS,
+    host_subject_id: "HFco2",
+  },
+  customFields: {
+    sample_name: "HFco2",
+    treatment: "control (high-fat diet)",
+    biosample_accession: "SAMD00089916",
+    bioproject_accession: "PRJDB6165",
+    run_accession: "DRR099974",
+    experiment_accession: "DRX093418",
+    read_count: "90723",
+  },
+};
+
+export const SAMPLE_MOUSE_03: SampleTemplate = {
+  sampleAlias: "SAMD00089917",
+  sampleTitle: "16S rRNA isolated from mice fecal in HFco3",
+  scientificName: MOUSE_GUT_BASE.scientificName,
+  taxId: MOUSE_GUT_BASE.taxId,
+  checklistData: {
+    ...MOUSE_GUT_MIXS,
+    host_subject_id: "HFco3",
+  },
+  customFields: {
+    sample_name: "HFco3",
+    treatment: "control (high-fat diet)",
+    biosample_accession: "SAMD00089917",
+    bioproject_accession: "PRJDB6165",
+    run_accession: "DRR099975",
+    experiment_accession: "DRX093419",
+    read_count: "107329",
+  },
+};
+
+export const SAMPLE_MOUSE_04: SampleTemplate = {
+  sampleAlias: "SAMD00089918",
+  sampleTitle: "16S rRNA isolated from mice fecal in HFco4",
+  scientificName: MOUSE_GUT_BASE.scientificName,
+  taxId: MOUSE_GUT_BASE.taxId,
+  checklistData: {
+    ...MOUSE_GUT_MIXS,
+    host_subject_id: "HFco4",
+  },
+  customFields: {
+    sample_name: "HFco4",
+    treatment: "control (high-fat diet)",
+    biosample_accession: "SAMD00089918",
+    bioproject_accession: "PRJDB6165",
+    run_accession: "DRR099976",
+    experiment_accession: "DRX093420",
+    read_count: "82174",
+  },
+};
+
+export const SAMPLE_MOUSE_05: SampleTemplate = {
+  sampleAlias: "SAMD00089919",
+  sampleTitle: "16S rRNA isolated from mice fecal in HFAa1",
+  scientificName: MOUSE_GUT_BASE.scientificName,
+  taxId: MOUSE_GUT_BASE.taxId,
+  checklistData: {
+    ...MOUSE_GUT_MIXS,
+    host_subject_id: "HFAa1",
+  },
+  customFields: {
+    sample_name: "HFAa1",
+    treatment: "high-fat diet + A. actinomycetemcomitans",
+    biosample_accession: "SAMD00089919",
+    bioproject_accession: "PRJDB6165",
+    run_accession: "DRR099977",
+    experiment_accession: "DRX093421",
+    read_count: "99093",
+  },
+};
+
+export const SAMPLE_MOUSE_06: SampleTemplate = {
+  sampleAlias: "SAMD00089920",
+  sampleTitle: "16S rRNA isolated from mice fecal in HFAa2",
+  scientificName: MOUSE_GUT_BASE.scientificName,
+  taxId: MOUSE_GUT_BASE.taxId,
+  checklistData: {
+    ...MOUSE_GUT_MIXS,
+    host_subject_id: "HFAa2",
+  },
+  customFields: {
+    sample_name: "HFAa2",
+    treatment: "high-fat diet + A. actinomycetemcomitans",
+    biosample_accession: "SAMD00089920",
+    bioproject_accession: "PRJDB6165",
+    run_accession: "DRR099978",
+    experiment_accession: "DRX093422",
+    read_count: "117186",
+  },
+};
+
+export const SAMPLE_MOUSE_07: SampleTemplate = {
+  sampleAlias: "SAMD00089921",
+  sampleTitle: "16S rRNA isolated from mice fecal in HFAa3",
+  scientificName: MOUSE_GUT_BASE.scientificName,
+  taxId: MOUSE_GUT_BASE.taxId,
+  checklistData: {
+    ...MOUSE_GUT_MIXS,
+    host_subject_id: "HFAa3",
+  },
+  customFields: {
+    sample_name: "HFAa3",
+    treatment: "high-fat diet + A. actinomycetemcomitans",
+    biosample_accession: "SAMD00089921",
+    bioproject_accession: "PRJDB6165",
+    run_accession: "DRR099979",
+    experiment_accession: "DRX093423",
+    read_count: "99911",
+  },
+};
+
+export const SAMPLE_MOUSE_08: SampleTemplate = {
+  sampleAlias: "SAMD00089922",
+  sampleTitle: "16S rRNA isolated from mice fecal in HFAa4",
+  scientificName: MOUSE_GUT_BASE.scientificName,
+  taxId: MOUSE_GUT_BASE.taxId,
+  checklistData: {
+    ...MOUSE_GUT_MIXS,
+    host_subject_id: "HFAa4",
+  },
+  customFields: {
+    sample_name: "HFAa4",
+    treatment: "high-fat diet + A. actinomycetemcomitans",
+    biosample_accession: "SAMD00089922",
+    bioproject_accession: "PRJDB6165",
+    run_accession: "DRR099980",
+    experiment_accession: "DRX093424",
+    read_count: "90527",
+  },
+};
+
+// Real run-level data per sample (accessions, md5 checksums, read counts) for
+// wiring Read rows in the demo seed.
+export const MOUSE_GUT_READS: Record<string, { run: string; experiment: string; checksum1: string; checksum2: string; readCount: number }> = {
+  "SAMD00089915": { run: "DRR099973", experiment: "DRX093417", checksum1: "ad0c526823c70b5ad1c7c0dc150cbce4", checksum2: "4a280d9f9bd29622055cdf778f6aad67", readCount: 91795 },
+  "SAMD00089916": { run: "DRR099974", experiment: "DRX093418", checksum1: "7bd36e4429524093b980c90ea7f3fc26", checksum2: "d93de56b3da3d0afba44c639bc2e25d6", readCount: 90723 },
+  "SAMD00089917": { run: "DRR099975", experiment: "DRX093419", checksum1: "213e4d5e0fe792008acaa1372ecff93a", checksum2: "570d628b2704ef2b61165d5bf4de0cec", readCount: 107329 },
+  "SAMD00089918": { run: "DRR099976", experiment: "DRX093420", checksum1: "cca1086517bd206e8b2f2cd93cabf997", checksum2: "ed69bf76113a90c3a30a7eb4c6ec18b0", readCount: 82174 },
+  "SAMD00089919": { run: "DRR099977", experiment: "DRX093421", checksum1: "a6db63ae65c8e28619acbe98d94eacc6", checksum2: "c4f7f96e033d70f2fcadde83daec7f5a", readCount: 99093 },
+  "SAMD00089920": { run: "DRR099978", experiment: "DRX093422", checksum1: "b2e00d8d2526545765966bdfccca64af", checksum2: "20a05817e94e2a2f96bfd184796c2d04", readCount: 117186 },
+  "SAMD00089921": { run: "DRR099979", experiment: "DRX093423", checksum1: "589fe5ca3a652e576767bfb23c719c7e", checksum2: "6a6de694afc521f28cec2cd1421b90f2", readCount: 99911 },
+  "SAMD00089922": { run: "DRR099980", experiment: "DRX093424", checksum1: "91527786815d17d5486b2289aac63389", checksum2: "b4e0fa748c8befdfc9dca2322c73495c", readCount: 90527 },
+};

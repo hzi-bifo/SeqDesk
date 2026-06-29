@@ -158,7 +158,8 @@ describe("demo workspace server helpers", () => {
       .mockResolvedValueOnce({ id: "study-pilot" })
       .mockResolvedValueOnce({ id: "study-soil" })
       .mockResolvedValueOnce({ id: "study-water" })
-      .mockResolvedValueOnce({ id: "study-ibd" });
+      .mockResolvedValueOnce({ id: "study-ibd" })
+      .mockResolvedValueOnce({ id: "study-mouse" });
     mocks.db.order.create
       .mockResolvedValueOnce({ id: "order-draft" })
       .mockResolvedValueOnce({
@@ -179,7 +180,8 @@ describe("demo workspace server helpers", () => {
       .mockResolvedValueOnce({ id: "order-environmental" })
       .mockResolvedValueOnce({ id: "order-ibd-baseline" })
       .mockResolvedValueOnce({ id: "order-ibd-followup" })
-      .mockResolvedValueOnce({ id: "order-ibd-draft" });
+      .mockResolvedValueOnce({ id: "order-ibd-draft" })
+      .mockResolvedValueOnce({ id: "order-mouse" });
     mocks.db.statusNote.create.mockResolvedValue({});
     mocks.db.pipelineRun.create.mockResolvedValue({ id: "run-1" });
     mocks.db.pipelineRunStep.create.mockResolvedValue({});
@@ -222,9 +224,9 @@ describe("demo workspace server helpers", () => {
     expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
     expect(mocks.db.orderFormConfig.update).toHaveBeenCalledTimes(1);
     expect(mocks.db.user.create).toHaveBeenCalledTimes(2);
-    expect(mocks.db.study.create).toHaveBeenCalledTimes(5);
+    expect(mocks.db.study.create).toHaveBeenCalledTimes(6);
     expect(mocks.db.studyFormConfig.create).toHaveBeenCalledTimes(1);
-    expect(mocks.db.order.create).toHaveBeenCalledTimes(7);
+    expect(mocks.db.order.create).toHaveBeenCalledTimes(8);
     const draftOrder = mocks.db.order.create.mock.calls[0][0].data;
     const submittedOrder = mocks.db.order.create.mock.calls[1][0].data;
     expect(draftOrder.platform).toBeNull();
@@ -644,7 +646,8 @@ describe("bootstrapDemoWorkspace edge cases", () => {
       .mockResolvedValueOnce({ id: "study-2" })
       .mockResolvedValueOnce({ id: "study-3" })
       .mockResolvedValueOnce({ id: "study-4" })
-      .mockResolvedValueOnce({ id: "study-5" });
+      .mockResolvedValueOnce({ id: "study-5" })
+      .mockResolvedValueOnce({ id: "study-6" });
     mocks.db.order.create
       .mockResolvedValueOnce({ id: "order-1" })
       .mockResolvedValueOnce({ id: "order-2", samples: [{ id: "s1", sampleId: "GR-01" }] })
@@ -652,7 +655,8 @@ describe("bootstrapDemoWorkspace edge cases", () => {
       .mockResolvedValueOnce({ id: "order-4" })
       .mockResolvedValueOnce({ id: "order-5" })
       .mockResolvedValueOnce({ id: "order-6" })
-      .mockResolvedValueOnce({ id: "order-7" });
+      .mockResolvedValueOnce({ id: "order-7" })
+      .mockResolvedValueOnce({ id: "order-8" });
 
     const result = await bootstrapDemoWorkspace("stale-token", "researcher");
 
@@ -690,7 +694,8 @@ describe("bootstrapDemoWorkspace edge cases", () => {
       .mockResolvedValueOnce({ id: "study-2" })
       .mockResolvedValueOnce({ id: "study-3" })
       .mockResolvedValueOnce({ id: "study-4" })
-      .mockResolvedValueOnce({ id: "study-5" });
+      .mockResolvedValueOnce({ id: "study-5" })
+      .mockResolvedValueOnce({ id: "study-6" });
     mocks.db.order.create
       .mockResolvedValueOnce({ id: "order-1" })
       .mockResolvedValueOnce({ id: "order-2", samples: [{ id: "s1", sampleId: "GR-01" }] })
@@ -698,7 +703,8 @@ describe("bootstrapDemoWorkspace edge cases", () => {
       .mockResolvedValueOnce({ id: "order-4" })
       .mockResolvedValueOnce({ id: "order-5" })
       .mockResolvedValueOnce({ id: "order-6" })
-      .mockResolvedValueOnce({ id: "order-7" });
+      .mockResolvedValueOnce({ id: "order-7" })
+      .mockResolvedValueOnce({ id: "order-8" });
 
     const result = await bootstrapDemoWorkspace("noadmin-token", "facility");
 

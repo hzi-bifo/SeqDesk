@@ -51,6 +51,16 @@ import {
   STUDY_SOIL_RESILIENCE,
   STUDY_RIVER_WATER,
   STUDY_IBD_COHORT,
+  STUDY_MOUSE_GUT_PRJDB6165,
+  SAMPLE_MOUSE_01,
+  SAMPLE_MOUSE_02,
+  SAMPLE_MOUSE_03,
+  SAMPLE_MOUSE_04,
+  SAMPLE_MOUSE_05,
+  SAMPLE_MOUSE_06,
+  SAMPLE_MOUSE_07,
+  SAMPLE_MOUSE_08,
+  MOUSE_GUT_READS,
   type PlatformProfile,
   type SampleTemplate,
 } from "@/lib/seed/templates";
@@ -1058,6 +1068,77 @@ async function createDemoWorkspaceInternal(
         },
       });
     }
+
+    // ── REAL data: ENA mouse gut metagenome study PRJDB6165 ──────────
+    // A real public ENA dataset (8 mouse faecal shotgun-metagenome libraries),
+    // seeded with the real accessions, md5 checksums, read counts, sample names,
+    // geography and collection year. Pipeline reports for this study are produced
+    // separately on the self-hosted runner and wired in afterwards.
+    const mouseStudy = await tx.study.create({
+      data: {
+        title: STUDY_MOUSE_GUT_PRJDB6165.titleBase,
+        alias: `${STUDY_MOUSE_GUT_PRJDB6165.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_MOUSE_GUT_PRJDB6165.description,
+        checklistType: STUDY_MOUSE_GUT_PRJDB6165.checklistType,
+        studyMetadata: JSON.stringify(
+          getStudyMetadata(
+            STUDY_MOUSE_GUT_PRJDB6165.principalInvestigator,
+            STUDY_MOUSE_GUT_PRJDB6165.abstract
+          )
+        ),
+        readyForSubmission: true,
+        readyAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000),
+        userId: researcher.id,
+      },
+    });
+
+    // Real ENA reads: real run/experiment accessions, md5 checksums and read
+    // counts. File basenames resolve to the bundled demo FastQC reports.
+    const mouseRead = (template: SampleTemplate) => {
+      const r = MOUSE_GUT_READS[template.sampleAlias];
+      return {
+        file1: `${demoRoot}/mouse-gut-prjdb6165/reads/${r.run}_1.fastq.gz`,
+        file2: `${demoRoot}/mouse-gut-prjdb6165/reads/${r.run}_2.fastq.gz`,
+        checksum1: r.checksum1,
+        checksum2: r.checksum2,
+        readCount1: r.readCount,
+        readCount2: r.readCount,
+        runAccessionNumber: r.run,
+        experimentAccessionNumber: r.experiment,
+        fastqcReport1: `${demoRoot}/mouse-gut-prjdb6165/fastqc/${r.run}_R1_fastqc.html`,
+        fastqcReport2: `${demoRoot}/mouse-gut-prjdb6165/fastqc/${r.run}_R2_fastqc.html`,
+      };
+    };
+
+    await tx.order.create({
+      data: {
+        orderNumber: createOrderNumber(prefix, 8),
+        name: "PRJDB6165 mouse gut metagenomes (real ENA data)",
+        status: "COMPLETED",
+        statusUpdatedAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000),
+        numberOfSamples: 8,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
+        billingAddress: "SeqDesk Demo Workspace",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_MISEQ_AMPLICON),
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_MISEQ_AMPLICON, {
+          _projects: "PRJDB6165 mouse gut (real ENA data)",
+        }),
+        userId: researcher.id,
+        samples: {
+          create: [
+            buildSampleCreate(SAMPLE_MOUSE_01, 8, 1, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_01) }),
+            buildSampleCreate(SAMPLE_MOUSE_02, 8, 2, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_02) }),
+            buildSampleCreate(SAMPLE_MOUSE_03, 8, 3, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_03) }),
+            buildSampleCreate(SAMPLE_MOUSE_04, 8, 4, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_04) }),
+            buildSampleCreate(SAMPLE_MOUSE_05, 8, 5, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_05) }),
+            buildSampleCreate(SAMPLE_MOUSE_06, 8, 6, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_06) }),
+            buildSampleCreate(SAMPLE_MOUSE_07, 8, 7, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_07) }),
+            buildSampleCreate(SAMPLE_MOUSE_08, 8, 8, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_08) }),
+          ],
+        },
+      },
+    });
 
     // ── Per-pipeline example output ──────────────────────────────────
     // A completed, published run with a browsable report for each public
