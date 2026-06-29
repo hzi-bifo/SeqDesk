@@ -1748,12 +1748,8 @@ export function StudyPipelinesSection({
     <div className="space-y-6">
       {isDemoUser && (
         <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-          <span className="font-medium">About these results:</span> the pipeline
-          runs and reports shown here are <span className="font-medium">real
-          output from SeqDesk&apos;s self-hosted CI pipeline runs</span>, wired
-          back into this public demo so you can inspect what finished analyses
-          look like. Pipelines can&apos;t be launched in the demo — it&apos;s a
-          view-only showcase of example results.
+          Real pipeline output run on dummy data, to demonstrate how finished
+          analyses look. View-only — pipelines can&apos;t be launched in the demo.
         </div>
       )}
       {/* Section 1: Header */}
