@@ -1,0 +1,4 @@
+sample_id	mode	simulation_mode_requested	simulation_mode_used	quality_profile	insert_mean	insert_std_dev	seed	template_label	template_dir	file1	file2	checksum1	checksum2	read_count1	read_count2	read_length
+CMQUCU39-402	shortReadPaired	synthetic	synthetic	standard	350	30				CMQUCU39-402_R1.fastq.gz	CMQUCU39-402_R2.fastq.gz	6cfaf263283e02638dec42f6a6e0a2b1	b407ac87cddf607e3a3de1e86938c710	10	10	75
+CMQUCU39-401	shortReadPaired	synthetic	synthetic	standard	350	30				CMQUCU39-401_R1.fastq.gz	CMQUCU39-401_R2.fastq.gz	83e82e070bf0656748dc0a60cd8454c4	743b05d859d0530f8d9416100e0c5073	10	10	75
+CMQUCU39-403	shortReadPaired	synthetic	synthetic	standard	350	30				CMQUCU39-403_R1.fastq.gz	CMQUCU39-403_R2.fastq.gz	0ca98ac360fe35ddcba1f527e3393f56	1cb6b43bde7a45c710459bda292face1	10	10	75

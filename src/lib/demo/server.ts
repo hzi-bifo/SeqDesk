@@ -1059,6 +1059,71 @@ async function createDemoWorkspaceInternal(
       });
     }
 
+    // ── Per-pipeline example output ──────────────────────────────────
+    // A completed, published run with a browsable report for each public
+    // pipeline (the report basename maps to a file bundled in
+    // public/demo/pipeline/), so a demo user can inspect example output for
+    // every pipeline we offer. metaxpath is intentionally excluded (private),
+    // and read-cleaning produces no standalone report so it is omitted.
+    const seedShowcaseRun = async (
+      pipelineId: string,
+      artifactName: string,
+      reportBasename: string,
+      artifactType: string
+    ) => {
+      const run = await tx.pipelineRun.create({
+        data: {
+          runNumber: createRunNumber(prefix, pipelineId.toUpperCase()),
+          pipelineId,
+          status: "completed",
+          progress: 100,
+          currentStep: "Completed",
+          studyId: pilotStudy.id,
+          userId: facilityAdmin.id,
+          inputSampleIds: JSON.stringify(
+            completedOrder.samples.map((sample) => sample.id)
+          ),
+          config: JSON.stringify({ preset: "demo-seeded" }),
+          runFolder: `${demoRoot}/runs/${pipelineId}-demo`,
+          queuedAt: runQueuedAt,
+          startedAt: runStartedAt,
+          completedAt: runCompletedAt,
+          lastEventAt: runCompletedAt,
+          statusSource: "process",
+          results: JSON.stringify({
+            note: "Seeded example output for the public demo.",
+          }),
+          queueStatus: "COMPLETED",
+          queueUpdatedAt: runCompletedAt,
+        },
+      });
+      await tx.pipelineArtifact.create({
+        data: {
+          pipelineRunId: run.id,
+          studyId: pilotStudy.id,
+          type: artifactType,
+          name: artifactName,
+          path: `${demoRoot}/runs/${pipelineId}-demo/output/report/${reportBasename}`,
+          metadata: JSON.stringify({ seeded: true }),
+        },
+      });
+      await tx.pipelineResultSelection.create({
+        data: {
+          pipelineId,
+          targetKey: `study:${pilotStudy.id}`,
+          studyId: pilotStudy.id,
+          selectedRunId: run.id,
+          selectedById: facilityAdmin.id,
+        },
+      });
+    };
+
+    await seedShowcaseRun("reads-qc", "Quality Overview report", "reads-qc-report.html", "qc_report");
+    await seedShowcaseRun("study-demo-report", "Study demo report", "demo-report.html", "report");
+    await seedShowcaseRun("fastqc", "FastQC summary", "fastqc-summary.tsv", "qc_report");
+    await seedShowcaseRun("simulate-reads", "Simulation summary", "simulation-summary.tsv", "report");
+    await seedShowcaseRun("fastq-checksum", "Checksum summary", "checksum-summary.tsv", "report");
+
     return {
       workspaceId: workspace.id,
       researcherUserId: researcher.id,

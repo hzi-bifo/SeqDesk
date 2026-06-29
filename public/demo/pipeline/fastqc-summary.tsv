@@ -1,0 +1,4 @@
+sample_id	r1_pass	r1_warn	r1_fail	r1_read_count	r1_avg_quality	r2_pass	r2_warn	r2_fail	r2_read_count	r2_avg_quality
+CMQUCU39-402	8	2	1	1000	34.8	8	2	1	1000	34.8
+CMQUCU39-401	8	2	1	1000	34.8	8	1	2	1000	34.8
+CMQUCU39-403	8	1	2	1000	34.8	9	1	1	1000	34.8
