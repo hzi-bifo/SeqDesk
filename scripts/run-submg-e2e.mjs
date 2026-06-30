@@ -249,6 +249,11 @@ const MEGAHIT_MIN_CONTIG_LEN = 1000; // mag-style; comfortably above ENA's 200 b
 function buildMegahitAssemblyGz(r1Abs, r2Abs) {
   const bin = process.env.SEQDESK_SUBMG_E2E_MEGAHIT_BIN || "megahit";
   if (spawnSync(bin, ["--version"], { stdio: "ignore" }).status !== 0) return null;
+  // Threads + timeout are env-tunable: the default (1 thread / 5 min) suits the tiny
+  // dummy reads, while a real shotgun sample needs more (e.g. 4 threads / 20 min) to
+  // assemble contigs within the window.
+  const threads = String(process.env.SEQDESK_SUBMG_E2E_MEGAHIT_THREADS || "1");
+  const timeoutSec = Number(process.env.SEQDESK_SUBMG_E2E_MEGAHIT_TIMEOUT_SEC || "300");
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "submg-megahit-"));
   const runOut = path.join(outDir, "asm"); // MEGAHIT requires its -o dir NOT pre-exist
   const res = spawnSync(
@@ -256,11 +261,11 @@ function buildMegahitAssemblyGz(r1Abs, r2Abs) {
     [
       "-1", r1Abs,
       "-2", r2Abs,
-      "--num-cpu-threads", "1",
+      "--num-cpu-threads", threads,
       "--min-contig-len", String(MEGAHIT_MIN_CONTIG_LEN),
       "-o", runOut,
     ],
-    { stdio: "inherit", timeout: 5 * 60 * 1000 },
+    { stdio: "inherit", timeout: timeoutSec * 1000 },
   );
   const contigs = path.join(runOut, "final.contigs.fa");
   if (res.status !== 0 || !fs.existsSync(contigs)) return null;
@@ -328,6 +333,28 @@ async function main() {
   if (!dataBasePath) fail("Could not resolve dataBasePath from sequencing-files settings");
   console.log(`Data base path: ${dataBasePath}`);
 
+  // Optionally provision a REAL example dataset (e.g. the human-gut shotgun study) into the
+  // configured data dir, so submg submits REAL reads + a REAL MEGAHIT assembly to ENA TEST
+  // instead of dummy data. Env-gated: default behaviour (dummy data) is unchanged.
+  const exampleDataset = process.env.SEQDESK_SUBMG_E2E_EXAMPLE_DATASET || null;
+  if (exampleDataset) {
+    console.log(`Seeding REAL example dataset '${exampleDataset}' (downloads reads)...`);
+    const seedRes = await client.request(
+      `/api/admin/seed/example-datasets/${exampleDataset}`,
+      { method: "POST" },
+    );
+    if (!seedRes.ok) {
+      fail(
+        `Failed to seed example dataset '${exampleDataset}' (${seedRes.status})`,
+        summarizeBody(await seedRes.text()),
+      );
+    }
+    console.log(`Seeded REAL example dataset '${exampleDataset}'.`);
+  }
+  // When set, pin the submg run to this study alias (e.g. the human-gut shotgun study)
+  // instead of the heuristic pick.
+  const targetStudyAlias = process.env.SEQDESK_SUBMG_E2E_STUDY_ALIAS || null;
+
   const prisma = new PrismaClient();
   try {
     // Pick a study whose samples have an active paired read on disk. Prefer one
@@ -351,8 +378,17 @@ async function main() {
     });
 
     const study =
-      candidateStudies.find((s) => !s.studyAccessionId) || candidateStudies[0];
+      (targetStudyAlias &&
+        candidateStudies.find((s) => String(s.alias) === targetStudyAlias)) ||
+      candidateStudies.find((s) => !s.studyAccessionId) ||
+      candidateStudies[0];
     if (!study) fail("No study with paired-read samples was found after seeding dummy data");
+    if (targetStudyAlias && String(study.alias) !== targetStudyAlias) {
+      fail(
+        `Target study alias '${targetStudyAlias}' not found among paired-read studies`,
+        JSON.stringify({ aliases: candidateStudies.map((s) => s.alias) }),
+      );
+    }
 
     // One submittable sample keeps the ENA TEST load (and the run) minimal.
     const targetSample = study.samples.find((sample) =>
