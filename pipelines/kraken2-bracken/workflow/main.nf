@@ -12,6 +12,13 @@ process KRAKEN2_KRAKEN2 {
   tag "${sample_id}"
   conda "bioconda::kraken2=2.1.3"
 
+  // Kraken2 loads the whole DB into RAM (a Standard DB is ~12 GB). Run one classification
+  // at a time and reserve enough memory so the local/SLURM executor never over-schedules
+  // and OOMs the node.
+  cpus 8
+  memory '16 GB'
+  maxForks 1
+
   publishDir "${params.outdir}", mode: 'copy', pattern: "kraken2/*"
 
   input:

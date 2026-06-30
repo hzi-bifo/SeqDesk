@@ -31,6 +31,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_human_gut_kraken:
+        description: "Run kraken2-bracken taxonomic profiling on the REAL human-gut shotgun dataset (PRJEB54724) and push the Kraken/Bracken/Krona output for the demo viewer"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -616,6 +621,69 @@ jobs:
           fi
           echo "mouse pipelines that failed:${FAILS:- none}"
           # Opt-in/experimental: never red the whole job on a mouse-data hiccup.
+          exit 0
+
+      # ── Opt-in: kraken2-bracken taxonomic profiling on the REAL human-gut shotgun study ──
+      # Runs the new kraken2-bracken pipeline on the 12 real PRJEB54724 read pairs against the
+      # runner's Standard kraken2 DB (~12 GB; the head node has ~62 GB RAM so LOCAL mode is fine —
+      # KRAKEN2 is capped to maxForks 1 / 16 GB in the package). The DB already ships the Bracken
+      # kmer distributions (database150mers.kmer_distrib), so no bracken-build is needed. Collects
+      # the Kraken2 report + Bracken abundance + Krona HTML and pushes them to a dedicated
+      # `demo-human-gut-kraken` branch (quota-proof) for wiring into the demo viewer.
+      - name: Run kraken2-bracken on the REAL human-gut shotgun study (taxonomy → demo, opt-in)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_human_gut_kraken == true }}
+        continue-on-error: true
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+          GH_PUSH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
+        run: |
+          set -uo pipefail
+          OUT="$RUNNER_TEMP/kraken-output"; mkdir -p "$OUT"
+          echo "kraken2 DB: $KRAKEN2_DB"
+          ls -la "$KRAKEN2_DB"/*.k2d "$KRAKEN2_DB"/database150mers.kmer_distrib 2>/dev/null | head
+          # Seed the real human-gut reads (idempotent download) + run kraken2-bracken LOCAL on the
+          # human-gut CI order (the harness treats kraken2-bracken as order-scoped). kraken2Db +
+          # bracken read length come via --config-json (the read-cleaning pattern).
+          if npm run pipeline:e2e:runtime -- \
+              --set-data-base-path "$SEQDESK_DATA_DIR" \
+              --seed-example-dataset human-gut-prjeb54724 \
+              --pipeline-id kraken2-bracken \
+              --order-number DEV-HUMAN-PRJEB54724-001 \
+              --config-json "{\"kraken2Db\":\"$KRAKEN2_DB\",\"brackenReadLength\":150,\"brackenLevel\":\"S\",\"krona\":true}" \
+              --skip-slurm \
+              2>&1 | tee "$RUNNER_TEMP/kraken-e2e.log"; then
+            echo "kraken2-bracken: OK"
+          else
+            echo "kraken2-bracken: FAILED (see log)"
+          fi
+          # Collect the taxonomy outputs (skip nextflow work/ intermediates).
+          find "$SEQDESK_RUN_DIR" -type d -path '*/work' -prune -o \
+            -type f \( -iname '*.kraken2.report.txt' -o -iname '*.bracken.tsv' -o -iname '*.bracken.report.txt' \
+                       -o -iname '*.krona.html' -o -iname '*kraken*summary*' -o -iname '*bracken*summary*' \) -print 2>/dev/null \
+            | while IFS= read -r f; do
+                rel="${f#"$SEQDESK_RUN_DIR"/}"; safe="$(printf '%s' "$rel" | tr '/' '__')"
+                cp "$f" "$OUT/$safe" 2>/dev/null || true
+              done
+          NFILES="$(find "$OUT" -type f | wc -l | tr -d ' ')"
+          echo "collected $NFILES kraken/bracken/krona file(s):"
+          find "$OUT" -type f -printf '  %f\n' 2>/dev/null | sort | head -60
+          # quota-proof transport -> demo-human-gut-kraken branch
+          if [ "$NFILES" -gt 0 ]; then
+            PUSH_DIR="$RUNNER_TEMP/kraken-push"; rm -rf "$PUSH_DIR"; mkdir -p "$PUSH_DIR/reports"
+            cp "$OUT"/* "$PUSH_DIR/reports/" 2>/dev/null || true
+            printf 'Human-gut (PRJEB54724) kraken2-bracken taxonomy output\nrun=%s attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$PUSH_DIR/reports/RUN_INFO.txt"
+            ( cd "$PUSH_DIR"; git init -q
+              git config user.email "ci@seqdesk.org"; git config user.name "SeqDesk CI"
+              git checkout -q -b demo-human-gut-kraken; git add -A
+              git commit -q -m "human-gut kraken2-bracken taxonomy (run $GITHUB_RUN_ID)"
+              git push -q -f "https://x-access-token:${GH_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" demo-human-gut-kraken \
+                && echo "pushed $NFILES file(s) -> demo-human-gut-kraken branch" || echo "WARN: branch push failed" )
+          else
+            echo "WARN: no kraken output collected — nothing to push"
+          fi
           exit 0
 
       # read-cleaning UNDER SLURM (source-boot, local + SLURM). The LOCAL run builds detaxizer's
