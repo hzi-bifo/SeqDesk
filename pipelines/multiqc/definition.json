@@ -1,0 +1,83 @@
+{
+  "pipeline": "multiqc",
+  "name": "Study MultiQC",
+  "description": "Aggregate prior study QC outputs into a single MultiQC report",
+  "version": "0.1.0",
+  "url": "https://multiqc.info",
+  "authors": [
+    "SeqDesk"
+  ],
+  "inputs": [
+    {
+      "id": "qc_outputs",
+      "name": "Prior QC outputs",
+      "description": "QC output directories produced by earlier runs in the study (FastQC zips, seqkit TSVs, read-cleaning multiqc_data)",
+      "fileTypes": [
+        ".zip",
+        ".tsv",
+        ".txt",
+        ".json"
+      ],
+      "source": "sample_reads",
+      "sourceDescription": "Gathered output directories of prior QC runs in the same study"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "multiqc_report",
+      "name": "MultiQC report",
+      "description": "Aggregate study-level MultiQC HTML report",
+      "fromStep": "multiqc",
+      "fileTypes": [
+        ".html"
+      ],
+      "destination": "study_report",
+      "destinationDescription": "Stored as a study-level report and previewable in-app"
+    },
+    {
+      "id": "multiqc_data",
+      "name": "MultiQC data",
+      "description": "Parsed MultiQC data tables and metadata",
+      "fromStep": "multiqc",
+      "fileTypes": [
+        ".txt",
+        ".json"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as run artifacts for download"
+    }
+  ],
+  "steps": [
+    {
+      "id": "multiqc",
+      "name": "MultiQC",
+      "description": "Run MultiQC over the gathered QC output directory of the study",
+      "category": "reporting",
+      "dependsOn": [],
+      "processMatchers": [
+        "MULTIQC"
+      ],
+      "tools": [
+        "multiqc"
+      ],
+      "outputs": [
+        "multiqc_report",
+        "multiqc_data"
+      ]
+    }
+  ],
+  "parameterGroups": [
+    {
+      "name": "Reporting",
+      "description": "MultiQC report options",
+      "parameters": [
+        {
+          "name": "reportTitle",
+          "type": "string",
+          "description": "Title shown at the top of the MultiQC report",
+          "default": "Study MultiQC report"
+        }
+      ]
+    }
+  ]
+}

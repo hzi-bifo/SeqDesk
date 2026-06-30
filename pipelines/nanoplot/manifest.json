@@ -1,0 +1,137 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "nanoplot",
+    "name": "NanoPlot (Long-read QC)",
+    "version": "0.1.0",
+    "description": "Quality control of Oxford Nanopore / PacBio long reads with NanoPlot, producing an interactive HTML report and per-read statistics",
+    "website": "https://github.com/wdecoster/NanoPlot",
+    "provider": "SeqDesk"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "parsers": [
+      "parsers/nanostats.yaml"
+    ],
+    "readme": "README.md",
+    "scripts": {
+      "discoverOutputs": "scripts/discover-outputs.mjs"
+    }
+  },
+  "targets": {
+    "supported": [
+      "order"
+    ]
+  },
+  "sequencingCompatibility": {
+    "readLengthClass": "long",
+    "readLayouts": [
+      "single"
+    ],
+    "platformFamilies": [
+      "oxford-nanopore",
+      "pacbio"
+    ]
+  },
+  "inputs": [
+    {
+      "id": "reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": true
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "0.1.0",
+    "profiles": [
+      "conda"
+    ],
+    "runtime": {
+      "allowMacOsArmLocal": true
+    },
+    "defaultParams": {}
+  },
+  "outputs": [
+    {
+      "id": "sample_report",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "report",
+      "fromStep": "nanoplot",
+      "discovery": {
+        "pattern": "nanoplot/*_NanoPlot-report.html",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "sample_stats",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "nanoplot",
+      "discovery": {
+        "pattern": "nanoplot/*_NanoStats.txt",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "sample_reads_writeback",
+      "scope": "sample",
+      "destination": "sample_reads",
+      "type": "artifact",
+      "fromStep": "nanoplot",
+      "writeback": {
+        "target": "Read",
+        "mode": "merge",
+        "fields": {
+          "readCount1": "readCount1",
+          "avgQuality1": "avgQuality1"
+        }
+      },
+      "discovery": {
+        "pattern": "nanoplot/*_NanoStats.txt",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "summary_tsv",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "collect_stats",
+      "discovery": {
+        "pattern": "summary/nanoplot-summary.tsv"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Read",
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  },
+  "ui": {
+    "sampleResult": {
+      "columnLabel": "Long-read QC",
+      "emptyText": "Not computed",
+      "layout": "columns",
+      "values": [
+        {
+          "label": "Reads",
+          "path": "read.readCount1",
+          "whenPathExists": "read.file1"
+        },
+        {
+          "label": "Mean Q",
+          "path": "read.avgQuality1",
+          "whenPathExists": "read.file1"
+        }
+      ]
+    }
+  }
+}

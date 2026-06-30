@@ -1,0 +1,178 @@
+{
+  "pipeline": "kraken2-bracken",
+  "name": "Taxonomic Profiling (Kraken2 + Bracken)",
+  "description": "Per-sample taxonomic classification with Kraken2, abundance re-estimation with Bracken, and Krona visualization",
+  "version": "0.1.0",
+  "url": "https://github.com/DerrickWood/kraken2",
+  "minNextflowVersion": "23.04.0",
+  "inputs": [
+    {
+      "id": "reads",
+      "name": "Linked FASTQ reads",
+      "description": "Short-read FASTQ files linked to selected samples",
+      "fileTypes": [
+        ".fastq",
+        ".fastq.gz",
+        ".fq",
+        ".fq.gz"
+      ],
+      "source": "sample_reads",
+      "sourceDescription": "Read records linked to selected study or order samples"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "kraken2_report",
+      "name": "Kraken2 report",
+      "description": "Per-sample Kraken2 classification report",
+      "fromStep": "kraken2",
+      "fileTypes": [
+        ".txt"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for review and download"
+    },
+    {
+      "id": "bracken_abundance",
+      "name": "Bracken abundance",
+      "description": "Per-sample Bracken re-estimated abundance table",
+      "fromStep": "bracken",
+      "fileTypes": [
+        ".tsv"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact; top taxa are parsed into artifact metadata"
+    },
+    {
+      "id": "krona_html",
+      "name": "Krona chart",
+      "description": "Interactive per-sample Krona HTML visualization of the Bracken abundances",
+      "fromStep": "krona",
+      "fileTypes": [
+        ".html"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Previewable from the pipeline output page"
+    },
+    {
+      "id": "summary_tsv",
+      "name": "Summary TSV",
+      "description": "Run-level table of the top taxon per sample",
+      "fromStep": "summary",
+      "fileTypes": [
+        ".tsv"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for download"
+    }
+  ],
+  "steps": [
+    {
+      "id": "kraken2",
+      "name": "Classify Reads (Kraken2)",
+      "description": "Assign taxonomy to each read against the configured Kraken2 database.",
+      "category": "processing",
+      "dependsOn": [],
+      "processMatchers": [
+        "KRAKEN2_KRAKEN2"
+      ],
+      "tools": [
+        "kraken2"
+      ],
+      "outputs": [
+        "kraken2_report"
+      ]
+    },
+    {
+      "id": "bracken",
+      "name": "Estimate Abundance (Bracken)",
+      "description": "Re-estimate species/genus abundances from the Kraken2 report at the configured rank.",
+      "category": "processing",
+      "dependsOn": [
+        "kraken2"
+      ],
+      "processMatchers": [
+        "BRACKEN_BRACKEN"
+      ],
+      "tools": [
+        "bracken"
+      ],
+      "outputs": [
+        "bracken_abundance"
+      ]
+    },
+    {
+      "id": "krona",
+      "name": "Visualize (Krona)",
+      "description": "Render an interactive Krona chart of the Bracken abundances for each sample.",
+      "category": "reporting",
+      "dependsOn": [
+        "bracken"
+      ],
+      "processMatchers": [
+        "KRONA"
+      ],
+      "tools": [
+        "krona"
+      ],
+      "outputs": [
+        "krona_html"
+      ]
+    },
+    {
+      "id": "summary",
+      "name": "Collect Summary",
+      "description": "Aggregate the top taxon per sample into a run-level summary table.",
+      "category": "reporting",
+      "dependsOn": [
+        "bracken"
+      ],
+      "processMatchers": [
+        "COLLECT_SUMMARY"
+      ],
+      "tools": [],
+      "outputs": [
+        "summary_tsv"
+      ]
+    }
+  ],
+  "parameterGroups": [
+    {
+      "name": "Classification",
+      "description": "Kraken2 / Bracken parameters",
+      "parameters": [
+        {
+          "name": "confidence",
+          "type": "number",
+          "description": "Kraken2 confidence score threshold (0.0-1.0)",
+          "default": 0.0,
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        {
+          "name": "brackenReadLength",
+          "type": "integer",
+          "description": "Read length used to select the Bracken kmer distribution",
+          "default": 150
+        },
+        {
+          "name": "brackenLevel",
+          "type": "string",
+          "description": "Taxonomic rank for Bracken abundance estimation",
+          "default": "S",
+          "enum": [
+            "S",
+            "G",
+            "F"
+          ]
+        },
+        {
+          "name": "krona",
+          "type": "boolean",
+          "description": "Render an interactive Krona chart per sample",
+          "default": true
+        }
+      ]
+    }
+  ]
+}

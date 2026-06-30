@@ -1,0 +1,159 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "kraken2-bracken",
+    "name": "Taxonomic Profiling (Kraken2 + Bracken)",
+    "version": "0.1.0",
+    "description": "Classify short reads against a Kraken2 database, re-estimate species abundances with Bracken, and render an interactive Krona chart per sample",
+    "provider": "SeqDesk",
+    "website": "https://github.com/DerrickWood/kraken2"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md",
+    "parsers": [
+      "parsers/bracken.yaml"
+    ],
+    "scripts": {
+      "discoverOutputs": "scripts/discover-outputs.mjs"
+    }
+  },
+  "targets": {
+    "supported": [
+      "study",
+      "order"
+    ]
+  },
+  "sequencingCompatibility": {
+    "readLengthClass": "short",
+    "readLayouts": [
+      "single",
+      "paired"
+    ],
+    "platformFamilies": [
+      "illumina"
+    ]
+  },
+  "inputs": [
+    {
+      "id": "reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": true
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "0.1.0",
+    "profiles": [
+      "conda"
+    ],
+    "runtime": {
+      "allowMacOsArmConda": true
+    },
+    "defaultParams": {
+      "confidence": 0.0,
+      "brackenReadLength": 150,
+      "brackenLevel": "S",
+      "krona": true
+    },
+    "paramMap": {
+      "kraken2Db": "--kraken2_db",
+      "confidence": "--confidence",
+      "brackenReadLength": "--bracken_read_length",
+      "brackenLevel": "--bracken_level",
+      "krona": "--krona"
+    }
+  },
+  "outputs": [
+    {
+      "id": "kraken2_report",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "kraken2",
+      "discovery": {
+        "pattern": "kraken2/*.kraken2.report.txt",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "bracken_abundance",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "bracken",
+      "parsed": {
+        "from": "bracken_parser",
+        "matchBy": "sample_id",
+        "map": {
+          "topTaxon": "name",
+          "topFraction": "fraction_total_reads",
+          "topReads": "new_est_reads"
+        }
+      },
+      "discovery": {
+        "pattern": "bracken/*.bracken.tsv",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "krona_html",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "report",
+      "fromStep": "krona",
+      "result": {
+        "kind": "run_artifact",
+        "writebackPolicy": "none",
+        "preview": {
+          "label": "Krona chart",
+          "primary": true,
+          "previewable": true
+        }
+      },
+      "discovery": {
+        "pattern": "krona/*.krona.html",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "summary_tsv",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "summary",
+      "discovery": {
+        "pattern": "summary/kraken2-bracken-summary.tsv"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  },
+  "ui": {
+    "sampleResult": {
+      "columnLabel": "Taxonomic Profile",
+      "emptyText": "Not profiled",
+      "layout": "stack",
+      "values": [
+        {
+          "label": "Top taxon",
+          "path": "topTaxon",
+          "format": "text"
+        },
+        {
+          "label": "Fraction",
+          "path": "topFraction",
+          "format": "text"
+        }
+      ]
+    }
+  }
+}

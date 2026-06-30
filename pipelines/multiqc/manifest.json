@@ -1,0 +1,95 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "multiqc",
+    "name": "Study MultiQC",
+    "version": "0.1.0",
+    "description": "Aggregate the QC outputs of prior study runs (FastQC, seqkit, read-cleaning MultiQC data) into a single study-level MultiQC report",
+    "provider": "SeqDesk"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md",
+    "scripts": {
+      "discoverOutputs": "scripts/discover-outputs.mjs"
+    }
+  },
+  "targets": {
+    "supported": [
+      "study"
+    ]
+  },
+  "inputs": [
+    {
+      "id": "samples",
+      "scope": "sample",
+      "source": "sample.sampleId",
+      "required": true
+    },
+    {
+      "id": "study",
+      "scope": "study",
+      "source": "study.title",
+      "required": false
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "0.1.0",
+    "profiles": [
+      "conda"
+    ],
+    "runtime": {
+      "allowMacOsArmConda": true
+    },
+    "defaultParams": {
+      "report_title": "Study MultiQC report"
+    },
+    "paramMap": {
+      "reportTitle": "--report_title",
+      "qcDir": ""
+    }
+  },
+  "outputs": [
+    {
+      "id": "multiqc_report",
+      "scope": "study",
+      "destination": "study_report",
+      "type": "report",
+      "fromStep": "multiqc",
+      "result": {
+        "kind": "study_report",
+        "writebackPolicy": "none",
+        "preview": {
+          "label": "MultiQC report",
+          "primary": true,
+          "previewable": true
+        }
+      },
+      "discovery": {
+        "pattern": "multiqc/study-multiqc.html"
+      }
+    },
+    {
+      "id": "multiqc_data",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "multiqc",
+      "discovery": {
+        "pattern": "multiqc/multiqc_data/*"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Study",
+      "Sample",
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  }
+}

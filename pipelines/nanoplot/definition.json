@@ -1,0 +1,92 @@
+{
+  "pipeline": "nanoplot",
+  "name": "NanoPlot (Long-read QC)",
+  "description": "Quality control of long reads (Oxford Nanopore / PacBio) with NanoPlot",
+  "version": "0.1.0",
+  "url": "https://github.com/wdecoster/NanoPlot",
+  "inputs": [
+    {
+      "id": "sample_reads",
+      "name": "Linked long-read FASTQ files",
+      "description": "Long-read FASTQ files linked to order samples (single-end ONT/PacBio)",
+      "fileTypes": [
+        ".fastq",
+        ".fastq.gz",
+        ".fq",
+        ".fq.gz"
+      ],
+      "source": "sample_reads",
+      "sourceDescription": "Read records linked to the selected sequencing order"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "sample_report",
+      "name": "NanoPlot HTML report",
+      "description": "Interactive per-sample NanoPlot quality report",
+      "fromStep": "nanoplot",
+      "fileTypes": [
+        ".html"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for review and preview"
+    },
+    {
+      "id": "sample_stats",
+      "name": "NanoStats text",
+      "description": "Per-sample NanoStats.txt with summary metrics",
+      "fromStep": "nanoplot",
+      "fileTypes": [
+        ".txt"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for download"
+    },
+    {
+      "id": "summary_tsv",
+      "name": "Summary TSV",
+      "description": "Combined long-read statistics across all samples",
+      "fromStep": "collect_stats",
+      "fileTypes": [
+        ".tsv"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored as a run artifact for download"
+    }
+  ],
+  "steps": [
+    {
+      "id": "nanoplot",
+      "name": "Run NanoPlot",
+      "description": "Run NanoPlot on each sample's long reads to compute QC metrics and an HTML report",
+      "category": "qc",
+      "dependsOn": [],
+      "processMatchers": [
+        "NANOPLOT"
+      ],
+      "tools": [
+        "nanoplot"
+      ],
+      "outputs": [
+        "sample_report",
+        "sample_stats"
+      ]
+    },
+    {
+      "id": "collect_stats",
+      "name": "Collect statistics",
+      "description": "Merge per-sample NanoStats into a single summary table",
+      "category": "qc",
+      "dependsOn": [
+        "nanoplot"
+      ],
+      "processMatchers": [
+        "COLLECT_STATS"
+      ],
+      "tools": [],
+      "outputs": [
+        "summary_tsv"
+      ]
+    }
+  ]
+}
