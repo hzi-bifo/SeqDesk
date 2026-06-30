@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import Link from "next/link";
@@ -40,6 +41,9 @@ import {
   Plus,
   Search,
   Table2,
+  Redo2,
+  Undo2,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -48,6 +52,7 @@ import {
   FACILITY_SAMPLE_STATUS_LABELS,
   type FacilitySampleStatus,
 } from "@/lib/sequencing/constants";
+import { validateStudyTableCellValue } from "@/lib/studies/study-table-validation";
 
 type StudyTableColumnGroup =
   | "identity"
@@ -150,6 +155,67 @@ type TableDensity = "comfortable" | "compact";
 // One level of a multi-level (Excel-style) sort: column key + direction.
 type SortLevel = { key: string; dir: "asc" | "desc" };
 
+interface CellChange {
+  rowId: string;
+  rowLabel: string;
+  columnKey: string;
+  columnLabel: string;
+  before: string;
+  after: string;
+}
+
+interface ChangeBatch {
+  label: string;
+  changes: CellChange[];
+}
+
+interface ImportPreview {
+  fileName: string;
+  changes: CellChange[];
+  errors: string[];
+  unmappedColumns: string[];
+}
+
+const MAX_HISTORY_BATCHES = 50;
+
+function cellValidationKey(rowId: string, columnKey: string): string {
+  return `${rowId}\u001f${columnKey}`;
+}
+
+function isMultiCellClipboard(text: string): boolean {
+  return text.includes("\t") || text.includes("\n") || text.includes("\r");
+}
+
+function parseClipboardTable(text: string): string[][] {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const trimmed = normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
+  return trimmed.split("\n").map((line) => line.split("\t"));
+}
+
+function normalizeHeader(value: string): string {
+  return value
+    .replace(/\s*\*\s*$/, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function getWorkbookCellText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === "object") {
+    const richText = (value as { richText?: Array<{ text?: string }> }).richText;
+    if (Array.isArray(richText)) {
+      return richText.map((part) => part.text ?? "").join("").trim();
+    }
+    const formulaResult = (value as { result?: unknown }).result;
+    if (formulaResult !== undefined) return getWorkbookCellText(formulaResult);
+    const text = (value as { text?: unknown }).text;
+    if (text !== undefined) return String(text).trim();
+  }
+  return String(value).trim();
+}
+
 // A single inline-editable metadata cell, controlled by the table for spreadsheet-
 // style keyboard use: click or Enter to edit, Enter saves + moves down, Tab saves +
 // moves across, Esc cancels, arrows move between editable cells when not editing.
@@ -166,6 +232,8 @@ function EditableCell({
   onStartEdit,
   onStopEdit,
   onMove,
+  onPasteText,
+  validationError,
 }: {
   studyId: string;
   sampleId: string;
@@ -178,10 +246,13 @@ function EditableCell({
   onStartEdit: () => void;
   onStopEdit: () => void;
   onMove: (dRow: number, dCol: number, startEditing: boolean) => void;
+  onPasteText: (text: string) => void;
+  validationError?: string;
 }) {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [localError, setLocalError] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
   // True between an Enter/Tab commit and the resulting blur, so the blur that fires
   // as focus leaves doesn't PATCH the same value a second time.
@@ -215,35 +286,54 @@ function EditableCell({
     () => () => {
       const l = latest.current;
       if (l.editing && l.draft !== l.value) {
+        const validation = validateStudyTableCellValue(column, l.draft);
+        if (validation.error) return;
         fetch(`/api/studies/${studyId}/table`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sampleId,
             columnKey: l.columnKey,
-            value: l.draft,
+            value: validation.value,
           }),
         }).catch(() => {});
       }
     },
-    [studyId, sampleId]
+    [studyId, sampleId, column]
   );
 
   const commit = async (): Promise<boolean> => {
-    if (draft === value) return true;
+    const validation = validateStudyTableCellValue(column, draft);
+    if (validation.error) {
+      setFailed(true);
+      setLocalError(validation.error);
+      return false;
+    }
+    if (validation.value === value) {
+      setFailed(false);
+      setLocalError("");
+      setDraft(validation.value);
+      return true;
+    }
     setSaving(true);
     setFailed(false);
+    setLocalError("");
     try {
       const res = await fetch(`/api/studies/${studyId}/table`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sampleId, columnKey: column.key, value: draft }),
+        body: JSON.stringify({
+          sampleId,
+          columnKey: column.key,
+          value: validation.value,
+        }),
       });
       if (!res.ok) throw new Error("save failed");
-      onSaved(draft);
+      onSaved(validation.value);
       return true;
     } catch {
       setFailed(true);
+      setLocalError("Save failed");
       setDraft(value);
       return false;
     } finally {
@@ -261,6 +351,13 @@ function EditableCell({
           onStartEdit();
         }}
         onFocus={onActivate}
+        onPaste={(event) => {
+          const text = event.clipboardData.getData("text/plain");
+          if (!text) return;
+          event.preventDefault();
+          onActivate();
+          onPasteText(text);
+        }}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === "F2") {
             event.preventDefault();
@@ -279,16 +376,19 @@ function EditableCell({
             onMove(0, -1, false);
           }
         }}
-        title="Click or press Enter to edit"
+        title={localError || validationError || "Click or press Enter to edit"}
         className={cn(
           "-mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-left hover:bg-primary/5 focus:outline-none",
           active && "bg-primary/5 ring-1 ring-inset ring-primary/50",
-          failed && "text-destructive"
+          (failed || validationError) && "text-destructive"
         )}
       >
         <span className="truncate">
           {value || <span className="text-muted-foreground/40">—</span>}
         </span>
+        {(localError || validationError) && (
+          <AlertCircle className="h-3 w-3 flex-shrink-0 text-destructive" />
+        )}
         {saving && (
           <Loader2 className="h-3 w-3 flex-shrink-0 animate-spin text-muted-foreground" />
         )}
@@ -335,6 +435,17 @@ function EditableCell({
       else skipBlur.current = false;
     }
   };
+  const onEditorPaste = (
+    event: ReactClipboardEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >
+  ) => {
+    const text = event.clipboardData.getData("text/plain");
+    if (!text || !isMultiCellClipboard(text)) return;
+    event.preventDefault();
+    onStopEdit();
+    onPasteText(text);
+  };
 
   if (column.fieldType === "select" && column.options) {
     return (
@@ -344,7 +455,12 @@ function EditableCell({
         onChange={onChange}
         onBlur={onBlur}
         onKeyDown={onEditorKeyDown}
-        className={editorClass}
+        onPaste={onEditorPaste}
+        className={cn(
+          editorClass,
+          (localError || validationError) && "border-destructive"
+        )}
+        aria-invalid={Boolean(localError || validationError)}
       >
         <option value="">—</option>
         {column.options.map((option) => (
@@ -365,7 +481,12 @@ function EditableCell({
         onChange={onChange}
         onBlur={onBlur}
         onKeyDown={onEditorKeyDown}
-        className={editorClass}
+        onPaste={onEditorPaste}
+        className={cn(
+          editorClass,
+          (localError || validationError) && "border-destructive"
+        )}
+        aria-invalid={Boolean(localError || validationError)}
       />
     );
   }
@@ -389,7 +510,12 @@ function EditableCell({
       onChange={onChange}
       onBlur={onBlur}
       onKeyDown={onEditorKeyDown}
-      className={editorClass}
+      onPaste={onEditorPaste}
+      className={cn(
+        editorClass,
+        (localError || validationError) && "border-destructive"
+      )}
+      aria-invalid={Boolean(localError || validationError)}
     />
   );
 }
@@ -427,6 +553,7 @@ export default function StudyTablePage({
   const [bulkValue, setBulkValue] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkDone, setBulkDone] = useState(0);
+  const [bulkError, setBulkError] = useState("");
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   // Spreadsheet keyboard navigation: which cell is focused, and whether it's editing.
   const [activeCell, setActiveCell] = useState<{
@@ -434,6 +561,14 @@ export default function StudyTablePage({
     colKey: string;
   } | null>(null);
   const [cellEditing, setCellEditing] = useState(false);
+  const [undoStack, setUndoStack] = useState<ChangeBatch[]>([]);
+  const [redoStack, setRedoStack] = useState<ChangeBatch[]>([]);
+  const [tableActionBusy, setTableActionBusy] = useState(false);
+  const [tableActionError, setTableActionError] = useState("");
+  const [tableNotice, setTableNotice] = useState("");
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const hiddenKey = `seqdesk:study-table:${id}:hidden`;
   const densityKey = `seqdesk:study-table:${id}:density`;
@@ -642,20 +777,408 @@ export default function StudyTablePage({
     await refetch();
   };
 
-  // Reflect a saved edit in local state so the cell updates without a refetch.
-  const updateCell = (rowId: string, key: string, next: string) => {
+  const recordHistory = (batch: ChangeBatch) => {
+    if (batch.changes.length === 0) return;
+    setUndoStack((prev) => [...prev, batch].slice(-MAX_HISTORY_BATCHES));
+    setRedoStack([]);
+  };
+
+  const updateCells = (changes: CellChange[]) => {
+    if (changes.length === 0) return;
     setData((prev) =>
       prev
         ? {
             ...prev,
             rows: prev.rows.map((row) =>
-              row.id === rowId
-                ? { ...row, cells: { ...row.cells, [key]: next } }
+              changes.some((change) => change.rowId === row.id)
+                ? {
+                    ...row,
+                    cells: changes.reduce(
+                      (cells, change) =>
+                        change.rowId === row.id
+                          ? { ...cells, [change.columnKey]: change.after }
+                          : cells,
+                      row.cells
+                    ),
+                  }
                 : row
             ),
           }
         : prev
     );
+  };
+
+  const updateCell = (
+    row: StudyTableRow,
+    column: StudyTableColumn,
+    next: string
+  ) => {
+    const before = row.cells[column.key] ?? "";
+    if (before === next) return;
+    const change: CellChange = {
+      rowId: row.id,
+      rowLabel: row.cells._sampleId || row.id,
+      columnKey: column.key,
+      columnLabel: column.label,
+      before,
+      after: next,
+    };
+    updateCells([change]);
+    recordHistory({ label: "Cell edit", changes: [change] });
+    setTableNotice(`${column.label} updated for ${change.rowLabel}`);
+  };
+
+  const persistCellChanges = async (changes: CellChange[]) => {
+    const applied: CellChange[] = [];
+    for (const change of changes) {
+      const res = await fetch(`/api/studies/${id}/table`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sampleId: change.rowId,
+          columnKey: change.columnKey,
+          value: change.after,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        if (applied.length > 0) {
+          updateCells(applied);
+          await refetch();
+        }
+        throw new Error(
+          body?.error ||
+            `Failed to update ${change.rowLabel} / ${change.columnLabel}`
+        );
+      }
+      applied.push(change);
+    }
+  };
+
+  const applyCellChangeBatch = async (changes: CellChange[], label: string) => {
+    const meaningful = changes.filter((change) => change.before !== change.after);
+    if (meaningful.length === 0) {
+      setTableNotice("No changes to apply");
+      return true;
+    }
+    setTableActionBusy(true);
+    setTableActionError("");
+    setTableNotice("");
+    try {
+      await persistCellChanges(meaningful);
+      updateCells(meaningful);
+      recordHistory({ label, changes: meaningful });
+      setTableNotice(
+        `${label}: ${meaningful.length} cell${
+          meaningful.length === 1 ? "" : "s"
+        } updated`
+      );
+      return true;
+    } catch (err) {
+      setTableActionError(
+        err instanceof Error ? err.message : `Failed to apply ${label}`
+      );
+      return false;
+    } finally {
+      setTableActionBusy(false);
+    }
+  };
+
+  const pasteIntoCell = async (
+    rowId: string,
+    columnKey: string,
+    text: string
+  ) => {
+    if (tableActionBusy) return;
+    const startRow = navRowIds.indexOf(rowId);
+    const startCol = navColKeys.indexOf(columnKey);
+    if (startRow < 0 || startCol < 0) return;
+
+    const matrix = parseClipboardTable(text);
+    const changes: CellChange[] = [];
+    const errors: string[] = [];
+
+    matrix.forEach((clipboardRow, rowOffset) => {
+      clipboardRow.forEach((rawValue, colOffset) => {
+        const targetRowId = navRowIds[startRow + rowOffset];
+        const targetColumnKey = navColKeys[startCol + colOffset];
+        const rawText = rawValue.trim();
+        if (!targetRowId || !targetColumnKey) {
+          if (rawText) errors.push("Pasted data exceeds the visible table range");
+          return;
+        }
+
+        const targetRow = rowById.get(targetRowId);
+        const targetColumn = editableColumnByKey.get(targetColumnKey);
+        if (!targetRow || !targetColumn) return;
+
+        const validation = validateStudyTableCellValue(targetColumn, rawValue);
+        if (validation.error) {
+          errors.push(
+            `${targetRow.cells._sampleId || targetRow.id} / ${
+              targetColumn.label
+            }: ${validation.error}`
+          );
+          return;
+        }
+
+        changes.push({
+          rowId: targetRow.id,
+          rowLabel: targetRow.cells._sampleId || targetRow.id,
+          columnKey: targetColumn.key,
+          columnLabel: targetColumn.label,
+          before: targetRow.cells[targetColumn.key] ?? "",
+          after: validation.value,
+        });
+      });
+    });
+
+    if (errors.length > 0) {
+      setTableActionError([...new Set(errors)].slice(0, 5).join("; "));
+      setTableNotice("");
+      return;
+    }
+
+    await applyCellChangeBatch(changes, "Paste");
+  };
+
+  const undoLastChange = async () => {
+    const batch = undoStack[undoStack.length - 1];
+    if (!batch || tableActionBusy) return;
+
+    const reversed = batch.changes.map((change) => ({
+      ...change,
+      before: change.after,
+      after: change.before,
+    }));
+
+    setTableActionBusy(true);
+    setTableActionError("");
+    setTableNotice("");
+    try {
+      await persistCellChanges(reversed);
+      updateCells(reversed);
+      setUndoStack((prev) => prev.slice(0, -1));
+      setRedoStack((prev) => [...prev, batch].slice(-MAX_HISTORY_BATCHES));
+      setTableNotice(
+        `Undid ${batch.label}: ${batch.changes.length} cell${
+          batch.changes.length === 1 ? "" : "s"
+        }`
+      );
+    } catch (err) {
+      setTableActionError(
+        err instanceof Error ? err.message : `Failed to undo ${batch.label}`
+      );
+    } finally {
+      setTableActionBusy(false);
+    }
+  };
+
+  const redoLastChange = async () => {
+    const batch = redoStack[redoStack.length - 1];
+    if (!batch || tableActionBusy) return;
+
+    setTableActionBusy(true);
+    setTableActionError("");
+    setTableNotice("");
+    try {
+      await persistCellChanges(batch.changes);
+      updateCells(batch.changes);
+      setRedoStack((prev) => prev.slice(0, -1));
+      setUndoStack((prev) => [...prev, batch].slice(-MAX_HISTORY_BATCHES));
+      setTableNotice(
+        `Redid ${batch.label}: ${batch.changes.length} cell${
+          batch.changes.length === 1 ? "" : "s"
+        }`
+      );
+    } catch (err) {
+      setTableActionError(
+        err instanceof Error ? err.message : `Failed to redo ${batch.label}`
+      );
+    } finally {
+      setTableActionBusy(false);
+    }
+  };
+
+  const handleImportFile = async (file: File) => {
+    setImportBusy(true);
+    setTableActionError("");
+    setTableNotice("");
+    setImportPreview(null);
+
+    try {
+      const ExcelJS = await import("exceljs");
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(await file.arrayBuffer());
+
+      const sheet = workbook.getWorksheet("Study Samples") || workbook.worksheets[0];
+      if (!sheet) {
+        throw new Error("No worksheet found in the uploaded workbook");
+      }
+
+      const headerRow = sheet.getRow(1);
+      const rowIdHeader = normalizeHeader("SeqDesk Row ID");
+      const sampleIdHeader = normalizeHeader("Sample ID");
+      const editableHeaders = new Map<string, StudyTableColumn>();
+      const knownHeaders = new Set<string>([rowIdHeader]);
+      for (const column of columns) {
+        knownHeaders.add(normalizeHeader(column.label));
+        knownHeaders.add(normalizeHeader(column.key));
+        if (column.editable) {
+          editableHeaders.set(normalizeHeader(column.label), column);
+          editableHeaders.set(normalizeHeader(column.key), column);
+        }
+      }
+
+      let rowIdColumnNumber: number | null = null;
+      let sampleIdColumnNumber: number | null = null;
+      const headerMap = new Map<number, StudyTableColumn>();
+      const mappedColumnKeys = new Set<string>();
+      const errors: string[] = [];
+      const unmappedColumns: string[] = [];
+
+      for (let colNumber = 1; colNumber <= headerRow.cellCount; colNumber += 1) {
+        const headerText = getWorkbookCellText(headerRow.getCell(colNumber).value);
+        if (!headerText) continue;
+        const normalized = normalizeHeader(headerText);
+        if (normalized === rowIdHeader) {
+          rowIdColumnNumber = colNumber;
+          continue;
+        }
+        if (normalized === sampleIdHeader || normalized === "sampleid") {
+          sampleIdColumnNumber = colNumber;
+          continue;
+        }
+        const editableColumn = editableHeaders.get(normalized);
+        if (editableColumn) {
+          if (mappedColumnKeys.has(editableColumn.key)) {
+            errors.push(`${editableColumn.label} appears more than once`);
+            continue;
+          }
+          headerMap.set(colNumber, editableColumn);
+          mappedColumnKeys.add(editableColumn.key);
+        } else if (!knownHeaders.has(normalized)) {
+          unmappedColumns.push(headerText);
+        }
+      }
+
+      if (headerMap.size === 0) {
+        errors.push("No editable table columns matched the workbook headers");
+      }
+
+      const rowsBySampleId = new Map<string, StudyTableRow[]>();
+      for (const row of rows) {
+        const sampleId = (row.cells._sampleId || "").trim();
+        if (!sampleId) continue;
+        rowsBySampleId.set(sampleId, [...(rowsBySampleId.get(sampleId) || []), row]);
+      }
+
+      const changes: CellChange[] = [];
+      for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+        const worksheetRow = sheet.getRow(rowNumber);
+        let hasValue = false;
+        const maxColumn = Math.max(headerRow.cellCount, worksheetRow.cellCount);
+        for (let colNumber = 1; colNumber <= maxColumn; colNumber += 1) {
+          if (getWorkbookCellText(worksheetRow.getCell(colNumber).value)) {
+            hasValue = true;
+            break;
+          }
+        }
+        if (!hasValue) continue;
+
+        let targetRow: StudyTableRow | undefined;
+        const workbookRowId =
+          rowIdColumnNumber === null
+            ? ""
+            : getWorkbookCellText(worksheetRow.getCell(rowIdColumnNumber).value);
+        if (workbookRowId) {
+          targetRow = rowById.get(workbookRowId);
+          if (!targetRow) {
+            errors.push(`Row ${rowNumber}: SeqDesk Row ID does not belong to this study`);
+            continue;
+          }
+        } else if (sampleIdColumnNumber !== null) {
+          const sampleId = getWorkbookCellText(
+            worksheetRow.getCell(sampleIdColumnNumber).value
+          );
+          const matches = rowsBySampleId.get(sampleId) || [];
+          if (matches.length === 1) {
+            targetRow = matches[0];
+          } else if (matches.length > 1) {
+            errors.push(`Row ${rowNumber}: Sample ID "${sampleId}" is not unique`);
+            continue;
+          } else {
+            errors.push(`Row ${rowNumber}: Sample ID "${sampleId}" was not found`);
+            continue;
+          }
+        } else {
+          errors.push(`Row ${rowNumber}: no SeqDesk Row ID or Sample ID column found`);
+          continue;
+        }
+
+        headerMap.forEach((column, colNumber) => {
+          if (!targetRow) return;
+          const rawValue = getWorkbookCellText(worksheetRow.getCell(colNumber).value);
+          const validation = validateStudyTableCellValue(column, rawValue);
+          if (validation.error) {
+            errors.push(
+              `Row ${rowNumber} / ${targetRow.cells._sampleId || targetRow.id} / ${
+                column.label
+              }: ${validation.error}`
+            );
+            return;
+          }
+          changes.push({
+            rowId: targetRow.id,
+            rowLabel: targetRow.cells._sampleId || targetRow.id,
+            columnKey: column.key,
+            columnLabel: column.label,
+            before: targetRow.cells[column.key] ?? "",
+            after: validation.value,
+          });
+        });
+      }
+
+      setImportPreview({
+        fileName: file.name,
+        changes: changes.filter((change) => change.before !== change.after),
+        errors,
+        unmappedColumns: [...new Set(unmappedColumns)],
+      });
+    } catch (err) {
+      setTableActionError(
+        err instanceof Error ? err.message : "Failed to read workbook"
+      );
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
+  const applyImportPreview = async () => {
+    if (!importPreview || importPreview.errors.length > 0) return;
+    const ok = await applyCellChangeBatch(importPreview.changes, "Excel import");
+    if (ok) setImportPreview(null);
+  };
+
+  const handleTableShortcut = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!(event.metaKey || event.ctrlKey)) return;
+    const target = event.target as HTMLElement | null;
+    if (
+      target?.closest("input, textarea, select, [contenteditable='true']")
+    ) {
+      return;
+    }
+    const key = event.key.toLowerCase();
+    if (key === "z" && event.shiftKey) {
+      event.preventDefault();
+      void redoLastChange();
+    } else if (key === "z") {
+      event.preventDefault();
+      void undoLastChange();
+    } else if (key === "y") {
+      event.preventDefault();
+      void redoLastChange();
+    }
   };
 
   const mixsMatches = data.availableMixsFields
@@ -743,6 +1266,27 @@ export default function StudyTablePage({
   const navColKeys = renderColumns
     .filter((column) => column.editable && column.key !== ADD_MIXS_KEY)
     .map((column) => column.key);
+  const editableColumns = columns.filter((column) => column.editable);
+  const editableColumnByKey = new Map(
+    editableColumns.map((column) => [column.key, column])
+  );
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+  const validationByCell = new Map<string, string>();
+  for (const row of rows) {
+    for (const column of editableColumns) {
+      const validation = validateStudyTableCellValue(
+        column,
+        row.cells[column.key] ?? ""
+      );
+      if (validation.error) {
+        validationByCell.set(
+          cellValidationKey(row.id, column.key),
+          validation.error
+        );
+      }
+    }
+  }
+  const validationCount = validationByCell.size;
   // If the active cell's row/column has left the view (filtered out, hidden, or
   // sorted away), drop the stale pointer so navigation isn't trapped. Any pending
   // edit on that cell is persisted by the cell's own unmount handler.
@@ -881,7 +1425,6 @@ export default function StudyTablePage({
 
   // Bulk edit reuses the per-cell PATCH endpoint (sequential — a study's worth of
   // rows is gentle on the API; each PATCH re-validates the field server-side).
-  const editableColumns = columns.filter((column) => column.editable);
   const bulkColumn =
     editableColumns.find((column) => column.key === bulkColumnKey) || null;
 
@@ -890,23 +1433,32 @@ export default function StudyTablePage({
     const targets = [...displayRows];
     setBulkBusy(true);
     setBulkDone(0);
+    setBulkError("");
     try {
-      for (const row of targets) {
-        await fetch(`/api/studies/${id}/table`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sampleId: row.id,
-            columnKey: bulkColumn.key,
-            value: bulkValue,
-          }),
-        });
-        setBulkDone((done) => done + 1);
+      const validation = validateStudyTableCellValue(bulkColumn, bulkValue);
+      if (validation.error) {
+        setBulkError(validation.error);
+        return;
       }
-      await refetch();
+      const changes = targets.map((row) => ({
+        rowId: row.id,
+        rowLabel: row.cells._sampleId || row.id,
+        columnKey: bulkColumn.key,
+        columnLabel: bulkColumn.label,
+        before: row.cells[bulkColumn.key] ?? "",
+        after: validation.value,
+      }));
+      const meaningful = changes.filter((change) => change.before !== change.after);
+      setBulkDone(meaningful.length);
+      const ok = await applyCellChangeBatch(meaningful, "Bulk edit");
+      if (!ok) return;
       setBulkOpen(false);
       setBulkColumnKey("");
       setBulkValue("");
+    } catch (err) {
+      setBulkError(
+        err instanceof Error ? err.message : "Failed to apply bulk edit"
+      );
     } finally {
       setBulkBusy(false);
     }
@@ -934,6 +1486,11 @@ export default function StudyTablePage({
           {displayRows.length === 1 ? "" : "s"}. Filter the table first to target a
           subset.
         </p>
+        {bulkError && (
+          <p className="rounded border border-destructive/20 bg-destructive/5 px-2 py-1 text-xs text-destructive">
+            {bulkError}
+          </p>
+        )}
         <label className="block text-xs font-medium text-muted-foreground">
           Field
           <select
@@ -1237,6 +1794,60 @@ export default function StudyTablePage({
     </div>
   );
 
+  const undoRedoControls = (
+    <div className="inline-flex overflow-hidden rounded-md border">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 rounded-none border-r px-2"
+            disabled={undoStack.length === 0 || tableActionBusy}
+            onClick={undoLastChange}
+            aria-label="Undo last table change"
+          >
+            <Undo2 className="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Undo last table change</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 rounded-none px-2"
+            disabled={redoStack.length === 0 || tableActionBusy}
+            onClick={redoLastChange}
+            aria-label="Redo last table change"
+          >
+            <Redo2 className="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Redo last undone change</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+
+  const importButton = (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={rows.length === 0 || tableActionBusy || importBusy}
+      onClick={() => importInputRef.current?.click()}
+    >
+      {importBusy ? (
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      ) : (
+        <Upload className="mr-2 h-4 w-4" />
+      )}
+      Import XLSX
+    </Button>
+  );
+
   const toolbar = (
     <div className="flex flex-wrap items-center gap-2">
       <div className="relative">
@@ -1251,7 +1862,15 @@ export default function StudyTablePage({
       {columnsMenu}
       {statusMenu}
       {bulkPanel}
+      {importButton}
+      {undoRedoControls}
       {densityToggle}
+      {validationCount > 0 && (
+        <span className="inline-flex items-center gap-1 rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1 text-xs font-medium text-destructive">
+          <AlertCircle className="h-3.5 w-3.5" />
+          {validationCount} invalid cell{validationCount === 1 ? "" : "s"}
+        </span>
+      )}
       {isFiltered && (
         <span className="text-xs text-muted-foreground">
           {displayRows.length} of {rows.length}
@@ -1268,6 +1887,112 @@ export default function StudyTablePage({
       )}
     </div>
   );
+
+  const tableFeedback =
+    tableActionBusy || tableActionError || tableNotice ? (
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-sm",
+          tableActionError
+            ? "border-destructive/20 bg-destructive/5 text-destructive"
+            : "bg-muted/30 text-muted-foreground"
+        )}
+      >
+        {tableActionBusy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : tableActionError ? (
+          <AlertCircle className="h-4 w-4" />
+        ) : (
+          <Info className="h-4 w-4" />
+        )}
+        <span>
+          {tableActionBusy
+            ? "Updating table…"
+            : tableActionError || tableNotice}
+        </span>
+      </div>
+    ) : null;
+
+  const importPreviewPanel = importPreview ? (
+    <div
+      className={cn(
+        "space-y-3 rounded-lg border p-3 text-sm",
+        importPreview.errors.length > 0
+          ? "border-destructive/20 bg-destructive/5"
+          : "bg-muted/20"
+      )}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-medium">Excel import preview</div>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {importPreview.fileName} · {importPreview.changes.length} changed cell
+            {importPreview.changes.length === 1 ? "" : "s"}
+            {importPreview.unmappedColumns.length > 0
+              ? ` · ${importPreview.unmappedColumns.length} unmapped column${
+                  importPreview.unmappedColumns.length === 1 ? "" : "s"
+                }`
+              : ""}
+          </p>
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={
+              importPreview.errors.length > 0 ||
+              importPreview.changes.length === 0 ||
+              tableActionBusy
+            }
+            onClick={applyImportPreview}
+          >
+            Apply
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={tableActionBusy}
+            onClick={() => setImportPreview(null)}
+          >
+            Cancel
+          </Button>
+        </div>
+      </div>
+
+      {importPreview.errors.length > 0 && (
+        <div className="space-y-1 text-xs text-destructive">
+          {importPreview.errors.slice(0, 5).map((item, index) => (
+            <div key={`${item}-${index}`}>• {item}</div>
+          ))}
+          {importPreview.errors.length > 5 && (
+            <div>• {importPreview.errors.length - 5} more error(s)</div>
+          )}
+        </div>
+      )}
+
+      {importPreview.errors.length === 0 && importPreview.changes.length > 0 && (
+        <div className="space-y-1 text-xs text-muted-foreground">
+          {importPreview.changes.slice(0, 5).map((change, index) => (
+            <div key={`${change.rowId}-${change.columnKey}-${index}`}>
+              {change.rowLabel} / {change.columnLabel}: “{change.before || "—"}”
+              → “{change.after || "—"}”
+            </div>
+          ))}
+          {importPreview.changes.length > 5 && (
+            <div>{importPreview.changes.length - 5} more change(s)</div>
+          )}
+        </div>
+      )}
+
+      {importPreview.unmappedColumns.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Unmapped columns ignored: {importPreview.unmappedColumns.slice(0, 6).join(", ")}
+          {importPreview.unmappedColumns.length > 6 ? ", …" : ""}
+        </p>
+      )}
+    </div>
+  ) : null;
 
   // The grid renders headers ALWAYS (so an empty study still shows its columns +
   // per-column help), and a spanning placeholder row when there are no samples.
@@ -1417,12 +2142,18 @@ export default function StudyTablePage({
                     if (column.key === ADD_MIXS_KEY) {
                       return <td key={ADD_MIXS_KEY} className={cellPad} />;
                     }
+                    const validationError = column.editable
+                      ? validationByCell.get(cellValidationKey(row.id, column.key))
+                      : undefined;
                     return (
                     <td
                       key={column.key}
+                      title={validationError}
                       className={cn(
                         "whitespace-nowrap align-top",
                         cellPad,
+                        validationError &&
+                          "bg-destructive/5 ring-1 ring-inset ring-destructive/25",
                         index === 0 &&
                           cn("sticky left-0 z-10 font-medium", tint)
                       )}
@@ -1442,7 +2173,7 @@ export default function StudyTablePage({
                           sampleId={row.id}
                           column={column}
                           value={row.cells[column.key] ?? ""}
-                          onSaved={(next) => updateCell(row.id, column.key, next)}
+                          onSaved={(next) => updateCell(row, column, next)}
                           active={isActiveCell(row.id, column.key)}
                           editing={
                             cellEditing && isActiveCell(row.id, column.key)
@@ -1454,6 +2185,10 @@ export default function StudyTablePage({
                           }}
                           onStopEdit={() => setCellEditing(false)}
                           onMove={moveActiveCell}
+                          onPasteText={(text) =>
+                            void pasteIntoCell(row.id, column.key, text)
+                          }
+                          validationError={validationError}
                         />
                       ) : row.cells[column.key] ? (
                         row.cells[column.key]
@@ -1487,8 +2222,19 @@ export default function StudyTablePage({
 
   return (
     <>
+      <input
+        ref={importInputRef}
+        type="file"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          if (file) void handleImportFile(file);
+          event.currentTarget.value = "";
+        }}
+      />
       <PageContainer>
-        <div className="space-y-4">
+        <div className="space-y-4" onKeyDown={handleTableShortcut}>
           {/* Header */}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
@@ -1573,6 +2319,8 @@ export default function StudyTablePage({
           {/* Toolbar: filter + columns + status + density (the "Add samples"
               action lives in the table as a row) */}
           {toolbar}
+          {tableFeedback}
+          {importPreviewPanel}
 
           {grid("calc(100vh - 400px)")}
 
@@ -1582,7 +2330,10 @@ export default function StudyTablePage({
 
       {/* Fullscreen overlay — table at the full viewport width. */}
       {fullscreen && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+        <div
+          className="fixed inset-0 z-50 flex flex-col bg-background"
+          onKeyDown={handleTableShortcut}
+        >
           <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
             <div className="flex min-w-0 items-center gap-2">
               <Table2 className="h-5 w-5 flex-shrink-0 text-muted-foreground" />
@@ -1607,6 +2358,8 @@ export default function StudyTablePage({
           </div>
           <div className="space-y-2 border-b px-4 py-2">
             {toolbar}
+            {tableFeedback}
+            {importPreviewPanel}
             {legends}
           </div>
           <div className="flex-1 overflow-hidden p-4">

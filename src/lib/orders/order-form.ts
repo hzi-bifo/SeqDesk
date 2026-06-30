@@ -27,6 +27,12 @@ export interface LoadedOrderFormSchema {
   perSampleFields: FormFieldDefinition[];
 }
 
+interface LoadOrderFormSchemaOptions {
+  isFacilityAdmin?: boolean;
+  applyRoleFilter?: boolean;
+  applyModuleFilter?: boolean;
+}
+
 function filterFieldsForRole(
   fields: FormFieldDefinition[],
   isFacilityAdmin: boolean
@@ -41,9 +47,13 @@ function filterFieldsForRole(
  * and other surfaces (e.g. the study Table Overview) resolve order columns the same way.
  */
 export async function loadOrderFormSchema(
-  options: { isFacilityAdmin?: boolean } = {}
+  options: LoadOrderFormSchemaOptions = {}
 ): Promise<LoadedOrderFormSchema> {
-  const { isFacilityAdmin = false } = options;
+  const {
+    isFacilityAdmin = false,
+    applyRoleFilter = true,
+    applyModuleFilter = true,
+  } = options;
 
   const [config, siteSettings] = await Promise.all([
     db.orderFormConfig.findUnique({ where: { id: "singleton" } }),
@@ -59,9 +69,12 @@ export async function loadOrderFormSchema(
     const defaultFields = ensureOrderModuleDefaultFields(DEFAULT_FORM_SCHEMA.fields, {
       sequencingTech: isModuleEnabled(modulesConfig, "sequencing-tech"),
     });
+    const moduleFilteredFields = applyModuleFilter
+      ? filterFieldsByModules(defaultFields, modulesConfig)
+      : defaultFields;
     const filteredFields = filterFieldsForRole(
-      filterFieldsByModules(defaultFields, modulesConfig),
-      isFacilityAdmin
+      moduleFilteredFields,
+      applyRoleFilter ? isFacilityAdmin : true
     );
     return {
       fields: filteredFields,
@@ -92,9 +105,12 @@ export async function loadOrderFormSchema(
     fields,
     groups: Array.isArray(parsed) ? undefined : parsed.groups,
   });
+  const moduleFilteredFields = applyModuleFilter
+    ? filterFieldsByModules(normalizedSchema.fields, modulesConfig)
+    : normalizedSchema.fields;
   const filteredFields = filterFieldsForRole(
-    filterFieldsByModules(normalizedSchema.fields, modulesConfig),
-    isFacilityAdmin
+    moduleFilteredFields,
+    applyRoleFilter ? isFacilityAdmin : true
   );
   const enabledMixsChecklists = isModuleEnabled(modulesConfig, "mixs-metadata")
     ? parsed.enabledMixsChecklists || []

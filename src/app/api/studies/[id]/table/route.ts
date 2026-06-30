@@ -6,11 +6,13 @@ import {
   buildStudyTableData,
   EDITABLE_CORE_COLUMNS,
   EDITABLE_FIELD_TYPES,
-  loadStudyChecklistFieldNames,
+  loadStudyChecklistFields,
 } from "@/lib/studies/study-table";
 import { loadStudyFormSchema } from "@/lib/studies/schema";
 import { loadOrderFormSchema } from "@/lib/orders/order-form";
 import { parseJsonObject } from "@/lib/json-object";
+import { validateStudyTableCellValue } from "@/lib/studies/study-table-validation";
+import type { FormFieldDefinition } from "@/types/form-config";
 
 // GET the read-only "Table overview" model for a study (identity + status + the
 // per-sample metadata columns, one row per assigned sample).
@@ -79,6 +81,25 @@ function addedMixsColumnsOf(studyMetadata: string | null): string[] {
     : [];
 }
 
+function validateFieldValue(field: FormFieldDefinition, value: string) {
+  return validateStudyTableCellValue(
+    {
+      key: field.name,
+      label: field.label,
+      fieldType: field.type,
+      required: field.required,
+      options:
+        field.type === "select" && Array.isArray(field.options)
+          ? field.options.map((option) => ({
+              value: String(option.value ?? option.label ?? ""),
+              label: String(option.label ?? option.value ?? ""),
+            }))
+          : undefined,
+    },
+    value
+  );
+}
+
 // PATCH a single per-sample cell: { sampleId, columnKey, value }. The columnKey
 // (checklist:/custom:/core:) decides where the value is written; the field is
 // re-validated server-side against the role-filtered schema, so a client can only
@@ -144,29 +165,57 @@ export async function PATCH(
             { status: 400 }
           );
         }
+        const validation = validateFieldValue(field, value);
+        if (validation.error) {
+          return NextResponse.json({ error: validation.error }, { status: 400 });
+        }
+        const merged = { ...parseJsonObject(sample.checklistData) };
+        if (validation.value === "") delete merged[name];
+        else merged[name] = validation.value;
+        await db.sample.update({
+          where: { id: sampleId },
+          data: { checklistData: JSON.stringify(merged) },
+        });
+        return NextResponse.json({ success: true });
       } else if (isAddedMixs) {
         // An added MIxS column is only editable while it is a real, current MIxS
         // checklist field (so it can't be used to reach role-filtered/removed fields).
-        const checklistFields = await loadStudyChecklistFieldNames(study);
-        if (!checklistFields.has(name)) {
+        // Validate against that field so added columns get the same trimming, select
+        // label→value mapping and date handling as schema-backed fields.
+        const checklistField = (await loadStudyChecklistFields(study)).find(
+          (f) => f.name === name
+        );
+        if (!checklistField) {
           return NextResponse.json(
             { error: "Field is not editable" },
             { status: 400 }
           );
         }
-      } else {
-        return NextResponse.json(
-          { error: "Field is not editable" },
-          { status: 400 }
+        const validation = validateStudyTableCellValue(
+          {
+            key: checklistField.name,
+            label: checklistField.label,
+            fieldType: checklistField.type,
+            options: checklistField.options,
+          },
+          value
         );
+        if (validation.error) {
+          return NextResponse.json({ error: validation.error }, { status: 400 });
+        }
+        const merged = { ...parseJsonObject(sample.checklistData) };
+        if (validation.value === "") delete merged[name];
+        else merged[name] = validation.value;
+        await db.sample.update({
+          where: { id: sampleId },
+          data: { checklistData: JSON.stringify(merged) },
+        });
+        return NextResponse.json({ success: true });
       }
-      const merged = { ...parseJsonObject(sample.checklistData) };
-      if (value === "") delete merged[name];
-      else merged[name] = value;
-      await db.sample.update({
-        where: { id: sampleId },
-        data: { checklistData: JSON.stringify(merged) },
-      });
+      return NextResponse.json(
+        { error: "Field is not editable" },
+        { status: 400 }
+      );
     } else if (columnKey.startsWith("custom:")) {
       const name = columnKey.slice("custom:".length);
       const schema = await loadOrderFormSchema({ isFacilityAdmin });
@@ -177,9 +226,13 @@ export async function PATCH(
           { status: 400 }
         );
       }
+      const validation = validateFieldValue(field, value);
+      if (validation.error) {
+        return NextResponse.json({ error: validation.error }, { status: 400 });
+      }
       const merged = { ...parseJsonObject(sample.customFields) };
-      if (value === "") delete merged[name];
-      else merged[name] = value;
+      if (validation.value === "") delete merged[name];
+      else merged[name] = validation.value;
       await db.sample.update({
         where: { id: sampleId },
         data: { customFields: JSON.stringify(merged) },

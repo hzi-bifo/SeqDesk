@@ -289,23 +289,48 @@ interface FieldColumnSource {
  * checklist or it can't be resolved). Used to validate which fields may be added
  * as / edited through MIxS table columns, so only real checklist fields qualify.
  */
-export async function loadStudyChecklistFieldNames(study: {
+export interface StudyChecklistFieldDef {
+  name: string;
+  label: string;
+  type: string;
+  options?: Array<{ value: string; label: string }>;
+}
+
+export async function loadStudyChecklistFields(study: {
   checklistType: string | null;
   mixsVersion: number | null;
-}): Promise<Set<string>> {
-  if (!study.checklistType) return new Set();
+}): Promise<StudyChecklistFieldDef[]> {
+  if (!study.checklistType) return [];
   try {
     const ref = resolveChecklistRef(study.checklistType);
     const checklist = await getChecklistForStudy(db, {
       ...ref,
       version: study.mixsVersion,
     });
-    return checklist
-      ? new Set(checklist.fields.map((field) => field.name))
-      : new Set();
+    if (!checklist) return [];
+    return checklist.fields.map((field) => ({
+      name: field.name,
+      label: field.label,
+      type: field.type,
+      options: Array.isArray(field.options)
+        ? field.options.map((option) => ({
+            value: String(option.value),
+            label: String(option.label),
+          }))
+        : undefined,
+    }));
   } catch {
-    return new Set();
+    return [];
   }
+}
+
+export async function loadStudyChecklistFieldNames(study: {
+  checklistType: string | null;
+  mixsVersion: number | null;
+}): Promise<Set<string>> {
+  return new Set(
+    (await loadStudyChecklistFields(study)).map((field) => field.name)
+  );
 }
 
 /**
@@ -321,7 +346,14 @@ export async function buildStudyTableData(
   const study = await resolveStudy(idOrAlias);
   if (!study) return null;
 
-  const [studySchema, orderSchema, samples, settings] = await Promise.all([
+  const [
+    studySchema,
+    orderSchema,
+    studySchemaAllFields,
+    orderSchemaAllFields,
+    samples,
+    settings,
+  ] = await Promise.all([
     loadStudyFormSchema({
       studyId: study.id,
       isFacilityAdmin: options.isFacilityAdmin,
@@ -329,6 +361,17 @@ export async function buildStudyTableData(
       applyModuleFilter: true,
     }),
     loadOrderFormSchema({ isFacilityAdmin: options.isFacilityAdmin }),
+    loadStudyFormSchema({
+      studyId: study.id,
+      isFacilityAdmin: true,
+      applyRoleFilter: false,
+      applyModuleFilter: false,
+    }),
+    loadOrderFormSchema({
+      isFacilityAdmin: true,
+      applyRoleFilter: false,
+      applyModuleFilter: false,
+    }),
     db.sample.findMany({
       where: { studyId: study.id },
       orderBy: { createdAt: "asc" },
@@ -525,6 +568,31 @@ export async function buildStudyTableData(
   addSchemaFields(orderSchema.perSampleFields, "order");
   addSchemaFields(studySchema.perSampleFields, "study");
 
+  const visibleFieldNamesBySource = {
+    order: new Set(
+      orderSchema.perSampleFields
+        .filter((field) => field.visible !== false)
+        .map((field) => field.name)
+    ),
+    study: new Set(
+      studySchema.perSampleFields
+        .filter((field) => field.visible !== false)
+        .map((field) => field.name)
+    ),
+  };
+  const knownPerSampleFieldNamesBySource = {
+    order: new Set(
+      orderSchemaAllFields.fields
+        .filter((field) => field.perSample)
+        .map((field) => field.name)
+    ),
+    study: new Set(
+      studySchemaAllFields.fields
+        .filter((field) => field.perSample)
+        .map((field) => field.name)
+    ),
+  };
+
   const parsedSamples = samples.map((sample) => ({
     custom: parseJsonObject(sample.customFields),
     checklist: parseJsonObject(sample.checklistData),
@@ -539,6 +607,12 @@ export async function buildStudyTableData(
     const extras = new Set<string>();
     for (const parsed of parsedSamples) {
       for (const key of Object.keys(parsed[blob])) {
+        if (
+          knownPerSampleFieldNamesBySource[source].has(key) &&
+          !visibleFieldNamesBySource[source].has(key)
+        ) {
+          continue;
+        }
         const coreColumn = FIELD_TO_COLUMN_MAP[key];
         if (coreColumn && seen.has(`core:${coreColumn}`)) continue;
         const columnKey = `${blob}:${key}`;

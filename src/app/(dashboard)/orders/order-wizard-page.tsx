@@ -635,6 +635,12 @@ export function OrderWizardPage({
   const [availableStudies, setAvailableStudies] = useState<
     Array<{ id: string; title: string; checklistType: string | null }>
   >([]);
+  const studyParam = !isEditMode ? searchParams.get("study") : null;
+  const studyFromParamAvailable =
+    dynamicStudiesEnabled &&
+    !isEditMode &&
+    typeof studyParam === "string" &&
+    availableStudies.some((study) => study.id === studyParam);
 
   // Tech data for barcode resolution
   const [techKits, setTechKits] = useState<SequencingKit[]>([]);
@@ -1100,13 +1106,17 @@ export function OrderWizardPage({
   // Preselect a study when arriving from a study's "Add samples" (?study=<id>),
   // so the new order is associated with that study by default.
   useEffect(() => {
-    if (isEditMode || studyChoice !== null) return;
-    const studyParam = searchParams.get("study");
-    if (studyParam && availableStudies.some((s) => s.id === studyParam)) {
-      setStudyChoice("all");
-      setPrimaryStudyId(studyParam);
+    if (
+      isEditMode ||
+      studyChoice !== null ||
+      !studyFromParamAvailable ||
+      !studyParam
+    ) {
+      return;
     }
-  }, [searchParams, availableStudies, isEditMode, studyChoice]);
+    setStudyChoice("all");
+    setPrimaryStudyId(studyParam);
+  }, [isEditMode, studyChoice, studyFromParamAvailable, studyParam]);
 
   // Fetch tech data for barcode resolution (kits + barcode sets)
   useEffect(() => {
@@ -1370,7 +1380,7 @@ export function OrderWizardPage({
   // known (preselected by the effect above), so skip the study-association step
   // and open the wizard directly on the first form step.
   const studyPreselectedFromParam =
-    dynamicStudiesEnabled && !isEditMode && Boolean(searchParams.get("study"));
+    studyFromParamAvailable;
 
   const steps = [
     ...((dynamicStudiesEnabled && !isEditMode && !studyPreselectedFromParam)
@@ -2084,7 +2094,7 @@ export function OrderWizardPage({
           // that param so association doesn't depend on the preselect effect having
           // populated primaryStudyId before submit.
           const studyToAssociate =
-            primaryStudyId || (!isEditMode ? searchParams.get("study") : null);
+            primaryStudyId || (studyFromParamAvailable ? studyParam : null);
           if (studyToAssociate) {
             try {
               const samplesData = await samplesRes.json();

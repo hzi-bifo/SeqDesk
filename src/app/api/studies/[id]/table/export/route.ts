@@ -33,14 +33,36 @@ export async function GET(
     workbook.created = new Date();
 
     const sheet = workbook.addWorksheet("Study Samples");
-    sheet.columns = data.columns.map((column) => ({
-      header: column.label,
-      key: column.key,
-      width: column.kind === "field" ? 24 : 18,
-    }));
+    sheet.columns = [
+      { header: "SeqDesk Row ID", key: "_seqdeskRowId", width: 18 },
+      ...data.columns.map((column) => ({
+        header: column.label,
+        key: column.key,
+        width: column.kind === "field" ? 24 : 18,
+      })),
+    ];
+    sheet.getColumn(1).hidden = true;
     sheet.getRow(1).font = { bold: true };
     sheet.views = [{ state: "frozen", ySplit: 1 }];
-    sheet.addRows(data.rows.map((row) => row.cells));
+    sheet.addRows(
+      data.rows.map((row) => ({
+        _seqdeskRowId: row.id,
+        ...row.cells,
+      }))
+    );
+
+    data.columns.forEach((column, index) => {
+      if (!column.editable) return;
+      const worksheetColumn = sheet.getColumn(index + 2);
+      worksheetColumn.eachCell({ includeEmpty: true }, (cell, rowNumber) => {
+        if (rowNumber === 1) return;
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFF8FAFC" },
+        };
+      });
+    });
 
     if (data.info.length > 0) {
       const metaSheet = workbook.addWorksheet("Study Info");
