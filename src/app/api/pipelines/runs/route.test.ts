@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   createGenericAdapter: vi.fn(),
   mergePipelineDerivedConfig: vi.fn(),
   isDemoSession: vi.fn(),
+  getDemoFacilityWorkspaceUserIds: vi.fn(),
   supportsPipelineTarget: vi.fn(),
   db: {
     pipelineRun: {
@@ -83,6 +84,7 @@ vi.mock("@/lib/pipelines/metadata-validation", () => ({
 
 vi.mock("@/lib/demo/server", () => ({
   isDemoSession: mocks.isDemoSession,
+  getDemoFacilityWorkspaceUserIds: mocks.getDemoFacilityWorkspaceUserIds,
 }));
 
 vi.mock("@/lib/pipelines/target", () => ({
@@ -100,6 +102,7 @@ describe("GET /api/pipelines/runs", () => {
         role: "USER",
       },
     });
+    mocks.getDemoFacilityWorkspaceUserIds.mockResolvedValue([]);
     mocks.db.pipelineRun.findMany.mockResolvedValue([
       {
         id: "run-1",
