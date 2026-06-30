@@ -9,6 +9,7 @@ import {
   FlaskConical,
   HardDrive,
   Send,
+  Table2,
   Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -188,7 +189,7 @@ export function SidebarEntityNav({
   const isEnaRegistered =
     entityType === "study" && entityContext.entityData?.status === "PUBLISHED";
   const currentStudySubview =
-    pathname.match(/^\/studies\/[^/]+\/(facility|edit|metadata)$/)?.[1] ?? null;
+    pathname.match(/^\/studies\/[^/]+\/(facility|edit|metadata|table)$/)?.[1] ?? null;
   const currentStudySection =
     currentStudySubview === "facility" || searchParams.get("section") === "facility"
       ? "facility"
@@ -218,6 +219,7 @@ export function SidebarEntityNav({
 
   // ── Study nav items ──
   const studyItems: NavItem[] = [
+    { key: "table", label: "Table Overview", href: entityId ? `/studies/${entityId}/table` : undefined, icon: Table2, show: true },
     { key: "overview", label: "Overview", href: entityId ? `/studies/${entityId}` : undefined, icon: FileText, show: true },
     {
       key: "facility",
@@ -289,6 +291,7 @@ export function SidebarEntityNav({
         currentStudySubview === null &&
         (currentStudyTab === null || currentStudyTab === "overview" || currentStudyTab === "notes");
       if (item.key === "overview") return isStudyOverviewTab && currentStudySection === "overview";
+      if (item.key === "table") return currentStudySubview === "table";
       if (item.key === "facility") return currentStudySubview === "facility";
       if (item.key === "sequencing") {
         return currentStudyTab === "samples" || currentStudyTab === "reads";

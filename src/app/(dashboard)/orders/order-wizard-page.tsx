@@ -635,6 +635,12 @@ export function OrderWizardPage({
   const [availableStudies, setAvailableStudies] = useState<
     Array<{ id: string; title: string; checklistType: string | null }>
   >([]);
+  const studyParam = !isEditMode ? searchParams.get("study") : null;
+  const studyFromParamAvailable =
+    dynamicStudiesEnabled &&
+    !isEditMode &&
+    typeof studyParam === "string" &&
+    availableStudies.some((study) => study.id === studyParam);
 
   // Tech data for barcode resolution
   const [techKits, setTechKits] = useState<SequencingKit[]>([]);
@@ -1097,6 +1103,21 @@ export function OrderWizardPage({
     };
   }, [dynamicStudiesEnabled, isEditMode]);
 
+  // Preselect a study when arriving from a study's "Add samples" (?study=<id>),
+  // so the new order is associated with that study by default.
+  useEffect(() => {
+    if (
+      isEditMode ||
+      studyChoice !== null ||
+      !studyFromParamAvailable ||
+      !studyParam
+    ) {
+      return;
+    }
+    setStudyChoice("all");
+    setPrimaryStudyId(studyParam);
+  }, [isEditMode, studyChoice, studyFromParamAvailable, studyParam]);
+
   // Fetch tech data for barcode resolution (kits + barcode sets)
   useEffect(() => {
     if (!sequencingTechModuleEnabled) return;
@@ -1355,8 +1376,14 @@ export function OrderWizardPage({
     (f) => !f.groupId && f.type !== "mixs"
   );
 
+  // Arriving from a study's "Add samples" (?study=<id>) means the study is already
+  // known (preselected by the effect above), so skip the study-association step
+  // and open the wizard directly on the first form step.
+  const studyPreselectedFromParam =
+    studyFromParamAvailable;
+
   const steps = [
-    ...((dynamicStudiesEnabled && !isEditMode)
+    ...((dynamicStudiesEnabled && !isEditMode && !studyPreselectedFromParam)
       ? [
           {
             id: "_study",
@@ -2061,28 +2088,35 @@ export function OrderWizardPage({
         if (!samplesRes.ok) {
           // Order was created but samples failed - go to order detail anyway
           console.error("Failed to save samples");
-        } else if (dynamicStudiesEnabled && primaryStudyId) {
-          // Associate the whole order's samples with the chosen primary study.
-          try {
-            const samplesData = await samplesRes.json();
-            const createdSampleIds = (samplesData?.samples ?? [])
-              .map((s: { id: string }) => s.id)
-              .filter(Boolean);
-            if (createdSampleIds.length > 0) {
-              const assignRes = await fetch(
-                `/api/studies/${primaryStudyId}/samples`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ sampleIds: createdSampleIds }),
+        } else if (dynamicStudiesEnabled) {
+          // Associate the whole order's samples with the chosen study. When the
+          // wizard skipped the study step (arrived via ?study=<id>), fall back to
+          // that param so association doesn't depend on the preselect effect having
+          // populated primaryStudyId before submit.
+          const studyToAssociate =
+            primaryStudyId || (studyFromParamAvailable ? studyParam : null);
+          if (studyToAssociate) {
+            try {
+              const samplesData = await samplesRes.json();
+              const createdSampleIds = (samplesData?.samples ?? [])
+                .map((s: { id: string }) => s.id)
+                .filter(Boolean);
+              if (createdSampleIds.length > 0) {
+                const assignRes = await fetch(
+                  `/api/studies/${studyToAssociate}/samples`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ sampleIds: createdSampleIds }),
+                  }
+                );
+                if (!assignRes.ok) {
+                  console.error("Failed to associate samples with study");
                 }
-              );
-              if (!assignRes.ok) {
-                console.error("Failed to associate samples with study");
               }
+            } catch {
+              console.error("Failed to associate samples with study");
             }
-          } catch {
-            console.error("Failed to associate samples with study");
           }
         }
       }
