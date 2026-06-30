@@ -1408,6 +1408,7 @@ async function createDemoWorkspaceInternal(
         samples: {
           select: {
             id: true,
+            sampleAlias: true,
           },
         },
       },
@@ -1552,6 +1553,123 @@ async function createDemoWorkspaceInternal(
           size: BigInt(4096),
           producedByStepId: "megahit",
           metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJEB54724" }),
+        },
+      });
+    }
+    // ── kraken2-bracken run on the human-gut study — native taxonomy output ──
+    // Real Kraken2 + Bracken profiling of the 12 PRJEB54724 samples on the self-hosted
+    // runner (Standard kraken2 DB): a per-sample interactive Krona chart + a top-taxa
+    // summary, represented like a genuine run (PipelineRun + steps + per-sample artifacts).
+    const KRAKEN_TOP_TAXON: Record<string, { taxon: string; pct: string }> = {
+      "HGM-01": { taxon: "Clostridium perfringens", pct: "7.3" },
+      "HGM-02": { taxon: "Kingevirus communis", pct: "17.3" },
+      "HGM-03": { taxon: "Escherichia coli", pct: "9.9" },
+      "HGM-04": { taxon: "Norovirus norwalkense", pct: "24.6" },
+      "HGM-05": { taxon: "Bifidobacterium longum", pct: "9.8" },
+      "HGM-06": { taxon: "Blohavirus americanus", pct: "24.6" },
+      "HGM-07": { taxon: "Escherichia coli", pct: "10.8" },
+      "HGM-08": { taxon: "Escherichia coli", pct: "9.5" },
+      "HGM-09": { taxon: "Vescimonas fastidiosa", pct: "15.3" },
+      "HGM-10": { taxon: "Aurodevirus hiberniae", pct: "10.3" },
+      "HGM-11": { taxon: "Proteus mirabilis", pct: "16.3" },
+      "HGM-12": { taxon: "Segatella copri", pct: "7.4" },
+    };
+    const humanKrakenRun = await tx.pipelineRun.create({
+      data: {
+        runNumber: createRunNumber(prefix, "KRAKEN2-BRACKEN", 1),
+        pipelineId: "kraken2-bracken",
+        status: "completed",
+        progress: 100,
+        currentStep: "Completed",
+        studyId: humanStudy.id,
+        userId: researcher.id,
+        inputSampleIds: JSON.stringify(
+          (humanOrder.samples ?? []).map((sample) => sample.id)
+        ),
+        config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJEB54724", kraken2Db: "Standard", brackenLevel: "S" }),
+        runFolder: `${demoRoot}/runs/human-kraken2-bracken-demo`,
+        queuedAt: runQueuedAt,
+        startedAt: runStartedAt,
+        completedAt: runCompletedAt,
+        lastEventAt: runCompletedAt,
+        statusSource: "process",
+        results: JSON.stringify({
+          note: "Real Kraken2 + Bracken taxonomic profiling of the PRJEB54724 human-gut reads on the self-hosted runner.",
+        }),
+        queueStatus: "COMPLETED",
+        queueUpdatedAt: runCompletedAt,
+      },
+    });
+    await tx.pipelineResultSelection.create({
+      data: {
+        pipelineId: "kraken2-bracken",
+        targetKey: `study:${humanStudy.id}`,
+        studyId: humanStudy.id,
+        selectedRunId: humanKrakenRun.id,
+        selectedById: researcher.id,
+      },
+    });
+    for (const [stepId, stepName, off1, off2, tail] of [
+      ["kraken2", "Kraken2 classification", 0, 25, "Classified reads against the Standard Kraken2 DB."],
+      ["bracken", "Bracken abundance", 25, 35, "Re-estimated species-level abundances (Bracken)."],
+      ["krona", "Krona", 35, 40, "Rendered per-sample Krona composition charts."],
+    ] as const) {
+      await tx.pipelineRunStep.create({
+        data: {
+          pipelineRunId: humanKrakenRun.id,
+          stepId,
+          stepName,
+          status: "completed",
+          startedAt: new Date(runStartedAt.getTime() + off1 * 60 * 1000),
+          completedAt: new Date(runStartedAt.getTime() + off2 * 60 * 1000),
+          outputTail: tail,
+        },
+      });
+    }
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: humanKrakenRun.id,
+        eventType: "workflow_start",
+        status: "running",
+        source: "process",
+        message: "kraken2-bracken taxonomic profiling started.",
+        occurredAt: runStartedAt,
+      },
+    });
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: humanKrakenRun.id,
+        eventType: "workflow_complete",
+        status: "completed",
+        source: "process",
+        message: "Taxonomic profiling completed for 12 samples.",
+        occurredAt: runCompletedAt,
+      },
+    });
+    await tx.pipelineArtifact.create({
+      data: {
+        pipelineRunId: humanKrakenRun.id,
+        studyId: humanStudy.id,
+        type: "qc_report",
+        name: "Taxonomic profile (top taxa per sample)",
+        path: `${demoRoot}/runs/human-kraken2-bracken-demo/output/report/human-gut-kraken-summary.tsv`,
+        producedByStepId: "bracken",
+        metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJEB54724" }),
+      },
+    });
+    for (const sample of humanOrder.samples ?? []) {
+      const top = KRAKEN_TOP_TAXON[sample.sampleAlias ?? ""];
+      if (!top) continue;
+      await tx.pipelineArtifact.create({
+        data: {
+          pipelineRunId: humanKrakenRun.id,
+          studyId: humanStudy.id,
+          sampleId: sample.id,
+          type: "qc_report",
+          name: `Krona taxonomy — ${sample.sampleAlias} (top: ${top.taxon} ${top.pct}%)`,
+          path: `${demoRoot}/runs/human-kraken2-bracken-demo/output/krona/${sample.sampleAlias}.krona.html`,
+          producedByStepId: "krona",
+          metadata: JSON.stringify({ seeded: true, realData: true, topTaxon: top.taxon, topTaxonPercent: top.pct }),
         },
       });
     }
