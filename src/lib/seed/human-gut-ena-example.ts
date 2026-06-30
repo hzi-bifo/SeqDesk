@@ -118,18 +118,21 @@ export function buildHumanGutManifest() {
       orderNumber: HUMAN_GUT_ORDER_NUMBER,
       name: `Human gut shotgun metagenomes (${HUMAN_GUT_BIOPROJECT}, real ENA)`,
       status: "SUBMITTED",
-      instrumentModel: "Illumina NextSeq 550",
+      // ENA-valid instrument string EXACTLY (Webin-CLI rejects anything else; NextSeq models
+      // are listed WITHOUT the "Illumina " prefix, so "Illumina NextSeq 550" normalizes to
+      // "unspecified" and fails the read submission).
+      instrumentModel: "NextSeq 550",
       libraryStrategy: "WGS",
       librarySource: "METAGENOMIC",
       // Short paired-end Illumina WGS reads — what the MAG pipeline assembles.
       sequencingTech: {
         technologyId: "illumina-nextseq-550",
-        technologyName: "Illumina NextSeq 550",
+        technologyName: "NextSeq 550",
         platformFamily: "illumina",
         readLengthClass: "short",
         supportedReadLayouts: ["paired"],
         deviceId: "illumina-nextseq-550",
-        deviceName: "Illumina NextSeq 550",
+        deviceName: "NextSeq 550",
       },
       customFields: { run_type: "metagenomics", platform: "illumina", bioproject: HUMAN_GUT_BIOPROJECT },
     },
