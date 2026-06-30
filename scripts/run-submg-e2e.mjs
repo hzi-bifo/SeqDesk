@@ -551,6 +551,32 @@ async function main() {
       console.log(`Normalized ENA checklist attributes on ${normalized} sample(s).`);
     }
 
+    // ENA TEST remembers PROJECT + SAMPLE aliases on the submission account FOREVER (even
+    // after the 24h test-data expiry), so a fixed alias can be registered only once. The dummy
+    // flow uses per-run-unique aliases; a fixed-alias example-dataset study can't re-register.
+    // Make this run's study + sample aliases unique so the ENA registration always succeeds.
+    if (exampleDataset) {
+      const suffix = `-r${Date.now().toString(36)}`;
+      await prisma.study.update({
+        where: { id: study.id },
+        data: { alias: `${study.alias}${suffix}` },
+      });
+      study.alias = `${study.alias}${suffix}`;
+      for (const sample of study.samples) {
+        await prisma.sample.update({
+          where: { id: sample.id },
+          data: {
+            sampleId: `${sample.sampleId}${suffix}`,
+            sampleAlias: `${sample.sampleAlias || sample.sampleId}${suffix}`,
+          },
+        });
+        sample.sampleId = `${sample.sampleId}${suffix}`;
+      }
+      console.log(
+        `Made study + ${study.samples.length} sample aliases unique for ENA TEST (${suffix}).`,
+      );
+    }
+
     // ---- Register the study on ENA TEST (gets PRJ* + fresh testRegisteredAt) ----
     const submitResponse = await client.request("/api/admin/submissions", {
       method: "POST",
