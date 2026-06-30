@@ -1413,66 +1413,148 @@ async function createDemoWorkspaceInternal(
       },
     });
 
-    // ── Real MAG pipeline output for the human-gut study ──────────────
-    // The genuine MEGAHIT assembly produced by running the public pipelines on the
-    // real PRJEB54724 reads on the self-hosted runner (and submitted to the ENA test
-    // server: study PRJEB115757, run ERR17457595, assembly ERZ29675197). The report
-    // basename maps to the real file bundled under public/demo/pipeline/. MAG showcase
-    // run uses runNumber index 3 so it doesn't collide with the pilot-study MAG run.
-    const seedHumanShowcaseRun = async (
-      pipelineId: string,
-      artifactName: string,
-      reportBasename: string,
-      artifactType: string
-    ) => {
-      const run = await tx.pipelineRun.create({
+    // ── MAG run on the human-gut study — native pipeline output ───────
+    // Represented exactly like a real MAG run in SeqDesk (PipelineRun + steps + events +
+    // Assembly + Bin + report), so the demo shows how MAG output integrates natively — as
+    // if the pipeline had been run on this study. The assembly + its ENA accession are the
+    // genuine output from running MEGAHIT on the real PRJEB54724 reads on the self-hosted
+    // runner and submitting to the ENA test server (study PRJEB115757, run ERR17457595,
+    // assembly ERZ29675197). runNumber index 3 avoids colliding with the pilot MAG run.
+    const humanSample = humanOrder.samples?.[0];
+    const humanMagRun = await tx.pipelineRun.create({
+      data: {
+        runNumber: createRunNumber(prefix, "MAG", 3),
+        pipelineId: "mag",
+        status: "completed",
+        progress: 100,
+        currentStep: "Completed",
+        studyId: humanStudy.id,
+        userId: researcher.id,
+        inputSampleIds: JSON.stringify(
+          (humanOrder.samples ?? []).map((sample) => sample.id)
+        ),
+        config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJEB54724", assembler: "megahit" }),
+        runFolder: `${demoRoot}/runs/human-mag-demo`,
+        queuedAt: runQueuedAt,
+        startedAt: runStartedAt,
+        completedAt: runCompletedAt,
+        lastEventAt: runCompletedAt,
+        statusSource: "process",
+        results: JSON.stringify({
+          note: "MAG run on the real ENA PRJEB54724 human-gut reads (self-hosted runner); assembly submitted to the ENA test server.",
+        }),
+        queueStatus: "COMPLETED",
+        queueUpdatedAt: runCompletedAt,
+      },
+    });
+    await tx.pipelineResultSelection.create({
+      data: {
+        pipelineId: "mag",
+        targetKey: `study:${humanStudy.id}`,
+        studyId: humanStudy.id,
+        selectedRunId: humanMagRun.id,
+        selectedById: researcher.id,
+      },
+    });
+    await tx.pipelineRunStep.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        stepId: "fastp",
+        stepName: "Read QC",
+        status: "completed",
+        startedAt: runStartedAt,
+        completedAt: new Date(runStartedAt.getTime() + 20 * 60 * 1000),
+        outputTail: "Adapter + quality trimming of the 12 paired libraries.",
+      },
+    });
+    await tx.pipelineRunStep.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        stepId: "megahit",
+        stepName: "Assembly",
+        status: "completed",
+        startedAt: new Date(runStartedAt.getTime() + 20 * 60 * 1000),
+        completedAt: new Date(runStartedAt.getTime() + 75 * 60 * 1000),
+        outputTail: "MEGAHIT assembly: 503 contigs, 1.95 Mb, N50 6,158 bp.",
+      },
+    });
+    await tx.pipelineRunStep.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        stepId: "metabat2",
+        stepName: "Binning",
+        status: "completed",
+        startedAt: new Date(runStartedAt.getTime() + 75 * 60 * 1000),
+        completedAt: runCompletedAt,
+        outputTail: "Binning + bin QC over the assembled contigs.",
+      },
+    });
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        eventType: "workflow_start",
+        status: "running",
+        source: "process",
+        message: "MAG workflow started on the human-gut shotgun study.",
+        occurredAt: runStartedAt,
+      },
+    });
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        eventType: "process_complete",
+        processName: "megahit",
+        stepId: "megahit",
+        status: "completed",
+        source: "trace",
+        message: "MEGAHIT assembly finished (503 contigs, N50 6,158 bp).",
+        occurredAt: new Date(runStartedAt.getTime() + 75 * 60 * 1000),
+      },
+    });
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        eventType: "workflow_complete",
+        status: "completed",
+        source: "process",
+        message: "MAG run completed successfully.",
+        occurredAt: runCompletedAt,
+      },
+    });
+    if (humanSample) {
+      await tx.assembly.create({
         data: {
-          runNumber: createRunNumber(prefix, pipelineId.toUpperCase(), 3),
-          pipelineId,
-          status: "completed",
-          progress: 100,
-          currentStep: "Completed",
-          studyId: humanStudy.id,
-          userId: researcher.id,
-          inputSampleIds: JSON.stringify(
-            (humanOrder.samples ?? []).map((sample) => sample.id)
-          ),
-          config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJEB54724" }),
-          runFolder: `${demoRoot}/runs/human-${pipelineId}-demo`,
-          queuedAt: runQueuedAt,
-          startedAt: runStartedAt,
-          completedAt: runCompletedAt,
-          lastEventAt: runCompletedAt,
-          statusSource: "process",
-          results: JSON.stringify({
-            note: "Real ENA PRJEB54724 human-gut MAG assembly, run on the self-hosted runner and submitted to the ENA test server.",
-          }),
-          queueStatus: "COMPLETED",
-          queueUpdatedAt: runCompletedAt,
+          sampleId: humanSample.id,
+          assemblyName: "MEGAHIT assembly — 503 contigs, 1.95 Mb, N50 6,158 bp",
+          assemblyFile: `${demoRoot}/runs/human-mag-demo/output/Assembly/MEGAHIT/HGM-01.contigs.fa.gz`,
+          assemblyAccession: "ERZ29675197",
+          createdByPipelineRunId: humanMagRun.id,
+        },
+      });
+      await tx.bin.create({
+        data: {
+          sampleId: humanSample.id,
+          binName: "MetaBAT2 bin.1",
+          binFile: `${demoRoot}/runs/human-mag-demo/output/GenomeBinning/MetaBAT2/bin.1.fa`,
+          completeness: 91.4,
+          contamination: 2.7,
+          createdByPipelineRunId: humanMagRun.id,
         },
       });
       await tx.pipelineArtifact.create({
         data: {
-          pipelineRunId: run.id,
+          pipelineRunId: humanMagRun.id,
           studyId: humanStudy.id,
-          type: artifactType,
-          name: artifactName,
-          path: `${demoRoot}/runs/human-${pipelineId}-demo/output/report/${reportBasename}`,
+          sampleId: humanSample.id,
+          type: "qc_report",
+          name: "MAG assembly report",
+          path: `${demoRoot}/runs/human-mag-demo/output/report/human-gut-assembly-report.html`,
+          size: BigInt(4096),
+          producedByStepId: "megahit",
           metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJEB54724" }),
         },
       });
-      await tx.pipelineResultSelection.create({
-        data: {
-          pipelineId,
-          targetKey: `study:${humanStudy.id}`,
-          studyId: humanStudy.id,
-          selectedRunId: run.id,
-          selectedById: researcher.id,
-        },
-      });
-    };
-
-    await seedHumanShowcaseRun("mag", "MAG assembly (real ENA human-gut data)", "human-gut-assembly-report.html", "report");
+    }
 
     return {
       workspaceId: workspace.id,
