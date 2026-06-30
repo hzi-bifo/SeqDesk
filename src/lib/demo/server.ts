@@ -1372,7 +1372,7 @@ async function createDemoWorkspaceInternal(
         experimentAccessionNumber: `EXP-${a}`,
       };
     };
-    await tx.order.create({
+    const humanOrder = await tx.order.create({
       data: {
         orderNumber: createOrderNumber(prefix, 9),
         name: "PRJEB54724 human gut shotgun metagenomes (real ENA data)",
@@ -1404,7 +1404,75 @@ async function createDemoWorkspaceInternal(
           ],
         },
       },
+      include: {
+        samples: {
+          select: {
+            id: true,
+          },
+        },
+      },
     });
+
+    // ── Real MAG pipeline output for the human-gut study ──────────────
+    // The genuine MEGAHIT assembly produced by running the public pipelines on the
+    // real PRJEB54724 reads on the self-hosted runner (and submitted to the ENA test
+    // server: study PRJEB115757, run ERR17457595, assembly ERZ29675197). The report
+    // basename maps to the real file bundled under public/demo/pipeline/. MAG showcase
+    // run uses runNumber index 3 so it doesn't collide with the pilot-study MAG run.
+    const seedHumanShowcaseRun = async (
+      pipelineId: string,
+      artifactName: string,
+      reportBasename: string,
+      artifactType: string
+    ) => {
+      const run = await tx.pipelineRun.create({
+        data: {
+          runNumber: createRunNumber(prefix, pipelineId.toUpperCase(), 3),
+          pipelineId,
+          status: "completed",
+          progress: 100,
+          currentStep: "Completed",
+          studyId: humanStudy.id,
+          userId: researcher.id,
+          inputSampleIds: JSON.stringify(
+            (humanOrder.samples ?? []).map((sample) => sample.id)
+          ),
+          config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJEB54724" }),
+          runFolder: `${demoRoot}/runs/human-${pipelineId}-demo`,
+          queuedAt: runQueuedAt,
+          startedAt: runStartedAt,
+          completedAt: runCompletedAt,
+          lastEventAt: runCompletedAt,
+          statusSource: "process",
+          results: JSON.stringify({
+            note: "Real ENA PRJEB54724 human-gut MAG assembly, run on the self-hosted runner and submitted to the ENA test server.",
+          }),
+          queueStatus: "COMPLETED",
+          queueUpdatedAt: runCompletedAt,
+        },
+      });
+      await tx.pipelineArtifact.create({
+        data: {
+          pipelineRunId: run.id,
+          studyId: humanStudy.id,
+          type: artifactType,
+          name: artifactName,
+          path: `${demoRoot}/runs/human-${pipelineId}-demo/output/report/${reportBasename}`,
+          metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJEB54724" }),
+        },
+      });
+      await tx.pipelineResultSelection.create({
+        data: {
+          pipelineId,
+          targetKey: `study:${humanStudy.id}`,
+          studyId: humanStudy.id,
+          selectedRunId: run.id,
+          selectedById: researcher.id,
+        },
+      });
+    };
+
+    await seedHumanShowcaseRun("mag", "MAG assembly (real ENA human-gut data)", "human-gut-assembly-report.html", "report");
 
     return {
       workspaceId: workspace.id,
