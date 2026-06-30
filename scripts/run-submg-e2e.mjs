@@ -338,6 +338,22 @@ async function main() {
   // instead of dummy data. Env-gated: default behaviour (dummy data) is unchanged.
   const exampleDataset = process.env.SEQDESK_SUBMG_E2E_EXAMPLE_DATASET || null;
   if (exampleDataset) {
+    // The example-dataset extractor reads the RAW stored SiteSettings.dataBasePath (not the
+    // env-resolved value the GET above returns), so persist it explicitly first — otherwise
+    // the seed 500s with "Data base path is not configured" (the slurm-e2e does the same via
+    // --set-data-base-path).
+    const setPathRes = await client.request("/api/admin/settings/sequencing-files", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dataBasePath }),
+    });
+    if (!setPathRes.ok) {
+      fail(
+        `Failed to persist dataBasePath before example-dataset seed (${setPathRes.status})`,
+        summarizeBody(await setPathRes.text()),
+      );
+    }
+    console.log(`Persisted dataBasePath=${dataBasePath} to SiteSettings.`);
     console.log(`Seeding REAL example dataset '${exampleDataset}' (downloads reads)...`);
     const seedRes = await client.request(
       `/api/admin/seed/example-datasets/${exampleDataset}`,

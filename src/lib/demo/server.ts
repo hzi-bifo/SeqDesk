@@ -61,6 +61,20 @@ import {
   SAMPLE_MOUSE_07,
   SAMPLE_MOUSE_08,
   MOUSE_GUT_READS,
+  STUDY_HUMAN_GUT_PRJEB54724,
+  SAMPLE_HGUT_01,
+  SAMPLE_HGUT_02,
+  SAMPLE_HGUT_03,
+  SAMPLE_HGUT_04,
+  SAMPLE_HGUT_05,
+  SAMPLE_HGUT_06,
+  SAMPLE_HGUT_07,
+  SAMPLE_HGUT_08,
+  SAMPLE_HGUT_09,
+  SAMPLE_HGUT_10,
+  SAMPLE_HGUT_11,
+  SAMPLE_HGUT_12,
+  HUMAN_GUT_READS,
   type PlatformProfile,
   type SampleTemplate,
 } from "@/lib/seed/templates";
@@ -1302,6 +1316,95 @@ async function createDemoWorkspaceInternal(
     await seedMouseShowcaseRun("study-demo-report", "Study report (real ENA mouse-gut data)", "mouse-demo-report.html", "report");
     await seedMouseShowcaseRun("fastqc", "FastQC summary (real ENA mouse-gut data)", "mouse-fastqc-summary.tsv", "qc_report");
     await seedMouseShowcaseRun("fastq-checksum", "Checksum summary (real ENA mouse-gut data)", "mouse-checksum-summary.tsv", "report");
+
+    // ── Human gut shotgun metagenome — real ENA PRJEB54724 ──────────────
+    // A second real-data demo study: 12 public human faecal shotgun-metagenome
+    // libraries (Illumina paired WGS) where the MAG pipeline is meaningful and
+    // reads + assembly are submitted to the ENA test server on the runner.
+    const HUMAN_STUDY_FORM_ANSWERS: Record<string, string> = {
+      library_prep_kit: "Illumina DNA Prep",
+      sequencing_platform: "Illumina NextSeq 550",
+      target_sequencing_depth: "~0.5-0.8M read pairs per sample",
+      qc_pipeline_version: "MAG (MEGAHIT assembly + binning) -> ENA submission",
+      demultiplexing_strategy: "Dual-index barcodes, demultiplexed on-instrument (bcl2fastq)",
+    };
+    const humanStudy = await tx.study.create({
+      data: {
+        title: STUDY_HUMAN_GUT_PRJEB54724.titleBase,
+        alias: `${STUDY_HUMAN_GUT_PRJEB54724.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_HUMAN_GUT_PRJEB54724.description,
+        checklistType: STUDY_HUMAN_GUT_PRJEB54724.checklistType,
+        studyMetadata: JSON.stringify({
+          ...getStudyMetadata(
+            STUDY_HUMAN_GUT_PRJEB54724.principalInvestigator,
+            STUDY_HUMAN_GUT_PRJEB54724.abstract
+          ),
+          ...HUMAN_STUDY_FORM_ANSWERS,
+        }),
+        readyForSubmission: true,
+        readyAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
+        userId: researcher.id,
+      },
+    });
+    const humanStudyForm = normalizeStudyFormSchema({
+      fields: MOUSE_STUDY_FORM_FIELDS,
+      groups: getFixedStudySections(),
+    });
+    await tx.studyFormConfig.create({
+      data: {
+        studyId: humanStudy.id,
+        fields: JSON.stringify(humanStudyForm.fields),
+        groups: JSON.stringify(humanStudyForm.groups),
+        defaultsVersion: STUDY_FORM_DEFAULTS_VERSION,
+      },
+    });
+    const humanRead = (template: SampleTemplate) => {
+      const r = HUMAN_GUT_READS[template.sampleAlias];
+      const a = template.sampleAlias;
+      return {
+        file1: `${demoRoot}/human-gut-shotgun/reads/${a}_R1.fastq.gz`,
+        file2: `${demoRoot}/human-gut-shotgun/reads/${a}_R2.fastq.gz`,
+        checksum1: r.checksum1,
+        checksum2: r.checksum2,
+        readCount1: r.readCount,
+        readCount2: r.readCount,
+        runAccessionNumber: `RUN-${a}`,
+        experimentAccessionNumber: `EXP-${a}`,
+      };
+    };
+    await tx.order.create({
+      data: {
+        orderNumber: createOrderNumber(prefix, 9),
+        name: "PRJEB54724 human gut shotgun metagenomes (real ENA data)",
+        status: "COMPLETED",
+        statusUpdatedAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
+        numberOfSamples: 12,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
+        billingAddress: "SeqDesk Demo Workspace",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS),
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS, {
+          _projects: "PRJEB54724 human gut shotgun (real ENA data)",
+        }),
+        userId: researcher.id,
+        samples: {
+          create: [
+            buildSampleCreate(SAMPLE_HGUT_01, 9, 1, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_01) }),
+            buildSampleCreate(SAMPLE_HGUT_02, 9, 2, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_02) }),
+            buildSampleCreate(SAMPLE_HGUT_03, 9, 3, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_03) }),
+            buildSampleCreate(SAMPLE_HGUT_04, 9, 4, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_04) }),
+            buildSampleCreate(SAMPLE_HGUT_05, 9, 5, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_05) }),
+            buildSampleCreate(SAMPLE_HGUT_06, 9, 6, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_06) }),
+            buildSampleCreate(SAMPLE_HGUT_07, 9, 7, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_07) }),
+            buildSampleCreate(SAMPLE_HGUT_08, 9, 8, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_08) }),
+            buildSampleCreate(SAMPLE_HGUT_09, 9, 9, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_09) }),
+            buildSampleCreate(SAMPLE_HGUT_10, 9, 10, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_10) }),
+            buildSampleCreate(SAMPLE_HGUT_11, 9, 11, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_11) }),
+            buildSampleCreate(SAMPLE_HGUT_12, 9, 12, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_12) }),
+          ],
+        },
+      },
+    });
 
     return {
       workspaceId: workspace.id,
