@@ -90,11 +90,15 @@ function sha256OfFile(filePath: string): string {
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
 }
 
-function r1Name(run: string): string {
-  return `${run}_1.fastq.gz`;
+// Local FASTQ filenames are keyed by the (genericized) sample alias, NOT the real run
+// accession — so the pipelines (and the FastQC reports they emit, named after the FASTQ
+// basename) come out demo-labelled (e.g. MGB-01_R1_fastqc.html) and match the bundled
+// demo reports. The download URL still uses the real run accession (enaFastqUrls).
+function r1Name(sampleAlias: string): string {
+  return `${sampleAlias}_R1.fastq.gz`;
 }
-function r2Name(run: string): string {
-  return `${run}_2.fastq.gz`;
+function r2Name(sampleAlias: string): string {
+  return `${sampleAlias}_R2.fastq.gz`;
 }
 
 export function buildMouseGutManifest() {
@@ -137,19 +141,20 @@ export function buildMouseGutManifest() {
       checklistType: "host-associated",
     },
     samples: MOUSE_GUT_RUNS.map((r) => ({
-      // Use the run accession as the sample id so pipeline outputs name files by it
-      // (FastQC derives report names from the FASTQ basename, e.g. DRR099973_1_fastqc.html).
-      sampleId: r.run,
+      // Use the (genericized) sample alias as the sample id so pipeline outputs name files
+      // by it (FastQC derives report names from the FASTQ basename, e.g. MGB-01_R1_fastqc.html),
+      // keeping the CI reports demo-labelled and matching the bundled demo reports.
+      sampleId: r.sampleAlias,
       sampleAlias: r.sampleAlias,
-      sampleTitle: `${r.run} (${r.sampleAlias})`,
+      sampleTitle: `Mouse faecal sample ${r.sampleAlias}`,
       scientificName: MOUSE_GUT_BASE.scientificName,
       taxId: MOUSE_GUT_BASE.taxId,
       materialBodySite: "gut",
-      file1: `reads/${r1Name(r.run)}`,
-      file2: `reads/${r2Name(r.run)}`,
+      file1: `reads/${r1Name(r.sampleAlias)}`,
+      file2: `reads/${r2Name(r.sampleAlias)}`,
       dataClass: "raw",
       dataClassSource: "example_dataset",
-      classificationNote: `ENA ${MOUSE_GUT_BIOPROJECT} run ${r.run}.`,
+      classificationNote: `Demo mouse-gut sample ${r.sampleAlias}.`,
     })),
   };
 }
@@ -226,8 +231,8 @@ export async function seedMouseGutExampleDataset({
     `[mouse-gut] Downloading ${MOUSE_GUT_RUNS.length} ENA ${MOUSE_GUT_BIOPROJECT} read pairs to ${stageReadsDir}`,
   );
   for (const r of MOUSE_GUT_RUNS) {
-    await downloadTo(r.r1, path.join(stageReadsDir, r1Name(r.run)));
-    await downloadTo(r.r2, path.join(stageReadsDir, r2Name(r.run)));
+    await downloadTo(r.r1, path.join(stageReadsDir, r1Name(r.sampleAlias)));
+    await downloadTo(r.r2, path.join(stageReadsDir, r2Name(r.sampleAlias)));
     logger.log?.(`[mouse-gut] fetched ${r.run} (${r.sampleAlias})`);
   }
 

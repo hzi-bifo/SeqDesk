@@ -44,13 +44,13 @@ describe("mouse-gut PRJDB6165 example dataset", () => {
     expect(manifest.study.alias).toBe(MOUSE_GUT_STUDY_ALIAS);
     expect(manifest.samples).toHaveLength(8);
     for (const sample of manifest.samples) {
-      expect(sample.file1).toMatch(/^reads\/DRR\d+_1\.fastq\.gz$/);
-      expect(sample.file2).toMatch(/^reads\/DRR\d+_2\.fastq\.gz$/);
+      expect(sample.file1).toMatch(/^reads\/MGB-\d+_R1\.fastq\.gz$/);
+      expect(sample.file2).toMatch(/^reads\/MGB-\d+_R2\.fastq\.gz$/);
       expect(sample.file1).not.toBe(sample.file2);
       expect(sample.scientificName).toBe(MOUSE_GUT_BASE.scientificName);
       expect(sample.taxId).toBe(MOUSE_GUT_BASE.taxId);
-      // sampleId is the run accession so pipeline outputs name files by it
-      expect(sample.sampleId).toMatch(/^DRR\d+$/);
+      // sampleId is the genericized alias so pipeline outputs name files by it
+      expect(sample.sampleId).toMatch(/^MGB-\d+$/);
     }
     // sample ids are unique
     const ids = manifest.samples.map((s) => s.sampleId);

@@ -225,7 +225,7 @@ describe("demo workspace server helpers", () => {
     expect(mocks.db.orderFormConfig.update).toHaveBeenCalledTimes(1);
     expect(mocks.db.user.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.study.create).toHaveBeenCalledTimes(6);
-    expect(mocks.db.studyFormConfig.create).toHaveBeenCalledTimes(1);
+    expect(mocks.db.studyFormConfig.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.order.create).toHaveBeenCalledTimes(8);
     const draftOrder = mocks.db.order.create.mock.calls[0][0].data;
     const submittedOrder = mocks.db.order.create.mock.calls[1][0].data;

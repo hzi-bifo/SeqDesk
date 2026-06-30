@@ -70,6 +70,10 @@ import {
   IBD_STUDY_FORM_STUDY_VALUES,
 } from "@/lib/seed/ibd-study-form";
 import {
+  MOUSE_STUDY_FORM_FIELDS,
+  MOUSE_STUDY_FORM_ANSWERS,
+} from "@/lib/seed/mouse-study-form";
+import {
   getFixedStudySections,
   normalizeStudyFormSchema,
 } from "@/lib/studies/fixed-sections";
@@ -1080,33 +1084,53 @@ async function createDemoWorkspaceInternal(
         alias: `${STUDY_MOUSE_GUT_PRJDB6165.aliasSlug}-${prefix.toLowerCase()}`,
         description: STUDY_MOUSE_GUT_PRJDB6165.description,
         checklistType: STUDY_MOUSE_GUT_PRJDB6165.checklistType,
-        studyMetadata: JSON.stringify(
-          getStudyMetadata(
+        studyMetadata: JSON.stringify({
+          ...getStudyMetadata(
             STUDY_MOUSE_GUT_PRJDB6165.principalInvestigator,
             STUDY_MOUSE_GUT_PRJDB6165.abstract
-          )
-        ),
+          ),
+          ...MOUSE_STUDY_FORM_ANSWERS,
+        }),
         readyForSubmission: true,
         readyAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000),
         userId: researcher.id,
       },
     });
 
-    // Real ENA reads: real run/experiment accessions, md5 checksums and read
-    // counts. File basenames resolve to the bundled demo FastQC reports.
+    // Per-study dynamic questionnaire (the `dynamic-studies` module): technical
+    // sequencing/library/QC fields for the mouse demo study, mirroring the IBD study.
+    // The answers above (studyMetadata) populate these fields so the form renders filled.
+    const mouseStudyForm = normalizeStudyFormSchema({
+      fields: MOUSE_STUDY_FORM_FIELDS,
+      groups: getFixedStudySections(),
+    });
+    await tx.studyFormConfig.create({
+      data: {
+        studyId: mouseStudy.id,
+        fields: JSON.stringify(mouseStudyForm.fields),
+        groups: JSON.stringify(mouseStudyForm.groups),
+        defaultsVersion: STUDY_FORM_DEFAULTS_VERSION,
+      },
+    });
+
+    // Demo reads: identifiers are illustrative (RUN-/EXP-<alias>), but the md5
+    // checksums and read counts are the real values for the representative reads.
+    // File + FastQC basenames are keyed by the (genericized) sample alias and
+    // resolve to the bundled demo reports under public/demo/pipeline/.
     const mouseRead = (template: SampleTemplate) => {
       const r = MOUSE_GUT_READS[template.sampleAlias];
+      const a = template.sampleAlias;
       return {
-        file1: `${demoRoot}/mouse-gut-prjdb6165/reads/${r.run}_1.fastq.gz`,
-        file2: `${demoRoot}/mouse-gut-prjdb6165/reads/${r.run}_2.fastq.gz`,
+        file1: `${demoRoot}/mouse-gut-microbiome/reads/${a}_R1.fastq.gz`,
+        file2: `${demoRoot}/mouse-gut-microbiome/reads/${a}_R2.fastq.gz`,
         checksum1: r.checksum1,
         checksum2: r.checksum2,
         readCount1: r.readCount,
         readCount2: r.readCount,
-        runAccessionNumber: r.run,
-        experimentAccessionNumber: r.experiment,
-        fastqcReport1: `${demoRoot}/mouse-gut-prjdb6165/fastqc/${r.run}_R1_fastqc.html`,
-        fastqcReport2: `${demoRoot}/mouse-gut-prjdb6165/fastqc/${r.run}_R2_fastqc.html`,
+        runAccessionNumber: `RUN-${a}`,
+        experimentAccessionNumber: `EXP-${a}`,
+        fastqcReport1: `${demoRoot}/mouse-gut-microbiome/fastqc/${a}_R1_fastqc.html`,
+        fastqcReport2: `${demoRoot}/mouse-gut-microbiome/fastqc/${a}_R2_fastqc.html`,
       };
     };
 
