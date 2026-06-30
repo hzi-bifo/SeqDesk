@@ -248,6 +248,86 @@ describe("GET /api/studies/[id]/table", () => {
     expect(r2.cells["custom:sample_volume"]).toBe("");
   });
 
+  it("does not surface stored admin-only per-sample fields as extras to researchers", async () => {
+    mocks.getServerSession.mockResolvedValueOnce(researcherSession("user-1"));
+
+    const publicOrderField = {
+      name: "sample_volume",
+      label: "Volume",
+      type: "number",
+      visible: true,
+      perSample: true,
+    };
+    const adminOrderField = {
+      name: "facility_sample_qc_result",
+      label: "Sample QC Result",
+      type: "select",
+      visible: true,
+      perSample: true,
+      adminOnly: true,
+    };
+
+    mocks.loadOrderFormSchema
+      .mockResolvedValueOnce({
+        fields: [publicOrderField],
+        groups: [],
+        version: 1,
+        enabledMixsChecklists: [],
+        perSampleFields: [publicOrderField],
+      })
+      .mockResolvedValueOnce({
+        fields: [publicOrderField, adminOrderField],
+        groups: [],
+        version: 1,
+        enabledMixsChecklists: [],
+        perSampleFields: [publicOrderField, adminOrderField],
+      });
+
+    mocks.db.sample.findMany.mockResolvedValueOnce([
+      {
+        id: "s1",
+        sampleId: "S-1",
+        sampleAlias: null,
+        sampleTitle: null,
+        sampleDescription: null,
+        scientificName: null,
+        taxId: null,
+        sampleAccessionNumber: null,
+        checklistData: null,
+        customFields: JSON.stringify({
+          sample_volume: "5",
+          facility_sample_qc_result: "PASS",
+        }),
+        facilityStatus: "WAITING",
+        biosampleNumber: null,
+        createdAt: new Date("2024-01-01T00:00:00Z"),
+        updatedAt: new Date("2024-01-01T00:00:00Z"),
+        reads: [],
+        assemblies: [],
+        order: {
+          id: "o1",
+          orderNumber: "ORD-1",
+          name: null,
+          platform: null,
+          instrumentModel: null,
+          libraryStrategy: null,
+          librarySource: null,
+          librarySelection: null,
+          customFields: null,
+        },
+      },
+    ]);
+
+    const res = await GET(req(), { params });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.columns.map((column: { key: string }) => column.key)).not.toContain(
+      "custom:facility_sample_qc_result"
+    );
+    expect(body.rows[0].cells["custom:facility_sample_qc_result"]).toBeUndefined();
+  });
+
   it("groups not-per-sample info into a Study panel and a per-order Sequencing panel", async () => {
     const res = await GET(req(), { params });
     const body = await res.json();
@@ -348,6 +428,45 @@ describe("PATCH /api/studies/[id]/table", () => {
     expect(JSON.parse(arg.data.customFields)).toEqual({ sample_volume: "9" });
   });
 
+  it("rejects invalid values before updating a cell", async () => {
+    const res = await PATCH(
+      patchReq({ sampleId: "s1", columnKey: "custom:sample_volume", value: "abc" }),
+      { params }
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Enter a valid number" });
+    expect(mocks.db.sample.update).not.toHaveBeenCalled();
+  });
+
+  it("normalizes select labels to stored option values", async () => {
+    mocks.loadOrderFormSchema.mockResolvedValueOnce({
+      fields: [],
+      groups: [],
+      version: 1,
+      enabledMixsChecklists: [],
+      perSampleFields: [
+        {
+          name: "sample_type",
+          label: "Sample Type",
+          type: "select",
+          visible: true,
+          options: [{ value: "soil", label: "Soil" }],
+        },
+      ],
+    });
+
+    const res = await PATCH(
+      patchReq({ sampleId: "s1", columnKey: "custom:sample_type", value: "Soil" }),
+      { params }
+    );
+    expect(res.status).toBe(200);
+    const arg = mocks.db.sample.update.mock.calls[0][0];
+    expect(JSON.parse(arg.data.customFields)).toEqual({
+      sample_volume: "1",
+      sample_type: "soil",
+    });
+  });
+
   it("updates a whitelisted core sample column", async () => {
     const res = await PATCH(
       patchReq({ sampleId: "s1", columnKey: "core:sampleTitle", value: "New title" }),
@@ -376,5 +495,167 @@ describe("PATCH /api/studies/[id]/table", () => {
     );
     expect(res.status).toBe(400);
     expect(mocks.db.sample.update).not.toHaveBeenCalled();
+  });
+
+  describe("added MIxS columns / authorization", () => {
+    // A study whose stored metadata advertises extra MIxS columns the user added
+    // from the "+ Add MIxS field" picker. The schema (perSampleFields) does NOT
+    // list these, so `field` is undefined and the route falls to the isAddedMixs
+    // branch, which re-checks them against the live checklist.
+    function studyWithMixsColumns(columns: string[]) {
+      return {
+        id: "study-1",
+        title: "Study One",
+        alias: null,
+        userId: "user-1",
+        checklistType: "soil",
+        mixsVersion: null,
+        studyMetadata: JSON.stringify({
+          study_abstract: "An abstract",
+          _mixsColumns: columns,
+        }),
+      };
+    }
+
+    it("accepts a valid added-MIxS edit and writes the normalized value", async () => {
+      mocks.db.study.findUnique.mockResolvedValueOnce(
+        studyWithMixsColumns(["depth"])
+      );
+      mocks.getChecklistForStudy.mockResolvedValueOnce({
+        fields: [{ name: "depth", label: "Depth", type: "number", visible: true }],
+      });
+
+      const res = await PATCH(
+        patchReq({ sampleId: "s1", columnKey: "checklist:depth", value: "12" }),
+        { params }
+      );
+      expect(res.status).toBe(200);
+      const arg = mocks.db.sample.update.mock.calls[0][0];
+      expect(arg.where).toEqual({ id: "s1" });
+      const stored = JSON.parse(arg.data.checklistData);
+      expect(stored.depth).toBe("12");
+    });
+
+    it("rejects an invalid value for an added-MIxS field", async () => {
+      mocks.db.study.findUnique.mockResolvedValueOnce(
+        studyWithMixsColumns(["depth"])
+      );
+      mocks.getChecklistForStudy.mockResolvedValueOnce({
+        fields: [{ name: "depth", label: "Depth", type: "number", visible: true }],
+      });
+
+      const res = await PATCH(
+        patchReq({ sampleId: "s1", columnKey: "checklist:depth", value: "abc" }),
+        { params }
+      );
+      expect(res.status).toBe(400);
+      expect(mocks.db.sample.update).not.toHaveBeenCalled();
+    });
+
+    it("normalizes an added-MIxS select label to its stored option value", async () => {
+      mocks.db.study.findUnique.mockResolvedValueOnce(
+        studyWithMixsColumns(["depth"])
+      );
+      mocks.getChecklistForStudy.mockResolvedValueOnce({
+        fields: [
+          {
+            name: "depth",
+            label: "Depth",
+            type: "select",
+            visible: true,
+            options: [
+              { value: "shallow", label: "Shallow" },
+              { value: "deep", label: "Deep" },
+            ],
+          },
+        ],
+      });
+
+      const res = await PATCH(
+        patchReq({ sampleId: "s1", columnKey: "checklist:depth", value: "Deep" }),
+        { params }
+      );
+      expect(res.status).toBe(200);
+      const arg = mocks.db.sample.update.mock.calls[0][0];
+      expect(JSON.parse(arg.data.checklistData).depth).toBe("deep");
+    });
+
+    it("rejects an added-MIxS column that is no longer a current checklist field", async () => {
+      mocks.db.study.findUnique.mockResolvedValueOnce(
+        studyWithMixsColumns(["ghost"])
+      );
+      // The live checklist no longer has "ghost".
+      mocks.getChecklistForStudy.mockResolvedValueOnce({
+        fields: [{ name: "depth", label: "Depth", type: "number", visible: true }],
+      });
+
+      const res = await PATCH(
+        patchReq({ sampleId: "s1", columnKey: "checklist:ghost", value: "x" }),
+        { params }
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "Field is not editable" });
+      expect(mocks.db.sample.update).not.toHaveBeenCalled();
+    });
+
+    it("clears a checklist key when the value is empty (deletes, not blanks)", async () => {
+      // The sample already stores collection_date; an empty PATCH should remove it
+      // while keeping the rest of the blob intact.
+      const res = await PATCH(
+        patchReq({ sampleId: "s1", columnKey: "checklist:collection_date", value: "" }),
+        { params }
+      );
+      expect(res.status).toBe(200);
+      const arg = mocks.db.sample.update.mock.calls[0][0];
+      const stored = JSON.parse(arg.data.checklistData);
+      expect(stored).not.toHaveProperty("collection_date");
+      expect(stored).toEqual({ keep: "x" });
+    });
+
+    it("lets a non-admin owner edit an editable field", async () => {
+      mocks.getServerSession.mockResolvedValueOnce(researcherSession("user-1"));
+      // study.userId is "user-1" (the owner) in the default findUnique mock.
+      const res = await PATCH(
+        patchReq({ sampleId: "s1", columnKey: "checklist:collection_date", value: "2025-06-06" }),
+        { params }
+      );
+      expect(res.status).toBe(200);
+      const arg = mocks.db.sample.update.mock.calls[0][0];
+      expect(JSON.parse(arg.data.checklistData)).toEqual({
+        keep: "x",
+        collection_date: "2025-06-06",
+      });
+    });
+
+    it("rejects a non-admin owner editing an admin-only (role-filtered) field", async () => {
+      mocks.getServerSession.mockResolvedValueOnce(researcherSession("user-1"));
+      // Simulate role filtering: the field only appears when isFacilityAdmin is true.
+      // For a non-admin the schema omits it, and it is not an added MIxS column, so
+      // the request falls through to the final "Field is not editable".
+      mocks.loadStudyFormSchema.mockImplementationOnce(async (args) => ({
+        fields: [],
+        studyFields: [],
+        perSampleFields: args?.isFacilityAdmin
+          ? [
+              {
+                name: "facility_only_field",
+                label: "Facility Only",
+                type: "text",
+                visible: true,
+              },
+            ]
+          : [],
+        groups: [],
+        modules: { mixs: false, sampleAssociation: false, funding: false },
+      }));
+
+      const res = await PATCH(
+        patchReq({ sampleId: "s1", columnKey: "checklist:facility_only_field", value: "x" }),
+        { params }
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "Field is not editable" });
+      expect(mocks.db.sample.update).not.toHaveBeenCalled();
+    });
   });
 });
