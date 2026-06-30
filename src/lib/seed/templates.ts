@@ -963,3 +963,324 @@ export const MOUSE_GUT_READS: Record<string, { run: string; experiment: string; 
   "MGB-07": { run: "DRR099979", experiment: "DRX093423", checksum1: "589fe5ca3a652e576767bfb23c719c7e", checksum2: "6a6de694afc521f28cec2cd1421b90f2", readCount: 99911 },
   "MGB-08": { run: "DRR099980", experiment: "DRX093424", checksum1: "91527786815d17d5486b2289aac63389", checksum2: "b4e0fa748c8befdfc9dca2322c73495c", readCount: 90527 },
 };
+// ── Human gut shotgun metagenome — real ENA study PRJEB54724 ─────────────────
+// Real public Dutch human faecal shotgun-metagenome libraries (Illumina WGS,
+// paired-end). Sample/run/biosample accessions, collection dates, country and
+// md5 checksums are the REAL ENA values. A shotgun metagenome so the MAG pipeline
+// (assembly + binning) is meaningful; submission-ready for ENA (taxId + collection
+// date + geographic location present on every sample).
+export const STUDY_HUMAN_GUT_PRJEB54724: StudyTemplate = {
+  titleBase: "Human Gut Shotgun Metagenomes (PRJEB54724)",
+  aliasSlug: "human-gut-shotgun-prjeb54724",
+  description:
+    "Real public human faecal shotgun-metagenome study (ENA PRJEB54724, Netherlands): twelve Illumina WGS libraries suitable for metagenome assembly (MAG). Accessions, collection dates and checksums are the real ENA values.",
+  checklistType: "host-associated",
+  principalInvestigator: "ENA PRJEB54724 (public)",
+  abstract:
+    "Twelve real public human gut shotgun-metagenome libraries (Illumina paired-end WGS, ENA PRJEB54724, collected in the Netherlands 2016-2018). Loaded into the demo from the real ENA submission to showcase the MAG assembly pipeline and ENA submission of reads + assembly.",
+};
+
+const HUMAN_GUT_MIXS = {
+  project_name: "Human gut shotgun metagenome (ENA PRJEB54724)",
+  geographic_location_country_and_or_sea: "Netherlands",
+  broad_scale_environmental_context: "host-associated habitat [ENVO:00009003]",
+  local_environmental_context: "gastrointestinal tract environment [ENVO:2100002]",
+  environmental_medium: "feces [ENVO:00002003]",
+  host_body_site: "gastrointestinal tract [UBERON:0001555]",
+  host_scientific_name: "Homo sapiens",
+  host_common_name: "human",
+  host_taxid: "9606",
+};
+
+export const HUMAN_GUT_BASE = { scientificName: "human gut metagenome", taxId: "408170" };
+
+export const SAMPLE_HGUT_01: SampleTemplate = {
+  sampleAlias: "HGM-01",
+  sampleTitle: "Human faecal shotgun metagenome Subject-01",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2016-05-12",
+    host_subject_id: "Subject-01",
+  },
+  customFields: {
+    sample_name: "Subject-01",
+    collection_date: "2016-05-12",
+    read_count: "466252",
+    sample_volume: "42",
+    sample_concentration: "24.1",
+    a260_280_ratio: "1.88",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_02: SampleTemplate = {
+  sampleAlias: "HGM-02",
+  sampleTitle: "Human faecal shotgun metagenome Subject-02",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2016-02-16",
+    host_subject_id: "Subject-02",
+  },
+  customFields: {
+    sample_name: "Subject-02",
+    collection_date: "2016-02-16",
+    read_count: "672698",
+    sample_volume: "38",
+    sample_concentration: "19.8",
+    a260_280_ratio: "1.82",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_03: SampleTemplate = {
+  sampleAlias: "HGM-03",
+  sampleTitle: "Human faecal shotgun metagenome Subject-03",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2016-08-16",
+    host_subject_id: "Subject-03",
+  },
+  customFields: {
+    sample_name: "Subject-03",
+    collection_date: "2016-08-16",
+    read_count: "707104",
+    sample_volume: "55",
+    sample_concentration: "31.5",
+    a260_280_ratio: "1.95",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_04: SampleTemplate = {
+  sampleAlias: "HGM-04",
+  sampleTitle: "Human faecal shotgun metagenome Subject-04",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2017-02-16",
+    host_subject_id: "Subject-04",
+  },
+  customFields: {
+    sample_name: "Subject-04",
+    collection_date: "2017-02-16",
+    read_count: "659122",
+    sample_volume: "47",
+    sample_concentration: "27.2",
+    a260_280_ratio: "1.90",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_05: SampleTemplate = {
+  sampleAlias: "HGM-05",
+  sampleTitle: "Human faecal shotgun metagenome Subject-05",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2016-03-01",
+    host_subject_id: "Subject-05",
+  },
+  customFields: {
+    sample_name: "Subject-05",
+    collection_date: "2016-03-01",
+    read_count: "492946",
+    sample_volume: "40",
+    sample_concentration: "21.0",
+    a260_280_ratio: "1.84",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_06: SampleTemplate = {
+  sampleAlias: "HGM-06",
+  sampleTitle: "Human faecal shotgun metagenome Subject-06",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2018-09-28",
+    host_subject_id: "Subject-06",
+  },
+  customFields: {
+    sample_name: "Subject-06",
+    collection_date: "2018-09-28",
+    read_count: "608262",
+    sample_volume: "52",
+    sample_concentration: "29.8",
+    a260_280_ratio: "1.94",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_07: SampleTemplate = {
+  sampleAlias: "HGM-07",
+  sampleTitle: "Human faecal shotgun metagenome Subject-07",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2018-09-11",
+    host_subject_id: "Subject-07",
+  },
+  customFields: {
+    sample_name: "Subject-07",
+    collection_date: "2018-09-11",
+    read_count: "806454",
+    sample_volume: "36",
+    sample_concentration: "17.4",
+    a260_280_ratio: "1.79",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_08: SampleTemplate = {
+  sampleAlias: "HGM-08",
+  sampleTitle: "Human faecal shotgun metagenome Subject-08",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2016-04-08",
+    host_subject_id: "Subject-08",
+  },
+  customFields: {
+    sample_name: "Subject-08",
+    collection_date: "2016-04-08",
+    read_count: "662668",
+    sample_volume: "49",
+    sample_concentration: "26.6",
+    a260_280_ratio: "1.91",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_09: SampleTemplate = {
+  sampleAlias: "HGM-09",
+  sampleTitle: "Human faecal shotgun metagenome Subject-09",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2016-05-12",
+    host_subject_id: "Subject-09",
+  },
+  customFields: {
+    sample_name: "Subject-09",
+    collection_date: "2016-05-12",
+    read_count: "739040",
+    sample_volume: "44",
+    sample_concentration: "23.3",
+    a260_280_ratio: "1.87",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_10: SampleTemplate = {
+  sampleAlias: "HGM-10",
+  sampleTitle: "Human faecal shotgun metagenome Subject-10",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2016-01-13",
+    host_subject_id: "Subject-10",
+  },
+  customFields: {
+    sample_name: "Subject-10",
+    collection_date: "2016-01-13",
+    read_count: "749034",
+    sample_volume: "58",
+    sample_concentration: "33.1",
+    a260_280_ratio: "1.96",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_11: SampleTemplate = {
+  sampleAlias: "HGM-11",
+  sampleTitle: "Human faecal shotgun metagenome Subject-11",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2016-11-28",
+    host_subject_id: "Subject-11",
+  },
+  customFields: {
+    sample_name: "Subject-11",
+    collection_date: "2016-11-28",
+    read_count: "559950",
+    sample_volume: "41",
+    sample_concentration: "20.5",
+    a260_280_ratio: "1.83",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const SAMPLE_HGUT_12: SampleTemplate = {
+  sampleAlias: "HGM-12",
+  sampleTitle: "Human faecal shotgun metagenome Subject-12",
+  scientificName: HUMAN_GUT_BASE.scientificName,
+  taxId: HUMAN_GUT_BASE.taxId,
+  checklistData: {
+    ...HUMAN_GUT_MIXS,
+    collection_date: "2018-11-23",
+    host_subject_id: "Subject-12",
+  },
+  customFields: {
+    sample_name: "Subject-12",
+    collection_date: "2018-11-23",
+    read_count: "464714",
+    sample_volume: "46",
+    sample_concentration: "25.4",
+    a260_280_ratio: "1.89",
+    extraction_kit: "QIAamp PowerFecal Pro DNA Kit",
+    library_prep_kit: "Illumina DNA Prep",
+    storage_temperature: "-80 °C",
+  },
+};
+
+export const HUMAN_GUT_READS: Record<string, { run: string; biosample: string; checksum1: string; checksum2: string; readCount: number }> = {
+  "HGM-01": { run: "ERR10009592", biosample: "SAMEA110434724", checksum1: "7ec2d63183160ab6ae024dc799629c46", checksum2: "207f0b084d11939df17296b8769a4d75", readCount: 466252 },
+  "HGM-02": { run: "ERR10009593", biosample: "SAMEA110434725", checksum1: "686552e04ff6a76d85d0e60848e9a569", checksum2: "c0b9d743afc092df927b03e592bb2000", readCount: 672698 },
+  "HGM-03": { run: "ERR10009594", biosample: "SAMEA110434726", checksum1: "7dd01c174d33e1be849cd37f57062867", checksum2: "3a7928536c630d0acb84b0e41842fba5", readCount: 707104 },
+  "HGM-04": { run: "ERR10009610", biosample: "SAMEA110434742", checksum1: "7554c89b7ef075fdd99597a0a06c001a", checksum2: "e0479b1afbf0f09830f7f1d60900d025", readCount: 659122 },
+  "HGM-05": { run: "ERR10009595", biosample: "SAMEA110434727", checksum1: "d195fff6eeda52b5208a10bebb8b8b9e", checksum2: "c12354b303b08c7857013f78fcf1dfb1", readCount: 492946 },
+  "HGM-06": { run: "ERR10009623", biosample: "SAMEA110434755", checksum1: "e73f25f74dcbb9149df2793b18493f85", checksum2: "e26a79b3ebd648389aa7ad9b4b1ca1b4", readCount: 608262 },
+  "HGM-07": { run: "ERR10009639", biosample: "SAMEA110434771", checksum1: "854b9aebc90bcb16af7f6e47fb1299b0", checksum2: "74560f8054f53ee1b1a2cfe482c13aca", readCount: 806454 },
+  "HGM-08": { run: "ERR10009590", biosample: "SAMEA110434722", checksum1: "09739d13f5a0d0a2d0e1e3ce3ff2ab44", checksum2: "263cc89ea4be05837f903977481afe1d", readCount: 662668 },
+  "HGM-09": { run: "ERR10009591", biosample: "SAMEA110434723", checksum1: "75b6595cd53941a5343450a10d689edb", checksum2: "18dcf6341bbcf9ee2037b465804c5dae", readCount: 739040 },
+  "HGM-10": { run: "ERR10009596", biosample: "SAMEA110434728", checksum1: "d9063a14cb7f82236add03767bae88ac", checksum2: "45fc752249628d69ca161e17e92e8e7f", readCount: 749034 },
+  "HGM-11": { run: "ERR10009608", biosample: "SAMEA110434740", checksum1: "3a7a2ea17c939b278c1db877cc671b18", checksum2: "aa74381314e272adfe041a161ab51054", readCount: 559950 },
+  "HGM-12": { run: "ERR10009632", biosample: "SAMEA110434764", checksum1: "59813bc3514e35e7855225225d2cbb74", checksum2: "43babbddd2f836e30ce00681058e6635", readCount: 464714 },
+};
