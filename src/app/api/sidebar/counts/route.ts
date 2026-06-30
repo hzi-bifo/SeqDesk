@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 
 // GET /api/sidebar/counts - Get counts for sidebar badges
 export async function GET() {
@@ -15,24 +16,29 @@ export async function GET() {
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
     const userId = session.user.id;
     const isDemoUser = session.user.isDemo;
+    const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
     // Get counts based on user role
     const [ordersCount, studiesCount, filesCount, submissionsCount, analysisCount] = await Promise.all([
       // Orders count
       db.order.count({
-        where: isFacilityAdmin ? {} : { userId },
+        where: isFacilityAdmin
+          ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {})
+          : { userId },
       }),
       // Studies count
       db.study.count({
-        where: isFacilityAdmin ? {} : { userId },
+        where: isFacilityAdmin
+          ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {})
+          : { userId },
       }),
       // Files count (sequencing files) - admin only
       isFacilityAdmin
-        ? db.read.count()
+        ? db.read.count(demoWsUserIds ? { where: { sample: { order: { userId: { in: demoWsUserIds } } } } } : undefined)
         : Promise.resolve(0),
       // Submissions count - admin only
       isFacilityAdmin
-        ? db.submission.count()
+        ? (demoWsUserIds ? 0 : db.submission.count())
         : Promise.resolve(0),
       // Analysis runs count (running or queued)
       isDemoUser

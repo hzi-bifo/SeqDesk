@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isDemoSession } from "@/lib/demo/server";
+import { serveDemoPipelineFile } from "@/lib/demo/pipeline-preview";
 import { canReadPipelineRun } from "@/lib/pipelines/run-visibility";
 import { safeJoin } from "@/lib/files/paths";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
@@ -40,33 +41,6 @@ const MIME_TYPES: Record<string, string> = {
 const MAX_PREVIEW_BYTES = 100 * 1024 * 1024;
 
 /**
- * For demo sessions, serve a real FastQC report bundled in public/demo/.
- * Uses the read direction (R1/R2) from the filename to pick the right report.
- */
-async function serveDemoFastqcReport(filePath: string): Promise<NextResponse | null> {
-  // Match paths like .../fastqc_reports/SampleName_R1_fastqc.html
-  const match = filePath.match(/_(R[12])_fastqc\.html$/);
-  if (!match) return null;
-  const direction = match[1]; // "R1" or "R2"
-
-  // Resolve the bundled report from public/demo/
-  const reportFile = path.join(process.cwd(), "public", "demo", `fastqc_${direction}.html`);
-  try {
-    const content = await fs.readFile(reportFile);
-    return new NextResponse(content, {
-      headers: {
-        "Content-Type": "text/html",
-        "Content-Length": String(content.length),
-        "Content-Security-Policy": "script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
-  } catch {
-    return null;
-  }
-}
-
-/**
  * GET /api/files/preview?path=/absolute/path/to/report.html
  *
  * Serves pipeline output files (HTML reports, etc.) for in-browser viewing.
@@ -84,7 +58,7 @@ export async function GET(request: NextRequest) {
       const { searchParams } = new URL(request.url);
       const demoPath = searchParams.get("path");
       if (demoPath) {
-        const demoResponse = await serveDemoFastqcReport(demoPath);
+        const demoResponse = await serveDemoPipelineFile(demoPath);
         if (demoResponse) return demoResponse;
       }
       return new NextResponse("Preview is not available for this file in the demo.", {

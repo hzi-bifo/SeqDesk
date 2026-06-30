@@ -229,7 +229,7 @@ export function SidebarEntityNav({
       show: showAdminControls && studyFacilitySections.length > 0,
     },
     { key: "sequencing", label: "Sequencing Data", href: entityId ? `/studies/${entityId}?tab=samples` : undefined, icon: HardDrive, show: true },
-    { key: "analysis", label: "Analysis", href: entityId ? `/studies/${entityId}?tab=pipelines` : undefined, icon: Workflow, show: showAdminControls && !isDemoUser },
+    { key: "analysis", label: "Analysis", href: entityId ? `/studies/${entityId}?tab=pipelines` : undefined, icon: Workflow, show: showAdminControls },
     { key: "publishing", label: "Publishing", href: entityId ? `/studies/${entityId}?tab=publishing` : undefined, icon: Send, show: !isDemoUser },
   ];
 

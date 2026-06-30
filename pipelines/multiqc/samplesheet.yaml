@@ -1,0 +1,16 @@
+samplesheet:
+  format: csv
+  filename: samplesheet.csv
+  rows:
+    scope: sample
+  columns:
+    - name: sample_id
+      source: sample.sampleId
+      required: true
+    - name: study_id
+      source: study.id
+      required: true
+    - name: study_title
+      source: study.title
+      required: false
+      default: ""

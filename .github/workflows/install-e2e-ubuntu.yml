@@ -58,7 +58,9 @@ jobs:
           name: public-release-tarball
           path: ${{ runner.temp }}/public-release-tarball/*
           if-no-files-found: error
-          retention-days: 14
+          # Only consumed by downstream install-E2E jobs within the same run;
+          # 1-day floor keeps the 39 MB tarball from piling up in Actions storage.
+          retention-days: 1
 
   public-installer-ubuntu:
     needs: build-public-release-artifact
@@ -272,7 +274,7 @@ jobs:
             ${{ env.PROVIDERS_JSON }}
             ${{ env.MOCK_SERVER_LOG }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
   source-installer-ubuntu:
     runs-on: ubuntu-latest
@@ -406,7 +408,7 @@ jobs:
             ${{ env.PROVIDERS_JSON }}
             ${{ env.STORE_E2E_JSON }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
   public-installer-ubuntu-pm2:
     needs: build-public-release-artifact
@@ -605,7 +607,7 @@ jobs:
             ${{ env.PM2_INFO }}
             ${{ env.MOCK_SERVER_LOG }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup PM2 process
         if: always()
@@ -803,7 +805,7 @@ jobs:
             ${{ env.MOCK_SERVER_LOG }}
             ${{ env.NPM_PACK_METADATA }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
   install-profile-fixture-ubuntu:
     name: Apply checked-in install profile (no secret)
@@ -1113,4 +1115,4 @@ jobs:
             ${{ env.PROFILE_ASSERT_JSON }}
             ${{ env.MOCK_SERVER_LOG }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5

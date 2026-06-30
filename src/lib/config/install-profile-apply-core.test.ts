@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyOrderForm,
   applySiteProfile,
+  applyStudyDefinitions,
   normalizeAccessSettings,
   normalizeAccountValidationSettings,
   normalizeAuthSettings,
@@ -577,5 +578,152 @@ describe("install profile applicator core", () => {
 
     const { extra } = lastSiteSettingsWrite(prisma);
     expect(extra.sequencingFiles).toEqual({ scanDepth: 3 });
+  });
+});
+
+describe("install profile study definitions (per-study dynamic forms)", () => {
+  function createStudyDefsPrisma(options?: {
+    users?: Array<{ id: string; role: string }>;
+    studies?: Array<{ id: string; alias: string | null }>;
+    modulesConfig?: string | null;
+  }) {
+    const state = {
+      users: options?.users ?? [{ id: "admin-1", role: "FACILITY_ADMIN" }],
+      studies: (options?.studies ?? []).map((s) => ({ ...s })) as Array<
+        Record<string, unknown>
+      >,
+      studyFormConfigs: [] as Array<Record<string, unknown>>,
+      siteSettings: {
+        id: "singleton",
+        modulesConfig: options?.modulesConfig ?? null,
+        extraSettings: "{}",
+      } as Record<string, unknown> | null,
+    };
+    let studySeq = state.studies.length;
+    return {
+      state,
+      user: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        findFirst: vi.fn(async (args?: any) => {
+          const role = args?.where?.role;
+          const match = state.users.find((u) => (role ? u.role === role : true));
+          return match ? { id: match.id } : null;
+        }),
+      },
+      study: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        findFirst: vi.fn(async (args: any) => {
+          const found = state.studies.find((s) => s.alias === args.where.alias);
+          return found ? { id: found.id } : null;
+        }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        create: vi.fn(async (args: any) => {
+          const id = `study-${++studySeq}`;
+          state.studies.push({ id, ...args.data });
+          return { id };
+        }),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        update: vi.fn(async (args: any) => {
+          const s = state.studies.find((x) => x.id === args.where.id);
+          if (s) Object.assign(s, args.data);
+          return { id: args.where.id };
+        }),
+      },
+      studyFormConfig: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        upsert: vi.fn(async (args: any) => {
+          const existing = state.studyFormConfigs.find(
+            (f) => f.studyId === args.where.studyId
+          );
+          if (existing) Object.assign(existing, args.update);
+          else state.studyFormConfigs.push({ ...args.create });
+          return {};
+        }),
+      },
+      siteSettings: {
+        findUnique: vi.fn(async () => state.siteSettings),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        upsert: vi.fn(async (args: any) => {
+          state.siteSettings = { ...(state.siteSettings ?? {}), ...args.update };
+          return state.siteSettings;
+        }),
+      },
+    };
+  }
+
+  const profileWithStudy = {
+    studies: [
+      {
+        title: "IBD Gut Metagenome Cohort",
+        alias: "ibd-gut-cohort",
+        checklistType: "human-gut",
+        readyForSubmission: true,
+        form: {
+          fields: [
+            {
+              id: "f1",
+              type: "select",
+              label: "DNA Extraction Kit",
+              name: "dna_extraction_kit",
+              required: true,
+              visible: true,
+              order: 0,
+              perSample: true,
+              options: [{ value: "kit", label: "kit" }],
+            },
+          ],
+          groups: [],
+        },
+      },
+    ],
+  };
+
+  it("creates a study + per-study form from the profile and enables dynamic-studies", async () => {
+    const prisma = createStudyDefsPrisma();
+    const applied = await applyStudyDefinitions(prisma, profileWithStudy);
+
+    expect(applied).toBe(1);
+    expect(prisma.study.create).toHaveBeenCalledTimes(1);
+    const created = prisma.study.create.mock.calls[0][0].data;
+    expect(created.userId).toBe("admin-1");
+    expect(created.alias).toBe("ibd-gut-cohort");
+    expect(created.checklistType).toBe("human-gut");
+
+    expect(prisma.studyFormConfig.upsert).toHaveBeenCalledTimes(1);
+    const cfg = prisma.studyFormConfig.upsert.mock.calls[0][0];
+    const fields = JSON.parse(String(cfg.create.fields));
+    expect(fields[0].name).toBe("dna_extraction_kit");
+
+    const modules = JSON.parse(String(prisma.state.siteSettings?.modulesConfig));
+    expect(modules.modules["dynamic-studies"]).toBe(true);
+  });
+
+  it("is idempotent: re-applying updates the existing study (matched by alias)", async () => {
+    const prisma = createStudyDefsPrisma({
+      studies: [{ id: "existing-1", alias: "ibd-gut-cohort" }],
+    });
+    const applied = await applyStudyDefinitions(prisma, profileWithStudy);
+
+    expect(applied).toBe(1);
+    expect(prisma.study.create).not.toHaveBeenCalled();
+    expect(prisma.study.update).toHaveBeenCalledTimes(1);
+    expect(prisma.studyFormConfig.upsert.mock.calls[0][0].where.studyId).toBe(
+      "existing-1"
+    );
+  });
+
+  it("skips study creation when the install has no users yet", async () => {
+    const prisma = createStudyDefsPrisma({ users: [] });
+    const applied = await applyStudyDefinitions(prisma, profileWithStudy);
+
+    expect(applied).toBe(0);
+    expect(prisma.study.create).not.toHaveBeenCalled();
+    expect(prisma.studyFormConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 0 when the profile declares no studies", async () => {
+    const prisma = createStudyDefsPrisma();
+    expect(await applyStudyDefinitions(prisma, { id: "dev" })).toBe(0);
+    expect(prisma.study.create).not.toHaveBeenCalled();
   });
 });

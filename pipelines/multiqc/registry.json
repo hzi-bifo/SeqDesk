@@ -1,0 +1,71 @@
+{
+  "id": "multiqc",
+  "name": "Study MultiQC",
+  "description": "Aggregate the QC outputs of prior study runs (FastQC, seqkit, read-cleaning MultiQC data) into a single study-level MultiQC report",
+  "category": "qc",
+  "version": "0.1.0",
+  "sortOrder": 3,
+  "website": "https://multiqc.info",
+  "requires": {
+    "reads": false,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "report",
+      "name": "multiqc_report",
+      "description": "Aggregate study-level MultiQC HTML report",
+      "visibility": "both",
+      "downloadable": true
+    },
+    {
+      "type": "data",
+      "name": "multiqc_data",
+      "description": "Parsed MultiQC data tables and metadata",
+      "model": "PipelineArtifact",
+      "visibility": "admin",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": true,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": [
+      "study"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": false,
+      "pairedEnd": false
+    }
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "reportTitle": {
+        "type": "string",
+        "title": "Report title",
+        "description": "Title shown at the top of the aggregate MultiQC report",
+        "default": "Study MultiQC report",
+        "x-seqdesk": {
+          "placement": "basic",
+          "group": "reporting"
+        }
+      }
+    }
+  },
+  "defaultConfig": {
+    "reportTitle": "Study MultiQC report"
+  },
+  "icon": "BarChart3"
+}

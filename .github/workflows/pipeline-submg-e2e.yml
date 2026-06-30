@@ -34,6 +34,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_human_gut:
+        description: "Run the REAL human-gut shotgun study (PRJEB54724): download ~712 MB of real reads, MEGAHIT-assemble, and submit reads + assembly to the ENA TEST server"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -46,7 +51,7 @@ jobs:
   submg_app_e2e:
     name: Pipeline submg E2E (ENA test server)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash -el {0}
@@ -118,7 +123,7 @@ jobs:
           # in the user data dir, so the later app run must share $HOME — it does).
           conda create -y -n "$SUBMG_CONDA_ENV" \
             --override-channels -c conda-forge -c bioconda \
-            python=3.11 'openjdk>=17' pip wheel pysam tk
+            python=3.11 'openjdk>=17' pip wheel pysam tk megahit=1.2.9
           rm -rf "$RUNNER_TEMP/submg-src"
           git clone --depth 1 --branch "$SUBMG_VERSION" https://github.com/ttubb/submg "$RUNNER_TEMP/submg-src"
           conda run -n "$SUBMG_CONDA_ENV" python -m pip install "$RUNNER_TEMP/submg-src"
@@ -185,6 +190,7 @@ jobs:
           SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
+          SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
           SEQDESK_SUBMG_E2E_SUBMIT_READS: ${{ github.event.inputs.submit_reads || 'false' }}
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: ${{ github.event.inputs.submit_assembly || 'false' }}
         run: |
@@ -206,11 +212,41 @@ jobs:
           SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
+          SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
           SEQDESK_SUBMG_E2E_SUBMIT_READS: "true"
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: "true"
         run: |
           set -euo pipefail
           npm run pipeline:e2e:submg 2>&1 | tee "$RUNNER_TEMP/submg-assembly.log"
+
+      # ── GOAL: REAL human-gut shotgun study → REAL MEGAHIT assembly → ENA TEST ──────
+      # Opt-in (run_human_gut), since it downloads ~712 MB of real reads. Seeds the real
+      # human-gut shotgun example dataset (12 public ENA PRJEB54724 paired WGS samples),
+      # assembles one sample with MEGAHIT (nf-core/mag's assembler, more threads/time than
+      # the dummy leg needs), registers the study on ENA TEST, then submits the REAL reads
+      # + REAL assembly to the ENA test server and asserts the ERR/ERZ accessions come back.
+      # HARD gate (not warn-only): this is the success criterion — a real reads+assembly
+      # submission to the ENA test server succeeding.
+      - name: Run submg on the REAL human-gut shotgun study (reads + MEGAHIT assembly → ENA TEST)
+        if: ${{ env.ENA_USERNAME != '' && github.event_name == 'workflow_dispatch' && inputs.run_human_gut == true }}
+        env:
+          SEQDESK_SUBMG_E2E_BASE_URL: http://127.0.0.1:8897
+          SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
+          SEQDESK_SUBMG_E2E_PASSWORD: admin
+          SEQDESK_SUBMG_E2E_CONDA_ENV: submg
+          SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
+          SEQDESK_SUBMG_E2E_EXAMPLE_DATASET: human-gut-prjeb54724
+          SEQDESK_SUBMG_E2E_STUDY_ALIAS: human-gut-shotgun-prjeb54724-ci
+          SEQDESK_SUBMG_E2E_SUBMIT_READS: "true"
+          SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: "true"
+          SEQDESK_SUBMG_E2E_MEGAHIT_THREADS: "4"
+          SEQDESK_SUBMG_E2E_MEGAHIT_TIMEOUT_SEC: "1200"
+          SEQDESK_SUBMG_E2E_TIMEOUT_SECONDS: "1800"
+        run: |
+          set -euo pipefail
+          npm run pipeline:e2e:submg 2>&1 | tee "$RUNNER_TEMP/submg-human-gut.log"
+          echo "=== human-gut submission summary ==="
+          grep -iE "Built REAL mag MEGAHIT assembly|wrote read accession|wrote assembly accession" "$RUNNER_TEMP/submg-human-gut.log" || true
 
       # Proof on the *installed* app (the realistic facility flow): install a
       # source-built release via the npm launcher + a mock release server, then run
@@ -223,6 +259,7 @@ jobs:
           SEQDESK_SUBMG_E2E_EMAIL: admin@example.com
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
+          SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
           SEQDESK_SUBMG_E2E_SUBMIT_READS: ${{ github.event.inputs.submit_reads || 'false' }}
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: ${{ github.event.inputs.submit_assembly || 'false' }}
         run: |
@@ -355,4 +392,4 @@ jobs:
             ${{ runner.temp }}/install-submg/server.log
             ${{ runner.temp }}/install-submg/install.log
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5

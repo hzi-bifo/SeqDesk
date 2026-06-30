@@ -1,0 +1,68 @@
+{
+  "id": "nanoplot",
+  "name": "NanoPlot (Long-read QC)",
+  "description": "Quality control of Oxford Nanopore / PacBio long reads with NanoPlot",
+  "category": "qc",
+  "version": "0.1.0",
+  "sortOrder": 4,
+  "website": "https://github.com/wdecoster/NanoPlot",
+  "requires": {
+    "reads": true,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "report",
+      "name": "nanoplot_report",
+      "description": "Per-sample NanoPlot HTML quality report",
+      "visibility": "admin",
+      "downloadable": true
+    },
+    {
+      "type": "report",
+      "name": "nanoplot_summary",
+      "description": "Run-level long-read statistics summary",
+      "visibility": "admin",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": false,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": [
+      "order"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": true,
+      "readMode": "single_or_paired",
+      "pairedEnd": false
+    }
+  },
+  "sequencingCompatibility": {
+    "readLengthClass": "long",
+    "readLayouts": [
+      "single"
+    ],
+    "platformFamilies": [
+      "oxford-nanopore",
+      "pacbio"
+    ]
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {}
+  },
+  "defaultConfig": {},
+  "icon": "Activity"
+}

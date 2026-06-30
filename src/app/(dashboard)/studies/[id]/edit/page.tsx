@@ -60,6 +60,7 @@ import { InlineFieldHelp, hasInlineFieldHelpContent } from "@/components/ui/inli
 import {
   isStudyChecklistTypeId,
   normalizeStudyChecklistType,
+  resolveStudyChecklistTypeId,
 } from "@/lib/studies/checklist-types";
 import { PageNotice } from "@/components/ui/page-notice";
 import { toast } from "@/components/ui/toast";
@@ -900,7 +901,13 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
         setTitle(study.title);
         setDescription(study.description || "");
-        setChecklistType(normalizeStudyChecklistType(study.checklistType));
+        // Resolve whatever format the study stored (slug / ENA accession / display name)
+        // to the canonical slug so the Environment Type step pre-selects the right tile.
+        // Fall back to the raw value when unresolvable so we never erase a stored value.
+        setChecklistType(
+          resolveStudyChecklistTypeId(study.checklistType) ||
+            normalizeStudyChecklistType(study.checklistType)
+        );
 
         let parsedMetadata: Record<string, unknown> = {};
         if (study.studyMetadata) {

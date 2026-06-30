@@ -82,7 +82,10 @@ export function getDemoSiteSettingsUpdate(existingExtraSettings: string | null) 
     helpText:
       "This is a disposable researcher demo. Changes stay private to this browser session and can be reset at any time.",
     modulesConfig: JSON.stringify({
-      modules: DEFAULT_MODULE_STATES,
+      // Enable the dynamic per-study questionnaire so the IBD study's custom
+      // technical form (see ibd-study-form.ts) renders. Studies without their own
+      // StudyFormConfig keep falling back to the global study form.
+      modules: { ...DEFAULT_MODULE_STATES, "dynamic-studies": true },
       globalDisabled: false,
     }),
     extraSettings: JSON.stringify({

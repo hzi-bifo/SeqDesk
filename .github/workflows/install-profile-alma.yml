@@ -74,7 +74,7 @@ jobs:
           name: alma-release-tarball
           path: ${{ runner.temp }}/alma-release-artifact/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 5
 
       - name: Upload npm launcher package
         uses: actions/upload-artifact@v4
@@ -82,7 +82,7 @@ jobs:
           name: alma-npm-launcher
           path: ${{ runner.temp }}/alma-npm-launcher/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 5
 
   install-without-profile:
     name: Install without profile on AlmaLinux
@@ -99,6 +99,8 @@ jobs:
       DB_USER: seqdesk
       FALLBACK_DB_PORT: 55433
       NEXT_TELEMETRY_DISABLED: 1
+      # Hoisted out of the run block so the block carries no ${{ }} (see the with-profile job).
+      RC_SPIKE_URL: ${{ vars.READ_CLEANING_SPIKE_URL }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -380,7 +382,19 @@ jobs:
           echo "Nextflow conda cacheDir: ${CONDA_CACHE_DIR:-<default>}"
           # Optional override for where the read-cleaning spiked example bundle is hosted
           # (the seed route reads SEQDESK_READ_CLEANING_SPIKE_URL; empty → the code default).
-          SEQDESK_READ_CLEANING_SPIKE_URL="${{ vars.READ_CLEANING_SPIKE_URL }}" \
+          # When a shared conda base is configured (the job that runs the metaxpath SLURM leg), point
+          # the app's pipeline-execution conda at it via env. SEQDESK_CONDA_PATH/ENV override the
+          # installed config (config/loader.ts maps them to pipelines.execution.conda.*) — the OFFLINE
+          # compute nodes can only read this shared conda. This does NOT change the app's default mode
+          # (stays local — the smoke + local Gemma runs are unaffected); only forced-SLURM runs use it,
+          # and local+SLURM then build/reuse the SAME shared env cache. No-op in the without-profile
+          # job (SLURM_SHARED_CONDA_BASE is unset there).
+          if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
+            export SEQDESK_CONDA_PATH="$SLURM_SHARED_CONDA_BASE"
+            export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-}"
+            echo "app boot: pipeline-execution conda -> $SLURM_SHARED_CONDA_BASE (metaxpath SLURM leg enabled)"
+          fi
+          SEQDESK_READ_CLEANING_SPIKE_URL="${RC_SPIKE_URL:-}" \
           SEQDESK_CONDA_CACHE_DIR="$CONDA_CACHE_DIR" ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           cleanup() {
@@ -435,7 +449,7 @@ jobs:
             ${{ env.MOCK_SERVER_LOG }}
             ${{ env.NPM_PACK_METADATA }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup canary resources
         if: always()
@@ -493,6 +507,21 @@ jobs:
       # stage the DB once for both harnesses. Absent → the read-cleaning smoke skips cleanly
       # (it's gated on the DB, exactly like mag is gated on GTDB).
       SLURM_SHARED_KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
+      # Shared conda base/env (the same repo vars the SLURM E2E uses). Lets the metaxpath SLURM leg
+      # point the installed app's SLURM executor at a conda the OFFLINE compute nodes can read.
+      # Unset → the app installs local-only and the metaxpath SLURM leg skips cleanly.
+      SLURM_SHARED_CONDA_BASE: ${{ vars.SLURM_SHARED_CONDA_BASE }}
+      SLURM_SHARED_CONDA_ENV: ${{ vars.SLURM_SHARED_CONDA_ENV }}
+      # Hoisted out of the big "Verify installed app startup" run block. That block also drives every
+      # Gemma run, so it's near GitHub's per-block expression-template limit (~21000 chars per
+      # templated scalar) — workflow_dispatch rejects the file if the block carries inline ${{ }}.
+      # Referencing these as $env in the block keeps the block free of expressions entirely.
+      RC_SPIKE_URL: ${{ vars.READ_CLEANING_SPIKE_URL }}
+      GEMMA_SUBSAMPLE: ${{ github.event.inputs.subsample_reads }}
+      # SLURM runs (the metaxpath SLURM leg) use the INLINE executor — the whole Nextflow run wraps
+      # into ONE sbatch on an offline compute node that can only REUSE cached conda envs. Inherited
+      # by the booted app; unused by local runs, so harmless when no SLURM leg runs.
+      SEQDESK_SLURM_INLINE_EXECUTOR: "1"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -810,7 +839,19 @@ jobs:
           echo "Nextflow conda cacheDir: ${CONDA_CACHE_DIR:-<default>}"
           # Optional override for where the read-cleaning spiked example bundle is hosted
           # (the seed route reads SEQDESK_READ_CLEANING_SPIKE_URL; empty → the code default).
-          SEQDESK_READ_CLEANING_SPIKE_URL="${{ vars.READ_CLEANING_SPIKE_URL }}" \
+          # When a shared conda base is configured (the job that runs the metaxpath SLURM leg), point
+          # the app's pipeline-execution conda at it via env. SEQDESK_CONDA_PATH/ENV override the
+          # installed config (config/loader.ts maps them to pipelines.execution.conda.*) — the OFFLINE
+          # compute nodes can only read this shared conda. This does NOT change the app's default mode
+          # (stays local — the smoke + local Gemma runs are unaffected); only forced-SLURM runs use it,
+          # and local+SLURM then build/reuse the SAME shared env cache. No-op in the without-profile
+          # job (SLURM_SHARED_CONDA_BASE is unset there).
+          if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
+            export SEQDESK_CONDA_PATH="$SLURM_SHARED_CONDA_BASE"
+            export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-}"
+            echo "app boot: pipeline-execution conda -> $SLURM_SHARED_CONDA_BASE (metaxpath SLURM leg enabled)"
+          fi
+          SEQDESK_READ_CLEANING_SPIKE_URL="${RC_SPIKE_URL:-}" \
           SEQDESK_CONDA_CACHE_DIR="$CONDA_CACHE_DIR" ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           cleanup() {
@@ -850,11 +891,37 @@ jobs:
             --password "admin" \
             --expected-role "FACILITY_ADMIN" \
             --check-path "/api/admin/users"
+          # The ci-runner profile pins telemetry.endpoint to www.seqdesk.com, which is down (404) —
+          # set it to the live seqdesk.org receiver before the heartbeat so the test exercises the
+          # app's telemetry path instead of reding on a dead marketing host. Stays strict (the
+          # heartbeat must still succeed). Production should update the profile endpoint to .org too.
           node "$GITHUB_WORKSPACE/scripts/run-telemetry-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
             --email "admin@example.com" \
             --password "admin" \
+            --set-endpoint "https://seqdesk.org/api/telemetry/heartbeat" \
             --output "$TELEMETRY_JSON"
+
+          # Researcher data lifecycle E2E (warn-only, md item 8) — the full data-management loop through
+          # the app API: a RESEARCHER (user@example.com) creates an order, adds samples, submits it; the
+          # FACILITY admin (admin@example.com) attaches a reads file (the sequencing/* surface is
+          # admin-only — a genuinely two-actor flow); the researcher creates a study, joins the samples,
+          # and the attached file rolls up into the study (samplesWithReads >= 1). Runs on the
+          # WITH-PROFILE leg because the file upload needs a configured sequencing dataBasePath
+          # (--data-path PROFILE_DATA_DIR), which the no-profile install lacks; both seed users have
+          # their known passwords here (the researcher auth above passes user/user). Warn-only while we
+          # bring it up.
+          echo "::group::researcher data lifecycle E2E (warn-only)"
+          if node "$GITHUB_WORKSPACE/scripts/researcher-lifecycle-e2e.mjs" \
+               --base-url "http://127.0.0.1:${PORT}" \
+               --researcher-email "user@example.com" --researcher-password "user" \
+               --admin-email "admin@example.com" --admin-password "admin"; then
+            echo "researcher lifecycle E2E OK"
+          else
+            echo "WARN (warn-only): researcher lifecycle E2E did not pass — not failing the suite"
+          fi
+          echo "::endgroup::"
+
           if [ "$PROFILE_ID" = "ci-runner" ]; then
             node "$GITHUB_WORKSPACE/scripts/run-install-profile-pipeline-smoke.mjs" \
               --dir "$INSTALL_DIR" \
@@ -916,7 +983,7 @@ jobs:
             # metaxpath classifies a fraction and the matrix finishes in ~30-60min instead of ~3h.
             # An ITERATION smoke, NOT the canonical validation — the scheduled full run stays the
             # source of truth. Empty input (scheduled / default) = full run.
-            SUBSAMPLE="${{ github.event.inputs.subsample_reads }}"
+            SUBSAMPLE="${GEMMA_SUBSAMPLE:-}"
             if [ -n "$SUBSAMPLE" ]; then
               echo "::group::SHORT run — subsampling Gemma reads to fraction $SUBSAMPLE"
               n=0
@@ -958,6 +1025,18 @@ jobs:
             # metaxpath actually classify on the test data instead of being rejected before it runs.
             run_gemma metaxpath   10800 --study-alias gemma-nanopore-metaxpath \
               --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB"}'
+            # metaxpath SLURM leg (warn-only, MANUAL-DISPATCH ONLY) — scripts/metaxpath-slurm-leg.sh.
+            # metaxpath provably runs under SLURM (run 27823876808: 36 procs, exit 0, reports), but the
+            # job's scheduling is at the mercy of the shared cluster: across every allocation tried
+            # (256/64/32 GB, 16/4/2 cores, 150/90 min limits, smaller subsets) it usually sits PENDING
+            # for hours and never starts. So it can't be a reliable gate. Gate it to manual dispatch
+            # (subsample_reads set) so the scheduled nightly isn't bloated by ~hours of pending; a
+            # manual run can still get a green when the cluster happens to be free. Always exits 0.
+            if [ -n "${GEMMA_SUBSAMPLE:-}" ] && [ -n "${SLURM_SHARED_CONDA_BASE:-}" ] && command -v sbatch >/dev/null 2>&1; then
+              bash "$GITHUB_WORKSPACE/scripts/metaxpath-slurm-leg.sh" "$PORT" || true
+            else
+              echo "metaxpath SLURM leg SKIPPED (manual-dispatch only, or no shared conda / sbatch)."
+            fi
             # Surface metaxpath's taxonomy output so we can read the classified taxa (it's not a
             # curated artifact). List its non-conda output files, dump the best report candidate,
             # and copy it for download. FULLY non-fatal — set +e/+o pipefail in a subshell so a
@@ -1042,6 +1121,21 @@ jobs:
               [ -n "$magdir" ] && [ -f "$magdir/logs/pipeline.out" ] && grep -A4 'Caused by' "$magdir/logs/pipeline.out" 2>/dev/null | head -12
               echo "::endgroup::"
             ) || true
+            # mag SLURM leg (warn-only, Tier 1, MANUAL-DISPATCH ONLY) — scripts/mag-slurm-leg.sh.
+            # Re-runs the SAME MEGAHIT-only smoke through the SLURM executor (inline: one sbatch on an
+            # OFFLINE compute node) AFTER the LOCAL mag leg above has seeded DEV-MAG-ILMN-001 onto the
+            # shared FS and warmed mag's per-process conda envs into the shared cacheDir — the SLURM
+            # leg reuses both by hash. Gated to manual dispatch (GEMMA_SUBSAMPLE set) like the metaxpath
+            # leg so the scheduled nightly isn't bloated by ~hours of cluster PENDING; a manual run can
+            # still green when the cluster is free. Resource admission (the metaxpath cpus trap recast):
+            # the inline path skips process.resourceLimits, so the leg passes --max_cpus 4 / --max_memory
+            # to cap mag's check_max() ceiling (MEGAHIT wants 8 cpus / 40.GB) to the -c 4 / 48G sbatch
+            # allocation. Always exits 0.
+            if [ -n "${GEMMA_SUBSAMPLE:-}" ] && [ -n "${SLURM_SHARED_CONDA_BASE:-}" ] && command -v sbatch >/dev/null 2>&1; then
+              bash "$GITHUB_WORKSPACE/scripts/mag-slurm-leg.sh" "$PORT" || true
+            else
+              echo "mag SLURM leg SKIPPED (manual-dispatch only, or no shared conda / sbatch)."
+            fi
 
             # read-cleaning (nf-core/detaxizer) — screen RAW reads for host/contaminant and stage
             # cleaned reads. The Gemma reads are already CLEANED (dataClassIn:[raw,unknown] rejects
@@ -1132,7 +1226,7 @@ jobs:
             ${{ env.NPM_PACK_METADATA }}
             ${{ runner.temp }}/metaxpath-report-*
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup canary resources
         if: always()

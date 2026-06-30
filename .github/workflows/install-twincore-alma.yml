@@ -278,7 +278,7 @@ jobs:
             ${{ env.STORE_E2E_JSON }}
             ${{ env.PG_LOG }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup canary directory
         if: always()

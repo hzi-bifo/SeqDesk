@@ -1,0 +1,13 @@
+sample_id	top_taxon	taxonomy_id	taxonomy_lvl	new_est_reads	fraction_total_reads
+HGM-02	Kingevirus communis	2956060	S	17967	0.17337
+HGM-01	Clostridium perfringens	1502	S	439	0.07331
+HGM-04	Norovirus norwalkense	3431196	S	42055	0.24588
+HGM-03	Escherichia coli	562	S	855	0.09911
+HGM-05	Bifidobacterium longum	216816	S	458	0.09807
+HGM-06	Blohavirus americanus	2955510	S	34967	0.24641
+HGM-08	Escherichia coli	562	S	10651	0.09528
+HGM-09	Vescimonas fastidiosa	2714353	S	18857	0.15306
+HGM-07	Escherichia coli	562	S	15195	0.10850
+HGM-10	Aurodevirus hiberniae	2955382	S	23991	0.10283
+HGM-12	Segatella copri	165179	S	2519	0.07383
+HGM-11	Proteus mirabilis	584	S	5481	0.16341

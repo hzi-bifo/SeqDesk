@@ -297,6 +297,9 @@ async function finalizeLocalRun(
 export async function listPipelineRunsForOperator(args: {
   userId: string;
   role: string;
+  // When set (facility-demo session), restrict the otherwise-unfiltered admin
+  // listing to runs owned by these workspace users, isolating the demo session.
+  demoWorkspaceUserIds?: string[] | null;
   pipelineId?: string | null;
   status?: string | null;
   studyId?: string | null;
@@ -320,6 +323,19 @@ export async function listPipelineRunsForOperator(args: {
     andFilters.push({ selectedResultSelections: { some: {} } });
   } else if (args.publishedOnly) {
     andFilters.push({ selectedResultSelections: { some: {} } });
+  }
+
+  // Facility-demo isolation: a seeded run is attributed via userId (the
+  // workspace's facility admin) AND via study/order (the researcher), so match
+  // all three to catch it without leaking other workspaces' runs.
+  if (args.demoWorkspaceUserIds && args.demoWorkspaceUserIds.length > 0) {
+    andFilters.push({
+      OR: [
+        { userId: { in: args.demoWorkspaceUserIds } },
+        { study: { userId: { in: args.demoWorkspaceUserIds } } },
+        { order: { userId: { in: args.demoWorkspaceUserIds } } },
+      ],
+    });
   }
 
   if (args.pipelineId) {

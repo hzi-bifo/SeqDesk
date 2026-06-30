@@ -176,11 +176,28 @@ export async function syncRun(run: {
         });
       }
 
+      // SLURM runs are identified by a numeric queueJobId (local runs use a 'local-<pid>' id).
+      const isSlurmRun = /^\d+$/.test(run.queueJobId || '');
       const runningSteps = Array.from(stepMap.values()).filter((s) => s.status === 'running');
+      const completedSteps = Array.from(stepMap.values()).filter((s) => s.status === 'completed').length;
       if (runningSteps.length > 0) {
         currentStep = runningSteps[0].stepName;
         derivedStatus = 'running';
-      } else if (stepMap.size > 0 && Array.from(stepMap.values()).every((s) => s.status === 'completed')) {
+      } else if (
+        stepMap.size > 0 &&
+        Array.from(stepMap.values()).every((s) => s.status === 'completed') &&
+        (!isSlurmRun || (totalSteps > 0 && completedSteps >= totalSteps))
+      ) {
+        // "Every step that has appeared in the trace is completed" — but stepMap holds only steps whose
+        // processes have already run. For a SLURM run that is dangerous: the inline job ingests reads in
+        // an early wave (metaxpath: input + move_fastq), the gap before the next step is submitted reads
+        // as "all known steps done", and the run was falsely finalized 'completed' after 2 of 13 steps
+        // while the sbatch job was still RUNNING (cancelled by the e2e). So for SLURM runs ALSO require
+        // completedSteps >= the package's totalSteps (mirrors the ops-service traceCompletedKnownWork
+        // guard); a SLURM run with partial step coverage instead finalizes from the scheduler/exit
+        // marker via reconcileRunStatus(null, schedulerStatus) below. LOCAL runs keep the original
+        // every-appeared behaviour: their finalize path ingests outputs (e.g. read-cleaning's cleaned
+        // reads); routing them through the scheduler/marker path instead drops that ingestion.
         derivedStatus = 'completed';
         currentStep = 'Completed';
       } else if (Array.from(stepMap.values()).some((s) => s.status === 'failed')) {
@@ -188,7 +205,6 @@ export async function syncRun(run: {
         currentStep = 'Failed';
       }
 
-      const completedSteps = Array.from(stepMap.values()).filter((s) => s.status === 'completed').length;
       if (totalSteps > 0) {
         progress = Math.min(99, Math.round((completedSteps / totalSteps) * 100));
       } else {

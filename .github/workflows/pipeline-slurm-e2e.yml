@@ -26,6 +26,16 @@ on:
         required: true
         default: "fastq-checksum"
         type: string
+      run_mouse_real_data:
+        description: "Also run the public pipelines on the REAL ENA mouse-gut dataset (PRJDB6165) and upload their reports for the demo viewer"
+        required: false
+        default: false
+        type: boolean
+      run_human_gut_kraken:
+        description: "Run kraken2-bracken taxonomic profiling on the REAL human-gut shotgun dataset (PRJEB54724) and push the Kraken/Bracken/Krona output for the demo viewer"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -42,6 +52,11 @@ jobs:
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]
+    # Needs write access so the opt-in mouse-gut step can push the collected real reports to a
+    # `demo-mouse-reports` branch (a quota-proof alternative to the artifact upload). Other steps
+    # only read. Job-level overrides the top-level `contents: read`.
+    permissions:
+      contents: write
     timeout-minutes: 90
     defaults:
       run:
@@ -495,6 +510,181 @@ jobs:
             --ensure-dummy-data \
             --pipeline-id reads-qc \
             2>&1 | tee "$RUNNER_TEMP/reads-qc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+
+      # --- Opt-in: run the PUBLIC pipelines on the REAL ENA mouse-gut dataset (PRJDB6165) ---
+      # Gated to an explicit workflow_dispatch with run_mouse_real_data=true — the nightly schedule
+      # skips it (it downloads ~130 MB of real reads from ENA and runs extra pipelines). Seeds the
+      # eight real mouse-gut read pairs as a real order/study, then runs fastqc + fastq-checksum
+      # (order-scoped) and reads-qc + study-demo-report (study-scoped) on them. The per-process conda
+      # envs (fastqc/seqkit) were already warmed into the shared cache by the dummy fastqc/reads-qc
+      # steps above, so the SLURM runs here reuse them by hash (same data-independent env hash).
+      # Resilient by design: the QOS submit slot is freed before each pipeline, one pipeline failing
+      # never aborts the rest, reports are always collected, and they are pushed to a dedicated
+      # `demo-mouse-reports` branch (quota-proof) for bundling into the SeqDesk demo viewer.
+      - name: Run public pipelines on REAL mouse-gut data (PRJDB6165) — opt-in
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_mouse_real_data == true }}
+        continue-on-error: true
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+          # Push the collected reports to a branch (quota-proof transport — see below).
+          GH_PUSH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # NOTE: intentionally NO `set -e` — a single pipeline failing (e.g. a transient SLURM
+          # QOS rejection) must NOT abort the step before reports are collected and pushed.
+          set -uo pipefail
+          MOUSE_REPORTS_DIR="$RUNNER_TEMP/mouse-gut-reports"
+          mkdir -p "$MOUSE_REPORTS_DIR"
+          echo "MOUSE_REPORTS_DIR=$MOUSE_REPORTS_DIR" >> "$GITHUB_ENV"
+          ORDER="DEV-MOUSE-PRJDB6165-001"
+          STUDY_ALIAS="mouse-gut-prjdb6165-ci"
+          ME="$(whoami)"
+          FAILS=""
+
+          # This cluster caps concurrent SLURM submissions per user (QOS MaxSubmitJobPerUser=1):
+          # a job still PENDING/RUNNING from the previous mouse pipeline makes the next sbatch fail
+          # with QOSMaxSubmitJobPerUserLimit (the reads-qc failure in run 28405692814). Before each
+          # pipeline, cancel any PENDING job of ours and wait for our queue to drain so the submit
+          # slot is free — the same slot-management the read-cleaning step already does.
+          free_qos_slot() {
+            command -v squeue >/dev/null 2>&1 || return 0
+            local stale; stale="$(squeue -u "$ME" -h -t PENDING -o '%i' 2>/dev/null || true)"
+            [ -n "$stale" ] && { echo "freeing stale PENDING SLURM job(s): $stale"; echo "$stale" | xargs -r scancel 2>/dev/null || true; }
+            for _ in $(seq 1 36); do squeue -u "$ME" -h 2>/dev/null | grep -q . || break; sleep 5; done
+          }
+
+          # Resilient: each pipeline runs local + SLURM; the LOCAL run (head node, no sbatch) always
+          # produces the report, so even if the SLURM submission is rejected we still get the report.
+          # Failures are recorded, never fatal.
+          run_mouse() {
+            local label="$1"; shift
+            free_qos_slot
+            echo "::group::mouse-gut pipeline: $label"
+            if npm run pipeline:e2e:runtime -- "$@" 2>&1 | tee "$RUNNER_TEMP/mouse-$label-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"; then
+              echo "mouse $label: OK"
+            else
+              echo "mouse $label: FAILED (continuing — local report may still exist)"; FAILS="$FAILS $label"
+            fi
+            echo "::endgroup::"
+          }
+
+          # Seed ONCE on the first run (the harness re-downloads on every --seed-example-dataset, so
+          # passing it on all four would re-fetch the ~130 MB four times). --set-data-base-path
+          # points the bundle extractor at the shared FS the compute nodes see and persists in
+          # SiteSettings; --seed-example-dataset downloads the 8 ENA pairs and creates the order/study.
+          run_mouse fastq-checksum    --set-data-base-path "$SEQDESK_DATA_DIR" \
+            --seed-example-dataset mouse-gut-prjdb6165 --pipeline-id fastq-checksum --order-number "$ORDER"
+          run_mouse fastqc            --pipeline-id fastqc            --order-number "$ORDER"
+          run_mouse reads-qc          --pipeline-id reads-qc          --study-alias "$STUDY_ALIAS"
+          run_mouse study-demo-report --pipeline-id study-demo-report --study-alias "$STUDY_ALIAS"
+
+          # Collect the human-readable report outputs (HTML/TSV/CSV/TXT) from the mouse run dirs;
+          # skip the heavy nextflow `work/` intermediates. Each file is renamed by its run-relative
+          # path so per-pipeline outputs don't collide on basename. Runs unconditionally.
+          echo "=== collecting mouse-gut reports ==="
+          find "$SEQDESK_RUN_DIR" -type d -path '*/work' -prune -o \
+            -type f \( -iname '*.html' -o -iname '*.tsv' -o -iname '*.csv' -o -iname '*.txt' \) -print 2>/dev/null \
+            | while IFS= read -r f; do
+                rel="${f#"$SEQDESK_RUN_DIR"/}"
+                safe="$(printf '%s' "$rel" | tr '/' '__')"
+                cp "$f" "$MOUSE_REPORTS_DIR/$safe" 2>/dev/null || true
+              done
+          NFILES="$(find "$MOUSE_REPORTS_DIR" -type f | wc -l | tr -d ' ')"
+          echo "collected $NFILES report file(s):"
+          find "$MOUSE_REPORTS_DIR" -type f -printf '  %f\n' 2>/dev/null | sort | head -120
+
+          # Quota-proof transport: the repo-wide artifact storage quota is frequently exhausted by the
+          # full run-dir upload (and GitHub's usage figure lags 6-12h after cleanup), which strands
+          # these tiny reports. So push them to a dedicated `demo-mouse-reports` branch instead — a
+          # fresh single-commit branch (force-pushed) that the demo maintainer fetches directly. No
+          # artifact dependency. Requires job-level `permissions: contents: write`.
+          if [ "$NFILES" -gt 0 ]; then
+            PUSH_DIR="$RUNNER_TEMP/mouse-reports-push"
+            rm -rf "$PUSH_DIR"; mkdir -p "$PUSH_DIR/reports"
+            cp "$MOUSE_REPORTS_DIR"/* "$PUSH_DIR/reports/" 2>/dev/null || true
+            printf 'Mouse-gut (PRJDB6165) real pipeline reports\nrun=%s attempt=%s\nfailed_pipelines=%s\n' \
+              "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${FAILS:- none}" > "$PUSH_DIR/reports/RUN_INFO.txt"
+            ( cd "$PUSH_DIR"
+              git init -q
+              git config user.email "ci@seqdesk.org"; git config user.name "SeqDesk CI"
+              git checkout -q -b demo-mouse-reports
+              git add -A
+              git commit -q -m "mouse-gut real reports (run $GITHUB_RUN_ID)"
+              if git push -q -f "https://x-access-token:${GH_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" demo-mouse-reports; then
+                echo "pushed $NFILES report file(s) -> demo-mouse-reports branch"
+              else
+                echo "WARN: branch push failed (reports also in the artifact if the quota recovers)"
+              fi )
+          else
+            echo "WARN: no reports collected — nothing to push"
+          fi
+          echo "mouse pipelines that failed:${FAILS:- none}"
+          # Opt-in/experimental: never red the whole job on a mouse-data hiccup.
+          exit 0
+
+      # ── Opt-in: kraken2-bracken taxonomic profiling on the REAL human-gut shotgun study ──
+      # Runs the new kraken2-bracken pipeline on the 12 real PRJEB54724 read pairs against the
+      # runner's Standard kraken2 DB (~12 GB; the head node has ~62 GB RAM so LOCAL mode is fine —
+      # KRAKEN2 is capped to maxForks 1 / 16 GB in the package). The DB already ships the Bracken
+      # kmer distributions (database150mers.kmer_distrib), so no bracken-build is needed. Collects
+      # the Kraken2 report + Bracken abundance + Krona HTML and pushes them to a dedicated
+      # `demo-human-gut-kraken` branch (quota-proof) for wiring into the demo viewer.
+      - name: Run kraken2-bracken on the REAL human-gut shotgun study (taxonomy → demo, opt-in)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_human_gut_kraken == true }}
+        continue-on-error: true
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+          GH_PUSH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
+        run: |
+          set -uo pipefail
+          OUT="$RUNNER_TEMP/kraken-output"; mkdir -p "$OUT"
+          echo "kraken2 DB: $KRAKEN2_DB"
+          ls -la "$KRAKEN2_DB"/*.k2d "$KRAKEN2_DB"/database150mers.kmer_distrib 2>/dev/null | head
+          # Seed the real human-gut reads (idempotent download) + run kraken2-bracken LOCAL on the
+          # human-gut CI order (the harness treats kraken2-bracken as order-scoped). kraken2Db +
+          # bracken read length come via --config-json (the read-cleaning pattern).
+          if npm run pipeline:e2e:runtime -- \
+              --set-data-base-path "$SEQDESK_DATA_DIR" \
+              --seed-example-dataset human-gut-prjeb54724 \
+              --pipeline-id kraken2-bracken \
+              --order-number DEV-HUMAN-PRJEB54724-001 \
+              --config-json "{\"kraken2Db\":\"$KRAKEN2_DB\",\"brackenReadLength\":150,\"brackenLevel\":\"S\",\"krona\":true}" \
+              --skip-slurm \
+              2>&1 | tee "$RUNNER_TEMP/kraken-e2e.log"; then
+            echo "kraken2-bracken: OK"
+          else
+            echo "kraken2-bracken: FAILED (see log)"
+          fi
+          # Collect the taxonomy outputs (skip nextflow work/ intermediates).
+          find "$SEQDESK_RUN_DIR" -type d -path '*/work' -prune -o \
+            -type f \( -iname '*.kraken2.report.txt' -o -iname '*.bracken.tsv' -o -iname '*.bracken.report.txt' \
+                       -o -iname '*.krona.html' -o -iname '*kraken*summary*' -o -iname '*bracken*summary*' \) -print 2>/dev/null \
+            | while IFS= read -r f; do
+                rel="${f#"$SEQDESK_RUN_DIR"/}"; safe="$(printf '%s' "$rel" | tr '/' '__')"
+                cp "$f" "$OUT/$safe" 2>/dev/null || true
+              done
+          NFILES="$(find "$OUT" -type f | wc -l | tr -d ' ')"
+          echo "collected $NFILES kraken/bracken/krona file(s):"
+          find "$OUT" -type f -printf '  %f\n' 2>/dev/null | sort | head -60
+          # quota-proof transport -> demo-human-gut-kraken branch
+          if [ "$NFILES" -gt 0 ]; then
+            PUSH_DIR="$RUNNER_TEMP/kraken-push"; rm -rf "$PUSH_DIR"; mkdir -p "$PUSH_DIR/reports"
+            cp "$OUT"/* "$PUSH_DIR/reports/" 2>/dev/null || true
+            printf 'Human-gut (PRJEB54724) kraken2-bracken taxonomy output\nrun=%s attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$PUSH_DIR/reports/RUN_INFO.txt"
+            ( cd "$PUSH_DIR"; git init -q
+              git config user.email "ci@seqdesk.org"; git config user.name "SeqDesk CI"
+              git checkout -q -b demo-human-gut-kraken; git add -A
+              git commit -q -m "human-gut kraken2-bracken taxonomy (run $GITHUB_RUN_ID)"
+              git push -q -f "https://x-access-token:${GH_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" demo-human-gut-kraken \
+                && echo "pushed $NFILES file(s) -> demo-human-gut-kraken branch" || echo "WARN: branch push failed" )
+          else
+            echo "WARN: no kraken output collected — nothing to push"
+          fi
+          exit 0
 
       # read-cleaning UNDER SLURM (source-boot, local + SLURM). The LOCAL run builds detaxizer's
       # conda env into the shared cache on the networked head node; the SLURM run reuses it by
@@ -1036,12 +1226,15 @@ jobs:
             ${{ env.PG_LOG }}
             ${{ env.SEQDESK_RUN_DIR }}
             ${{ runner.temp }}/slurm-diag
+            # Real mouse-gut (PRJDB6165) pipeline reports — only present when the opt-in step ran
+            # (workflow_dispatch + run_mouse_real_data=true). Collected for the demo viewer.
+            ${{ runner.temp }}/mouse-gut-reports
             # Nextflow work dirs are intermediates, not useful as artifacts — and they get
             # huge (read-cleaning's detaxizer un-tars a ~20 GB kraken2 DB into one, which made
             # the upload hang ~1h). The per-process logs are echoed by the diagnostics step.
             !${{ env.SEQDESK_RUN_DIR }}/**/work/**
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
       - name: Cleanup resources
         if: always()

@@ -1101,15 +1101,142 @@ async function applyPipelineEnablement(prisma, profile) {
   return enableIds.length;
 }
 
+// Default version stamped on profile-declared per-study forms when none is given.
+// Mirrors STUDY_FORM_DEFAULTS_VERSION in src/lib/modules/default-form-fields.ts.
+const STUDY_FORM_DEFAULTS_VERSION = 1;
+
+// Read the optional `studies` section of an install profile: a list of study
+// definitions, each optionally carrying its own dynamic per-study questionnaire
+// (`form: { fields, groups, defaultsVersion }`). `title` + `alias` are required;
+// `alias` is the idempotency match key against Study.alias.
+function readStudyDefinitions(profile) {
+  const list = Array.isArray(profile.studies) ? profile.studies : [];
+  const out = [];
+  for (const entry of list) {
+    const record = toRecord(entry);
+    const title = toOptionalString(record.title);
+    const alias = toOptionalString(record.alias);
+    if (!title || !alias) continue;
+    const form = toRecord(record.form);
+    const hasForm = Array.isArray(form.fields) && form.fields.length > 0;
+    out.push({
+      title,
+      alias,
+      description: toOptionalString(record.description) ?? null,
+      checklistType: toOptionalString(record.checklistType) ?? null,
+      readyForSubmission: toOptionalBoolean(record.readyForSubmission) ?? false,
+      form: hasForm
+        ? {
+            fields: form.fields,
+            groups: Array.isArray(form.groups) ? form.groups : [],
+            defaultsVersion:
+              toOptionalInt(form.defaultsVersion) || STUDY_FORM_DEFAULTS_VERSION,
+          }
+        : null,
+    });
+  }
+  return out;
+}
+
+// Studies need an owner (Study.userId). Prefer the first facility admin, else any
+// user. Returns null when the install has no users yet (study creation is skipped).
+async function resolveProfileStudyOwner(prisma) {
+  const admin = await prisma.user.findFirst({
+    where: { role: "FACILITY_ADMIN" },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  if (admin) return admin.id;
+  const anyUser = await prisma.user.findFirst({
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  return anyUser?.id ?? null;
+}
+
+// Apply the install profile's `studies` section: upsert each study (matched by
+// alias) and its optional per-study StudyFormConfig. Idempotent. When any study
+// declares a form, the `dynamic-studies` module is enabled so the form renders.
+export async function applyStudyDefinitions(prisma, profile) {
+  const definitions = readStudyDefinitions(profile);
+  if (definitions.length === 0) return 0;
+
+  const ownerId = await resolveProfileStudyOwner(prisma);
+  if (!ownerId) return 0;
+
+  let applied = 0;
+  let anyForm = false;
+  for (const def of definitions) {
+    const existing = await prisma.study.findFirst({
+      where: { alias: def.alias },
+      select: { id: true },
+    });
+    const data = {
+      title: def.title,
+      alias: def.alias,
+      description: def.description,
+      checklistType: def.checklistType,
+      readyForSubmission: def.readyForSubmission,
+    };
+    let studyId;
+    if (existing) {
+      await prisma.study.update({ where: { id: existing.id }, data });
+      studyId = existing.id;
+    } else {
+      const created = await prisma.study.create({
+        data: { ...data, userId: ownerId },
+        select: { id: true },
+      });
+      studyId = created.id;
+    }
+
+    if (def.form) {
+      anyForm = true;
+      const fieldsJson = JSON.stringify(def.form.fields);
+      const groupsJson = JSON.stringify(def.form.groups);
+      await prisma.studyFormConfig.upsert({
+        where: { studyId },
+        update: {
+          fields: fieldsJson,
+          groups: groupsJson,
+          defaultsVersion: def.form.defaultsVersion,
+        },
+        create: {
+          studyId,
+          fields: fieldsJson,
+          groups: groupsJson,
+          defaultsVersion: def.form.defaultsVersion,
+        },
+      });
+    }
+    applied += 1;
+  }
+
+  if (anyForm) {
+    const settings = await loadSiteSettings(prisma);
+    const modulesConfig = parseModulesConfig(settings?.modulesConfig);
+    if (modulesConfig.modules["dynamic-studies"] !== true) {
+      modulesConfig.modules["dynamic-studies"] = true;
+      await updateSiteSettings(prisma, {
+        modulesConfig: JSON.stringify(modulesConfig),
+      });
+    }
+  }
+
+  return applied;
+}
+
 export async function applyInstallProfile(prisma, profile) {
   const appliedOrderForm = await applyOrderForm(prisma, profile);
   await applySiteProfile(prisma, profile);
   const enabledPipelines = await applyPipelineEnablement(prisma, profile);
+  const appliedStudies = await applyStudyDefinitions(prisma, profile);
   const persistedProfile = persistSafeInstallProfileMetadata(profile);
 
   return {
     appliedOrderForm,
     enabledPipelines,
+    appliedStudies,
     persistedProfile,
   };
 }

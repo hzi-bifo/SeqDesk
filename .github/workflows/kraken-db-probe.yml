@@ -1,0 +1,45 @@
+# Kraken DB probe — read-only inspection of the runner's kraken2 DB so we can wire
+# the kraken2-bracken pipeline correctly (DB size/contents, bracken kmer files, RAM,
+# writability). Dispatch-only, gated to the private CI mirror.
+name: Kraken DB probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Kraken DB probe (self-hosted)
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' }}
+    runs-on:
+      group: bifo_dmz
+      labels: [self-hosted, Linux, X64, db-local, twincore, alma]
+    timeout-minutes: 15
+    env:
+      KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
+      SHARED_ROOT: ${{ vars.SLURM_SHARED_RUN_ROOT }}
+    steps:
+      - name: Probe
+        shell: bash
+        run: |
+          set +e
+          DB="$KRAKEN2_DB"
+          echo "=================== KRAKEN2 DB PROBE ==================="
+          echo "DB path: $DB"
+          echo "--- exists? ---"; [ -e "$DB" ] && echo "yes ($([ -d "$DB" ] && echo dir || echo file))" || { echo "NO — DB absent"; }
+          echo "--- size ---"; du -sh "$DB" 2>/dev/null
+          echo "--- top-level contents ---"; ls -la "$DB" 2>/dev/null | head -40
+          echo "--- kraken2 index files (*.k2d) ---"; ls -la "$DB"/*.k2d 2>/dev/null || echo "  none (.k2d absent — not a built kraken2 DB?)"
+          echo "--- bracken kmer distributions (databaseXXmers.kmer_distrib) ---"; ls -la "$DB"/*kmer_distrib* "$DB"/database*mers* 2>/dev/null || echo "  NONE — bracken-build needed"
+          echo "--- inputs bracken-build needs (library/, taxonomy/, database.kraken) ---"
+          ls -ld "$DB"/library "$DB"/taxonomy 2>/dev/null; ls -la "$DB"/database.kraken "$DB"/seqid2taxid.map 2>/dev/null || echo "  (library/taxonomy/database.kraken may be absent -> cannot bracken-build in place)"
+          echo "--- is the DB dir writable by us? ($(whoami)) ---"; touch "$DB/.write_probe" 2>/dev/null && { echo "WRITABLE"; rm -f "$DB/.write_probe"; } || echo "READ-ONLY"
+          echo "--- a writable shared-FS root for building a bracken DB copy? ---"; echo "SHARED_ROOT=$SHARED_ROOT"; [ -n "$SHARED_ROOT" ] && { df -hP "$SHARED_ROOT" 2>/dev/null | tail -1; touch "$SHARED_ROOT/.k2probe" 2>/dev/null && { echo "  shared root WRITABLE"; rm -f "$SHARED_ROOT/.k2probe"; } || echo "  shared root not writable"; }
+          echo "--- node RAM (kraken2 loads the whole DB into RAM) ---"; free -g 2>/dev/null | head -2; echo "DB size vs RAM matters."
+          echo "--- conda + kraken2/bracken/krona availability ---"
+          for t in conda kraken2 bracken bracken-build kreport2krona.py ktImportText; do command -v "$t" >/dev/null 2>&1 && echo "  $t: $(command -v $t)" || echo "  $t: (not on PATH — comes from the pipeline conda env at run time)"; done
+          echo "--- sinfo: which partitions/node memory (for right-sizing a slurm kraken job) ---"; command -v sinfo >/dev/null 2>&1 && sinfo -o "%P %m %c %N" 2>/dev/null | head || echo "  sinfo n/a"
+          echo "=================== END PROBE ==================="
+          true

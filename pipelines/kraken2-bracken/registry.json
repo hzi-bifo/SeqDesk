@@ -1,0 +1,144 @@
+{
+  "id": "kraken2-bracken",
+  "name": "Taxonomic Profiling (Kraken2 + Bracken)",
+  "description": "Classify short reads with Kraken2, re-estimate abundances with Bracken, and render per-sample Krona charts",
+  "category": "analysis",
+  "version": "0.1.0",
+  "sortOrder": 3,
+  "website": "https://github.com/DerrickWood/kraken2",
+  "requires": {
+    "reads": true,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "report",
+      "name": "kraken2_report",
+      "description": "Per-sample Kraken2 classification report",
+      "model": "PipelineArtifact",
+      "visibility": "both",
+      "downloadable": true
+    },
+    {
+      "type": "data",
+      "name": "bracken_abundance",
+      "description": "Per-sample Bracken re-estimated abundance table",
+      "model": "PipelineArtifact",
+      "visibility": "both",
+      "downloadable": true
+    },
+    {
+      "type": "report",
+      "name": "krona_html",
+      "description": "Interactive per-sample Krona visualization",
+      "model": "PipelineArtifact",
+      "visibility": "both",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": true,
+    "userCanStart": false
+  },
+  "input": {
+    "supportedScopes": [
+      "study",
+      "samples"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": true,
+      "readMode": "single_or_paired",
+      "pairedEnd": false
+    }
+  },
+  "sequencingCompatibility": {
+    "readLengthClass": "short",
+    "readLayouts": [
+      "single",
+      "paired"
+    ]
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "kraken2Db": {
+        "type": "string",
+        "title": "Kraken2 DB",
+        "description": "Local Kraken2 database directory (must also contain Bracken kmer distribution files).",
+        "default": "",
+        "x-seqdesk": {
+          "placement": "basic",
+          "group": "databases",
+          "helpText": "Required. SeqDesk will not silently choose or download a database; admins pin this via the install profile.",
+          "hideWhenServerConfigured": true
+        }
+      },
+      "confidence": {
+        "type": "number",
+        "title": "Kraken2 Confidence",
+        "description": "Kraken2 confidence score threshold (0.0 disables filtering).",
+        "default": 0.0,
+        "minimum": 0,
+        "maximum": 1,
+        "x-seqdesk": {
+          "placement": "advanced",
+          "group": "analysis"
+        }
+      },
+      "brackenReadLength": {
+        "type": "integer",
+        "title": "Bracken Read Length",
+        "description": "Read length used to choose the Bracken kmer distribution built on the Kraken2 DB.",
+        "default": 150,
+        "minimum": 1,
+        "x-seqdesk": {
+          "placement": "advanced",
+          "group": "analysis",
+          "helpText": "Must correspond to a databaseXXmers.kmer_distrib file built with bracken-build."
+        }
+      },
+      "brackenLevel": {
+        "type": "string",
+        "title": "Bracken Level",
+        "description": "Taxonomic rank for Bracken abundance re-estimation.",
+        "enum": [
+          "S",
+          "G",
+          "F"
+        ],
+        "default": "S",
+        "x-seqdesk": {
+          "placement": "advanced",
+          "group": "analysis"
+        }
+      },
+      "krona": {
+        "type": "boolean",
+        "title": "Krona Chart",
+        "description": "Render an interactive Krona HTML chart per sample.",
+        "default": true,
+        "x-seqdesk": {
+          "placement": "basic",
+          "group": "reporting"
+        }
+      }
+    }
+  },
+  "defaultConfig": {
+    "kraken2Db": "",
+    "confidence": 0.0,
+    "brackenReadLength": 150,
+    "brackenLevel": "S",
+    "krona": true
+  },
+  "icon": "BarChart3"
+}

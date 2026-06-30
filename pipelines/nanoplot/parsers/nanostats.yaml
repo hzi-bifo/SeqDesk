@@ -1,0 +1,29 @@
+parser:
+  id: "nanostats_parser"
+  type: "tsv"
+  description: "Extract long-read metrics (read count, N50, mean length, mean quality) from the NanoPlot summary table"
+  trigger:
+    filePattern: "summary/nanoplot-summary.tsv"
+  skipHeader: true
+  columns:
+    - name: "sample_id"
+      index: 0
+      type: "string"
+    - name: "num_reads"
+      index: 1
+      type: "int"
+    - name: "total_bases"
+      index: 2
+      type: "int"
+    - name: "mean_length"
+      index: 3
+      type: "float"
+    - name: "median_length"
+      index: 4
+      type: "float"
+    - name: "read_n50"
+      index: 5
+      type: "int"
+    - name: "mean_quality"
+      index: 6
+      type: "float"

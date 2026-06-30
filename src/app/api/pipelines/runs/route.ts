@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth';
-import { isDemoSession } from '@/lib/demo/server';
+import {
+  getDemoFacilityWorkspaceUserIds,
+  isDemoSession,
+} from '@/lib/demo/server';
 import {
   createPipelineRunForOperator,
   listPipelineRunsForOperator,
@@ -22,9 +25,12 @@ export async function GET(request: NextRequest) {
       searchParams.get('publishedOnly') === 'true' ||
       searchParams.get('userVisible') === 'true' ||
       searchParams.get('visible') === 'user';
+    const demoWorkspaceUserIds =
+      await getDemoFacilityWorkspaceUserIds(session);
     const result = await listPipelineRunsForOperator({
       userId: session.user.id,
       role: session.user.role,
+      demoWorkspaceUserIds,
       pipelineId: searchParams.get('pipelineId'),
       status: searchParams.get('status'),
       studyId: searchParams.get('studyId'),

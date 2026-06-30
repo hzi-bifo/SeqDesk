@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 
 // GET /api/tickets/unread - Get count of unread tickets
 export async function GET() {
@@ -12,11 +13,12 @@ export async function GET() {
   }
 
   const isAdmin = session.user.role === "FACILITY_ADMIN";
+  const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
   try {
     const tickets = await db.ticket.findMany({
       where: isAdmin
-        ? { status: { not: "CLOSED" } }
+        ? (demoWsUserIds ? { userId: { in: demoWsUserIds }, status: { not: "CLOSED" } } : { status: { not: "CLOSED" } })
         : { userId: session.user.id, status: { not: "CLOSED" } },
       select: {
         id: true,

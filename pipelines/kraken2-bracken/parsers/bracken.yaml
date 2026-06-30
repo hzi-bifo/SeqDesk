@@ -1,0 +1,32 @@
+parser:
+  id: "bracken_parser"
+  type: "tsv"
+  description: "Extract the top taxon and its abundance fraction from a per-sample Bracken table"
+  trigger:
+    filePattern: "bracken/*.bracken.tsv"
+  skipHeader: true
+  columns:
+    - name: "sample_id"
+      index: 0
+      type: "string"
+    - name: "name"
+      index: 1
+      type: "string"
+    - name: "taxonomy_id"
+      index: 2
+      type: "int"
+    - name: "taxonomy_lvl"
+      index: 3
+      type: "string"
+    - name: "kraken_assigned_reads"
+      index: 4
+      type: "int"
+    - name: "added_reads"
+      index: 5
+      type: "int"
+    - name: "new_est_reads"
+      index: 6
+      type: "int"
+    - name: "fraction_total_reads"
+      index: 7
+      type: "float"

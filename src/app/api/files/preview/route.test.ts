@@ -158,11 +158,23 @@ describe("GET /api/files/preview", () => {
     expect(response.headers.get("Content-Type")).toBe("text/html");
   });
 
-  it("returns 403 in demo mode for non-fastqc path", async () => {
+  it("serves a bundled non-fastqc report (e.g. multiqc) in demo mode", async () => {
+    mocks.isDemoSession.mockReturnValue(true);
+    mocks.fs.readFile.mockResolvedValue(Buffer.from("<html>multiqc</html>"));
+
+    const response = await GET(
+      makeRequest({ path: "/data/runs/run-1/output/multiqc_report.html" })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("text/html");
+  });
+
+  it("returns 403 in demo mode for a non-previewable file", async () => {
     mocks.isDemoSession.mockReturnValue(true);
 
     const response = await GET(
-      makeRequest({ path: "/data/runs/run-1/output/report.html" })
+      makeRequest({ path: "/data/runs/run-1/output/assembly/contigs.fasta" })
     );
 
     expect(response.status).toBe(403);

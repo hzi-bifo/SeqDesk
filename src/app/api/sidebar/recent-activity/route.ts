@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { PIPELINE_REGISTRY } from "@/lib/pipelines";
 
 export async function GET() {
@@ -15,6 +16,7 @@ export async function GET() {
     const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
     const userId = session.user.id;
     const isDemoUser = session.user.isDemo === true;
+    const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
     const [runs, submissions] = await Promise.all([
       isDemoUser
@@ -38,18 +40,20 @@ export async function GET() {
             take: 3,
           }),
       isFacilityAdmin
-        ? db.submission.findMany({
-            select: {
-              id: true,
-              submissionType: true,
-              status: true,
-              entityType: true,
-              entityId: true,
-              createdAt: true,
-            },
-            orderBy: { createdAt: "desc" },
-            take: 3,
-          })
+        ? (demoWsUserIds
+            ? []
+            : db.submission.findMany({
+                select: {
+                  id: true,
+                  submissionType: true,
+                  status: true,
+                  entityType: true,
+                  entityId: true,
+                  createdAt: true,
+                },
+                orderBy: { createdAt: "desc" },
+                take: 3,
+              }))
         : Promise.resolve([]),
     ]);
 

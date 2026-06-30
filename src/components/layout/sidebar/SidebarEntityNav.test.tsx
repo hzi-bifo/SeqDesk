@@ -192,7 +192,9 @@ describe("SidebarEntityNav", () => {
     expect(overviewSectionLink.getAttribute("href")).toBe("/studies/study-1/edit?section=overview-a");
     expect(screen.getByText("Facility B")).toBeTruthy();
     expect(screen.queryByText("Read Files")).toBeNull();
-    expect(screen.queryByText("Analysis")).toBeNull();
+    // Analysis (study pipelines tab) is now shown to the facility-admin demo so
+    // the seeded, published MAG run + its MultiQC are reachable from the study.
+    expect(screen.getByText("Analysis")).toBeTruthy();
     expect(screen.queryByText("Publishing")).toBeNull();
   });
 

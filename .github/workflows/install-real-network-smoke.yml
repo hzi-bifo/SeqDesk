@@ -124,7 +124,7 @@ jobs:
             ${{ env.INSTALL_LOG }}
             ${{ env.SERVER_LOG }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
   curl-install-sh:
     name: "curl https://seqdesk.org/install.sh | bash"
@@ -198,7 +198,7 @@ jobs:
             ${{ env.INSTALL_LOG }}
             ${{ env.SERVER_LOG }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5
 
   npm-global-install-macos:
     name: "npm i -g seqdesk (macOS, node 20)"
@@ -319,4 +319,4 @@ jobs:
             ${{ env.INSTALL_LOG }}
             ${{ env.SERVER_LOG }}
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 5

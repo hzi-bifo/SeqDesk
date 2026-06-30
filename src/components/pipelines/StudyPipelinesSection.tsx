@@ -177,12 +177,15 @@ interface Sample {
   id: string;
   sampleId: string;
   sampleAlias?: string | null;
+  sampleAccessionNumber?: string | null;
   reads: {
     id: string;
     file1: string | null;
     file2: string | null;
     checksum1?: string | null;
     checksum2?: string | null;
+    runAccessionNumber?: string | null;
+    experimentAccessionNumber?: string | null;
   }[];
   order?: {
     id: string;
@@ -195,6 +198,7 @@ interface Sample {
     id: string;
     assemblyName: string | null;
     assemblyFile: string | null;
+    assemblyAccession?: string | null;
     createdByPipelineRunId: string | null;
     createdByPipelineRun: {
       id: string;
@@ -830,6 +834,7 @@ export function StudyPipelinesSection({
 }: StudyPipelinesSectionProps) {
   const { data: session } = useSession();
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const isDemoUser = session?.user?.isDemo === true;
 
   // --- Data fetching ---
   const { data: pipelinesData, isLoading: pipelinesLoading } = useSWR<{
@@ -1120,6 +1125,23 @@ export function StudyPipelinesSection({
   useEffect(() => {
     if (!selectedPipeline) return;
     let cancelled = false;
+
+    // In the public demo there is no pipeline runtime (no Nextflow/conda/run
+    // dir), and launching is blocked anyway. Skip the prerequisite probe so the
+    // UI doesn't surface a "Missing: Nextflow / Conda/Mamba / ..." checklist that
+    // looks like a broken install; the run controls render disabled instead.
+    if (isDemoUser) {
+      setPrerequisites({
+        requiredPassed: true,
+        allPassed: true,
+        summary: "",
+        checks: [],
+      });
+      setMetadataValidation(null);
+      setLoadingPrereqs(false);
+      setLoadingMetadata(false);
+      return;
+    }
 
     setLoadingPrereqs(true);
     setLoadingMetadata(true);
@@ -1724,6 +1746,12 @@ export function StudyPipelinesSection({
   // --- Main render (single-column layout matching OrderPipelineView) ---
   return (
     <div className="space-y-6">
+      {isDemoUser && (
+        <div className="rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          Real pipeline output run on dummy data, to demonstrate how finished
+          analyses look. View-only — pipelines can&apos;t be launched in the demo.
+        </div>
+      )}
       {/* Section 1: Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
@@ -1740,7 +1768,7 @@ export function StudyPipelinesSection({
               <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               Checking environment...
             </Button>
-          ) : systemBlocked ? (
+          ) : systemBlocked && !isDemoUser ? (
             <Button
               size="sm"
               variant="outline"
@@ -1760,6 +1788,7 @@ export function StudyPipelinesSection({
             <Button
               size="sm"
               disabled={
+                isDemoUser ||
                 !selectedPipeline ||
                 readinessIssues.length > 0 ||
                 startingPipelineId !== null ||
@@ -1769,9 +1798,11 @@ export function StudyPipelinesSection({
               }
               onClick={() => void handleStartPipeline()}
               title={
-                readinessIssues.length > 0
-                  ? readinessIssues[0]
-                  : executionTargetBlockMessage || undefined
+                isDemoUser
+                  ? "Pipeline execution isn't available in the public demo — this is a view-only showcase of example results."
+                  : readinessIssues.length > 0
+                    ? readinessIssues[0]
+                    : executionTargetBlockMessage || undefined
               }
             >
               {startingPipelineId === selectedPipeline?.pipelineId || loadingPrereqs || loadingMetadata ? (
@@ -1864,6 +1895,88 @@ export function StudyPipelinesSection({
           {enaSubmissionServer.isTestMode ? " - test submission mode" : ""}
         </p>
       )}
+
+      {/* ENA submission results: accessions written back by SubMG after a submission
+          (sample ERS/SAMEA, read run ERR + experiment ERX, assembly ERZ). Shown whenever
+          the study has any accession, linking sample -> reads -> assembly in the ENA browser. */}
+      {(() => {
+        const enaHost = enaSubmissionServer?.host ?? null;
+        const renderAcc = (acc: string | null) => {
+          if (!acc) return <span className="text-muted-foreground">—</span>;
+          if (!enaHost) return <span className="font-mono">{acc}</span>;
+          return (
+            <a
+              href={`https://${enaHost}/ena/browser/view/${acc}`}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-[#00BD7D] hover:underline"
+            >
+              {acc}
+            </a>
+          );
+        };
+        const rows = samples
+          .map((s) => {
+            const read = s.reads.find(
+              (r) => r.runAccessionNumber || r.experimentAccessionNumber
+            );
+            const assembly = s.assemblies.find((a) => a.assemblyAccession);
+            return {
+              id: s.id,
+              sampleId: s.sampleId,
+              sampleAcc: s.sampleAccessionNumber ?? null,
+              runAcc: read?.runAccessionNumber ?? null,
+              expAcc: read?.experimentAccessionNumber ?? null,
+              asmAcc: assembly?.assemblyAccession ?? null,
+            };
+          })
+          .filter((r) => r.sampleAcc || r.runAcc || r.expAcc || r.asmAcc);
+        if (rows.length === 0) return null;
+        return (
+          <div className="rounded-md border border-[#00BD7D]/30 bg-[#00BD7D]/5 p-3">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-medium">ENA submission results</h3>
+              {enaSubmissionServer && (
+                <span
+                  className={`text-xs ${
+                    enaSubmissionServer.isTestMode ? "text-amber-700" : "text-blue-700"
+                  }`}
+                >
+                  {enaSubmissionServer.label} ({enaSubmissionServer.host})
+                </span>
+              )}
+            </div>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Accessions registered at ENA and ingested by SeqDesk, linking each sample to its
+              submitted reads and assembly.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="text-muted-foreground">
+                  <tr className="border-b">
+                    <th className="py-1 pr-3 text-left font-medium">Sample</th>
+                    <th className="py-1 pr-3 text-left font-medium">Sample (ERS)</th>
+                    <th className="py-1 pr-3 text-left font-medium">Run (ERR)</th>
+                    <th className="py-1 pr-3 text-left font-medium">Experiment (ERX)</th>
+                    <th className="py-1 text-left font-medium">Assembly (ERZ)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.id} className="border-b last:border-0">
+                      <td className="py-1 pr-3 font-mono">{r.sampleId}</td>
+                      <td className="py-1 pr-3">{renderAcc(r.sampleAcc)}</td>
+                      <td className="py-1 pr-3">{renderAcc(r.runAcc)}</td>
+                      <td className="py-1 pr-3">{renderAcc(r.expAcc)}</td>
+                      <td className="py-1">{renderAcc(r.asmAcc)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Section 4: Samples table */}
       <div>

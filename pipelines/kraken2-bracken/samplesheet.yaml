@@ -1,0 +1,22 @@
+samplesheet:
+  format: csv
+  filename: samplesheet.csv
+  rows:
+    scope: sample
+  columns:
+    - name: sample_id
+      source: sample.sampleId
+      required: true
+    - name: fastq_1
+      source: read.file1
+      required: true
+      transform:
+        type: prepend_path
+        base: '${DATA_BASE_PATH}'
+    - name: fastq_2
+      source: read.file2
+      required: false
+      default: ""
+      transform:
+        type: prepend_path
+        base: '${DATA_BASE_PATH}'

@@ -40,9 +40,12 @@
  *     --webin-username "$ENA_USERNAME" --webin-password "$ENA_PWD"
  */
 
+import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import zlib from "node:zlib";
 
 import { PrismaClient } from "@prisma/client";
 
@@ -235,6 +238,43 @@ function buildAssemblyFasta() {
   return `${contigs.join("\n")}\n`;
 }
 
+const MEGAHIT_MIN_CONTIG_LEN = 1000; // mag-style; comfortably above ENA's 200 bp floor
+
+// Produce a REAL mag-style assembly: run MEGAHIT (nf-core/mag's assembler) on the
+// seeded paired reads, deterministically (--num-cpu-threads 1). Returns gzip bytes
+// of final.contigs.fa when it yields >=1 contig >= MEGAHIT_MIN_CONTIG_LEN, else null
+// (caller falls back to the synthetic FASTA so the warn-only leg never regresses).
+// The megahit binary comes from the submg conda env via SEQDESK_SUBMG_E2E_MEGAHIT_BIN;
+// when unset/missing (local/dev), this returns null and the synthetic FASTA is used.
+function buildMegahitAssemblyGz(r1Abs, r2Abs) {
+  const bin = process.env.SEQDESK_SUBMG_E2E_MEGAHIT_BIN || "megahit";
+  if (spawnSync(bin, ["--version"], { stdio: "ignore" }).status !== 0) return null;
+  // Threads + timeout are env-tunable: the default (1 thread / 5 min) suits the tiny
+  // dummy reads, while a real shotgun sample needs more (e.g. 4 threads / 20 min) to
+  // assemble contigs within the window.
+  const threads = String(process.env.SEQDESK_SUBMG_E2E_MEGAHIT_THREADS || "1");
+  const timeoutSec = Number(process.env.SEQDESK_SUBMG_E2E_MEGAHIT_TIMEOUT_SEC || "300");
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "submg-megahit-"));
+  const runOut = path.join(outDir, "asm"); // MEGAHIT requires its -o dir NOT pre-exist
+  const res = spawnSync(
+    bin,
+    [
+      "-1", r1Abs,
+      "-2", r2Abs,
+      "--num-cpu-threads", threads,
+      "--min-contig-len", String(MEGAHIT_MIN_CONTIG_LEN),
+      "-o", runOut,
+    ],
+    { stdio: "inherit", timeout: timeoutSec * 1000 },
+  );
+  const contigs = path.join(runOut, "final.contigs.fa");
+  if (res.status !== 0 || !fs.existsSync(contigs)) return null;
+  // Guard ENA validation: require a real header + IUPAC sequence (>=1 contig).
+  const text = fs.readFileSync(contigs, "utf8");
+  if (!/^>.+\n[ACGTNacgtn]/m.test(text)) return null;
+  return zlib.gzipSync(Buffer.from(text));
+}
+
 const ACCESSION_RE = /^(ERS|SAMEA|SAMN|ERR|ERX|ERZ|GCA)/i;
 
 async function main() {
@@ -293,6 +333,44 @@ async function main() {
   if (!dataBasePath) fail("Could not resolve dataBasePath from sequencing-files settings");
   console.log(`Data base path: ${dataBasePath}`);
 
+  // Optionally provision a REAL example dataset (e.g. the human-gut shotgun study) into the
+  // configured data dir, so submg submits REAL reads + a REAL MEGAHIT assembly to ENA TEST
+  // instead of dummy data. Env-gated: default behaviour (dummy data) is unchanged.
+  const exampleDataset = process.env.SEQDESK_SUBMG_E2E_EXAMPLE_DATASET || null;
+  if (exampleDataset) {
+    // The example-dataset extractor reads the RAW stored SiteSettings.dataBasePath (not the
+    // env-resolved value the GET above returns), so persist it explicitly first — otherwise
+    // the seed 500s with "Data base path is not configured" (the slurm-e2e does the same via
+    // --set-data-base-path).
+    const setPathRes = await client.request("/api/admin/settings/sequencing-files", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dataBasePath }),
+    });
+    if (!setPathRes.ok) {
+      fail(
+        `Failed to persist dataBasePath before example-dataset seed (${setPathRes.status})`,
+        summarizeBody(await setPathRes.text()),
+      );
+    }
+    console.log(`Persisted dataBasePath=${dataBasePath} to SiteSettings.`);
+    console.log(`Seeding REAL example dataset '${exampleDataset}' (downloads reads)...`);
+    const seedRes = await client.request(
+      `/api/admin/seed/example-datasets/${exampleDataset}`,
+      { method: "POST" },
+    );
+    if (!seedRes.ok) {
+      fail(
+        `Failed to seed example dataset '${exampleDataset}' (${seedRes.status})`,
+        summarizeBody(await seedRes.text()),
+      );
+    }
+    console.log(`Seeded REAL example dataset '${exampleDataset}'.`);
+  }
+  // When set, pin the submg run to this study alias (e.g. the human-gut shotgun study)
+  // instead of the heuristic pick.
+  const targetStudyAlias = process.env.SEQDESK_SUBMG_E2E_STUDY_ALIAS || null;
+
   const prisma = new PrismaClient();
   try {
     // Pick a study whose samples have an active paired read on disk. Prefer one
@@ -316,8 +394,17 @@ async function main() {
     });
 
     const study =
-      candidateStudies.find((s) => !s.studyAccessionId) || candidateStudies[0];
+      (targetStudyAlias &&
+        candidateStudies.find((s) => String(s.alias) === targetStudyAlias)) ||
+      candidateStudies.find((s) => !s.studyAccessionId) ||
+      candidateStudies[0];
     if (!study) fail("No study with paired-read samples was found after seeding dummy data");
+    if (targetStudyAlias && String(study.alias) !== targetStudyAlias) {
+      fail(
+        `Target study alias '${targetStudyAlias}' not found among paired-read studies`,
+        JSON.stringify({ aliases: candidateStudies.map((s) => s.alias) }),
+      );
+    }
 
     // One submittable sample keeps the ENA TEST load (and the run) minimal.
     const targetSample = study.samples.find((sample) =>
@@ -360,10 +447,25 @@ async function main() {
     );
     if (!hasAssemblyOnDisk) {
       const relDir = path.join("submg-e2e-assemblies", study.id);
-      const relPath = path.join(relDir, `${targetSample.id}.fasta`);
+      // Try a REAL MEGAHIT assembly (nf-core/mag's assembler) of the seeded paired
+      // reads, exactly what a mag run leaves behind. Fall back to the synthetic FASTA
+      // when MEGAHIT is unavailable or yields no usable contig — keeps the leg green.
+      const r1Abs = resolveOnDisk(dataBasePath, pairedRead.file1);
+      const r2Abs = resolveOnDisk(dataBasePath, pairedRead.file2);
+      const megahitGz = r1Abs && r2Abs ? buildMegahitAssemblyGz(r1Abs, r2Abs) : null;
+      const useReal = Boolean(megahitGz);
+      const relPath = path.join(
+        relDir,
+        useReal ? `${targetSample.id}.contigs.fa.gz` : `${targetSample.id}.fasta`,
+      );
       const absPath = path.resolve(dataBasePath, relPath);
       fs.mkdirSync(path.dirname(absPath), { recursive: true });
-      fs.writeFileSync(absPath, buildAssemblyFasta());
+      fs.writeFileSync(absPath, useReal ? megahitGz : buildAssemblyFasta());
+      console.log(
+        useReal
+          ? `Built REAL mag MEGAHIT assembly: ${relPath}`
+          : `MEGAHIT unavailable/empty — using synthetic assembly fallback: ${relPath}`,
+      );
       // Simulate the upstream mag run that generated this assembly.
       let magRunId = null;
       if (adminUserId) {
@@ -447,6 +549,32 @@ async function main() {
     }
     if (normalized > 0) {
       console.log(`Normalized ENA checklist attributes on ${normalized} sample(s).`);
+    }
+
+    // ENA TEST remembers PROJECT + SAMPLE aliases on the submission account FOREVER (even
+    // after the 24h test-data expiry), so a fixed alias can be registered only once. The dummy
+    // flow uses per-run-unique aliases; a fixed-alias example-dataset study can't re-register.
+    // Make this run's study + sample aliases unique so the ENA registration always succeeds.
+    if (exampleDataset) {
+      const suffix = `-r${Date.now().toString(36)}`;
+      await prisma.study.update({
+        where: { id: study.id },
+        data: { alias: `${study.alias}${suffix}` },
+      });
+      study.alias = `${study.alias}${suffix}`;
+      for (const sample of study.samples) {
+        await prisma.sample.update({
+          where: { id: sample.id },
+          data: {
+            sampleId: `${sample.sampleId}${suffix}`,
+            sampleAlias: `${sample.sampleAlias || sample.sampleId}${suffix}`,
+          },
+        });
+        sample.sampleId = `${sample.sampleId}${suffix}`;
+      }
+      console.log(
+        `Made study + ${study.samples.length} sample aliases unique for ENA TEST (${suffix}).`,
+      );
     }
 
     // ---- Register the study on ENA TEST (gets PRJ* + fresh testRegisteredAt) ----

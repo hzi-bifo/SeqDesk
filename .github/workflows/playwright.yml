@@ -78,7 +78,7 @@ jobs:
           name: playwright-report
           path: playwright-report/
           if-no-files-found: ignore
-          retention-days: 30
+          retention-days: 7
 
       - name: Upload Playwright results
         if: ${{ failure() }}
@@ -87,4 +87,4 @@ jobs:
           name: playwright-results
           path: test-results/
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 5

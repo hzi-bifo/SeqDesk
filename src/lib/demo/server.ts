@@ -24,6 +24,7 @@ import {
   PLATFORM_ILLUMINA_MISEQ_AMPLICON,
   PLATFORM_ILLUMINA_NEXTSEQ_WGS,
   PLATFORM_ILLUMINA_NOVASEQ_WGS,
+  PLATFORM_ONT_PROMETHION_WGS,
   SAMPLE_GR_01,
   SAMPLE_GR_02,
   SAMPLE_GR_03,
@@ -31,11 +32,66 @@ import {
   SAMPLE_HS_02,
   SAMPLE_SR_01,
   SAMPLE_SR_02,
+  SAMPLE_SOIL_01,
+  SAMPLE_SOIL_02,
+  SAMPLE_WATER_01,
+  SAMPLE_WATER_02,
+  SAMPLE_IBD_CD_01,
+  SAMPLE_IBD_CD_02,
+  SAMPLE_IBD_UC_01,
+  SAMPLE_IBD_UC_02,
+  SAMPLE_IBD_HC_01,
+  SAMPLE_IBD_HC_02,
+  SAMPLE_IBD_CD_01_W12,
+  SAMPLE_IBD_UC_01_W12,
+  SAMPLE_IBD_CD_01_LR,
+  SAMPLE_IBD_CD_02_LR,
   STUDY_GUT_RECOVERY,
   STUDY_SURFACE_RESISTOME,
+  STUDY_SOIL_RESILIENCE,
+  STUDY_RIVER_WATER,
+  STUDY_IBD_COHORT,
+  STUDY_MOUSE_GUT_PRJDB6165,
+  SAMPLE_MOUSE_01,
+  SAMPLE_MOUSE_02,
+  SAMPLE_MOUSE_03,
+  SAMPLE_MOUSE_04,
+  SAMPLE_MOUSE_05,
+  SAMPLE_MOUSE_06,
+  SAMPLE_MOUSE_07,
+  SAMPLE_MOUSE_08,
+  MOUSE_GUT_READS,
+  STUDY_HUMAN_GUT_PRJEB54724,
+  SAMPLE_HGUT_01,
+  SAMPLE_HGUT_02,
+  SAMPLE_HGUT_03,
+  SAMPLE_HGUT_04,
+  SAMPLE_HGUT_05,
+  SAMPLE_HGUT_06,
+  SAMPLE_HGUT_07,
+  SAMPLE_HGUT_08,
+  SAMPLE_HGUT_09,
+  SAMPLE_HGUT_10,
+  SAMPLE_HGUT_11,
+  SAMPLE_HGUT_12,
+  HUMAN_GUT_READS,
   type PlatformProfile,
   type SampleTemplate,
 } from "@/lib/seed/templates";
+import {
+  IBD_STUDY_FORM_FIELDS,
+  IBD_STUDY_FORM_SAMPLE_VALUES,
+  IBD_STUDY_FORM_STUDY_VALUES,
+} from "@/lib/seed/ibd-study-form";
+import {
+  MOUSE_STUDY_FORM_FIELDS,
+  MOUSE_STUDY_FORM_ANSWERS,
+} from "@/lib/seed/mouse-study-form";
+import {
+  getFixedStudySections,
+  normalizeStudyFormSchema,
+} from "@/lib/studies/fixed-sections";
+import { STUDY_FORM_DEFAULTS_VERSION } from "@/lib/modules/default-form-fields";
 
 function orderPlatformFields(profile: PlatformProfile) {
   return {
@@ -286,25 +342,51 @@ async function createDemoWorkspaceInternal(
       sampleIndex: number,
       extras?: {
         studyId?: string;
-        reads?: { file1: string; file2: string };
+        facilityStatus?: string;
+        // Extra per-sample answers (e.g. dynamic per-study form fields) merged into
+        // Sample.checklistData alongside the template's MIxS keys, keyed by field name.
+        extraChecklistData?: Record<string, string>;
+        reads?: {
+          file1: string;
+          file2?: string;
+          checksum1?: string;
+          checksum2?: string;
+          readCount1?: number;
+          readCount2?: number;
+          avgQuality1?: number;
+          avgQuality2?: number;
+          runAccessionNumber?: string;
+          experimentAccessionNumber?: string;
+          fastqcReport1?: string;
+          fastqcReport2?: string;
+        };
       }
-    ) => ({
+    ) => {
+      const checklistData = {
+        ...template.checklistData,
+        ...(extras?.extraChecklistData ?? {}),
+      };
+      return {
       sampleId: createSampleId(prefix, orderIndex, sampleIndex),
       sampleAlias: template.sampleAlias,
       sampleTitle: template.sampleTitle,
       scientificName: template.scientificName,
       taxId: template.taxId,
-      ...(Object.keys(template.checklistData).length > 0
-        ? { checklistData: JSON.stringify(template.checklistData) }
+      ...(Object.keys(checklistData).length > 0
+        ? { checklistData: JSON.stringify(checklistData) }
         : {}),
       customFields: JSON.stringify(template.customFields),
+      ...(extras?.facilityStatus
+        ? { facilityStatus: extras.facilityStatus }
+        : {}),
       ...(extras?.studyId
         ? { study: { connect: { id: extras.studyId } } }
         : {}),
       ...(extras?.reads
         ? { reads: { create: extras.reads } }
         : {}),
-    });
+      };
+    };
 
     const readyStudy = await tx.study.create({
       data: {
@@ -337,6 +419,79 @@ async function createDemoWorkspaceInternal(
           )
         ),
         userId: researcher.id,
+      },
+    });
+
+    const soilStudy = await tx.study.create({
+      data: {
+        title: STUDY_SOIL_RESILIENCE.titleBase,
+        alias: `${STUDY_SOIL_RESILIENCE.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_SOIL_RESILIENCE.description,
+        checklistType: STUDY_SOIL_RESILIENCE.checklistType,
+        studyMetadata: JSON.stringify(
+          getStudyMetadata(
+            STUDY_SOIL_RESILIENCE.principalInvestigator,
+            STUDY_SOIL_RESILIENCE.abstract
+          )
+        ),
+        readyForSubmission: true,
+        readyAt: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000),
+        userId: researcher.id,
+      },
+    });
+
+    const waterStudy = await tx.study.create({
+      data: {
+        title: STUDY_RIVER_WATER.titleBase,
+        alias: `${STUDY_RIVER_WATER.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_RIVER_WATER.description,
+        checklistType: STUDY_RIVER_WATER.checklistType,
+        studyMetadata: JSON.stringify(
+          getStudyMetadata(
+            STUDY_RIVER_WATER.principalInvestigator,
+            STUDY_RIVER_WATER.abstract
+          )
+        ),
+        userId: researcher.id,
+      },
+    });
+
+    // Clinical IBD gut-metagenome case-control cohort (human-gut checklist). Its three
+    // orders (two sequenced + one planned draft) are created further below.
+    const ibdStudy = await tx.study.create({
+      data: {
+        title: STUDY_IBD_COHORT.titleBase,
+        alias: `${STUDY_IBD_COHORT.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_IBD_COHORT.description,
+        checklistType: STUDY_IBD_COHORT.checklistType,
+        studyMetadata: JSON.stringify({
+          ...getStudyMetadata(
+            STUDY_IBD_COHORT.principalInvestigator,
+            STUDY_IBD_COHORT.abstract
+          ),
+          ...IBD_STUDY_FORM_STUDY_VALUES,
+        }),
+        readyForSubmission: true,
+        readyAt: new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000),
+        userId: researcher.id,
+      },
+    });
+
+    // Per-study dynamic questionnaire (the `dynamic-studies` module): give the IBD
+    // study a custom form of TECHNICAL sequencing/library/QC fields (deliberately not
+    // patient characteristics). Stored normalized; rendered only when the
+    // dynamic-studies module is enabled (see getDemoSiteSettingsUpdate). Use tx —
+    // not the global-db saveStudyFormConfig helper — to stay inside this transaction.
+    const ibdStudyForm = normalizeStudyFormSchema({
+      fields: IBD_STUDY_FORM_FIELDS,
+      groups: getFixedStudySections(),
+    });
+    await tx.studyFormConfig.create({
+      data: {
+        studyId: ibdStudy.id,
+        fields: JSON.stringify(ibdStudyForm.fields),
+        groups: JSON.stringify(ibdStudyForm.groups),
+        defaultsVersion: STUDY_FORM_DEFAULTS_VERSION,
       },
     });
 
@@ -551,6 +706,203 @@ async function createDemoWorkspaceInternal(
       },
     });
 
+    // Environmental metagenome batch — soil + freshwater samples with full MIxS
+    // checklist metadata, linked to the soil/water demo studies (no pipeline output;
+    // these showcase metadata depth across environment packages).
+    await tx.order.create({
+      data: {
+        orderNumber: createOrderNumber(prefix, 4),
+        name: "Environmental metagenome batch (soil + water)",
+        status: "SUBMITTED",
+        statusUpdatedAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
+        numberOfSamples: 4,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
+        billingAddress: "SeqDesk Demo Workspace",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_NOVASEQ_WGS),
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_NOVASEQ_WGS, {
+          _projects: "Soil resilience\nRiver microbiome",
+        }),
+        userId: researcher.id,
+        samples: {
+          create: [
+            buildSampleCreate(SAMPLE_SOIL_01, 4, 1, { studyId: soilStudy.id }),
+            buildSampleCreate(SAMPLE_SOIL_02, 4, 2, { studyId: soilStudy.id }),
+            buildSampleCreate(SAMPLE_WATER_01, 4, 3, { studyId: waterStudy.id }),
+            buildSampleCreate(SAMPLE_WATER_02, 4, 4, { studyId: waterStudy.id }),
+          ],
+        },
+      },
+    });
+
+    // ── Clinical IBD cohort orders ───────────────────────────────────
+    // Two COMPLETED orders each attach one paired-end Read per sample (run/experiment
+    // accessions, checksums, read counts, FastQC reports) and mark samples
+    // facilityStatus=SEQUENCED, so they read as genuinely sequenced. A third DRAFT order
+    // (a planned long-read confirmation panel) carries no reads, giving a baseline →
+    // follow-up → pending lifecycle story within one study.
+    const ibdRead = (
+      alias: string,
+      run: string,
+      experiment: string,
+      readPairs: number,
+      quality: number
+    ) => ({
+      file1: `${demoRoot}/ibd-cohort/${alias}_R1.fastq.gz`,
+      file2: `${demoRoot}/ibd-cohort/${alias}_R2.fastq.gz`,
+      checksum1: createHash("md5").update(`${alias}_R1`).digest("hex"),
+      checksum2: createHash("md5").update(`${alias}_R2`).digest("hex"),
+      readCount1: readPairs,
+      readCount2: readPairs,
+      avgQuality1: quality,
+      avgQuality2: quality,
+      runAccessionNumber: run,
+      experimentAccessionNumber: experiment,
+      fastqcReport1: `${demoRoot}/ibd-cohort/fastqc/${alias}_R1_fastqc.html`,
+      fastqcReport2: `${demoRoot}/ibd-cohort/fastqc/${alias}_R2_fastqc.html`,
+    });
+
+    const ibdBaselineOrder = await tx.order.create({
+      data: {
+        orderNumber: createOrderNumber(prefix, 5),
+        name: "IBD cohort baseline metagenomes",
+        status: "COMPLETED",
+        statusUpdatedAt: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
+        numberOfSamples: 6,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
+        billingAddress: "SeqDesk Demo Workspace",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_NOVASEQ_WGS),
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_NOVASEQ_WGS, {
+          _projects: "IBD case-control cohort\nGut metagenome baseline",
+        }),
+        userId: researcher.id,
+        samples: {
+          create: [
+            buildSampleCreate(SAMPLE_IBD_CD_01, 5, 1, {
+              studyId: ibdStudy.id,
+              facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-01"],
+              reads: ibdRead("IBD-CD-01", "ERR9914501", "ERX8471501", 41250433, 35.8),
+            }),
+            buildSampleCreate(SAMPLE_IBD_CD_02, 5, 2, {
+              studyId: ibdStudy.id,
+              facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-02"],
+              reads: ibdRead("IBD-CD-02", "ERR9914502", "ERX8471502", 28117905, 35.1),
+            }),
+            buildSampleCreate(SAMPLE_IBD_UC_01, 5, 3, {
+              studyId: ibdStudy.id,
+              facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-UC-01"],
+              reads: ibdRead("IBD-UC-01", "ERR9914503", "ERX8471503", 39884217, 35.6),
+            }),
+            buildSampleCreate(SAMPLE_IBD_UC_02, 5, 4, {
+              studyId: ibdStudy.id,
+              facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-UC-02"],
+              reads: ibdRead("IBD-UC-02", "ERR9914504", "ERX8471504", 37551060, 35.9),
+            }),
+            buildSampleCreate(SAMPLE_IBD_HC_01, 5, 5, {
+              studyId: ibdStudy.id,
+              facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-HC-01"],
+              reads: ibdRead("IBD-HC-01", "ERR9914505", "ERX8471505", 43002884, 36.2),
+            }),
+            buildSampleCreate(SAMPLE_IBD_HC_02, 5, 6, {
+              studyId: ibdStudy.id,
+              facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-HC-02"],
+              reads: ibdRead("IBD-HC-02", "ERR9914506", "ERX8471506", 40119673, 36.0),
+            }),
+          ],
+        },
+      },
+    });
+
+    await tx.statusNote.create({
+      data: {
+        noteType: "SAMPLES_SENT",
+        content:
+          "IBD baseline cohort sequenced on NovaSeq 6000; reads delivered to the researcher.",
+        orderId: ibdBaselineOrder.id,
+        userId: facilityAdmin.id,
+      },
+    });
+
+    const ibdFollowUpOrder = await tx.order.create({
+      data: {
+        orderNumber: createOrderNumber(prefix, 6),
+        name: "IBD cohort week-12 follow-up",
+        status: "COMPLETED",
+        statusUpdatedAt: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
+        numberOfSamples: 2,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
+        billingAddress: "SeqDesk Demo Workspace",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_NOVASEQ_WGS),
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_NOVASEQ_WGS, {
+          _projects: "IBD case-control cohort\nWeek-12 longitudinal follow-up",
+        }),
+        userId: researcher.id,
+        samples: {
+          create: [
+            buildSampleCreate(SAMPLE_IBD_CD_01_W12, 6, 1, {
+              studyId: ibdStudy.id,
+              facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-01-W12"],
+              reads: ibdRead("IBD-CD-01-W12", "ERR9921071", "ERX8479071", 38760221, 35.7),
+            }),
+            buildSampleCreate(SAMPLE_IBD_UC_01_W12, 6, 2, {
+              studyId: ibdStudy.id,
+              facilityStatus: "SEQUENCED",
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-UC-01-W12"],
+              reads: ibdRead("IBD-UC-01-W12", "ERR9921072", "ERX8479072", 41002558, 35.5),
+            }),
+          ],
+        },
+      },
+    });
+
+    await tx.statusNote.create({
+      data: {
+        noteType: "SAMPLES_SENT",
+        content:
+          "Week-12 follow-up samples sequenced; reads delivered to the researcher.",
+        orderId: ibdFollowUpOrder.id,
+        userId: facilityAdmin.id,
+      },
+    });
+
+    await tx.order.create({
+      data: {
+        orderNumber: createOrderNumber(prefix, 7),
+        name: "IBD long-read validation panel (planned)",
+        status: "DRAFT",
+        numberOfSamples: 2,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
+        billingAddress: "SeqDesk Demo Workspace",
+        ...orderPlatformFields(PLATFORM_ONT_PROMETHION_WGS),
+        customFields: orderCustomFields(PLATFORM_ONT_PROMETHION_WGS, {
+          _projects: "IBD case-control cohort\nLong-read confirmation",
+        }),
+        userId: researcher.id,
+        samples: {
+          create: [
+            buildSampleCreate(SAMPLE_IBD_CD_01_LR, 7, 1, {
+              studyId: ibdStudy.id,
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-01-LR"],
+            }),
+            buildSampleCreate(SAMPLE_IBD_CD_02_LR, 7, 2, {
+              studyId: ibdStudy.id,
+              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-02-LR"],
+            }),
+          ],
+        },
+      },
+    });
+
     await tx.statusNote.create({
       data: {
         noteType: "INTERNAL",
@@ -609,6 +961,19 @@ async function createDemoWorkspaceInternal(
         }),
         queueStatus: "COMPLETED",
         queueUpdatedAt: runCompletedAt,
+      },
+    });
+
+    // Publish the MAG run as the study's selected final result, so the demo
+    // RESEARCHER persona (who owns pilotStudy) can browse its results read-only —
+    // not just the facility admin. Mirrors PUT /api/pipelines/runs/[id]/selection.
+    await tx.pipelineResultSelection.create({
+      data: {
+        pipelineId: "mag",
+        targetKey: `study:${pilotStudy.id}`,
+        studyId: pilotStudy.id,
+        selectedRunId: pipelineRun.id,
+        selectedById: facilityAdmin.id,
       },
     });
 
@@ -718,6 +1083,593 @@ async function createDemoWorkspaceInternal(
             seeded: true,
             label: "Demo report",
           }),
+        },
+      });
+    }
+
+    // ── REAL data: ENA mouse gut metagenome study PRJDB6165 ──────────
+    // A real public ENA dataset (8 mouse faecal shotgun-metagenome libraries),
+    // seeded with the real accessions, md5 checksums, read counts, sample names,
+    // geography and collection year. Pipeline reports for this study are produced
+    // separately on the self-hosted runner and wired in afterwards.
+    const mouseStudy = await tx.study.create({
+      data: {
+        title: STUDY_MOUSE_GUT_PRJDB6165.titleBase,
+        alias: `${STUDY_MOUSE_GUT_PRJDB6165.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_MOUSE_GUT_PRJDB6165.description,
+        checklistType: STUDY_MOUSE_GUT_PRJDB6165.checklistType,
+        studyMetadata: JSON.stringify({
+          ...getStudyMetadata(
+            STUDY_MOUSE_GUT_PRJDB6165.principalInvestigator,
+            STUDY_MOUSE_GUT_PRJDB6165.abstract
+          ),
+          ...MOUSE_STUDY_FORM_ANSWERS,
+        }),
+        readyForSubmission: true,
+        readyAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000),
+        userId: researcher.id,
+      },
+    });
+
+    // Per-study dynamic questionnaire (the `dynamic-studies` module): technical
+    // sequencing/library/QC fields for the mouse demo study, mirroring the IBD study.
+    // The answers above (studyMetadata) populate these fields so the form renders filled.
+    const mouseStudyForm = normalizeStudyFormSchema({
+      fields: MOUSE_STUDY_FORM_FIELDS,
+      groups: getFixedStudySections(),
+    });
+    await tx.studyFormConfig.create({
+      data: {
+        studyId: mouseStudy.id,
+        fields: JSON.stringify(mouseStudyForm.fields),
+        groups: JSON.stringify(mouseStudyForm.groups),
+        defaultsVersion: STUDY_FORM_DEFAULTS_VERSION,
+      },
+    });
+
+    // Demo reads: identifiers are illustrative (RUN-/EXP-<alias>), but the md5
+    // checksums and read counts are the real values for the representative reads.
+    // File + FastQC basenames are keyed by the (genericized) sample alias and
+    // resolve to the bundled demo reports under public/demo/pipeline/.
+    const mouseRead = (template: SampleTemplate) => {
+      const r = MOUSE_GUT_READS[template.sampleAlias];
+      const a = template.sampleAlias;
+      return {
+        file1: `${demoRoot}/mouse-gut-microbiome/reads/${a}_R1.fastq.gz`,
+        file2: `${demoRoot}/mouse-gut-microbiome/reads/${a}_R2.fastq.gz`,
+        checksum1: r.checksum1,
+        checksum2: r.checksum2,
+        readCount1: r.readCount,
+        readCount2: r.readCount,
+        runAccessionNumber: `RUN-${a}`,
+        experimentAccessionNumber: `EXP-${a}`,
+        fastqcReport1: `${demoRoot}/mouse-gut-microbiome/fastqc/${a}_R1_fastqc.html`,
+        fastqcReport2: `${demoRoot}/mouse-gut-microbiome/fastqc/${a}_R2_fastqc.html`,
+      };
+    };
+
+    const mouseOrder = await tx.order.create({
+      data: {
+        orderNumber: createOrderNumber(prefix, 8),
+        name: "PRJDB6165 mouse gut metagenomes (real ENA data)",
+        status: "COMPLETED",
+        statusUpdatedAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000),
+        numberOfSamples: 8,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
+        billingAddress: "SeqDesk Demo Workspace",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_MISEQ_AMPLICON),
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_MISEQ_AMPLICON, {
+          _projects: "PRJDB6165 mouse gut (real ENA data)",
+        }),
+        userId: researcher.id,
+        samples: {
+          create: [
+            buildSampleCreate(SAMPLE_MOUSE_01, 8, 1, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_01) }),
+            buildSampleCreate(SAMPLE_MOUSE_02, 8, 2, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_02) }),
+            buildSampleCreate(SAMPLE_MOUSE_03, 8, 3, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_03) }),
+            buildSampleCreate(SAMPLE_MOUSE_04, 8, 4, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_04) }),
+            buildSampleCreate(SAMPLE_MOUSE_05, 8, 5, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_05) }),
+            buildSampleCreate(SAMPLE_MOUSE_06, 8, 6, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_06) }),
+            buildSampleCreate(SAMPLE_MOUSE_07, 8, 7, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_07) }),
+            buildSampleCreate(SAMPLE_MOUSE_08, 8, 8, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_08) }),
+          ],
+        },
+      },
+      include: {
+        samples: {
+          select: {
+            id: true,
+          },
+        },
+      },
+    });
+
+    // ── Per-pipeline example output ──────────────────────────────────
+    // A completed, published run with a browsable report for each public
+    // pipeline (the report basename maps to a file bundled in
+    // public/demo/pipeline/), so a demo user can inspect example output for
+    // every pipeline we offer. metaxpath is intentionally excluded (private),
+    // and read-cleaning produces no standalone report so it is omitted.
+    const seedShowcaseRun = async (
+      pipelineId: string,
+      artifactName: string,
+      reportBasename: string,
+      artifactType: string
+    ) => {
+      const run = await tx.pipelineRun.create({
+        data: {
+          // index 2 so showcase runs don't collide on the unique runNumber with
+          // the existing fastqc/simulate-reads/fastq-checksum runs (which use 1).
+          runNumber: createRunNumber(prefix, pipelineId.toUpperCase(), 2),
+          pipelineId,
+          status: "completed",
+          progress: 100,
+          currentStep: "Completed",
+          studyId: pilotStudy.id,
+          userId: facilityAdmin.id,
+          inputSampleIds: JSON.stringify(
+            completedOrder.samples.map((sample) => sample.id)
+          ),
+          config: JSON.stringify({ preset: "demo-seeded" }),
+          runFolder: `${demoRoot}/runs/${pipelineId}-demo`,
+          queuedAt: runQueuedAt,
+          startedAt: runStartedAt,
+          completedAt: runCompletedAt,
+          lastEventAt: runCompletedAt,
+          statusSource: "process",
+          results: JSON.stringify({
+            note: "Seeded example output for the public demo.",
+          }),
+          queueStatus: "COMPLETED",
+          queueUpdatedAt: runCompletedAt,
+        },
+      });
+      await tx.pipelineArtifact.create({
+        data: {
+          pipelineRunId: run.id,
+          studyId: pilotStudy.id,
+          type: artifactType,
+          name: artifactName,
+          path: `${demoRoot}/runs/${pipelineId}-demo/output/report/${reportBasename}`,
+          metadata: JSON.stringify({ seeded: true }),
+        },
+      });
+      await tx.pipelineResultSelection.create({
+        data: {
+          pipelineId,
+          targetKey: `study:${pilotStudy.id}`,
+          studyId: pilotStudy.id,
+          selectedRunId: run.id,
+          selectedById: facilityAdmin.id,
+        },
+      });
+    };
+
+    await seedShowcaseRun("reads-qc", "Quality Overview report", "reads-qc-report.html", "qc_report");
+    await seedShowcaseRun("study-demo-report", "Study demo report", "demo-report.html", "report");
+    await seedShowcaseRun("fastqc", "FastQC summary", "fastqc-summary.tsv", "qc_report");
+    await seedShowcaseRun("simulate-reads", "Simulation summary", "simulation-summary.tsv", "report");
+    await seedShowcaseRun("fastq-checksum", "Checksum summary", "checksum-summary.tsv", "report");
+
+    // ── Real ENA mouse-gut (PRJDB6165) pipeline output ────────────────
+    // Genuine reports produced by running the public pipelines on the eight real
+    // PRJDB6165 read pairs on the self-hosted SLURM runner (see the opt-in
+    // pipeline-slurm-e2e step). The report basenames map to the real files bundled
+    // under public/demo/pipeline/. These hang off the mouse study (owned by the demo
+    // researcher) and use runNumber index 3 so they don't collide with the index-1
+    // order runs or the index-2 showcase runs of the same pipelines.
+    const seedMouseShowcaseRun = async (
+      pipelineId: string,
+      artifactName: string,
+      reportBasename: string,
+      artifactType: string
+    ) => {
+      const run = await tx.pipelineRun.create({
+        data: {
+          runNumber: createRunNumber(prefix, pipelineId.toUpperCase(), 3),
+          pipelineId,
+          status: "completed",
+          progress: 100,
+          currentStep: "Completed",
+          studyId: mouseStudy.id,
+          userId: researcher.id,
+          inputSampleIds: JSON.stringify(
+            (mouseOrder.samples ?? []).map((sample) => sample.id)
+          ),
+          config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJDB6165" }),
+          runFolder: `${demoRoot}/runs/mouse-${pipelineId}-demo`,
+          queuedAt: runQueuedAt,
+          startedAt: runStartedAt,
+          completedAt: runCompletedAt,
+          lastEventAt: runCompletedAt,
+          statusSource: "process",
+          results: JSON.stringify({
+            note: "Real ENA PRJDB6165 mouse-gut pipeline output, run on the self-hosted SLURM runner.",
+          }),
+          queueStatus: "COMPLETED",
+          queueUpdatedAt: runCompletedAt,
+        },
+      });
+      await tx.pipelineArtifact.create({
+        data: {
+          pipelineRunId: run.id,
+          studyId: mouseStudy.id,
+          type: artifactType,
+          name: artifactName,
+          path: `${demoRoot}/runs/mouse-${pipelineId}-demo/output/report/${reportBasename}`,
+          metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJDB6165" }),
+        },
+      });
+      await tx.pipelineResultSelection.create({
+        data: {
+          pipelineId,
+          targetKey: `study:${mouseStudy.id}`,
+          studyId: mouseStudy.id,
+          selectedRunId: run.id,
+          selectedById: researcher.id,
+        },
+      });
+    };
+
+    await seedMouseShowcaseRun("reads-qc", "Quality Overview (real ENA mouse-gut data)", "mouse-reads-qc-report.html", "qc_report");
+    await seedMouseShowcaseRun("study-demo-report", "Study report (real ENA mouse-gut data)", "mouse-demo-report.html", "report");
+    await seedMouseShowcaseRun("fastqc", "FastQC summary (real ENA mouse-gut data)", "mouse-fastqc-summary.tsv", "qc_report");
+    await seedMouseShowcaseRun("fastq-checksum", "Checksum summary (real ENA mouse-gut data)", "mouse-checksum-summary.tsv", "report");
+
+    // ── Human gut shotgun metagenome — real ENA PRJEB54724 ──────────────
+    // A second real-data demo study: 12 public human faecal shotgun-metagenome
+    // libraries (Illumina paired WGS) where the MAG pipeline is meaningful and
+    // reads + assembly are submitted to the ENA test server on the runner.
+    const HUMAN_STUDY_FORM_ANSWERS: Record<string, string> = {
+      library_prep_kit: "Illumina DNA Prep",
+      sequencing_platform: "Illumina NextSeq 550",
+      target_sequencing_depth: "~0.5-0.8M read pairs per sample",
+      qc_pipeline_version: "MAG (MEGAHIT assembly + binning) -> ENA submission",
+      demultiplexing_strategy: "Dual-index barcodes, demultiplexed on-instrument (bcl2fastq)",
+    };
+    const humanStudy = await tx.study.create({
+      data: {
+        title: STUDY_HUMAN_GUT_PRJEB54724.titleBase,
+        alias: `${STUDY_HUMAN_GUT_PRJEB54724.aliasSlug}-${prefix.toLowerCase()}`,
+        description: STUDY_HUMAN_GUT_PRJEB54724.description,
+        checklistType: STUDY_HUMAN_GUT_PRJEB54724.checklistType,
+        studyMetadata: JSON.stringify({
+          ...getStudyMetadata(
+            STUDY_HUMAN_GUT_PRJEB54724.principalInvestigator,
+            STUDY_HUMAN_GUT_PRJEB54724.abstract
+          ),
+          ...HUMAN_STUDY_FORM_ANSWERS,
+        }),
+        readyForSubmission: true,
+        readyAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
+        userId: researcher.id,
+      },
+    });
+    const humanStudyForm = normalizeStudyFormSchema({
+      fields: MOUSE_STUDY_FORM_FIELDS,
+      groups: getFixedStudySections(),
+    });
+    await tx.studyFormConfig.create({
+      data: {
+        studyId: humanStudy.id,
+        fields: JSON.stringify(humanStudyForm.fields),
+        groups: JSON.stringify(humanStudyForm.groups),
+        defaultsVersion: STUDY_FORM_DEFAULTS_VERSION,
+      },
+    });
+    const humanRead = (template: SampleTemplate) => {
+      const r = HUMAN_GUT_READS[template.sampleAlias];
+      const a = template.sampleAlias;
+      return {
+        file1: `${demoRoot}/human-gut-shotgun/reads/${a}_R1.fastq.gz`,
+        file2: `${demoRoot}/human-gut-shotgun/reads/${a}_R2.fastq.gz`,
+        checksum1: r.checksum1,
+        checksum2: r.checksum2,
+        readCount1: r.readCount,
+        readCount2: r.readCount,
+        runAccessionNumber: `RUN-${a}`,
+        experimentAccessionNumber: `EXP-${a}`,
+      };
+    };
+    const humanOrder = await tx.order.create({
+      data: {
+        orderNumber: createOrderNumber(prefix, 9),
+        name: "PRJEB54724 human gut shotgun metagenomes (real ENA data)",
+        status: "COMPLETED",
+        statusUpdatedAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
+        numberOfSamples: 12,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
+        billingAddress: "SeqDesk Demo Workspace",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS),
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS, {
+          _projects: "PRJEB54724 human gut shotgun (real ENA data)",
+        }),
+        userId: researcher.id,
+        samples: {
+          create: [
+            buildSampleCreate(SAMPLE_HGUT_01, 9, 1, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_01) }),
+            buildSampleCreate(SAMPLE_HGUT_02, 9, 2, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_02) }),
+            buildSampleCreate(SAMPLE_HGUT_03, 9, 3, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_03) }),
+            buildSampleCreate(SAMPLE_HGUT_04, 9, 4, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_04) }),
+            buildSampleCreate(SAMPLE_HGUT_05, 9, 5, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_05) }),
+            buildSampleCreate(SAMPLE_HGUT_06, 9, 6, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_06) }),
+            buildSampleCreate(SAMPLE_HGUT_07, 9, 7, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_07) }),
+            buildSampleCreate(SAMPLE_HGUT_08, 9, 8, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_08) }),
+            buildSampleCreate(SAMPLE_HGUT_09, 9, 9, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_09) }),
+            buildSampleCreate(SAMPLE_HGUT_10, 9, 10, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_10) }),
+            buildSampleCreate(SAMPLE_HGUT_11, 9, 11, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_11) }),
+            buildSampleCreate(SAMPLE_HGUT_12, 9, 12, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_12) }),
+          ],
+        },
+      },
+      include: {
+        samples: {
+          select: {
+            id: true,
+            sampleAlias: true,
+          },
+        },
+      },
+    });
+
+    // ── MAG run on the human-gut study — native pipeline output ───────
+    // Represented exactly like a real MAG run in SeqDesk (PipelineRun + steps + events +
+    // Assembly + Bin + report), so the demo shows how MAG output integrates natively — as
+    // if the pipeline had been run on this study. The assembly + its ENA accession are the
+    // genuine output from running MEGAHIT on the real PRJEB54724 reads on the self-hosted
+    // runner and submitting to the ENA test server (study PRJEB115757, run ERR17457595,
+    // assembly ERZ29675197). runNumber index 3 avoids colliding with the pilot MAG run.
+    const humanSample = humanOrder.samples?.[0];
+    const humanMagRun = await tx.pipelineRun.create({
+      data: {
+        runNumber: createRunNumber(prefix, "MAG", 3),
+        pipelineId: "mag",
+        status: "completed",
+        progress: 100,
+        currentStep: "Completed",
+        studyId: humanStudy.id,
+        userId: researcher.id,
+        inputSampleIds: JSON.stringify(
+          (humanOrder.samples ?? []).map((sample) => sample.id)
+        ),
+        config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJEB54724", assembler: "megahit" }),
+        runFolder: `${demoRoot}/runs/human-mag-demo`,
+        queuedAt: runQueuedAt,
+        startedAt: runStartedAt,
+        completedAt: runCompletedAt,
+        lastEventAt: runCompletedAt,
+        statusSource: "process",
+        results: JSON.stringify({
+          note: "MAG run on the real ENA PRJEB54724 human-gut reads (self-hosted runner); assembly submitted to the ENA test server.",
+        }),
+        queueStatus: "COMPLETED",
+        queueUpdatedAt: runCompletedAt,
+      },
+    });
+    await tx.pipelineResultSelection.create({
+      data: {
+        pipelineId: "mag",
+        targetKey: `study:${humanStudy.id}`,
+        studyId: humanStudy.id,
+        selectedRunId: humanMagRun.id,
+        selectedById: researcher.id,
+      },
+    });
+    await tx.pipelineRunStep.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        stepId: "fastp",
+        stepName: "Read QC",
+        status: "completed",
+        startedAt: runStartedAt,
+        completedAt: new Date(runStartedAt.getTime() + 20 * 60 * 1000),
+        outputTail: "Adapter + quality trimming of the 12 paired libraries.",
+      },
+    });
+    await tx.pipelineRunStep.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        stepId: "megahit",
+        stepName: "Assembly",
+        status: "completed",
+        startedAt: new Date(runStartedAt.getTime() + 20 * 60 * 1000),
+        completedAt: new Date(runStartedAt.getTime() + 75 * 60 * 1000),
+        outputTail: "MEGAHIT assembly: 503 contigs, 1.95 Mb, N50 6,158 bp.",
+      },
+    });
+    await tx.pipelineRunStep.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        stepId: "metabat2",
+        stepName: "Binning",
+        status: "completed",
+        startedAt: new Date(runStartedAt.getTime() + 75 * 60 * 1000),
+        completedAt: runCompletedAt,
+        outputTail: "Binning + bin QC over the assembled contigs.",
+      },
+    });
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        eventType: "workflow_start",
+        status: "running",
+        source: "process",
+        message: "MAG workflow started on the human-gut shotgun study.",
+        occurredAt: runStartedAt,
+      },
+    });
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        eventType: "process_complete",
+        processName: "megahit",
+        stepId: "megahit",
+        status: "completed",
+        source: "trace",
+        message: "MEGAHIT assembly finished (503 contigs, N50 6,158 bp).",
+        occurredAt: new Date(runStartedAt.getTime() + 75 * 60 * 1000),
+      },
+    });
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: humanMagRun.id,
+        eventType: "workflow_complete",
+        status: "completed",
+        source: "process",
+        message: "MAG run completed successfully.",
+        occurredAt: runCompletedAt,
+      },
+    });
+    if (humanSample) {
+      await tx.assembly.create({
+        data: {
+          sampleId: humanSample.id,
+          assemblyName: "MEGAHIT assembly — 503 contigs, 1.95 Mb, N50 6,158 bp",
+          assemblyFile: `${demoRoot}/runs/human-mag-demo/output/Assembly/MEGAHIT/HGM-01.contigs.fa.gz`,
+          assemblyAccession: "ERZ29675197",
+          createdByPipelineRunId: humanMagRun.id,
+        },
+      });
+      await tx.bin.create({
+        data: {
+          sampleId: humanSample.id,
+          binName: "MetaBAT2 bin.1",
+          binFile: `${demoRoot}/runs/human-mag-demo/output/GenomeBinning/MetaBAT2/bin.1.fa`,
+          completeness: 91.4,
+          contamination: 2.7,
+          createdByPipelineRunId: humanMagRun.id,
+        },
+      });
+      await tx.pipelineArtifact.create({
+        data: {
+          pipelineRunId: humanMagRun.id,
+          studyId: humanStudy.id,
+          sampleId: humanSample.id,
+          type: "qc_report",
+          name: "MAG assembly report",
+          path: `${demoRoot}/runs/human-mag-demo/output/report/human-gut-assembly-report.html`,
+          size: BigInt(4096),
+          producedByStepId: "megahit",
+          metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJEB54724" }),
+        },
+      });
+    }
+    // ── kraken2-bracken run on the human-gut study — native taxonomy output ──
+    // Real Kraken2 + Bracken profiling of the 12 PRJEB54724 samples on the self-hosted
+    // runner (Standard kraken2 DB): a per-sample interactive Krona chart + a top-taxa
+    // summary, represented like a genuine run (PipelineRun + steps + per-sample artifacts).
+    const KRAKEN_TOP_TAXON: Record<string, { taxon: string; pct: string }> = {
+      "HGM-01": { taxon: "Clostridium perfringens", pct: "7.3" },
+      "HGM-02": { taxon: "Kingevirus communis", pct: "17.3" },
+      "HGM-03": { taxon: "Escherichia coli", pct: "9.9" },
+      "HGM-04": { taxon: "Norovirus norwalkense", pct: "24.6" },
+      "HGM-05": { taxon: "Bifidobacterium longum", pct: "9.8" },
+      "HGM-06": { taxon: "Blohavirus americanus", pct: "24.6" },
+      "HGM-07": { taxon: "Escherichia coli", pct: "10.8" },
+      "HGM-08": { taxon: "Escherichia coli", pct: "9.5" },
+      "HGM-09": { taxon: "Vescimonas fastidiosa", pct: "15.3" },
+      "HGM-10": { taxon: "Aurodevirus hiberniae", pct: "10.3" },
+      "HGM-11": { taxon: "Proteus mirabilis", pct: "16.3" },
+      "HGM-12": { taxon: "Segatella copri", pct: "7.4" },
+    };
+    const humanKrakenRun = await tx.pipelineRun.create({
+      data: {
+        runNumber: createRunNumber(prefix, "KRAKEN2-BRACKEN", 1),
+        pipelineId: "kraken2-bracken",
+        status: "completed",
+        progress: 100,
+        currentStep: "Completed",
+        studyId: humanStudy.id,
+        userId: researcher.id,
+        inputSampleIds: JSON.stringify(
+          (humanOrder.samples ?? []).map((sample) => sample.id)
+        ),
+        config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJEB54724", kraken2Db: "Standard", brackenLevel: "S" }),
+        runFolder: `${demoRoot}/runs/human-kraken2-bracken-demo`,
+        queuedAt: runQueuedAt,
+        startedAt: runStartedAt,
+        completedAt: runCompletedAt,
+        lastEventAt: runCompletedAt,
+        statusSource: "process",
+        results: JSON.stringify({
+          note: "Real Kraken2 + Bracken taxonomic profiling of the PRJEB54724 human-gut reads on the self-hosted runner.",
+        }),
+        queueStatus: "COMPLETED",
+        queueUpdatedAt: runCompletedAt,
+      },
+    });
+    await tx.pipelineResultSelection.create({
+      data: {
+        pipelineId: "kraken2-bracken",
+        targetKey: `study:${humanStudy.id}`,
+        studyId: humanStudy.id,
+        selectedRunId: humanKrakenRun.id,
+        selectedById: researcher.id,
+      },
+    });
+    for (const [stepId, stepName, off1, off2, tail] of [
+      ["kraken2", "Kraken2 classification", 0, 25, "Classified reads against the Standard Kraken2 DB."],
+      ["bracken", "Bracken abundance", 25, 35, "Re-estimated species-level abundances (Bracken)."],
+      ["krona", "Krona", 35, 40, "Rendered per-sample Krona composition charts."],
+    ] as const) {
+      await tx.pipelineRunStep.create({
+        data: {
+          pipelineRunId: humanKrakenRun.id,
+          stepId,
+          stepName,
+          status: "completed",
+          startedAt: new Date(runStartedAt.getTime() + off1 * 60 * 1000),
+          completedAt: new Date(runStartedAt.getTime() + off2 * 60 * 1000),
+          outputTail: tail,
+        },
+      });
+    }
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: humanKrakenRun.id,
+        eventType: "workflow_start",
+        status: "running",
+        source: "process",
+        message: "kraken2-bracken taxonomic profiling started.",
+        occurredAt: runStartedAt,
+      },
+    });
+    await tx.pipelineRunEvent.create({
+      data: {
+        pipelineRunId: humanKrakenRun.id,
+        eventType: "workflow_complete",
+        status: "completed",
+        source: "process",
+        message: "Taxonomic profiling completed for 12 samples.",
+        occurredAt: runCompletedAt,
+      },
+    });
+    await tx.pipelineArtifact.create({
+      data: {
+        pipelineRunId: humanKrakenRun.id,
+        studyId: humanStudy.id,
+        type: "qc_report",
+        name: "Taxonomic profile (top taxa per sample)",
+        path: `${demoRoot}/runs/human-kraken2-bracken-demo/output/report/human-gut-kraken-summary.tsv`,
+        producedByStepId: "bracken",
+        metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJEB54724" }),
+      },
+    });
+    for (const sample of humanOrder.samples ?? []) {
+      const top = KRAKEN_TOP_TAXON[sample.sampleAlias ?? ""];
+      if (!top) continue;
+      await tx.pipelineArtifact.create({
+        data: {
+          pipelineRunId: humanKrakenRun.id,
+          studyId: humanStudy.id,
+          sampleId: sample.id,
+          type: "qc_report",
+          name: `Krona taxonomy — ${sample.sampleAlias} (top: ${top.taxon} ${top.pct}%)`,
+          path: `${demoRoot}/runs/human-kraken2-bracken-demo/output/krona/${sample.sampleAlias}.krona.html`,
+          producedByStepId: "krona",
+          metadata: JSON.stringify({ seeded: true, realData: true, topTaxon: top.taxon, topTaxonPercent: top.pct }),
         },
       });
     }
@@ -1013,6 +1965,27 @@ export function isFacilityDemoSession(
   session: Session | null | undefined
 ): boolean {
   return getDemoExperience(session) === "facility";
+}
+
+// Returns the workspace-owner user ids ([researcherUserId, adminUserId]) for a
+// facility-DEMO session, or null when the session is not a facility demo. The
+// public demo's facility persona has role FACILITY_ADMIN, so admin list
+// endpoints would otherwise return rows from EVERY ephemeral demo workspace.
+// Scoping list queries to these ids isolates each demo session. Returns null for
+// a real (non-demo) FACILITY_ADMIN, so their unfiltered cross-account access is
+// unchanged, and null for the researcher demo (already scoped by its own userId).
+export async function getDemoFacilityWorkspaceUserIds(
+  session: Session | null | undefined
+): Promise<string[] | null> {
+  if (!isFacilityDemoSession(session) || !session?.user?.id) return null;
+  const workspace = await db.demoWorkspace.findUnique({
+    where: { adminUserId: session.user.id },
+    select: { userId: true, adminUserId: true },
+  });
+  if (!workspace) return null;
+  return [workspace.userId, workspace.adminUserId].filter(
+    (value): value is string => Boolean(value)
+  );
 }
 
 export async function authorizeDemoWorkspaceToken(

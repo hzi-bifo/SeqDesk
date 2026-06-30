@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MAG Assembly — Human Gut Shotgun Metagenome</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f6f8fa; color: #1f2328; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 24px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: #57606a; font-size: 14px; margin: 0 0 24px; }
+  .card { background: #fff; border: 1px solid #d0d7de; border-radius: 10px; padding: 20px 24px; margin: 0 0 20px; }
+  .card h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; color: #57606a; margin: 0 0 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 7px 4px; border-bottom: 1px solid #eaeef2; }
+  td:first-child { color: #57606a; width: 46%; }
+  td:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .stat { background: #f6f8fa; border: 1px solid #eaeef2; border-radius: 8px; padding: 14px; text-align: center; }
+  .stat .n { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .l { font-size: 12px; color: #57606a; margin-top: 2px; }
+  code { background: #eff1f3; border-radius: 4px; padding: 1px 6px; font-size: 13px; }
+  .ok { color: #1a7f37; font-weight: 600; }
+  .foot { font-size: 12px; color: #768390; margin-top: 18px; }
+  a { color: #0969da; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MAG Assembly — Human Gut Shotgun Metagenome</h1>
+  <p class="sub">nf-core/mag (MEGAHIT) · real public ENA data · run on the self-hosted SeqDesk runner</p>
+
+  <div class="card">
+    <h2>Assembly summary</h2>
+    <div class="grid">
+      <div class="stat"><div class="n">503</div><div class="l">contigs (&ge; 1&nbsp;kb)</div></div>
+      <div class="stat"><div class="n">1.95&nbsp;Mb</div><div class="l">total length</div></div>
+      <div class="stat"><div class="n">6,158&nbsp;bp</div><div class="l">N50</div></div>
+    </div>
+    <table style="margin-top:16px">
+      <tr><td>Assembler</td><td>MEGAHIT (nf-core/mag)</td></tr>
+      <tr><td>Total contigs (&ge; 1&nbsp;kb)</td><td>503</td></tr>
+      <tr><td>Total assembled length</td><td>1,954,373 bp</td></tr>
+      <tr><td>Longest contig</td><td>84,864 bp</td></tr>
+      <tr><td>Shortest contig</td><td>1,006 bp</td></tr>
+      <tr><td>Mean contig length</td><td>3,885 bp</td></tr>
+      <tr><td>N50</td><td>6,158 bp</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Input</h2>
+    <table>
+      <tr><td>Study</td><td>Human Gut Shotgun Metagenomes (ENA PRJEB54724)</td></tr>
+      <tr><td>Sample</td><td>HGM-01 · human faecal shotgun metagenome</td></tr>
+      <tr><td>Sequencing</td><td>Illumina NextSeq 550 · paired-end WGS</td></tr>
+      <tr><td>Source</td><td>Real public ENA project <code>PRJEB54724</code></td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>ENA submission <span class="ok">&check; submitted to the test server</span></h2>
+    <table>
+      <tr><td>Study (project)</td><td><code>PRJEB115757</code></td></tr>
+      <tr><td>Sample (BioSample)</td><td><code>ERS32294246</code></td></tr>
+      <tr><td>Run (reads)</td><td><code>ERR17457595</code></td></tr>
+      <tr><td>Experiment</td><td><code>ERX16848262</code></td></tr>
+      <tr><td>Assembly (analysis)</td><td><code>ERZ29675197</code></td></tr>
+    </table>
+    <p class="foot">Reads and the assembly above were submitted to the ENA <strong>test</strong> server
+      (wwwdev.ebi.ac.uk) via submg/Webin-CLI. Test-server submissions are not public and expire after 24&nbsp;h.</p>
+  </div>
+
+  <p class="foot">Real public data — only the demo presentation is illustrative. Assembly produced by the MAG pipeline
+    on the self-hosted runner; the assembled bases and statistics above are genuine MEGAHIT output.</p>
+</div>
+</body>
+</html>

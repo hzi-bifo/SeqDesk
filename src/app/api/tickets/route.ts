@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { ticketReferencesSupported } from "@/lib/tickets/reference-support";
 import { notifyTicketCreated } from "@/lib/notifications/dispatcher";
 
@@ -143,6 +144,7 @@ export async function GET() {
   }
 
   const isAdmin = session.user.role === "FACILITY_ADMIN";
+  const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
   try {
     const supportsReferences = await ticketReferencesSupported();
@@ -150,7 +152,7 @@ export async function GET() {
     try {
       tickets = supportsReferences
         ? await db.ticket.findMany({
-            where: isAdmin ? {} : { userId: session.user.id },
+            where: isAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId: session.user.id },
             orderBy: { updatedAt: "desc" },
             include: {
               user: {
@@ -180,7 +182,7 @@ export async function GET() {
             },
           })
         : await db.ticket.findMany({
-            where: isAdmin ? {} : { userId: session.user.id },
+            where: isAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId: session.user.id },
             orderBy: { updatedAt: "desc" },
             select: {
               id: true,

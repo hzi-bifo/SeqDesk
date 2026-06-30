@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { decryptSecret } from "@/lib/security/secret-store";
 import {
   submitStudyToENA,
@@ -59,10 +60,16 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
+
   try {
-    const submissions = await db.submission.findMany({
-      orderBy: { createdAt: "desc" },
-    });
+    // Submission has no owner column and the demo seeds none, so a facility-demo
+    // session sees an empty list rather than every workspace's submissions.
+    const submissions = demoWsUserIds
+      ? []
+      : await db.submission.findMany({
+          orderBy: { createdAt: "desc" },
+        });
 
     // Enrich submissions with entity details
     const enrichedSubmissions = await Promise.all(
