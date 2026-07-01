@@ -963,25 +963,28 @@ export const MOUSE_GUT_READS: Record<string, { run: string; experiment: string; 
   "MGB-07": { run: "DRR099979", experiment: "DRX093423", checksum1: "589fe5ca3a652e576767bfb23c719c7e", checksum2: "6a6de694afc521f28cec2cd1421b90f2", readCount: 99911 },
   "MGB-08": { run: "DRR099980", experiment: "DRX093424", checksum1: "91527786815d17d5486b2289aac63389", checksum2: "b4e0fa748c8befdfc9dca2322c73495c", readCount: 90527 },
 };
-// ── Human gut shotgun metagenome — real ENA study PRJEB54724 ─────────────────
-// Real public Dutch human faecal shotgun-metagenome libraries (Illumina WGS,
-// paired-end). Sample/run/biosample accessions, collection dates, country and
-// md5 checksums are the REAL ENA values. A shotgun metagenome so the MAG pipeline
-// (assembly + binning) is meaningful; submission-ready for ENA (taxId + collection
-// date + geographic location present on every sample).
+// ── Human gut shotgun metagenome DEMO study ──────────────────────────────────
+// Presented in the demo as illustrative data: the study title/PI/description and
+// the project accession are genericized demo values, NOT real database identifiers.
+// Provenance (maintainers only): the underlying FASTQs are representative REAL
+// public human faecal shotgun-metagenome libraries (Illumina paired-end WGS); the
+// per-run md5 checksums and read counts in HUMAN_GUT_READS are the real values
+// needed for the CI download/verification of those reads. A shotgun metagenome so
+// the MAG pipeline (assembly + binning) is meaningful; submission-ready (taxId +
+// collection date + geographic location present on every sample).
 export const STUDY_HUMAN_GUT_PRJEB54724: StudyTemplate = {
-  titleBase: "Human Gut Shotgun Metagenomes (PRJEB54724)",
-  aliasSlug: "human-gut-shotgun-prjeb54724",
+  titleBase: "Human Gut Shotgun Metagenomes (Demo)",
+  aliasSlug: "human-gut-shotgun",
   description:
-    "Real public human faecal shotgun-metagenome study (ENA PRJEB54724, Netherlands): twelve Illumina WGS libraries suitable for metagenome assembly (MAG). Accessions, collection dates and checksums are the real ENA values.",
+    "Demonstration human faecal shotgun-metagenome study: twelve Illumina paired-end WGS libraries suitable for metagenome assembly (MAG). Sample identifiers and metadata are illustrative demo values; the sequencing reads and pipeline outputs are representative real data.",
   checklistType: "host-associated",
-  principalInvestigator: "ENA PRJEB54724 (public)",
+  principalInvestigator: "SeqDesk Demo Facility",
   abstract:
-    "Twelve real public human gut shotgun-metagenome libraries (Illumina paired-end WGS, ENA PRJEB54724, collected in the Netherlands 2016-2018). Loaded into the demo from the real ENA submission to showcase the MAG assembly pipeline and ENA submission of reads + assembly.",
+    "A demonstration human gut shotgun-metagenome study used to showcase SeqDesk's MAG assembly and taxonomic-profiling pipelines. Twelve Illumina paired-end WGS libraries; sample IDs, subject codes and lab values are illustrative demo data, while the reads and pipeline outputs are wired from representative real sequencing.",
 };
 
 const HUMAN_GUT_MIXS = {
-  project_name: "Human gut shotgun metagenome (ENA PRJEB54724)",
+  project_name: "Human gut shotgun metagenome (demo)",
   geographic_location_country_and_or_sea: "Netherlands",
   broad_scale_environmental_context: "host-associated habitat [ENVO:00009003]",
   local_environmental_context: "gastrointestinal tract environment [ENVO:2100002]",

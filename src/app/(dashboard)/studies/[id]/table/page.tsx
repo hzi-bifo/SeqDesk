@@ -520,6 +520,29 @@ function EditableCell({
   );
 }
 
+// A study/order info value that may be a long free-text field (description,
+// abstract, project name). Short values render inline; long ones are clamped to
+// a few lines with a "Show more"/"Show less" toggle so the info panels stay tidy.
+const INFO_VALUE_CLAMP = 180;
+function InfoFieldValue({ value }: { value: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = value.length > INFO_VALUE_CLAMP;
+  if (!isLong) return <>{value}</>;
+  return (
+    <>
+      <span className={expanded ? undefined : "line-clamp-3"}>{value}</span>
+      <button
+        type="button"
+        onClick={() => setExpanded((open) => !open)}
+        className="mt-0.5 block text-xs font-medium text-primary hover:underline"
+        aria-expanded={expanded}
+      >
+        {expanded ? "Show less" : "Show more"}
+      </button>
+    </>
+  );
+}
+
 export default function StudyTablePage({
   params,
 }: {
@@ -2304,7 +2327,7 @@ export default function StudyTablePage({
                               {field.label}:
                             </dt>
                             <dd className="min-w-0 break-words font-medium">
-                              {field.value}
+                              <InfoFieldValue value={field.value} />
                             </dd>
                           </div>
                         ))}
