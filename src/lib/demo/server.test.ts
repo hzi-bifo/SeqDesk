@@ -252,7 +252,7 @@ describe("demo workspace server helpers", () => {
     expect(mocks.db.statusNote.create).toHaveBeenCalledTimes(5);
     expect(mocks.db.pipelineRun.create).toHaveBeenCalledTimes(15);
     expect(mocks.db.pipelineResultSelection.create).toHaveBeenCalledTimes(12);
-    expect(mocks.db.pipelineRunStep.create).toHaveBeenCalledTimes(9);
+    expect(mocks.db.pipelineRunStep.create).toHaveBeenCalledTimes(10);
     expect(mocks.db.pipelineRunEvent.create).toHaveBeenCalledTimes(8);
   });
 

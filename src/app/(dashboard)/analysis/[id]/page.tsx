@@ -623,34 +623,27 @@ export default function AnalysisRunDetailPage({
       });
     }
     if (run.runFolder) {
-      addOutput({
-        id: "run:trace",
-        name: "trace.txt",
-        path: `${run.runFolder}/trace.txt`,
-        type: "log",
-        size: fileSizeByPath[`${run.runFolder}/trace.txt`],
-      });
-      addOutput({
-        id: "run:report",
-        name: "report.html",
-        path: `${run.runFolder}/report.html`,
-        type: "report",
-        size: fileSizeByPath[`${run.runFolder}/report.html`],
-      });
-      addOutput({
-        id: "run:timeline",
-        name: "timeline.html",
-        path: `${run.runFolder}/timeline.html`,
-        type: "report",
-        size: fileSizeByPath[`${run.runFolder}/timeline.html`],
-      });
-      addOutput({
-        id: "run:dag",
-        name: "dag.dot",
-        path: `${run.runFolder}/dag.dot`,
-        type: "dag",
-        size: fileSizeByPath[`${run.runFolder}/dag.dot`],
-      });
+      // Nextflow execution-infra files (trace/report/timeline/dag). These only
+      // exist once the run wrote them to disk; fileSizeByPath is stat-derived, so
+      // a missing entry means the file isn't there (e.g. the serverless public
+      // demo has no run folder). Only link a file we know exists — otherwise the
+      // preview/download just 403s on a dead path.
+      const runInfraFiles: Array<{
+        id: string;
+        name: string;
+        type: string;
+      }> = [
+        { id: "run:trace", name: "trace.txt", type: "log" },
+        { id: "run:report", name: "report.html", type: "report" },
+        { id: "run:timeline", name: "timeline.html", type: "report" },
+        { id: "run:dag", name: "dag.dot", type: "dag" },
+      ];
+      for (const infra of runInfraFiles) {
+        const infraPath = `${run.runFolder}/${infra.name}`;
+        const size = fileSizeByPath[infraPath];
+        if (size === undefined) continue;
+        addOutput({ id: infra.id, name: infra.name, path: infraPath, type: infra.type, size });
+      }
     }
 
     return outputs;

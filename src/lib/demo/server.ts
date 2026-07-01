@@ -1613,6 +1613,7 @@ async function createDemoWorkspaceInternal(
       ["kraken2", "Kraken2 classification", 0, 25, "Classified reads against the Standard Kraken2 DB."],
       ["bracken", "Bracken abundance", 25, 35, "Re-estimated species-level abundances (Bracken)."],
       ["krona", "Krona", 35, 40, "Rendered per-sample Krona composition charts."],
+      ["summary", "Collect Summary", 40, 45, "Aggregated the top taxon per sample into a run-level summary table."],
     ] as const) {
       await tx.pipelineRunStep.create({
         data: {
@@ -1653,7 +1654,7 @@ async function createDemoWorkspaceInternal(
         type: "qc_report",
         name: "Taxonomic profile (top taxa per sample)",
         path: `${demoRoot}/runs/human-kraken2-bracken-demo/output/report/human-gut-kraken-summary.tsv`,
-        producedByStepId: "bracken",
+        producedByStepId: "summary",
         metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJEB54724" }),
       },
     });
