@@ -24,7 +24,6 @@ import {
   PLATFORM_ILLUMINA_MISEQ_AMPLICON,
   PLATFORM_ILLUMINA_NEXTSEQ_WGS,
   PLATFORM_ILLUMINA_NOVASEQ_WGS,
-  PLATFORM_ONT_PROMETHION_WGS,
   SAMPLE_GR_01,
   SAMPLE_GR_02,
   SAMPLE_GR_03,
@@ -32,25 +31,8 @@ import {
   SAMPLE_HS_02,
   SAMPLE_SR_01,
   SAMPLE_SR_02,
-  SAMPLE_SOIL_01,
-  SAMPLE_SOIL_02,
-  SAMPLE_WATER_01,
-  SAMPLE_WATER_02,
-  SAMPLE_IBD_CD_01,
-  SAMPLE_IBD_CD_02,
-  SAMPLE_IBD_UC_01,
-  SAMPLE_IBD_UC_02,
-  SAMPLE_IBD_HC_01,
-  SAMPLE_IBD_HC_02,
-  SAMPLE_IBD_CD_01_W12,
-  SAMPLE_IBD_UC_01_W12,
-  SAMPLE_IBD_CD_01_LR,
-  SAMPLE_IBD_CD_02_LR,
   STUDY_GUT_RECOVERY,
   STUDY_SURFACE_RESISTOME,
-  STUDY_SOIL_RESILIENCE,
-  STUDY_RIVER_WATER,
-  STUDY_IBD_COHORT,
   STUDY_MOUSE_GUT_PRJDB6165,
   SAMPLE_MOUSE_01,
   SAMPLE_MOUSE_02,
@@ -78,11 +60,6 @@ import {
   type PlatformProfile,
   type SampleTemplate,
 } from "@/lib/seed/templates";
-import {
-  IBD_STUDY_FORM_FIELDS,
-  IBD_STUDY_FORM_SAMPLE_VALUES,
-  IBD_STUDY_FORM_STUDY_VALUES,
-} from "@/lib/seed/ibd-study-form";
 import {
   MOUSE_STUDY_FORM_FIELDS,
   MOUSE_STUDY_FORM_ANSWERS,
@@ -422,79 +399,6 @@ async function createDemoWorkspaceInternal(
       },
     });
 
-    const soilStudy = await tx.study.create({
-      data: {
-        title: STUDY_SOIL_RESILIENCE.titleBase,
-        alias: `${STUDY_SOIL_RESILIENCE.aliasSlug}-${prefix.toLowerCase()}`,
-        description: STUDY_SOIL_RESILIENCE.description,
-        checklistType: STUDY_SOIL_RESILIENCE.checklistType,
-        studyMetadata: JSON.stringify(
-          getStudyMetadata(
-            STUDY_SOIL_RESILIENCE.principalInvestigator,
-            STUDY_SOIL_RESILIENCE.abstract
-          )
-        ),
-        readyForSubmission: true,
-        readyAt: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000),
-        userId: researcher.id,
-      },
-    });
-
-    const waterStudy = await tx.study.create({
-      data: {
-        title: STUDY_RIVER_WATER.titleBase,
-        alias: `${STUDY_RIVER_WATER.aliasSlug}-${prefix.toLowerCase()}`,
-        description: STUDY_RIVER_WATER.description,
-        checklistType: STUDY_RIVER_WATER.checklistType,
-        studyMetadata: JSON.stringify(
-          getStudyMetadata(
-            STUDY_RIVER_WATER.principalInvestigator,
-            STUDY_RIVER_WATER.abstract
-          )
-        ),
-        userId: researcher.id,
-      },
-    });
-
-    // Clinical IBD gut-metagenome case-control cohort (human-gut checklist). Its three
-    // orders (two sequenced + one planned draft) are created further below.
-    const ibdStudy = await tx.study.create({
-      data: {
-        title: STUDY_IBD_COHORT.titleBase,
-        alias: `${STUDY_IBD_COHORT.aliasSlug}-${prefix.toLowerCase()}`,
-        description: STUDY_IBD_COHORT.description,
-        checklistType: STUDY_IBD_COHORT.checklistType,
-        studyMetadata: JSON.stringify({
-          ...getStudyMetadata(
-            STUDY_IBD_COHORT.principalInvestigator,
-            STUDY_IBD_COHORT.abstract
-          ),
-          ...IBD_STUDY_FORM_STUDY_VALUES,
-        }),
-        readyForSubmission: true,
-        readyAt: new Date(now.getTime() - 6 * 24 * 60 * 60 * 1000),
-        userId: researcher.id,
-      },
-    });
-
-    // Per-study dynamic questionnaire (the `dynamic-studies` module): give the IBD
-    // study a custom form of TECHNICAL sequencing/library/QC fields (deliberately not
-    // patient characteristics). Stored normalized; rendered only when the
-    // dynamic-studies module is enabled (see getDemoSiteSettingsUpdate). Use tx —
-    // not the global-db saveStudyFormConfig helper — to stay inside this transaction.
-    const ibdStudyForm = normalizeStudyFormSchema({
-      fields: IBD_STUDY_FORM_FIELDS,
-      groups: getFixedStudySections(),
-    });
-    await tx.studyFormConfig.create({
-      data: {
-        studyId: ibdStudy.id,
-        fields: JSON.stringify(ibdStudyForm.fields),
-        groups: JSON.stringify(ibdStudyForm.groups),
-        defaultsVersion: STUDY_FORM_DEFAULTS_VERSION,
-      },
-    });
-
     const draftOrder = await tx.order.create({
       data: {
         orderNumber: createOrderNumber(prefix, 1),
@@ -703,203 +607,6 @@ async function createDemoWorkspaceInternal(
         content: "Demo samples marked as sent to the institution.",
         orderId: completedOrder.id,
         userId: facilityAdmin.id,
-      },
-    });
-
-    // Environmental metagenome batch — soil + freshwater samples with full MIxS
-    // checklist metadata, linked to the soil/water demo studies (no pipeline output;
-    // these showcase metadata depth across environment packages).
-    await tx.order.create({
-      data: {
-        orderNumber: createOrderNumber(prefix, 4),
-        name: "Environmental metagenome batch (soil + water)",
-        status: "SUBMITTED",
-        statusUpdatedAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
-        numberOfSamples: 4,
-        contactName: "Demo Researcher",
-        contactEmail: researcherEmail,
-        billingAddress: "SeqDesk Demo Workspace",
-        ...orderPlatformFields(PLATFORM_ILLUMINA_NOVASEQ_WGS),
-        customFields: orderCustomFields(PLATFORM_ILLUMINA_NOVASEQ_WGS, {
-          _projects: "Soil resilience\nRiver microbiome",
-        }),
-        userId: researcher.id,
-        samples: {
-          create: [
-            buildSampleCreate(SAMPLE_SOIL_01, 4, 1, { studyId: soilStudy.id }),
-            buildSampleCreate(SAMPLE_SOIL_02, 4, 2, { studyId: soilStudy.id }),
-            buildSampleCreate(SAMPLE_WATER_01, 4, 3, { studyId: waterStudy.id }),
-            buildSampleCreate(SAMPLE_WATER_02, 4, 4, { studyId: waterStudy.id }),
-          ],
-        },
-      },
-    });
-
-    // ── Clinical IBD cohort orders ───────────────────────────────────
-    // Two COMPLETED orders each attach one paired-end Read per sample (run/experiment
-    // accessions, checksums, read counts, FastQC reports) and mark samples
-    // facilityStatus=SEQUENCED, so they read as genuinely sequenced. A third DRAFT order
-    // (a planned long-read confirmation panel) carries no reads, giving a baseline →
-    // follow-up → pending lifecycle story within one study.
-    const ibdRead = (
-      alias: string,
-      run: string,
-      experiment: string,
-      readPairs: number,
-      quality: number
-    ) => ({
-      file1: `${demoRoot}/ibd-cohort/${alias}_R1.fastq.gz`,
-      file2: `${demoRoot}/ibd-cohort/${alias}_R2.fastq.gz`,
-      checksum1: createHash("md5").update(`${alias}_R1`).digest("hex"),
-      checksum2: createHash("md5").update(`${alias}_R2`).digest("hex"),
-      readCount1: readPairs,
-      readCount2: readPairs,
-      avgQuality1: quality,
-      avgQuality2: quality,
-      runAccessionNumber: run,
-      experimentAccessionNumber: experiment,
-      fastqcReport1: `${demoRoot}/ibd-cohort/fastqc/${alias}_R1_fastqc.html`,
-      fastqcReport2: `${demoRoot}/ibd-cohort/fastqc/${alias}_R2_fastqc.html`,
-    });
-
-    const ibdBaselineOrder = await tx.order.create({
-      data: {
-        orderNumber: createOrderNumber(prefix, 5),
-        name: "IBD cohort baseline metagenomes",
-        status: "COMPLETED",
-        statusUpdatedAt: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
-        numberOfSamples: 6,
-        contactName: "Demo Researcher",
-        contactEmail: researcherEmail,
-        billingAddress: "SeqDesk Demo Workspace",
-        ...orderPlatformFields(PLATFORM_ILLUMINA_NOVASEQ_WGS),
-        customFields: orderCustomFields(PLATFORM_ILLUMINA_NOVASEQ_WGS, {
-          _projects: "IBD case-control cohort\nGut metagenome baseline",
-        }),
-        userId: researcher.id,
-        samples: {
-          create: [
-            buildSampleCreate(SAMPLE_IBD_CD_01, 5, 1, {
-              studyId: ibdStudy.id,
-              facilityStatus: "SEQUENCED",
-              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-01"],
-              reads: ibdRead("IBD-CD-01", "ERR9914501", "ERX8471501", 41250433, 35.8),
-            }),
-            buildSampleCreate(SAMPLE_IBD_CD_02, 5, 2, {
-              studyId: ibdStudy.id,
-              facilityStatus: "SEQUENCED",
-              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-02"],
-              reads: ibdRead("IBD-CD-02", "ERR9914502", "ERX8471502", 28117905, 35.1),
-            }),
-            buildSampleCreate(SAMPLE_IBD_UC_01, 5, 3, {
-              studyId: ibdStudy.id,
-              facilityStatus: "SEQUENCED",
-              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-UC-01"],
-              reads: ibdRead("IBD-UC-01", "ERR9914503", "ERX8471503", 39884217, 35.6),
-            }),
-            buildSampleCreate(SAMPLE_IBD_UC_02, 5, 4, {
-              studyId: ibdStudy.id,
-              facilityStatus: "SEQUENCED",
-              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-UC-02"],
-              reads: ibdRead("IBD-UC-02", "ERR9914504", "ERX8471504", 37551060, 35.9),
-            }),
-            buildSampleCreate(SAMPLE_IBD_HC_01, 5, 5, {
-              studyId: ibdStudy.id,
-              facilityStatus: "SEQUENCED",
-              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-HC-01"],
-              reads: ibdRead("IBD-HC-01", "ERR9914505", "ERX8471505", 43002884, 36.2),
-            }),
-            buildSampleCreate(SAMPLE_IBD_HC_02, 5, 6, {
-              studyId: ibdStudy.id,
-              facilityStatus: "SEQUENCED",
-              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-HC-02"],
-              reads: ibdRead("IBD-HC-02", "ERR9914506", "ERX8471506", 40119673, 36.0),
-            }),
-          ],
-        },
-      },
-    });
-
-    await tx.statusNote.create({
-      data: {
-        noteType: "SAMPLES_SENT",
-        content:
-          "IBD baseline cohort sequenced on NovaSeq 6000; reads delivered to the researcher.",
-        orderId: ibdBaselineOrder.id,
-        userId: facilityAdmin.id,
-      },
-    });
-
-    const ibdFollowUpOrder = await tx.order.create({
-      data: {
-        orderNumber: createOrderNumber(prefix, 6),
-        name: "IBD cohort week-12 follow-up",
-        status: "COMPLETED",
-        statusUpdatedAt: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
-        numberOfSamples: 2,
-        contactName: "Demo Researcher",
-        contactEmail: researcherEmail,
-        billingAddress: "SeqDesk Demo Workspace",
-        ...orderPlatformFields(PLATFORM_ILLUMINA_NOVASEQ_WGS),
-        customFields: orderCustomFields(PLATFORM_ILLUMINA_NOVASEQ_WGS, {
-          _projects: "IBD case-control cohort\nWeek-12 longitudinal follow-up",
-        }),
-        userId: researcher.id,
-        samples: {
-          create: [
-            buildSampleCreate(SAMPLE_IBD_CD_01_W12, 6, 1, {
-              studyId: ibdStudy.id,
-              facilityStatus: "SEQUENCED",
-              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-01-W12"],
-              reads: ibdRead("IBD-CD-01-W12", "ERR9921071", "ERX8479071", 38760221, 35.7),
-            }),
-            buildSampleCreate(SAMPLE_IBD_UC_01_W12, 6, 2, {
-              studyId: ibdStudy.id,
-              facilityStatus: "SEQUENCED",
-              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-UC-01-W12"],
-              reads: ibdRead("IBD-UC-01-W12", "ERR9921072", "ERX8479072", 41002558, 35.5),
-            }),
-          ],
-        },
-      },
-    });
-
-    await tx.statusNote.create({
-      data: {
-        noteType: "SAMPLES_SENT",
-        content:
-          "Week-12 follow-up samples sequenced; reads delivered to the researcher.",
-        orderId: ibdFollowUpOrder.id,
-        userId: facilityAdmin.id,
-      },
-    });
-
-    await tx.order.create({
-      data: {
-        orderNumber: createOrderNumber(prefix, 7),
-        name: "IBD long-read validation panel (planned)",
-        status: "DRAFT",
-        numberOfSamples: 2,
-        contactName: "Demo Researcher",
-        contactEmail: researcherEmail,
-        billingAddress: "SeqDesk Demo Workspace",
-        ...orderPlatformFields(PLATFORM_ONT_PROMETHION_WGS),
-        customFields: orderCustomFields(PLATFORM_ONT_PROMETHION_WGS, {
-          _projects: "IBD case-control cohort\nLong-read confirmation",
-        }),
-        userId: researcher.id,
-        samples: {
-          create: [
-            buildSampleCreate(SAMPLE_IBD_CD_01_LR, 7, 1, {
-              studyId: ibdStudy.id,
-              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-01-LR"],
-            }),
-            buildSampleCreate(SAMPLE_IBD_CD_02_LR, 7, 2, {
-              studyId: ibdStudy.id,
-              extraChecklistData: IBD_STUDY_FORM_SAMPLE_VALUES["IBD-CD-02-LR"],
-            }),
-          ],
-        },
       },
     });
 
@@ -1151,7 +858,7 @@ async function createDemoWorkspaceInternal(
     const mouseOrder = await tx.order.create({
       data: {
         orderNumber: createOrderNumber(prefix, 8),
-        name: "PRJDB6165 mouse gut metagenomes (real ENA data)",
+        name: "Mouse gut metagenomes (demo)",
         status: "COMPLETED",
         statusUpdatedAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000),
         numberOfSamples: 8,
@@ -1160,7 +867,7 @@ async function createDemoWorkspaceInternal(
         billingAddress: "SeqDesk Demo Workspace",
         ...orderPlatformFields(PLATFORM_ILLUMINA_MISEQ_AMPLICON),
         customFields: orderCustomFields(PLATFORM_ILLUMINA_MISEQ_AMPLICON, {
-          _projects: "PRJDB6165 mouse gut (real ENA data)",
+          _projects: "Mouse gut (demo)",
         }),
         userId: researcher.id,
         samples: {
@@ -1277,7 +984,7 @@ async function createDemoWorkspaceInternal(
           inputSampleIds: JSON.stringify(
             (mouseOrder.samples ?? []).map((sample) => sample.id)
           ),
-          config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJDB6165" }),
+          config: JSON.stringify({ preset: "demo" }),
           runFolder: `${demoRoot}/runs/mouse-${pipelineId}-demo`,
           queuedAt: runQueuedAt,
           startedAt: runStartedAt,
@@ -1285,7 +992,7 @@ async function createDemoWorkspaceInternal(
           lastEventAt: runCompletedAt,
           statusSource: "process",
           results: JSON.stringify({
-            note: "Real ENA PRJDB6165 mouse-gut pipeline output, run on the self-hosted SLURM runner.",
+            note: "Mouse-gut demo pipeline output.",
           }),
           queueStatus: "COMPLETED",
           queueUpdatedAt: runCompletedAt,
@@ -1298,7 +1005,7 @@ async function createDemoWorkspaceInternal(
           type: artifactType,
           name: artifactName,
           path: `${demoRoot}/runs/mouse-${pipelineId}-demo/output/report/${reportBasename}`,
-          metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJDB6165" }),
+          metadata: JSON.stringify({ seeded: true, demo: true }),
         },
       });
       await tx.pipelineResultSelection.create({
