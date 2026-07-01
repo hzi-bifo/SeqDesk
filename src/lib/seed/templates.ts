@@ -983,7 +983,7 @@ export const STUDY_HUMAN_GUT_PRJEB54724: StudyTemplate = {
     "A demonstration human gut shotgun-metagenome study used to showcase SeqDesk's MAG assembly and taxonomic-profiling pipelines. Twelve Illumina paired-end WGS libraries; sample IDs, subject codes and lab values are illustrative demo data, while the reads and pipeline outputs are wired from representative real sequencing.",
 };
 
-const HUMAN_GUT_MIXS = {
+export const HUMAN_GUT_MIXS = {
   project_name: "Human gut shotgun metagenome (demo)",
   geographic_location_country_and_or_sea: "Netherlands",
   broad_scale_environmental_context: "host-associated habitat [ENVO:00009003]",

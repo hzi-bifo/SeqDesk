@@ -25,7 +25,7 @@ browse it.
 | `simulate-reads` | Simulate Reads | ✅ | Surface Resistome (**study**) + Gut Recovery (**order**) | `simulation-summary.tsv` | SR + GR |
 | `fastq-checksum` | FASTQ Checksum | ✅ | Surface Resistome (**study**) + Gut Recovery (**order**) | `checksum-summary.tsv` | SR + GR |
 | `read-cleaning` | Read Cleaning | ❌ TODO | — | none (no standalone report) | — |
-| `submg` | Submit to ENA | ◐ partial | samples (ENA accessions) | n/a — submission, not a report | IBD + others |
+| `submg` | Submit to ENA | ◐ partial | samples (ENA accessions) | n/a — submission, not a report | Mouse + Human gut + others |
 | `metaxpath` | MetaxPath | ⛔ excluded | — | private | — |
 
 ### Real ENA data — Mouse Gut Metagenome (PRJDB6165)
