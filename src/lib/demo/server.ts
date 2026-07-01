@@ -1317,7 +1317,8 @@ async function createDemoWorkspaceInternal(
     await seedMouseShowcaseRun("fastqc", "FastQC summary (real ENA mouse-gut data)", "mouse-fastqc-summary.tsv", "qc_report");
     await seedMouseShowcaseRun("fastq-checksum", "Checksum summary (real ENA mouse-gut data)", "mouse-checksum-summary.tsv", "report");
 
-    // ── Human gut shotgun metagenome — real ENA PRJEB54724 ──────────────
+    // ── Human gut shotgun metagenome DEMO study ─────────────────────────
+    // Genericized demo (see STUDY_HUMAN_GUT_PRJEB54724). Provenance is maintainers-only.
     // A second real-data demo study: 12 public human faecal shotgun-metagenome
     // libraries (Illumina paired WGS) where the MAG pipeline is meaningful and
     // reads + assembly are submitted to the ENA test server on the runner.
@@ -1375,7 +1376,7 @@ async function createDemoWorkspaceInternal(
     const humanOrder = await tx.order.create({
       data: {
         orderNumber: createOrderNumber(prefix, 9),
-        name: "PRJEB54724 human gut shotgun metagenomes (real ENA data)",
+        name: "Human gut shotgun metagenomes (demo)",
         status: "COMPLETED",
         statusUpdatedAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
         numberOfSamples: 12,
@@ -1384,7 +1385,7 @@ async function createDemoWorkspaceInternal(
         billingAddress: "SeqDesk Demo Workspace",
         ...orderPlatformFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS),
         customFields: orderCustomFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS, {
-          _projects: "PRJEB54724 human gut shotgun (real ENA data)",
+          _projects: "Human gut shotgun (demo)",
         }),
         userId: researcher.id,
         samples: {
@@ -1417,10 +1418,10 @@ async function createDemoWorkspaceInternal(
     // ── MAG run on the human-gut study — native pipeline output ───────
     // Represented exactly like a real MAG run in SeqDesk (PipelineRun + steps + events +
     // Assembly + Bin + report), so the demo shows how MAG output integrates natively — as
-    // if the pipeline had been run on this study. The assembly + its ENA accession are the
-    // genuine output from running MEGAHIT on the real PRJEB54724 reads on the self-hosted
-    // runner and submitting to the ENA test server (study PRJEB115757, run ERR17457595,
-    // assembly ERZ29675197). runNumber index 3 avoids colliding with the pilot MAG run.
+    // if the pipeline had been run on this study. Accessions shown here are illustrative
+    // demo values. Provenance (maintainers only): a real MEGAHIT assembly of the underlying
+    // WGS reads on the self-hosted runner, submitted to the ENA test server. runNumber
+    // index 3 avoids colliding with the pilot MAG run.
     const humanSample = humanOrder.samples?.[0];
     const humanMagRun = await tx.pipelineRun.create({
       data: {
@@ -1434,7 +1435,7 @@ async function createDemoWorkspaceInternal(
         inputSampleIds: JSON.stringify(
           (humanOrder.samples ?? []).map((sample) => sample.id)
         ),
-        config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJEB54724", assembler: "megahit" }),
+        config: JSON.stringify({ preset: "demo", assembler: "megahit" }),
         runFolder: `${demoRoot}/runs/human-mag-demo`,
         queuedAt: runQueuedAt,
         startedAt: runStartedAt,
@@ -1442,7 +1443,7 @@ async function createDemoWorkspaceInternal(
         lastEventAt: runCompletedAt,
         statusSource: "process",
         results: JSON.stringify({
-          note: "MAG run on the real ENA PRJEB54724 human-gut reads (self-hosted runner); assembly submitted to the ENA test server.",
+          note: "MAG assembly run on the human-gut demo study.",
         }),
         queueStatus: "COMPLETED",
         queueUpdatedAt: runCompletedAt,
@@ -1528,7 +1529,8 @@ async function createDemoWorkspaceInternal(
           sampleId: humanSample.id,
           assemblyName: "MEGAHIT assembly — 503 contigs, 1.95 Mb, N50 6,158 bp",
           assemblyFile: `${demoRoot}/runs/human-mag-demo/output/Assembly/MEGAHIT/HGM-01.contigs.fa.gz`,
-          assemblyAccession: "ERZ29675197",
+          // Illustrative demo — no real ENA registration (a real run records the test-server accession here).
+          assemblyAccession: null,
           createdByPipelineRunId: humanMagRun.id,
         },
       });
@@ -1552,14 +1554,15 @@ async function createDemoWorkspaceInternal(
           path: `${demoRoot}/runs/human-mag-demo/output/report/human-gut-assembly-report.html`,
           size: BigInt(4096),
           producedByStepId: "megahit",
-          metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJEB54724" }),
+          metadata: JSON.stringify({ seeded: true, demo: true }),
         },
       });
     }
     // ── kraken2-bracken run on the human-gut study — native taxonomy output ──
-    // Real Kraken2 + Bracken profiling of the 12 PRJEB54724 samples on the self-hosted
-    // runner (Standard kraken2 DB): a per-sample interactive Krona chart + a top-taxa
-    // summary, represented like a genuine run (PipelineRun + steps + per-sample artifacts).
+    // Kraken2 + Bracken taxonomic profiling for the 12 human-gut demo samples (Standard
+    // kraken2 DB): a per-sample interactive Krona chart + a top-taxa summary, represented
+    // like a genuine run (PipelineRun + steps + per-sample artifacts). Provenance
+    // (maintainers only): real profiling on the self-hosted runner.
     const KRAKEN_TOP_TAXON: Record<string, { taxon: string; pct: string }> = {
       "HGM-01": { taxon: "Clostridium perfringens", pct: "7.3" },
       "HGM-02": { taxon: "Kingevirus communis", pct: "17.3" },
@@ -1586,7 +1589,7 @@ async function createDemoWorkspaceInternal(
         inputSampleIds: JSON.stringify(
           (humanOrder.samples ?? []).map((sample) => sample.id)
         ),
-        config: JSON.stringify({ preset: "real-ena-data", bioproject: "PRJEB54724", kraken2Db: "Standard", brackenLevel: "S" }),
+        config: JSON.stringify({ preset: "demo", kraken2Db: "Standard", brackenLevel: "S" }),
         runFolder: `${demoRoot}/runs/human-kraken2-bracken-demo`,
         queuedAt: runQueuedAt,
         startedAt: runStartedAt,
@@ -1594,7 +1597,7 @@ async function createDemoWorkspaceInternal(
         lastEventAt: runCompletedAt,
         statusSource: "process",
         results: JSON.stringify({
-          note: "Real Kraken2 + Bracken taxonomic profiling of the PRJEB54724 human-gut reads on the self-hosted runner.",
+          note: "Kraken2 + Bracken taxonomic profiling on the human-gut demo study.",
         }),
         queueStatus: "COMPLETED",
         queueUpdatedAt: runCompletedAt,
@@ -1655,7 +1658,7 @@ async function createDemoWorkspaceInternal(
         name: "Taxonomic profile (top taxa per sample)",
         path: `${demoRoot}/runs/human-kraken2-bracken-demo/output/report/human-gut-kraken-summary.tsv`,
         producedByStepId: "summary",
-        metadata: JSON.stringify({ seeded: true, realData: true, bioproject: "PRJEB54724" }),
+        metadata: JSON.stringify({ seeded: true, demo: true }),
       },
     });
     for (const sample of humanOrder.samples ?? []) {
