@@ -57,9 +57,11 @@ import {
   SAMPLE_HGUT_11,
   SAMPLE_HGUT_12,
   HUMAN_GUT_READS,
+  HUMAN_GUT_MIXS,
   type PlatformProfile,
   type SampleTemplate,
 } from "@/lib/seed/templates";
+import { CRC_COHORT_SAMPLES } from "@/lib/seed/data/crc-cohort-prjeb12449";
 import {
   MOUSE_STUDY_FORM_FIELDS,
   MOUSE_STUDY_FORM_ANSWERS,
@@ -1384,6 +1386,93 @@ async function createDemoWorkspaceInternal(
         },
       });
     }
+
+    // ── Large human-gut metagenome cohort DEMO study (120 samples) ──────
+    // Genericized demo: a larger human faecal shotgun-metagenome cohort used to
+    // show SeqDesk at scale (browse/filter 120 rows in the Table Overview).
+    // Display uses CRC-### aliases + illustrative demo metadata and RUN-/EXP-
+    // placeholder accessions. Only md5 checksums + read counts come from the real
+    // underlying data; the real run/biosample accessions stay internal in the data
+    // file. Provenance (maintainers only): a real public ENA human-gut WGS cohort.
+    // No pipeline run/artifacts are seeded here yet — those come later from a real
+    // runner cycle (no fake reports).
+    const crcStudy = await tx.study.create({
+      data: {
+        title: "Human Gut Metagenome Cohort (Demo, 120 samples)",
+        alias: `gut-cohort-120-${prefix.toLowerCase()}`,
+        description:
+          "A larger demonstration human gut shotgun-metagenome cohort (120 Illumina paired-end WGS libraries) used to show SeqDesk at scale — browse and filter the whole cohort in the Table Overview. Sample identifiers and metadata are illustrative demo values.",
+        checklistType: "host-associated",
+        studyMetadata: JSON.stringify(
+          getStudyMetadata(
+            "SeqDesk Demo Facility",
+            "A demonstration human gut shotgun-metagenome cohort of 120 Illumina paired-end WGS libraries, used to showcase how SeqDesk scales to larger studies: sample browsing, filtering and Table-Overview navigation across a full cohort. Sample IDs, subject codes and lab values are illustrative demo data; read counts and checksums are wired from representative real sequencing."
+          )
+        ),
+        readyForSubmission: true,
+        readyAt: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
+        userId: researcher.id,
+      },
+    });
+    // No pipeline run is seeded on this cohort, so the created order is not read back.
+    await tx.order.create({
+      data: {
+        orderNumber: createOrderNumber(prefix, 10),
+        name: "Human gut metagenome cohort (demo, 120 samples)",
+        status: "COMPLETED",
+        statusUpdatedAt: new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000),
+        numberOfSamples: 120,
+        contactName: "Demo Researcher",
+        contactEmail: researcherEmail,
+        billingAddress: "SeqDesk Demo Workspace",
+        ...orderPlatformFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS),
+        customFields: orderCustomFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS, {
+          _projects: "Gut cohort (demo)",
+        }),
+        userId: researcher.id,
+        samples: {
+          create: CRC_COHORT_SAMPLES.map((s, i) => {
+            // Spread collection dates plausibly across 2015-2016 (one per ~6 days
+            // from 2015-01-01), so the Table Overview can show date-based filtering.
+            const collectionDate = new Date(
+              Date.UTC(2015, 0, 1) + i * 6 * 24 * 60 * 60 * 1000
+            )
+              .toISOString()
+              .slice(0, 10);
+            const template: SampleTemplate = {
+              sampleAlias: s.alias,
+              sampleTitle: `Human faecal metagenome — Subject ${s.alias}`,
+              scientificName: "human gut metagenome",
+              taxId: "408170",
+              checklistData: {
+                ...HUMAN_GUT_MIXS,
+                collection_date: collectionDate,
+                host_subject_id: s.alias,
+              },
+              customFields: {
+                sample_name: s.alias,
+                read_count: String(s.readCount),
+                sequencing_batch: `Batch-${(i % 4) + 1}`,
+              },
+            };
+            return buildSampleCreate(template, 10, i + 1, {
+              studyId: crcStudy.id,
+              facilityStatus: "SEQUENCED",
+              reads: {
+                file1: `${demoRoot}/gut-cohort-120/reads/${s.alias}_R1.fastq.gz`,
+                file2: `${demoRoot}/gut-cohort-120/reads/${s.alias}_R2.fastq.gz`,
+                checksum1: s.md5R1,
+                checksum2: s.md5R2,
+                readCount1: s.readCount,
+                readCount2: s.readCount,
+                runAccessionNumber: `RUN-${s.alias}`,
+                experimentAccessionNumber: `EXP-${s.alias}`,
+              },
+            });
+          }),
+        },
+      },
+    });
 
     return {
       workspaceId: workspace.id,
