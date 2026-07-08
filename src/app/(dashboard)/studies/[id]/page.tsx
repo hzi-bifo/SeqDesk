@@ -524,9 +524,11 @@ export default function StudyDetailPage({
       });
   }, [id]);
 
-  // ENA credentials check - runs when user visits the ENA registration page
+  // ENA credentials check - runs when user visits the ENA registration page.
+  // Skipped for demo users: publishing is a view-only showcase, so we keep the
+  // clean disabled "Register" button instead of an admin credentials error.
   useEffect(() => {
-    if (selectedPublishingTarget !== "ena" || !isAdmin) return;
+    if (selectedPublishingTarget !== "ena" || !isAdmin || isDemoUser) return;
     if (enaCheck.status !== "idle") return;
 
     setEnaCheck({ status: "checking" });
@@ -542,7 +544,7 @@ export default function StudyDetailPage({
       .catch(() => {
         setEnaCheck({ status: "error", message: "Failed to check ENA credentials" });
       });
-  }, [selectedPublishingTarget, isAdmin, enaCheck.status]);
+  }, [selectedPublishingTarget, isAdmin, isDemoUser, enaCheck.status]);
 
   // Fetch ENA submissions for this study
   const fetchEnaSubmissions = useCallback(() => {
@@ -653,6 +655,7 @@ export default function StudyDetailPage({
 
   const handleRegisterWithENA = async (isTest: boolean) => {
     if (!study) return;
+    if (isDemoUser) return;
 
     setRegisterSteps([
       { step: 1, name: "Submitting to ENA", status: "running" as const },
@@ -1773,8 +1776,13 @@ export default function StudyDetailPage({
         )}
 
         {/* Publishing Tab */}
-        {!isDemoUser && (
         <TabsContent value="publishing">
+          {isDemoUser && !selectedPublishingPipeline && (
+            <div className="mb-6 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+              View-only in the demo — publishing to ENA is disabled here. This
+              shows how registration and submission look in a real deployment.
+            </div>
+          )}
           {selectedPublishingPipeline ? (
             <StudyPipelinesSection
               studyId={study.id}
@@ -2059,12 +2067,17 @@ export default function StudyDetailPage({
                             size="sm"
                             onClick={() => handleRegisterWithENA(true)}
                             disabled={
+                              isDemoUser ||
                               submitting ||
                               !allPassed ||
                               hasPartialProductionRegistration ||
                               (activeTestRegistration && allSamplesHaveAccessions)
                             }
-                            title={testButtonDisabledReason}
+                            title={
+                              isDemoUser
+                                ? "Publishing to ENA isn't available in the demo — this is a view-only showcase."
+                                : testButtonDisabledReason
+                            }
                           >
                             {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                             Register at Test Server
@@ -2073,8 +2086,8 @@ export default function StudyDetailPage({
                           <Button
                             size="sm"
                             onClick={() => handleRegisterWithENA(false)}
-                            disabled={submitting || !allPassed || !study.readyForSubmission || !activeTestRegistration}
-                            title={!allPassed ? "All checks must pass" : !activeTestRegistration ? "Register on test server first" : !study.readyForSubmission ? "Mark study as ready first" : undefined}
+                            disabled={isDemoUser || submitting || !allPassed || !study.readyForSubmission || !activeTestRegistration}
+                            title={isDemoUser ? "Publishing to ENA isn't available in the demo — this is a view-only showcase." : !allPassed ? "All checks must pass" : !activeTestRegistration ? "Register on test server first" : !study.readyForSubmission ? "Mark study as ready first" : undefined}
                           >
                             {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                             Register at Production
@@ -2393,7 +2406,6 @@ export default function StudyDetailPage({
           })()}
 
         </TabsContent>
-        )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

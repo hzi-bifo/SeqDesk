@@ -1897,9 +1897,11 @@ export function StudyPipelinesSection({
       )}
 
       {/* ENA submission results: accessions written back by SubMG after a submission
-          (sample ERS/SAMEA, read run ERR + experiment ERX, assembly ERZ). Shown whenever
-          the study has any accession, linking sample -> reads -> assembly in the ENA browser. */}
-      {(() => {
+          (sample ERS/SAMEA, read run ERR + experiment ERX, assembly ERZ), linking
+          sample -> reads -> assembly in the ENA browser. Scoped to the SubMG submission
+          pipeline (the ENA/publishing flow) — it must NOT appear on analysis pipelines
+          such as Kraken2/Bracken, whose runs have nothing to do with ENA submission. */}
+      {isSubmgSelected && (() => {
         const enaHost = enaSubmissionServer?.host ?? null;
         const renderAcc = (acc: string | null) => {
           if (!acc) return <span className="text-muted-foreground">—</span>;
