@@ -195,7 +195,9 @@ describe("SidebarEntityNav", () => {
     // Analysis (study pipelines tab) is now shown to the facility-admin demo so
     // the seeded, published MAG run + its MultiQC are reachable from the study.
     expect(screen.getByText("Analysis")).toBeTruthy();
-    expect(screen.queryByText("Publishing")).toBeNull();
+    // Publishing is shown to demo users too, as a view-only showcase — the
+    // registration view is reachable but the submit actions are disabled.
+    expect(screen.getByText("Publishing")).toBeTruthy();
   });
 
   it("renders study sequencing subitems under a single parent", () => {
