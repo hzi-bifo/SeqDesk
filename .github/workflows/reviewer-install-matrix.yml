@@ -113,8 +113,6 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
-      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-required
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
       DB_USER: seqdesk
@@ -135,14 +133,14 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: reviewer-candidate
-          path: ${{ env.CANDIDATE_DIR }}
+          path: ${{ runner.temp }}/reviewer-candidate
       - name: Clean install, migrate, boot, and authenticate
         run: bash scripts/ci/run-reviewer-install-smoke.sh
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: reviewer-required-ubuntu24-x64-node24-pg16
-          path: ${{ env.COMPATIBILITY_DIR }}
+          path: ${{ runner.temp }}/reviewer-compatibility
           if-no-files-found: warn
           retention-days: 30
 
@@ -166,8 +164,6 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
-      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-required-minimum
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
       DB_USER: seqdesk
@@ -188,14 +184,14 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: reviewer-candidate
-          path: ${{ env.CANDIDATE_DIR }}
+          path: ${{ runner.temp }}/reviewer-candidate
       - name: Verify the minimum supported dependency boundary
         run: bash scripts/ci/run-reviewer-install-smoke.sh
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: reviewer-required-ubuntu22-x64-node22.13-pg14
-          path: ${{ env.COMPATIBILITY_DIR }}
+          path: ${{ runner.temp }}/reviewer-compatibility
           if-no-files-found: warn
           retention-days: 30
 
@@ -249,8 +245,6 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
-      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-${{ matrix.id }}
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
       DB_USER: seqdesk
@@ -271,13 +265,13 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: reviewer-candidate
-          path: ${{ env.CANDIDATE_DIR }}
+          path: ${{ runner.temp }}/reviewer-candidate
       - run: bash scripts/ci/run-reviewer-install-smoke.sh
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: reviewer-${{ matrix.id }}
-          path: ${{ env.COMPATIBILITY_DIR }}
+          path: ${{ runner.temp }}/reviewer-compatibility
           if-no-files-found: warn
           retention-days: 30
 
@@ -300,8 +294,6 @@ jobs:
             runner: macos-15-intel
             arch: x64
     env:
-      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
-      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-${{ matrix.id }}
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
       DB_USER: seqdesk
@@ -322,7 +314,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: reviewer-candidate
-          path: ${{ env.CANDIDATE_DIR }}
+          path: ${{ runner.temp }}/reviewer-candidate
       - name: Start isolated PostgreSQL 16
         run: |
           set -euo pipefail
@@ -347,6 +339,8 @@ jobs:
       - run: bash scripts/ci/run-reviewer-install-smoke.sh
       - name: Preserve database log and stop PostgreSQL
         if: always()
+        env:
+          COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-compatibility
         run: |
           mkdir -p "$COMPATIBILITY_DIR"
           cp "${PG_LOG:-/dev/null}" "$COMPATIBILITY_DIR/postgres.log" 2>/dev/null || true
@@ -357,7 +351,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: reviewer-${{ matrix.id }}
-          path: ${{ env.COMPATIBILITY_DIR }}
+          path: ${{ runner.temp }}/reviewer-compatibility
           if-no-files-found: warn
           retention-days: 30
 
@@ -396,8 +390,6 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
-      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-${{ matrix.id }}
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_USER: seqdesk
@@ -434,14 +426,14 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: reviewer-candidate
-          path: ${{ env.CANDIDATE_DIR }}
+          path: ${{ runner.temp }}/reviewer-candidate
       - shell: bash
         run: bash scripts/ci/run-reviewer-install-smoke.sh
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: reviewer-${{ matrix.id }}
-          path: ${{ env.COMPATIBILITY_DIR }}
+          path: ${{ runner.temp }}/reviewer-compatibility
           if-no-files-found: warn
           retention-days: 30
 
@@ -468,8 +460,6 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
-      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-pipeline
       DB_HOST: 127.0.0.1
       DB_PORT: "5432"
       DB_USER: seqdesk
@@ -495,14 +485,14 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: reviewer-candidate
-          path: ${{ env.CANDIDATE_DIR }}
+          path: ${{ runner.temp }}/reviewer-candidate
       - name: Install candidate and execute its packaged checksum workflow
         run: bash scripts/ci/run-reviewer-install-smoke.sh
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: reviewer-linux-pipeline-toolchain
-          path: ${{ env.COMPATIBILITY_DIR }}
+          path: ${{ runner.temp }}/reviewer-compatibility
           if-no-files-found: warn
           retention-days: 30
 
@@ -512,9 +502,6 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
     runs-on: windows-2025
     timeout-minutes: 15
-    env:
-      CANDIDATE_DIR: ${{ runner.temp }}\reviewer-candidate
-      COMPATIBILITY_DIR: ${{ runner.temp }}\reviewer-windows
     steps:
       - uses: actions/setup-node@v6
         with:
@@ -523,9 +510,12 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: reviewer-candidate
-          path: ${{ env.CANDIDATE_DIR }}
+          path: ${{ runner.temp }}\reviewer-candidate
       - name: Verify actual launcher rejection and WSL guidance
         shell: pwsh
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}\reviewer-candidate
+          COMPATIBILITY_DIR: ${{ runner.temp }}\reviewer-compatibility
         run: |
           $ErrorActionPreference = "Stop"
           $meta = Get-Content (Join-Path $env:CANDIDATE_DIR "candidate.json") -Raw | ConvertFrom-Json
@@ -560,6 +550,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: reviewer-native-windows-contract
-          path: ${{ env.COMPATIBILITY_DIR }}
+          path: ${{ runner.temp }}\reviewer-compatibility
           if-no-files-found: warn
           retention-days: 30

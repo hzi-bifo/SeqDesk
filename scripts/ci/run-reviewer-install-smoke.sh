@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 WORKSPACE="${GITHUB_WORKSPACE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-CANDIDATE_DIR="${CANDIDATE_DIR:?CANDIDATE_DIR is required}"
+CANDIDATE_DIR="${CANDIDATE_DIR:-${RUNNER_TEMP:-/tmp}/reviewer-candidate}"
 OUTPUT_DIR="${COMPATIBILITY_DIR:-${RUNNER_TEMP:-/tmp}/reviewer-compatibility}"
 INSTALL_DIR="${REVIEWER_INSTALL_DIR:-${RUNNER_TEMP:-/tmp}/seqdesk-reviewer-install}"
 NPM_PREFIX="${REVIEWER_NPM_PREFIX:-${RUNNER_TEMP:-/tmp}/seqdesk-reviewer-npm-prefix}"
