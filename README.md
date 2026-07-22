@@ -225,6 +225,7 @@ e2e harnesses, see **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 ## Documentation
 
 - User & operator guide: [seqdesk.org/docs](https://seqdesk.org/docs)
+- Beginner AWS deployment: [Install SeqDesk on AWS EC2](./AWS_EC2_INSTALLATION.md)
 - Releases and update info: [seqdesk.org](https://seqdesk.org)
 
 ## License
