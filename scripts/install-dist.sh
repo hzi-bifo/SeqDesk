@@ -526,8 +526,13 @@ print_postgres_setup_instructions() {
 
     if load_postgres_url_parts; then
         print_warning "Local PostgreSQL must be installed, running, and contain the SeqDesk role/database before migrations can run."
-        echo "  Run this once from a sudo-capable account:"
-        echo "  sudo env SEQDESK_DATABASE_URL=$(shell_quote "$SEQDESK_DATABASE_URL") npx -y seqdesk@latest -y --prepare-postgres"
+        if [ "$OS" = "macos" ]; then
+            echo "  Run this once as your normal macOS login user (do not use sudo):"
+            echo "  env SEQDESK_DATABASE_URL=$(shell_quote "$SEQDESK_DATABASE_URL") npx -y seqdesk@latest -y --prepare-postgres"
+        else
+            echo "  Run this once from a sudo-capable account:"
+            echo "  sudo env SEQDESK_DATABASE_URL=$(shell_quote "$SEQDESK_DATABASE_URL") npx -y seqdesk@latest -y --prepare-postgres"
+        fi
         echo "  Then rerun:"
         echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
         echo ""
@@ -870,11 +875,13 @@ NODE
 }
 
 postgres_connection_ready() {
-    if ! command_exists psql; then
+    local psql_bin
+    psql_bin="$(find_postgres_binary psql 2>/dev/null || true)"
+    if [ -z "$psql_bin" ]; then
         return 1
     fi
 
-    PGPASSWORD="${PG_PASSWORD_VALUE:-}" psql \
+    PGPASSWORD="${PG_PASSWORD_VALUE:-}" "$psql_bin" \
         -h "${PG_HOST:-127.0.0.1}" \
         -p "${PG_PORT:-5432}" \
         -U "${PG_USER_NAME:-seqdesk}" \
@@ -882,15 +889,192 @@ postgres_connection_ready() {
         -qAt -c "select 1" >/dev/null 2>&1
 }
 
+postgres_server_ready() {
+    local pg_isready_bin
+    pg_isready_bin="$(find_postgres_binary pg_isready 2>/dev/null || true)"
+    if [ -n "$pg_isready_bin" ]; then
+        "$pg_isready_bin" \
+            -h "${PG_HOST:-127.0.0.1}" \
+            -p "${PG_PORT:-5432}" >/dev/null 2>&1
+        return $?
+    fi
+
+    # pg_isready is supplied by every supported PostgreSQL package. This TCP
+    # fallback is only for an externally managed local server with client tools
+    # absent from PATH; credential validation still happens before migrations.
+    db_tcp_reachable "${PG_HOST:-127.0.0.1}" "${PG_PORT:-5432}"
+}
+
 sudo_postgres_ready() {
-    run_as_postgres psql -d postgres -qAt -c "select 1" >/dev/null 2>&1
+    local psql_bin
+    psql_bin="$(find_postgres_binary psql 2>/dev/null || true)"
+    if [ -z "$psql_bin" ]; then
+        return 1
+    fi
+
+    run_as_postgres "$psql_bin" \
+        -h "${PG_HOST:-127.0.0.1}" \
+        -p "${PG_PORT:-5432}" \
+        -d postgres -qAt -c "select 1" >/dev/null 2>&1
+}
+
+find_postgres_binary() {
+    local tool="$1"
+    local candidate formula prefix
+
+    candidate="$(command -v "$tool" 2>/dev/null || true)"
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+        printf '%s' "$candidate"
+        return 0
+    fi
+
+    if [ "${OS:-}" = "macos" ] && command_exists brew; then
+        for formula in postgresql@16 postgresql@18 postgresql@17 postgresql@15 postgresql@14 postgresql; do
+            if ! brew list --versions "$formula" >/dev/null 2>&1; then
+                continue
+            fi
+            prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+            candidate="$prefix/bin/$tool"
+            if [ -n "$prefix" ] && [ -x "$candidate" ]; then
+                printf '%s' "$candidate"
+                return 0
+            fi
+        done
+    fi
+
+    return 1
+}
+
+find_installed_brew_postgres_formula() {
+    local formula
+    command_exists brew || return 1
+    for formula in postgresql@16 postgresql@18 postgresql@17 postgresql@15 postgresql@14 postgresql; do
+        if brew list --versions "$formula" >/dev/null 2>&1; then
+            printf '%s' "$formula"
+            return 0
+        fi
+    done
+    return 1
+}
+
+add_brew_postgres_to_path() {
+    local formula="$1"
+    local prefix
+    prefix="$(brew --prefix "$formula" 2>/dev/null || true)"
+    if [ -n "$prefix" ] && [ -d "$prefix/bin" ]; then
+        export PATH="$prefix/bin:$PATH"
+    fi
+}
+
+macos_brew_service_runs_as_root() {
+    local formula="$1"
+    local plist="/Library/LaunchDaemons/homebrew.mxcl.${formula}.plist"
+    [ -f "$plist" ] || return 1
+
+    # A root-level LaunchDaemon is safe only when it explicitly drops to an
+    # unprivileged account. Old `sudo brew services start postgresql...` calls
+    # create a plist without UserName, causing PostgreSQL to reject startup.
+    if [ -x /usr/libexec/PlistBuddy ] && \
+        /usr/libexec/PlistBuddy -c 'Print :UserName' "$plist" >/dev/null 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
+warn_macos_root_postgres_services() {
+    [ "${OS:-}" = "macos" ] || return 0
+    [ "${MACOS_ROOT_POSTGRES_WARNING_SHOWN:-}" != "1" ] || return 0
+
+    local formula log_file brew_prefix found="false" running_formula
+    brew_prefix="$(brew --prefix 2>/dev/null || true)"
+    running_formula="$(brew services list 2>/dev/null | \
+        awk '$1 ~ /^postgresql(@[0-9]+)?$/ && $2 == "started" { print $1; exit }')"
+    for formula in postgresql@16 postgresql@18 postgresql@17 postgresql@15 postgresql@14 postgresql; do
+        if ! macos_brew_service_runs_as_root "$formula"; then
+            continue
+        fi
+
+        found="true"
+        print_warning "Homebrew PostgreSQL service '$formula' is registered to run as root."
+        echo "  PostgreSQL refuses to run as root; this commonly appears as launchctl error 5"
+        echo "  followed by Homebrew service status 'error 78'."
+        echo "  Repair the stale system service as follows:"
+        echo "    sudo brew services stop $formula"
+        echo "    brew services stop $formula"
+
+        log_file="$brew_prefix/var/log/${formula}.log"
+        if [ -n "$brew_prefix" ] && [ -f "$log_file" ] && [ ! -w "$log_file" ]; then
+            echo "    sudo chown \"$(id -un)\":admin $(shell_quote "$log_file")"
+        fi
+        if [ -n "$running_formula" ] && [ "$running_formula" != "$formula" ]; then
+            echo "  '$running_formula' is already running. SeqDesk supports PostgreSQL 14+,"
+            echo "  so keep using it instead of starting a second server on port 5432."
+        else
+            echo "    brew services start $formula"
+        fi
+        echo "  Do not run 'sudo brew services start' for PostgreSQL."
+    done
+
+    if [ "$found" = "true" ]; then
+        MACOS_ROOT_POSTGRES_WARNING_SHOWN=1
+    fi
+}
+
+print_macos_brew_postgres_failure() {
+    local formula="$1"
+    local service_output="${2:-}"
+    local brew_prefix log_file log_excerpt service_line
+
+    if [ -n "$service_output" ]; then
+        printf '%s\n' "$service_output" | sed 's/^/  /'
+    fi
+
+    warn_macos_root_postgres_services
+
+    service_line="$(brew services list 2>/dev/null | awk -v formula="$formula" '$1 == formula { print; exit }')"
+    if [ -n "$service_line" ]; then
+        print_info "Homebrew service: $service_line"
+    fi
+
+    brew_prefix="$(brew --prefix 2>/dev/null || true)"
+    log_file="$brew_prefix/var/log/${formula}.log"
+    if [ -n "$brew_prefix" ] && [ -f "$log_file" ] && [ ! -w "$log_file" ] && \
+        ! macos_brew_service_runs_as_root "$formula"; then
+        print_warning "The PostgreSQL log is not writable by $(id -un): $log_file"
+        echo "  Repair its ownership, then retry:"
+        echo "    sudo chown \"$(id -un)\":admin $(shell_quote "$log_file")"
+    fi
+    if [ -n "$brew_prefix" ] && [ -r "$log_file" ]; then
+        log_excerpt="$(tail -n 120 "$log_file" 2>/dev/null | \
+            grep -Ei 'root.*not permitted|address already in use|could not bind|lock file|permission denied|fatal|panic' | \
+            tail -n 8 || true)"
+        if [ -n "$log_excerpt" ]; then
+            print_warning "PostgreSQL log excerpt ($log_file):"
+            printf '%s\n' "$log_excerpt" | sed 's/^/  /'
+        else
+            print_info "PostgreSQL log: $log_file"
+        fi
+    fi
 }
 
 install_postgres_packages_if_possible() {
     if [ "${OS:-}" = "macos" ]; then
-        if command_exists brew && ! command_exists psql; then
-            run_with_spinner_warn "Install PostgreSQL packages" brew install postgresql@16 || brew install postgresql || true
+        if ! command_exists brew; then
+            print_warning "Homebrew is required to provision local PostgreSQL automatically on macOS."
+            return 1
         fi
+
+        local formula
+        formula="$(find_installed_brew_postgres_formula 2>/dev/null || true)"
+        if [ -z "$formula" ]; then
+            if run_with_spinner_warn "Install PostgreSQL 16" brew install postgresql@16; then
+                formula="postgresql@16"
+            else
+                print_warning "Homebrew could not install postgresql@16."
+                return 1
+            fi
+        fi
+        add_brew_postgres_to_path "$formula"
         return 0
     fi
 
@@ -918,33 +1102,44 @@ install_postgres_packages_if_possible() {
 start_postgres_if_possible() {
     if [ "${OS:-}" = "macos" ]; then
         if command_exists brew; then
-            for formula in postgresql@16 postgresql@15 postgresql@14 postgresql; do
-                if brew list "$formula" >/dev/null 2>&1; then
-                    brew services start "$formula" >/dev/null 2>&1 || true
-                    if sudo_postgres_ready; then
+            warn_macos_root_postgres_services
+            local formula service_output
+            for formula in postgresql@16 postgresql@18 postgresql@17 postgresql@15 postgresql@14 postgresql; do
+                if ! brew list --versions "$formula" >/dev/null 2>&1; then
+                    continue
+                fi
+                if macos_brew_service_runs_as_root "$formula"; then
+                    print_info "Skipping misconfigured root service $formula until it is repaired."
+                    print_macos_brew_postgres_failure "$formula"
+                    continue
+                fi
+
+                add_brew_postgres_to_path "$formula"
+                print_info "Starting PostgreSQL with Homebrew ($formula)"
+                if ! service_output="$(brew services start "$formula" 2>&1)"; then
+                    print_warning "Homebrew could not start $formula."
+                    print_macos_brew_postgres_failure "$formula" "$service_output"
+                    continue
+                fi
+
+                for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+                    if postgres_server_ready; then
                         return 0
                     fi
-                fi
-            done
-        fi
+                    sleep 1
+                done
 
-        local pgdata
-        for pgdata in \
-            "${HOMEBREW_PREFIX:-/opt/homebrew}/var/postgresql@16" \
-            "${HOMEBREW_PREFIX:-/opt/homebrew}/var/postgresql@15" \
-            "${HOMEBREW_PREFIX:-/opt/homebrew}/var/postgresql@14" \
-            "${HOMEBREW_PREFIX:-/opt/homebrew}/var/postgresql" \
-            "/usr/local/var/postgresql@16" \
-            "/usr/local/var/postgresql@15" \
-            "/usr/local/var/postgresql@14" \
-            "/usr/local/var/postgresql"; do
-            if [ -d "$pgdata" ] && command_exists pg_ctl; then
-                pg_ctl -D "$pgdata" start >/dev/null 2>&1 || true
-                if sudo_postgres_ready; then
-                    return 0
-                fi
-            fi
-        done
+                print_warning "$formula started but PostgreSQL did not become ready on ${PG_HOST:-127.0.0.1}:${PG_PORT:-5432}."
+                print_macos_brew_postgres_failure "$formula" "$service_output"
+
+                # Do not register several PostgreSQL versions after one service
+                # starts successfully. A port or data-directory error needs to
+                # be fixed explicitly rather than hidden by another version.
+                return 1
+            done
+        else
+            print_warning "Homebrew is required to provision local PostgreSQL automatically on macOS."
+        fi
 
         return 1
     fi
@@ -960,6 +1155,59 @@ start_postgres_if_possible() {
     if command_exists systemctl; then
         run_privileged systemctl enable --now postgresql >/dev/null 2>&1 || true
     fi
+}
+
+uses_local_postgres_target() {
+    if [ -z "${SEQDESK_DATABASE_URL:-}" ]; then
+        return 0
+    fi
+
+    local database_host
+    database_host="$(postgres_url_host "$SEQDESK_DATABASE_URL" 2>/dev/null || true)"
+    case "$database_host" in
+        127.0.0.1|localhost|::1|'[::1]') return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+preflight_macos_local_postgres() {
+    [ "${OS:-}" = "macos" ] || return 0
+    uses_local_postgres_target || return 0
+
+    if [ -n "${SEQDESK_DATABASE_URL:-}" ]; then
+        local host_port
+        host_port="$(postgres_url_host_port "$SEQDESK_DATABASE_URL" 2>/dev/null || true)"
+        if [ -n "$host_port" ]; then
+            IFS=$'\t' read -r PG_HOST PG_PORT <<< "$host_port"
+            PG_HOST="${PG_HOST#[}"
+            PG_HOST="${PG_HOST%]}"
+        fi
+    fi
+
+    print_header "Prepare local PostgreSQL"
+    warn_macos_root_postgres_services
+
+    if postgres_server_ready; then
+        print_success "PostgreSQL is already available on ${PG_HOST:-127.0.0.1}:${PG_PORT:-5432}; reusing it."
+        return 0
+    fi
+
+    if ! install_postgres_packages_if_possible; then
+        print_error "Could not install local PostgreSQL on macOS."
+        echo "  Install Homebrew from https://brew.sh, or choose 'Existing/managed'"
+        echo "  in the guided installer and provide a PostgreSQL connection string."
+        return 1
+    fi
+
+    if start_postgres_if_possible && postgres_server_ready; then
+        print_success "PostgreSQL is ready on ${PG_HOST:-127.0.0.1}:${PG_PORT:-5432}."
+        return 0
+    fi
+
+    print_error "Local PostgreSQL could not be started. The SeqDesk application release was not downloaded and no install directory was created."
+    echo "  Review the Homebrew service status and diagnostic output above."
+    echo "  After applying the printed repair, rerun the same SeqDesk command."
+    return 1
 }
 
 write_postgres_bootstrap_sql() {
@@ -1007,13 +1255,21 @@ ensure_local_postgres_database() {
 
     print_info "Preparing local PostgreSQL database"
 
+    if [ "${OS:-}" = "macos" ] && command_exists brew; then
+        warn_macos_root_postgres_services
+    fi
+
     if ! sudo_postgres_ready; then
         install_postgres_packages_if_possible || true
         start_postgres_if_possible || true
     fi
 
     if ! sudo_postgres_ready; then
-        print_warning "Could not access local PostgreSQL as root or through passwordless sudo."
+        if [ "${OS:-}" = "macos" ]; then
+            print_warning "Could not access local PostgreSQL as the current macOS user."
+        else
+            print_warning "Could not access local PostgreSQL as root or through passwordless sudo."
+        fi
         return 1
     fi
 
@@ -1343,7 +1599,11 @@ run_interactive_wizard() {
 
     # 1) Database
     print_info "Database — where should SeqDesk store its data?"
-    echo "    1) Local PostgreSQL  — the installer creates the role/database (needs sudo)"
+    if [ "${OS:-}" = "macos" ]; then
+        echo "    1) Local PostgreSQL  — installed/started with Homebrew as your login user"
+    else
+        echo "    1) Local PostgreSQL  — the installer creates the role/database (needs sudo)"
+    fi
     echo "    2) Existing/managed  — paste a PostgreSQL connection string"
     local db_choice
     db_choice=$(read_input "  Choose [1]: ")
@@ -1377,7 +1637,12 @@ run_interactive_wizard() {
             fi
         fi
     else
-        print_info "  Using local PostgreSQL — the installer will create the role/database and generate a password."
+        if [ "${OS:-}" = "macos" ]; then
+            print_info "  Using local PostgreSQL — the installer will install/start Homebrew PostgreSQL as your login user, then create the database."
+            print_info "  Never run Homebrew PostgreSQL services with sudo."
+        else
+            print_info "  Using local PostgreSQL — the installer will create the role/database and generate a password."
+        fi
     fi
 
     # 2) Accounts
@@ -1464,6 +1729,9 @@ Examples:
   seqdesk -y --config https://example.org/infrastructure-setup.json
   seqdesk -y --reconfigure --config ./infrastructure-setup.json
   seqdesk -y --reconfigure --reseed-db --config ./infrastructure-setup.json
+  # macOS (run Homebrew PostgreSQL as your login user):
+  env SEQDESK_DATABASE_URL="postgresql://..." npx -y seqdesk@latest -y --prepare-postgres
+  # Linux:
   sudo env SEQDESK_DATABASE_URL="postgresql://..." npx -y seqdesk@latest -y --prepare-postgres
 EOF
 }
@@ -3760,7 +4028,11 @@ if ! is_truthy "$SEQDESK_YES" && ! is_truthy "$SEQDESK_RECONFIGURE" && ! is_trut
     echo "  You'll need:"
     echo "    - Node.js ${NODE_SUPPORT_LABEL:-22.13.0+ or 24.x} and npm   (checked next)"
     echo "    - A PostgreSQL database:"
-    echo "        local    the installer can create one for you if you can use sudo"
+    if [[ "${OSTYPE:-}" == darwin* ]]; then
+        echo "        local    the installer provisions Homebrew PostgreSQL without sudo"
+    else
+        echo "        local    the installer can create one for you if you can use sudo"
+    fi
     echo "        managed  re-run with  --database-url \"postgresql://...\"  (or set DATABASE_URL)"
     echo "    - A writable install directory"
     echo ""
@@ -3946,6 +4218,15 @@ fi
 # so Node is available for the database reachability test, and before the
 # remaining prompts/config summary so its values flow through unchanged.
 run_interactive_wizard
+
+# On macOS, provision or validate the selected local PostgreSQL server before
+# downloading the release or creating the install directory. A clean reviewer
+# machine gets PostgreSQL automatically; stale root services, ownership issues,
+# and port conflicts fail here with Homebrew status/log details and no partial
+# SeqDesk installation left behind. Managed/remote database URLs are untouched.
+if ! preflight_macos_local_postgres; then
+    exit 1
+fi
 
 # Pipeline support
 print_step "Configure pipeline support"
