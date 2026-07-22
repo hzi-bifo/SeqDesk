@@ -3,8 +3,8 @@
 # SeqDesk Installation Script (Distribution)
 # https://seqdesk.org
 #
-# Usage: curl -fsSL https://seqdesk.org/install.sh | bash
-# CLI usage: curl -fsSL https://seqdesk.org/install.sh | bash -s -- [options]
+# Usage: curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y [options]
+# Guided usage: npm i -g seqdesk && seqdesk --interactive
 #
 # Options (environment variables):
 #   SEQDESK_DIR=/path/to/install   - Installation directory (default: ./seqdesk)
@@ -118,6 +118,7 @@ SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NAME="${SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NA
 SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME="${SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME:-}"
 SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION="${SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION:-}"
 SEQDESK_BOOTSTRAP_RESEARCHER_ROLE="${SEQDESK_BOOTSTRAP_RESEARCHER_ROLE:-}"
+SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_USE_PM2="${SEQDESK_USE_PM2:-}"
 SEQDESK_RUN_DOCTOR="${SEQDESK_RUN_DOCTOR:-}"
@@ -155,7 +156,8 @@ PM2_PROCESS_EXISTS="false"
 PM2_BIN=""
 PM2_DISPLAY_CMD="pm2"
 
-MIN_NODE_VERSION=18
+MIN_NODE_VERSION="22.13.0"
+NODE_SUPPORT_LABEL="22.13.0+ or 24.x"
 INSTALL_START_TS=$(date +%s)
 INSTALL_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S %Z')
 TOTAL_STEPS=9
@@ -229,7 +231,17 @@ browser_app_url() {
 }
 
 bind_host() {
-    printf '%s' "${SEQDESK_BIND_HOST:-0.0.0.0}"
+    if [ -n "${SEQDESK_BIND_HOST:-}" ]; then
+        printf '%s' "$SEQDESK_BIND_HOST"
+        return 0
+    fi
+
+    local persisted_bind_host=""
+    if [ -f "$SEQDESK_DIR/.seqdesk-bind-host" ]; then
+        IFS= read -r persisted_bind_host < "$SEQDESK_DIR/.seqdesk-bind-host" || true
+        persisted_bind_host="${persisted_bind_host%$'\r'}"
+    fi
+    printf '%s' "${persisted_bind_host:-0.0.0.0}"
 }
 
 doctor_url() {
@@ -276,6 +288,11 @@ configure_install_log() {
         print_warning "Could not create install log: $SEQDESK_LOG"
         return 0
     }
+    if ! chmod 600 "$SEQDESK_LOG" 2>/dev/null; then
+        print_warning "Could not secure install log permissions; logging is disabled: $SEQDESK_LOG"
+        rm -f "$SEQDESK_LOG" 2>/dev/null || true
+        return 0
+    fi
     SEQDESK_LOG_ENABLED="true"
 
     if command_exists mkfifo && command_exists tee; then
@@ -386,6 +403,24 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+node_meets_minimum_version() {
+    node -e '
+      const parse = (value) => {
+        const match = String(value).match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
+        return match ? match.slice(1, 4).map((part) => Number(part || 0)) : null;
+      };
+      const current = parse(process.argv[2] || process.versions.node);
+      const required = parse(process.argv[1]);
+      if (!current || !required) process.exit(1);
+      if (current[0] !== 22 && current[0] !== 24) process.exit(1);
+      for (let index = 0; index < 3; index += 1) {
+        if (current[index] > required[index]) process.exit(0);
+        if (current[index] < required[index]) process.exit(1);
+      }
+      process.exit(0);
+    ' "$MIN_NODE_VERSION"
+}
+
 is_root_user() {
     [ "$(id -u 2>/dev/null || echo 1)" = "0" ]
 }
@@ -457,7 +492,7 @@ configure_postgres_urls() {
         generated_password="$(generate_postgres_password)"
         SEQDESK_DATABASE_URL="$(default_postgres_url "$generated_password")"
         print_info "No DATABASE_URL supplied. Defaulting to local PostgreSQL on 127.0.0.1:5432."
-        print_info "Create role 'seqdesk' with this password: $generated_password"
+        print_info "Generated local PostgreSQL credentials; the password will be stored only in the protected runtime config."
     fi
 
     if [[ "$SEQDESK_DATABASE_URL" == file:* ]]; then
@@ -503,7 +538,7 @@ print_postgres_setup_instructions() {
                     echo "  brew install postgresql@16"
                     echo "  brew services start postgresql@16"
                 else
-                    echo "  Install PostgreSQL 15+ and start the server."
+                    echo "  Install PostgreSQL 14+ and start the server."
                 fi
                 ;;
             linux:debian)
@@ -523,7 +558,7 @@ print_postgres_setup_instructions() {
                 fi
                 ;;
             *)
-                echo "  Install PostgreSQL 15+ and ensure it is reachable from this host."
+                echo "  Install PostgreSQL 14+ and ensure it is reachable from this host."
                 ;;
         esac
         if [ "$OS" = "macos" ]; then
@@ -584,8 +619,26 @@ async function main() {
     return;
   }
   try {
-    const meta = await client.query("SELECT current_database() AS db, current_user AS usr");
-    console.log("OK\t" + (meta.rows[0].db || "") + "\t" + (meta.rows[0].usr || ""));
+    const meta = await client.query("SELECT current_database() AS db, current_user AS usr, current_setting('server_version') AS version");
+    console.log("OK\t" + (meta.rows[0].db || "") + "\t" + (meta.rows[0].usr || "") + "\t" + (meta.rows[0].version || ""));
+    const tables = await client.query(`
+      SELECT
+        to_regclass('public."User"') IS NOT NULL AS has_users,
+        to_regclass('public."Order"') IS NOT NULL AS has_orders
+    `);
+    if (tables.rows[0]?.has_users || tables.rows[0]?.has_orders) {
+      let users = "unknown";
+      let orders = "unknown";
+      if (tables.rows[0]?.has_users) {
+        const result = await client.query('SELECT COUNT(*)::bigint AS count FROM "User"');
+        users = String(result.rows[0]?.count ?? "unknown");
+      }
+      if (tables.rows[0]?.has_orders) {
+        const result = await client.query('SELECT COUNT(*)::bigint AS count FROM "Order"');
+        orders = String(result.rows[0]?.count ?? "unknown");
+      }
+      console.log("EXISTING_SEQDESK\t" + users + "\t" + orders);
+    }
     try {
       await client.query("CREATE TEMP TABLE _seqdesk_probe_temp (id INT)");
       await client.query("DROP TABLE _seqdesk_probe_temp");
@@ -618,6 +671,20 @@ NODE
             return 0
             ;;
         OK*)
+            local database_name database_role database_version
+            IFS=$'\t' read -r _ database_name database_role database_version <<< "$first_line"
+            print_kv "PostgreSQL server" "${database_version:-unknown} (${database_name:-unknown} as ${database_role:-unknown})"
+
+            local existing_line
+            existing_line="$(printf '%s\n' "$probe_output" | grep '^EXISTING_SEQDESK' | head -n 1)"
+            if [ -n "$existing_line" ] && ! is_truthy "$SEQDESK_RECONFIGURE"; then
+                local existing_users existing_orders
+                IFS=$'\t' read -r _ existing_users existing_orders <<< "$existing_line"
+                print_warning "Existing SeqDesk data was detected in the selected database."
+                print_kv "Existing records" "users=${existing_users:-unknown}, orders=${existing_orders:-unknown}"
+                print_info "Migrations preserve and update this database; use a different --database-url for an isolated installation."
+            fi
+
             if printf '%s\n' "$probe_output" | grep -q "^WRITE_OK$"; then
                 return 0
             fi
@@ -783,7 +850,23 @@ db_tcp_reachable() {
     # Bounded TCP connect to host:port. Returns 0 if reachable, 1 if not.
     local host="$1"
     local port="$2"
-    timeout 8 bash -lc "</dev/tcp/${host}/${port}" >/dev/null 2>&1
+    DB_TCP_HOST="$host" DB_TCP_PORT="$port" node <<'NODE' >/dev/null 2>&1
+const net = require("net");
+const host = process.env.DB_TCP_HOST || "";
+const port = Number(process.env.DB_TCP_PORT || "");
+if (!host || !Number.isInteger(port) || port < 1 || port > 65535) process.exit(1);
+const socket = net.createConnection({ host, port });
+const timer = setTimeout(() => socket.destroy(new Error("timeout")), 8000);
+socket.once("connect", () => {
+  clearTimeout(timer);
+  socket.destroy();
+  process.exit(0);
+});
+socket.once("error", () => {
+  clearTimeout(timer);
+  process.exit(1);
+});
+NODE
 }
 
 postgres_connection_ready() {
@@ -1309,9 +1392,11 @@ run_interactive_wizard() {
     make_researcher=${make_researcher:-Y}
     case "$make_researcher" in
         n|N|no|NO)
+            SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="0"
             print_info "  Skipping the researcher account."
             ;;
         *)
+            SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="1"
             interactive_prompt_email "  Researcher email" "user@example.com"
             SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL="$INTERACTIVE_RESULT"
             interactive_prompt_password "  Researcher password"
@@ -1327,7 +1412,7 @@ print_usage() {
 Usage:
   npx -y seqdesk@latest [options]
   seqdesk [options]
-  curl -fsSL https://seqdesk.org/install.sh | bash -s -- [options]  # advanced fallback
+  curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y [options]  # non-interactive fallback
 
 Options:
   -y, --yes                    Non-interactive mode (accept defaults)
@@ -2558,6 +2643,31 @@ is_writable_target() {
     [ -w "$parent" ]
 }
 
+validate_or_confirm_install_target() {
+    if is_truthy "$SEQDESK_RECONFIGURE" || [ ! -e "$SEQDESK_DIR" ]; then
+        return 0
+    fi
+
+    if is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
+        print_warning "Target path already exists and will be backed up before replacement: $SEQDESK_DIR"
+        return 0
+    fi
+
+    if is_truthy "$SEQDESK_YES"; then
+        print_error "Target path $SEQDESK_DIR already exists. Choose a new --dir, use --reconfigure for an installed instance, or pass --overwrite-existing to back it up and replace it."
+        exit 1
+    fi
+
+    print_warning "Target path already exists: $SEQDESK_DIR"
+    local response
+    response=$(read_input "Backup and replace? (y/N): ")
+    if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        echo "Installation cancelled."
+        exit 0
+    fi
+    SEQDESK_OVERWRITE_EXISTING="1"
+}
+
 gating_disk_kb() {
     # Print raw free kilobytes on the filesystem backing $1, or empty if unknown.
     local target="$1"
@@ -2735,17 +2845,18 @@ confirm_config() {
 
 print_node_install_instructions() {
     print_warning "Automatic system package installation is disabled."
-    print_info "Install Node.js ${MIN_NODE_VERSION}+ manually, then re-run this installer."
+    print_info "Install a supported Node.js release (${NODE_SUPPORT_LABEL}), then re-run this installer."
     case "$OS:$DISTRO" in
         macos:macos)
-            echo "  brew install node"
+            echo "  brew install node@24"
+            echo '  export PATH="$(brew --prefix node@24)/bin:$PATH"'
             ;;
         linux:debian)
-            echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+            echo "  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"
             echo "  sudo apt-get install -y nodejs"
             ;;
         linux:redhat)
-            echo "  curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -"
+            echo "  curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -"
             if command_exists dnf; then
                 echo "  sudo dnf install -y nodejs"
             else
@@ -2854,13 +2965,22 @@ install_runtime_node_modules() {
 
 write_root_start_wrapper() {
     mkdir -p "$SEQDESK_DIR"
-    cat > "$SEQDESK_DIR/start.sh" <<'EOF'
+    local persisted_bind_host
+    persisted_bind_host="$(bind_host)"
+    printf '%s\n' "$persisted_bind_host" > "$SEQDESK_DIR/.seqdesk-bind-host"
+    chmod 600 "$SEQDESK_DIR/.seqdesk-bind-host"
+    {
+        cat <<'EOF'
 #!/usr/bin/env bash
 set -e
+EOF
+        printf 'if [[ -z "${SEQDESK_BIND_HOST:-}" ]]; then export SEQDESK_BIND_HOST=%q; fi\n' "$persisted_bind_host"
+        cat <<'EOF'
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR/current"
 exec ./start.sh "$@"
 EOF
+    } > "$SEQDESK_DIR/start.sh"
     chmod +x "$SEQDESK_DIR/start.sh"
 }
 
@@ -2935,7 +3055,7 @@ run_wizard() {
     if [ ! -f scripts/install-wizard.mjs ]; then
         return 1
     fi
-    if [ -z "$SEQDESK_YES" ] && [ ! -t 0 ]; then
+    if [ -z "$SEQDESK_YES" ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
         return 1
     fi
     local wizard_out
@@ -3085,6 +3205,7 @@ write_config() {
     SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_LAST_NAME="${SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME:-}" \
     SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_INSTITUTION="${SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION:-}" \
     SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_ROLE="${SEQDESK_BOOTSTRAP_RESEARCHER_ROLE:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_ENABLED="${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" \
     SEQDESK_INSTALL_PROFILE_CONFIG_FILE="${SEQDESK_PROFILE_CONFIG_FILE:-}" \
     SEQDESK_INSTALL_PORT="${SEQDESK_PORT:-}" \
     node <<'NODE'
@@ -3110,6 +3231,7 @@ const notificationRelayUrl = process.env.SEQDESK_INSTALL_NOTIFICATION_RELAY_URL 
 const notificationRelayToken = process.env.SEQDESK_INSTALL_NOTIFICATION_RELAY_TOKEN || '';
 const profileConfigFile = process.env.SEQDESK_INSTALL_PROFILE_CONFIG_FILE || '';
 const appPortRaw = process.env.SEQDESK_INSTALL_PORT || '';
+const researcherEnabledRaw = process.env.SEQDESK_INSTALL_BOOTSTRAP_RESEARCHER_ENABLED || '';
 const bootstrapEnv = {
   admin: {
     email: process.env.SEQDESK_INSTALL_BOOTSTRAP_ADMIN_EMAIL || '',
@@ -3290,13 +3412,20 @@ if (
 
 const adminBootstrap = buildBootstrapUserConfig(bootstrapEnv.admin);
 const researcherBootstrap = buildBootstrapUserConfig(bootstrapEnv.researcher);
-if (adminBootstrap || researcherBootstrap) {
+const researcherEnabled = toOptionalBoolean(researcherEnabledRaw);
+if (adminBootstrap || researcherBootstrap || researcherEnabled === false) {
   config.bootstrap = config.bootstrap && typeof config.bootstrap === 'object' ? config.bootstrap : {};
   const users = config.bootstrap.users && typeof config.bootstrap.users === 'object'
     ? config.bootstrap.users
     : {};
   if (adminBootstrap) users.admin = adminBootstrap;
-  if (researcherBootstrap) users.researcher = researcherBootstrap;
+  if (researcherEnabled === false) {
+    users.researcher = false;
+  } else if (researcherBootstrap) {
+    users.researcher = researcherBootstrap;
+  } else if (researcherEnabled === true && users.researcher === false) {
+    delete users.researcher;
+  }
   config.bootstrap.users = users;
 }
 
@@ -3307,6 +3436,9 @@ NODE
     for f in settings.json seqdesk.config.json; do
         if [ -e "$f" ]; then written_config_name="$f"; break; fi
     done
+    if ! chmod 600 "$written_config_name" 2>/dev/null; then
+        print_warning "Could not restrict $written_config_name to owner-only access. Review its permissions before starting SeqDesk."
+    fi
     print_kv "$written_config_name" "written"
 }
 
@@ -3624,7 +3756,7 @@ if ! is_truthy "$SEQDESK_YES" && ! is_truthy "$SEQDESK_RECONFIGURE" && ! is_trut
     echo "  This installs it to ${SEQDESK_DIR:-./seqdesk} and shows a summary before changing anything."
     echo ""
     echo "  You'll need:"
-    echo "    - Node.js ${MIN_NODE_VERSION:-18}+ and npm   (checked next)"
+    echo "    - Node.js ${NODE_SUPPORT_LABEL:-22.13.0+ or 24.x} and npm   (checked next)"
     echo "    - A PostgreSQL database:"
     echo "        local    the installer can create one for you if you can use sudo"
     echo "        managed  re-run with  --database-url \"postgresql://...\"  (or set DATABASE_URL)"
@@ -3687,8 +3819,7 @@ if ! command_exists node; then
     node_install_reason="missing"
 else
     NODE_VERSION=$(node -v | sed 's/v//')
-    NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d. -f1)
-    if [ "$NODE_MAJOR" -lt "$MIN_NODE_VERSION" ]; then
+    if ! node_meets_minimum_version; then
         node_install_reason="outdated"
     fi
 fi
@@ -3699,18 +3830,17 @@ fi
 
 if [ -n "$node_install_reason" ]; then
     if [ "$node_install_reason" = "missing" ]; then
-        print_error "Node.js $MIN_NODE_VERSION+ is required but was not found."
+        print_error "A supported Node.js release ($NODE_SUPPORT_LABEL) is required but was not found."
     else
-        print_error "Node.js ${MIN_NODE_VERSION}+ is required (found v$NODE_VERSION)."
+        print_error "Node.js $NODE_SUPPORT_LABEL is required (found v$NODE_VERSION)."
     fi
     print_node_install_instructions
     exit 1
 fi
 
 NODE_VERSION=$(node -v | sed 's/v//')
-NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d. -f1)
-if [ "$NODE_MAJOR" -lt "$MIN_NODE_VERSION" ]; then
-    print_error "Node.js ${MIN_NODE_VERSION}+ is required (found v$NODE_VERSION)"
+if ! node_meets_minimum_version; then
+    print_error "Node.js $NODE_SUPPORT_LABEL is required (found v$NODE_VERSION)"
     exit 1
 fi
 print_success "Node.js $NODE_VERSION"
@@ -3787,6 +3917,10 @@ fi
 if is_truthy "$SEQDESK_PREPARE_POSTGRES"; then
     prepare_postgres_and_exit
 fi
+
+# Reject or confirm an existing fresh-install target before asking wizard
+# questions, installing Conda, or downloading the release package.
+validate_or_confirm_install_target
 
 if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
     SEQDESK_EXEC_CONDA_PATH="${SEQDESK_EXEC_CONDA_PATH/#\~/$HOME}"
@@ -4007,20 +4141,10 @@ if is_truthy "$SEQDESK_RECONFIGURE"; then
     fi
 else
     if [ -e "$SEQDESK_DIR" ]; then
-        if is_truthy "$SEQDESK_YES"; then
-            if ! is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
-                print_error "Target path $SEQDESK_DIR already exists. Set SEQDESK_DIR to a new path, remove it, or pass --overwrite-existing to back it up and replace it."
-                rm -f "$TEMP_FILE"
-                exit 1
-            fi
-        else
-            print_warning "Target path already exists: $SEQDESK_DIR"
-            response=$(read_input "Backup and replace? (y/N): ")
-            if [[ ! "$response" =~ ^[Yy]$ ]]; then
-                echo "Installation cancelled."
-                rm -f "$TEMP_FILE"
-                exit 0
-            fi
+        if ! is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
+            print_error "Target path changed after preflight and now exists: $SEQDESK_DIR"
+            rm -f "$TEMP_FILE"
+            exit 1
         fi
         # Before moving the existing install aside, fail fast if a configured
         # database host:port is known but unreachable. Skip cleanly when no
@@ -4143,6 +4267,7 @@ write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
 clear_bootstrap_plaintext_passwords
 export DATABASE_URL="$SEQDESK_DATABASE_URL"
 export DIRECT_URL="$SEQDESK_DATABASE_DIRECT_URL"
+export SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED
 
 # Initialize database
 SEED_OK="false"
@@ -4216,8 +4341,11 @@ elif [ "$SEED_OK" = "true" ]; then
     print_success "Database initialized"
     if is_truthy "$SEQDESK_RECONFIGURE"; then
         print_info "Reconfigure mode: existing user accounts were kept."
-    elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ]; then
-        print_info "Bootstrap users available with configured profile credentials."
+    elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ] || [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
+        print_info "Bootstrap account configuration applied."
+        if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
+            print_info "Researcher account not created."
+        fi
     else
         print_info "Default users available: admin@example.com/admin and user@example.com/user"
     fi
@@ -4376,6 +4504,9 @@ print_kv "Directory" "$SEQDESK_DIR"
 print_kv "Browser URL" "$(browser_app_url)"
 print_kv "Local health URL" "$(local_app_url)"
 print_kv "Bind host" "$(bind_host)"
+if [ "$(bind_host)" = "0.0.0.0" ]; then
+    print_warning "SeqDesk is listening on every network interface. Set SEQDESK_BIND_HOST=127.0.0.1 before install/start for local-only use."
+fi
 print_kv "Node.js" "v$NODE_VERSION"
 if command_exists conda && [ "$PIPELINES_ENABLED" = "true" ]; then
     CONDA_VERSION=$(conda --version 2>/dev/null | awk '{print $2}' || true)
@@ -4439,9 +4570,15 @@ print_header "Login"
 
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     echo "  Existing user accounts are unchanged (reconfigure mode)."
-elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ]; then
+elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ] || [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
     print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
-    print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com} / configured profile password"
+    if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
+        print_kv "Researcher" "not created"
+    elif [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
+        print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL} / configured profile password"
+    else
+        print_kv "Researcher" "user@example.com / user (default; change after first login)"
+    fi
 else
     print_kv "Admin" "admin@example.com / admin"
     print_kv "Researcher" "user@example.com / user"

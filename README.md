@@ -80,8 +80,8 @@ point. This does not change the deployment guidance for real SeqDesk instances.
 
 ## Requirements
 
-- Node.js 18+
-- PostgreSQL (SeqDesk is PostgreSQL-only)
+- Node.js 22.13.0+ on the 22.x line, or Node.js 24.x (recommended)
+- PostgreSQL 14+ (SeqDesk is PostgreSQL-only)
 - Optional, for pipelines: Conda and/or Nextflow — and SLURM for cluster execution
 
 ## Install
@@ -93,6 +93,26 @@ npm i -g seqdesk
 seqdesk
 ```
 
+### macOS quick start
+
+```bash
+brew install node@24 postgresql@16
+export PATH="$(brew --prefix node@24)/bin:$PATH"
+brew services start postgresql@16
+pg_isready -h 127.0.0.1 -p 5432
+
+npm i -g seqdesk@latest
+SEQDESK_BIND_HOST=127.0.0.1 seqdesk --interactive \
+  --dir "$HOME/seqdesk" --without-pipelines
+
+seqdesk doctor --dir "$HOME/seqdesk" --url http://127.0.0.1:8000
+```
+
+Use a new install directory. Omit `--without-pipelines` if this Mac should also
+run Conda/Nextflow workflows. See the full
+[macOS guide](https://seqdesk.org/docs/installation/macos) for PostgreSQL service
+conflicts, PM2 startup, and troubleshooting.
+
 Installer flags pass straight through the launcher, for example:
 
 ```bash
@@ -102,8 +122,11 @@ seqdesk -y --config ./infrastructure-setup.json
 Fallback when npm is unavailable:
 
 ```bash
-curl -fsSL https://seqdesk.org/install.sh | bash
+curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y --dir /opt/seqdesk
 ```
+
+The pipe-based fallback is non-interactive. Use the npm launcher for guided
+prompts.
 
 Full installation, configuration, and unattended options are documented at
 **[seqdesk.org/docs/installation](https://seqdesk.org/docs/installation)**.
@@ -120,7 +143,7 @@ Every path boots the same app — pick by your scenario. The methods below are e
 | Method | Command | Best for | Verified in CI |
 | --- | --- | --- | --- |
 | npm launcher (recommended) | `npm i -g seqdesk` then `seqdesk` | Almost everyone — supported install + upgrade path | Ubuntu · AlmaLinux · macOS |
-| One-line installer | `curl -fsSL https://seqdesk.org/install.sh \| bash` | Fallback when npm is unavailable | Ubuntu |
+| One-line installer | `curl -fsSL https://seqdesk.org/install.sh \| bash -s -- -y --dir /opt/seqdesk` | Non-interactive fallback when npm is unavailable | Ubuntu |
 | macOS (Homebrew) | `npm i -g seqdesk && seqdesk` | Local Mac workstation / dev installs | macOS |
 | Unattended | `seqdesk -y --config ./infrastructure-setup.json` | Fleet or scripted deployments; update in place with `--reconfigure` | Ubuntu |
 | From source | `bash scripts/install.sh` | Developers / CI building a specific branch | Ubuntu · AlmaLinux |
@@ -132,7 +155,8 @@ The npm-launcher and source installs are also exercised under PM2, and the npm/A
 A few common installation and setup questions. See the full
 **[FAQ](https://seqdesk.org/docs/faq)** for more.
 
-**What do I need to run SeqDesk?** Node.js 18+ (20 LTS recommended), a PostgreSQL
+**What do I need to run SeqDesk?** Node.js 22.13.0+ on the 22.x line or Node.js
+24.x, a PostgreSQL 14+
 database, and Linux or macOS. Pipelines are optional and add Conda/Nextflow (plus
 SLURM for cluster execution).
 

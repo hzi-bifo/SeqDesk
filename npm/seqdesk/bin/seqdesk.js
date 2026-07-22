@@ -607,6 +607,12 @@ async function runDoctor(argv) {
   }
   addCheck(checks, "pass", "Install directory", installDir);
 
+  // Distribution installs keep immutable app files under current/ while the
+  // root holds shared config, data, and the start wrapper. Legacy/source
+  // installs still place the app files directly in the requested directory.
+  const currentDir = path.join(installDir, "current");
+  const appDir = dirExists(currentDir) ? currentDir : installDir;
+
   const packagePath = path.join(installDir, "package.json");
   let packageJson = null;
   if (!fileExists(packagePath)) {
@@ -651,15 +657,25 @@ async function runDoctor(argv) {
     addCheck(checks, "pass", "start.sh", "executable");
   }
 
-  if (dirExists(path.join(installDir, "node_modules"))) {
-    addCheck(checks, "pass", "node_modules", "present");
+  if (dirExists(path.join(appDir, "node_modules"))) {
+    addCheck(
+      checks,
+      "pass",
+      "node_modules",
+      appDir === installDir ? "present" : "present in current release"
+    );
   } else {
     addCheck(checks, "fail", "node_modules", "missing");
   }
 
-  if (dirExists(path.join(installDir, ".next", "static"))) {
-    addCheck(checks, "pass", ".next/static", "present");
-  } else if (dirExists(path.join(installDir, ".next"))) {
+  if (dirExists(path.join(appDir, ".next", "static"))) {
+    addCheck(
+      checks,
+      "pass",
+      ".next/static",
+      appDir === installDir ? "present" : "present in current release"
+    );
+  } else if (dirExists(path.join(appDir, ".next"))) {
     addCheck(checks, "warn", ".next/static", ".next exists but static assets are missing");
   } else {
     addCheck(checks, "warn", ".next/static", "missing; production release assets may be incomplete");
@@ -1016,9 +1032,31 @@ async function downloadInstaller() {
 
 function runInstaller(script) {
   return new Promise((resolve, reject) => {
-    const bash = spawn("bash", ["-s", "--", ...args], {
+    let tempDir;
+    let scriptPath;
+
+    try {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "seqdesk-installer-"));
+      scriptPath = path.join(tempDir, "install.sh");
+      fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+    } catch (error) {
+      reject(new Error(`Could not prepare the installer: ${error.message}`));
+      return;
+    }
+
+    const cleanup = () => {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {
+        // Best effort: the operating system will eventually clear its temp dir.
+      }
+    };
+
+    // Run a real file instead of piping the script to `bash -s`. Piping consumes
+    // stdin and makes the installer's guided prompts believe no TTY is present.
+    const bash = spawn("bash", [scriptPath, ...args], {
       env,
-      stdio: ["pipe", "inherit", "inherit"],
+      stdio: "inherit",
     });
 
     let settled = false;
@@ -1026,24 +1064,19 @@ function runInstaller(script) {
     function finishError(error) {
       if (settled) return;
       settled = true;
+      cleanup();
       reject(error);
     }
 
     function finishSuccess(code) {
       if (settled) return;
       settled = true;
+      cleanup();
       resolve(code ?? 1);
     }
 
     bash.on("error", (error) => {
       finishError(new Error(`Failed to start bash: ${error.message}`));
-    });
-
-    bash.stdin.on("error", (error) => {
-      if (error && error.code === "EPIPE") {
-        return;
-      }
-      finishError(new Error(`Failed to write installer to bash stdin: ${error.message}`));
     });
 
     bash.on("close", (code, signal) => {
@@ -1054,7 +1087,6 @@ function runInstaller(script) {
       finishSuccess(code);
     });
 
-    bash.stdin.end(script);
   });
 }
 
@@ -1068,6 +1100,17 @@ async function main() {
     console.log("  seqdesk assets apply [options]");
     console.log("  seqdesk pipeline <command> [options]");
     console.log("  seqdesk --version");
+    console.log("");
+    console.log("Common installer options:");
+    console.log("  --interactive        Guided database and bootstrap-account setup");
+    console.log("  -y, --yes            Non-interactive install using configured/default values");
+    console.log("  --dir <path>         Explicit installation directory");
+    console.log("  --with-pipelines     Install Conda/Nextflow pipeline support");
+    console.log("  --without-pipelines  Install the core application only");
+    console.log("  --config <path>      Read unattended installation settings from JSON");
+    console.log("");
+    console.log("Local-only binding: SEQDESK_BIND_HOST=127.0.0.1 seqdesk --interactive");
+    console.log("Full guide: https://seqdesk.org/docs/installation");
     return;
   }
 
