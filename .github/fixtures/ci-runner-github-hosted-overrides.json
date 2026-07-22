@@ -1,0 +1,46 @@
+{
+  "site.dataBasePath": "/tmp/seqdesk-github-hosted-profile-data",
+  "pipelines.enabled": true,
+  "pipelines.enable": ["fastq-checksum"],
+  "pipelines.execution": {
+    "mode": "local",
+    "conda": {
+      "enabled": false,
+      "path": "",
+      "environment": "seqdesk-pipelines"
+    },
+    "nextflowProfile": "standard"
+  },
+  "pipelines.databaseDirectory": "/tmp/seqdesk-github-hosted-profile-databases",
+  "pipelines.databases": {
+    "autoDownload": false,
+    "downloads": []
+  },
+  "pipelines.configs": {},
+  "pipelines.pipelineConfigs": {},
+  "privatePipelines": null,
+  "seedData.enabled": true,
+  "seedData.fixtures": [
+    {
+      "id": "ci-runner-fastq-checksum-smoke",
+      "kind": "orderPipelineSmoke",
+      "orderNumber": "CI-RUNNER-SMOKE-001",
+      "source": {
+        "type": "downloadedFastqBundle",
+        "url": "https://seqdesk.org/api/install-profiles/assets/ci-runner-fastq-bundle.tar.gz",
+        "sha256": "1b00289ec64f024a98c9cd9ab4a366b2e5eb90924c9f2acb882dcbe22dfd2617"
+      }
+    }
+  ],
+  "pipelineSmokeTests.enabled": true,
+  "pipelineSmokeTests.tests": [
+    {
+      "id": "ci-runner-fastq-checksum",
+      "kind": "orderPipelineApiSmoke",
+      "fixtureId": "ci-runner-fastq-checksum-smoke",
+      "pipelineId": "fastq-checksum",
+      "required": true,
+      "timeoutSeconds": 240
+    }
+  ]
+}

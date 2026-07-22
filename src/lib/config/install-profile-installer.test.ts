@@ -47,6 +47,15 @@ const hostedProfileSmokeWorkflow = fs.readFileSync(
   path.join(repoRoot, ".github/workflows/install-profile-ubuntu-smoke.yml"),
   "utf8"
 );
+const hostedProfileSmokeOverrides = JSON.parse(
+  fs.readFileSync(
+    path.join(
+      repoRoot,
+      ".github/fixtures/ci-runner-github-hosted-overrides.json"
+    ),
+    "utf8"
+  )
+) as Record<string, unknown>;
 
 describe("install profile installer wiring", () => {
   it("adds hosted profile flags and aliases to the distribution installer", () => {
@@ -62,6 +71,8 @@ describe("install profile installer wiring", () => {
     expect(installDist).toContain("apply_additional_settings_to_config_path");
     expect(installDist).toContain("Applied additional installer settings");
     expect(installDist).toContain("allowedRoots");
+    expect(installDist).toContain('"pipelineSmokeTests",');
+    expect(installDist).toContain('"seedData",');
     expect(installDist).toContain("__proto__");
     expect(installDist).toContain("Additional installer settings require --profile or --config.");
     expect(installDist).toContain("resolve_install_profile");
@@ -240,8 +251,53 @@ describe("install profile installer wiring", () => {
     expect(hostedProfileSmokeWorkflow).toContain("SEQDESK_CI_PROFILE_CODE");
     expect(hostedProfileSmokeWorkflow).toContain("Setup Miniconda for pipeline tools");
     expect(hostedProfileSmokeWorkflow).toContain("--with-pipelines");
+    expect(hostedProfileSmokeWorkflow).toContain(
+      "ci-runner-github-hosted-overrides.json"
+    );
+    expect(hostedProfileSmokeWorkflow).toContain(
+      '--additional-setting "site.dataBasePath=$PROFILE_DATA_DIR"'
+    );
+    expect(hostedProfileSmokeWorkflow).toContain(
+      '--additional-setting "pipelines.execution.runDirectory=$PROFILE_RUN_DIR"'
+    );
+    expect(hostedProfileSmokeWorkflow).toContain(
+      '--additional-setting "pipelines.databaseDirectory=$PROFILE_RUN_DIR/databases"'
+    );
     expect(hostedProfileSmokeWorkflow).toContain("--expected-pipelines-enabled true");
     expect(hostedProfileSmokeWorkflow).toContain("scripts/assert-install-profile-applied.mjs");
     expect(hostedProfileSmokeWorkflow).toContain("scripts/run-install-profile-pipeline-smoke.mjs");
+  });
+
+  it("pins the GitHub-hosted profile smoke to portable assets", () => {
+    expect(hostedProfileSmokeOverrides["pipelines.enabled"]).toBe(true);
+    expect(hostedProfileSmokeOverrides["pipelines.enable"]).toEqual([
+      "fastq-checksum",
+    ]);
+    expect(hostedProfileSmokeOverrides["pipelines.databases"]).toEqual({
+      autoDownload: false,
+      downloads: [],
+    });
+    expect(hostedProfileSmokeOverrides.privatePipelines).toBeNull();
+    expect(hostedProfileSmokeOverrides["seedData.fixtures"]).toEqual([
+      expect.objectContaining({
+        id: "ci-runner-fastq-checksum-smoke",
+        kind: "orderPipelineSmoke",
+        source: expect.objectContaining({
+          type: "downloadedFastqBundle",
+          url: "https://seqdesk.org/api/install-profiles/assets/ci-runner-fastq-bundle.tar.gz",
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }),
+      }),
+    ]);
+    expect(hostedProfileSmokeOverrides["pipelineSmokeTests.tests"]).toEqual([
+      expect.objectContaining({
+        pipelineId: "fastq-checksum",
+        required: true,
+      }),
+    ]);
+
+    const serialized = JSON.stringify(hostedProfileSmokeOverrides);
+    expect(serialized).not.toContain("/net/");
+    expect(serialized).not.toContain("metaxpath");
   });
 });

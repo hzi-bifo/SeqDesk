@@ -465,6 +465,42 @@ describe("install profile asset script helpers", () => {
     );
   });
 
+  it("rejects a required existing database path that is absent", async () => {
+    const { rootDir } = await createMetaxDbInstallRoot();
+    const databaseRoot = path.join(tempDir, "missing-profile-dbs");
+    const missingParamsPath = path.join(
+      tempDir,
+      "missing",
+      "metaxpath.downloaded.params.yaml"
+    );
+    const prisma = makeDatabasePrisma(databaseRoot);
+
+    await expect(
+      applyProfilePipelineDatabases({
+        prisma,
+        profile: {
+          pipelines: {
+            databaseDirectory: databaseRoot,
+            databases: [
+              {
+                pipelineId: "metaxpath",
+                databaseId: "db-bundle",
+                configKey: "paramsFile",
+                mode: "skip",
+                path: missingParamsPath,
+                required: true,
+              },
+            ],
+          },
+        },
+        rootDir,
+        logger: { log: vi.fn(), warn: vi.fn() },
+      })
+    ).rejects.toThrow(
+      `metaxpath/db-bundle does not exist or is empty: ${missingParamsPath}`
+    );
+  });
+
   it("requires a path when database mode is skip", async () => {
     const { rootDir } = await createMetaxDbInstallRoot();
     const prisma = makeDatabasePrisma(path.join(tempDir, "skip-missing-dbs"));

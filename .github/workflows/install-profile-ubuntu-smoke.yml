@@ -164,6 +164,10 @@ jobs:
             sleep 1
           done
 
+          # The normal ci-runner profile is also used by the private Alma canary,
+          # where administrators may attach /net-backed databases and private
+          # pipelines. Keep this GitHub-hosted job on the committed portable smoke
+          # subset while still resolving and authenticating the real hosted profile.
           PATH="$NPM_PREFIX/bin:$PATH" \
           SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" \
           SEQDESK_INSTALL_URL="http://127.0.0.1:${MOCK_RELEASE_PORT}/install.sh" \
@@ -172,6 +176,11 @@ jobs:
             seqdesk \
               -y \
               --with-pipelines \
+              --additional-settings-file "$GITHUB_WORKSPACE/.github/fixtures/ci-runner-github-hosted-overrides.json" \
+              --additional-setting "site.dataBasePath=$PROFILE_DATA_DIR" \
+              --additional-setting "pipelines.execution.runDirectory=$PROFILE_RUN_DIR" \
+              --additional-setting "pipelines.execution.weblogUrl=http://127.0.0.1:$PORT/api/pipelines/weblog" \
+              --additional-setting "pipelines.databaseDirectory=$PROFILE_RUN_DIR/databases" \
               --data-path "$PROFILE_DATA_DIR" \
               --run-dir "$PROFILE_RUN_DIR" \
               --no-pm2 \
