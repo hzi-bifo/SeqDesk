@@ -62,6 +62,7 @@ reset_state() {
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD=""
     SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL=""
     SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD=""
+    SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED=""
 }
 
 OUT="$(mktemp)"
@@ -113,6 +114,7 @@ assert_eq "local choice leaves DATABASE_URL empty (installer defaults later)" ""
 assert_eq "admin email defaulted" "admin@example.com" "$SEQDESK_BOOTSTRAP_ADMIN_EMAIL"
 assert_eq "admin password captured" "password123" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD"
 assert_eq "researcher skipped (no email)" "" "$SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL"
+assert_eq "researcher disabled" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
 
 echo ""
 echo "== Case 3: wizard is a no-op under -y (unattended must be untouched) =="

@@ -55,6 +55,18 @@ function envFlagTrue(name: string): boolean {
   return value === "true" || value === "1" || value === "yes";
 }
 
+function envFlagFalse(name: string): boolean {
+  const value = process.env[name]?.trim().toLowerCase();
+  return value === "false" || value === "0" || value === "no";
+}
+
+function shouldCreateBootstrapResearcher(config: Record<string, unknown>): boolean {
+  if (envFlagFalse("SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED")) return false;
+  const bootstrap = isRecord(config.bootstrap) ? config.bootstrap : {};
+  const users = isRecord(bootstrap.users) ? bootstrap.users : {};
+  return users.researcher !== false;
+}
+
 function shouldSeedDummyData(config: Record<string, unknown>): boolean {
   if (envFlagTrue("SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA")) return true;
   const bootstrap = config?.bootstrap;
@@ -265,23 +277,27 @@ export async function autoSeedIfNeeded(): Promise<{
     });
     console.log("[auto-seed] Created admin user");
 
-    // 2. Create test researcher user
-    const researcherBootstrap = resolveBootstrapUser("researcher", seedConfig);
-    const userPassword = researcherBootstrap.passwordHash;
-    await db.user.upsert({
-      where: { email: researcherBootstrap.email },
-      update: {},
-      create: {
-        email: researcherBootstrap.email,
-        password: userPassword,
-        firstName: researcherBootstrap.firstName,
-        lastName: researcherBootstrap.lastName,
-        role: "RESEARCHER",
-        researcherRole: researcherBootstrap.researcherRole,
-        institution: researcherBootstrap.institution,
-      },
-    });
-    console.log("[auto-seed] Created test user");
+    // 2. Create the initial researcher unless the installer/profile opted out.
+    if (shouldCreateBootstrapResearcher(seedConfig)) {
+      const researcherBootstrap = resolveBootstrapUser("researcher", seedConfig);
+      const userPassword = researcherBootstrap.passwordHash;
+      await db.user.upsert({
+        where: { email: researcherBootstrap.email },
+        update: {},
+        create: {
+          email: researcherBootstrap.email,
+          password: userPassword,
+          firstName: researcherBootstrap.firstName,
+          lastName: researcherBootstrap.lastName,
+          role: "RESEARCHER",
+          researcherRole: researcherBootstrap.researcherRole,
+          institution: researcherBootstrap.institution,
+        },
+      });
+      console.log("[auto-seed] Created researcher user");
+    } else {
+      console.log("[auto-seed] Researcher account disabled by bootstrap configuration");
+    }
 
     // 3. Create site settings
     const defaultPostSubmissionInstructions = `## Thank you for your submission!

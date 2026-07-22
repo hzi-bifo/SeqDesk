@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ["18", "20", "22"]
+        node: ["22", "24"]
     env:
       NEXT_TELEMETRY_DISABLED: 1
       PORT: "8893"
@@ -138,7 +138,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Configure paths
         run: |
@@ -201,7 +201,7 @@ jobs:
           retention-days: 5
 
   npm-global-install-macos:
-    name: "npm i -g seqdesk (macOS, node 20)"
+    name: "npm i -g seqdesk (macOS, node 24)"
     runs-on: macos-latest
     timeout-minutes: 40
     env:
@@ -216,7 +216,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Configure paths
         run: |
@@ -308,7 +308,7 @@ jobs:
             --base-url "http://127.0.0.1:${PORT}" \
             --email "user@example.com" --password "user" \
             --expected-role "RESEARCHER"
-          echo "OK: real-network npm install booted, migrated, and authenticated (admin + researcher) on macOS (node 20)."
+          echo "OK: real-network npm install booted, migrated, and authenticated (admin + researcher) on macOS (node 24)."
 
       - name: Upload logs
         if: always()

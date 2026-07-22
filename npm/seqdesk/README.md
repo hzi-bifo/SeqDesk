@@ -2,6 +2,8 @@
 
 CLI launcher for installing and updating SeqDesk.
 
+Requires Node.js 22.13.0+ on the 22.x line or Node.js 24.x; Node.js 24 is recommended.
+
 ## Usage
 
 ```bash

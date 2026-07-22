@@ -14,6 +14,7 @@ const BOOTSTRAP_ENV_KEYS = [
   "SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME",
   "SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION",
   "SEQDESK_BOOTSTRAP_RESEARCHER_ROLE",
+  "SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED",
 ];
 
 // Mock the db module before importing
@@ -160,6 +161,25 @@ describe("autoSeedIfNeeded", () => {
         data: expect.objectContaining({
           extraSettings: expect.any(String),
         }),
+      })
+    );
+  });
+
+  it("does not create a researcher when bootstrap configuration disables it", async () => {
+    process.env.SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED = "0";
+    mockDb.siteSettings.findUnique.mockResolvedValue(null);
+    mockDb.user.upsert.mockResolvedValue({});
+    mockDb.siteSettings.upsert.mockResolvedValue({});
+    mockDb.orderFormConfig.upsert.mockResolvedValue({});
+    mockDb.siteSettings.update.mockResolvedValue({});
+
+    const result = await autoSeedIfNeeded();
+
+    expect(result).toEqual({ seeded: true });
+    expect(mockDb.user.upsert).toHaveBeenCalledTimes(1);
+    expect(mockDb.user.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { email: "admin@example.com" },
       })
     );
   });

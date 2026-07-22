@@ -31,7 +31,7 @@ describe("version response parser", () => {
         downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
         checksum: "sha256:deadbeef",
         releaseNotes: "Stability fixes",
-        minNodeVersion: "18.0.0",
+        minNodeVersion: "22.13.0",
         databaseRequirement: "postgresql",
         size: "1048576",
       })
@@ -42,7 +42,7 @@ describe("version response parser", () => {
       downloadUrl: "https://downloads.seqdesk.org/seqdesk-1.2.3.tar.gz",
       checksum: "sha256:deadbeef",
       releaseNotes: "Stability fixes",
-      minNodeVersion: "18.0.0",
+      minNodeVersion: "22.13.0",
       databaseRequirement: "postgresql",
       size: 1048576,
     });

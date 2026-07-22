@@ -103,7 +103,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Setup Miniconda
         uses: conda-incubator/setup-miniconda@v3
@@ -990,7 +990,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/seqdesk-${VERSION}.tar.gz" "$MOCK_ROOT/downloads/"
           cp "$GITHUB_WORKSPACE/scripts/install-dist.sh" "$MOCK_ROOT/install.sh"
           CHECKSUM="sha256:$(sha256sum "$MOCK_ROOT/downloads/seqdesk-${VERSION}.tar.gz" | cut -d' ' -f1)"
-          echo "{\"latest\":{\"version\":\"$VERSION\",\"channel\":\"stable\",\"releaseDate\":\"$(date -u +%F)\",\"downloadUrl\":\"http://127.0.0.1:$MOCK_PORT/downloads/seqdesk-${VERSION}.tar.gz\",\"checksum\":\"$CHECKSUM\",\"minNodeVersion\":\"18.0.0\"},\"updateAvailable\":false}" > "$MOCK_ROOT/api/version"
+          echo "{\"latest\":{\"version\":\"$VERSION\",\"channel\":\"stable\",\"releaseDate\":\"$(date -u +%F)\",\"downloadUrl\":\"http://127.0.0.1:$MOCK_PORT/downloads/seqdesk-${VERSION}.tar.gz\",\"checksum\":\"$CHECKSUM\",\"minNodeVersion\":\"22.13.0\"},\"updateAvailable\":false}" > "$MOCK_ROOT/api/version"
           ( cd "$GITHUB_WORKSPACE/npm/seqdesk" && npm run sync-version >/dev/null 2>&1 && npm pack --pack-destination "$WORK" >/dev/null )
           NPM_TGZ="$(find "$WORK" -maxdepth 1 -name 'seqdesk-*.tgz' | head -n1)"
           npm install -g "$NPM_TGZ" --prefix "$NPM_PREFIX" --cache "$WORK/npm-cache" >/dev/null

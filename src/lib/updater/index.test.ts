@@ -124,7 +124,7 @@ describe("checkForUpdates", () => {
     downloadUrl: "https://seqdesk.org/download/2.0.0",
     checksum: "abc123",
     releaseNotes: "Big update",
-    minNodeVersion: "18.0.0",
+    minNodeVersion: "22.13.0",
   };
 
   it("returns update available when newer version exists", async () => {

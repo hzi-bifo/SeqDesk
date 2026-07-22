@@ -5,7 +5,8 @@ documentation lives at [seqdesk.org/docs](https://seqdesk.org/docs).
 
 ## Prerequisites
 
-- Node.js 18+ and a local PostgreSQL (SeqDesk is PostgreSQL-only).
+- Node.js 22.13+ on the 22.x line or Node.js 24.x, plus local PostgreSQL 14+
+  (SeqDesk is PostgreSQL-only).
 - For pipeline work: Conda and/or Nextflow; SLURM for cluster-mode tests.
 
 ## Local setup

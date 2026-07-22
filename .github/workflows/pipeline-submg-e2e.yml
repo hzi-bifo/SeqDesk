@@ -79,7 +79,7 @@ jobs:
         if: ${{ env.ENA_USERNAME != '' }}
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Setup Miniconda
         if: ${{ env.ENA_USERNAME != '' }}
@@ -287,7 +287,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/seqdesk-${VERSION}.tar.gz" "$MOCK_ROOT/downloads/"
           cp "$GITHUB_WORKSPACE/scripts/install-dist.sh" "$MOCK_ROOT/install.sh"
           CHECKSUM="sha256:$(sha256sum "$MOCK_ROOT/downloads/seqdesk-${VERSION}.tar.gz" | cut -d' ' -f1)"
-          printf '{"latest":{"version":"%s","channel":"stable","releaseDate":"%s","downloadUrl":"http://127.0.0.1:%s/downloads/seqdesk-%s.tar.gz","checksum":"%s","minNodeVersion":"18.0.0"},"updateAvailable":false}' \
+          printf '{"latest":{"version":"%s","channel":"stable","releaseDate":"%s","downloadUrl":"http://127.0.0.1:%s/downloads/seqdesk-%s.tar.gz","checksum":"%s","minNodeVersion":"22.13.0"},"updateAvailable":false}' \
             "$VERSION" "$(date -u +%F)" "$MOCK_PORT" "$VERSION" "$CHECKSUM" > "$MOCK_ROOT/api/version"
           ( cd "$GITHUB_WORKSPACE/npm/seqdesk" && npm run sync-version >/dev/null 2>&1 && npm pack --pack-destination "$WORK" >/dev/null )
           NPM_TGZ="$(find "$WORK" -maxdepth 1 -name 'seqdesk-*.tgz' | head -n1)"

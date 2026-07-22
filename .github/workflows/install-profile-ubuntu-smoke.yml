@@ -62,7 +62,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Setup Miniconda for pipeline tools
         uses: conda-incubator/setup-miniconda@v3
@@ -134,7 +134,7 @@ jobs:
           cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
           CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
           cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
-          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI ubuntu profile smoke release artifact","minNodeVersion":"18.0.0"},"updateAvailable":false,"currentVersion":null}
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI ubuntu profile smoke release artifact","minNodeVersion":"22.13.0"},"updateAvailable":false,"currentVersion":null}
           EOF
 
       - name: Install side-by-side with hosted dummy profile through npm launcher

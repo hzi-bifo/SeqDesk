@@ -17,7 +17,7 @@
  * Usage:
  *   node scripts/ci/write-mock-manifest.mjs \
  *     --version <v> --download-url <url> --checksum sha256:<hex> --out <path> \
- *     [--update-available true|false] [--release-date YYYY-MM-DD] [--min-node 18.0.0] \
+ *     [--update-available true|false] [--release-date YYYY-MM-DD] [--min-node 22.13.0] \
  *     [--notes "..."]
  */
 
@@ -66,7 +66,7 @@ const manifest = {
     downloadUrl,
     checksum,
     releaseNotes: args.notes || "CI Tier-2 update-E2E release artifact",
-    minNodeVersion: args["min-node"] || "18.0.0",
+    minNodeVersion: args["min-node"] || "22.13.0",
     databaseRequirement: "postgresql",
   },
 };

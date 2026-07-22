@@ -170,7 +170,7 @@ for (const entry of entries) {
     entryPoints: [entry],
     bundle: true,
     platform: "node",
-    target: "node20",
+    target: "node22",
     format: "cjs",
     outfile,
     external: ["@prisma/client", ".prisma/client", "fsevents"],

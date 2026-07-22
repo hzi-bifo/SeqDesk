@@ -5,7 +5,15 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
+  reviewer-install-gate:
+    uses: ./.github/workflows/reviewer-install-matrix.yml
+    permissions:
+      contents: read
+
   update-rollback-gate:
     # Block the release on the in-app update + rollback E2E gate: a release cannot
     # publish unless an existing install can update to a new release and roll back
@@ -13,41 +21,40 @@ jobs:
     uses: ./.github/workflows/update-rollback-e2e-ubuntu.yml
 
   build:
-    needs: update-rollback-gate
-    runs-on: ubuntu-latest
+    needs: [reviewer-install-gate, update-rollback-gate]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "24"
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Generate Prisma client
-        run: npx prisma generate
-
-      - name: Build application
-        run: npm run build
-        env:
-          NEXT_TELEMETRY_DISABLED: 1
-          DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
-          DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
+      - name: Download the candidate that passed the reviewer matrix
+        uses: actions/download-artifact@v8
+        with:
+          name: reviewer-candidate
+          path: ${{ runner.temp }}/reviewer-candidate
 
       - name: Get version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
 
-      - name: Create release package
+      - name: Verify and prepare the tested release package
+        env:
+          CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
         run: |
           set -euo pipefail
           VERSION=${{ steps.version.outputs.VERSION }}
-          scripts/build-release.sh "$VERSION" --skip-build
+          METADATA="$CANDIDATE_DIR/candidate.json"
+          CANDIDATE_VERSION="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version" "$METADATA")"
+          RELEASE_NAME="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).releaseTarball" "$METADATA")"
+          test "$CANDIDATE_VERSION" = "$VERSION"
+          test "$RELEASE_NAME" = "seqdesk-${VERSION}.tar.gz"
+          (cd "$CANDIDATE_DIR" && sha256sum -c SHA256SUMS)
+          cp "$CANDIDATE_DIR/$RELEASE_NAME" "$RELEASE_NAME"
           sha256sum "seqdesk-${VERSION}.tar.gz" > "seqdesk-${VERSION}.tar.gz.sha256"
 
       - name: Create GitHub Release

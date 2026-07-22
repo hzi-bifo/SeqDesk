@@ -144,7 +144,7 @@ async function publishRelease(release, adminSecret) {
       releaseDate: new Date().toISOString().split("T")[0],
       downloadUrl: release.downloadUrl,
       checksum: `sha256:${release.checksum}`,
-      minNodeVersion: "18.0.0",
+      minNodeVersion: "22.13.0",
       title: release.title || `SeqDesk v${release.version}`,
       releaseNotes: release.releaseNotes || `SeqDesk v${release.version}`,
       changelog: release.changelog || [],

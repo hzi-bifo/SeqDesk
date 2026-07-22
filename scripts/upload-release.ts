@@ -168,7 +168,7 @@ async function publishRelease(
       releaseDate: new Date().toISOString().split("T")[0],
       downloadUrl: release.downloadUrl,
       checksum: `sha256:${release.checksum}`,
-      minNodeVersion: "18.0.0",
+      minNodeVersion: "22.13.0",
       databaseRequirement: "postgresql",
       title: release.title || `SeqDesk v${release.version}`,
       releaseNotes: release.releaseNotes || `SeqDesk v${release.version}`,

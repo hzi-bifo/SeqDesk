@@ -18,7 +18,7 @@
     "scripts/sync-version.js"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13.0 <23 || >=24 <25"
   },
   "keywords": [
     "seqdesk",

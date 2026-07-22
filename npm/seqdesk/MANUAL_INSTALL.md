@@ -7,7 +7,7 @@ Prefer a disposable VM or host first.
 
 Required:
 
-- Node.js 20+
+- Node.js 22.13+ on the 22.x line or Node.js 24.x (recommended)
 - npm
 - PostgreSQL 14+
 - curl

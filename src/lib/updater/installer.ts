@@ -323,6 +323,8 @@ function validateReleaseForInstall(release: ReleaseInfo): void {
     throw new Error(`Invalid release version: ${release.version}`);
   }
 
+  validateNodeVersionForRelease(release.version, release.minNodeVersion);
+
   const downloadUrl = parseDownloadUrl(release.downloadUrl);
   // Require https so the download cannot be MITM'd. http is permitted only when
   // an operator explicitly opts in (e.g. an internal mirror over a trusted link).
@@ -335,6 +337,66 @@ function validateReleaseForInstall(release: ReleaseInfo): void {
   }
 
   validateChecksumFormat(release.checksum);
+}
+
+type NodeVersionParts = [major: number, minor: number, patch: number];
+const SUPPORTED_NODE_MAJORS = new Set([22, 24]);
+
+function parseNodeVersion(value: unknown): NodeVersionParts | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const match = value.trim().match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
+  if (!match) {
+    return null;
+  }
+
+  const parts = [match[1], match[2] ?? '0', match[3] ?? '0'].map(Number);
+  if (parts.some((part) => !Number.isSafeInteger(part) || part < 0)) {
+    return null;
+  }
+
+  return parts as NodeVersionParts;
+}
+
+function isNodeVersionOlder(current: NodeVersionParts, required: NodeVersionParts): boolean {
+  for (let index = 0; index < current.length; index += 1) {
+    if (current[index] !== required[index]) {
+      return current[index] < required[index];
+    }
+  }
+
+  return false;
+}
+
+function validateNodeVersionForRelease(releaseVersion: string, minNodeVersion: unknown): void {
+  const required = parseNodeVersion(minNodeVersion);
+  const currentVersion = process.versions.node;
+  const current = parseNodeVersion(currentVersion);
+
+  if (current && !SUPPORTED_NODE_MAJORS.has(current[0])) {
+    throw new Error(
+      `SeqDesk ${releaseVersion} supports Node.js 22.13.0+ on the 22.x line or Node.js 24.x, ` +
+        `but SeqDesk is running Node.js ${currentVersion}. Switch to a supported Node.js LTS, ` +
+        'restart SeqDesk, and try the update again.'
+    );
+  }
+
+  // Older manifests omitted this field, and a few historical manifests may
+  // contain non-semver text. Preserve their previous install behavior rather
+  // than blocking an otherwise valid, checksum-verified update.
+  if (!required || !current) {
+    return;
+  }
+
+  if (isNodeVersionOlder(current, required)) {
+    throw new Error(
+      `SeqDesk ${releaseVersion} requires Node.js ${String(minNodeVersion).trim()} or newer, ` +
+        `but SeqDesk is running Node.js ${currentVersion}. ` +
+        'Upgrade Node.js, restart SeqDesk, and try the update again.'
+    );
+  }
 }
 
 function parseDownloadUrl(downloadUrl: string): URL {

@@ -1,0 +1,565 @@
+name: Reviewer Installation Matrix
+
+# Reviewer-facing clean-room installation evidence. The required PR job is
+# deliberately small; the broader compatibility matrix is scheduled/manual.
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reviewer-install-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  build-candidate:
+    name: Build candidate release and npm launcher once
+    if: ${{ github.event_name != 'schedule' || github.repository == 'hzi-bifo/SeqDesk' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      NODE_OPTIONS: --max-old-space-size=8192
+      DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
+      DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked build dependencies
+        run: npm ci
+      - name: Build release tarball
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          bash scripts/build-release.sh "$VERSION" --offline-fonts --webpack
+      - name: Pack candidate bundle
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          OUT="$RUNNER_TEMP/reviewer-candidate"
+          RELEASE_NAME="seqdesk-${VERSION}.tar.gz"
+          mkdir -p "$OUT"
+          cp "$RELEASE_NAME" "$OUT/$RELEASE_NAME"
+          cp scripts/install-dist.sh "$OUT/install.sh"
+          (
+            cd npm/seqdesk
+            npm run sync-version
+            npm pack --pack-destination "$OUT"
+          )
+          LAUNCHER_PATH="$(find "$OUT" -maxdepth 1 -name 'seqdesk-*.tgz' -type f | head -n 1)"
+          test -n "$LAUNCHER_PATH"
+          LAUNCHER_NAME="$(basename "$LAUNCHER_PATH")"
+          VERSION="$VERSION" RELEASE_NAME="$RELEASE_NAME" LAUNCHER_NAME="$LAUNCHER_NAME" \
+            node -e '
+              const fs = require("node:fs");
+              const value = {
+                version: process.env.VERSION,
+                releaseTarball: process.env.RELEASE_NAME,
+                launcherTarball: process.env.LAUNCHER_NAME,
+                builtWithNode: process.version,
+                builtAt: new Date().toISOString()
+              };
+              fs.writeFileSync(
+                process.env.RUNNER_TEMP + "/reviewer-candidate/candidate.json",
+                JSON.stringify(value, null, 2) + "\n"
+              );
+            '
+          (cd "$OUT" && sha256sum "$RELEASE_NAME" "$LAUNCHER_NAME" > SHA256SUMS)
+          {
+            echo "## Shared reviewer candidate"
+            echo
+            echo '```json'
+            cat "$OUT/candidate.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: reviewer-candidate
+          path: ${{ runner.temp }}/reviewer-candidate
+          if-no-files-found: error
+          retention-days: 5
+          compression-level: 0
+
+  required-ubuntu:
+    name: Required install / Ubuntu 24.04 x64 / Node 24 / PostgreSQL 16
+    needs: build-candidate
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: seqdesk
+          POSTGRES_PASSWORD: seqdesk
+          POSTGRES_DB: seqdesk_reviewer
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U seqdesk -d seqdesk_reviewer"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
+      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-required
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_USER: seqdesk
+      DB_PASSWORD: seqdesk
+      DB_NAME: seqdesk_reviewer
+      REVIEWER_LABEL: Ubuntu 24.04 x64, Node 24, PostgreSQL 16
+      REVIEWER_DECLARED_OS: Ubuntu 24.04 x64
+      REVIEWER_EXPECTED_ARCH: x64
+      REVIEWER_NODE_VERSION: "24"
+      REVIEWER_POSTGRES_VERSION: "16"
+      REVIEWER_PIPELINE_SMOKE: "false"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: reviewer-candidate
+          path: ${{ env.CANDIDATE_DIR }}
+      - name: Clean install, migrate, boot, and authenticate
+        run: bash scripts/ci/run-reviewer-install-smoke.sh
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reviewer-required-ubuntu24-x64-node24-pg16
+          path: ${{ env.COMPATIBILITY_DIR }}
+          if-no-files-found: warn
+          retention-days: 30
+
+  required-minimum:
+    name: Required minimum / Ubuntu 22.04 x64 / Node 22.13.0 / PostgreSQL 14
+    needs: build-candidate
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: seqdesk
+          POSTGRES_PASSWORD: seqdesk
+          POSTGRES_DB: seqdesk_reviewer_minimum
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U seqdesk -d seqdesk_reviewer_minimum"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
+      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-required-minimum
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_USER: seqdesk
+      DB_PASSWORD: seqdesk
+      DB_NAME: seqdesk_reviewer_minimum
+      REVIEWER_LABEL: Ubuntu 22.04 x64, minimum Node 22.13.0, PostgreSQL 14
+      REVIEWER_DECLARED_OS: Ubuntu 22.04 x64
+      REVIEWER_EXPECTED_ARCH: x64
+      REVIEWER_NODE_VERSION: "22.13.0"
+      REVIEWER_POSTGRES_VERSION: "14"
+      REVIEWER_PIPELINE_SMOKE: "false"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22.13.0"
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: reviewer-candidate
+          path: ${{ env.CANDIDATE_DIR }}
+      - name: Verify the minimum supported dependency boundary
+        run: bash scripts/ci/run-reviewer-install-smoke.sh
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reviewer-required-ubuntu22-x64-node22.13-pg14
+          path: ${{ env.COMPATIBILITY_DIR }}
+          if-no-files-found: warn
+          retention-days: 30
+
+  required-install-gate:
+    name: Required reviewer installation gate
+    needs: [build-candidate, required-ubuntu, required-minimum]
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require candidate build and both installation boundaries
+        env:
+          BUILD_RESULT: ${{ needs.build-candidate.result }}
+          PRIMARY_RESULT: ${{ needs.required-ubuntu.result }}
+          MINIMUM_RESULT: ${{ needs.required-minimum.result }}
+        run: |
+          set -euo pipefail
+          printf 'candidate build: %s\nprimary install: %s\nminimum install: %s\n' \
+            "$BUILD_RESULT" "$PRIMARY_RESULT" "$MINIMUM_RESULT"
+          test "$BUILD_RESULT" = success
+          test "$PRIMARY_RESULT" = success
+          test "$MINIMUM_RESULT" = success
+
+  extended-ubuntu:
+    name: Extended / ${{ matrix.label }}
+    needs: build-candidate
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: ubuntu24-arm64-node24-pg17
+            label: Ubuntu 24.04 ARM64 / Node 24 / PostgreSQL 17
+            runner: ubuntu-24.04-arm
+            arch: arm64
+            node: "24"
+            postgres: "17"
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_USER: seqdesk
+          POSTGRES_PASSWORD: seqdesk
+          POSTGRES_DB: seqdesk_reviewer
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U seqdesk -d seqdesk_reviewer"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
+      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-${{ matrix.id }}
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_USER: seqdesk
+      DB_PASSWORD: seqdesk
+      DB_NAME: seqdesk_reviewer
+      REVIEWER_LABEL: ${{ matrix.label }}
+      REVIEWER_DECLARED_OS: ${{ matrix.label }}
+      REVIEWER_EXPECTED_ARCH: ${{ matrix.arch }}
+      REVIEWER_NODE_VERSION: ${{ matrix.node }}
+      REVIEWER_POSTGRES_VERSION: ${{ matrix.postgres }}
+      REVIEWER_PIPELINE_SMOKE: "false"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: reviewer-candidate
+          path: ${{ env.CANDIDATE_DIR }}
+      - run: bash scripts/ci/run-reviewer-install-smoke.sh
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reviewer-${{ matrix.id }}
+          path: ${{ env.COMPATIBILITY_DIR }}
+          if-no-files-found: warn
+          retention-days: 30
+
+  extended-macos:
+    name: Extended / ${{ matrix.label }} / application only
+    needs: build-candidate
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: macos15-arm64-node24-pg16
+            label: macOS 15 ARM64 / Node 24 / PostgreSQL 16
+            runner: macos-15
+            arch: arm64
+          - id: macos15-intel-node24-pg16
+            label: macOS 15 Intel / Node 24 / PostgreSQL 16
+            runner: macos-15-intel
+            arch: x64
+    env:
+      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
+      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-${{ matrix.id }}
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_USER: seqdesk
+      DB_PASSWORD: seqdesk
+      DB_NAME: seqdesk_reviewer
+      REVIEWER_LABEL: ${{ matrix.label }}
+      REVIEWER_DECLARED_OS: ${{ matrix.label }}
+      REVIEWER_EXPECTED_ARCH: ${{ matrix.arch }}
+      REVIEWER_NODE_VERSION: "24"
+      REVIEWER_POSTGRES_VERSION: "16"
+      REVIEWER_PIPELINE_SMOKE: "false"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: reviewer-candidate
+          path: ${{ env.CANDIDATE_DIR }}
+      - name: Start isolated PostgreSQL 16
+        run: |
+          set -euo pipefail
+          brew install postgresql@16
+          PG_BIN="$(brew --prefix postgresql@16)/bin"
+          PGDATA="$RUNNER_TEMP/reviewer-postgres-data"
+          PG_LOG="$RUNNER_TEMP/reviewer-postgres.log"
+          echo "$PG_BIN" >> "$GITHUB_PATH"
+          echo "PG_BIN=$PG_BIN" >> "$GITHUB_ENV"
+          echo "PGDATA=$PGDATA" >> "$GITHUB_ENV"
+          echo "PG_LOG=$PG_LOG" >> "$GITHUB_ENV"
+          "$PG_BIN/initdb" -D "$PGDATA" -U postgres -A trust --no-locale
+          "$PG_BIN/pg_ctl" -D "$PGDATA" -l "$PG_LOG" -o "-h 127.0.0.1 -p 5432" start
+          for _ in $(seq 1 30); do
+            if "$PG_BIN/pg_isready" -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          "$PG_BIN/pg_isready" -h 127.0.0.1 -p 5432
+          "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk';"
+          "$PG_BIN/createdb" -h 127.0.0.1 -p 5432 -U postgres -O seqdesk seqdesk_reviewer
+      - run: bash scripts/ci/run-reviewer-install-smoke.sh
+      - name: Preserve database log and stop PostgreSQL
+        if: always()
+        run: |
+          mkdir -p "$COMPATIBILITY_DIR"
+          cp "${PG_LOG:-/dev/null}" "$COMPATIBILITY_DIR/postgres.log" 2>/dev/null || true
+          if [ -n "${PG_BIN:-}" ] && [ -n "${PGDATA:-}" ]; then
+            "$PG_BIN/pg_ctl" -D "$PGDATA" stop -m fast || true
+          fi
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reviewer-${{ matrix.id }}
+          path: ${{ env.COMPATIBILITY_DIR }}
+          if-no-files-found: warn
+          retention-days: 30
+
+  extended-containers:
+    name: Extended / ${{ matrix.label }}
+    needs: build-candidate
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: debian12-node22-pg18
+            label: Debian 12 container / Node 22 / PostgreSQL 18
+            image: debian:12
+            node: "22"
+            postgres: "18"
+          - id: rocky9-node24-pg15
+            label: Rocky Linux 9 container / Node 24 / PostgreSQL 15
+            image: rockylinux:9
+            node: "24"
+            postgres: "15"
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_USER: seqdesk
+          POSTGRES_PASSWORD: seqdesk
+          POSTGRES_DB: seqdesk_reviewer
+        options: >-
+          --health-cmd "pg_isready -U seqdesk -d seqdesk_reviewer"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
+      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-${{ matrix.id }}
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: seqdesk
+      DB_PASSWORD: seqdesk
+      DB_NAME: seqdesk_reviewer
+      REVIEWER_CONTAINER_ID: ${{ matrix.id }}
+      REVIEWER_LABEL: ${{ matrix.label }}
+      REVIEWER_DECLARED_OS: ${{ matrix.label }}
+      REVIEWER_EXPECTED_ARCH: x64
+      REVIEWER_NODE_VERSION: ${{ matrix.node }}
+      REVIEWER_POSTGRES_VERSION: ${{ matrix.postgres }}
+      REVIEWER_PIPELINE_SMOKE: "false"
+    steps:
+      - name: Install minimal container prerequisites
+        run: |
+          set -eu
+          case "$REVIEWER_CONTAINER_ID" in
+            debian12-node22-pg18)
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y bash ca-certificates curl \
+                findutils git gzip openssl postgresql-client procps tar xz-utils
+              ;;
+            rocky9-node24-pg15)
+              dnf install -y bash ca-certificates curl findutils git gzip openssl \
+                postgresql procps-ng tar which xz
+              ;;
+            *) exit 1 ;;
+          esac
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: reviewer-candidate
+          path: ${{ env.CANDIDATE_DIR }}
+      - shell: bash
+        run: bash scripts/ci/run-reviewer-install-smoke.sh
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reviewer-${{ matrix.id }}
+          path: ${{ env.COMPATIBILITY_DIR }}
+          if-no-files-found: warn
+          retention-days: 30
+
+  linux-pipeline-toolchain:
+    name: Extended / Linux x64 / packaged fastq-checksum / Java 17 + Conda + Nextflow
+    needs: build-candidate
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash -el {0}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: seqdesk
+          POSTGRES_PASSWORD: seqdesk
+          POSTGRES_DB: seqdesk_reviewer_pipeline
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U seqdesk -d seqdesk_reviewer_pipeline"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CANDIDATE_DIR: ${{ runner.temp }}/reviewer-candidate
+      COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-pipeline
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_USER: seqdesk
+      DB_PASSWORD: seqdesk
+      DB_NAME: seqdesk_reviewer_pipeline
+      REVIEWER_LABEL: Ubuntu 24.04 x64 packaged pipeline, Node 24, PostgreSQL 16
+      REVIEWER_DECLARED_OS: Ubuntu 24.04 x64
+      REVIEWER_EXPECTED_ARCH: x64
+      REVIEWER_NODE_VERSION: "24"
+      REVIEWER_POSTGRES_VERSION: "16"
+      REVIEWER_PIPELINE_SMOKE: "true"
+      REVIEWER_PIPELINE_CONDA_ENV: seqdesk-pipelines
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-activate-base: false
+          miniconda-version: latest
+      - uses: actions/download-artifact@v8
+        with:
+          name: reviewer-candidate
+          path: ${{ env.CANDIDATE_DIR }}
+      - name: Install candidate and execute its packaged checksum workflow
+        run: bash scripts/ci/run-reviewer-install-smoke.sh
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reviewer-linux-pipeline-toolchain
+          path: ${{ env.COMPATIBILITY_DIR }}
+          if-no-files-found: warn
+          retention-days: 30
+
+  native-windows-contract:
+    name: Extended / native Windows rejection directs reviewers to WSL
+    needs: build-candidate
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      CANDIDATE_DIR: ${{ runner.temp }}\reviewer-candidate
+      COMPATIBILITY_DIR: ${{ runner.temp }}\reviewer-windows
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: reviewer-candidate
+          path: ${{ env.CANDIDATE_DIR }}
+      - name: Verify actual launcher rejection and WSL guidance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $meta = Get-Content (Join-Path $env:CANDIDATE_DIR "candidate.json") -Raw | ConvertFrom-Json
+          $tgz = Join-Path $env:CANDIDATE_DIR $meta.launcherTarball
+          $prefix = Join-Path $env:RUNNER_TEMP "reviewer-npm-prefix"
+          npm install --global $tgz --prefix $prefix --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "Could not install candidate launcher" }
+          $output = (& (Join-Path $prefix "seqdesk.cmd") --version 2>&1 | Out-String).Trim()
+          $code = $LASTEXITCODE
+          if ($code -eq 0) { throw "Native Windows unexpectedly reported support" }
+          if ($output -notmatch "Windows is not supported directly" -or $output -notmatch "WSL") {
+            throw "Missing expected WSL guidance: $output"
+          }
+          New-Item -ItemType Directory -Force -Path $env:COMPATIBILITY_DIR | Out-Null
+          $report = [ordered]@{
+            result = "passed"
+            scope = "native Windows rejection contract only"
+            candidateVersion = $meta.version
+            platform = [System.Environment]::OSVersion.VersionString
+            architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+            node = (node --version)
+            npm = (npm --version)
+            launcherExitCode = $code
+            launcherMessage = $output
+            supportStatement = "Native Windows is not supported; reviewers are directed to WSL."
+          }
+          $report | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $env:COMPATIBILITY_DIR "compatibility.json")
+          "## Reviewer native Windows contract: PASS`n`nCandidate $($meta.version) rejected native Windows with explicit WSL guidance. This is not a native Windows compatibility claim." |
+            Set-Content (Join-Path $env:COMPATIBILITY_DIR "compatibility.md")
+          Get-Content (Join-Path $env:COMPATIBILITY_DIR "compatibility.md") | Add-Content $env:GITHUB_STEP_SUMMARY
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reviewer-native-windows-contract
+          path: ${{ env.COMPATIBILITY_DIR }}
+          if-no-files-found: warn
+          retention-days: 30

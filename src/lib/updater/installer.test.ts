@@ -124,7 +124,7 @@ function createRelease(overrides: Partial<ReleaseInfo> = {}): ReleaseInfo {
     // mandatory (the previous "sha256:placeholder" skip has been removed).
     checksum: `sha256:${crypto.createHash("sha256").update("archive").digest("hex")}`,
     releaseNotes: "Improved coverage",
-    minNodeVersion: "20.0.0",
+    minNodeVersion: "22.13.0",
     ...overrides,
   };
 }
@@ -806,6 +806,58 @@ describe("installer", () => {
     await expect(
       mod.installUpdate(createRelease({ checksum: "sha256:not-a-real-sha" }))
     ).rejects.toThrow("Invalid sha256 checksum");
+
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an update that requires a newer Node.js runtime", async () => {
+    const mod = await loadInstallerModule();
+    const requiredMajor = Number(process.versions.node.split(".")[0]) + 1;
+
+    await expect(
+      mod.installUpdate(
+        createRelease({ minNodeVersion: `${requiredMajor}.0.0` })
+      )
+    ).rejects.toThrow(
+      `requires Node.js ${requiredMajor}.0.0 or newer, but SeqDesk is running Node.js ${process.versions.node}`
+    );
+
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an update on an untested Node.js major", async () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process.versions, "node");
+    Object.defineProperty(process.versions, "node", {
+      configurable: true,
+      value: "25.0.0",
+    });
+
+    try {
+      const mod = await loadInstallerModule();
+      await expect(mod.installUpdate(createRelease())).rejects.toThrow(
+        "supports Node.js 22.13.0+ on the 22.x line or Node.js 24.x, but SeqDesk is running Node.js 25.0.0"
+      );
+      expect(execMock).not.toHaveBeenCalled();
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(process.versions, "node", originalDescriptor);
+      }
+    }
+  });
+
+  it("keeps legacy updates with missing or invalid Node metadata installable", async () => {
+    const mod = await loadInstallerModule();
+
+    for (const minNodeVersion of ["", "not-a-version"]) {
+      await expect(
+        mod.installUpdate(
+          createRelease({
+            minNodeVersion,
+            downloadUrl: "file:///tmp/update.tar.gz",
+          })
+        )
+      ).rejects.toThrow("Unsupported download URL protocol: file:");
+    }
 
     expect(execMock).not.toHaveBeenCalled();
   });

@@ -60,7 +60,8 @@ NC='\033[0m'
 SEQDESK_REPO="${SEQDESK_REPO:-https://github.com/hzi-bifo/SeqDesk.git}"
 SEQDESK_DIR="${SEQDESK_DIR:-./seqdesk}"
 SEQDESK_BRANCH="${SEQDESK_BRANCH:-main}"
-MIN_NODE_VERSION=18
+MIN_NODE_VERSION="22.13.0"
+NODE_SUPPORT_LABEL="22.13.0+ or 24.x"
 
 SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
 SEQDESK_WITH_CONDA="${SEQDESK_WITH_CONDA:-}"
@@ -138,6 +139,24 @@ print_info() {
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+node_meets_minimum_version() {
+    node -e '
+      const parse = (value) => {
+        const match = String(value).match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
+        return match ? match.slice(1, 4).map((part) => Number(part || 0)) : null;
+      };
+      const current = parse(process.argv[2] || process.versions.node);
+      const required = parse(process.argv[1]);
+      if (!current || !required) process.exit(1);
+      if (current[0] !== 22 && current[0] !== 24) process.exit(1);
+      for (let index = 0; index < 3; index += 1) {
+        if (current[index] > required[index]) process.exit(0);
+        if (current[index] < required[index]) process.exit(1);
+      }
+      process.exit(0);
+    ' "$MIN_NODE_VERSION"
 }
 
 is_truthy() {
@@ -248,17 +267,18 @@ EOF
 }
 
 print_node_install_instructions() {
-    print_info "Install Node.js ${MIN_NODE_VERSION}+ manually and re-run this installer."
+    print_info "Install a supported Node.js release (${NODE_SUPPORT_LABEL}) and re-run this installer."
     case "$OS:$DISTRO" in
         macos:macos)
-            echo "  brew install node"
+            echo "  brew install node@24"
+            echo '  export PATH="$(brew --prefix node@24)/bin:$PATH"'
             ;;
         linux:debian)
-            echo "  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -"
+            echo "  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -"
             echo "  sudo apt-get install -y nodejs"
             ;;
         linux:redhat)
-            echo "  curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -"
+            echo "  curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -"
             if command_exists dnf; then
                 echo "  sudo dnf install -y nodejs"
             else
@@ -403,7 +423,7 @@ print_postgres_setup_instructions() {
             fi
             ;;
         *)
-            echo "  Install PostgreSQL 15+ and ensure it is reachable from this host."
+            echo "  Install PostgreSQL 14+ and ensure it is reachable from this host."
             ;;
     esac
     echo "  sudo -u postgres psql <<'SQL'"
@@ -1842,11 +1862,10 @@ fi
 
 if command_exists node; then
     NODE_VERSION=$(node --version | sed 's/v//')
-    NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d. -f1)
-    if [ "$NODE_MAJOR" -ge "$MIN_NODE_VERSION" ]; then
+    if node_meets_minimum_version; then
         print_success "Node.js: $NODE_VERSION"
     else
-        print_error "Node.js: $NODE_VERSION (requires >= $MIN_NODE_VERSION)"
+        print_error "Node.js: $NODE_VERSION (supported: $NODE_SUPPORT_LABEL)"
         MISSING_DEPS+=("node")
     fi
 else
