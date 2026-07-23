@@ -4,7 +4,7 @@
 # https://seqdesk.org
 #
 # Usage: curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y [options]
-# Guided usage: npm i -g seqdesk && seqdesk --interactive
+# Guided usage: npm i -g seqdesk@latest && seqdesk --interactive
 #
 # Options (environment variables):
 #   SEQDESK_DIR=/path/to/install   - Installation directory (default: ./seqdesk)
@@ -401,6 +401,29 @@ run_with_spinner_warn() {
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+select_miniconda_installer() {
+    local os="${1:-}"
+    local arch="${2:-}"
+
+    case "${os}:${arch}" in
+        linux:x86_64|linux:amd64)
+            printf '%s\n' "Miniconda3-latest-Linux-x86_64.sh"
+            ;;
+        linux:aarch64|linux:arm64)
+            printf '%s\n' "Miniconda3-latest-Linux-aarch64.sh"
+            ;;
+        macos:x86_64|macos:amd64)
+            printf '%s\n' "Miniconda3-latest-MacOSX-x86_64.sh"
+            ;;
+        macos:arm64|macos:aarch64)
+            printf '%s\n' "Miniconda3-latest-MacOSX-arm64.sh"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 node_meets_minimum_version() {
@@ -4289,13 +4312,10 @@ print_preflight_summary
 if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     print_header "Install Miniconda"
 
-    CONDA_INSTALLER="Miniconda3-latest-Linux-x86_64.sh"
-    if [[ "$OS" == "macos" ]]; then
-        if [[ "$ARCH" == "arm64" ]]; then
-            CONDA_INSTALLER="Miniconda3-latest-MacOSX-arm64.sh"
-        else
-            CONDA_INSTALLER="Miniconda3-latest-MacOSX-x86_64.sh"
-        fi
+    if ! CONDA_INSTALLER=$(select_miniconda_installer "$OS" "$ARCH"); then
+        print_error "No supported Miniconda installer is available for $OS/$ARCH."
+        print_info "Install Conda manually or re-run without pipeline support."
+        exit 1
     fi
 
     run_with_spinner "Download Miniconda" curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" -o /tmp/miniconda.sh

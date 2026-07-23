@@ -14,24 +14,24 @@ seqdesk --interactive
 Pass any installer flags directly:
 
 ```bash
-seqdesk -y --dir /opt/seqdesk
+seqdesk -y --dir "$HOME/seqdesk"
 seqdesk -y --use-pm2 --config ./infrastructure-setup.json
 seqdesk -y --reconfigure --config ./infrastructure-setup.json
-seqdesk -y --dir /opt/seqdesk --run-doctor
+seqdesk -y --dir "$HOME/seqdesk" --run-doctor
 ```
 
 Check an installed directory:
 
 ```bash
-seqdesk doctor --dir /opt/seqdesk
-seqdesk doctor --dir /opt/seqdesk --url http://127.0.0.1:3000
-seqdesk doctor --dir /opt/seqdesk --json
+seqdesk doctor --dir "$HOME/seqdesk"
+seqdesk doctor --dir "$HOME/seqdesk" --url http://127.0.0.1:8000
+seqdesk doctor --dir "$HOME/seqdesk" --json
 ```
 
 Apply hosted profile assets to an existing install:
 
 ```bash
-seqdesk assets apply --dir /opt/seqdesk \
+seqdesk assets apply --dir "$HOME/seqdesk" \
   --profile dev \
   --profile-code "$DEV_SETUP_CODE"
 ```
@@ -42,14 +42,14 @@ assets and seed fixtures without reinstalling SeqDesk.
 Run installed pipelines from the server shell:
 
 ```bash
-seqdesk pipeline list --dir /opt/seqdesk --catalog all --enabled
-seqdesk pipeline run metaxpath --dir /opt/seqdesk --study <study-id> --watch
-seqdesk pipeline run fastq-checksum --dir /opt/seqdesk --order <order-id> --samples id1,id2 --json
-seqdesk pipeline status <run-id> --dir /opt/seqdesk --watch
-seqdesk pipeline logs <run-id> --dir /opt/seqdesk --type error --tail 200
-seqdesk pipeline outputs <run-id> --dir /opt/seqdesk --json
-seqdesk pipeline debug <run-id> --dir /opt/seqdesk --format text --out debug.txt
-seqdesk pipeline cancel <run-id> --dir /opt/seqdesk
+seqdesk pipeline list --dir "$HOME/seqdesk" --catalog all --enabled
+seqdesk pipeline run metaxpath --dir "$HOME/seqdesk" --study <study-id> --watch
+seqdesk pipeline run fastq-checksum --dir "$HOME/seqdesk" --order <order-id> --samples id1,id2 --json
+seqdesk pipeline status <run-id> --dir "$HOME/seqdesk" --watch
+seqdesk pipeline logs <run-id> --dir "$HOME/seqdesk" --type error --tail 200
+seqdesk pipeline outputs <run-id> --dir "$HOME/seqdesk" --json
+seqdesk pipeline debug <run-id> --dir "$HOME/seqdesk" --format text --out debug.txt
+seqdesk pipeline cancel <run-id> --dir "$HOME/seqdesk"
 ```
 
 Pipeline commands run locally against the installed app database and use the
@@ -63,6 +63,9 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 ## Notes
 
 - The npm launcher is the supported public install entry point.
+- `$HOME/seqdesk` is used above as a writable evaluation path. For a production
+  system location, have an administrator prepare a parent owned by the
+  non-root SeqDesk service account, then install into a new child directory.
 - The launcher downloads `https://seqdesk.org/install.sh` over HTTPS and
   executes it with `bash` internally. Users normally do not need to call the
   shell installer directly.

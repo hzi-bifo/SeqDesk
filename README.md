@@ -125,6 +125,65 @@ npm i -g seqdesk@latest
 seqdesk --interactive
 ```
 
+### Linux quick start
+
+For a small local evaluation on Ubuntu, Debian, RHEL, AlmaLinux, or Rocky
+Linux, install a supported Node.js release first. The examples below install
+the supported Node.js 22 line; Node.js 24 is recommended when it is available
+from your normal package source:
+
+```bash
+# Ubuntu / Debian
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# RHEL / AlmaLinux / Rocky Linux
+curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash -
+sudo dnf install -y nodejs
+```
+
+Then run the guided installer into a new directory owned by your login user:
+
+```bash
+npm i -g seqdesk@latest
+
+# Run this first only when the installer should provision local PostgreSQL.
+sudo -v
+
+SEQDESK_BIND_HOST=127.0.0.1 seqdesk --interactive \
+  --dir "$HOME/seqdesk" \
+  --without-pipelines
+```
+
+The local PostgreSQL option can install and start PostgreSQL when the
+distribution uses `apt`, `dnf`, or `yum`. That path needs root or a current
+passwordless/cached `sudo` authorization; use an existing PostgreSQL 14+
+server or a managed database if system-package installation is unavailable.
+
+`--without-pipelines` keeps an evaluation install small. Omit it on a Linux
+host that should also run Conda/Nextflow workflows. When installation
+finishes, verify the instance and open <http://127.0.0.1:8000>:
+
+```bash
+seqdesk doctor --dir "$HOME/seqdesk" --url http://127.0.0.1:8000
+```
+
+For a service install under `/opt`, create a parent owned by the non-root
+service account, then install into a new child directory; do not run the
+application as root:
+
+```bash
+sudo install -d -o "$USER" -g "$(id -gn)" /opt/seqdesk
+seqdesk --interactive --dir /opt/seqdesk/app
+```
+
+SeqDesk assumes a trusted network. Before using a network-reachable bind,
+configure the host firewall or reverse proxy and replace all bootstrap
+credentials. See the full
+[Linux installation guide](https://seqdesk.org/docs/installation/linux) for
+distribution-specific PostgreSQL setup, migration, PM2 startup, and
+troubleshooting.
+
 ### macOS quick start
 
 For a small local evaluation, install Node.js, then let the guided installer
@@ -170,14 +229,21 @@ Installer flags pass straight through the launcher, for example:
 seqdesk -y --config ./infrastructure-setup.json
 ```
 
-Fallback when npm is unavailable:
+Fallback when the global npm launcher cannot be installed (a supported
+Node.js release and npm are still required):
 
 ```bash
-curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y --dir /opt/seqdesk
+curl -fsSL https://seqdesk.org/install.sh | \
+  bash -s -- -y --dir "$HOME/seqdesk"
 ```
 
-The pipe-based fallback is non-interactive because the downloaded script uses
-standard input. Download the script to a file first if you need guided prompts.
+The command shown is unattended because it passes `-y`. For the supported
+guided fallback, download the script first and run it from a terminal:
+
+```bash
+curl -fsSL https://seqdesk.org/install.sh -o /tmp/seqdesk-install.sh
+bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"
+```
 
 Full installation, configuration, and unattended options are documented at
 **[seqdesk.org/docs/installation](https://seqdesk.org/docs/installation)**.
@@ -197,7 +263,8 @@ green.
 | Method | Command | Best for | CI coverage |
 | --- | --- | --- | --- |
 | npm launcher (recommended) | `npm i -g seqdesk@latest` then `seqdesk --interactive` | Almost everyone — supported install path with built-in updates afterward | Required Ubuntu; extended macOS; private AlmaLinux |
-| One-line installer | `curl -fsSL https://seqdesk.org/install.sh \| bash -s -- -y --dir /opt/seqdesk` | Non-interactive fallback when npm is unavailable | Required Ubuntu |
+| One-line installer | `curl -fsSL https://seqdesk.org/install.sh \| bash -s -- -y --dir "$HOME/seqdesk"` | Non-interactive fallback when the global npm launcher cannot be installed; Node.js and npm are still required | Required Ubuntu |
+| Linux | `npm i -g seqdesk@latest` then `SEQDESK_BIND_HOST=127.0.0.1 seqdesk --interactive --dir "$HOME/seqdesk" --without-pipelines` | Local Linux workstation / evaluation install; prepare an owned service directory separately for production | Required Ubuntu; extended Debian, Rocky Linux, and ARM64; private AlmaLinux |
 | macOS (Homebrew) | `npm i -g seqdesk@latest` then `SEQDESK_BIND_HOST=127.0.0.1 seqdesk --interactive --dir "$HOME/seqdesk" --without-pipelines` | Local Mac workstation / evaluation installs | Extended weekly/manual |
 | Unattended | `seqdesk -y --config ./infrastructure-setup.json` | Fleet or scripted deployments; reapply configuration with `--reconfigure` | Required Ubuntu |
 | From source | `bash scripts/install.sh` | Developers / CI building a specific branch | Ubuntu; private AlmaLinux |
