@@ -116,10 +116,12 @@ point. This does not change the deployment guidance for real SeqDesk instances.
 
 ## Install
 
-Recommended — the npm launcher handles installs and upgrades:
+Recommended — the npm launcher handles installation and diagnostics. Installed
+application releases are updated later from **Admin → Settings → Software
+Updates**:
 
 ```bash
-npm i -g seqdesk
+npm i -g seqdesk@latest
 seqdesk --interactive
 ```
 
@@ -194,10 +196,10 @@ green.
 
 | Method | Command | Best for | CI coverage |
 | --- | --- | --- | --- |
-| npm launcher (recommended) | `npm i -g seqdesk` then `seqdesk --interactive` | Almost everyone — supported install + upgrade path | Required Ubuntu; extended macOS; private AlmaLinux |
+| npm launcher (recommended) | `npm i -g seqdesk@latest` then `seqdesk --interactive` | Almost everyone — supported install path with built-in updates afterward | Required Ubuntu; extended macOS; private AlmaLinux |
 | One-line installer | `curl -fsSL https://seqdesk.org/install.sh \| bash -s -- -y --dir /opt/seqdesk` | Non-interactive fallback when npm is unavailable | Required Ubuntu |
 | macOS (Homebrew) | `npm i -g seqdesk@latest` then `SEQDESK_BIND_HOST=127.0.0.1 seqdesk --interactive --dir "$HOME/seqdesk" --without-pipelines` | Local Mac workstation / evaluation installs | Extended weekly/manual |
-| Unattended | `seqdesk -y --config ./infrastructure-setup.json` | Fleet or scripted deployments; update in place with `--reconfigure` | Required Ubuntu |
+| Unattended | `seqdesk -y --config ./infrastructure-setup.json` | Fleet or scripted deployments; reapply configuration with `--reconfigure` | Required Ubuntu |
 | From source | `bash scripts/install.sh` | Developers / CI building a specific branch | Ubuntu; private AlmaLinux |
 
 The npm-launcher and source installs are also exercised under PM2. When the
@@ -241,8 +243,9 @@ only intentional exception.
 
 **How do I check an install is healthy, or update and roll back?** `seqdesk
 doctor` (read-only) verifies layout, database reachability, and HTTP. Updates go
-through the npm launcher; a failed update automatically restores the timestamped
-backup.
+through **Admin → Settings → Software Updates**; upgrading the npm launcher
+updates the CLI only. The built-in updater retains the previous release for
+rollback.
 
 ## Local development
 

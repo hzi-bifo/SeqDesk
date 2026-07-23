@@ -74,7 +74,8 @@ reset_state() {
 }
 
 OUT="$(mktemp)"
-trap 'rm -f "$OUT"' EXIT
+TEST_TMP_DIR="$(mktemp -d)"
+trap 'rm -f "$OUT"; rm -rf "$TEST_TMP_DIR"' EXIT
 
 echo "== Case 1: managed DB (unreachable -> use anyway), validation re-prompts, accounts =="
 reset_state
@@ -233,6 +234,34 @@ preflight_macos_local_postgres >"$OUT" 2>&1
 assert_contains "clean preflight installs PostgreSQL" "mock install postgresql@16" "$OUT"
 assert_contains "clean preflight starts PostgreSQL" "mock start postgresql@16" "$OUT"
 assert_contains "clean preflight reaches ready state" "PostgreSQL is ready" "$OUT"
+
+echo ""
+echo "== Case 10: local PostgreSQL recovery never prints database credentials =="
+OS="linux"
+DISTRO="debian"
+SENTINEL_DB_PASSWORD="SEQDESK_SENTINEL_DB_PASSWORD_DO_NOT_PRINT"
+SEQDESK_DATABASE_URL="postgresql://seqdesk:${SENTINEL_DB_PASSWORD}@127.0.0.1:5432/seqdesk"
+SEQDESK_DATABASE_DIRECT_URL="$SEQDESK_DATABASE_URL"
+SEQDESK_DIR="$TEST_TMP_DIR/existing-install"
+mkdir -p "$SEQDESK_DIR"
+printf '{}\n' >"$SEQDESK_DIR/settings.json"
+load_postgres_url_parts() { return 0; }
+print_postgres_setup_instructions >"$OUT" 2>&1
+assert_contains "existing install reuses protected config" \
+    "sudo npx -y seqdesk@latest -y --prepare-postgres --dir" "$OUT"
+assert_contains "existing install keeps reconfigure recovery" \
+    "npx -y seqdesk@latest -y --reconfigure --reseed-db --dir" "$OUT"
+assert_not_contains "existing install recovery hides database password" \
+    "$SENTINEL_DB_PASSWORD" "$OUT"
+
+SEQDESK_DIR="$TEST_TMP_DIR/fresh-install"
+print_postgres_setup_instructions >"$OUT" 2>&1
+assert_contains "fresh-host recovery explains missing installed settings" \
+    "expected when --prepare-postgres is run before a fresh install" "$OUT"
+assert_contains "fresh-host recovery preserves private-shell guidance" \
+    "SEQDESK_DATABASE_URL set in your private shell" "$OUT"
+assert_not_contains "fresh-host recovery hides database password" \
+    "$SENTINEL_DB_PASSWORD" "$OUT"
 
 echo ""
 if [ "$FAILURES" -ne 0 ]; then

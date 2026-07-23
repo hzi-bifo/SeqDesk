@@ -525,16 +525,39 @@ print_postgres_setup_instructions() {
     redacted_database_url="$(redact_database_url "$SEQDESK_DATABASE_URL")"
 
     if load_postgres_url_parts; then
+        local installed_config_path=""
+        local config_name
+        for config_name in settings.json seqdesk.config.json; do
+            if [ -f "$SEQDESK_DIR/$config_name" ]; then
+                installed_config_path="$SEQDESK_DIR/$config_name"
+                break
+            fi
+        done
+
         print_warning "Local PostgreSQL must be installed, running, and contain the SeqDesk role/database before migrations can run."
         if [ "$OS" = "macos" ]; then
-            echo "  Run this once as your normal macOS login user (do not use sudo):"
-            echo "  env SEQDESK_DATABASE_URL=$(shell_quote "$SEQDESK_DATABASE_URL") npx -y seqdesk@latest -y --prepare-postgres"
+            echo "  PostgreSQL setup must run as your normal macOS login user (do not use sudo)."
         else
-            echo "  Run this once from a sudo-capable account:"
-            echo "  sudo env SEQDESK_DATABASE_URL=$(shell_quote "$SEQDESK_DATABASE_URL") npx -y seqdesk@latest -y --prepare-postgres"
+            echo "  PostgreSQL setup must run from a sudo-capable account."
         fi
-        echo "  Then rerun:"
-        echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
+
+        if [ -n "$installed_config_path" ]; then
+            echo "  Reuse the protected database URL stored in $(shell_quote "$installed_config_path"):"
+            if [ "$OS" = "macos" ]; then
+                echo "  npx -y seqdesk@latest -y --prepare-postgres --dir $(shell_quote "$SEQDESK_DIR")"
+            else
+                echo "  sudo npx -y seqdesk@latest -y --prepare-postgres --dir $(shell_quote "$SEQDESK_DIR")"
+            fi
+            echo "  Then rerun:"
+            echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
+        else
+            echo "  No installed settings file was found in $(shell_quote "$SEQDESK_DIR")."
+            echo "  This is expected when --prepare-postgres is run before a fresh install."
+            echo "  After installing/starting PostgreSQL, rerun the original --prepare-postgres"
+            echo "  command with SEQDESK_DATABASE_URL set in your private shell."
+            echo "  The connection string is intentionally not echoed here."
+            echo "  Then rerun the original SeqDesk installation command."
+        fi
         echo ""
         echo "  Manual fallback:"
         case "$OS:$DISTRO" in
