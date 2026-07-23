@@ -6,6 +6,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 const launcherPath = path.resolve(process.cwd(), 'npm/seqdesk/bin/seqdesk.js');
 const tempDirs: string[] = [];
+const pythonPtyAvailable =
+  process.platform !== 'win32' &&
+  spawnSync('python3', ['--version'], { stdio: 'ignore' }).status === 0;
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 
 function makeInstallWithPipelineCli(): { dir: string; capturePath: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-'));
@@ -72,6 +79,125 @@ describe('seqdesk npm launcher pipeline dispatch', () => {
 });
 
 describe('seqdesk npm launcher installer dispatch', () => {
+  it.runIf(pythonPtyAvailable)(
+    'preserves an interactive terminal after installer logging redirects stdout',
+    () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-tty-'));
+      tempDirs.push(dir);
+      const capturePath = path.join(dir, 'tty-preserved');
+      const installerLogPath = path.join(dir, 'installer.log');
+      const installer = [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        `exec >${shellQuote(installerLogPath)} 2>&1`,
+        'if [ ! -t 0 ] && [ ! -t 1 ]; then',
+        '  echo "No interactive TTY detected"',
+        '  exit 41',
+        'fi',
+        `printf 'tty preserved\\n' >${shellQuote(capturePath)}`,
+        '',
+      ].join('\n');
+      const ptyRunnerPath = path.join(dir, 'pty-runner.py');
+      fs.writeFileSync(
+        ptyRunnerPath,
+        [
+          'import errno',
+          'import os',
+          'import pty',
+          'import select',
+          'import signal',
+          'import sys',
+          'import time',
+          '',
+          'pid, master_fd = pty.fork()',
+          'if pid == 0:',
+          '    os.execvpe(sys.argv[1], sys.argv[1:], os.environ)',
+          '',
+          'deadline = time.monotonic() + 20',
+          'output = bytearray()',
+          'timed_out = False',
+          'status = None',
+          'master_open = True',
+          '',
+          'try:',
+          '    while status is None:',
+          '        waited_pid, waited_status = os.waitpid(pid, os.WNOHANG)',
+          '        if waited_pid == pid:',
+          '            status = waited_status',
+          '            break',
+          '',
+          '        remaining = deadline - time.monotonic()',
+          '        if remaining <= 0:',
+          '            timed_out = True',
+          '            try:',
+          '                os.killpg(pid, signal.SIGKILL)',
+          '            except ProcessLookupError:',
+          '                pass',
+          '            _, status = os.waitpid(pid, 0)',
+          '            break',
+          '',
+          '        if master_open:',
+          '            readable, _, _ = select.select([master_fd], [], [], min(remaining, 0.1))',
+          '        else:',
+          '            time.sleep(min(remaining, 0.01))',
+          '            readable = []',
+          '        if master_fd in readable:',
+          '            try:',
+          '                chunk = os.read(master_fd, 65536)',
+          '            except OSError as error:',
+          '                if error.errno == errno.EIO:',
+          '                    master_open = False',
+          '                else:',
+          '                    raise',
+          '            else:',
+          '                if chunk:',
+          '                    output.extend(chunk)',
+          '                else:',
+          '                    master_open = False',
+          'finally:',
+          '    os.close(master_fd)',
+          '',
+          'sys.stdout.buffer.write(output)',
+          'if timed_out:',
+          '    print("PTY child timed out", file=sys.stderr)',
+          '    raise SystemExit(124)',
+          'raise SystemExit(os.waitstatus_to_exitcode(status))',
+          '',
+        ].join('\n')
+      );
+
+      const result = spawnSync(
+        'python3',
+        [
+          ptyRunnerPath,
+          process.execPath,
+          launcherPath,
+          '--interactive',
+          '--without-pipelines',
+          '--dir',
+          path.join(dir, 'install'),
+        ],
+        {
+          encoding: 'utf-8',
+          env: {
+            ...process.env,
+            SEQDESK_INSTALL_URL: `data:text/plain,${encodeURIComponent(installer)}`,
+          },
+        },
+      );
+
+      expect(
+        result.status,
+        `PTY runner error: ${result.error?.message || 'none'}\nscript stdout:\n${result.stdout || ''}\nscript stderr:\n${result.stderr || ''}`
+      ).toBe(0);
+      expect(fs.readFileSync(capturePath, 'utf-8')).toBe('tty preserved\n');
+      expect(fs.readFileSync(installerLogPath, 'utf-8')).not.toContain(
+        'No interactive TTY detected'
+      );
+    },
+    25_000
+  );
+
   it('runs a temporary installer file with inherited stdin and cleans it up', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-installer-'));
     tempDirs.push(dir);
