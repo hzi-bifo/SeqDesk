@@ -14,7 +14,7 @@ runs self-hosted on your own infrastructure.
 | --- | --- |
 | Host | Linux or a local macOS application install on `x64` or `arm64`. Native Windows is unsupported; WSL is guidance only and is not currently CI-tested. |
 | Node.js | **`>=22.13.0 <23` or `>=24 <25`** (Node 24 recommended). Node 23, 25, and future majors are rejected until explicitly supported. |
-| PostgreSQL | **14 or newer**; PostgreSQL 14 through 18 are represented in the current CI matrix. SQLite is not supported. |
+| PostgreSQL | **14 or newer**; PostgreSQL 14 through 18 are represented in the current CI matrix. SQLite is not supported. You normally do not supply a database: when no reusable local server or socket is found, the installer creates and owns a private, socket-only cluster under `$SEQDESK_PG_HOME` (default `~/.seqdesk/postgres`; that path must be 85 characters or shorter because of the macOS Unix-socket limit). |
 | Installer tools | npm, Bash, `curl`, `tar`, and `sha256sum` or `shasum`. |
 | Install target | A new, writable directory with at least the larger of 2 GB or three times the release-archive size free. |
 | Optional pipelines | The installer reuses a working existing Conda base or provisions Miniconda with Python 3.11, Java 17, Nextflow, nf-core, and supporting tools; Slurm is optional for cluster execution. Pipeline evidence is Linux-only. |
@@ -125,6 +125,10 @@ curl -fsSLo /tmp/seqdesk-install.sh https://seqdesk.org/install.sh &&
 bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"
 ```
 
+SeqDesk binds to `0.0.0.0` (every interface) unless `SEQDESK_BIND_HOST` is set
+at install or start time. For a local-only evaluation, prefix the command with
+`SEQDESK_BIND_HOST=127.0.0.1`, as the Linux and macOS quick starts below do.
+
 ### Linux quick start
 
 For a small local evaluation on Ubuntu, Debian, RHEL, AlmaLinux, or Rocky
@@ -148,17 +152,29 @@ login user:
 ```bash
 curl -fsSLo /tmp/seqdesk-install.sh https://seqdesk.org/install.sh
 
-# Run this first only when the installer should provision local PostgreSQL.
+# Only needed when the PostgreSQL server package is missing and the installer
+# must install it (apt/dnf/yum), or when a system PostgreSQL is already running
+# and its role and database must be created via `sudo -n -u postgres psql`.
 sudo -v
 
 SEQDESK_BIND_HOST=127.0.0.1 bash /tmp/seqdesk-install.sh --interactive \
   --dir "$HOME/seqdesk"
 ```
 
-The local PostgreSQL option can install and start PostgreSQL when the
-distribution uses `apt`, `dnf`, or `yum`. That path needs root or a current
-passwordless/cached `sudo` authorization; use an existing PostgreSQL 14+
-server or a managed database if system-package installation is unavailable.
+SeqDesk sets the database up itself in most cases. It first reuses a healthy
+local server, then a local Unix socket you own; if neither exists it creates its
+**own** PostgreSQL cluster under `$SEQDESK_PG_HOME` (default
+`~/.seqdesk/postgres`), owned by your login user and reachable only through a
+private Unix socket — no TCP port and no systemd unit. `sudo` is needed in only
+two cases: to install the PostgreSQL server package when it is absent (`apt`,
+`dnf`, or `yum`), and to create the role and database inside a pre-existing
+*system* PostgreSQL, which the installer reaches with
+`sudo -n -u postgres psql`. Do not run the installer itself under `sudo`: as
+root it refuses to create a PostgreSQL instance and requires an explicit
+`--database-url`. Supply `--database-url "postgresql://..."` for an existing
+PostgreSQL 14+ or managed server, or when the only local socket (for example a
+distribution server on `/var/run/postgresql`) is owned by another user —
+SeqDesk will not send generated credentials to an endpoint it does not own.
 
 Fresh installs now default to the smaller core application. Add
 `--with-pipelines` only on a Linux host that should also provision
@@ -199,11 +215,17 @@ SEQDESK_BIND_HOST=127.0.0.1 bash /tmp/seqdesk-install.sh --interactive \
   --dir "$HOME/seqdesk"
 ```
 
-For the local-database choice, the installer installs PostgreSQL 16 when needed,
-starts it as your macOS login user, and reuses an already-running PostgreSQL 14+
-server. Do not use `sudo brew services start`: PostgreSQL refuses to run as root,
-and the installer will report stale root services, ownership problems, port
-conflicts, and the relevant Homebrew log path with repair commands.
+For the local-database choice, the installer reuses an already-running
+PostgreSQL 14+ server, then a local Unix socket you own, then an
+already-registered (non-root) Homebrew service — and only if nothing usable
+exists does it `brew install postgresql@16` for the binaries and create its
+**own** cluster under `$SEQDESK_PG_HOME` (default `~/.seqdesk/postgres`),
+started with `pg_ctl` as your macOS login user and reachable only through a
+private Unix socket (no TCP port, not registered with launchd). PostgreSQL setup
+on macOS never uses `sudo`. Do not use `sudo brew services start`: PostgreSQL
+refuses to run as root, and the installer will report stale root services,
+ownership problems, port conflicts, and the relevant Homebrew log path with
+repair commands.
 
 Fresh installs default to the smaller core application. Add `--with-pipelines`
 only when this Mac should also provision Conda/Nextflow workflows. If
@@ -218,16 +240,23 @@ npx -y seqdesk@latest doctor --dir "$HOME/seqdesk" --url http://127.0.0.1:8000
 ```
 
 The installer records this local-only bind in the installation's root start
-wrapper, so later manual or PM2 starts retain it. An explicitly supplied
-`SEQDESK_BIND_HOST` can still override the stored value. SeqDesk's bootstrap
-login must not be exposed to an untrusted network. See the full
-[macOS installation guide](https://seqdesk.org/docs/installation/macos) for
+wrapper, so later manual or PM2 starts retain it. When the installer provisioned
+its own PostgreSQL cluster, that same wrapper (`<dir>/start.sh`) also checks
+`pg_ctl -D ~/.seqdesk/postgres/data status` and starts the database before
+launching the app — the private cluster is deliberately not a launchd or systemd
+service, so PM2 resurrects the app and the app starts its own database after a
+reboot. Installs that reuse an existing PostgreSQL server get no such snippet.
+An explicitly supplied `SEQDESK_BIND_HOST` can still override the stored value.
+SeqDesk's bootstrap login must not be exposed to an untrusted network. See the
+full [macOS installation guide](https://seqdesk.org/docs/installation/macos) for
 PostgreSQL service conflicts, pipelines, PM2 startup, and troubleshooting.
 
-Installer flags pass straight to the downloaded script, for example:
+Installer flags pass straight to the downloaded script — for example
+`--verbose`, which prints the diagnostic detail that otherwise goes only to the
+install log:
 
 ```bash
-bash /tmp/seqdesk-install.sh -y --config ./infrastructure-setup.json
+bash /tmp/seqdesk-install.sh -y --verbose --config ./infrastructure-setup.json
 ```
 
 The npm launcher remains an equivalent alternative when you prefer a global
@@ -238,9 +267,10 @@ npm i -g seqdesk@latest
 seqdesk --interactive --dir "$HOME/seqdesk"
 ```
 
-For automation, use `-y --config ./settings.json` and provide explicit
-credentials, bind address, database URL, install directory, pipeline choice,
-and process-manager choice. A piped script cannot ask interactive questions.
+For automation, use `-y --config ./infrastructure-setup.json` and provide
+explicit credentials, bind address, database URL, install directory, pipeline
+choice, and process-manager choice. A piped script cannot ask interactive
+questions.
 
 Full installation, configuration, and unattended options are documented at
 **[seqdesk.org/docs/installation](https://seqdesk.org/docs/installation)**.
@@ -279,11 +309,15 @@ downloadable evidence, see **[Installation compatibility](./INSTALLATION_COMPATI
 A few common installation and setup questions. See the full
 **[FAQ](https://seqdesk.org/docs/faq)** for more.
 
-**What do I need to run SeqDesk?** Node.js `>=22.13.0 <23` or `>=24 <25`, a
-PostgreSQL 14+ database, and Linux or a local macOS application environment.
-Pipelines are optional and add a Conda environment with Python 3.11, Java 17,
-Nextflow, nf-core, and supporting tools (plus Slurm for cluster execution). See
-the baseline table above for storage and installer tools.
+**What do I need to run SeqDesk?** Node.js `>=22.13.0 <23` or `>=24 <25`,
+PostgreSQL 14+ — which you usually do **not** have to provide, because the
+installer reuses a local server or creates and owns a private, socket-only
+cluster under `~/.seqdesk/postgres` — and Linux or a local macOS application
+environment. Pass `--database-url` only for an existing, remote, or managed
+database (or when installing as root). Pipelines are optional and add a Conda
+environment with Python 3.11, Java 17, Nextflow, nf-core, and supporting tools
+(plus Slurm for cluster execution). See the baseline table above for storage and
+installer tools.
 
 **Does it work with SQLite?** No — SeqDesk is PostgreSQL-only. An existing SQLite
 instance must stay on its last SQLite-compatible release until it is migrated to

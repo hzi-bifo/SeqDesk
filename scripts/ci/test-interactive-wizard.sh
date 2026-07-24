@@ -323,6 +323,15 @@ untrusted_socket_result="$(
             echo "UNEXPECTED service start"
             return 1
         }
+        try_adopt_registered_brew_postgres() { return 1; }
+        # An unusable socket must not end the install: the ladder continues to a
+        # server SeqDesk does own. Stopping here broke every Linux host whose
+        # system PostgreSQL listens only on /var/run/postgresql, a socket owned
+        # by the postgres account rather than the installing user.
+        provision_private_postgres() {
+            echo "fell through to a private instance"
+            return 0
+        }
         if preflight_local_postgres; then
             echo "status=0"
         else
@@ -330,10 +339,12 @@ untrusted_socket_result="$(
         fi
     )
 )"
-assert_contains "untrusted socket stops the preflight" \
-    "status=1" <(printf '%s\n' "$untrusted_socket_result")
+assert_contains "an unusable socket does not abort the install" \
+    "status=0" <(printf '%s\n' "$untrusted_socket_result")
+assert_contains "the ladder continues to a private instance" \
+    "fell through to a private instance" <(printf '%s\n' "$untrusted_socket_result")
 assert_contains "untrusted socket ownership is explained" \
-    "not owned by the current macOS user" <(printf '%s\n' "$untrusted_socket_result")
+    "SeqDesk will not send generated database credentials" <(printf '%s\n' "$untrusted_socket_result")
 assert_not_contains "untrusted socket receives no credentialed query" \
     "UNEXPECTED credentialed query" <(printf '%s\n' "$untrusted_socket_result")
 assert_not_contains "untrusted socket does not trigger another service" \
@@ -364,7 +375,7 @@ post_start_untrusted_result="$(
 assert_contains "post-start untrusted socket stops the preflight" \
     "status=1" <(printf '%s\n' "$post_start_untrusted_result")
 assert_contains "post-start untrusted socket prints the ownership diagnosis" \
-    "not owned by the current macOS user" <(printf '%s\n' "$post_start_untrusted_result")
+    "SeqDesk will not send generated database credentials" <(printf '%s\n' "$post_start_untrusted_result")
 
 echo ""
 echo "== Case 5e: the socket admin probe is isolated and bounded =="
