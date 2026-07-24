@@ -145,6 +145,7 @@ async function publishRelease(release, adminSecret) {
       downloadUrl: release.downloadUrl,
       checksum: `sha256:${release.checksum}`,
       minNodeVersion: "22.13.0",
+      databaseRequirement: "postgresql",
       title: release.title || `SeqDesk v${release.version}`,
       releaseNotes: release.releaseNotes || `SeqDesk v${release.version}`,
       changelog: release.changelog || [],
