@@ -1089,7 +1089,7 @@ probe_postgres_database() {
     fi
     if [ -n "${MACOS_POSTGRES_SOCKET_DIR:-}" ] && \
         ! postgres_socket_owned_by_current_user "$MACOS_POSTGRES_SOCKET_DIR" "${PG_PORT:-5432}"; then
-        print_untrusted_macos_postgres_socket "$MACOS_POSTGRES_SOCKET_DIR" "${PG_PORT:-5432}"
+        print_selected_socket_no_longer_trusted "$MACOS_POSTGRES_SOCKET_DIR" "${PG_PORT:-5432}"
         return 1
     fi
 
@@ -1430,15 +1430,40 @@ postgres_socket_owned_by_current_user() {
     [ "$socket_uid" = "$current_uid" ]
 }
 
-print_untrusted_macos_postgres_socket() {
+# Not fatal. SeqDesk declines to send generated credentials to a server it does
+# not own, but declining is not a reason to stop: the ladder continues, and the
+# usual outcome is a private instance the user does own. Stopping here would
+# break every Linux host whose system PostgreSQL listens only on
+# /var/run/postgresql, which is owned by the postgres account rather than the
+# person running the installer.
+print_untrusted_postgres_socket() {
+    local socket_dir="${1:-/tmp}"
+    local socket_port="${2:-5432}"
+    local owner="unknown"
+    local socket_file="${socket_dir%/}/.s.PGSQL.${socket_port}"
+
+    if [ -S "$socket_file" ]; then
+        owner="$(stat -f '%Su' "$socket_file" 2>/dev/null || stat -c '%U' "$socket_file" 2>/dev/null || echo unknown)"
+    fi
+
+    print_warning "PostgreSQL answered through ${socket_dir}:${socket_port}, but that socket belongs to '${owner}', not $(id -un)."
+    echo "  SeqDesk will not send generated database credentials to a server it does not own,"
+    echo "  so it is skipping this one. To use it instead, rerun as '${owner}' or pass"
+    echo "  --database-url \"postgresql://...\" naming it explicitly."
+}
+
+# The fatal variant, for when the socket was already selected and is about to be
+# used. Ownership changing between selection and use means something moved
+# underneath the install, which is not something to continue through.
+print_selected_socket_no_longer_trusted() {
     local socket_dir="${1:-/tmp}"
     local socket_port="${2:-5432}"
 
-    print_error "PostgreSQL answered through ${socket_dir}:${socket_port}, but its socket is not owned by the current macOS user."
-    echo "  SeqDesk will not send generated database credentials to that endpoint or modify it."
-    echo "  Run the installer as the user that owns the Homebrew PostgreSQL service,"
-    echo "  or provide an explicit trusted PostgreSQL DATABASE_URL and DIRECT_URL."
-    print_troubleshooting_url "https://seqdesk.org/docs/installation/macos#postgresql-unix-socket-works-but-tcp-does-not"
+    print_error "The selected PostgreSQL socket ${socket_dir}:${socket_port} is no longer owned by $(id -un)."
+    echo "  SeqDesk will not send generated database credentials to it."
+    echo "  Rerun the installer as the account that owns that server, or pass"
+    echo "  --database-url \"postgresql://...\" to name a database explicitly."
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/macos#seqdesk-manages-its-own-postgresql"
 }
 
 postgres_socket_admin_ready() {
@@ -1947,11 +1972,14 @@ print_macos_postgres_protocol_diagnosis() {
         port_owner="$(describe_port_owner "$configured_port" 2>/dev/null || true)"
         if [ -n "$port_owner" ]; then
             echo "  ${configured_host}:${configured_port}     held by ${port_owner}, no PostgreSQL response"
-            echo "  A listening port that does not speak the PostgreSQL protocol usually means"
-            echo "  a VPN or endpoint-security tool is intercepting local connections."
         else
             echo "  ${configured_host}:${configured_port}     nothing is listening"
         fi
+        # Stated in both cases: a port that answers TCP but not the PostgreSQL
+        # protocol, and a port with no listener at all, have the same two likely
+        # causes from the user's point of view.
+        echo "  Either PostgreSQL is not configured for TCP, or a VPN or"
+        echo "  endpoint-security tool is intercepting local connections."
         echo ""
         if [ -n "${SEQDESK_DATABASE_URL:-}" ]; then
             echo "  Your explicit DATABASE_URL was left unchanged. To use the working socket,"
@@ -2138,8 +2166,8 @@ try_reuse_local_postgres_socket() {
         fi
 
         if ! postgres_socket_owned_by_current_user "$socket_dir" "$port"; then
-            print_untrusted_macos_postgres_socket "$socket_dir" "$port"
-            return 1
+            print_untrusted_postgres_socket "$socket_dir" "$port"
+            continue
         fi
 
         if postgres_socket_admin_ready "$socket_dir" "$port"; then
@@ -2383,7 +2411,7 @@ ensure_local_postgres_database() {
     fi
     if [ -n "${MACOS_POSTGRES_SOCKET_DIR:-}" ] && \
         ! postgres_socket_owned_by_current_user "$MACOS_POSTGRES_SOCKET_DIR" "${PG_PORT:-5432}"; then
-        print_untrusted_macos_postgres_socket "$MACOS_POSTGRES_SOCKET_DIR" "${PG_PORT:-5432}"
+        print_selected_socket_no_longer_trusted "$MACOS_POSTGRES_SOCKET_DIR" "${PG_PORT:-5432}"
         return 1
     fi
 
