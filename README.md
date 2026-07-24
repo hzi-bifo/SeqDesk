@@ -16,7 +16,7 @@ runs self-hosted on your own infrastructure.
 | Node.js | **`>=22.13.0 <23` or `>=24 <25`** (Node 24 recommended). Node 23, 25, and future majors are rejected until explicitly supported. |
 | PostgreSQL | **14 or newer**; PostgreSQL 14 through 18 are represented in the current CI matrix. SQLite is not supported. You normally do not supply a database: when no reusable local server or socket is found, the installer creates and owns a private, socket-only cluster under `$SEQDESK_PG_HOME` (default `~/.seqdesk/postgres`; that path must be 85 characters or shorter because of the macOS Unix-socket limit). |
 | Installer tools | npm, Bash, `curl`, `tar`, and `sha256sum` or `shasum`. |
-| Install target | A new, writable directory with at least the larger of 2 GB or three times the release-archive size free. |
+| Install target | A new, writable directory with at least the larger of 2 GB or three times the release-archive size free. A SeqDesk-owned PostgreSQL cluster is created separately under `$SEQDESK_PG_HOME` and does not consume this directory. |
 | Optional pipelines | The installer reuses a working existing Conda base or provisions Miniconda with Python 3.11, Java 17, Nextflow, nf-core, and supporting tools; Slurm is optional for cluster execution. Pipeline evidence is Linux-only. |
 
 ## CI installation coverage
@@ -252,8 +252,9 @@ full [macOS installation guide](https://seqdesk.org/docs/installation/macos) for
 PostgreSQL service conflicts, pipelines, PM2 startup, and troubleshooting.
 
 Installer flags pass straight to the downloaded script — for example
-`--verbose`, which prints the diagnostic detail that otherwise goes only to the
-install log:
+`--verbose` (or `SEQDESK_VERBOSE=1`), which prints the diagnostic detail that
+otherwise goes only to the install log
+(`/tmp/seqdesk-install-<timestamp>.log`, overridable with `SEQDESK_LOG`):
 
 ```bash
 bash /tmp/seqdesk-install.sh -y --verbose --config ./infrastructure-setup.json

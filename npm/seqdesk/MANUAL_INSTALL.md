@@ -9,8 +9,16 @@ Required:
 
 - Node.js 22.13.0+ on the 22.x line or Node.js 24.x (recommended)
 - npm
-- PostgreSQL 14+
-- curl
+- curl, tar, and `sha256sum` (or `shasum`) — all three are checked before
+  anything is downloaded and are fatal if absent
+- PostgreSQL 14+ *(optional)* — SeqDesk only needs an existing server if you
+  want it to use one. When no reusable local server is found, the installer
+  creates and starts its **own private, socket-only PostgreSQL cluster** under
+  `$HOME/.seqdesk/postgres` (override with `SEQDESK_PG_HOME`; the path must be
+  85 characters or shorter). This requires running the installer as a normal
+  non-root user — it refuses to create a cluster owned by root. On Linux, root
+  or passwordless sudo is needed only to install the `postgresql` server
+  package when `initdb`/`pg_ctl` are missing.
 
 Recommended:
 
@@ -34,7 +42,17 @@ sudo install -d -o "$USER" -g "$(id -gn)" /opt/seqdesk
 export SEQDESK_INSTALL_DIR="/opt/seqdesk/app"
 ```
 
-Create a PostgreSQL role and database:
+The database is **optional**. If you skip the rest of this section entirely (do
+not set `SEQDESK_DATABASE_URL`, do not pass `--database-url`), the installer
+picks a database itself, in this order: reuse a healthy local server on
+`127.0.0.1:5432`; reuse a local Unix socket you own as a PostgreSQL 14+
+superuser; adopt a non-root Homebrew service (macOS); otherwise create its own
+socket-only cluster under `$HOME/.seqdesk/postgres` (`SEQDESK_PG_HOME`) with a
+generated password. Skip to step 2 in that case, and drop the
+`--database-url`/`--database-direct-url` flags from the commands below.
+
+Only if you want SeqDesk to use a server *you* manage, create the role and
+database yourself:
 
 ```bash
 sudo -u postgres psql <<'SQL'
@@ -43,12 +61,21 @@ CREATE DATABASE seqdesk OWNER seqdesk;
 SQL
 ```
 
-Set database URLs:
+Note that when SeqDesk adopts a pre-existing *system* PostgreSQL it administers
+it via `sudo -n -u postgres psql`, so passwordless sudo is required on that
+path. The installer also will not adopt a socket owned by another OS user (for
+example `/var/run/postgresql` owned by `postgres`) — that is a hard failure
+unless you pass an explicit `--database-url`.
+
+Set database URLs (only for the self-managed path):
 
 ```bash
 export SEQDESK_DATABASE_URL="postgresql://seqdesk:replace-with-password@127.0.0.1:5432/seqdesk?schema=public"
-export SEQDESK_DIRECT_URL="$SEQDESK_DATABASE_URL"
+export SEQDESK_DATABASE_DIRECT_URL="$SEQDESK_DATABASE_URL"
 ```
+
+If `SEQDESK_DATABASE_DIRECT_URL` is omitted altogether, the installer sets the
+direct URL equal to `SEQDESK_DATABASE_URL`.
 
 ## 2. Install Without Hosted Profile
 
@@ -58,7 +85,7 @@ bash /tmp/seqdesk-install.sh -y \
     --dir "$SEQDESK_INSTALL_DIR" \
     --port 8000 \
     --database-url "$SEQDESK_DATABASE_URL" \
-    --database-direct-url "$SEQDESK_DIRECT_URL" \
+    --database-direct-url "$SEQDESK_DATABASE_DIRECT_URL" \
     --without-pipelines \
     --no-pm2
 ```
@@ -71,7 +98,7 @@ seqdesk -y \
   --dir "$SEQDESK_INSTALL_DIR" \
   --port 8000 \
   --database-url "$SEQDESK_DATABASE_URL" \
-  --database-direct-url "$SEQDESK_DIRECT_URL" \
+  --database-direct-url "$SEQDESK_DATABASE_DIRECT_URL" \
   --without-pipelines \
   --no-pm2
 ```
@@ -96,7 +123,7 @@ curl -fsSL https://seqdesk.org/install.sh | \
     --dir "$SEQDESK_CI_INSTALL_DIR" \
     --port 8001 \
     --database-url "$SEQDESK_DATABASE_URL" \
-    --database-direct-url "$SEQDESK_DIRECT_URL"
+    --database-direct-url "$SEQDESK_DATABASE_DIRECT_URL"
 ```
 
 Use a separate database name when testing both installs on the same machine.
@@ -107,6 +134,16 @@ Use a separate database name when testing both installs on the same machine.
 cd "$SEQDESK_INSTALL_DIR"
 ./start.sh 8000
 ```
+
+`$SEQDESK_INSTALL_DIR/start.sh` is the wrapper the installer writes. If the
+install provisioned its own private PostgreSQL cluster, the wrapper checks
+`pg_ctl -D <SEQDESK_PG_HOME>/data status` and starts the cluster before
+launching the app: the private cluster is deliberately **not** registered with
+systemd or launchd, so it comes up with the app (and is resurrected by PM2
+after a reboot when PM2 is used). That cluster listens on a Unix socket only
+(`<SEQDESK_PG_HOME>/socket`, mode 0700) — no TCP port is ever opened, and its
+`DATABASE_URL` carries a `host=<percent-encoded socket dir>` parameter.
+Installs that reuse an existing server get no such snippet.
 
 In another shell, verify the app responds:
 
@@ -121,7 +158,11 @@ seed the fallback development accounts:
 - `admin@example.com` / `admin`
 - `user@example.com` / `user`
 
-Change or remove both before making the instance reachable by other users.
+Change or remove both immediately. SeqDesk binds `0.0.0.0` (every interface) by
+default, so the instance — and these default credentials — are reachable from
+the network as soon as it starts. To keep a test install local-only, set
+`SEQDESK_BIND_HOST=127.0.0.1` at install time (it is persisted in
+`$SEQDESK_INSTALL_DIR/.seqdesk-bind-host`) or export it before `./start.sh`.
 
 ## 5. Run Doctor
 
@@ -148,7 +189,7 @@ Expected result:
 - `package.json`, `settings.json`, `start.sh`, `node_modules`, and
   `.next/static` are present.
 - `runtime.databaseUrl` and `runtime.directUrl` are PostgreSQL URLs.
-- PostgreSQL TCP is reachable.
+- The configured PostgreSQL TCP endpoint or Unix socket is reachable.
 - `/api/auth/providers` includes credentials auth.
 - `/api/setup/status` reports the database as configured.
 
@@ -233,9 +274,17 @@ backup before deliberately adding `--reseed-db`. For a fresh install, rerun the
 normal install command instead of using `--reconfigure`.
 
 If the guided installer reports that PostgreSQL provisioning cannot use sudo,
-run `sudo -v` immediately before `seqdesk --interactive`, preinstall
-PostgreSQL, or select an existing/managed database. If npm global installation
-fails with `EACCES`, use:
+you usually do not need sudo at all: rerun as a normal **non-root** user and
+SeqDesk creates its own private cluster under `$HOME/.seqdesk/postgres`
+(`SEQDESK_PG_HOME`). Running the installer as root — including
+`sudo bash install.sh` — disables that path, because SeqDesk refuses to create
+a PostgreSQL instance owned by root. Sudo is genuinely required only to (a)
+install the server package when `initdb`/`pg_ctl` are missing
+(`sudo apt-get install postgresql` / `sudo dnf install postgresql-server`), or
+(b) administer a pre-existing *system* PostgreSQL that SeqDesk adopted, which
+uses `sudo -n -u postgres psql` — run `sudo -v` first, or pass
+`--database-url "postgresql://..."` for a database you manage. If npm global
+installation fails with `EACCES`, use:
 
 ```bash
 npx -y seqdesk@latest --interactive \
@@ -243,14 +292,22 @@ npx -y seqdesk@latest --interactive \
   --without-pipelines
 ```
 
-Installer diagnostics are saved under `/tmp/seqdesk-install-*.log`. Check the
-app and PostgreSQL with:
+Installer diagnostics are saved under `/tmp/seqdesk-install-*.log` (override
+with `SEQDESK_LOG`). Add `--verbose` (or `SEQDESK_VERBOSE=1`) to promote that
+diagnostic narration to the terminal instead of only the log — useful when a
+run fails before the log path is printed. Check the app and PostgreSQL with:
 
 ```bash
 seqdesk doctor --dir "$SEQDESK_INSTALL_DIR" \
   --url http://127.0.0.1:8000
+
+# Only when SeqDesk adopted a pre-existing system PostgreSQL:
 systemctl status postgresql
 journalctl -u postgresql --no-pager -n 100
+
+# When SeqDesk provisioned its own private cluster (no systemd unit exists):
+pg_ctl -D "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}/data" status
+tail -n 100 "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}/server.log"
 ```
 
 See the maintained
@@ -272,7 +329,13 @@ test "$SEQDESK_INSTALL_DIR" = "$HOME/seqdesk-manual" && \
 test "$SEQDESK_CI_INSTALL_DIR" = "$HOME/seqdesk-ci-runner" && \
   rm -rf -- "$SEQDESK_CI_INSTALL_DIR"
 
-# Run these only if "seqdesk" was a dedicated disposable test database.
+# If SeqDesk provisioned its own private cluster, stop and remove it; it is not
+# visible to the system "postgres" user and survives removing the install dir.
+pg_ctl -D "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}/data" stop
+rm -rf -- "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}"
+
+# Run these only if "seqdesk" was a dedicated disposable test database on a
+# pre-existing system server.
 sudo -u postgres dropdb seqdesk
 sudo -u postgres dropuser seqdesk
 ```
