@@ -76,9 +76,9 @@ seqdesk -y \
   --no-pm2
 ```
 
-This checklist starts the app manually in step 4, so it opts out of PM2 and the
-optional pipeline toolchain explicitly. Omit those flags when testing those
-features.
+This checklist starts the app manually in step 4, so it opts out of PM2
+explicitly. The optional pipeline toolchain is already disabled by default;
+replace `--without-pipelines` with `--with-pipelines` when testing it.
 
 ## 3. Install With The Hosted CI Runner Profile
 

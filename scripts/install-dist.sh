@@ -3,8 +3,10 @@
 # SeqDesk Installation Script (Distribution)
 # https://seqdesk.org
 #
-# Usage: curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y [options]
-# Guided usage: npm i -g seqdesk@latest && seqdesk --interactive
+# Guided usage:
+#   curl -fsSLo /tmp/seqdesk-install.sh https://seqdesk.org/install.sh
+#   bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"
+# Non-interactive usage: curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y [options]
 #
 # Options (environment variables):
 #   SEQDESK_DIR=/path/to/install   - Installation directory (default: ./seqdesk)
@@ -788,6 +790,25 @@ is_truthy() {
         1|true|TRUE|yes|YES|y|Y) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+resolve_pipeline_enablement() {
+    PIPELINES_ENABLED=""
+
+    if [ -n "$SEQDESK_WITH_PIPELINES" ]; then
+        if is_truthy "$SEQDESK_WITH_PIPELINES"; then
+            PIPELINES_ENABLED="true"
+        else
+            PIPELINES_ENABLED="false"
+        fi
+    elif is_truthy "$SEQDESK_WITH_CONDA"; then
+        # Backward-compatible opt-in for older unattended configurations.
+        PIPELINES_ENABLED="true"
+    else
+        # Keep a fresh install small and avoid provisioning Conda/Nextflow
+        # unless the operator, profile, or existing install explicitly opts in.
+        PIPELINES_ENABLED="false"
+    fi
 }
 
 generate_postgres_password() {
@@ -2097,6 +2118,7 @@ run_interactive_wizard() {
 print_usage() {
     cat <<'EOF'
 Usage:
+  bash /tmp/seqdesk-install.sh --interactive [options]
   npx -y seqdesk@latest [options]
   seqdesk [options]
   curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y [options]  # non-interactive fallback
@@ -2120,8 +2142,8 @@ Options:
   --dir <path>                 Install directory
   --overwrite-existing         With -y, back up an existing install dir (<dir>.backup.<ts>) and replace it
   --version <version>          Release version (default: latest)
-  --with-pipelines             Enable pipeline dependencies
-  --without-pipelines          Disable pipeline dependencies
+  --with-pipelines             Install optional Conda/Nextflow pipeline support
+  --without-pipelines          Install the core app only (default)
   --skip-deps                  Deprecated (ignored in distribution installer)
   --port <port>                App port
   --data-path <path>           Sequencing data directory
@@ -4672,35 +4694,19 @@ fi
 # Pipeline support
 print_step "Configure pipeline support"
 
-PIPELINES_ENABLED=""
-if [ -n "$SEQDESK_WITH_PIPELINES" ]; then
-    if is_truthy "$SEQDESK_WITH_PIPELINES"; then
-        PIPELINES_ENABLED="true"
-    else
-        PIPELINES_ENABLED="false"
-    fi
-elif is_truthy "$SEQDESK_WITH_CONDA"; then
-    PIPELINES_ENABLED="true"
-fi
+resolve_pipeline_enablement
 
 HAS_CONDA="false"
 if [ "$CONDA_RESOLUTION" = "found" ]; then
     HAS_CONDA="true"
 fi
 
-if [ -z "$PIPELINES_ENABLED" ]; then
-    if [ "$HAS_CONDA" = "true" ]; then
-        prompt_yes_no PIPELINES_ENABLED "Enable pipeline support (Conda + Nextflow)?" "y"
-    else
-        prompt_yes_no PIPELINES_ENABLED "Install pipeline dependencies (Conda + Nextflow)?" "y"
-    fi
-fi
-
 if [ "$PIPELINES_ENABLED" = "true" ]; then
     print_info "Pipeline support enabled"
     print_conda_resolution_notice
 else
-    print_info "Pipeline support disabled"
+    print_info "Pipeline support disabled (default for a smaller core installation)"
+    print_info "Use --with-pipelines to install Conda and Nextflow support."
 fi
 
 print_preflight_summary

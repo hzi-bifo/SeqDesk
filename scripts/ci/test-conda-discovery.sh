@@ -283,6 +283,29 @@ if [ "$INSTALLER_VARIANT" = "distribution" ]; then
 fi
 
 echo ""
+echo "== Pipeline enablement: fresh installs default to the core app =="
+SEQDESK_WITH_PIPELINES=""
+SEQDESK_WITH_CONDA=""
+resolve_pipeline_enablement
+assert_eq "no pipeline option defaults to disabled" "false" "$PIPELINES_ENABLED"
+
+SEQDESK_WITH_PIPELINES="1"
+SEQDESK_WITH_CONDA=""
+resolve_pipeline_enablement
+assert_eq "explicit pipeline opt-in is honored" "true" "$PIPELINES_ENABLED"
+
+SEQDESK_WITH_PIPELINES="0"
+SEQDESK_WITH_CONDA="1"
+resolve_pipeline_enablement
+assert_eq "explicit pipeline opt-out overrides legacy Conda opt-in" \
+    "false" "$PIPELINES_ENABLED"
+
+SEQDESK_WITH_PIPELINES=""
+SEQDESK_WITH_CONDA="1"
+resolve_pipeline_enablement
+assert_eq "legacy Conda setting remains an opt-in" "true" "$PIPELINES_ENABLED"
+
+echo ""
 if [ "$FAILURES" -ne 0 ]; then
     echo "conda-discovery test ($INSTALLER_VARIANT): $FAILURES assertion(s) failed" >&2
     exit 1

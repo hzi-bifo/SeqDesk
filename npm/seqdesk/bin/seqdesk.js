@@ -1105,8 +1105,8 @@ async function main() {
     console.log("  --interactive        Guided database and bootstrap-account setup");
     console.log("  -y, --yes            Non-interactive install using configured/default values");
     console.log("  --dir <path>         Explicit installation directory");
-    console.log("  --with-pipelines     Install Conda/Nextflow pipeline support");
-    console.log("  --without-pipelines  Install the core application only");
+    console.log("  --with-pipelines     Install optional Conda/Nextflow pipeline support");
+    console.log("  --without-pipelines  Install the core application only (default)");
     console.log("  --config <path>      Read unattended installation settings from JSON");
     console.log("");
     console.log("Local-only binding: SEQDESK_BIND_HOST=127.0.0.1 seqdesk --interactive");

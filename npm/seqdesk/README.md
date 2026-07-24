@@ -62,7 +62,10 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 
 ## Notes
 
-- The npm launcher is the supported public install entry point.
+- The npm launcher remains a supported alternative to downloading
+  `https://seqdesk.org/install.sh` directly.
+- Fresh installs provision the core application only. Pass `--with-pipelines`
+  to add the optional Conda/Nextflow runtime.
 - `$HOME/seqdesk` is used above as a writable evaluation path. For a production
   system location, have an administrator prepare a parent owned by the
   non-root SeqDesk service account, then install into a new child directory.

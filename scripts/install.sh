@@ -441,6 +441,25 @@ is_truthy() {
     esac
 }
 
+resolve_pipeline_enablement() {
+    PIPELINES_ENABLED=""
+
+    if [ -n "$SEQDESK_WITH_PIPELINES" ]; then
+        if is_truthy "$SEQDESK_WITH_PIPELINES"; then
+            PIPELINES_ENABLED="true"
+        else
+            PIPELINES_ENABLED="false"
+        fi
+    elif is_truthy "$SEQDESK_WITH_CONDA"; then
+        # Backward-compatible opt-in for older unattended configurations.
+        PIPELINES_ENABLED="true"
+    else
+        # Keep a fresh install small and avoid provisioning Conda/Nextflow
+        # unless the operator, profile, or existing install explicitly opts in.
+        PIPELINES_ENABLED="false"
+    fi
+}
+
 read_input() {
     local prompt="$1"
     local reply=""
@@ -518,8 +537,8 @@ Options:
   --dir <path>                 Install directory
   --overwrite-existing         With -y, back up an existing install dir (<dir>.backup.<ts>) and replace it
   --branch <branch>            Git branch to install (source installer)
-  --with-pipelines             Enable pipeline dependencies
-  --without-pipelines          Disable pipeline dependencies
+  --with-pipelines             Install optional Conda/Nextflow pipeline support
+  --without-pipelines          Install the core app only (default)
   --skip-deps                  Skip dependency preflight checks
   --port <port>                App port
   --data-path <path>           Sequencing data directory
@@ -2213,35 +2232,19 @@ resolve_conda_runtime
 # Pipeline support
 print_step "Pipeline support"
 
-PIPELINES_ENABLED=""
-if [ -n "$SEQDESK_WITH_PIPELINES" ]; then
-    if is_truthy "$SEQDESK_WITH_PIPELINES"; then
-        PIPELINES_ENABLED="true"
-    else
-        PIPELINES_ENABLED="false"
-    fi
-elif is_truthy "$SEQDESK_WITH_CONDA"; then
-    PIPELINES_ENABLED="true"
-fi
+resolve_pipeline_enablement
 
 HAS_CONDA="false"
 if [ "$CONDA_RESOLUTION" = "found" ]; then
     HAS_CONDA="true"
 fi
 
-if [ -z "$PIPELINES_ENABLED" ]; then
-    if [ "$HAS_CONDA" = "true" ]; then
-        prompt_yes_no PIPELINES_ENABLED "Enable pipeline support (Conda + Nextflow)?" "y"
-    else
-        prompt_yes_no PIPELINES_ENABLED "Install pipeline dependencies (Conda + Nextflow)?" "y"
-    fi
-fi
-
 if [ "$PIPELINES_ENABLED" = "true" ]; then
     print_info "Pipeline support enabled"
     print_conda_resolution_notice
 else
-    print_info "Pipeline support disabled"
+    print_info "Pipeline support disabled (default for a smaller core installation)"
+    print_info "Use --with-pipelines to install Conda and Nextflow support."
 fi
 
 if [ "$PIPELINES_ENABLED" = "true" ] && {
