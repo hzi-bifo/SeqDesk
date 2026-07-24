@@ -66,6 +66,15 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
   `https://seqdesk.org/install.sh` directly.
 - Fresh installs provision the core application only. Pass `--with-pipelines`
   to add the optional Conda/Nextflow runtime.
+- You normally do not need to set up PostgreSQL yourself. The installer reuses a
+  healthy local server or a Unix socket it can administer when it finds one;
+  otherwise it creates its own private, socket-only cluster under
+  `$HOME/.seqdesk/postgres` (override with `SEQDESK_PG_HOME`). That cluster
+  opens no TCP port and is not registered with systemd or launchd, so the
+  install directory's `start.sh` starts it before the app. Run the installer as
+  your normal non-root user: it refuses to create a cluster owned by root. Pass
+  `--database-url` only for a database you manage yourself; an explicit URL is
+  never silently retargeted.
 - `$HOME/seqdesk` is used above as a writable evaluation path. For a production
   system location, have an administrator prepare a parent owned by the
   non-root SeqDesk service account, then install into a new child directory.
@@ -79,7 +88,8 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 - The installer writes a timestamped log to `/tmp/seqdesk-install-*.log` unless
   `SEQDESK_LOG` is set.
 - Interactive installs show a compact spinner for long-running work; command
-  output stays in the install log.
+  output stays in the install log. Pass `--verbose` (or set `SEQDESK_VERBOSE=1`)
+  to mirror the diagnostic detail to the terminal.
 - `seqdesk doctor` runs locally and does not download the installer. It checks
   install files, PostgreSQL reachability, runtime config, auth providers, and
   setup status when the app URL is known.
