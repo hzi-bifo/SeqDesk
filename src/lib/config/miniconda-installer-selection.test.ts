@@ -68,3 +68,21 @@ describe.each(installerPaths)("%s Miniconda selection", (installerPath) => {
     );
   });
 });
+
+describe("pipeline environment setup contract", () => {
+  const source = readFileSync(
+    path.join(repoRoot, "scripts/setup-conda-env.sh"),
+    "utf8"
+  );
+
+  it("offers only supported execution modes", () => {
+    expect(source).toContain("Execution mode: local|slurm");
+    expect(source).not.toContain("local|slurm|kubernetes");
+  });
+
+  it("does not write the ignored conda.enabled compatibility field", () => {
+    expect(source).not.toContain(
+      "config.pipelines.execution.conda.enabled = true"
+    );
+  });
+});

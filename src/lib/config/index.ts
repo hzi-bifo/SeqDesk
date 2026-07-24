@@ -3,7 +3,7 @@
  *
  * Configuration sources (in priority order):
  * 1. Environment variables (SEQDESK_*)
- * 2. Config file (seqdesk.config.json)
+ * 2. Config file (settings.json; legacy/development seqdesk.config.json is also read)
  * 3. Database settings (UI-editable)
  * 4. Default values
  *

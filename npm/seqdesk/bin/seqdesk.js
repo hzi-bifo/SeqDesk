@@ -24,7 +24,7 @@ if (!env.SEQDESK_VERSION) {
 }
 
 const DOCTOR_USAGE = `Usage:
-  seqdesk doctor [--dir /path/to/seqdesk] [--url http://127.0.0.1:3000]
+  seqdesk doctor [--dir /path/to/seqdesk] [--url http://127.0.0.1:8000]
 
 Options:
   --dir, -d          Installed SeqDesk directory. Defaults to the current directory.

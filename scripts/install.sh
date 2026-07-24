@@ -34,7 +34,7 @@
 #   SEQDESK_EXEC_SLURM_MEMORY=64GB - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_TIME_LIMIT=12 - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_OPTIONS=... - Optional pipeline execution override
-#   SEQDESK_EXEC_CONDA_PATH=/opt/miniconda3 - Optional pipeline execution override
+#   SEQDESK_EXEC_CONDA_PATH=/opt/miniconda3 - Existing or new Conda base; overrides discovery
 #   SEQDESK_EXEC_CONDA_ENV=seqdesk-pipelines - Optional pipeline execution override
 #   SEQDESK_EXEC_NEXTFLOW_PROFILE=conda - Optional pipeline execution override
 #   SEQDESK_EXEC_WEBLOG_URL=http://host/api/pipelines/weblog - Optional override
@@ -103,6 +103,14 @@ SEQDESK_EXEC_WEBLOG_SECRET="${SEQDESK_EXEC_WEBLOG_SECRET:-}"
 SEQDESK_METAXPATH_PACKAGE_URL="${SEQDESK_METAXPATH_PACKAGE_URL:-${METAXPATH_PACKAGE_URL:-}}"
 SEQDESK_METAXPATH_KEY="${SEQDESK_METAXPATH_KEY:-${METAXPATH_PACKAGE_TOKEN:-}}"
 SEQDESK_METAXPATH_SHA256="${SEQDESK_METAXPATH_SHA256:-${METAXPATH_PACKAGE_SHA256:-}}"
+CONDA_BIN_FROM_PATH=""
+CONDA_DISCOVERY_SOURCE=""
+CONDA_INSTALL_BASE=""
+CONDA_RESOLUTION="missing"
+CONDA_SKIPPED_PREFIX=""
+CONDA_CONFLICT_PATH=""
+MINICONDA_INSTALLER_FILE=""
+MINICONDA_OUTPUT_FILE=""
 
 TOTAL_STEPS=8
 CURRENT_STEP=0
@@ -139,6 +147,250 @@ print_info() {
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+shell_quote() {
+    printf '%q' "$1"
+}
+
+path_exists_or_symlink() {
+    [ -e "$1" ] || [ -L "$1" ]
+}
+
+normalize_conda_base_path() {
+    local value="$1"
+    while [ "$value" != "/" ] && [[ "$value" == */ ]]; do
+        value="${value%/}"
+    done
+    printf '%s\n' "$value"
+}
+
+absolute_conda_base_path() {
+    local value
+    value="$(normalize_conda_base_path "$1")"
+    if [[ "$value" != /* ]]; then
+        value="$PWD/${value#./}"
+    fi
+    normalize_conda_base_path "$value"
+}
+
+find_usable_conda_in_prefix() {
+    local prefix
+    local candidate
+
+    prefix="$(normalize_conda_base_path "$1")"
+    [ -n "$prefix" ] || return 1
+    for candidate in "$prefix/condabin/conda" "$prefix/bin/conda"; do
+        if [ -x "$candidate" ] && "$candidate" --version >/dev/null 2>&1; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+conda_base_from_command() {
+    local conda_command="$1"
+    local base
+
+    base="$("$conda_command" info --base 2>/dev/null | tail -n 1)" || true
+    [ -n "$base" ] || return 1
+    if find_usable_conda_in_prefix "$base" >/dev/null; then
+        normalize_conda_base_path "$base"
+        return 0
+    fi
+    return 1
+}
+
+activate_conda_runtime() {
+    local base="$1"
+    local binary="$2"
+    local source="$3"
+
+    CONDA_BIN_FROM_PATH="$binary"
+    CONDA_DISCOVERY_SOURCE="$source"
+    CONDA_RESOLUTION="found"
+    CONDA_INSTALL_BASE=""
+    CONDA_CONFLICT_PATH=""
+    CONDA_SKIPPED_PREFIX=""
+
+    if [ -n "$base" ]; then
+        SEQDESK_EXEC_CONDA_PATH="$(normalize_conda_base_path "$base")"
+        export PATH="$SEQDESK_EXEC_CONDA_PATH/bin:$PATH"
+    elif [[ "$binary" == */* ]]; then
+        export PATH="$(dirname "$binary"):$PATH"
+    fi
+}
+
+resolve_conda_runtime() {
+    local configured_path="${SEQDESK_EXEC_CONDA_PATH:-}"
+    local candidate_path
+    local candidate_binary
+    local path_binary
+    local resolved_base
+    local default_base="$HOME/miniconda3"
+    local fallback_base="$HOME/seqdesk-miniconda3"
+
+    CONDA_BIN_FROM_PATH=""
+    CONDA_DISCOVERY_SOURCE=""
+    CONDA_INSTALL_BASE=""
+    CONDA_RESOLUTION="missing"
+    CONDA_SKIPPED_PREFIX=""
+    CONDA_CONFLICT_PATH=""
+
+    if [ -n "$configured_path" ]; then
+        configured_path="${configured_path/#\~/$HOME}"
+        SEQDESK_EXEC_CONDA_PATH="$(absolute_conda_base_path "$configured_path")"
+        if candidate_binary="$(find_usable_conda_in_prefix "$SEQDESK_EXEC_CONDA_PATH")"; then
+            activate_conda_runtime "$SEQDESK_EXEC_CONDA_PATH" "$candidate_binary" "configured"
+        elif path_exists_or_symlink "$SEQDESK_EXEC_CONDA_PATH"; then
+            CONDA_RESOLUTION="invalid-configured"
+            CONDA_CONFLICT_PATH="$SEQDESK_EXEC_CONDA_PATH"
+        else
+            CONDA_RESOLUTION="install-configured"
+            CONDA_INSTALL_BASE="$SEQDESK_EXEC_CONDA_PATH"
+        fi
+        return 0
+    fi
+
+    if command_exists conda && conda --version >/dev/null 2>&1; then
+        if resolved_base="$(conda_base_from_command conda)"; then
+            candidate_binary="$(find_usable_conda_in_prefix "$resolved_base")"
+            activate_conda_runtime "$resolved_base" "$candidate_binary" "PATH"
+            return 0
+        fi
+
+        path_binary="$(command -v conda 2>/dev/null || true)"
+        if [ -n "$path_binary" ] && [ -x "$path_binary" ]; then
+            activate_conda_runtime "" "$path_binary" "PATH"
+            return 0
+        fi
+    fi
+
+    if [ -n "${CONDA_EXE:-}" ] && [ -x "$CONDA_EXE" ] && "$CONDA_EXE" --version >/dev/null 2>&1; then
+        if resolved_base="$(conda_base_from_command "$CONDA_EXE")"; then
+            candidate_binary="$(find_usable_conda_in_prefix "$resolved_base")"
+            activate_conda_runtime "$resolved_base" "$candidate_binary" "CONDA_EXE"
+        else
+            activate_conda_runtime "" "$CONDA_EXE" "CONDA_EXE"
+        fi
+        return 0
+    fi
+
+    for candidate_path in \
+        "$default_base" \
+        "$fallback_base" \
+        "$HOME/miniforge3" \
+        "$HOME/mambaforge" \
+        "$HOME/anaconda3"; do
+        if candidate_binary="$(find_usable_conda_in_prefix "$candidate_path")"; then
+            activate_conda_runtime "$candidate_path" "$candidate_binary" "standard-prefix"
+            return 0
+        fi
+    done
+
+    if ! path_exists_or_symlink "$default_base"; then
+        CONDA_RESOLUTION="install-default"
+        CONDA_INSTALL_BASE="$default_base"
+        return 0
+    fi
+
+    CONDA_SKIPPED_PREFIX="$default_base"
+    if ! path_exists_or_symlink "$fallback_base"; then
+        CONDA_RESOLUTION="install-fallback"
+        CONDA_INSTALL_BASE="$fallback_base"
+        return 0
+    fi
+
+    CONDA_RESOLUTION="invalid-defaults"
+    CONDA_CONFLICT_PATH="$fallback_base"
+}
+
+print_conda_resolution_notice() {
+    case "$CONDA_RESOLUTION:$CONDA_DISCOVERY_SOURCE" in
+        found:configured)
+            print_info "Using configured Conda at $CONDA_BIN_FROM_PATH"
+            ;;
+        found:PATH|found:CONDA_EXE)
+            if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
+                print_info "Using Conda from $CONDA_DISCOVERY_SOURCE at $SEQDESK_EXEC_CONDA_PATH"
+            fi
+            ;;
+        found:standard-prefix)
+            print_info "Found Conda outside PATH at $SEQDESK_EXEC_CONDA_PATH; it will be reused."
+            ;;
+        install-fallback:*)
+            print_warning "$CONDA_SKIPPED_PREFIX exists but is not a working Conda base."
+            print_info "It will be left untouched; Miniconda will be installed to $CONDA_INSTALL_BASE."
+            ;;
+    esac
+}
+
+suggest_unused_conda_base() {
+    local base="$HOME/seqdesk-miniconda3-new"
+    local suffix=2
+
+    while path_exists_or_symlink "$base"; do
+        base="$HOME/seqdesk-miniconda3-new-$suffix"
+        suffix=$((suffix + 1))
+    done
+    printf '%s\n' "$base"
+}
+
+print_unusable_conda_prefix_error() {
+    local suggested_base
+    suggested_base="$(suggest_unused_conda_base)"
+
+    if [ "$CONDA_RESOLUTION" = "invalid-configured" ]; then
+        print_error "The configured Conda base exists but does not contain a working conda executable."
+        print_info "Configured base: $CONDA_CONFLICT_PATH"
+    else
+        print_error "Existing Conda target directories are present, but neither contains a working conda executable."
+        print_info "Default base: $CONDA_SKIPPED_PREFIX"
+        print_info "Fallback base: $CONDA_CONFLICT_PATH"
+    fi
+
+    print_info "SeqDesk will not delete, overwrite, or update these directories automatically."
+    print_info "To install into a fresh base, rerun the same command with:"
+    echo "  SEQDESK_EXEC_CONDA_PATH=$(shell_quote "$suggested_base") bash scripts/install.sh"
+    print_info "Or rerun without pipeline support if Conda and Nextflow are not needed."
+    print_info "Troubleshooting: https://seqdesk.org/docs/installation/common-problems#miniconda-says-the-prefix-already-exists"
+}
+
+cleanup_miniconda_temp_files() {
+    if [ -n "${MINICONDA_INSTALLER_FILE:-}" ]; then
+        rm -f "$MINICONDA_INSTALLER_FILE" 2>/dev/null || true
+        MINICONDA_INSTALLER_FILE=""
+    fi
+    if [ -n "${MINICONDA_OUTPUT_FILE:-}" ]; then
+        rm -f "$MINICONDA_OUTPUT_FILE" 2>/dev/null || true
+        MINICONDA_OUTPUT_FILE=""
+    fi
+}
+
+install_miniconda_with_diagnostics() {
+    local installer_file="$1"
+    local install_base="$2"
+    local status
+
+    if bash "$installer_file" -b -p "$install_base" >"$MINICONDA_OUTPUT_FILE" 2>&1; then
+        cleanup_miniconda_temp_files
+        return 0
+    else
+        status=$?
+    fi
+
+    print_error "Miniconda could not install into $install_base."
+    if [ -s "$MINICONDA_OUTPUT_FILE" ]; then
+        print_warning "Miniconda's error output:"
+        tail -n 20 "$MINICONDA_OUTPUT_FILE" | sed 's/^/  /'
+    fi
+    print_info "SeqDesk did not delete or replace a Conda directory that existed before this attempt."
+    print_info "Miniconda may have left a partial new prefix at $install_base."
+    print_info "Reuse it only if bin/conda or condabin/conda works; otherwise choose a new unused base with SEQDESK_EXEC_CONDA_PATH."
+    print_info "Troubleshooting: https://seqdesk.org/docs/installation/common-problems#miniconda-says-the-prefix-already-exists"
+    cleanup_miniconda_temp_files
+    return "$status"
 }
 
 select_miniconda_installer() {
@@ -282,6 +534,11 @@ Options:
   --order-form-settings <path> Exported order form JSON to apply after seeding
   --study-form-settings <path> Exported study form JSON to apply after seeding
   -h, --help                   Show this help
+
+Pipeline environment:
+  SEQDESK_EXEC_CONDA_PATH      Existing Conda base to reuse, or an unused path
+                               where Miniconda may be installed. This overrides
+                               PATH and standard user-prefix discovery.
 
 Examples:
   curl -fsSL https://seqdesk.org/install.sh | bash -s -- -y
@@ -1759,6 +2016,7 @@ db_tcp_reachable() {
 on_error() {
     local exit_code=$?
     set +e
+    cleanup_miniconda_temp_files
     print_error "Command failed (exit ${exit_code}): ${BASH_COMMAND}"
     if [ -n "$SEQDESK_LOG" ]; then
         print_error "See log: $SEQDESK_LOG"
@@ -1783,6 +2041,11 @@ on_error() {
 
     exit $exit_code
 }
+
+# Test hook: source helper functions without running the source installer.
+if [ -n "${SEQDESK_INSTALL_LIB_ONLY:-}" ]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 parse_args "$@"
 SEQDESK_DIR="${SEQDESK_DIR/#\~/$HOME}"
@@ -1908,7 +2171,7 @@ if command_exists conda; then
     CONDA_VERSION=$(conda --version | cut -d' ' -f2)
     print_success "Conda: $CONDA_VERSION (optional)"
 else
-    print_info "Conda: not found (optional, needed for pipelines)"
+    print_info "Conda: not on PATH (configured and standard user bases will also be checked)"
 fi
 
 if command_exists nextflow; then
@@ -1945,23 +2208,7 @@ if [ -n "$SEQDESK_CONFIG" ]; then
     print_success "Loaded installer config"
 fi
 
-if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
-    SEQDESK_EXEC_CONDA_PATH="${SEQDESK_EXEC_CONDA_PATH/#\~/$HOME}"
-fi
-
-CONDA_BIN_FROM_PATH=""
-if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
-    for candidate in "$SEQDESK_EXEC_CONDA_PATH/condabin/conda" "$SEQDESK_EXEC_CONDA_PATH/bin/conda"; do
-        if [ -x "$candidate" ]; then
-            CONDA_BIN_FROM_PATH="$candidate"
-            break
-        fi
-    done
-    if [ -n "$CONDA_BIN_FROM_PATH" ]; then
-        export PATH="$SEQDESK_EXEC_CONDA_PATH/bin:$PATH"
-        print_info "Using configured Conda at $CONDA_BIN_FROM_PATH"
-    fi
-fi
+resolve_conda_runtime
 
 # Pipeline support
 print_step "Pipeline support"
@@ -1978,7 +2225,7 @@ elif is_truthy "$SEQDESK_WITH_CONDA"; then
 fi
 
 HAS_CONDA="false"
-if [ -n "$CONDA_BIN_FROM_PATH" ] || command_exists conda; then
+if [ "$CONDA_RESOLUTION" = "found" ]; then
     HAS_CONDA="true"
 fi
 
@@ -1992,8 +2239,17 @@ fi
 
 if [ "$PIPELINES_ENABLED" = "true" ]; then
     print_info "Pipeline support enabled"
+    print_conda_resolution_notice
 else
     print_info "Pipeline support disabled"
+fi
+
+if [ "$PIPELINES_ENABLED" = "true" ] && {
+    [ "$CONDA_RESOLUTION" = "invalid-configured" ] ||
+    [ "$CONDA_RESOLUTION" = "invalid-defaults" ];
+}; then
+    print_unusable_conda_prefix_error
+    exit 1
 fi
 
 # Install Miniconda if requested and missing
@@ -2007,20 +2263,18 @@ if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     fi
 
     print_info "Downloading Miniconda..."
-    curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" -o /tmp/miniconda.sh
+    MINICONDA_TEMP_DIR="${TMPDIR:-/tmp}"
+    MINICONDA_TEMP_DIR="${MINICONDA_TEMP_DIR%/}"
+    MINICONDA_INSTALLER_FILE="$(mktemp "$MINICONDA_TEMP_DIR/seqdesk-miniconda.XXXXXX")"
+    MINICONDA_OUTPUT_FILE="$(mktemp "$MINICONDA_TEMP_DIR/seqdesk-miniconda-output.XXXXXX")"
+    curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" \
+        -o "$MINICONDA_INSTALLER_FILE"
 
-    CONDA_INSTALL_BASE="${SEQDESK_EXEC_CONDA_PATH:-$HOME/miniconda3}"
     print_info "Installing Miniconda to $CONDA_INSTALL_BASE..."
-    bash /tmp/miniconda.sh -b -p "$CONDA_INSTALL_BASE"
-    rm /tmp/miniconda.sh
+    install_miniconda_with_diagnostics "$MINICONDA_INSTALLER_FILE" "$CONDA_INSTALL_BASE"
 
     CONDA_INIT_BIN=""
-    for candidate in "$CONDA_INSTALL_BASE/condabin/conda" "$CONDA_INSTALL_BASE/bin/conda"; do
-        if [ -x "$candidate" ]; then
-            CONDA_INIT_BIN="$candidate"
-            break
-        fi
-    done
+    CONDA_INIT_BIN="$(find_usable_conda_in_prefix "$CONDA_INSTALL_BASE" || true)"
     if [ -z "$CONDA_INIT_BIN" ]; then
         print_error "Miniconda install completed but conda binary was not found under $CONDA_INSTALL_BASE."
         exit 1
@@ -2048,6 +2302,10 @@ if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     done
 
     export PATH="$CONDA_INSTALL_BASE/bin:$PATH"
+    SEQDESK_EXEC_CONDA_PATH="$CONDA_INSTALL_BASE"
+    CONDA_BIN_FROM_PATH="$CONDA_INIT_BIN"
+    CONDA_DISCOVERY_SOURCE="installed"
+    CONDA_RESOLUTION="found"
     CONDA_VERSION=$("$CONDA_INIT_BIN" --version | cut -d' ' -f2 || true)
     HAS_CONDA="true"
 

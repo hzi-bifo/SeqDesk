@@ -47,7 +47,7 @@
 #   SEQDESK_EXEC_SLURM_MEMORY=64GB - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_TIME_LIMIT=12 - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_OPTIONS=... - Optional pipeline execution override
-#   SEQDESK_EXEC_CONDA_PATH=/opt/miniconda3 - Optional pipeline execution override
+#   SEQDESK_EXEC_CONDA_PATH=/opt/miniconda3 - Existing or new Conda base; overrides discovery
 #   SEQDESK_EXEC_CONDA_ENV=seqdesk-pipelines - Optional pipeline execution override
 #   SEQDESK_EXEC_NEXTFLOW_PROFILE=conda - Optional pipeline execution override
 #   SEQDESK_EXEC_WEBLOG_URL=http://host/api/pipelines/weblog - Optional override
@@ -155,6 +155,14 @@ PM2_STARTUP_ENABLED="false"
 PM2_PROCESS_EXISTS="false"
 PM2_BIN=""
 PM2_DISPLAY_CMD="pm2"
+CONDA_BIN_FROM_PATH=""
+CONDA_DISCOVERY_SOURCE=""
+CONDA_INSTALL_BASE=""
+CONDA_RESOLUTION="missing"
+CONDA_SKIPPED_PREFIX=""
+CONDA_CONFLICT_PATH=""
+MINICONDA_INSTALLER_FILE=""
+MINICONDA_OUTPUT_FILE=""
 
 MIN_NODE_VERSION="22.13.0"
 NODE_SUPPORT_LABEL="22.13.0+ or 24.x"
@@ -186,6 +194,12 @@ print_warning() {
 
 print_error() {
     printf '  %berror%b %s\n' "$RED" "$NC" "$1"
+}
+
+print_troubleshooting_url() {
+    local url="${1:-https://seqdesk.org/docs/installation/common-problems}"
+    echo "  Troubleshooting:"
+    echo "    $url"
 }
 
 print_info() {
@@ -403,6 +417,296 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+path_exists_or_symlink() {
+    [ -e "$1" ] || [ -L "$1" ]
+}
+
+normalize_conda_base_path() {
+    local value="$1"
+    while [ "$value" != "/" ] && [[ "$value" == */ ]]; do
+        value="${value%/}"
+    done
+    printf '%s\n' "$value"
+}
+
+absolute_conda_base_path() {
+    local value
+    value="$(normalize_conda_base_path "$1")"
+    if [[ "$value" != /* ]]; then
+        value="$PWD/${value#./}"
+    fi
+    normalize_conda_base_path "$value"
+}
+
+find_usable_conda_in_prefix() {
+    local prefix
+    local candidate
+
+    prefix="$(normalize_conda_base_path "$1")"
+    [ -n "$prefix" ] || return 1
+    for candidate in "$prefix/condabin/conda" "$prefix/bin/conda"; do
+        if [ -x "$candidate" ] && "$candidate" --version >/dev/null 2>&1; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+conda_base_from_command() {
+    local conda_command="$1"
+    local base
+
+    base="$("$conda_command" info --base 2>/dev/null | tail -n 1)" || true
+    [ -n "$base" ] || return 1
+    if find_usable_conda_in_prefix "$base" >/dev/null; then
+        normalize_conda_base_path "$base"
+        return 0
+    fi
+    return 1
+}
+
+activate_conda_runtime() {
+    local base="$1"
+    local binary="$2"
+    local source="$3"
+
+    CONDA_BIN_FROM_PATH="$binary"
+    CONDA_DISCOVERY_SOURCE="$source"
+    CONDA_RESOLUTION="found"
+    CONDA_INSTALL_BASE=""
+    CONDA_CONFLICT_PATH=""
+    CONDA_SKIPPED_PREFIX=""
+
+    if [ -n "$base" ]; then
+        SEQDESK_EXEC_CONDA_PATH="$(normalize_conda_base_path "$base")"
+        export PATH="$SEQDESK_EXEC_CONDA_PATH/bin:$PATH"
+    elif [[ "$binary" == */* ]]; then
+        export PATH="$(dirname "$binary"):$PATH"
+    fi
+}
+
+resolve_conda_runtime() {
+    local configured_path="${SEQDESK_EXEC_CONDA_PATH:-}"
+    local candidate_path
+    local candidate_binary
+    local path_binary
+    local resolved_base
+    local default_base="$HOME/miniconda3"
+    local fallback_base="$HOME/seqdesk-miniconda3"
+
+    CONDA_BIN_FROM_PATH=""
+    CONDA_DISCOVERY_SOURCE=""
+    CONDA_INSTALL_BASE=""
+    CONDA_RESOLUTION="missing"
+    CONDA_SKIPPED_PREFIX=""
+    CONDA_CONFLICT_PATH=""
+
+    if [ -n "$configured_path" ]; then
+        configured_path="${configured_path/#\~/$HOME}"
+        SEQDESK_EXEC_CONDA_PATH="$(absolute_conda_base_path "$configured_path")"
+        if candidate_binary="$(find_usable_conda_in_prefix "$SEQDESK_EXEC_CONDA_PATH")"; then
+            activate_conda_runtime "$SEQDESK_EXEC_CONDA_PATH" "$candidate_binary" "configured"
+        elif path_exists_or_symlink "$SEQDESK_EXEC_CONDA_PATH"; then
+            CONDA_RESOLUTION="invalid-configured"
+            CONDA_CONFLICT_PATH="$SEQDESK_EXEC_CONDA_PATH"
+        else
+            CONDA_RESOLUTION="install-configured"
+            CONDA_INSTALL_BASE="$SEQDESK_EXEC_CONDA_PATH"
+        fi
+        return 0
+    fi
+
+    if command_exists conda && conda --version >/dev/null 2>&1; then
+        if resolved_base="$(conda_base_from_command conda)"; then
+            candidate_binary="$(find_usable_conda_in_prefix "$resolved_base")"
+            activate_conda_runtime "$resolved_base" "$candidate_binary" "PATH"
+            return 0
+        fi
+
+        path_binary="$(command -v conda 2>/dev/null || true)"
+        if [ -n "$path_binary" ] && [ -x "$path_binary" ]; then
+            activate_conda_runtime "" "$path_binary" "PATH"
+            return 0
+        fi
+    fi
+
+    if [ -n "${CONDA_EXE:-}" ] && [ -x "$CONDA_EXE" ] && "$CONDA_EXE" --version >/dev/null 2>&1; then
+        if resolved_base="$(conda_base_from_command "$CONDA_EXE")"; then
+            candidate_binary="$(find_usable_conda_in_prefix "$resolved_base")"
+            activate_conda_runtime "$resolved_base" "$candidate_binary" "CONDA_EXE"
+        else
+            activate_conda_runtime "" "$CONDA_EXE" "CONDA_EXE"
+        fi
+        return 0
+    fi
+
+    for candidate_path in \
+        "$default_base" \
+        "$fallback_base" \
+        "$HOME/miniforge3" \
+        "$HOME/mambaforge" \
+        "$HOME/anaconda3"; do
+        if candidate_binary="$(find_usable_conda_in_prefix "$candidate_path")"; then
+            activate_conda_runtime "$candidate_path" "$candidate_binary" "standard-prefix"
+            return 0
+        fi
+    done
+
+    if ! path_exists_or_symlink "$default_base"; then
+        CONDA_RESOLUTION="install-default"
+        CONDA_INSTALL_BASE="$default_base"
+        return 0
+    fi
+
+    CONDA_SKIPPED_PREFIX="$default_base"
+    if ! path_exists_or_symlink "$fallback_base"; then
+        CONDA_RESOLUTION="install-fallback"
+        CONDA_INSTALL_BASE="$fallback_base"
+        return 0
+    fi
+
+    CONDA_RESOLUTION="invalid-defaults"
+    CONDA_CONFLICT_PATH="$fallback_base"
+}
+
+conda_preflight_status() {
+    case "$CONDA_RESOLUTION" in
+        found)
+            if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
+                printf 'found at %s (will reuse)' "$SEQDESK_EXEC_CONDA_PATH"
+            else
+                printf 'found on PATH (will reuse)'
+            fi
+            ;;
+        install-default|install-configured)
+            printf 'not found (will install Miniconda to %s)' "$CONDA_INSTALL_BASE"
+            ;;
+        install-fallback)
+            printf 'will install to %s; leaving %s untouched' "$CONDA_INSTALL_BASE" "$CONDA_SKIPPED_PREFIX"
+            ;;
+        invalid-configured|invalid-defaults)
+            printf 'unusable prefix (action required)'
+            ;;
+        *)
+            printf 'not found'
+            ;;
+    esac
+}
+
+print_conda_resolution_notice() {
+    case "$CONDA_RESOLUTION:$CONDA_DISCOVERY_SOURCE" in
+        found:configured)
+            print_info "Using configured Conda at $CONDA_BIN_FROM_PATH"
+            ;;
+        found:PATH|found:CONDA_EXE)
+            if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
+                print_info "Using Conda from $CONDA_DISCOVERY_SOURCE at $SEQDESK_EXEC_CONDA_PATH"
+            fi
+            ;;
+        found:standard-prefix)
+            print_info "Found Conda outside PATH at $SEQDESK_EXEC_CONDA_PATH; it will be reused."
+            ;;
+        install-fallback:*)
+            print_warning "$CONDA_SKIPPED_PREFIX exists but is not a working Conda base."
+            print_info "It will be left untouched; Miniconda will be installed to $CONDA_INSTALL_BASE."
+            ;;
+    esac
+}
+
+suggest_unused_conda_base() {
+    local base="$HOME/seqdesk-miniconda3-new"
+    local suffix=2
+
+    while path_exists_or_symlink "$base"; do
+        base="$HOME/seqdesk-miniconda3-new-$suffix"
+        suffix=$((suffix + 1))
+    done
+    printf '%s\n' "$base"
+}
+
+print_unusable_conda_prefix_error() {
+    local suggested_base
+    suggested_base="$(suggest_unused_conda_base)"
+
+    if [ "$CONDA_RESOLUTION" = "invalid-configured" ]; then
+        print_error "The configured Conda base exists but does not contain a working conda executable."
+        print_kv "Configured base" "$CONDA_CONFLICT_PATH"
+    else
+        print_error "Existing Conda target directories are present, but neither contains a working conda executable."
+        print_kv "Default base" "$CONDA_SKIPPED_PREFIX"
+        print_kv "Fallback base" "$CONDA_CONFLICT_PATH"
+    fi
+
+    echo "  SeqDesk will not delete, overwrite, or update these directories automatically."
+    echo "  To use an existing base, verify that bin/conda or condabin/conda runs, then set"
+    echo "  SEQDESK_EXEC_CONDA_PATH to that base."
+    echo "  To install into a fresh base, rerun the same command with:"
+    echo "    SEQDESK_EXEC_CONDA_PATH=$(shell_quote "$suggested_base") seqdesk --interactive --dir $(shell_quote "$SEQDESK_DIR")"
+    echo "  Or rerun without pipeline support if Conda and Nextflow are not needed."
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/common-problems#miniconda-says-the-prefix-already-exists"
+}
+
+cleanup_miniconda_temp_files() {
+    if [ -n "${MINICONDA_INSTALLER_FILE:-}" ]; then
+        rm -f "$MINICONDA_INSTALLER_FILE" 2>/dev/null || true
+        MINICONDA_INSTALLER_FILE=""
+    fi
+    if [ -n "${MINICONDA_OUTPUT_FILE:-}" ]; then
+        rm -f "$MINICONDA_OUTPUT_FILE" 2>/dev/null || true
+        MINICONDA_OUTPUT_FILE=""
+    fi
+}
+
+run_miniconda_installer_capture() {
+    local output_file="$1"
+    shift
+    local status
+
+    if "$@" >"$output_file" 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
+
+    if [ "$SEQDESK_LOG_ENABLED" = "true" ] && [ -n "$SEQDESK_LOG" ]; then
+        {
+            echo ""
+            echo "[Miniconda installer output]"
+            sed 's/^/[Miniconda] /' "$output_file"
+        } >> "$SEQDESK_LOG"
+    fi
+    return "$status"
+}
+
+install_miniconda_with_diagnostics() {
+    local installer_file="$1"
+    local install_base="$2"
+    local status
+
+    if run_with_spinner "Install Miniconda" \
+        run_miniconda_installer_capture "$MINICONDA_OUTPUT_FILE" \
+        bash "$installer_file" -b -p "$install_base"; then
+        cleanup_miniconda_temp_files
+        return 0
+    else
+        status=$?
+    fi
+
+    print_error "Miniconda could not install into $install_base."
+    if [ -s "$MINICONDA_OUTPUT_FILE" ]; then
+        print_warning "Miniconda's error output:"
+        tail -n 20 "$MINICONDA_OUTPUT_FILE" | sed 's/^/    /'
+    fi
+    echo "  SeqDesk did not delete or replace a Conda directory that existed before this attempt."
+    echo "  Miniconda may have left a partial new prefix at $install_base."
+    echo "  Reuse it only if its bin/conda or condabin/conda command works; otherwise choose"
+    echo "  a new unused base with SEQDESK_EXEC_CONDA_PATH."
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/common-problems#miniconda-says-the-prefix-already-exists"
+    cleanup_miniconda_temp_files
+    return "$status"
+}
+
 select_miniconda_installer() {
     local os="${1:-}"
     local arch="${2:-}"
@@ -520,11 +824,13 @@ configure_postgres_urls() {
 
     if [[ "$SEQDESK_DATABASE_URL" == file:* ]]; then
         print_error "SQLite is no longer supported. Configure PostgreSQL via --database-url or SEQDESK_DATABASE_URL."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#postgresql-cannot-be-reached-or-migrations-fail"
         exit 1
     fi
 
     if ! is_postgres_url "$SEQDESK_DATABASE_URL"; then
         print_error "Unsupported DATABASE_URL. SeqDesk now only supports PostgreSQL connection strings."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#postgresql-cannot-be-reached-or-migrations-fail"
         exit 1
     fi
 
@@ -534,11 +840,13 @@ configure_postgres_urls() {
 
     if [[ "$SEQDESK_DATABASE_DIRECT_URL" == file:* ]]; then
         print_error "SQLite is no longer supported for DIRECT_URL. Use a PostgreSQL connection string."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#postgresql-cannot-be-reached-or-migrations-fail"
         exit 1
     fi
 
     if ! is_postgres_url "$SEQDESK_DATABASE_DIRECT_URL"; then
         print_error "Unsupported DIRECT_URL. SeqDesk now only supports PostgreSQL connection strings."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#postgresql-cannot-be-reached-or-migrations-fail"
         exit 1
     fi
 }
@@ -640,6 +948,7 @@ print_postgres_setup_instructions() {
         echo "  After fixing connectivity or credentials, rerun:"
         echo "  npx -y seqdesk@latest -y --reconfigure --reseed-db --dir $(shell_quote "$SEQDESK_DIR")"
     fi
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#postgresql-cannot-be-reached-or-migrations-fail"
 }
 
 probe_postgres_database() {
@@ -770,6 +1079,7 @@ postgres_probe_print_grant_hint() {
         echo "  Probe write step failed: $write_line"
     fi
     echo "  Current DATABASE_URL: ${redacted}"
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#postgresql-cannot-be-reached-or-migrations-fail"
 }
 
 postgres_probe_print_failure() {
@@ -813,6 +1123,7 @@ postgres_probe_print_failure() {
         printf '%s\n' "$probe_output" | sed 's/^/  /'
     fi
     echo "  Current DATABASE_URL: ${redacted}"
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#postgresql-cannot-be-reached-or-migrations-fail"
 }
 
 load_postgres_url_parts() {
@@ -1069,7 +1380,7 @@ warn_macos_root_postgres_services() {
 print_macos_brew_postgres_failure() {
     local formula="$1"
     local service_output="${2:-}"
-    local brew_prefix log_file log_excerpt service_line
+    local brew_prefix log_file log_excerpt log_mtime service_line
 
     if [ -n "$service_output" ]; then
         printf '%s\n' "$service_output" | sed 's/^/  /'
@@ -1091,16 +1402,69 @@ print_macos_brew_postgres_failure() {
         echo "    sudo chown \"$(id -un)\":admin $(shell_quote "$log_file")"
     fi
     if [ -n "$brew_prefix" ] && [ -r "$log_file" ]; then
-        log_excerpt="$(tail -n 120 "$log_file" 2>/dev/null | \
-            grep -Ei 'root.*not permitted|address already in use|could not bind|lock file|permission denied|fatal|panic' | \
-            tail -n 8 || true)"
-        if [ -n "$log_excerpt" ]; then
-            print_warning "PostgreSQL log excerpt ($log_file):"
-            printf '%s\n' "$log_excerpt" | sed 's/^/  /'
+        log_mtime="$(stat -c '%Y' "$log_file" 2>/dev/null || \
+            stat -f '%m' "$log_file" 2>/dev/null || true)"
+        if [[ "$log_mtime" =~ ^[0-9]+$ ]] && [ "$log_mtime" -lt "$INSTALL_START_TS" ]; then
+            print_info "PostgreSQL log has no entries from this install attempt; historical errors omitted: $log_file"
         else
-            print_info "PostgreSQL log: $log_file"
+            log_excerpt="$(tail -n 120 "$log_file" 2>/dev/null | \
+                grep -Ei 'root.*not permitted|address already in use|could not bind|lock file|permission denied|fatal|panic' | \
+                tail -n 8 || true)"
+            if [ -n "$log_excerpt" ]; then
+                print_warning "PostgreSQL log excerpt from this install attempt ($log_file):"
+                printf '%s\n' "$log_excerpt" | sed 's/^/  /'
+            else
+                print_info "PostgreSQL log: $log_file"
+            fi
         fi
     fi
+}
+
+print_macos_postgres_protocol_diagnosis() {
+    local pg_isready_bin running_formula hba_path
+    local tcp_host="${PG_HOST:-127.0.0.1}"
+    local tcp_port="${PG_PORT:-5432}"
+
+    pg_isready_bin="$(find_postgres_binary pg_isready 2>/dev/null || true)"
+    if [ -z "$pg_isready_bin" ]; then
+        print_error "PostgreSQL dependency check failed: pg_isready was not found."
+        echo "  Install or repair a supported PostgreSQL 14+ client/server package,"
+        echo "  then rerun the same SeqDesk command."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#macos-prerequisites"
+        return
+    fi
+
+    if "$pg_isready_bin" -h /tmp -p "$tcp_port" >/dev/null 2>&1; then
+        print_error "PostgreSQL dependency check failed: the Unix socket works, but TCP does not."
+        echo "  Unix socket          /tmp:${tcp_port} — accepting connections"
+        echo "  TCP                  ${tcp_host}:${tcp_port} — no PostgreSQL response"
+        echo "  SeqDesk uses a TCP PostgreSQL URL, so an open port or working Unix socket"
+        echo "  alone is not sufficient."
+        echo ""
+        echo "  Check:"
+        echo "    $pg_isready_bin -h ${tcp_host} -p ${tcp_port}"
+        echo "    $pg_isready_bin -h /tmp -p ${tcp_port}"
+        echo "    lsof -nP -iTCP:${tcp_port} -sTCP:LISTEN"
+        running_formula="$(brew services list 2>/dev/null | \
+            awk '$1 ~ /^postgresql(@[0-9]+)?$/ && $2 == "started" { print $1; exit }')"
+        if [ -n "$running_formula" ]; then
+            hba_path="$(brew --prefix 2>/dev/null)/var/${running_formula}/pg_hba.conf"
+            echo "    grep -vE '^[[:space:]]*(#|$)' $(shell_quote "$hba_path")"
+        fi
+        echo ""
+        echo "  Ensure pg_hba.conf permits the selected loopback address, PostgreSQL listens on localhost,"
+        echo "  and a VPN or institutional endpoint-security tool is not filtering local"
+        echo "  PostgreSQL protocol traffic. Do not delete postmaster.pid."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/macos#postgresql-unix-socket-works-but-tcp-does-not"
+        return
+    fi
+
+    print_error "PostgreSQL dependency check failed: no healthy local server answered."
+    echo "  Neither TCP ${tcp_host}:${tcp_port} nor the macOS Unix socket /tmp:${tcp_port}"
+    echo "  accepted a PostgreSQL readiness probe."
+    echo "  Inspect the current Homebrew service and log output above. Repair the selected"
+    echo "  service as your normal macOS user; never start PostgreSQL with sudo."
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/macos#postgresql-fails-with-launchctl-bootstrap--exited-with-5"
 }
 
 install_postgres_packages_if_possible() {
@@ -1242,6 +1606,7 @@ preflight_macos_local_postgres() {
         print_error "Could not install local PostgreSQL on macOS."
         echo "  Install Homebrew from https://brew.sh, or choose 'Existing/managed'"
         echo "  in the guided installer and provide a PostgreSQL connection string."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#macos-prerequisites"
         return 1
     fi
 
@@ -1250,8 +1615,19 @@ preflight_macos_local_postgres() {
         return 0
     fi
 
-    print_error "Local PostgreSQL could not be started. The SeqDesk application release was not downloaded and no install directory was created."
-    echo "  Review the Homebrew service status and diagnostic output above."
+    print_macos_postgres_protocol_diagnosis
+    print_error "SeqDesk cannot continue until its PostgreSQL dependency is healthy over TCP."
+    echo "  The SeqDesk application release was not downloaded and the install target was not replaced."
+    echo "  Review the dependency diagnosis and Homebrew output above."
+    echo "  Safe checks:"
+    echo "    brew services list | grep postgresql"
+    echo "    pg_isready -h ${PG_HOST:-127.0.0.1} -p ${PG_PORT:-5432}"
+    echo "    pg_isready -h /tmp -p ${PG_PORT:-5432}  # macOS Unix-socket comparison"
+    echo "    lsof -nP -iTCP:${PG_PORT:-5432} -sTCP:LISTEN"
+    echo "  An open TCP port alone is not enough: the TCP pg_isready check must say"
+    echo "  'accepting connections'. If /tmp works but 127.0.0.1 does not, inspect"
+    echo "  pg_hba.conf and local VPN/endpoint-security filtering before retrying."
+    echo "  Do not remove postmaster.pid while a live postgres process owns it."
     echo "  After applying the printed repair, rerun the same SeqDesk command."
     return 1
 }
@@ -1768,6 +2144,11 @@ Options:
   --prepare-postgres           Prepare local PostgreSQL role/database, then exit
   -h, --help                   Show this help
 
+Pipeline environment:
+  SEQDESK_EXEC_CONDA_PATH      Existing Conda base to reuse, or an unused path
+                               where Miniconda may be installed. This overrides
+                               PATH and standard user-prefix discovery.
+
 Examples:
   npx -y seqdesk@latest -y
   npx -y seqdesk@latest -y --profile twincore --profile-code "$TWINCORE_SETUP_CODE"
@@ -2178,6 +2559,7 @@ fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 NODE
     then
         print_error "Failed to apply additional installer settings."
+        print_troubleshooting_url
         exit 1
     fi
 
@@ -2191,16 +2573,19 @@ resolve_install_profile() {
 
     if [ -n "$SEQDESK_CONFIG" ]; then
         print_error "Use either --profile or --config, not both."
+        print_troubleshooting_url
         exit 1
     fi
 
     if [ -z "$SEQDESK_PROFILE_CODE" ]; then
         print_error "--profile-code is required when --profile is used."
+        print_troubleshooting_url
         exit 1
     fi
 
     if ! command_exists curl; then
         print_error "curl is required to resolve hosted install profiles."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#what-the-installer-checks"
         exit 1
     fi
 
@@ -2213,6 +2598,7 @@ resolve_install_profile() {
     if ! curl -fsSL -H "Authorization: Bearer ${SEQDESK_PROFILE_CODE}" "$profile_url" -o "$profile_config"; then
         rm -f "$profile_config"
         print_error "Failed to resolve hosted install profile '$SEQDESK_PROFILE'. Check the profile id and access code."
+        print_troubleshooting_url
         exit 1
     fi
 
@@ -2229,23 +2615,27 @@ load_install_config() {
 
     if ! command_exists node; then
         print_error "Node.js is required to parse --config JSON."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-installer-stops-before-downloading-seqdesk"
         exit 1
     fi
 
     if [[ "$config_ref" =~ ^https?:// ]]; then
         if ! command_exists curl; then
             print_error "curl is required to download config URL: $config_ref"
+            print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#what-the-installer-checks"
             exit 1
         fi
         temp_json=$(mktemp)
         if ! curl -fsSL "$config_ref" -o "$temp_json"; then
             rm -f "$temp_json"
             print_error "Failed to download config: $config_ref"
+            print_troubleshooting_url
             exit 1
         fi
         config_path="$temp_json"
     elif [ ! -f "$config_ref" ]; then
         print_error "Config file not found: $config_ref"
+        print_troubleshooting_url
         exit 1
     fi
 
@@ -2642,6 +3032,7 @@ NODE
             rm -f "$temp_json"
         fi
         print_error "Failed to parse config JSON: $config_ref"
+        print_troubleshooting_url
         exit 1
     fi
 
@@ -2824,6 +3215,10 @@ if (!port && nextAuthUrl) {
 const dataPath = trimString(config?.site?.dataBasePath);
 const runDir = trimString(config?.pipelines?.execution?.runDirectory);
 const pipelineDatabaseDir = trimString(config?.pipelines?.databaseDirectory);
+const condaPath =
+  trimString(config?.pipelines?.execution?.conda?.path) ||
+  trimString(config?.pipelines?.execution?.condaPath) ||
+  trimString(config?.condaPath);
 
 let withPipelines;
 if (typeof config?.pipelines?.enabled === "boolean") {
@@ -2839,6 +3234,7 @@ if (directUrl) out.SEQDESK_EXISTING_DATABASE_DIRECT_URL = directUrl;
 if (dataPath) out.SEQDESK_EXISTING_DATA_PATH = dataPath;
 if (runDir) out.SEQDESK_EXISTING_RUN_DIR = runDir;
 if (pipelineDatabaseDir) out.SEQDESK_EXISTING_PIPELINE_DATABASE_DIR = pipelineDatabaseDir;
+if (condaPath) out.SEQDESK_EXISTING_CONDA_PATH = condaPath;
 if (withPipelines !== undefined) {
   out.SEQDESK_EXISTING_WITH_PIPELINES = withPipelines;
 }
@@ -2865,11 +3261,13 @@ NODE
     apply_config_value SEQDESK_DATA_PATH SEQDESK_EXISTING_DATA_PATH
     apply_config_value SEQDESK_RUN_DIR SEQDESK_EXISTING_RUN_DIR
     apply_config_value SEQDESK_PIPELINE_DATABASE_DIR SEQDESK_EXISTING_PIPELINE_DATABASE_DIR
+    apply_config_value SEQDESK_EXEC_CONDA_PATH SEQDESK_EXISTING_CONDA_PATH
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_EXISTING_WITH_PIPELINES
 
     unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_SECRET
     unset SEQDESK_EXISTING_DATABASE_URL SEQDESK_EXISTING_DATABASE_DIRECT_URL SEQDESK_EXISTING_DATA_PATH
-    unset SEQDESK_EXISTING_RUN_DIR SEQDESK_EXISTING_PIPELINE_DATABASE_DIR SEQDESK_EXISTING_WITH_PIPELINES
+    unset SEQDESK_EXISTING_RUN_DIR SEQDESK_EXISTING_PIPELINE_DATABASE_DIR SEQDESK_EXISTING_CONDA_PATH
+    unset SEQDESK_EXISTING_WITH_PIPELINES
 }
 
 redact_database_url() {
@@ -2971,6 +3369,7 @@ validate_or_confirm_install_target() {
 
     if is_truthy "$SEQDESK_YES"; then
         print_error "Target path $SEQDESK_DIR already exists. Choose a new --dir, use --reconfigure for an installed instance, or pass --overwrite-existing to back it up and replace it."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-target-exists-is-not-writable-or-has-too-little-space"
         exit 1
     fi
 
@@ -3017,6 +3416,7 @@ gating_preflight() {
         print_error "Cannot install to $SEQDESK_DIR: target is not writable."
         print_info "Parent directory: $parent_dir"
         print_info "Fix permissions, choose a different --dir, or run with sufficient privileges, then re-run."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-target-exists-is-not-writable-or-has-too-little-space"
         exit 1
     fi
 
@@ -3044,6 +3444,7 @@ gating_preflight() {
         print_kv "Available" "$(format_kb "$free_kb")"
         print_kv "Required" "$(format_kb "$required_kb")"
         print_info "Free up space or choose a --dir on a larger filesystem, then re-run."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-target-exists-is-not-writable-or-has-too-little-space"
         exit 1
     fi
 }
@@ -3063,12 +3464,10 @@ print_preflight_summary() {
     parent_dir="$(resolve_parent_dir "$SEQDESK_DIR")"
 
     local conda_status
-    if command_exists conda; then
-        conda_status="found"
-    elif [ "$PIPELINES_ENABLED" = "true" ]; then
-        conda_status="not found (will install Miniconda)"
-    else
+    if [ "$PIPELINES_ENABLED" != "true" ]; then
         conda_status="not needed"
+    else
+        conda_status="$(conda_preflight_status)"
     fi
 
     local nextflow_status
@@ -3183,6 +3582,7 @@ print_node_install_instructions() {
             echo "  https://nodejs.org"
             ;;
     esac
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-installer-stops-before-downloading-seqdesk"
 }
 
 map_unknown_distro() {
@@ -3236,6 +3636,7 @@ print_required_tool_install_instructions() {
             echo "  Install: curl, tar, and sha256sum (coreutils) or shasum"
             ;;
     esac
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#what-the-installer-checks"
 }
 
 is_nfs_prisma_busy_unlink_failure() {
@@ -3270,11 +3671,13 @@ install_runtime_node_modules() {
     if [ ! -x "./node_modules/.bin/next" ]; then
         print_error "next CLI is missing after dependency install (node_modules/.bin/next)."
         print_error "Run 'npm install --omit=dev' manually in $SEQDESK_DIR and retry."
+        print_troubleshooting_url
         exit 1
     fi
     if [ ! -x "./node_modules/.bin/prisma" ]; then
         print_error "Prisma CLI is missing after dependency install (node_modules/.bin/prisma)."
         print_error "Run 'npm ci --omit=dev' manually in $SEQDESK_DIR and retry."
+        print_troubleshooting_url
         exit 1
     fi
 }
@@ -3988,6 +4391,7 @@ on_error() {
     set +e
     failed_at=$(date +%s)
     elapsed=$((failed_at - INSTALL_START_TS))
+    cleanup_miniconda_temp_files
     if [ -n "${SEQDESK_PROFILE_CONFIG_FILE:-}" ] && [ -f "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
         rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
     fi
@@ -4022,6 +4426,7 @@ on_error() {
         print_info "Tip: re-run with SEQDESK_LOG=/tmp/seqdesk-install.log"
     fi
     print_info "Common fixes: check network access, Node.js prerequisites, and disk space."
+    print_troubleshooting_url
     exit $exit_code
 }
 
@@ -4040,6 +4445,7 @@ configure_install_log
 
 if [ -z "$SEQDESK_YES" ] && [ ! -t 0 ] && [ ! -t 1 ]; then
     print_error "No interactive TTY detected. Use -y (or SEQDESK_YES=1) for automated installs."
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-direct-shell-fallback-needs-explicit-input"
     exit 1
 fi
 
@@ -4112,6 +4518,7 @@ elif [[ "$OSTYPE" == "darwin"* ]]; then
     DISTRO="macos"
 else
     print_error "Unsupported operating system: $OSTYPE"
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#required"
     exit 1
 fi
 
@@ -4161,12 +4568,14 @@ fi
 NODE_VERSION=$(node -v | sed 's/v//')
 if ! node_meets_minimum_version; then
     print_error "Node.js $NODE_SUPPORT_LABEL is required (found v$NODE_VERSION)"
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-installer-stops-before-downloading-seqdesk"
     exit 1
 fi
 print_success "Node.js $NODE_VERSION"
 
 if ! command_exists npm; then
     print_error "npm is required but not installed."
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-installer-stops-before-downloading-seqdesk"
     exit 1
 fi
 NPM_VERSION=$(npm -v)
@@ -4201,6 +4610,7 @@ resolve_install_profile
 
 if has_additional_settings && [ -z "$SEQDESK_CONFIG" ]; then
     print_error "Additional installer settings require --profile or --config."
+    print_troubleshooting_url
     exit 1
 fi
 
@@ -4222,6 +4632,7 @@ SEQDESK_DIR="$(resolve_absolute_dir "$SEQDESK_DIR")"
 
 if is_truthy "$SEQDESK_RECONFIGURE" && [ ! -d "$SEQDESK_DIR" ]; then
     print_error "Reconfigure mode requires an existing installation directory: $SEQDESK_DIR"
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-target-exists-is-not-writable-or-has-too-little-space"
     exit 1
 fi
 
@@ -4242,23 +4653,7 @@ fi
 # questions, installing Conda, or downloading the release package.
 validate_or_confirm_install_target
 
-if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
-    SEQDESK_EXEC_CONDA_PATH="${SEQDESK_EXEC_CONDA_PATH/#\~/$HOME}"
-fi
-
-CONDA_BIN_FROM_PATH=""
-if [ -n "$SEQDESK_EXEC_CONDA_PATH" ]; then
-    for candidate in "$SEQDESK_EXEC_CONDA_PATH/condabin/conda" "$SEQDESK_EXEC_CONDA_PATH/bin/conda"; do
-        if [ -x "$candidate" ]; then
-            CONDA_BIN_FROM_PATH="$candidate"
-            break
-        fi
-    done
-    if [ -n "$CONDA_BIN_FROM_PATH" ]; then
-        export PATH="$SEQDESK_EXEC_CONDA_PATH/bin:$PATH"
-        print_info "Using configured Conda at $CONDA_BIN_FROM_PATH"
-    fi
-fi
+resolve_conda_runtime
 
 # Guided setup wizard (opt-in via --interactive). Runs after dependency checks
 # so Node is available for the database reachability test, and before the
@@ -4289,7 +4684,7 @@ elif is_truthy "$SEQDESK_WITH_CONDA"; then
 fi
 
 HAS_CONDA="false"
-if [ -n "$CONDA_BIN_FROM_PATH" ] || command_exists conda; then
+if [ "$CONDA_RESOLUTION" = "found" ]; then
     HAS_CONDA="true"
 fi
 
@@ -4303,11 +4698,20 @@ fi
 
 if [ "$PIPELINES_ENABLED" = "true" ]; then
     print_info "Pipeline support enabled"
+    print_conda_resolution_notice
 else
     print_info "Pipeline support disabled"
 fi
 
 print_preflight_summary
+
+if [ "$PIPELINES_ENABLED" = "true" ] && {
+    [ "$CONDA_RESOLUTION" = "invalid-configured" ] ||
+    [ "$CONDA_RESOLUTION" = "invalid-defaults" ];
+}; then
+    print_unusable_conda_prefix_error
+    exit 1
+fi
 
 if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     print_header "Install Miniconda"
@@ -4315,24 +4719,25 @@ if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     if ! CONDA_INSTALLER=$(select_miniconda_installer "$OS" "$ARCH"); then
         print_error "No supported Miniconda installer is available for $OS/$ARCH."
         print_info "Install Conda manually or re-run without pipeline support."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#optional-pipeline-prerequisites"
         exit 1
     fi
 
-    run_with_spinner "Download Miniconda" curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" -o /tmp/miniconda.sh
+    MINICONDA_TEMP_DIR="${TMPDIR:-/tmp}"
+    MINICONDA_TEMP_DIR="${MINICONDA_TEMP_DIR%/}"
+    MINICONDA_INSTALLER_FILE="$(mktemp "$MINICONDA_TEMP_DIR/seqdesk-miniconda.XXXXXX")"
+    MINICONDA_OUTPUT_FILE="$(mktemp "$MINICONDA_TEMP_DIR/seqdesk-miniconda-output.XXXXXX")"
+    run_with_spinner "Download Miniconda" \
+        curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" \
+        -o "$MINICONDA_INSTALLER_FILE"
 
-    CONDA_INSTALL_BASE="${SEQDESK_EXEC_CONDA_PATH:-$HOME/miniconda3}"
-    run_with_spinner "Install Miniconda" bash /tmp/miniconda.sh -b -p "$CONDA_INSTALL_BASE"
-    rm /tmp/miniconda.sh
+    install_miniconda_with_diagnostics "$MINICONDA_INSTALLER_FILE" "$CONDA_INSTALL_BASE"
 
     CONDA_INIT_BIN=""
-    for candidate in "$CONDA_INSTALL_BASE/condabin/conda" "$CONDA_INSTALL_BASE/bin/conda"; do
-        if [ -x "$candidate" ]; then
-            CONDA_INIT_BIN="$candidate"
-            break
-        fi
-    done
+    CONDA_INIT_BIN="$(find_usable_conda_in_prefix "$CONDA_INSTALL_BASE" || true)"
     if [ -z "$CONDA_INIT_BIN" ]; then
         print_error "Miniconda install completed but conda binary was not found under $CONDA_INSTALL_BASE."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#optional-pipeline-prerequisites"
         exit 1
     fi
 
@@ -4358,6 +4763,10 @@ if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     done
 
     export PATH="$CONDA_INSTALL_BASE/bin:$PATH"
+    SEQDESK_EXEC_CONDA_PATH="$CONDA_INSTALL_BASE"
+    CONDA_BIN_FROM_PATH="$CONDA_INIT_BIN"
+    CONDA_DISCOVERY_SOURCE="installed"
+    CONDA_RESOLUTION="found"
     HAS_CONDA="true"
 
     print_success "Miniconda installed to $CONDA_INSTALL_BASE"
@@ -4393,22 +4802,26 @@ else
 
     if [ -z "$VERSION_INFO" ]; then
         print_error "Could not connect to SeqDesk server"
+        print_troubleshooting_url
         exit 1
     fi
 
     if ! VERSION_FIELDS=$(parse_release_version_info "$VERSION_INFO"); then
         print_error "Could not parse version info"
+        print_troubleshooting_url
         exit 1
     fi
     IFS=$'\x1f' read -r LATEST_VERSION DOWNLOAD_URL CHECKSUM FILE_SIZE VERSION_FIELDS_END <<< "$VERSION_FIELDS"
 
     if [ "${VERSION_FIELDS_END:-}" != "__SEQDESK_VERSION_INFO_END__" ]; then
         print_error "Could not parse version info"
+        print_troubleshooting_url
         exit 1
     fi
 
     if [ -z "$LATEST_VERSION" ] || [ -z "$DOWNLOAD_URL" ]; then
         print_error "Could not fetch version info"
+        print_troubleshooting_url
         exit 1
     fi
 
@@ -4445,6 +4858,7 @@ else
             print_error "Expected: $CHECKSUM"
             print_error "Got:      $ACTUAL_CHECKSUM"
             rm -f "$TEMP_FILE"
+            print_troubleshooting_url
             exit 1
         fi
     fi
@@ -4457,6 +4871,7 @@ APP_DIR=""
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     if [ ! -d "$SEQDESK_DIR" ]; then
         print_error "Reconfigure mode requires an existing installation directory: $SEQDESK_DIR"
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-target-exists-is-not-writable-or-has-too-little-space"
         exit 1
     fi
     print_success "Using existing installation: $SEQDESK_DIR"
@@ -4470,6 +4885,7 @@ else
         if ! is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
             print_error "Target path changed after preflight and now exists: $SEQDESK_DIR"
             rm -f "$TEMP_FILE"
+            print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-target-exists-is-not-writable-or-has-too-little-space"
             exit 1
         fi
         # Before moving the existing install aside, fail fast if a configured

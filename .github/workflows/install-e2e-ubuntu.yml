@@ -25,7 +25,9 @@ jobs:
           node-version: "24"
 
       - name: Run interactive wizard test
-        run: bash scripts/ci/test-interactive-wizard.sh
+        run: |
+          bash scripts/ci/test-interactive-wizard.sh
+          bash scripts/ci/test-conda-discovery.sh
 
   build-public-release-artifact:
     runs-on: ubuntu-latest

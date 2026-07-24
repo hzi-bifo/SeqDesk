@@ -151,10 +151,39 @@ assert_contains "macOS recovery explicitly rejects sudo" "do not use sudo" "$OUT
 assert_not_contains "macOS recovery does not invoke launcher with sudo" "sudo env SEQDESK_DATABASE_URL" "$OUT"
 
 echo ""
-echo "== Case 5: stale root service points to the healthy PostgreSQL 14 service =="
+echo "== Case 5: an open port does not override a failed PostgreSQL protocol check =="
+FAKE_PG_ISREADY="$TEST_TMP_DIR/pg_isready"
+cat > "$FAKE_PG_ISREADY" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-h" ] && [ "${2:-}" = "/tmp" ]; then
+    exit 0
+fi
+exit 2
+EOF
+chmod +x "$FAKE_PG_ISREADY"
+find_postgres_binary() { printf '%s' "$FAKE_PG_ISREADY"; }
+TEST_DB_REACHABLE=1
+if postgres_server_ready; then
+    ready_status=0
+else
+    ready_status=$?
+fi
+assert_eq "failed pg_isready remains a preflight failure" "2" "$ready_status"
+print_macos_postgres_protocol_diagnosis >"$OUT" 2>&1
+assert_contains "socket-only health is classified explicitly" \
+    "the Unix socket works, but TCP does not" "$OUT"
+assert_contains "socket-only health explains why SeqDesk stops" \
+    "SeqDesk uses a TCP PostgreSQL URL" "$OUT"
+assert_contains "socket-only health points to endpoint filtering" \
+    "endpoint-security tool" "$OUT"
+assert_contains "socket-only health links to exact troubleshooting instructions" \
+    "https://seqdesk.org/docs/installation/macos#postgresql-unix-socket-works-but-tcp-does-not" "$OUT"
+
+echo ""
+echo "== Case 6: stale root service points to the healthy PostgreSQL 14 service =="
 brew() {
     if [ "${1:-}" = "--prefix" ]; then
-        printf '/tmp/seqdesk-test-brew'
+        printf '%s' "$TEST_TMP_DIR/brew"
         return 0
     fi
     if [ "${1:-}" = "services" ] && [ "${2:-}" = "list" ]; then
@@ -186,7 +215,19 @@ assert_contains "healthy service is selected" "Starting PostgreSQL with Homebrew
 assert_not_contains "root service is not started" "Starting PostgreSQL with Homebrew (postgresql@16)" "$OUT"
 
 echo ""
-echo "== Case 6: macOS preflight reuses a healthy local server before download =="
+echo "== Case 7: historical PostgreSQL errors are not presented as current =="
+mkdir -p "$TEST_TMP_DIR/brew/var/log"
+printf '2000-01-01 FATAL: lock file "postmaster.pid" already exists\n' \
+    > "$TEST_TMP_DIR/brew/var/log/postgresql@14.log"
+touch -t 200001010000 "$TEST_TMP_DIR/brew/var/log/postgresql@14.log"
+print_macos_brew_postgres_failure postgresql@14 >"$OUT" 2>&1
+assert_contains "historical log errors are identified and omitted" \
+    "historical errors omitted" "$OUT"
+assert_not_contains "historical lock error is not presented as current" \
+    "lock file \"postmaster.pid\" already exists" "$OUT"
+
+echo ""
+echo "== Case 8: macOS preflight reuses a healthy local server before download =="
 SEQDESK_DATABASE_URL=""
 sudo_postgres_ready() { return 1; }
 postgres_server_ready() { return 0; }
@@ -194,7 +235,7 @@ preflight_macos_local_postgres >"$OUT" 2>&1
 assert_contains "healthy server is reused" "PostgreSQL is already available" "$OUT"
 
 echo ""
-echo "== Case 7: failed macOS preflight clearly stops before installation =="
+echo "== Case 9: failed macOS preflight clearly stops before installation =="
 sudo_postgres_ready() { return 1; }
 postgres_server_ready() { return 1; }
 install_postgres_packages_if_possible() { return 0; }
@@ -205,17 +246,22 @@ else
     preflight_status=$?
 fi
 assert_eq "failed preflight returns non-zero" "1" "$preflight_status"
-assert_contains "preflight failure says nothing was installed" "no install directory was created" "$OUT"
+assert_contains "preflight failure says the target was not replaced" \
+    "install target was not replaced" "$OUT"
 assert_contains "preflight failure gives rerun guidance" "rerun the same SeqDesk command" "$OUT"
+assert_contains "preflight failure warns against deleting a live PID file" \
+    "Do not remove postmaster.pid while a live postgres process owns it" "$OUT"
+assert_contains "preflight requires PostgreSQL protocol health, not only a listener" \
+    "An open TCP port alone is not enough" "$OUT"
 
 echo ""
-echo "== Case 8: managed PostgreSQL skips local Homebrew provisioning =="
+echo "== Case 10: managed PostgreSQL skips local Homebrew provisioning =="
 SEQDESK_DATABASE_URL="postgresql://seqdesk:secret@db.example.org:5432/seqdesk"
 preflight_macos_local_postgres >"$OUT" 2>&1
 assert_eq "managed database preflight is silent" "" "$(cat "$OUT")"
 
 echo ""
-echo "== Case 9: clean macOS preflight provisions PostgreSQL automatically =="
+echo "== Case 11: clean macOS preflight provisions PostgreSQL automatically =="
 SEQDESK_DATABASE_URL=""
 TEST_SERVER_READY_CALLS=0
 postgres_server_ready() {
@@ -236,7 +282,7 @@ assert_contains "clean preflight starts PostgreSQL" "mock start postgresql@16" "
 assert_contains "clean preflight reaches ready state" "PostgreSQL is ready" "$OUT"
 
 echo ""
-echo "== Case 10: local PostgreSQL recovery never prints database credentials =="
+echo "== Case 12: local PostgreSQL recovery never prints database credentials =="
 OS="linux"
 DISTRO="debian"
 SENTINEL_DB_PASSWORD="SEQDESK_SENTINEL_DB_PASSWORD_DO_NOT_PRINT"
@@ -262,6 +308,17 @@ assert_contains "fresh-host recovery preserves private-shell guidance" \
     "SEQDESK_DATABASE_URL set in your private shell" "$OUT"
 assert_not_contains "fresh-host recovery hides database password" \
     "$SENTINEL_DB_PASSWORD" "$OUT"
+
+echo ""
+echo "== Case 13: installer failures expose stable troubleshooting URLs =="
+print_troubleshooting_url >"$OUT" 2>&1
+assert_contains "generic failures link to the common-problems index" \
+    "https://seqdesk.org/docs/installation/common-problems" "$OUT"
+print_troubleshooting_url \
+    "https://seqdesk.org/docs/installation/prerequisites#what-the-installer-checks" \
+    >"$OUT" 2>&1
+assert_contains "classified failures can link to exact recovery guidance" \
+    "https://seqdesk.org/docs/installation/prerequisites#what-the-installer-checks" "$OUT"
 
 echo ""
 if [ "$FAILURES" -ne 0 ]; then

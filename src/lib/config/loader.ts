@@ -3,7 +3,7 @@
  *
  * Loads and merges configuration from multiple sources:
  * 1. Environment variables (SEQDESK_*)
- * 2. Config file (seqdesk.config.json)
+ * 2. Config file (settings.json, with seqdesk.config.json kept for legacy/development use)
  * 3. Database settings
  *
  * Priority: ENV > File > Database > Defaults
@@ -49,10 +49,10 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
       },
       slurm: {
         enabled: false,
-        queue: 'default',
+        queue: 'cpu',
         cores: 4,
-        memory: '16GB',
-        timeLimit: 24,
+        memory: '64GB',
+        timeLimit: 12,
       },
     },
     mag: {

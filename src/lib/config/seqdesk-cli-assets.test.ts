@@ -67,6 +67,17 @@ describe("seqdesk assets apply CLI", () => {
     expect(stdout.trim()).toBe(packageJson.version);
   });
 
+  it("shows the installed-service port in doctor help", async () => {
+    const { stdout } = await execFileAsync(process.execPath, [
+      cliPath,
+      "doctor",
+      "--help",
+    ]);
+
+    expect(stdout).toContain("http://127.0.0.1:8000");
+    expect(stdout).not.toContain("http://127.0.0.1:3000");
+  });
+
   it("prints assets apply help", async () => {
     const { stdout } = await execFileAsync(process.execPath, [
       cliPath,

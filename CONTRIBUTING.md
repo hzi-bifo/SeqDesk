@@ -5,7 +5,7 @@ documentation lives at [seqdesk.org/docs](https://seqdesk.org/docs).
 
 ## Prerequisites
 
-- Node.js 22.13+ on the 22.x line or Node.js 24.x, plus local PostgreSQL 14+
+- Node.js 22.13.0+ on the 22.x line or Node.js 24.x, plus local PostgreSQL 14+
   (SeqDesk is PostgreSQL-only).
 - For pipeline work: Conda and/or Nextflow; SLURM for cluster-mode tests.
 
@@ -38,8 +38,8 @@ transaction-mode pooler can't hold (it fails with `P1002`), so migrations always
 resolved `DIRECT_URL` automatically, so a deploy still works if only the pooled URL is configured.
 
 For `npm run dev`, keep `runtime.nextAuthUrl` aligned with the URL you open in the browser
-(typically `http://localhost:3000`). The installer-oriented config example uses port `8000`, which
-is for installed service mode rather than local Next.js development.
+(typically `http://localhost:3000`). The repository example is deliberately development-oriented;
+fresh installed releases write `settings.json` and default to port `8000`.
 
 Then initialize the database and start the dev server:
 

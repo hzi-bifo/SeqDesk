@@ -53,12 +53,14 @@ export SEQDESK_DIRECT_URL="$SEQDESK_DATABASE_URL"
 ## 2. Install Without Hosted Profile
 
 ```bash
-curl -fsSL https://seqdesk.org/install.sh | \
-  bash -s -- -y \
+curl -fsSLo /tmp/seqdesk-install.sh https://seqdesk.org/install.sh
+bash /tmp/seqdesk-install.sh -y \
     --dir "$SEQDESK_INSTALL_DIR" \
     --port 8000 \
     --database-url "$SEQDESK_DATABASE_URL" \
-    --database-direct-url "$SEQDESK_DIRECT_URL"
+    --database-direct-url "$SEQDESK_DIRECT_URL" \
+    --without-pipelines \
+    --no-pm2
 ```
 
 Equivalent npm launcher path:
@@ -69,8 +71,14 @@ seqdesk -y \
   --dir "$SEQDESK_INSTALL_DIR" \
   --port 8000 \
   --database-url "$SEQDESK_DATABASE_URL" \
-  --database-direct-url "$SEQDESK_DIRECT_URL"
+  --database-direct-url "$SEQDESK_DIRECT_URL" \
+  --without-pipelines \
+  --no-pm2
 ```
+
+This checklist starts the app manually in step 4, so it opts out of PM2 and the
+optional pipeline toolchain explicitly. Omit those flags when testing those
+features.
 
 ## 3. Install With The Hosted CI Runner Profile
 
@@ -107,10 +115,13 @@ curl -fsS http://127.0.0.1:8000/api/auth/providers
 curl -fsS http://127.0.0.1:8000/api/setup/status
 ```
 
-Default seeded users:
+Because these commands are unattended and do not provide bootstrap users, they
+seed the fallback development accounts:
 
 - `admin@example.com` / `admin`
 - `user@example.com` / `user`
+
+Change or remove both before making the instance reachable by other users.
 
 ## 5. Run Doctor
 
@@ -134,7 +145,7 @@ seqdesk doctor --dir "$SEQDESK_INSTALL_DIR" --url http://127.0.0.1:8000 --json
 
 Expected result:
 
-- `package.json`, `seqdesk.config.json`, `start.sh`, `node_modules`, and
+- `package.json`, `settings.json`, `start.sh`, `node_modules`, and
   `.next/static` are present.
 - `runtime.databaseUrl` and `runtime.directUrl` are PostgreSQL URLs.
 - PostgreSQL TCP is reachable.
@@ -147,7 +158,7 @@ is passed. Failures should be fixed before using the install for real data.
 ## 6. Hosted Profile Checks
 
 For a `ci-runner` install, inspect
-`$SEQDESK_CI_INSTALL_DIR/seqdesk.config.json`
+`$SEQDESK_CI_INSTALL_DIR/settings.json`
 and the admin UI after startup.
 
 Expected:

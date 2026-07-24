@@ -16,6 +16,13 @@ run, and manual run executes both of these clean-install boundaries:
 | Ubuntu 24.04 | x64 | 24 | 16 | Recommended current LTS environment |
 | Ubuntu 22.04 | x64 | 22.13.0 | 14 | Exact minimum supported dependency boundary |
 
+These jobs use a PostgreSQL service prepared by the workflow, pre-create the
+test role and database, and pass explicit database URLs to the installer. They
+prove that SeqDesk installs, migrates, and runs against those PostgreSQL
+versions. They do **not** prove that the installer or a guide can install an OS
+package, enable a database service, or satisfy every distribution-specific
+authentication policy on a bare host.
+
 A stable aggregate gate fails if the candidate build or either installation is
 failed or skipped. The release workflow must pass this gate before it can
 publish the exact checksummed archive exercised by the matrix; it does not
@@ -40,8 +47,9 @@ Together with the required checks, this exercises both supported Node LTS lines
 (22.13.0+ on 22.x and 24.x) and PostgreSQL majors 14 through 18. Odd-numbered
 and future Node majors are not claimed as supported until they are added to this
 matrix. Docker-based distro jobs test the distro
-userland on a GitHub-hosted Ubuntu kernel; they are not claims about a different
-kernel.
+userland inside containers on the GitHub-hosted Ubuntu kernel. They are not
+bare-metal or VM boot tests, do not exercise `systemd`, and are not claims about
+a Debian or Rocky Linux kernel.
 
 ## What a passing application job proves
 
@@ -72,13 +80,17 @@ installation, boot, or authentication failure.
 - Linux and macOS application installs are tested. Native Windows is not
   supported; a Windows contract test verifies that the launcher stops with WSL
   guidance. This is not a claim that WSL itself was tested.
-- Bioinformatics pipeline execution is claimed only by the Linux pipeline job.
-  The macOS jobs intentionally test the application installation only.
-- Real SLURM execution remains a separate private, self-hosted integration test.
+- Public packaged-pipeline execution evidence is limited to the
+  `fastq-checksum` workflow on tiny synthetic reads in the Linux pipeline job.
+  It does not validate production datasets or every bundled workflow. The macOS
+  jobs intentionally test the application installation only.
+- Real SLURM execution is covered by a separate private, self-hosted integration
+  test; it is not part of the public compatibility matrix.
 - The scheduled
   [`Install Real-Network Smoke`](https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-real-network-smoke.yml)
-  separately checks the published npm package and public installer. It is
-  network-dependent and is not a required pull-request check.
+  separately checks the already-published npm package and public installer over
+  the real network. It is network-dependent, is not candidate-build evidence,
+  and is not a required pull-request or release-gate check.
 - The matrix is compatibility evidence, not a performance benchmark, security
   audit, or validation of every storage, scheduler, and institutional network
   configuration.

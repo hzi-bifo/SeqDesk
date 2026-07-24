@@ -56,7 +56,7 @@ Options:
   --run-dir PATH         Pipeline run directory (default: ./pipeline_runs)
   --site-name NAME       Facility name
   --contact-email EMAIL  Facility contact email
-  --mode MODE            Execution mode: local|slurm|kubernetes
+  --mode MODE            Execution mode: local|slurm
   --pipelines-enabled    Set pipelines.enabled=true
   --pipelines-disabled   Set pipelines.enabled=false
   --create-dirs          Create data/run directories (if paths provided)
@@ -228,10 +228,10 @@ fi
 
 if [[ -n "${EXECUTION_MODE}" ]]; then
   case "${EXECUTION_MODE}" in
-    local|slurm|kubernetes)
+    local|slurm)
       ;;
     *)
-      log "ERROR: --mode must be local, slurm, or kubernetes"
+      log "ERROR: --mode must be local or slurm"
       exit 1
       ;;
   esac
@@ -395,7 +395,6 @@ if (process.env.SEQDESK_EXEC_MODE) config.pipelines.execution.mode = process.env
 if (process.env.SEQDESK_RUN_DIR) config.pipelines.execution.runDirectory = process.env.SEQDESK_RUN_DIR;
 
 config.pipelines.execution.conda = config.pipelines.execution.conda || {};
-config.pipelines.execution.conda.enabled = true;
 if (process.env.SEQDESK_CONDA_BASE) config.pipelines.execution.conda.path = process.env.SEQDESK_CONDA_BASE;
 if (process.env.SEQDESK_CONDA_ENV_NAME) config.pipelines.execution.conda.environment = process.env.SEQDESK_CONDA_ENV_NAME;
 

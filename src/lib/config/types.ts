@@ -3,7 +3,7 @@
  *
  * Configuration can come from three sources (in order of priority):
  * 1. Environment variables (highest priority)
- * 2. Config file (seqdesk.config.json)
+ * 2. Config file (settings.json; legacy/development seqdesk.config.json is also read)
  * 3. Database settings (lowest priority, but UI-editable)
  */
 
@@ -47,7 +47,7 @@ export interface PipelineExecutionOverrideConfig {
 }
 
 export interface PipelineExecutionConfig {
-  /** Execution mode: local, slurm, or kubernetes */
+  /** local and slurm are supported; kubernetes remains accepted for legacy config compatibility only */
   mode?: 'local' | 'slurm' | 'kubernetes';
   /** Directory for pipeline run outputs */
   runDirectory?: string;

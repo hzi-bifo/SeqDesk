@@ -19,6 +19,16 @@ requirements described later.
 > SSH ports. Do not use real credentials or sequencing data in this HTTP-only
 > setup. A permanent installation should use private/VPN access and HTTPS.
 
+> **Test coverage:** Public CI tests packaged application installs on Ubuntu
+> 24.04/x64 with Node.js 24 and PostgreSQL 16, and on Ubuntu 22.04/x64 with
+> Node.js 22.13.0 and PostgreSQL 14. Those jobs use prepared PostgreSQL services
+> and explicit database URLs. An extended Linux job runs only the packaged
+> `fastq-checksum` workflow on tiny synthetic reads. The exact EC2 console,
+> `apt`/`systemd`, PM2 reboot, and one-node Slurm procedure below is a documented
+> operator recipe, not a public CI environment. Real Slurm execution is tested
+> separately in private self-hosted CI. See
+> [Installation compatibility and reproducibility](INSTALLATION_COMPATIBILITY.md).
+
 AWS changes its console occasionally. These labels match the console as checked
 in July 2026.
 
@@ -149,8 +159,8 @@ psql --version
 seqdesk --help
 ```
 
-Expect Node.js `v22...`, a PostgreSQL version, and SeqDesk help. Stop if a
-command reports `command not found`.
+Expect Node.js `v22.13.0` or newer on the 22.x line, a PostgreSQL version, and
+SeqDesk help. Stop if a command reports `command not found`.
 
 ## 4. Install SeqDesk
 
@@ -459,6 +469,61 @@ free -h
 ```
 
 Remove credentials and tokens before sharing logs.
+
+### PostgreSQL setup or sudo fails
+
+Check the EC2 login identity, passwordless sudo, and local service before
+re-running the installer:
+
+```bash
+whoami
+sudo -n true
+sudo systemctl status postgresql --no-pager
+sudo pg_isready
+sudo -u postgres psql -c 'select version();'
+```
+
+`whoami` should print `ubuntu`, `sudo -n true` should return without prompting,
+and `pg_isready` should report that PostgreSQL accepts connections. If the
+service is inactive, run:
+
+```bash
+sudo systemctl enable --now postgresql
+```
+
+Do not run the complete SeqDesk installer as `root`; files and PM2 processes
+should belong to `ubuntu`. The installer needs sudo when it prepares the local
+PostgreSQL role and database. If your organization removes passwordless sudo,
+have an administrator prepare PostgreSQL first or use a managed PostgreSQL
+database and provide its database URLs through the guided installer.
+
+### Conda or pipeline setup fails
+
+Pipeline setup needs more disk, memory, and network access than the UI-only
+install. Check the failed install log plus the host and environment:
+
+```bash
+df -h
+free -h
+/home/ubuntu/miniconda3/bin/conda env list
+/home/ubuntu/miniconda3/bin/conda run -n seqdesk-pipelines java -version
+/home/ubuntu/miniconda3/bin/conda run -n seqdesk-pipelines nextflow -version
+```
+
+Use at least the `t3.large` and 100 GiB configuration from this guide. If Conda
+package downloads timed out, confirm the instance has outbound HTTPS access and
+retry the idempotent pipeline configuration:
+
+```bash
+seqdesk -y \
+  --reconfigure \
+  --dir /home/ubuntu/seqdesk \
+  --with-pipelines \
+  --run-doctor
+```
+
+If the application is all you need, reconfigure with `--without-pipelines` and
+leave the Slurm sections disabled.
 
 ### Slurm fails or jobs stay pending
 
