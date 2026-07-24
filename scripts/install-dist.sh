@@ -90,6 +90,13 @@ SEQDESK_WITH_CONDA="${SEQDESK_WITH_CONDA:-}"
 SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
 SEQDESK_YES="${SEQDESK_YES:-}"
 SEQDESK_INTERACTIVE="${SEQDESK_INTERACTIVE:-}"
+# Promote diagnostic detail() narration from the install log to the terminal.
+SEQDESK_VERBOSE="${SEQDESK_VERBOSE:-}"
+# Whether the installer generated the bootstrap passwords (and therefore has to
+# show them once at the end) rather than the operator supplying them.
+INTERACTIVE_RESULT_GENERATED="false"
+SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="false"
+SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="false"
 INTERACTIVE_RESULT=""
 SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
 SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
@@ -99,6 +106,13 @@ SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
 SEQDESK_NEXTAUTH_SECRET="${SEQDESK_NEXTAUTH_SECRET:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
 SEQDESK_DATABASE_DIRECT_URL="${SEQDESK_DATABASE_DIRECT_URL:-}"
+# Internal, non-secret state selected only when a fresh macOS install can reuse
+# an already-working local PostgreSQL Unix socket. Explicit database URLs are
+# never rewritten to use this value.
+MACOS_POSTGRES_SOCKET_DIR=""
+# Set when the installer created (or adopted) its own PostgreSQL cluster under
+# SEQDESK_PG_HOME instead of reusing a server the machine already runs.
+SEQDESK_PRIVATE_POSTGRES="false"
 SEQDESK_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}"
 SEQDESK_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}"
 SEQDESK_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}"
@@ -186,8 +200,18 @@ print_step() {
     printf '%b%d/%d %s%b\n' "$CYAN" "$CURRENT_STEP" "$TOTAL_STEPS" "$1" "$NC"
 }
 
+# Success used to be an alias of print_info, so a check that passed and a note
+# about what happens next rendered identically and the output could not be
+# skimmed for "did that work". Marked in the same ASCII idiom as warning/error.
 print_success() {
-    print_log_line "$1"
+    local message="$1"
+
+    # Wizard sub-steps pass pre-indented text; keep their nesting intact.
+    if [[ "$message" == " "* ]]; then
+        printf '  %s\n' "$message"
+        return 0
+    fi
+    printf '  %bok%b %s\n' "$GREEN" "$NC" "$message"
 }
 
 print_warning() {
@@ -212,6 +236,18 @@ print_kv() {
     printf "  %-20s %s\n" "$1" "$2"
 }
 
+# Credentials go to the terminal only. FD 3 is the original stdout, duplicated
+# before output is teed into the install log, so a generated password is not
+# written to a file that outlives the session. Falls back to normal output when
+# there is no log (and therefore no FD 3), where losing it entirely is worse.
+print_secret_kv() {
+    if [ "$SEQDESK_LOG_ENABLED" = "true" ]; then
+        printf "  %-20s %s\n" "$1" "$2" >&3
+        return 0
+    fi
+    printf "  %-20s %s\n" "$1" "$2"
+}
+
 print_log_line() {
     local message="$1"
     if [[ "$message" == *": "* ]]; then
@@ -219,6 +255,39 @@ print_log_line() {
     else
         printf '  %s\n' "$message"
     fi
+}
+
+# Diagnostic narration: which binary was chosen, which probe answered, why a
+# candidate was rejected. It goes to the install log only, so the terminal can
+# stay short while a failure still has a full trail to read. --verbose promotes
+# it to the terminal.
+detail() {
+    local message="$*"
+
+    if is_truthy "${SEQDESK_VERBOSE:-}"; then
+        printf '  %s\n' "$message"
+        return 0
+    fi
+    if [ "$SEQDESK_LOG_ENABLED" = "true" ]; then
+        printf '  %s\n' "$message" >> "$SEQDESK_LOG" 2>/dev/null || true
+    fi
+}
+
+# On failure the detail the terminal skipped is exactly what is needed, so
+# replay the tail of the log rather than making the user go find it.
+replay_recent_detail() {
+    local lines="${1:-20}"
+    local excerpt
+
+    is_truthy "${SEQDESK_VERBOSE:-}" && return 0
+    [ "$SEQDESK_LOG_ENABLED" = "true" ] || return 0
+
+    excerpt="$(tail -n "$lines" "$SEQDESK_LOG" 2>/dev/null || true)"
+    [ -n "$excerpt" ] || return 0
+
+    echo ""
+    echo "  Recent detail (full log: $SEQDESK_LOG):"
+    printf '%s\n' "$excerpt" | sed 's/^/  /'
 }
 
 format_elapsed() {
@@ -769,7 +838,10 @@ run_privileged() {
 }
 
 run_as_postgres() {
-    if [ "${OS:-}" = "macos" ]; then
+    # A SeqDesk-owned cluster was created by initdb as the invoking user, who is
+    # therefore its superuser. Escalating to the system `postgres` account would
+    # be both unnecessary and wrong — that account has no role in this cluster.
+    if [ "${OS:-}" = "macos" ] || [ "${SEQDESK_PRIVATE_POSTGRES:-false}" = "true" ]; then
         "$@"
         return $?
     fi
@@ -825,8 +897,33 @@ generate_postgres_password() {
     date +%s | shasum | awk '{print $1}' | cut -c1-32
 }
 
+# Percent-encode a value for use in a URL query parameter. Iterated over bytes
+# (LC_ALL=C) so a home directory containing spaces or non-ASCII characters
+# survives the round trip into DATABASE_URL.
+url_encode_component() {
+    local raw="$1"
+    local out="" index char
+    local LC_ALL=C
+
+    for (( index = 0; index < ${#raw}; index++ )); do
+        char="${raw:index:1}"
+        case "$char" in
+            [a-zA-Z0-9.~_-]) out+="$char" ;;
+            *) out+="$(printf '%%%02X' "'$char")" ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+
 default_postgres_url() {
     local password="$1"
+    if [ -n "${MACOS_POSTGRES_SOCKET_DIR:-}" ]; then
+        printf 'postgresql://seqdesk:%s@localhost:%s/seqdesk?schema=public&host=%s' \
+            "$password" \
+            "${PG_PORT:-5432}" \
+            "$(url_encode_component "$MACOS_POSTGRES_SOCKET_DIR")"
+        return 0
+    fi
     printf 'postgresql://seqdesk:%s@127.0.0.1:5432/seqdesk?schema=public' "$password"
 }
 
@@ -835,11 +932,22 @@ is_postgres_url() {
 }
 
 configure_postgres_urls() {
+    if [ -z "$SEQDESK_DATABASE_URL" ] && [ -n "$SEQDESK_DATABASE_DIRECT_URL" ]; then
+        print_error "DIRECT_URL was supplied without DATABASE_URL."
+        echo "  Supply both URLs, or omit DIRECT_URL so the generated local DATABASE_URL is used for migrations too."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#postgresql-options"
+        exit 1
+    fi
+
     if [ -z "$SEQDESK_DATABASE_URL" ]; then
         local generated_password
         generated_password="$(generate_postgres_password)"
         SEQDESK_DATABASE_URL="$(default_postgres_url "$generated_password")"
-        print_info "No DATABASE_URL supplied. Defaulting to local PostgreSQL on 127.0.0.1:5432."
+        if [ -n "${MACOS_POSTGRES_SOCKET_DIR:-}" ]; then
+            print_info "No DATABASE_URL supplied. Using local PostgreSQL through Unix socket ${MACOS_POSTGRES_SOCKET_DIR}:5432."
+        else
+            print_info "No DATABASE_URL supplied. Defaulting to local PostgreSQL on 127.0.0.1:5432."
+        fi
         print_info "Generated local PostgreSQL credentials; the password will be stored only in the protected runtime config."
     fi
 
@@ -978,6 +1086,11 @@ probe_postgres_database() {
     # Must be called from the install directory so node can resolve "pg".
     if [ -z "$SEQDESK_DATABASE_URL" ]; then
         return 0
+    fi
+    if [ -n "${MACOS_POSTGRES_SOCKET_DIR:-}" ] && \
+        ! postgres_socket_owned_by_current_user "$MACOS_POSTGRES_SOCKET_DIR" "${PG_PORT:-5432}"; then
+        print_untrusted_macos_postgres_socket "$MACOS_POSTGRES_SOCKET_DIR" "${PG_PORT:-5432}"
+        return 1
     fi
 
     local probe_output probe_status
@@ -1159,8 +1272,9 @@ try {
   const url = new URL(raw);
   const protocol = url.protocol.replace(/:$/, "");
   if (protocol !== "postgres" && protocol !== "postgresql") process.exit(2);
-  const host = url.hostname || "127.0.0.1";
-  if (!["127.0.0.1", "localhost", "::1"].includes(host)) process.exit(2);
+  const socketHost = url.searchParams.get("host") || "";
+  const host = socketHost.startsWith("/") ? socketHost : (url.hostname || "127.0.0.1");
+  if (!host.startsWith("/") && !["127.0.0.1", "localhost", "::1"].includes(host)) process.exit(2);
   const database = decodeURIComponent(url.pathname.replace(/^\/+/, "")) || "seqdesk";
   const user = decodeURIComponent(url.username || "seqdesk");
   const password = decodeURIComponent(url.password || "");
@@ -1199,7 +1313,8 @@ try {
   const url = new URL(raw);
   const protocol = url.protocol.replace(/:$/, "");
   if (protocol !== "postgres" && protocol !== "postgresql") process.exit(2);
-  process.stdout.write(url.hostname || "");
+  const socketHost = url.searchParams.get("host") || "";
+  process.stdout.write(socketHost.startsWith("/") ? socketHost : (url.hostname || ""));
 } catch {
   process.exit(2);
 }
@@ -1219,7 +1334,8 @@ try {
   const url = new URL(raw);
   const protocol = url.protocol.replace(/:$/, "");
   if (protocol !== "postgres" && protocol !== "postgresql") process.exit(2);
-  const host = url.hostname || "";
+  const socketHost = url.searchParams.get("host") || "";
+  const host = socketHost.startsWith("/") ? socketHost : (url.hostname || "");
   if (!host) process.exit(2);
   const port = url.port || "5432";
   process.stdout.write(host + "\t" + port);
@@ -1259,7 +1375,8 @@ postgres_connection_ready() {
         return 1
     fi
 
-    PGPASSWORD="${PG_PASSWORD_VALUE:-}" "$psql_bin" \
+    PGCONNECT_TIMEOUT=5 PGPASSWORD="${PG_PASSWORD_VALUE:-}" "$psql_bin" \
+        -X -w \
         -h "${PG_HOST:-127.0.0.1}" \
         -p "${PG_PORT:-5432}" \
         -U "${PG_USER_NAME:-seqdesk}" \
@@ -1283,6 +1400,318 @@ postgres_server_ready() {
     db_tcp_reachable "${PG_HOST:-127.0.0.1}" "${PG_PORT:-5432}"
 }
 
+postgres_socket_server_ready() {
+    local socket_dir="${1:-/tmp}"
+    local socket_port="${2:-5432}"
+    local pg_isready_bin
+
+    [[ "$socket_dir" == /* ]] || return 1
+    pg_isready_bin="$(find_postgres_binary pg_isready 2>/dev/null || true)"
+    [ -n "$pg_isready_bin" ] || return 1
+    "$pg_isready_bin" -h "$socket_dir" -p "$socket_port" >/dev/null 2>&1
+}
+
+postgres_socket_owned_by_current_user() {
+    local socket_dir="${1:-/tmp}"
+    local socket_port="${2:-5432}"
+    local socket_file socket_uid current_uid
+
+    [[ "$socket_dir" == /* ]] || return 1
+    socket_file="${socket_dir%/}/.s.PGSQL.${socket_port}"
+    [ -S "$socket_file" ] || return 1
+
+    socket_uid="$(stat -f '%u' "$socket_file" 2>/dev/null || true)"
+    if ! [[ "$socket_uid" =~ ^[0-9]+$ ]]; then
+        socket_uid="$(stat -c '%u' "$socket_file" 2>/dev/null || true)"
+    fi
+    current_uid="$(id -u 2>/dev/null || true)"
+    [[ "$socket_uid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$current_uid" =~ ^[0-9]+$ ]] || return 1
+    [ "$socket_uid" = "$current_uid" ]
+}
+
+print_untrusted_macos_postgres_socket() {
+    local socket_dir="${1:-/tmp}"
+    local socket_port="${2:-5432}"
+
+    print_error "PostgreSQL answered through ${socket_dir}:${socket_port}, but its socket is not owned by the current macOS user."
+    echo "  SeqDesk will not send generated database credentials to that endpoint or modify it."
+    echo "  Run the installer as the user that owns the Homebrew PostgreSQL service,"
+    echo "  or provide an explicit trusted PostgreSQL DATABASE_URL and DIRECT_URL."
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/macos#postgresql-unix-socket-works-but-tcp-does-not"
+}
+
+postgres_socket_admin_ready() {
+    local socket_dir="${1:-/tmp}"
+    local socket_port="${2:-5432}"
+    local psql_bin version_num
+
+    [[ "$socket_dir" == /* ]] || return 1
+    psql_bin="$(find_postgres_binary psql 2>/dev/null || true)"
+    [ -n "$psql_bin" ] || return 1
+
+    version_num="$(PGCONNECT_TIMEOUT=5 run_as_postgres "$psql_bin" \
+        -X \
+        -h "$socket_dir" \
+        -p "$socket_port" \
+        -w -d postgres -qAt -c \
+        "select current_setting('server_version_num') from pg_roles where rolname = current_user and rolsuper" \
+        2>/dev/null | \
+        tr -d '[:space:]')" || return 1
+    [[ "$version_num" =~ ^[0-9]+$ ]] || return 1
+    [ "$version_num" -ge 140000 ]
+}
+
+select_macos_postgres_socket() {
+    local socket_dir="${1:-/tmp}"
+    local socket_port="${2:-5432}"
+
+    MACOS_POSTGRES_SOCKET_DIR="$socket_dir"
+    PG_HOST="$socket_dir"
+    PG_PORT="$socket_port"
+    print_success "Reusing PostgreSQL via Unix socket ${socket_dir}:${socket_port}; no PostgreSQL service configuration changed."
+}
+
+# --- Private, SeqDesk-managed PostgreSQL -------------------------------------
+#
+# A private instance is a cluster SeqDesk creates and owns, instead of asking
+# the machine's shared server for a seat. It answers on a Unix socket only,
+# lives under $HOME, and is started with pg_ctl rather than a launchd or
+# systemd service. That removes every failure mode which comes from
+# negotiating with somebody else's server: an occupied port 5432, a Homebrew
+# service registered to root, a login user without CREATE ROLE on the existing
+# cluster, pg_hba rules, and loopback TCP filtered by endpoint-security tools.
+#
+# It is deliberately NOT the first choice: a healthy local server the installer
+# can administer is still reused untouched. This is the fallback that makes a
+# fresh reviewer machine work without asking anyone to repair anything.
+
+# macOS caps a Unix socket path (sun_path) at 104 bytes and PostgreSQL appends
+# "/.s.PGSQL.<port>" to the directory, so the directory itself must stay short.
+PRIVATE_PG_MAX_SOCKET_DIR_LEN=85
+
+private_postgres_root() {
+    printf '%s' "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}"
+}
+
+private_postgres_data_dir() {
+    printf '%s/data' "$(private_postgres_root)"
+}
+
+private_postgres_socket_dir() {
+    printf '%s/socket' "$(private_postgres_root)"
+}
+
+private_postgres_log_file() {
+    printf '%s/server.log' "$(private_postgres_root)"
+}
+
+private_postgres_socket_dir_usable() {
+    local socket_dir="${1:-$(private_postgres_socket_dir)}"
+    [ "${#socket_dir}" -le "$PRIVATE_PG_MAX_SOCKET_DIR_LEN" ]
+}
+
+# A cluster exists once initdb has written its PG_VERSION stamp. An empty or
+# half-written directory is treated as absent so a failed attempt can be retried.
+private_postgres_initialized() {
+    local data_dir="${1:-$(private_postgres_data_dir)}"
+    [ -s "$data_dir/PG_VERSION" ]
+}
+
+# Normalised to 0/1. pg_ctl status distinguishes "not running" (3) from
+# "unusable data directory" (4), but every caller only asks whether it can
+# connect, and leaking those codes makes `return $?` chains hard to read.
+private_postgres_running() {
+    local data_dir="${1:-$(private_postgres_data_dir)}"
+    local pg_ctl_bin
+    pg_ctl_bin="$(find_postgres_binary pg_ctl 2>/dev/null || true)"
+    [ -n "$pg_ctl_bin" ] || return 1
+    if env LC_ALL=C LANG=C "$pg_ctl_bin" -D "$data_dir" status >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+# Both the config and the HBA file are written by SeqDesk rather than patched,
+# so the resulting cluster is identical on every machine and auditable in one
+# place. listen_addresses='' means the server never opens a TCP socket at all.
+private_postgres_write_config() {
+    local data_dir="$1"
+    local socket_dir="$2"
+
+    cat >> "$data_dir/postgresql.conf" <<CONF
+
+# --- SeqDesk-managed private instance ---
+# Unix socket only: no TCP listener is opened, on any interface or port.
+listen_addresses = ''
+unix_socket_directories = '$socket_dir'
+unix_socket_permissions = 0700
+CONF
+}
+
+# Peer authentication for the owning OS user keeps administration passwordless
+# (and impossible for anyone else), while the application role authenticates
+# with scram. Every host line is rejected because no TCP listener exists.
+private_postgres_write_hba() {
+    local data_dir="$1"
+    local owner="$2"
+
+    cat > "$data_dir/pg_hba.conf" <<HBA
+# Written by the SeqDesk installer. The socket directory is mode 0700, so the
+# owning OS user is the only account that can reach this cluster at all.
+local   all   $owner   peer
+local   all   all      scram-sha-256
+host    all   all      all             reject
+hostssl all   all      all             reject
+HBA
+    chmod 600 "$data_dir/pg_hba.conf"
+}
+
+private_postgres_start() {
+    local data_dir="${1:-$(private_postgres_data_dir)}"
+    local log_file="${2:-$(private_postgres_log_file)}"
+    local pg_ctl_bin
+
+    pg_ctl_bin="$(find_postgres_binary pg_ctl 2>/dev/null || true)"
+    [ -n "$pg_ctl_bin" ] || return 1
+    env LC_ALL=C LANG=C "$pg_ctl_bin" -D "$data_dir" -l "$log_file" -w start >/dev/null 2>&1
+}
+
+# initdb reads LC_* from the environment and aborts with "invalid locale
+# settings" when they are unset or unusable. A `curl … | bash` shell routinely
+# has no LANG at all, so pin both the environment and the cluster's own locale
+# rather than inheriting whatever the terminal happened to export.
+private_postgres_initdb() {
+    local data_dir="$1"
+    local owner="$2"
+    local initdb_bin
+
+    initdb_bin="$(find_postgres_binary initdb 2>/dev/null || true)"
+    [ -n "$initdb_bin" ] || return 1
+    env LC_ALL=C LANG=C "$initdb_bin" \
+        -D "$data_dir" \
+        --username="$owner" \
+        --encoding=UTF8 \
+        --lc-collate=C \
+        --lc-ctype=C \
+        --auth-local=peer \
+        --auth-host=reject >/dev/null 2>&1
+}
+
+select_private_postgres() {
+    local socket_dir="$1"
+
+    SEQDESK_PRIVATE_POSTGRES="true"
+    MACOS_POSTGRES_SOCKET_DIR="$socket_dir"
+    PG_HOST="$socket_dir"
+    PG_PORT="5432"
+}
+
+print_private_postgres_start_failure() {
+    local log_file="$1"
+    local excerpt
+
+    print_error "The SeqDesk PostgreSQL instance did not start."
+    if [ -r "$log_file" ]; then
+        excerpt="$(tail -n 5 "$log_file" 2>/dev/null || true)"
+        if [ -n "$excerpt" ]; then
+            printf '%s\n' "$excerpt" | sed 's/^/  /'
+        fi
+    fi
+    echo "  Its data directory and log are under $(private_postgres_root)."
+    echo "  Nothing outside that directory was modified."
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/macos#seqdesk-manages-its-own-postgresql"
+}
+
+# Create (or adopt) the private cluster and point the installer at it. Safe to
+# re-run: an existing cluster is started rather than rebuilt, so reinstalling
+# SeqDesk never destroys data.
+provision_private_postgres() {
+    local root data_dir socket_dir log_file owner
+
+    root="$(private_postgres_root)"
+    data_dir="$(private_postgres_data_dir)"
+    socket_dir="$(private_postgres_socket_dir)"
+    log_file="$(private_postgres_log_file)"
+    owner="$(id -un 2>/dev/null || true)"
+
+    if [ -z "$owner" ]; then
+        print_error "Could not determine the current user name for the PostgreSQL cluster owner."
+        return 1
+    fi
+
+    # PostgreSQL refuses to start as root, so a cluster owned by root is
+    # unusable. This is reachable on Linux, where the installer may be run under
+    # sudo; fail with the reason rather than letting initdb error obscurely.
+    if is_root_user; then
+        print_error "SeqDesk will not create a PostgreSQL instance owned by root."
+        echo "  PostgreSQL refuses to run as root, so the instance could never start."
+        echo "  Rerun the installer as your normal user account, or supply an existing"
+        echo "  database with --database-url \"postgresql://...\"."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#postgresql-options"
+        return 1
+    fi
+
+    if ! private_postgres_socket_dir_usable "$socket_dir"; then
+        print_error "The SeqDesk PostgreSQL socket path is too long for this system."
+        echo "  ${socket_dir} (${#socket_dir} characters, limit ${PRIVATE_PG_MAX_SOCKET_DIR_LEN})"
+        echo "  Set SEQDESK_PG_HOME to a shorter path and retry, for example:"
+        echo "    SEQDESK_PG_HOME=/tmp/seqdesk-pg-$(id -u)"
+        return 1
+    fi
+
+    if [ -z "$(find_postgres_binary initdb 2>/dev/null || true)" ] || \
+        [ -z "$(find_postgres_binary pg_ctl 2>/dev/null || true)" ]; then
+        print_error "PostgreSQL server programs (initdb, pg_ctl) were not found."
+        echo "  SeqDesk installs its own PostgreSQL instance and needs the server package,"
+        echo "  not only the client tools."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#macos-prerequisites"
+        return 1
+    fi
+
+    if ! mkdir -p "$socket_dir" 2>/dev/null; then
+        print_error "Could not create the PostgreSQL directory ${socket_dir}."
+        return 1
+    fi
+    chmod 700 "$root" "$socket_dir" 2>/dev/null || true
+
+    if private_postgres_initialized "$data_dir"; then
+        if private_postgres_running "$data_dir"; then
+            select_private_postgres "$socket_dir"
+            print_success "Using the existing SeqDesk PostgreSQL instance in ${root}."
+            return 0
+        fi
+        if ! run_with_spinner "Start SeqDesk PostgreSQL" private_postgres_start "$data_dir" "$log_file"; then
+            print_private_postgres_start_failure "$log_file"
+            return 1
+        fi
+        select_private_postgres "$socket_dir"
+        return 0
+    fi
+
+    if ! run_with_spinner "Create SeqDesk PostgreSQL" private_postgres_initdb "$data_dir" "$owner"; then
+        print_error "Could not create the SeqDesk PostgreSQL instance in ${data_dir}."
+        echo "  Remove that directory and retry, or supply an existing database with"
+        echo "  --database-url \"postgresql://...\"."
+        return 1
+    fi
+
+    if ! private_postgres_write_config "$data_dir" "$socket_dir" || \
+        ! private_postgres_write_hba "$data_dir" "$owner"; then
+        print_error "Could not write the PostgreSQL configuration in ${data_dir}."
+        return 1
+    fi
+
+    if ! run_with_spinner "Start SeqDesk PostgreSQL" private_postgres_start "$data_dir" "$log_file"; then
+        print_private_postgres_start_failure "$log_file"
+        return 1
+    fi
+
+    select_private_postgres "$socket_dir"
+    print_success "SeqDesk PostgreSQL is running on its own Unix socket in ${root} (no TCP port used)."
+    return 0
+}
+
 sudo_postgres_ready() {
     local psql_bin
     psql_bin="$(find_postgres_binary psql 2>/dev/null || true)"
@@ -1290,7 +1719,8 @@ sudo_postgres_ready() {
         return 1
     fi
 
-    run_as_postgres "$psql_bin" \
+    PGCONNECT_TIMEOUT=5 run_as_postgres "$psql_bin" \
+        -X -w \
         -h "${PG_HOST:-127.0.0.1}" \
         -p "${PG_PORT:-5432}" \
         -d postgres -qAt -c "select 1" >/dev/null 2>&1
@@ -1320,12 +1750,38 @@ find_postgres_binary() {
         done
     fi
 
+    # Distribution packages keep the server programs off PATH: Debian/Ubuntu put
+    # them in /usr/lib/postgresql/<major>/bin and the PGDG RPMs in
+    # /usr/pgsql-<major>/bin. Without this, initdb and pg_ctl look absent on a
+    # machine that has them, and SeqDesk falls back to demanding sudo.
+    if [ "${OS:-}" = "linux" ]; then
+        # SEQDESK_PG_SEARCH_ROOT prefixes the search so this branch can be
+        # exercised against a fixture; empty in every real install.
+        local major search_root="${SEQDESK_PG_SEARCH_ROOT:-}"
+        for major in 18 17 16 15 14; do
+            for candidate in \
+                "$search_root/usr/lib/postgresql/$major/bin/$tool" \
+                "$search_root/usr/pgsql-$major/bin/$tool"; do
+                if [ -x "$candidate" ]; then
+                    printf '%s' "$candidate"
+                    return 0
+                fi
+            done
+        done
+    fi
+
     return 1
 }
 
 find_installed_brew_postgres_formula() {
-    local formula
+    local formula running_formula
     command_exists brew || return 1
+    running_formula="$(brew services list 2>/dev/null | \
+        awk '$1 ~ /^postgresql(@[0-9]+)?$/ && $2 == "started" { print $1; exit }')"
+    if [ -n "$running_formula" ] && brew list --versions "$running_formula" >/dev/null 2>&1; then
+        printf '%s' "$running_formula"
+        return 0
+    fi
     for formula in postgresql@16 postgresql@18 postgresql@17 postgresql@15 postgresql@14 postgresql; do
         if brew list --versions "$formula" >/dev/null 2>&1; then
             printf '%s' "$formula"
@@ -1441,10 +1897,24 @@ print_macos_brew_postgres_failure() {
     fi
 }
 
+# Name the process holding the port instead of telling the user to go run lsof.
+# Nearly every "TCP does not answer but the socket does" report comes down to
+# which process owns the port, and the installer can simply look.
+describe_port_owner() {
+    local port="$1"
+    local owner
+
+    command_exists lsof || return 1
+    owner="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | \
+        awk 'NR > 1 { printf "%s (pid %s, user %s)", $1, $2, $3; exit }')"
+    [ -n "$owner" ] || return 1
+    printf '%s' "$owner"
+}
+
 print_macos_postgres_protocol_diagnosis() {
-    local pg_isready_bin running_formula hba_path
-    local tcp_host="${PG_HOST:-127.0.0.1}"
-    local tcp_port="${PG_PORT:-5432}"
+    local pg_isready_bin port_owner
+    local configured_host="${PG_HOST:-127.0.0.1}"
+    local configured_port="${PG_PORT:-5432}"
 
     pg_isready_bin="$(find_postgres_binary pg_isready 2>/dev/null || true)"
     if [ -z "$pg_isready_bin" ]; then
@@ -1455,36 +1925,51 @@ print_macos_postgres_protocol_diagnosis() {
         return
     fi
 
-    if "$pg_isready_bin" -h /tmp -p "$tcp_port" >/dev/null 2>&1; then
-        print_error "PostgreSQL dependency check failed: the Unix socket works, but TCP does not."
-        echo "  Unix socket          /tmp:${tcp_port} — accepting connections"
-        echo "  TCP                  ${tcp_host}:${tcp_port} — no PostgreSQL response"
-        echo "  SeqDesk uses a TCP PostgreSQL URL, so an open port or working Unix socket"
-        echo "  alone is not sufficient."
-        echo ""
-        echo "  Check:"
-        echo "    $pg_isready_bin -h ${tcp_host} -p ${tcp_port}"
-        echo "    $pg_isready_bin -h /tmp -p ${tcp_port}"
-        echo "    lsof -nP -iTCP:${tcp_port} -sTCP:LISTEN"
-        running_formula="$(brew services list 2>/dev/null | \
-            awk '$1 ~ /^postgresql(@[0-9]+)?$/ && $2 == "started" { print $1; exit }')"
-        if [ -n "$running_formula" ]; then
-            hba_path="$(brew --prefix 2>/dev/null)/var/${running_formula}/pg_hba.conf"
-            echo "    grep -vE '^[[:space:]]*(#|$)' $(shell_quote "$hba_path")"
+    if "$pg_isready_bin" -h /tmp -p "$configured_port" >/dev/null 2>&1; then
+        if [[ "$configured_host" == /* ]]; then
+            print_error "The configured PostgreSQL Unix socket is unavailable, but /tmp works."
+            echo "  Configured socket     ${configured_host}:${configured_port} — no PostgreSQL response"
+            echo "  Available socket      /tmp:${configured_port} — accepting connections"
+            echo "  SeqDesk kept the explicit socket URL unchanged. If /tmp is intentional,"
+            echo "  set host=%2Ftmp in both DATABASE_URL and DIRECT_URL."
+            echo ""
+            echo "  Check:"
+            echo "    $pg_isready_bin -h ${configured_host} -p ${configured_port}"
+            echo "    $pg_isready_bin -h /tmp -p ${configured_port}"
+            echo "  Confirm unix_socket_directories on the intended PostgreSQL server."
+            echo "  Do not delete postmaster.pid."
+            print_troubleshooting_url "https://seqdesk.org/docs/installation/macos#postgresql-unix-socket-works-but-tcp-does-not"
+            return
+        fi
+
+        print_error "PostgreSQL answers on its Unix socket, but not over TCP."
+        echo "  /tmp:${configured_port}          accepting connections"
+        port_owner="$(describe_port_owner "$configured_port" 2>/dev/null || true)"
+        if [ -n "$port_owner" ]; then
+            echo "  ${configured_host}:${configured_port}     held by ${port_owner}, no PostgreSQL response"
+            echo "  A listening port that does not speak the PostgreSQL protocol usually means"
+            echo "  a VPN or endpoint-security tool is intercepting local connections."
+        else
+            echo "  ${configured_host}:${configured_port}     nothing is listening"
         fi
         echo ""
-        echo "  Ensure pg_hba.conf permits the selected loopback address, PostgreSQL listens on localhost,"
-        echo "  and a VPN or institutional endpoint-security tool is not filtering local"
-        echo "  PostgreSQL protocol traffic. Do not delete postmaster.pid."
+        if [ -n "${SEQDESK_DATABASE_URL:-}" ]; then
+            echo "  Your explicit DATABASE_URL was left unchanged. To use the working socket,"
+            echo "  append its directory as a host parameter:"
+            echo "    postgresql://USER:PASSWORD@localhost:${configured_port}/DATABASE?schema=public&host=%2Ftmp"
+        fi
+        # A live server is answering here, so the stale-PID-file "fix" found in
+        # search results is exactly the wrong move.
+        echo "  Do not remove postmaster.pid while a live postgres process owns it."
         print_troubleshooting_url "https://seqdesk.org/docs/installation/macos#postgresql-unix-socket-works-but-tcp-does-not"
         return
     fi
 
     print_error "PostgreSQL dependency check failed: no healthy local server answered."
-    echo "  Neither TCP ${tcp_host}:${tcp_port} nor the macOS Unix socket /tmp:${tcp_port}"
+    echo "  Neither TCP ${configured_host}:${configured_port} nor the macOS Unix socket /tmp:${configured_port}"
     echo "  accepted a PostgreSQL readiness probe."
-    echo "  Inspect the current Homebrew service and log output above. Repair the selected"
-    echo "  service as your normal macOS user; never start PostgreSQL with sudo."
+    echo "  Repair the service as your normal macOS user; never start PostgreSQL with sudo."
+    echo "  Do not remove postmaster.pid while a live postgres process owns it."
     print_troubleshooting_url "https://seqdesk.org/docs/installation/macos#postgresql-fails-with-launchctl-bootstrap--exited-with-5"
 }
 
@@ -1534,8 +2019,16 @@ start_postgres_if_possible() {
     if [ "${OS:-}" = "macos" ]; then
         if command_exists brew; then
             warn_macos_root_postgres_services
-            local formula service_output
-            for formula in postgresql@16 postgresql@18 postgresql@17 postgresql@15 postgresql@14 postgresql; do
+            local formula service_output running_formula formula_candidates seen_formulas=""
+            running_formula="$(brew services list 2>/dev/null | \
+                awk '$1 ~ /^postgresql(@[0-9]+)?$/ && $2 == "started" { print $1; exit }')"
+            formula_candidates="$running_formula postgresql@16 postgresql@18 postgresql@17 postgresql@15 postgresql@14 postgresql"
+            for formula in $formula_candidates; do
+                [ -n "$formula" ] || continue
+                case " $seen_formulas " in
+                    *" $formula "*) continue ;;
+                esac
+                seen_formulas="$seen_formulas $formula"
                 if ! brew list --versions "$formula" >/dev/null 2>&1; then
                     continue
                 fi
@@ -1588,6 +2081,122 @@ start_postgres_if_possible() {
     fi
 }
 
+postgres_client_tools_available() {
+    [ -n "$(find_postgres_binary pg_isready 2>/dev/null || true)" ]
+}
+
+# Socket directories worth probing for a local server, most specific first. A
+# SeqDesk-managed instance wins over the machine's shared server so a repeat
+# install keeps using its own data.
+local_postgres_socket_candidates() {
+    local brew_prefix
+
+    private_postgres_socket_dir
+    printf '\n'
+    if [ -n "${PGHOST:-}" ] && [[ "${PGHOST}" == /* ]]; then
+        printf '%s\n' "$PGHOST"
+    fi
+    printf '/tmp\n'
+    brew_prefix="$(brew --prefix 2>/dev/null || true)"
+    if [ -n "$brew_prefix" ]; then
+        printf '%s/var/run\n' "$brew_prefix"
+    fi
+    printf '/var/run/postgresql\n'
+}
+
+# Adopt an existing local server reachable over a Unix socket.
+#
+# Returns 0 when one was adopted, 1 when a server answered but must not be used
+# (already explained to the user), and 2 when nothing usable was found. The
+# tri-state matters: "I could not check" and "there is nothing there" used to be
+# the same answer, which is how a healthy server got skipped in favour of
+# starting a second one.
+try_reuse_local_postgres_socket() {
+    local url_was_supplied="$1"
+    local port="${PG_PORT:-5432}"
+    local socket_dir candidates
+
+    if ! postgres_client_tools_available; then
+        detail "socket reuse skipped: no pg_isready on PATH or in any Homebrew keg yet"
+        return 2
+    fi
+
+    candidates="$(local_postgres_socket_candidates)"
+    while IFS= read -r socket_dir; do
+        [ -n "$socket_dir" ] || continue
+
+        if ! postgres_socket_server_ready "$socket_dir" "$port"; then
+            detail "socket ${socket_dir}:${port} — no server responding"
+            continue
+        fi
+        detail "socket ${socket_dir}:${port} — accepting connections"
+
+        # An explicit database URL is the user's decision. Report, never retarget.
+        if [ "$url_was_supplied" = "true" ]; then
+            detail "socket ${socket_dir}:${port} — not adopted: an explicit DATABASE_URL was supplied"
+            return 2
+        fi
+
+        if ! postgres_socket_owned_by_current_user "$socket_dir" "$port"; then
+            print_untrusted_macos_postgres_socket "$socket_dir" "$port"
+            return 1
+        fi
+
+        if postgres_socket_admin_ready "$socket_dir" "$port"; then
+            select_macos_postgres_socket "$socket_dir" "$port"
+            return 0
+        fi
+
+        detail "socket ${socket_dir}:${port} — reachable, but $(id -un) is not a PostgreSQL 14+ superuser there; not adopting"
+    done <<CANDIDATES
+$candidates
+CANDIDATES
+
+    return 2
+}
+
+# Start a Homebrew PostgreSQL that is already installed and registered, so an
+# earlier SeqDesk installation keeps its existing data instead of silently
+# getting a new empty database. Never fatal: if this cannot work, the caller
+# provisions a private instance instead.
+try_adopt_registered_brew_postgres() {
+    local formula service_output
+
+    [ "${OS:-}" = "macos" ] || return 1
+    command_exists brew || return 1
+
+    formula="$(brew services list 2>/dev/null | \
+        awk '$1 ~ /^postgresql(@[0-9]+)?$/ { print $1; exit }')"
+    [ -n "$formula" ] || { detail "no Homebrew PostgreSQL service is registered"; return 1; }
+
+    if macos_brew_service_runs_as_root "$formula"; then
+        detail "$formula is registered to run as root; not touching it"
+        return 1
+    fi
+
+    add_brew_postgres_to_path "$formula"
+    detail "starting registered Homebrew service $formula"
+    if ! service_output="$(brew services start "$formula" 2>&1)"; then
+        detail "brew services start $formula failed: $service_output"
+        return 1
+    fi
+
+    local attempt
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        if postgres_server_ready; then
+            detail "$formula became ready on ${PG_HOST:-127.0.0.1}:${PG_PORT:-5432}"
+            return 0
+        fi
+        if try_reuse_local_postgres_socket "false"; then
+            return 0
+        fi
+        sleep 1
+    done
+
+    detail "$formula did not become usable within 10s"
+    return 1
+}
+
 uses_local_postgres_target() {
     if [ -z "${SEQDESK_DATABASE_URL:-}" ]; then
         return 0
@@ -1596,60 +2205,142 @@ uses_local_postgres_target() {
     local database_host
     database_host="$(postgres_url_host "$SEQDESK_DATABASE_URL" 2>/dev/null || true)"
     case "$database_host" in
-        127.0.0.1|localhost|::1|'[::1]') return 0 ;;
+        127.0.0.1|localhost|::1|'[::1]'|/*) return 0 ;;
         *) return 1 ;;
     esac
 }
 
-preflight_macos_local_postgres() {
-    [ "${OS:-}" = "macos" ] || return 0
+# Diagnosis dispatcher. The macOS text is about Homebrew services and /tmp
+# sockets; neither means anything on a Linux host.
+print_local_postgres_diagnosis() {
+    if [ "${OS:-}" = "macos" ]; then
+        print_macos_postgres_protocol_diagnosis
+        return
+    fi
+
+    local configured_host="${PG_HOST:-127.0.0.1}"
+    local configured_port="${PG_PORT:-5432}"
+    local port_owner
+
+    print_error "No usable PostgreSQL was found and SeqDesk could not create one."
+    port_owner="$(describe_port_owner "$configured_port" 2>/dev/null || true)"
+    if [ -n "$port_owner" ]; then
+        echo "  ${configured_host}:${configured_port}     held by ${port_owner}, no PostgreSQL response"
+    else
+        echo "  ${configured_host}:${configured_port}     nothing is listening"
+    fi
+    echo "  SeqDesk needs either the PostgreSQL server package (so it can create its"
+    echo "  own instance without root) or an existing database:"
+    echo "    Debian/Ubuntu   sudo apt-get install postgresql"
+    echo "    RHEL/Alma       sudo dnf install postgresql-server"
+    echo "    Managed         --database-url \"postgresql://...\""
+    print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#postgresql-options"
+}
+
+preflight_local_postgres() {
+    case "${OS:-}" in
+        macos|linux) ;;
+        *) return 0 ;;
+    esac
     uses_local_postgres_target || return 0
 
+    if [ -z "${SEQDESK_DATABASE_URL:-}" ] && [ -n "${SEQDESK_DATABASE_DIRECT_URL:-}" ]; then
+        print_header "Prepare local PostgreSQL"
+        print_error "DIRECT_URL was supplied without DATABASE_URL."
+        echo "  Supply both URLs, or omit DIRECT_URL so one generated local URL is used consistently."
+        print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#postgresql-options"
+        return 1
+    fi
+
+    local database_url_was_supplied="false"
     if [ -n "${SEQDESK_DATABASE_URL:-}" ]; then
-        local host_port
-        host_port="$(postgres_url_host_port "$SEQDESK_DATABASE_URL" 2>/dev/null || true)"
-        if [ -n "$host_port" ]; then
-            IFS=$'\t' read -r PG_HOST PG_PORT <<< "$host_port"
-            PG_HOST="${PG_HOST#[}"
-            PG_HOST="${PG_HOST%]}"
-        fi
+        database_url_was_supplied="true"
+        load_postgres_url_parts || return 0
+    else
+        PG_HOST="127.0.0.1"
+        PG_PORT="5432"
     fi
 
     print_header "Prepare local PostgreSQL"
     warn_macos_root_postgres_services
 
+    # The ladder, in order of least interference:
+    #   1. a healthy server on the configured transport   -> reuse untouched
+    #   2. a healthy server on a local socket we can admin -> reuse untouched
+    #   3. a Homebrew service that is installed but idle   -> start it once
+    #   4. nothing usable                                  -> own one privately
+    # Rungs 3 and 4 are skipped when the user supplied an explicit DATABASE_URL:
+    # an unreachable URL they chose is an error to report, never a reason to
+    # build a different database behind their back.
+
     if postgres_server_ready; then
         print_success "PostgreSQL is already available on ${PG_HOST:-127.0.0.1}:${PG_PORT:-5432}; reusing it."
         return 0
     fi
+    detail "TCP ${PG_HOST:-127.0.0.1}:${PG_PORT:-5432} — no PostgreSQL response"
 
-    if ! install_postgres_packages_if_possible; then
-        print_error "Could not install local PostgreSQL on macOS."
-        echo "  Install Homebrew from https://brew.sh, or choose 'Existing/managed'"
-        echo "  in the guided installer and provide a PostgreSQL connection string."
-        print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#macos-prerequisites"
+    # Captured with `|| status=$?` rather than called bare: the installer runs
+    # under `set -e`, where a bare call returning the "nothing usable" code
+    # would abort the whole script instead of falling through to the next rung.
+    local socket_reuse_status=0
+    try_reuse_local_postgres_socket "$database_url_was_supplied" || socket_reuse_status=$?
+    case "$socket_reuse_status" in
+        0) return 0 ;;
+        1) return 1 ;;
+    esac
+
+    if [ "$database_url_was_supplied" = "true" ]; then
+        # On Linux an explicit URL that is unreachable right now has always been
+        # recoverable further down, where ensure_local_postgres_database can
+        # install and start a system server with sudo. Failing here would remove
+        # that recovery, so leave the existing path in charge.
+        if [ "${OS:-}" != "macos" ]; then
+            detail "explicit DATABASE_URL is unreachable; deferring to the system PostgreSQL setup"
+            return 0
+        fi
+        print_local_postgres_diagnosis
+        print_error "SeqDesk kept the explicit PostgreSQL URL unchanged."
+        echo "  Choose an intentional Unix-socket URL or restore the configured TCP transport, then retry."
+        replay_recent_detail
         return 1
     fi
 
-    if start_postgres_if_possible && postgres_server_ready; then
+    if try_adopt_registered_brew_postgres; then
         print_success "PostgreSQL is ready on ${PG_HOST:-127.0.0.1}:${PG_PORT:-5432}."
         return 0
     fi
 
-    print_macos_postgres_protocol_diagnosis
-    print_error "SeqDesk cannot continue until its PostgreSQL dependency is healthy over TCP."
-    echo "  The SeqDesk application release was not downloaded and the install target was not replaced."
-    echo "  Review the dependency diagnosis and Homebrew output above."
-    echo "  Safe checks:"
-    echo "    brew services list | grep postgresql"
-    echo "    pg_isready -h ${PG_HOST:-127.0.0.1} -p ${PG_PORT:-5432}"
-    echo "    pg_isready -h /tmp -p ${PG_PORT:-5432}  # macOS Unix-socket comparison"
-    echo "    lsof -nP -iTCP:${PG_PORT:-5432} -sTCP:LISTEN"
-    echo "  An open TCP port alone is not enough: the TCP pg_isready check must say"
-    echo "  'accepting connections'. If /tmp works but 127.0.0.1 does not, inspect"
-    echo "  pg_hba.conf and local VPN/endpoint-security filtering before retrying."
-    echo "  Do not remove postmaster.pid while a live postgres process owns it."
-    echo "  After applying the printed repair, rerun the same SeqDesk command."
+    # Nothing on this machine can serve SeqDesk, so stop negotiating and bring
+    # our own. install_postgres_packages_if_possible only supplies the binaries;
+    # the cluster and its lifecycle belong to SeqDesk. Checked with
+    # find_postgres_binary rather than command_exists because distributions keep
+    # initdb off PATH.
+    if [ -z "$(find_postgres_binary initdb 2>/dev/null || true)" ] && \
+        ! install_postgres_packages_if_possible; then
+        print_error "PostgreSQL server programs are not available and could not be installed."
+        if [ "${OS:-}" = "macos" ]; then
+            echo "  Install Homebrew from https://brew.sh, or supply an existing database"
+            echo "  with --database-url \"postgresql://...\"."
+            print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#macos-prerequisites"
+        else
+            echo "  Install the server package once; SeqDesk needs no root after that:"
+            echo "    Debian/Ubuntu   sudo apt-get install postgresql"
+            echo "    RHEL/Alma       sudo dnf install postgresql-server"
+            echo "  Or supply an existing database with --database-url \"postgresql://...\"."
+            print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#postgresql-options"
+        fi
+        return 1
+    fi
+
+    if provision_private_postgres; then
+        return 0
+    fi
+
+    print_local_postgres_diagnosis
+    echo "  Nothing was installed and the install target was not replaced."
+    echo "  Rerun the same command after applying the repair above, or supply an"
+    echo "  existing database with --database-url \"postgresql://...\"."
+    replay_recent_detail
     return 1
 }
 
@@ -1690,6 +2381,11 @@ ensure_local_postgres_database() {
     if ! load_postgres_url_parts; then
         return 0
     fi
+    if [ -n "${MACOS_POSTGRES_SOCKET_DIR:-}" ] && \
+        ! postgres_socket_owned_by_current_user "$MACOS_POSTGRES_SOCKET_DIR" "${PG_PORT:-5432}"; then
+        print_untrusted_macos_postgres_socket "$MACOS_POSTGRES_SOCKET_DIR" "${PG_PORT:-5432}"
+        return 1
+    fi
 
     if postgres_connection_ready; then
         print_kv "PostgreSQL" "ready"
@@ -1716,11 +2412,24 @@ ensure_local_postgres_database() {
         return 1
     fi
 
-    local sql_file
+    local sql_file psql_bin
+    psql_bin="$(find_postgres_binary psql 2>/dev/null || true)"
+    if [ -z "$psql_bin" ]; then
+        print_warning "PostgreSQL client 'psql' was not found."
+        return 1
+    fi
     sql_file="$(mktemp)"
     write_postgres_bootstrap_sql "$sql_file"
 
-    if ! run_with_spinner "Local PostgreSQL database" run_as_postgres psql -v ON_ERROR_STOP=1 -d postgres -f "$sql_file"; then
+    if [[ "${PG_HOST:-}" == /* ]]; then
+        if ! run_with_spinner "Local PostgreSQL database" run_as_postgres "$psql_bin" \
+            -X -w -h "$PG_HOST" -p "${PG_PORT:-5432}" \
+            -v ON_ERROR_STOP=1 -d postgres -f "$sql_file"; then
+            rm -f "$sql_file"
+            return 1
+        fi
+    elif ! run_with_spinner "Local PostgreSQL database" run_as_postgres "$psql_bin" \
+        -X -w -v ON_ERROR_STOP=1 -d postgres -f "$sql_file"; then
         rm -f "$sql_file"
         return 1
     fi
@@ -1985,13 +2694,18 @@ interactive_prompt_email() {
 
 interactive_prompt_password() {
     local label="$1" pw pw2
+    INTERACTIVE_RESULT_GENERATED="false"
     while true; do
         pw=$(read_secret "$label (leave blank to generate a strong one): ")
         if [ -z "$pw" ]; then
             pw="$(generate_postgres_password)"
-            print_info "Generated a strong password (shown once — save it now):"
-            print_kv "password" "$pw"
+            # Deliberately not printed here. A generated password shown mid-wizard
+            # scrolls away behind the rest of the install (or behind a failure
+            # that means the account was never created). It is printed once at
+            # the end, next to the URL it is used on.
+            print_info "  A strong password was generated; it is shown when the install finishes."
             INTERACTIVE_RESULT="$pw"
+            INTERACTIVE_RESULT_GENERATED="true"
             return 0
         fi
         if [ "${#pw}" -lt 8 ]; then
@@ -2019,6 +2733,15 @@ interactive_test_database() {
         return 1
     fi
     IFS=$'\t' read -r host port <<< "$host_port"
+    if [[ "$host" == /* ]]; then
+        print_info "  Testing PostgreSQL Unix socket ${host}:${port} ..."
+        if postgres_socket_server_ready "$host" "$port"; then
+            print_success "  Looks OK — PostgreSQL is accepting connections through ${host}:${port}."
+            return 0
+        fi
+        print_warning "  Could not reach PostgreSQL through ${host}:${port}. Check the socket path, port, and server."
+        return 1
+    fi
     print_info "  Testing connectivity to ${host}:${port} ..."
     if db_tcp_reachable "$host" "$port"; then
         print_success "  Looks OK — ${host}:${port} is reachable (credentials are verified after install)."
@@ -2028,7 +2751,19 @@ interactive_test_database() {
     return 1
 }
 
-run_interactive_wizard() {
+interactive_wizard_enabled() {
+    is_truthy "$SEQDESK_INTERACTIVE" || return 1
+    is_truthy "$SEQDESK_YES" && return 1
+    [ -z "${SEQDESK_CONFIG:-}" ] || return 1
+    [ -z "${SEQDESK_PROFILE:-}" ] || return 1
+    return 0
+}
+
+# The wizard is split so the database dependency can be verified between its two
+# halves. Asking for accounts first meant a reviewer chose a password, was shown
+# a generated one to "save now", and then watched the install abort on a
+# database problem that had nothing to do with either.
+run_interactive_wizard_database() {
     is_truthy "$SEQDESK_INTERACTIVE" || return 0
     if is_truthy "$SEQDESK_YES"; then
         return 0
@@ -2081,12 +2816,15 @@ run_interactive_wizard() {
         fi
     else
         if [ "${OS:-}" = "macos" ]; then
-            print_info "  Using local PostgreSQL — the installer will install/start Homebrew PostgreSQL as your login user, then create the database."
-            print_info "  Never run Homebrew PostgreSQL services with sudo."
+            print_info "  Using local PostgreSQL — reusing a healthy local server if there is one, otherwise SeqDesk installs its own."
         else
             print_info "  Using local PostgreSQL — the installer will create the role/database and generate a password."
         fi
     fi
+}
+
+run_interactive_wizard_accounts() {
+    interactive_wizard_enabled || return 0
 
     # 2) Accounts
     print_info "Accounts — the initial users to create"
@@ -2094,6 +2832,7 @@ run_interactive_wizard() {
     SEQDESK_BOOTSTRAP_ADMIN_EMAIL="$INTERACTIVE_RESULT"
     interactive_prompt_password "  Admin password"
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD="$INTERACTIVE_RESULT"
+    SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="$INTERACTIVE_RESULT_GENERATED"
 
     local make_researcher
     make_researcher=$(read_input "  Also create a researcher (non-admin) account? (Y/n): ")
@@ -2109,10 +2848,19 @@ run_interactive_wizard() {
             SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL="$INTERACTIVE_RESULT"
             interactive_prompt_password "  Researcher password"
             SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD="$INTERACTIVE_RESULT"
+            SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="$INTERACTIVE_RESULT_GENERATED"
             ;;
     esac
 
     print_success "Guided setup captured. Continuing the installation..."
+}
+
+# Kept as a single entry point for callers (and tests) that drive the whole
+# wizard in one go. The installer itself runs the two halves around the
+# database preflight.
+run_interactive_wizard() {
+    run_interactive_wizard_database
+    run_interactive_wizard_accounts
 }
 
 print_usage() {
@@ -2128,6 +2876,8 @@ Options:
   --interactive                Guided setup wizard: choose the database and
                                create the admin/researcher accounts, with a
                                live database reachability check
+  --verbose                    Print the diagnostic detail that normally goes
+                               only to the install log
   --config <path-or-url>       Infrastructure JSON file (local path or https URL)
   --profile <id>               Hosted install profile id (for example: twincore)
   --profile-code <code>        Access code for --profile
@@ -2193,6 +2943,9 @@ parse_args() {
                 ;;
             --interactive)
                 SEQDESK_INTERACTIVE="1"
+                ;;
+            --verbose)
+                SEQDESK_VERBOSE="1"
                 ;;
             --config)
                 if [ $# -lt 2 ]; then
@@ -3514,6 +4267,9 @@ print_preflight_summary() {
     print_kv "Disk available" "$(get_disk_info "$parent_dir")"
     print_kv "Node.js" "v$NODE_VERSION"
     print_kv "npm" "$NPM_VERSION"
+    if [ -n "${MACOS_POSTGRES_SOCKET_DIR:-}" ]; then
+        print_kv "PostgreSQL" "Unix socket ${MACOS_POSTGRES_SOCKET_DIR}:5432 (reused)"
+    fi
     print_kv "Conda" "$conda_status"
     print_kv "Nextflow" "$nextflow_status"
     print_kv "Pipelines" "$pipelines_status"
@@ -3550,6 +4306,8 @@ print_config_summary() {
     print_kv "NEXTAUTH_URL" "${SEQDESK_NEXTAUTH_URL:-http://localhost:${SEQDESK_PORT:-8000}}"
     if [ -n "${SEQDESK_DATABASE_URL:-}" ]; then
         print_kv "DATABASE_URL" "$(redact_database_url "$SEQDESK_DATABASE_URL")"
+    elif [ -n "${MACOS_POSTGRES_SOCKET_DIR:-}" ]; then
+        print_kv "DATABASE_URL" "generated local URL via Unix socket ${MACOS_POSTGRES_SOCKET_DIR}:5432"
     else
         print_kv "DATABASE_URL" "default local PostgreSQL URL"
     fi
@@ -3704,6 +4462,39 @@ install_runtime_node_modules() {
     fi
 }
 
+# A SeqDesk-managed PostgreSQL is deliberately not registered as a launchd or
+# systemd service, so nothing brings it back after a reboot. The app's own start
+# wrapper does it instead: pm2 resurrects the app, the app starts its database.
+# Emitted only when the installer actually provisioned a private instance.
+emit_private_postgres_start_snippet() {
+    [ "${SEQDESK_PRIVATE_POSTGRES:-false}" = "true" ] || return 0
+
+    local data_dir log_file pg_ctl_bin
+    data_dir="$(private_postgres_data_dir)"
+    log_file="$(private_postgres_log_file)"
+    pg_ctl_bin="$(find_postgres_binary pg_ctl 2>/dev/null || true)"
+    [ -n "$pg_ctl_bin" ] || return 0
+
+    printf '\n# SeqDesk manages this PostgreSQL instance; make sure it is running.\n'
+    printf 'SEQDESK_PG_CTL=%q\n' "$pg_ctl_bin"
+    printf 'SEQDESK_PG_DATA=%q\n' "$data_dir"
+    printf 'SEQDESK_PG_LOG=%q\n' "$log_file"
+    cat <<'EOF'
+if [ ! -x "$SEQDESK_PG_CTL" ]; then
+    SEQDESK_PG_CTL="$(command -v pg_ctl 2>/dev/null || true)"
+fi
+if [ -n "$SEQDESK_PG_CTL" ] && [ -s "$SEQDESK_PG_DATA/PG_VERSION" ]; then
+    if ! LC_ALL=C LANG=C "$SEQDESK_PG_CTL" -D "$SEQDESK_PG_DATA" status >/dev/null 2>&1; then
+        if ! LC_ALL=C LANG=C "$SEQDESK_PG_CTL" -D "$SEQDESK_PG_DATA" \
+            -l "$SEQDESK_PG_LOG" -w start >/dev/null 2>&1; then
+            echo "[seqdesk] warning: could not start PostgreSQL in $SEQDESK_PG_DATA" >&2
+            echo "[seqdesk] see $SEQDESK_PG_LOG" >&2
+        fi
+    fi
+fi
+EOF
+}
+
 write_root_start_wrapper() {
     mkdir -p "$SEQDESK_DIR"
     local persisted_bind_host
@@ -3716,6 +4507,7 @@ write_root_start_wrapper() {
 set -e
 EOF
         printf 'if [[ -z "${SEQDESK_BIND_HOST:-}" ]]; then export SEQDESK_BIND_HOST=%q; fi\n' "$persisted_bind_host"
+        emit_private_postgres_start_snippet
         cat <<'EOF'
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR/current"
@@ -4490,26 +5282,15 @@ fi
 print_kv "Started" "$INSTALL_STARTED_AT"
 print_kv "Log" "$SEQDESK_LOG"
 
-# Orientation for first-time interactive installs: state plainly what will happen
-# and the one prerequisite people miss (a PostgreSQL database) before any work
-# starts. Skipped for -y / reconfigure / prepare-postgres (automation or advanced
-# flows that don't need the primer).
+# Orientation for first-time interactive installs. Deliberately two lines: the
+# earlier version listed prerequisites before checking any of them, so it was
+# read as a wall of text at exactly the moment the reader had nothing to decide.
+# Every requirement here is verified a few lines below, and a missing one is
+# explained then — when it is actionable.
 if ! is_truthy "$SEQDESK_YES" && ! is_truthy "$SEQDESK_RECONFIGURE" && ! is_truthy "$SEQDESK_PREPARE_POSTGRES"; then
-    print_header "Before you start"
-    echo "  SeqDesk is a metadata & analysis platform for sequencing facilities."
-    echo "  This installs it to ${SEQDESK_DIR:-./seqdesk} and shows a summary before changing anything."
     echo ""
-    echo "  You'll need:"
-    echo "    - Node.js ${NODE_SUPPORT_LABEL:-22.13.0+ or 24.x} and npm   (checked next)"
-    echo "    - A PostgreSQL database:"
-    if [[ "${OSTYPE:-}" == darwin* ]]; then
-        echo "        local    the installer provisions Homebrew PostgreSQL without sudo"
-    else
-        echo "        local    the installer can create one for you if you can use sudo"
-    fi
-    echo "        managed  re-run with  --database-url \"postgresql://...\"  (or set DATABASE_URL)"
-    echo "    - A writable install directory"
-    echo ""
+    echo "  Installing to ${SEQDESK_DIR:-./seqdesk}. Nothing is changed until the summary is confirmed."
+    echo "  Needs Node.js ${NODE_SUPPORT_LABEL:-22.13.0+ or 24.x} and a PostgreSQL database; SeqDesk installs its own if you have none."
     echo "  Prerequisites: https://seqdesk.org/docs/installation/prerequisites"
 fi
 
@@ -4677,19 +5458,27 @@ validate_or_confirm_install_target
 
 resolve_conda_runtime
 
-# Guided setup wizard (opt-in via --interactive). Runs after dependency checks
-# so Node is available for the database reachability test, and before the
-# remaining prompts/config summary so its values flow through unchanged.
-run_interactive_wizard
+# Guided setup wizard (opt-in via --interactive), first half. Runs after
+# dependency checks so Node is available for the database reachability test.
+# Only the database question is asked here, because the answer decides what the
+# preflight below has to do.
+run_interactive_wizard_database
 
 # On macOS, provision or validate the selected local PostgreSQL server before
 # downloading the release or creating the install directory. A clean reviewer
-# machine gets PostgreSQL automatically; stale root services, ownership issues,
-# and port conflicts fail here with Homebrew status/log details and no partial
-# SeqDesk installation left behind. Managed/remote database URLs are untouched.
-if ! preflight_macos_local_postgres; then
+# machine gets a working PostgreSQL either way: a healthy local server is reused
+# untouched, and otherwise SeqDesk creates its own socket-only instance under
+# SEQDESK_PG_HOME. Managed/remote database URLs are untouched.
+#
+# This deliberately runs before the account prompts: everything that can fail
+# without the user having entered anything should fail first.
+if ! preflight_local_postgres; then
     exit 1
 fi
+
+# Second half of the wizard: the account details and generated credentials,
+# asked only once the database they will be created in is known to work.
+run_interactive_wizard_accounts
 
 # Pipeline support
 print_step "Configure pipeline support"
@@ -5319,13 +6108,30 @@ print_header "Login"
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     echo "  Existing user accounts are unchanged (reconfigure mode)."
 elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ] || [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
-    print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
+    # A password the installer generated is shown exactly once, here, next to the
+    # URL it is used on — and via print_secret_kv, so it is not written to the
+    # install log. A password the operator chose is never echoed back.
+    if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ]; then
+        print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}"
+        print_secret_kv "Admin password" "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD}"
+    else
+        print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
+    fi
     if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
         print_kv "Researcher" "not created"
     elif [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
-        print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL} / configured profile password"
+        if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
+            print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL}"
+            print_secret_kv "Researcher password" "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD}"
+        else
+            print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL} / configured profile password"
+        fi
     else
         print_kv "Researcher" "user@example.com / user (default; change after first login)"
+    fi
+    if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] || \
+        [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
+        echo "  Save the generated passwords now — they are not stored anywhere else."
     fi
 else
     print_kv "Admin" "admin@example.com / admin"
