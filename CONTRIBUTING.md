@@ -64,6 +64,14 @@ For advanced/dev checkouts rather than the recommended production npm path:
 bash scripts/install.sh -y --dir ./seqdesk-source
 ```
 
+Unlike the distribution installer (`npx -y seqdesk@latest`, i.e. `scripts/install-dist.sh`), the
+source installer does **not** provision PostgreSQL — it only prints setup instructions
+(`sudo apt-get install -y postgresql postgresql-contrib`, `sudo -u postgres psql …`) and exits
+non-zero if migrations cannot reach a server. Have a PostgreSQL 14+ server running and pass
+`--database-url postgresql://…` (or set `SEQDESK_DATABASE_URL`) before running it. Only the
+distribution installer reuses a healthy local server or creates and owns a private, socket-only
+cluster under `${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}`.
+
 ## Common commands
 
 ```bash

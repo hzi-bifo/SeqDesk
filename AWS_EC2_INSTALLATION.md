@@ -16,8 +16,14 @@ requirements described later.
 > **Security:** SeqDesk is designed for a trusted internal network. The direct
 > browser access below is only for a temporary test and is restricted to your
 > current public IP. Never choose `Anywhere` or `0.0.0.0/0` for the SeqDesk or
-> SSH ports. Do not use real credentials or sequencing data in this HTTP-only
-> setup. A permanent installation should use private/VPN access and HTTPS.
+> SSH ports. SeqDesk's server binds to `0.0.0.0` — every interface — unless you
+> set `SEQDESK_BIND_HOST`, so the security group is the only thing limiting who
+> can reach port 8000. For a loopback-only install (behind a reverse proxy or
+> VPN) export `SEQDESK_BIND_HOST=127.0.0.1` before running the installer; it is
+> persisted in `/home/ubuntu/seqdesk/.seqdesk-bind-host`, and the installer
+> warns at the end whenever the bind host is `0.0.0.0`. Do not use real
+> credentials or sequencing data in this HTTP-only setup. A permanent
+> installation should use private/VPN access and HTTPS.
 
 > **Test coverage:** Public CI tests packaged application installs on Ubuntu
 > 24.04/x64 with Node.js 24 and PostgreSQL 16, and on Ubuntu 22.04/x64 with
@@ -138,9 +144,17 @@ All remaining terminal commands run on EC2, not on your own computer.
 ```bash
 sudo apt-get update
 sudo apt-get upgrade -y
-sudo apt-get install -y curl ca-certificates postgresql postgresql-contrib
-sudo systemctl enable --now postgresql
+sudo apt-get install -y curl ca-certificates
 ```
+
+You no longer install or start PostgreSQL yourself. The installer reuses a
+healthy local server if one is already running; otherwise it creates and owns a
+private, socket-only PostgreSQL cluster under `~/.seqdesk/postgres`, installing
+the PostgreSQL server package with sudo if `initdb`/`pg_ctl` are missing. Add
+`postgresql postgresql-contrib` to the command above only if you deliberately
+want a system-wide PostgreSQL service — the installer then adopts it on
+`127.0.0.1:5432` and needs passwordless sudo (`sudo -n -u postgres psql`) to
+create the role and database.
 
 Install Node.js 22, SeqDesk, and PM2:
 
@@ -155,12 +169,13 @@ Verify them:
 ```bash
 node --version
 npm --version
-psql --version
 seqdesk --help
 ```
 
-Expect Node.js `v22.13.0` or newer on the 22.x line, a PostgreSQL version, and
-SeqDesk help. Stop if a command reports `command not found`.
+Expect Node.js `v22.13.0` or newer on the 22.x line (or any 24.x), npm, and
+SeqDesk help. Stop if `node`, `npm`, or `seqdesk` reports `command not found`.
+`psql` is not required before the install — SeqDesk installs the PostgreSQL
+packages if they are missing and provisions its own cluster.
 
 ## 4. Install SeqDesk
 
@@ -190,17 +205,31 @@ sections will then not apply.
 Answer the prompts as follows:
 
 1. For **Database — where should SeqDesk store its data?**, enter `1` for local
-   PostgreSQL. PostgreSQL stays private on this instance.
-2. Enter an administrator email and a strong test password. If the installer
-   generates a password, save it immediately because it is shown once.
+   PostgreSQL. PostgreSQL stays private on this instance. If no local
+   PostgreSQL server is already running, SeqDesk creates and owns one: a private
+   cluster under `${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}` holding `data/`,
+   `socket/`, and `server.log` at mode 0700. It is configured with
+   `listen_addresses = ''` and a Unix socket only — nothing is ever exposed on
+   TCP 5432, which is why the security group needs no 5432 rule — and its
+   superuser is the `ubuntu` login user through peer authentication. Set
+   `SEQDESK_PG_HOME` before installing to relocate it; the path must stay 85
+   characters or shorter.
+2. Enter an administrator email and a strong test password. Leaving the password
+   blank makes the installer generate a strong one, but it is deliberately not
+   printed at the prompt — the wizard only says that a strong password was
+   generated and is shown when the install finishes. It is printed exactly once
+   at the very end, next to the browser URL, and is never written to the install
+   log, so copy it from that final summary.
 3. Create a researcher account if you want to test both roles.
-4. Accept app port `8000`.
-5. At the review screen confirm:
-   - `/home/ubuntu/seqdesk`
-   - port `8000`
-   - `http://PUBLIC_IP:8000`
-   - pipelines enabled
-6. Continue only if those values are correct.
+4. The wizard asks nothing further; it covers only the database and the two
+   accounts.
+5. The installer then prints a **Preflight summary** (`Target directory
+   /home/ubuntu/seqdesk`, `Writable`, `Disk available`, `Node.js`, `npm`,
+   `Pipelines`) and, after the download, a **Configuration summary**
+   (`Pipelines: enabled`, `Port: 8000`, `NEXTAUTH_URL: http://PUBLIC_IP:8000`,
+   `DATABASE_URL`, the admin and researcher accounts, and `settings.json`),
+   followed by the prompt `Continue with these settings? (Y/n):`.
+6. Answer `Y` only if those values are correct; `n` cancels the installation.
 
 The installer downloads SeqDesk, creates the database, installs Conda/Nextflow,
 starts PM2, and runs health checks. Do not close the terminal. At the end note
@@ -220,6 +249,15 @@ instance, then save the process list:
 ```bash
 pm2 save
 ```
+
+If SeqDesk provisioned its own PostgreSQL, that cluster is deliberately not
+registered with systemd — nothing else brings it back after a reboot.
+`/home/ubuntu/seqdesk/start.sh`, the script PM2 runs, checks
+`pg_ctl -D ~/.seqdesk/postgres/data status` and starts the cluster before
+launching the app, so `pm2 resurrect` at boot brings up the database and then
+SeqDesk. There is nothing extra to enable. If the database fails to start,
+`pm2 logs seqdesk` shows `[seqdesk] warning: could not start PostgreSQL in ...`
+and names `~/.seqdesk/postgres/server.log`.
 
 ## 6. Verify the application
 
@@ -461,6 +499,12 @@ with `10.`, `172.16`–`172.31`, or `192.168`.
 
 ### Installer fails
 
+Re-run the install with `--verbose` (or `SEQDESK_VERBOSE=1`) to promote the
+installer's diagnostic narration from the log to the terminal, for example
+`seqdesk --interactive --verbose --dir /home/ubuntu/seqdesk --port 8000 …`.
+Without it, that detail exists only in `/tmp/seqdesk-install-<timestamp>.log`
+(mode 0600, overridable with `SEQDESK_LOG`).
+
 ```bash
 ls -1t /tmp/seqdesk-install-*.log | head -n 1
 tail -n 100 /tmp/seqdesk-install-*.log
@@ -478,24 +522,40 @@ re-running the installer:
 ```bash
 whoami
 sudo -n true
+
+# only if a system PostgreSQL is in use
 sudo systemctl status postgresql --no-pager
-sudo pg_isready
 sudo -u postgres psql -c 'select version();'
+
+# if SeqDesk provisioned its own cluster (no systemd unit exists)
+PG_CTL="$(command -v pg_ctl || ls -d /usr/lib/postgresql/*/bin/pg_ctl | tail -n 1)"
+"$PG_CTL" -D "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}/data" status
+tail -n 50 "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}/server.log"
+psql -h "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}/socket" -d seqdesk -c 'select version();'
 ```
 
 `whoami` should print `ubuntu`, `sudo -n true` should return without prompting,
-and `pg_isready` should report that PostgreSQL accepts connections. If the
-service is inactive, run:
+and PostgreSQL should report that it accepts connections. If a *system* service
+is inactive, run:
 
 ```bash
 sudo systemctl enable --now postgresql
 ```
 
+That command applies only to a system server; a SeqDesk-owned cluster is started
+by `/home/ubuntu/seqdesk/start.sh` instead.
+
 Do not run the complete SeqDesk installer as `root`; files and PM2 processes
-should belong to `ubuntu`. The installer needs sudo when it prepares the local
-PostgreSQL role and database. If your organization removes passwordless sudo,
-have an administrator prepare PostgreSQL first or use a managed PostgreSQL
-database and provide its database URLs through the guided installer.
+should belong to `ubuntu`. The installer needs sudo only in two cases: when it
+adopts a pre-existing *system* PostgreSQL, where it creates the role and
+database with `sudo -n -u postgres psql`, or when it has to install the
+PostgreSQL server package. Without passwordless sudo you do not need an
+administrator or a managed database: as long as `initdb` and `pg_ctl` exist on
+the host, run the installer as your normal `ubuntu` user and SeqDesk creates and
+owns its own cluster under `~/.seqdesk/postgres`. Running the installer as
+`root` is not a workaround — it refuses with `SeqDesk will not create a
+PostgreSQL instance owned by root.` A managed PostgreSQL URL through the guided
+installer remains a valid choice, not a requirement.
 
 ### Conda or pipeline setup fails
 
