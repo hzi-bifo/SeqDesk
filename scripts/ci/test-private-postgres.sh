@@ -135,7 +135,9 @@ else
     tcp_sockets="$(lsof -nP -p "$postgres_pid" -a -iTCP 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')"
     assert_eq "the instance opens no TCP sockets" "0" "$tcp_sockets"
 
-    socket_perms="$(ls -ld "$(private_postgres_socket_dir)" | awk '{print $1}')"
+    # Strip the trailing ACL/xattr marker macOS appends (@ or +) — it varies by
+    # filesystem and says nothing about the permission bits under test.
+    socket_perms="$(ls -ld "$(private_postgres_socket_dir)" | awk '{print $1}' | sed 's/[@+]$//')"
     assert_eq "the socket directory is private to its owner" "drwx------" "$socket_perms"
 
     hba="$(cat "$(private_postgres_data_dir)/pg_hba.conf")"
