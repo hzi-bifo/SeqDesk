@@ -28,6 +28,9 @@ jobs:
         run: |
           bash scripts/ci/test-interactive-wizard.sh
           bash scripts/ci/test-conda-discovery.sh
+          # Provisioning cases self-skip when initdb/pg_ctl are absent, so this
+          # still exercises the path helpers and guards on a client-only runner.
+          bash scripts/ci/test-private-postgres.sh
 
   build-public-release-artifact:
     runs-on: ubuntu-latest
