@@ -119,6 +119,17 @@ assert_eq "generated researcher password is flagged for the final summary" \
     "true" "$SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED"
 assert_eq "an operator-supplied password is not flagged as generated" \
     "false" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED"
+# The summary prints long after settings.json is written, and writing it wipes
+# the bootstrap plaintext. Reading the wiped variable there printed an empty
+# password and left the operator with an account they could not sign in to.
+assert_nonempty "a generated password is kept for the final summary" \
+    "$SEQDESK_GENERATED_RESEARCHER_PASSWORD"
+clear_bootstrap_plaintext_passwords
+assert_eq "clearing wipes the bootstrap plaintext" "" "$SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD"
+assert_nonempty "the summary copy survives that wipe" \
+    "$SEQDESK_GENERATED_RESEARCHER_PASSWORD"
+assert_eq "an operator-supplied password is never copied for display" \
+    "" "$SEQDESK_GENERATED_ADMIN_PASSWORD"
 
 echo ""
 echo "== Case 2: local DB choice, no researcher, reachable managed not used =="
