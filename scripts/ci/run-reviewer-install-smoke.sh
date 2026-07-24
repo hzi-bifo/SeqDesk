@@ -217,7 +217,41 @@ SEQDESK_EXEC_CONDA_ENV="$PIPELINE_CONDA_ENV" \
     --port "$APP_PORT" \
     --nextauth-url "http://127.0.0.1:${APP_PORT}" \
     --database-url "$DATABASE_URL" \
-    --database-direct-url "$DATABASE_URL"
+    --database-direct-url "$DATABASE_URL" 2>&1 | tee "$OUTPUT_DIR/install-stdout.log"
+
+# What the installer *prints* is part of the product: it is the only place a
+# generated credential is ever shown, and the only instruction telling an
+# operator how to start the app. A released installer once printed the
+# credential labels with no values, and every existing check still passed
+# because none of them read this output.
+CURRENT_STAGE="verify-install-summary"
+SUMMARY="$OUTPUT_DIR/install-stdout.log"
+
+if ! grep -q "SUCCESS" "$SUMMARY"; then
+  echo "Install summary is missing its SUCCESS marker" >&2
+  exit 1
+fi
+
+# Absolute, not './start.sh' — the relative form does nothing from any other
+# directory, and the summary is frequently read after the shell has moved on.
+if ! grep -qF "$INSTALL_DIR/start.sh" "$SUMMARY"; then
+  echo "Install summary does not name the absolute start.sh path" >&2
+  exit 1
+fi
+
+# A '<label> password' line with nothing after it means the operator was handed
+# an account they cannot sign in to.
+if grep -qE '^[[:space:]]+[A-Za-z]+ password[[:space:]]*$' "$SUMMARY"; then
+  echo "Install summary printed a credential label with no value:" >&2
+  grep -nE '^[[:space:]]+[A-Za-z]+ password[[:space:]]*$' "$SUMMARY" >&2
+  exit 1
+fi
+
+# Credentials must never reach the install log, which outlives the session.
+if [ -f "$OUTPUT_DIR/install.log" ] && grep -qiE '^[[:space:]]+[A-Za-z]+ password[[:space:]]+[^[:space:]]' "$OUTPUT_DIR/install.log"; then
+  echo "A credential value was written to the install log" >&2
+  exit 1
+fi
 
 test -x "$INSTALL_DIR/start.sh"
 test -f "$INSTALL_DIR/current/package.json"

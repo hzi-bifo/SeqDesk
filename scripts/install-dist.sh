@@ -5286,6 +5286,64 @@ on_error() {
     exit $exit_code
 }
 
+print_login_summary() {
+    print_header "Login"
+
+    if is_truthy "$SEQDESK_RECONFIGURE"; then
+        echo "  Existing user accounts are unchanged (reconfigure mode)."
+    elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ] || [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
+        # A password the installer generated is shown exactly once, here, next to the
+        # URL it is used on — and via print_secret_kv, so it is not written to the
+        # install log. A password the operator chose is never echoed back.
+        if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ]; then
+            print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}"
+            print_secret_kv "Admin password" "${SEQDESK_GENERATED_ADMIN_PASSWORD}"
+        else
+            print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
+        fi
+        if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
+            print_kv "Researcher" "not created"
+        elif [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
+            if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
+                print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL}"
+                print_secret_kv "Researcher password" "${SEQDESK_GENERATED_RESEARCHER_PASSWORD}"
+            else
+                print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL} / configured profile password"
+            fi
+        else
+            print_kv "Researcher" "user@example.com / user (default; change after first login)"
+        fi
+        if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] || \
+            [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
+            echo "  Save the generated passwords now — they are not stored anywhere else."
+        fi
+    else
+        print_kv "Admin" "admin@example.com / admin"
+        print_kv "Researcher" "user@example.com / user"
+        echo "  Change the default admin password immediately after first login."
+    fi
+}
+
+print_success_footer() {
+    # The last thing on screen is the one thing the reader has to do next. Everything
+    # above is reference; this is the instruction. Under PM2 the app is already
+    # running, so it is a link to open — otherwise it is the command to start it.
+    echo ""
+    printf '%b  SUCCESS  SeqDesk v%s is installed.%b\n' "$GREEN$BOLD" "$INSTALLED_VERSION" "$NC"
+    echo ""
+    if [ "$PM2_CONFIGURED" = "true" ]; then
+        echo "  Open SeqDesk:"
+        printf '  %b%s%b\n' "$CYAN$BOLD" "$(browser_app_url)" "$NC"
+    else
+        echo "  Start SeqDesk:"
+        printf '  %b%s/start.sh%b\n' "$CYAN$BOLD" "$SEQDESK_DIR" "$NC"
+        echo ""
+        echo "  then open:"
+        printf '  %b%s%b\n' "$CYAN$BOLD" "$(browser_app_url)" "$NC"
+    fi
+    echo ""
+}
+
 # Test hook: when sourced with SEQDESK_INSTALL_LIB_ONLY=1, load the function
 # and variable definitions above but do NOT run the installer. Lets the wizard
 # and other helpers be unit-tested in isolation (scripts/ci/test-interactive-wizard.sh).
@@ -6152,41 +6210,11 @@ else
     echo "  A manual start does not come back after a reboot or an update."
 fi
 
-print_header "Login"
+# Extracted so the credential summary can be asserted directly. It used to be
+# inline top-level code, which is why nothing could test that it renders a real
+# password rather than an empty one.
 
-if is_truthy "$SEQDESK_RECONFIGURE"; then
-    echo "  Existing user accounts are unchanged (reconfigure mode)."
-elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ] || [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
-    # A password the installer generated is shown exactly once, here, next to the
-    # URL it is used on — and via print_secret_kv, so it is not written to the
-    # install log. A password the operator chose is never echoed back.
-    if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ]; then
-        print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}"
-        print_secret_kv "Admin password" "${SEQDESK_GENERATED_ADMIN_PASSWORD}"
-    else
-        print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
-    fi
-    if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
-        print_kv "Researcher" "not created"
-    elif [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
-        if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
-            print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL}"
-            print_secret_kv "Researcher password" "${SEQDESK_GENERATED_RESEARCHER_PASSWORD}"
-        else
-            print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL} / configured profile password"
-        fi
-    else
-        print_kv "Researcher" "user@example.com / user (default; change after first login)"
-    fi
-    if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] || \
-        [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
-        echo "  Save the generated passwords now — they are not stored anywhere else."
-    fi
-else
-    print_kv "Admin" "admin@example.com / admin"
-    print_kv "Researcher" "user@example.com / user"
-    echo "  Change the default admin password immediately after first login."
-fi
+print_login_summary
 
 print_header "Diagnose"
 
@@ -6213,20 +6241,5 @@ echo "  1. Log in as admin and configure Data Storage in Admin > Data Storage"
 echo "  2. Configure pipeline runtime under Admin > Pipeline Runtime (if enabled)"
 echo "  3. Use the Browser URL for login. Use the Local health URL for curl/doctor checks."
 
-# The last thing on screen is the one thing the reader has to do next. Everything
-# above is reference; this is the instruction. Under PM2 the app is already
-# running, so it is a link to open — otherwise it is the command to start it.
-echo ""
-printf '%b  SUCCESS  SeqDesk v%s is installed.%b\n' "$GREEN$BOLD" "$INSTALLED_VERSION" "$NC"
-echo ""
-if [ "$PM2_CONFIGURED" = "true" ]; then
-    echo "  Open SeqDesk:"
-    printf '  %b%s%b\n' "$CYAN$BOLD" "$(browser_app_url)" "$NC"
-else
-    echo "  Start SeqDesk:"
-    printf '  %b%s/start.sh%b\n' "$CYAN$BOLD" "$SEQDESK_DIR" "$NC"
-    echo ""
-    echo "  then open:"
-    printf '  %b%s%b\n' "$CYAN$BOLD" "$(browser_app_url)" "$NC"
-fi
-echo ""
+
+print_success_footer

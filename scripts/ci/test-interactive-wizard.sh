@@ -642,6 +642,48 @@ assert_not_contains "the generated password is not written to the install log" \
     "SENTINEL_GENERATED_PW" "$secret_log"
 
 echo ""
+echo "== Case 12c: the rendered install summary shows a real password and next action =="
+# Asserting the flag was true is not enough: the shipped v1.1.122 summary printed
+# the credential labels with empty values because it read variables that had
+# already been wiped. These assertions render the actual summary.
+summary_out="$(
+    (
+        SEQDESK_LOG_ENABLED="false"
+        SEQDESK_RECONFIGURE=""
+        SEQDESK_DIR="/opt/seqdesk-test"
+        INSTALLED_VERSION="9.9.9"
+        PM2_CONFIGURED="false"
+        SEQDESK_PORT="8000"
+        SEQDESK_BIND_HOST="127.0.0.1"
+        SEQDESK_BOOTSTRAP_ADMIN_EMAIL="admin@lab.org"
+        SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="true"
+        SEQDESK_GENERATED_ADMIN_PASSWORD="AAAAgeneratedAdminAAAA"
+        SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="1"
+        SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL="r@lab.org"
+        SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="true"
+        SEQDESK_GENERATED_RESEARCHER_PASSWORD="BBBBgeneratedResearcherBBBB"
+        # The wipe that runs long before the summary in a real install.
+        clear_bootstrap_plaintext_passwords
+        print_login_summary
+        print_success_footer
+    ) 2>&1
+)"
+assert_contains "the admin password is rendered, not blank" \
+    "AAAAgeneratedAdminAAAA" <(printf '%s\n' "$summary_out")
+assert_contains "the researcher password is rendered, not blank" \
+    "BBBBgeneratedResearcherBBBB" <(printf '%s\n' "$summary_out")
+assert_contains "the summary ends with a success marker" \
+    "SUCCESS" <(printf '%s\n' "$summary_out")
+assert_contains "the start command is an absolute path" \
+    "/opt/seqdesk-test/start.sh" <(printf '%s\n' "$summary_out")
+assert_contains "the URL to open is shown" \
+    "http://127.0.0.1:8000" <(printf '%s\n' "$summary_out")
+
+# Guard the general shape: any "<label> password" line must carry a value.
+empty_secret_lines="$(printf '%s\n' "$summary_out" | grep -cE '^[[:space:]]+[A-Za-z]+ password[[:space:]]*$' || true)"
+assert_eq "no password line is label-only" "0" "$empty_secret_lines"
+
+echo ""
 echo "== Case 13: installer failures expose stable troubleshooting URLs =="
 print_troubleshooting_url >"$OUT" 2>&1
 assert_contains "generic failures link to the common-problems index" \
