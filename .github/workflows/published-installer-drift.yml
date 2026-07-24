@@ -1,0 +1,78 @@
+name: Published Installer Drift
+
+# The installer users actually run is published by hand: scripts/install-dist.sh
+# is copied into the website repo as public/install.sh. Nothing enforces that
+# copy, so main can move while https://seqdesk.org/install.sh keeps serving an
+# older script — including one with a known defect.
+#
+# The only existing check on the published artifact, install-real-network-smoke,
+# runs weekly. A broken installer could therefore reach every new user and stay
+# there for seven days. This closes that window to a single push, and reports the
+# drift rather than trying to fix it: publishing stays a deliberate act.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/install-dist.sh"
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: published-installer-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    name: Published installer matches main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Fetch the published installer
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --retry-delay 5 https://seqdesk.org/install.sh \
+            -o published-install.sh
+          echo "published lines: $(wc -l < published-install.sh)"
+          echo "main lines:      $(wc -l < scripts/install-dist.sh)"
+
+      - name: Published script is valid shell
+        run: bash -n published-install.sh
+
+      - name: Compare against main
+        run: |
+          set -euo pipefail
+          repo_sha="$(shasum -a 256 scripts/install-dist.sh | cut -d' ' -f1)"
+          live_sha="$(shasum -a 256 published-install.sh | cut -d' ' -f1)"
+          echo "main:      $repo_sha"
+          echo "published: $live_sha"
+
+          if [ "$repo_sha" = "$live_sha" ]; then
+            echo "Published installer matches main."
+            exit 0
+          fi
+
+          {
+            echo "### Published installer is out of date"
+            echo ""
+            echo "\`https://seqdesk.org/install.sh\` does not match \`scripts/install-dist.sh\` on main."
+            echo ""
+            echo "| | SHA-256 | Lines |"
+            echo "| --- | --- | --- |"
+            echo "| main | \`${repo_sha:0:16}\` | $(wc -l < scripts/install-dist.sh) |"
+            echo "| published | \`${live_sha:0:16}\` | $(wc -l < published-install.sh) |"
+            echo ""
+            echo "Publish by copying \`scripts/install-dist.sh\` to \`public/install.sh\`"
+            echo "in the website repository and pushing to its default branch."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::Published installer does not match main — see the job summary to publish."
+          diff <(sed 's/[[:space:]]*$//' scripts/install-dist.sh) \
+               <(sed 's/[[:space:]]*$//' published-install.sh) | head -60 || true
+          exit 1

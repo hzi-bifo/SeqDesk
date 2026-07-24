@@ -195,25 +195,100 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  # macOS installs used to run only on workflow_dispatch and the weekly schedule,
+  # so the whole macOS path — Homebrew, launchd, and the PostgreSQL reuse ladder
+  # that behaves differently there — was unverified at merge time. Two macOS-only
+  # defects reached a release that way. One arm64 install now runs on every pull
+  # request; the wider macOS matrix (Intel, pipelines) stays in extended-macos.
+  required-macos:
+    name: Required install / macOS 15 ARM64 / Node 24 / PostgreSQL 16
+    needs: build-candidate
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_USER: seqdesk
+      DB_PASSWORD: seqdesk
+      DB_NAME: seqdesk_reviewer
+      REVIEWER_LABEL: macOS 15 ARM64 / Node 24 / PostgreSQL 16
+      REVIEWER_DECLARED_OS: macOS 15 ARM64 / Node 24 / PostgreSQL 16
+      REVIEWER_EXPECTED_ARCH: arm64
+      REVIEWER_NODE_VERSION: "24"
+      REVIEWER_POSTGRES_VERSION: "16"
+      REVIEWER_PIPELINE_SMOKE: "false"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: reviewer-candidate
+          path: ${{ runner.temp }}/reviewer-candidate
+      - name: Start isolated PostgreSQL 16
+        run: |
+          set -euo pipefail
+          brew install postgresql@16
+          PG_BIN="$(brew --prefix postgresql@16)/bin"
+          PGDATA="$RUNNER_TEMP/reviewer-postgres-data"
+          PG_LOG="$RUNNER_TEMP/reviewer-postgres.log"
+          echo "$PG_BIN" >> "$GITHUB_PATH"
+          echo "PG_BIN=$PG_BIN" >> "$GITHUB_ENV"
+          echo "PGDATA=$PGDATA" >> "$GITHUB_ENV"
+          echo "PG_LOG=$PG_LOG" >> "$GITHUB_ENV"
+          "$PG_BIN/initdb" -D "$PGDATA" -U postgres -A trust --no-locale
+          "$PG_BIN/pg_ctl" -D "$PGDATA" -l "$PG_LOG" -o "-h 127.0.0.1 -p 5432" start
+          for _ in $(seq 1 30); do
+            if "$PG_BIN/pg_isready" -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          "$PG_BIN/pg_isready" -h 127.0.0.1 -p 5432
+          "$PG_BIN/psql" -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk';"
+          "$PG_BIN/createdb" -h 127.0.0.1 -p 5432 -U postgres -O seqdesk seqdesk_reviewer
+      - run: bash scripts/ci/run-reviewer-install-smoke.sh
+      - name: Preserve database log and stop PostgreSQL
+        if: always()
+        env:
+          COMPATIBILITY_DIR: ${{ runner.temp }}/reviewer-compatibility
+        run: |
+          mkdir -p "$COMPATIBILITY_DIR"
+          cp "${PG_LOG:-/dev/null}" "$COMPATIBILITY_DIR/postgres.log" 2>/dev/null || true
+          if [ -n "${PG_BIN:-}" ] && [ -n "${PGDATA:-}" ]; then
+            "$PG_BIN/pg_ctl" -D "$PGDATA" stop -m fast || true
+          fi
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reviewer-required-macos15-arm64-node24-pg16
+          path: ${{ runner.temp }}/reviewer-compatibility
+          if-no-files-found: warn
+          retention-days: 30
+
   required-install-gate:
     name: Required reviewer installation gate
-    needs: [build-candidate, required-ubuntu, required-minimum]
+    needs: [build-candidate, required-ubuntu, required-minimum, required-macos]
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require candidate build and both installation boundaries
+      - name: Require candidate build and all installation boundaries
         env:
           BUILD_RESULT: ${{ needs.build-candidate.result }}
           PRIMARY_RESULT: ${{ needs.required-ubuntu.result }}
           MINIMUM_RESULT: ${{ needs.required-minimum.result }}
+          MACOS_RESULT: ${{ needs.required-macos.result }}
         run: |
           set -euo pipefail
-          printf 'candidate build: %s\nprimary install: %s\nminimum install: %s\n' \
-            "$BUILD_RESULT" "$PRIMARY_RESULT" "$MINIMUM_RESULT"
+          printf 'candidate build: %s\nprimary install: %s\nminimum install: %s\nmacos install:   %s\n' \
+            "$BUILD_RESULT" "$PRIMARY_RESULT" "$MINIMUM_RESULT" "$MACOS_RESULT"
           test "$BUILD_RESULT" = success
           test "$PRIMARY_RESULT" = success
           test "$MINIMUM_RESULT" = success
+          test "$MACOS_RESULT" = success
 
   extended-ubuntu:
     name: Extended / ${{ matrix.label }}
