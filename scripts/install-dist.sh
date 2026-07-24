@@ -97,6 +97,14 @@ SEQDESK_VERBOSE="${SEQDESK_VERBOSE:-}"
 INTERACTIVE_RESULT_GENERATED="false"
 SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="false"
 SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="false"
+# Separate copies of passwords the installer generated, kept only so the final
+# summary can show them once. clear_bootstrap_plaintext_passwords() wipes the
+# bootstrap variables as soon as settings.json is written — long before the
+# summary prints — so reading them there yields an empty string and the operator
+# is left with an account they cannot sign in to. These are cleared immediately
+# after they are displayed. A password the operator typed is never stored here.
+SEQDESK_GENERATED_ADMIN_PASSWORD=""
+SEQDESK_GENERATED_RESEARCHER_PASSWORD=""
 INTERACTIVE_RESULT=""
 SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
 SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
@@ -2861,6 +2869,9 @@ run_interactive_wizard_accounts() {
     interactive_prompt_password "  Admin password"
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD="$INTERACTIVE_RESULT"
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="$INTERACTIVE_RESULT_GENERATED"
+    if [ "$INTERACTIVE_RESULT_GENERATED" = "true" ]; then
+        SEQDESK_GENERATED_ADMIN_PASSWORD="$INTERACTIVE_RESULT"
+    fi
 
     local make_researcher
     make_researcher=$(read_input "  Also create a researcher (non-admin) account? (Y/n): ")
@@ -2877,6 +2888,9 @@ run_interactive_wizard_accounts() {
             interactive_prompt_password "  Researcher password"
             SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD="$INTERACTIVE_RESULT"
             SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="$INTERACTIVE_RESULT_GENERATED"
+            if [ "$INTERACTIVE_RESULT_GENERATED" = "true" ]; then
+                SEQDESK_GENERATED_RESEARCHER_PASSWORD="$INTERACTIVE_RESULT"
+            fi
             ;;
     esac
 
@@ -6125,10 +6139,17 @@ if [ "$PM2_CONFIGURED" = "true" ]; then
     fi
 else
     print_kv "Mode" "manual"
-    printf '  %bcd %s%b\n' "$CYAN" "$SEQDESK_DIR" "$NC"
-    printf '  %b./start.sh%b\n' "$CYAN" "$NC"
+    echo "  SeqDesk is installed but not running yet. Start it with:"
     echo ""
-    echo "  Manual start will not auto-restart after updates."
+    # Absolute path: the reader is not necessarily in the install directory, and
+    # a bare ./start.sh silently does nothing useful from anywhere else.
+    printf '  %b%s/start.sh%b\n' "$CYAN" "$SEQDESK_DIR" "$NC"
+    echo ""
+    echo "  Leave it running in that terminal, or start it in the background with:"
+    printf '  %bnohup %s/start.sh > %s/seqdesk.out 2>&1 &%b\n' \
+        "$CYAN" "$SEQDESK_DIR" "$SEQDESK_DIR" "$NC"
+    echo ""
+    echo "  A manual start does not come back after a reboot or an update."
 fi
 
 print_header "Login"
@@ -6141,7 +6162,7 @@ elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_AD
     # install log. A password the operator chose is never echoed back.
     if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ]; then
         print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}"
-        print_secret_kv "Admin password" "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD}"
+        print_secret_kv "Admin password" "${SEQDESK_GENERATED_ADMIN_PASSWORD}"
     else
         print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
     fi
@@ -6150,7 +6171,7 @@ elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_AD
     elif [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
         if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
             print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL}"
-            print_secret_kv "Researcher password" "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD}"
+            print_secret_kv "Researcher password" "${SEQDESK_GENERATED_RESEARCHER_PASSWORD}"
         else
             print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL} / configured profile password"
         fi
@@ -6191,4 +6212,21 @@ print_header "Next steps"
 echo "  1. Log in as admin and configure Data Storage in Admin > Data Storage"
 echo "  2. Configure pipeline runtime under Admin > Pipeline Runtime (if enabled)"
 echo "  3. Use the Browser URL for login. Use the Local health URL for curl/doctor checks."
+
+# The last thing on screen is the one thing the reader has to do next. Everything
+# above is reference; this is the instruction. Under PM2 the app is already
+# running, so it is a link to open — otherwise it is the command to start it.
+echo ""
+printf '%b  SUCCESS  SeqDesk v%s is installed.%b\n' "$GREEN$BOLD" "$INSTALLED_VERSION" "$NC"
+echo ""
+if [ "$PM2_CONFIGURED" = "true" ]; then
+    echo "  Open SeqDesk:"
+    printf '  %b%s%b\n' "$CYAN$BOLD" "$(browser_app_url)" "$NC"
+else
+    echo "  Start SeqDesk:"
+    printf '  %b%s/start.sh%b\n' "$CYAN$BOLD" "$SEQDESK_DIR" "$NC"
+    echo ""
+    echo "  then open:"
+    printf '  %b%s%b\n' "$CYAN$BOLD" "$(browser_app_url)" "$NC"
+fi
 echo ""
