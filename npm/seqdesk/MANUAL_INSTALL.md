@@ -71,6 +71,16 @@ it prints a warning naming the socket's real owner, skips that candidate, and
 continues down the list — normally ending at its own private cluster. Pass an
 explicit `--database-url` only when you want that other server to be used.
 
+Whichever path is used, the installer reuses a database it finds rather than
+creating a new one: a database named `seqdesk` on the reused server (or the one
+named by `--database-url`) is attached to as-is, including data and user
+accounts from an earlier install. Bootstrap accounts are then created only where
+they are missing — an account that already exists keeps its current password,
+and no password the run generates applies to it. For a clean test, name a
+database that does not exist yet in `--database-url`; on a local host or socket
+the installer creates the role and database, on a remote or managed server
+create it yourself first.
+
 Set database URLs (only for the self-managed path):
 
 ```bash
@@ -157,11 +167,13 @@ curl -fsS http://127.0.0.1:8000/api/setup/status
 ```
 
 Because these commands are unattended and do not provide bootstrap users, they
-seed the fallback development accounts:
+seed the fallback development accounts into an empty database:
 
 - `admin@example.com` / `admin`
 - `user@example.com` / `user`
 
+If the database was not empty and already carried those accounts, they are left
+exactly as they are — their existing passwords apply, not the ones listed here.
 Change or remove both immediately. SeqDesk binds `0.0.0.0` (every interface) by
 default, so the instance — and these default credentials — are reachable from
 the network as soon as it starts. To keep a test install local-only, set
@@ -289,6 +301,54 @@ seqdesk -y --reconfigure \
 Reconfigure mode skips migrations and seed data by default. Take a database
 backup before deliberately adding `--reseed-db`. For a fresh install, rerun the
 normal install command instead of using `--reconfigure`.
+
+A repeat install on a machine that already ran SeqDesk normally lands on the
+earlier database. Replacing the install directory (the `Back up and replace the
+install directory? (y/N)` prompt, or `--overwrite-existing` with `-y`) moves
+`<dir>` to `<dir>.backup.<timestamp>` and leaves the database alone, so the
+second install starts with the first install's data and accounts. Expect the
+existing accounts to keep their existing passwords, and expect the installer to
+say so between the migrations and the seed:
+
+```text
+  warning The selected database already contains SeqDesk accounts.
+  Database             postgresql://seqdesk:********@127.0.0.1:5432/seqdesk?schema=public
+  Existing admin account admin@example.com (password left unchanged)
+```
+
+The generated password for such an account is then discarded — including the
+hash already written to `settings.json` — the database step ends with `Existing
+SeqDesk database adopted: schema updated, existing accounts and data kept`, and
+the closing **Login** block shows `existing password (unchanged)` in place of a
+password. The check covers only the bootstrap addresses this run would create,
+so its silence does not certify an empty database. To retest from zero, either
+point `--database-url` at a database name that is not in use, or drop the old
+one deliberately (see step 9) before reinstalling.
+
+After editing `runtime.*` in `<SEQDESK_INSTALL_DIR>/settings.json` — a different
+`databaseUrl`, for example — the change applies at the next process start. The
+app fills these variables from `settings.json` only when they are not already
+set in its environment, and PM2 reuses the environment captured when the process
+was first started:
+
+```bash
+# The empty values are what the installer prints, and what does the work:
+# --update-env merges the current environment into the copy PM2 stored and
+# cannot drop a variable that copy already has, so a DATABASE_URL captured at
+# first start survives a plain --update-env restart. An empty value overwrites
+# it, and start.sh treats empty as unset and falls back to settings.json.
+DATABASE_URL= DIRECT_URL= pm2 restart seqdesk --update-env
+pm2 save
+
+# check the result with: pm2 env <id>   (id from pm2 status)
+# or recreate the process, which stores no such value at all
+pm2 delete seqdesk
+pm2 start "$SEQDESK_INSTALL_DIR/start.sh" --name seqdesk
+pm2 save
+```
+
+A manually started install picks the file up simply by stopping `./start.sh`
+and running it again.
 
 If the guided installer reports that PostgreSQL provisioning cannot use sudo,
 you usually do not need sudo at all: rerun as a normal **non-root** user and

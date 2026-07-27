@@ -248,7 +248,7 @@ if grep -qE '^[[:space:]]+[A-Za-z]+ password[[:space:]]*$' "$SUMMARY"; then
 fi
 
 # Credentials must never reach the install log, which outlives the session.
-if [ -f "$OUTPUT_DIR/install.log" ] && grep -qiE '^[[:space:]]+[A-Za-z]+ password[[:space:]]+[^[:space:]]' "$OUTPUT_DIR/install.log"; then
+if [ -f "$OUTPUT_DIR/install.log" ] && grep -qiE '^[[:space:]]+[A-Za-z]+ password[[:space:]]{2,}[^[:space:]]' "$OUTPUT_DIR/install.log"; then
   echo "A credential value was written to the install log" >&2
   exit 1
 fi

@@ -244,6 +244,43 @@ The installer downloads SeqDesk, creates the database, installs Conda/Nextflow,
 starts PM2, and runs health checks. Do not close the terminal. At the end note
 the printed **Browser URL**, **Directory**, and **Log**.
 
+### Installing a second time on the same instance
+
+On a first install this instance has no database yet, so the accounts entered
+above are created and their passwords are the ones that work. A later install on
+the same instance behaves differently: the installer reuses the PostgreSQL
+server it finds and reuses the existing `seqdesk` database inside it, with all
+of the earlier data and user accounts. Replacing the install directory does not
+change that — answering `y` to `Back up and replace the install directory? (y/N)`
+(or passing `--overwrite-existing` with `-y`) moves `/home/ubuntu/seqdesk` to
+`/home/ubuntu/seqdesk.backup.<timestamp>` and leaves the database untouched.
+
+Accounts that already exist in that database keep their existing passwords. The
+second run does not reset them, so sign in with the credentials from the first
+install. The installer says as much during the database step, between the
+migrations and the seed:
+
+```text
+  warning The selected database already contains SeqDesk accounts.
+  Database             postgresql://seqdesk:********@127.0.0.1:5432/seqdesk?schema=public
+  Existing admin account admin@example.com (password left unchanged)
+```
+
+It then drops the password it had generated for that account, ends the database
+step with `Existing SeqDesk database adopted: schema updated, existing accounts
+and data kept`, and prints `admin@example.com / existing password (unchanged)`
+in the closing **Login** block rather than a password. That check looks only for
+the bootstrap addresses this run would have created, so it stays quiet on a
+database whose accounts use other addresses — silence is not proof that the
+database is empty. To start over with an empty database, add `--database-url`
+naming a database that does not exist yet. Take
+`runtime.databaseUrl` from `/home/ubuntu/seqdesk/settings.json` and change only
+the database name at the end of it, so the host, socket, and credentials still
+match this instance's PostgreSQL; the installer then creates that database on
+the server it administers. There is no flag that wipes an existing database. For
+a throwaway test instance, terminating it (see **Stop or delete the test**) is
+the simplest clean slate.
+
 ## 5. Enable startup after reboot
 
 ```bash
@@ -298,7 +335,9 @@ pm2 logs seqdesk --lines 100
 pm2 restart seqdesk
 ```
 
-Press `Ctrl+C` to leave live logs without stopping SeqDesk.
+Press `Ctrl+C` to leave live logs without stopping SeqDesk. A plain restart keeps
+the environment PM2 captured at the first start; to apply an edited
+`settings.json`, follow **Routine operations → Applying a configuration change**.
 
 ## 7. Open and navigate the UI
 
@@ -308,7 +347,10 @@ Press `Ctrl+C` to leave live logs without stopping SeqDesk.
    http://203.0.113.10:8000
    ```
 
-2. Sign in with the administrator account.
+2. Sign in with the administrator account entered during the install. If this
+   instance had SeqDesk installed before, that account may predate this run and
+   still use its earlier password — see **Installing a second time on the same
+   instance**.
 3. A browser may label this HTTP page not secure. This is why access is limited
    to your IP and this setup is only for testing.
 4. Choose **Settings → Infrastructure → Open Data Storage** and test that the
@@ -483,6 +525,36 @@ seqdesk doctor --dir /home/ubuntu/seqdesk --url http://127.0.0.1:8000
 pm2 restart seqdesk
 ```
 
+### Applying a configuration change
+
+A change to `runtime.*` in `/home/ubuntu/seqdesk/settings.json` — whether it was
+made by hand or by `seqdesk --reconfigure` — applies at the next process start.
+The app fills these variables from `settings.json` only when they are not
+already set in its environment, and PM2 reuses the environment it captured when
+the process was first started, so refresh that environment on restart:
+
+```bash
+DATABASE_URL= DIRECT_URL= pm2 restart seqdesk --update-env
+pm2 save
+```
+
+That is the command the installer prints, empty values included, and they are
+the working part. `--update-env` merges the current environment into the copy
+PM2 stored; it does not remove a variable that copy already holds, so a
+`DATABASE_URL` captured when the process was first started survives a plain
+`pm2 restart seqdesk --update-env` even from a shell that exports none.
+Assigning an empty value overwrites it, and `start.sh` treats an empty value as
+unset and falls back to `settings.json`. Check the result with `pm2 env <id>`,
+using the id from `pm2 status`.
+
+Or recreate the process, which stores no such value in the first place:
+
+```bash
+pm2 delete seqdesk
+pm2 start /home/ubuntu/seqdesk/start.sh --name seqdesk
+pm2 save
+```
+
 ### After stopping and starting
 
 Copy the new EC2 public address, then run:
@@ -493,7 +565,8 @@ seqdesk -y \
   --reconfigure \
   --dir /home/ubuntu/seqdesk \
   --nextauth-url "http://${SEQDESK_PUBLIC_IP}:8000"
-pm2 restart seqdesk
+DATABASE_URL= DIRECT_URL= pm2 restart seqdesk --update-env
+pm2 save
 ```
 
 Update both security-group rules with **My IP** if your own IP changed. A static
@@ -517,6 +590,31 @@ If local `curl` works, open **EC2 → Security Groups → seqdesk-test-sg → Ed
 inbound rules**. Port `8000` must use your current **My IP**. Save the rule; do
 not change it to `Anywhere`. Use the public address, not an address beginning
 with `10.`, `172.16`–`172.31`, or `192.168`.
+
+### Login says the email or password is invalid
+
+If the install just finished and the account was entered or generated during
+this run, check first that this instance had no earlier SeqDesk database. A
+repeat install attaches to the existing `seqdesk` database, and accounts already
+in it keep their earlier passwords — see **Installing a second time on the same
+instance**. Confirm what the database holds. SeqDesk's connection string carries
+a `schema` parameter that `psql` rejects, so drop it first:
+
+```bash
+SEQDESK_DB_URL="$(node -e 'const u = new URL(require("/home/ubuntu/seqdesk/settings.json").runtime.databaseUrl); u.searchParams.delete("schema"); console.log(u.toString());')"
+psql "$SEQDESK_DB_URL" -c 'SELECT email, role, "createdAt" FROM "User" ORDER BY "createdAt"'
+```
+
+A `createdAt` older than today's install means the account predates it. Use its
+original password, install against a database name that is not in use, or set a
+new hash for that row:
+
+```bash
+cd /home/ubuntu/seqdesk/current
+node -e 'const { hashSync } = require("bcryptjs"); console.log(hashSync(process.argv[1], 12));' 'replace-with-strong-password'
+psql "$SEQDESK_DB_URL" \
+  -c "UPDATE \"User\" SET password = '<hash>' WHERE email = 'admin@example.com'"
+```
 
 ### Installer fails
 
