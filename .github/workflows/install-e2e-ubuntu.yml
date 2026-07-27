@@ -1685,9 +1685,11 @@ jobs:
       || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
-    # Two full installs plus two application boots, so roughly double a
-    # single-install leg.
-    timeout-minutes: 60
+    # Two full installs plus three application boots, so roughly double a
+    # single-install leg. The third boot belongs to the password-reset leg at
+    # the end: the reset itself is a single UPDATE and costs nothing, but the
+    # login that proves the new password works needs the app up again.
+    timeout-minutes: 70
     env:
       NEXT_TELEMETRY_DISABLED: 1
       DB_NAME: seqdesk_second_install
@@ -1736,6 +1738,24 @@ jobs:
           echo "MOCK_RELEASE_PORT=8803" >> "$GITHUB_ENV"
           echo "MOCK_SERVER_LOG=$RUNNER_TEMP/second-install-release-server.log" >> "$GITHUB_ENV"
           echo "DB_URL=postgresql://seqdesk:seqdesk@127.0.0.1:5432/$DB_NAME?schema=public" >> "$GITHUB_ENV"
+          # The account the password-reset leg recovers. It is the one the
+          # second install deliberately left alone, so at that point in the job
+          # nobody holds a working password for it -- which is the whole reason
+          # the reset command exists.
+          echo "RESET_EMAIL=admin@example.com" >> "$GITHUB_ENV"
+          # Everything the reset command wrote to its stdout/stderr. Like the
+          # two installer summaries it carries a plaintext password, so it is
+          # masked before anything echoes it and it is never uploaded.
+          echo "RESET_OUTPUT=$RUNNER_TEMP/second-install-reset-output.log" >> "$GITHUB_ENV"
+          echo "RESET_PASSWORD_FILE=$RUNNER_TEMP/second-install-reset-password.txt" >> "$GITHUB_ENV"
+          # The extracted password rendered in the one line shape
+          # scripts/ci/mask-printed-credentials.sh recognises, so the same
+          # masking the installer summaries get also covers this value.
+          echo "RESET_MASK_FILE=$RUNNER_TEMP/second-install-reset-mask.log" >> "$GITHUB_ENV"
+          # Which account was reset and whether the password was generated. No
+          # password value in it, so this one is safe to upload.
+          echo "RESET_SUMMARY=$RUNNER_TEMP/second-install-reset-summary.json" >> "$GITHUB_ENV"
+          echo "SERVER_LOG_THREE=$RUNNER_TEMP/second-install-reset-server.log" >> "$GITHUB_ENV"
 
       - name: Download public release tarball
         uses: actions/download-artifact@v4
@@ -2149,23 +2169,256 @@ jobs:
             --require-printed-password \
             --result-file "$GOVERNING_RESULT"
 
+      - name: Reset the forgotten password with the shipped command
+        # The two steps below close the job's loop. Up to here the second
+        # install has been shown to be honest -- it printed no password and said
+        # why -- which leaves a reviewer holding an account they cannot log into
+        # and no way back in. That is exactly the situation `seqdesk
+        # reset-password` exists for, and this runner is the only place it can
+        # be tried against a real installation in that state.
+        #
+        # ORDER MATTERS. Every assertion above has already run, including
+        # "Assert the existing admin password was not overwritten", so that one
+        # still tests what it was written to test: whether the INSTALL rewrote
+        # the hash. This step rewrites it deliberately, afterwards, and asserts
+        # that it did.
+        #
+        # The launcher is this checkout's copy rather than a globally installed
+        # or `npx`-fetched `seqdesk`: the published package predates the command
+        # and would not have it, so testing anything else would test the wrong
+        # code. It is pointed with --dir at INSTALL_DIR_TWO, which is what makes
+        # the worker it runs the copy that shipped inside the release tarball
+        # and makes it read that installation's settings.json for the database
+        # credentials.
+        #
+        # --yes because the command otherwise stops for a confirmation and
+        # nobody is here to give it; without it this step would hang until the
+        # job timeout.
+        run: |
+          set -euo pipefail
+
+          # Cleared rather than assumed absent, so a rerun cannot make the
+          # checks below pass on a leftover file from an earlier attempt.
+          rm -f "$RESET_PASSWORD_FILE" "$RESET_MASK_FILE" "$RESET_SUMMARY"
+
+          # Output is captured to a file rather than tee'd, for the same reason
+          # the installer summaries above are: it carries the new plaintext
+          # password, which is masked in the commands that follow before
+          # anything can echo it.
+          : > "$RESET_OUTPUT"
+          chmod 600 "$RESET_OUTPUT"
+          set +e
+          node "$GITHUB_WORKSPACE/npm/seqdesk/bin/seqdesk.js" reset-password \
+            --dir "$INSTALL_DIR_TWO" \
+            --email "$RESET_EMAIL" \
+            --yes \
+            --json \
+            >"$RESET_OUTPUT" 2>&1
+          RESET_STATUS=$?
+          set -e
+
+          # First net, and dead weight while --json is used: the shared masker
+          # only recognises the installer's "  <Word> password    <value>" line
+          # shape. It runs anyway so a future change back to the human summary
+          # is covered without anyone having to remember this step.
+          bash "$GITHUB_WORKSPACE/scripts/ci/mask-printed-credentials.sh" "$RESET_OUTPUT"
+
+          # Second net, and the value this job needs to log in with. --json
+          # makes the whole output one pretty-printed payload, so the password
+          # is read out of that and written twice: once for the login step, once
+          # in the line shape the masker above understands, which is what
+          # actually registers the value as a secret. Nothing prints the
+          # command's output until that has happened.
+          # Non-fatal, so a failed reset can still be diagnosed below.
+          set +e
+          SEQDESK_RESET_OUTPUT="$RESET_OUTPUT" \
+          SEQDESK_RESET_PASSWORD_FILE="$RESET_PASSWORD_FILE" \
+          SEQDESK_RESET_MASK_FILE="$RESET_MASK_FILE" \
+          SEQDESK_RESET_SUMMARY="$RESET_SUMMARY" \
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const raw = fs.readFileSync(process.env.SEQDESK_RESET_OUTPUT, "utf8");
+          let password = "";
+          let details = {};
+
+          // --json prints the payload with JSON.stringify(result, null, 2), so
+          // it spans lines. Parse the whole capture, and if stderr got mixed in
+          // ahead of it, fall back to the outermost braces.
+          const candidates = [raw.trim()];
+          const first = raw.indexOf("{");
+          const last = raw.lastIndexOf("}");
+          if (first !== -1 && last > first) {
+            candidates.push(raw.slice(first, last + 1));
+          }
+          for (const candidate of candidates) {
+            if (!candidate) continue;
+            try {
+              const payload = JSON.parse(candidate);
+              if (payload && payload.ok === true && typeof payload.password === "string" && payload.password) {
+                password = payload.password;
+                details = { email: payload.email, role: payload.role, generated: payload.generated };
+                break;
+              }
+            } catch {
+              // Not a payload. Fall through to the printed-line shape below.
+            }
+          }
+
+          if (!password) {
+            // Kept as a net for a command that stops emitting JSON: the shape
+            // scripts/ci/mask-printed-credentials.sh matches, so a value found
+            // this way was already registered as a secret.
+            for (const line of raw.split(/\r?\n/)) {
+              const match = /^[ \t]+[A-Za-z]+ password[ \t]{2,}(\S.*)$/.exec(line);
+              if (match) {
+                password = match[1].trim();
+                break;
+              }
+            }
+          }
+
+          if (!password) {
+            console.error("Could not find a password in the reset command output.");
+            console.error("Expected an \"ok\": true JSON payload with a password, or a printed");
+            console.error("\"  <Word> password    <value>\" line.");
+            process.exit(1);
+          }
+
+          fs.writeFileSync(process.env.SEQDESK_RESET_PASSWORD_FILE, password, { mode: 0o600 });
+          fs.writeFileSync(process.env.SEQDESK_RESET_MASK_FILE, `  Reset password       ${password}\n`, {
+            mode: 0o600,
+          });
+          fs.writeFileSync(
+            process.env.SEQDESK_RESET_SUMMARY,
+            `${JSON.stringify(
+              {
+                email: details.email ?? null,
+                role: details.role ?? null,
+                generated: details.generated ?? null,
+                passwordPrinted: true,
+              },
+              null,
+              2
+            )}\n`
+          );
+          NODE
+          EXTRACT_STATUS=$?
+          set -e
+          if [ -f "$RESET_MASK_FILE" ]; then
+            bash "$GITHUB_WORKSPACE/scripts/ci/mask-printed-credentials.sh" "$RESET_MASK_FILE"
+          fi
+
+          # The command only emits a password when it succeeded, so a non-zero
+          # exit can be dumped whole and is the case that most needs it.
+          if [ "$RESET_STATUS" -ne 0 ]; then
+            cat "$RESET_OUTPUT"
+            echo "seqdesk reset-password failed with status $RESET_STATUS."
+            echo "A reviewer who cannot log in has nothing else to try, so this command"
+            echo "has to work against an installation the installer just left alone."
+            exit "$RESET_STATUS"
+          fi
+
+          # Deliberately NOT dumped: the command reported success, which means
+          # its output carries the new password, and a value this job could not
+          # find is a value it could not register as a secret either. Printing
+          # it here to explain the failure would be the leak the masking above
+          # exists to prevent.
+          if [ "$EXTRACT_STATUS" -ne 0 ]; then
+            echo "seqdesk reset-password succeeded but this job could not read the new password"
+            echo "out of its output, so the output is withheld rather than printed unmasked."
+            echo "A password nobody can read is the same failure as no password at all."
+            echo "Output size: $(wc -c <"$RESET_OUTPUT") bytes."
+            exit 1
+          fi
+
+          # Every password value in it is registered as a secret by now.
+          cat "$RESET_OUTPUT"
+          test -s "$RESET_PASSWORD_FILE"
+          cat "$RESET_SUMMARY"
+
+          # The counterpart of "Assert the existing admin password was not
+          # overwritten": that step proved the INSTALL left the hash alone, this
+          # one proves the reset did not. Compared as md5 fingerprints, so no
+          # hash is written anywhere it does not belong.
+          #
+          # `FROM "User"` again -- see the note on "Record the accounts the
+          # second install will meet" about the unmapped Prisma model name.
+          AFTER_RESET="$(PGPASSWORD=seqdesk psql -h 127.0.0.1 -p 5432 -U seqdesk -d "$DB_NAME" \
+            -tAc "SELECT md5(password) FROM \"User\" WHERE email = '$RESET_EMAIL'")"
+          BEFORE_RESET="$(cat "$ADMIN_FINGERPRINT")"
+          if [ "$AFTER_RESET" = "$BEFORE_RESET" ]; then
+            echo "reset-password reported success but the stored hash for $RESET_EMAIL is unchanged."
+            echo "Whatever it printed cannot be the password that account now has."
+            exit 1
+          fi
+          echo "ok: the stored password hash for $RESET_EMAIL was replaced"
+
+      - name: Log in with the password the reset command printed
+        # The assertion the whole password-reset leg exists for, and the same
+        # rule this job already enforces for the installer: a password that gets
+        # PRINTED must work. Nothing weaker counts -- a reset that reports
+        # success and leaves the account unreachable is the defect, not the fix.
+        #
+        # PORT_TWO is reused. The step above ran with the app down and the
+        # previous boot's process reaped, and the start wrapper execs through to
+        # node, so killing it released the port.
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR_TWO"
+
+          ./start.sh "$PORT_TWO" >"$SERVER_LOG_THREE" 2>&1 &
+          APP_PID=$!
+
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT_TWO}/api/auth/providers" >/dev/null; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG_THREE" || true
+            exit 1
+          fi
+
+          # Same login path every other installation leg in this workflow uses,
+          # so a pass here means the same thing it means there.
+          node "$GITHUB_WORKSPACE/scripts/run-auth-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT_TWO}" \
+            --email "$RESET_EMAIL" \
+            --password "$(cat "$RESET_PASSWORD_FILE")"
+          echo "ok: the password seqdesk reset-password printed authenticates as $RESET_EMAIL"
+
       - name: Upload install e2e artifacts (second install)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          # Neither installer summary is uploaded: both hold the plaintext
-          # passwords the installer printed. The credential-result JSONs record
-          # which accounts were checked and whether they authenticated, with no
-          # password values in them.
+          # Neither installer summary is uploaded, and neither is the reset
+          # command's output or the password file it produced: all four hold a
+          # plaintext password. The credential-result JSONs and the reset
+          # summary record which accounts were touched and whether they
+          # authenticated, with no password values in them.
           name: install-e2e-second-install-ubuntu
           path: |
             ${{ env.FIRST_INSTALL_LOG }}
             ${{ env.SECOND_INSTALL_LOG }}
             ${{ env.SERVER_LOG_ONE }}
             ${{ env.SERVER_LOG_TWO }}
+            ${{ env.SERVER_LOG_THREE }}
             ${{ env.FIRST_RESULT }}
             ${{ env.SECOND_RESULT }}
             ${{ env.GOVERNING_RESULT }}
+            ${{ env.RESET_SUMMARY }}
             ${{ env.MOCK_SERVER_LOG }}
           if-no-files-found: warn
           retention-days: 5

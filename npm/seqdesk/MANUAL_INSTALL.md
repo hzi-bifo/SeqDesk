@@ -174,7 +174,9 @@ seed the fallback development accounts into an empty database:
 
 If the database was not empty and already carried those accounts, they are left
 exactly as they are — their existing passwords apply, not the ones listed here.
-Change or remove both immediately. SeqDesk binds `0.0.0.0` (every interface) by
+If nobody has those passwords, set a new one for a single account with
+`seqdesk reset-password` (step 8). Change or remove both immediately. SeqDesk
+binds `0.0.0.0` (every interface) by
 default, so the instance — and these default credentials — are reachable from
 the network as soon as it starts. To keep a test install local-only, set
 `SEQDESK_BIND_HOST=127.0.0.1` at install time (it is persisted in
@@ -324,6 +326,45 @@ password. The check covers only the bootstrap addresses this run would create,
 so its silence does not certify an empty database. To retest from zero, either
 point `--database-url` at a database name that is not in use, or drop the old
 one deliberately (see step 9) before reinstalling.
+
+When the checklist reaches that state and the earlier password is no longer
+known — the `existing password (unchanged)` case — set a new one for that single
+account instead of reinstalling:
+
+```bash
+seqdesk reset-password --dir "$SEQDESK_INSTALL_DIR" --email admin@example.com
+```
+
+Expected: a plan block (`Account`, `Directory`, `Database`), the prompt `Reset
+this account's password? (y/N)`, and after confirming, one summary block naming
+the account (email, name, role) and the new password, printed once. Answering
+anything else cancels and changes nothing. Add `--password 'chosen-value'` to
+set a value yourself, `--yes` to skip the prompt, or `--yes --json` for
+machine-readable output when scripting this step (`--json` alone is rejected,
+because the prompt cannot be answered in that mode). A missing address, an
+unreachable database, or an installed release older than 1.1.125 — which has no
+`current/scripts/reset-password.mjs` to run — exits non-zero with an explanation
+rather than a password.
+
+Verify the reset by signing in with the printed password. Then confirm what the
+command deliberately does not do: it writes the password to no file and no log,
+and cannot reprint it, so the terminal is the only copy. It also changes nothing
+but the account named by `--email` — list the users and check that only that row
+has a fresh `updatedAt`:
+
+```bash
+SEQDESK_DB_URL="$(node -e 'const u = new URL(require(process.argv[1]).runtime.databaseUrl); u.searchParams.delete("schema"); console.log(u.toString());' "$SEQDESK_INSTALL_DIR/settings.json")"
+psql "$SEQDESK_DB_URL" -c 'SELECT email, role, "updatedAt" FROM "User" ORDER BY "updatedAt"'
+```
+
+The command reads `runtime.databaseUrl` from `<dir>/settings.json` and updates
+the database directly, so the app need be neither running nor stopped for it,
+and no restart is required afterwards. Sessions are JWT-based, so a browser that
+is already signed in as that account stays signed in until its session expires;
+the new password governs the next sign-in. It is an operator command that
+assumes local access to the install directory; it is not a self-service or
+remote reset and adds no privilege, because that same `settings.json` already
+carries the database credentials.
 
 After editing `runtime.*` in `<SEQDESK_INSTALL_DIR>/settings.json` — a different
 `databaseUrl`, for example — the change applies at the next process start. The

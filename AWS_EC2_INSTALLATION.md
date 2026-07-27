@@ -257,7 +257,9 @@ change that — answering `y` to `Back up and replace the install directory? (y/
 
 Accounts that already exist in that database keep their existing passwords. The
 second run does not reset them, so sign in with the credentials from the first
-install. The installer says as much during the database step, between the
+install — or, if those are lost, give one account a new password with `seqdesk
+reset-password` (see **Routine operations → Resetting a lost account
+password**). The installer says as much during the database step, between the
 migrations and the seed:
 
 ```text
@@ -350,7 +352,8 @@ the environment PM2 captured at the first start; to apply an edited
 2. Sign in with the administrator account entered during the install. If this
    instance had SeqDesk installed before, that account may predate this run and
    still use its earlier password — see **Installing a second time on the same
-   instance**.
+   instance**, and **Routine operations → Resetting a lost account password** if
+   that earlier password is gone.
 3. A browser may label this HTTP page not secure. This is why access is limited
    to your IP and this setup is only for testing.
 4. Choose **Settings → Infrastructure → Open Data Storage** and test that the
@@ -525,6 +528,32 @@ seqdesk doctor --dir /home/ubuntu/seqdesk --url http://127.0.0.1:8000
 pm2 restart seqdesk
 ```
 
+### Resetting a lost account password
+
+```bash
+seqdesk reset-password --dir /home/ubuntu/seqdesk --email admin@example.com
+```
+
+The command shows the account, directory, and database it is about to change and
+asks `Reset this account's password? (y/N)`. After you confirm, it sets a new
+password for that one account and prints it once, together with the account's
+name and role. Pass `--password 'chosen-value'` to choose the value yourself,
+`--yes` to skip the prompt, or `--yes --json` for machine-readable output. The
+password goes to the terminal only — no file, no log, no second chance to
+display it — so copy it before closing the SSH session. Nothing else changes:
+only the account named by `--email` is touched.
+
+Run it on the instance. The command reads `runtime.databaseUrl` from
+`/home/ubuntu/seqdesk/settings.json` and updates the database directly through
+the installed release, so SeqDesk does not have to be running and PM2 needs no
+restart afterwards. It needs SeqDesk 1.1.125 or newer in
+`/home/ubuntu/seqdesk`; against an older install it changes nothing and prints
+the version required. It is not a self-service or remote reset — SeqDesk has no
+forgot-password email, and nothing in the UI does this — and it grants nothing
+new: anyone with SSH access to that directory can already read the database
+credentials out of `settings.json`. Keep the instance's SSH access limited
+accordingly.
+
 ### Applying a configuration change
 
 A change to `runtime.*` in `/home/ubuntu/seqdesk/settings.json` — whether it was
@@ -606,15 +635,18 @@ psql "$SEQDESK_DB_URL" -c 'SELECT email, role, "createdAt" FROM "User" ORDER BY 
 ```
 
 A `createdAt` older than today's install means the account predates it. Use its
-original password, install against a database name that is not in use, or set a
-new hash for that row:
+original password, install against a database name that is not in use, or give
+that one account a new password:
 
 ```bash
-cd /home/ubuntu/seqdesk/current
-node -e 'const { hashSync } = require("bcryptjs"); console.log(hashSync(process.argv[1], 12));' 'replace-with-strong-password'
-psql "$SEQDESK_DB_URL" \
-  -c "UPDATE \"User\" SET password = '<hash>' WHERE email = 'admin@example.com'"
+seqdesk reset-password --dir /home/ubuntu/seqdesk --email admin@example.com
 ```
+
+The new password is printed once and stored nowhere, so copy it from the
+terminal; `--password 'chosen-value'` sets a value you choose instead, and
+`--yes --json` prints the result as JSON for scripting. See **Routine operations → Resetting
+a lost account password** for what the command does and does not do. Writing a
+bcrypt hash into the `User` table by hand is no longer necessary.
 
 ### Installer fails
 
