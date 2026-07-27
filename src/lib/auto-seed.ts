@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { hashSync } from "bcryptjs";
+import type { Prisma } from "@prisma/client";
 import { db } from "./db";
 import { resolveDataBasePathFromStoredValue } from "./files/data-base-path";
 import {
@@ -19,6 +20,50 @@ const DEFAULT_USER_PASSWORD_HASH =
   "$2b$12$kbd8ye8jMpaIwxH8nVP79u/witxktRivlfVQ59IlUzyzVKCVIox2m";
 
 type BootstrapUserConfig = Record<string, unknown>;
+
+export type BootstrapAccountKind = "admin" | "researcher";
+
+/**
+ * What happened to a single bootstrap account during a seed pass.
+ * - `created`: the account did not exist and was created with the configured password.
+ * - `existing`: the account was already in this database and was left untouched,
+ *   which means the configured password does NOT apply to it.
+ * - `skipped`: the account was not attempted because the bootstrap configuration
+ *   disabled it.
+ * - `refused`: the account would have been created with the built-in default
+ *   password on an install where that password is not the intended credential.
+ *   Nothing was written; see `reason`.
+ */
+export type BootstrapAccountOutcome =
+  | "created"
+  | "existing"
+  | "skipped"
+  | "refused";
+
+export type BootstrapAccountReport = {
+  kind: BootstrapAccountKind;
+  outcome: BootstrapAccountOutcome;
+  /** Omitted for accounts that were not written (`skipped`, `refused`). */
+  email?: string;
+  /** Why a `skipped` or `refused` account was not created. */
+  reason?: string;
+};
+
+export type BootstrapAccountReports = {
+  admin: BootstrapAccountReport;
+  researcher: BootstrapAccountReport;
+};
+
+export type AutoSeedResult = {
+  seeded: boolean;
+  error?: string;
+  /**
+   * Present whenever a seed pass actually looked at the bootstrap accounts.
+   * Absent when the guard short-circuited (nothing to do) or the pass failed
+   * before reaching the accounts.
+   */
+  accounts?: BootstrapAccountReports;
+};
 
 const CONFIG_FILE_NAMES = [
   "settings.json",
@@ -45,6 +90,9 @@ const DEFAULT_RESEARCHER_USER = {
 };
 
 let seedingInProgress = false;
+// Set once this process has confirmed the database is fully bootstrapped, so
+// callers that poll (e.g. /api/setup/status) do not re-query on every request.
+let bootstrapVerified = false;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -158,41 +206,78 @@ function firstSeedString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
+type ResolvedBootstrapPassword = {
+  hash: string;
+  /**
+   * True when nothing named a password for this account and the hash below is
+   * the one SeqDesk ships (the documented `admin` / `user` credentials).
+   */
+  isBuiltInDefault: boolean;
+};
+
 function resolvePasswordHash(
   kind: "admin" | "researcher",
   configUser: BootstrapUserConfig,
   defaultHash: string
-): string {
+): ResolvedBootstrapPassword {
   const envPrefix =
     kind === "admin" ? "SEQDESK_BOOTSTRAP_ADMIN" : "SEQDESK_BOOTSTRAP_RESEARCHER";
   const passwordHash = firstSeedString(
     process.env[`${envPrefix}_PASSWORD_HASH`],
     configUser.passwordHash
   );
-  if (passwordHash) return passwordHash;
+  if (passwordHash) return { hash: passwordHash, isBuiltInDefault: false };
 
   const password = firstSeedString(process.env[`${envPrefix}_PASSWORD`], configUser.password);
-  if (password) return hashSync(password, 12);
+  if (password) return { hash: hashSync(password, 12), isBuiltInDefault: false };
 
-  return defaultHash;
+  return { hash: defaultHash, isBuiltInDefault: true };
 }
+
+function resolveConfiguredEmail(
+  kind: "admin" | "researcher",
+  configUser: BootstrapUserConfig
+): string | undefined {
+  const envKey =
+    kind === "admin"
+      ? "SEQDESK_BOOTSTRAP_ADMIN_EMAIL"
+      : "SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL";
+  return firstSeedString(process.env[envKey], configUser.email);
+}
+
+/**
+ * A bootstrap account with the two facts the seed guard needs about where its
+ * credentials came from.
+ */
+type ResolvedBootstrapUser<T> = T & {
+  /**
+   * True when this install named the address itself (profile config file,
+   * settings.json or environment) instead of falling back to the shipped
+   * default address.
+   */
+  emailConfigured: boolean;
+  /** True when `passwordHash` is the shipped default for this account kind. */
+  passwordIsBuiltInDefault: boolean;
+};
 
 function resolveBootstrapUser(
   kind: "admin",
   config: Record<string, unknown>
-): typeof DEFAULT_ADMIN_USER;
+): ResolvedBootstrapUser<typeof DEFAULT_ADMIN_USER>;
 function resolveBootstrapUser(
   kind: "researcher",
   config: Record<string, unknown>
-): typeof DEFAULT_RESEARCHER_USER;
+): ResolvedBootstrapUser<typeof DEFAULT_RESEARCHER_USER>;
 function resolveBootstrapUser(kind: "admin" | "researcher", config: Record<string, unknown>) {
   const configUser = bootstrapUserFromConfig(config, kind);
+  const configuredEmail = resolveConfiguredEmail(kind, configUser);
   if (kind === "admin") {
+    const password = resolvePasswordHash("admin", configUser, DEFAULT_ADMIN_USER.passwordHash);
     return {
-      email:
-        firstSeedString(process.env.SEQDESK_BOOTSTRAP_ADMIN_EMAIL, configUser.email) ??
-        DEFAULT_ADMIN_USER.email,
-      passwordHash: resolvePasswordHash("admin", configUser, DEFAULT_ADMIN_USER.passwordHash),
+      email: configuredEmail ?? DEFAULT_ADMIN_USER.email,
+      emailConfigured: configuredEmail !== undefined,
+      passwordHash: password.hash,
+      passwordIsBuiltInDefault: password.isBuiltInDefault,
       firstName:
         firstSeedString(process.env.SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME, configUser.firstName) ??
         DEFAULT_ADMIN_USER.firstName,
@@ -205,15 +290,16 @@ function resolveBootstrapUser(kind: "admin" | "researcher", config: Record<strin
     };
   }
 
+  const password = resolvePasswordHash(
+    "researcher",
+    configUser,
+    DEFAULT_RESEARCHER_USER.passwordHash
+  );
   return {
-    email:
-      firstSeedString(process.env.SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL, configUser.email) ??
-      DEFAULT_RESEARCHER_USER.email,
-    passwordHash: resolvePasswordHash(
-      "researcher",
-      configUser,
-      DEFAULT_RESEARCHER_USER.passwordHash
-    ),
+    email: configuredEmail ?? DEFAULT_RESEARCHER_USER.email,
+    emailConfigured: configuredEmail !== undefined,
+    passwordHash: password.hash,
+    passwordIsBuiltInDefault: password.isBuiltInDefault,
     firstName:
       firstSeedString(process.env.SEQDESK_BOOTSTRAP_RESEARCHER_FIRST_NAME, configUser.firstName) ??
       DEFAULT_RESEARCHER_USER.firstName,
@@ -235,16 +321,167 @@ function resolveBootstrapUser(kind: "admin" | "researcher", config: Record<strin
 }
 
 /**
+ * Create a bootstrap account unless the target database already has one, and
+ * report which of the two happened.
+ *
+ * An account that is already present is deliberately left untouched: the
+ * password generated for this install must never silently replace the password
+ * an existing installation is already using. The caller is expected to surface
+ * the `existing` outcome instead of advertising credentials that do not apply.
+ */
+async function ensureBootstrapAccount(
+  kind: BootstrapAccountKind,
+  email: string,
+  create: Prisma.UserCreateInput
+): Promise<BootstrapAccountReport> {
+  const existing = await db.user.findUnique({
+    where: { email },
+    select: { id: true },
+  });
+
+  await db.user.upsert({
+    where: { email },
+    update: {},
+    create,
+  });
+
+  if (existing) {
+    console.log(
+      `[auto-seed] Bootstrap ${kind} account ${email} already exists, ` +
+        "leaving it unchanged (its current password still applies)"
+    );
+    return { kind, email, outcome: "existing" };
+  }
+
+  console.log(`[auto-seed] Created ${kind} user ${email}`);
+  return { kind, email, outcome: "created" };
+}
+
+type BootstrapSeedOptions = {
+  /**
+   * Whether this pass may create an account with the password SeqDesk ships.
+   * True only for the very first seed of a database that carries nothing at
+   * all -- see `refuseBuiltInDefaultPassword`.
+   */
+  allowBuiltInDefaultPassword: boolean;
+};
+
+/**
+ * Decide whether an account must NOT be created because it would end up with
+ * the built-in default password (the documented `admin` / `user`).
+ *
+ * That password is world-known, so it is only ever the intended credential for
+ * an install that configured nothing at all -- a checkout started against an
+ * empty database. Two situations must never produce it:
+ *
+ *  - **The install named the account but no password for it.** This is what the
+ *    distribution installer leaves behind after it attaches to a database that
+ *    already holds the account: it removes the `passwordHash` it could not
+ *    apply (`strip_unapplied_bootstrap_password_hashes`) and keeps the address.
+ *    Reading that leftover address as "create this account with the default
+ *    password" would turn an install that deliberately generated a secret into
+ *    one anybody can sign into.
+ *  - **The accounts-only pass**, which runs against a database that already
+ *    carries site settings. Something configured that install before, so a
+ *    login nobody chose does not belong in it.
+ *
+ * Refusing leaves the install without that account, which is visible at the
+ * login screen and fixable from the log below. Creating it silently is neither:
+ * `/api/setup/status` is unauthenticated, so any anonymous request would
+ * otherwise be able to bring a well-known administrator into existence.
+ */
+function refuseBuiltInDefaultPassword(
+  kind: BootstrapAccountKind,
+  resolved: {
+    email: string;
+    emailConfigured: boolean;
+    passwordIsBuiltInDefault: boolean;
+  },
+  options: BootstrapSeedOptions
+): BootstrapAccountReport | undefined {
+  if (!resolved.passwordIsBuiltInDefault) return undefined;
+  if (options.allowBuiltInDefaultPassword && !resolved.emailConfigured) {
+    return undefined;
+  }
+
+  const reason = resolved.emailConfigured
+    ? "This install names the account but configured no password for it"
+    : "This database was already configured, so no account is created with the built-in default password";
+  console.warn(
+    `[auto-seed] Not creating bootstrap ${kind} account ${resolved.email}: ${reason}. ` +
+      `Set bootstrap.users.${kind}.password (or passwordHash) in settings.json and restart ` +
+      "the app to create it, or add the account directly in the database."
+  );
+  return { kind, outcome: "refused", reason };
+}
+
+/**
+ * Ensure both bootstrap accounts exist and report what was done to each.
+ */
+async function seedBootstrapAccounts(
+  seedConfig: Record<string, unknown>,
+  options: BootstrapSeedOptions
+): Promise<{ reports: BootstrapAccountReports; adminEmail: string }> {
+  const adminBootstrap = resolveBootstrapUser("admin", seedConfig);
+  const admin =
+    refuseBuiltInDefaultPassword("admin", adminBootstrap, options) ??
+    (await ensureBootstrapAccount("admin", adminBootstrap.email, {
+      email: adminBootstrap.email,
+      password: adminBootstrap.passwordHash,
+      firstName: adminBootstrap.firstName,
+      lastName: adminBootstrap.lastName,
+      role: "FACILITY_ADMIN",
+      facilityName: adminBootstrap.facilityName,
+    }));
+
+  let researcher: BootstrapAccountReport;
+  if (shouldCreateBootstrapResearcher(seedConfig)) {
+    const researcherBootstrap = resolveBootstrapUser("researcher", seedConfig);
+    researcher =
+      refuseBuiltInDefaultPassword("researcher", researcherBootstrap, options) ??
+      (await ensureBootstrapAccount(
+        "researcher",
+        researcherBootstrap.email,
+        {
+          email: researcherBootstrap.email,
+          password: researcherBootstrap.passwordHash,
+          firstName: researcherBootstrap.firstName,
+          lastName: researcherBootstrap.lastName,
+          role: "RESEARCHER",
+          researcherRole: researcherBootstrap.researcherRole,
+          institution: researcherBootstrap.institution,
+        }
+      ));
+  } else {
+    console.log("[auto-seed] Researcher account disabled by bootstrap configuration");
+    researcher = {
+      kind: "researcher",
+      outcome: "skipped",
+      reason: "Disabled by bootstrap configuration",
+    };
+  }
+
+  return { reports: { admin, researcher }, adminEmail: adminBootstrap.email };
+}
+
+function createdAnyAccount(reports: BootstrapAccountReports): boolean {
+  return reports.admin.outcome === "created" || reports.researcher.outcome === "created";
+}
+
+/**
  * Automatically seed the database with initial data if it hasn't been seeded yet.
  * This runs within the Next.js app process so it doesn't depend on external CLI tools.
  * Uses upsert operations so it's safe to call multiple times.
  */
-export async function autoSeedIfNeeded(): Promise<{
-  seeded: boolean;
-  error?: string;
-}> {
+export async function autoSeedIfNeeded(): Promise<AutoSeedResult> {
   if (seedingInProgress) {
     return { seeded: false, error: "Seeding already in progress" };
+  }
+
+  // This process has already confirmed the database is bootstrapped; nothing
+  // can un-bootstrap it from under a running app, so skip the round trips.
+  if (bootstrapVerified) {
+    return { seeded: false };
   }
 
   try {
@@ -253,51 +490,53 @@ export async function autoSeedIfNeeded(): Promise<{
       where: { id: "singleton" },
     });
     if (settings) {
-      return { seeded: false }; // Already seeded
+      // Site settings alone do not prove the install was seeded: a database
+      // whose schema was migrated (or whose settings row was written by a
+      // configuration step) can still have no accounts at all, and would leave
+      // the install with no way to log in. Fill in only the missing accounts;
+      // an install that already has users is left completely alone.
+      const userCount = await db.user.count();
+      if (userCount > 0) {
+        bootstrapVerified = true;
+        return { seeded: false }; // Already seeded
+      }
+
+      seedingInProgress = true;
+      console.log(
+        "[auto-seed] Site settings present but no user accounts, creating bootstrap accounts..."
+      );
+      // This database was configured by something before this pass, so it never
+      // gets an account with the password SeqDesk ships.
+      const { reports } = await seedBootstrapAccounts(loadSeedConfig(), {
+        allowBuiltInDefaultPassword: false,
+      });
+      // Nothing further changes without a restart: the bootstrap configuration
+      // is read from disk, and the installer already tells operators to restart
+      // the app after editing settings.json. Remembering the outcome keeps a
+      // polled, unauthenticated endpoint from re-running this on every request.
+      bootstrapVerified = true;
+      if (!createdAnyAccount(reports)) {
+        console.warn(
+          "[auto-seed] No bootstrap account was created, so this database still has no way to sign in"
+        );
+        return { seeded: false, accounts: reports };
+      }
+      console.log("[auto-seed] Bootstrap accounts created");
+      return { seeded: true, accounts: reports };
     }
 
     seedingInProgress = true;
     console.log("[auto-seed] Database not seeded, seeding now...");
     const seedConfig = loadSeedConfig();
 
-    // 1. Create admin user
-    const adminBootstrap = resolveBootstrapUser("admin", seedConfig);
-    const adminPassword = adminBootstrap.passwordHash;
-    await db.user.upsert({
-      where: { email: adminBootstrap.email },
-      update: {},
-      create: {
-        email: adminBootstrap.email,
-        password: adminPassword,
-        firstName: adminBootstrap.firstName,
-        lastName: adminBootstrap.lastName,
-        role: "FACILITY_ADMIN",
-        facilityName: adminBootstrap.facilityName,
-      },
+    // 1. + 2. Create the bootstrap accounts (the researcher unless the
+    //    installer/profile opted out). Accounts that are already present are
+    //    reported back rather than overwritten. This is the first seed of a
+    //    database that carries nothing, so the shipped default password is
+    //    allowed -- but only for an account this install did not name itself.
+    const { reports: accounts, adminEmail } = await seedBootstrapAccounts(seedConfig, {
+      allowBuiltInDefaultPassword: true,
     });
-    console.log("[auto-seed] Created admin user");
-
-    // 2. Create the initial researcher unless the installer/profile opted out.
-    if (shouldCreateBootstrapResearcher(seedConfig)) {
-      const researcherBootstrap = resolveBootstrapUser("researcher", seedConfig);
-      const userPassword = researcherBootstrap.passwordHash;
-      await db.user.upsert({
-        where: { email: researcherBootstrap.email },
-        update: {},
-        create: {
-          email: researcherBootstrap.email,
-          password: userPassword,
-          firstName: researcherBootstrap.firstName,
-          lastName: researcherBootstrap.lastName,
-          role: "RESEARCHER",
-          researcherRole: researcherBootstrap.researcherRole,
-          institution: researcherBootstrap.institution,
-        },
-      });
-      console.log("[auto-seed] Created researcher user");
-    } else {
-      console.log("[auto-seed] Researcher account disabled by bootstrap configuration");
-    }
 
     // 3. Create site settings
     const defaultPostSubmissionInstructions = `## Thank you for your submission!
@@ -717,11 +956,12 @@ Contact us at sequencing@example.com or call (555) 123-4567.`;
     //    Off by default; opt in by setting SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA=true
     //    (also accepts bootstrap.includeDummyData=true in seqdesk.config.json).
     if (shouldSeedDummyData(seedConfig)) {
-      await tryAutoSeedDummyData(adminBootstrap.email);
+      await tryAutoSeedDummyData(adminEmail);
     }
 
+    bootstrapVerified = true;
     console.log("[auto-seed] Database seeding completed successfully");
-    return { seeded: true };
+    return { seeded: true, accounts };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : String(error);

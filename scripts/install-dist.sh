@@ -119,6 +119,20 @@ SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="false"
 # after they are displayed. A password the operator typed is never stored here.
 SEQDESK_GENERATED_ADMIN_PASSWORD=""
 SEQDESK_GENERATED_RESEARCHER_PASSWORD=""
+# Set once the database has been inspected: whether the target database already
+# held the bootstrap accounts this install was about to create. The seed leaves
+# an existing account untouched, so a password generated here would never be
+# applied to it -- these flags stop such a password from being stored or shown.
+SEQDESK_DB_ADOPTED="false"
+SEQDESK_BOOTSTRAP_ADMIN_EXISTED="false"
+SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED="false"
+# Number of User rows the target database held before this install seeded it.
+# Empty means "not established" and must never be read as zero: only a measured
+# 0 entitles the installer to call the database new and empty.
+SEQDESK_DB_USER_COUNT=""
+# True when the database could not be inspected at all. The installer then still
+# generates and prints credentials, so it has to say that they are unverified.
+SEQDESK_DB_PROBE_FAILED="false"
 INTERACTIVE_RESULT=""
 SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
 SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
@@ -1277,10 +1291,298 @@ print_postgres_setup_instructions() {
     print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#postgresql-cannot-be-reached-or-migrations-fail"
 }
 
+# Which of the accounts the seed is about to bootstrap already exist in the
+# target database.
+#
+# The seed upserts bootstrap users by email with an empty update clause, so an
+# account that is already in the database keeps the password it was created
+# with. A password generated for this install is therefore never applied to it:
+# hashing that password into settings.json and printing it in the closing
+# summary hands the operator credentials that cannot sign in. Every installation
+# CI leg starts from an empty database, where the create branch always runs, so
+# nothing caught this until a second install adopted a database left behind by
+# an earlier one.
+#
+# Writes one "<kind><TAB><email>" line per bootstrap address that already
+# exists. Returns 0 when at least one does, 1 when none do, and 2 when the
+# database could not be inspected at all (no Node, no generated Prisma client,
+# no connection). A 2 must never be read as "the database is empty".
+probe_existing_bootstrap_accounts() {
+    command_exists node || return 2
+    [ -n "${DATABASE_URL:-}" ] || return 2
+
+    local probe_output probe_status
+    probe_status=0
+    probe_output="$(
+        SEQDESK_PROBE_ADMIN_EMAIL="${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}" \
+        SEQDESK_PROBE_RESEARCHER_EMAIL="${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com}" \
+        SEQDESK_PROBE_RESEARCHER_ENABLED="${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" \
+        node --no-warnings 2>/dev/null <<'NODE'
+const wanted = [];
+const adminEmail = (process.env.SEQDESK_PROBE_ADMIN_EMAIL || "").trim();
+const researcherEmail = (process.env.SEQDESK_PROBE_RESEARCHER_EMAIL || "").trim();
+const researcherEnabled = (process.env.SEQDESK_PROBE_RESEARCHER_ENABLED || "").trim();
+if (adminEmail) wanted.push(["admin", adminEmail]);
+if (researcherEmail && researcherEnabled !== "0") wanted.push(["researcher", researcherEmail]);
+if (wanted.length === 0) process.exit(0);
+
+let PrismaClient;
+try {
+  ({ PrismaClient } = require("@prisma/client"));
+} catch (error) {
+  process.exit(3);
+}
+
+const prisma = new PrismaClient();
+prisma.user
+  .findMany({ where: { email: { in: wanted.map((entry) => entry[1]) } }, select: { email: true } })
+  .then((rows) => {
+    const found = rows.map((row) => row.email);
+    for (const entry of wanted) {
+      if (found.indexOf(entry[1]) !== -1) {
+        process.stdout.write(entry[0] + "\t" + entry[1] + "\n");
+      }
+    }
+  })
+  .catch((error) => {
+    // A database that never had migrations applied has no User table, and so
+    // has no bootstrap accounts. That is an answer, not a failed inspection.
+    if (error && error.code === "P2021") return;
+    process.exitCode = 3;
+  })
+  .then(() => prisma.$disconnect().catch(() => {}));
+NODE
+    )" || probe_status=$?
+
+    if [ "$probe_status" -ne 0 ]; then
+        return 2
+    fi
+    if [ -z "$probe_output" ]; then
+        return 1
+    fi
+    printf '%s\n' "$probe_output"
+    return 0
+}
+
+# The honest report for a database that already holds SeqDesk accounts.
+#
+# Printed instead of -- never next to -- bootstrap credentials. Overwriting the
+# password of an account that is already there is deliberately not an option:
+# anyone able to run the installer could then reset the admin password of any
+# database they pointed it at. So the installer says what it did and did not do,
+# and leaves the existing credentials in charge.
+print_adopted_bootstrap_accounts_notice() {
+    local existing_accounts="$1"
+    local kind email
+
+    print_warning "The selected database already contains SeqDesk accounts."
+    print_info "Database: $(redact_database_url "${DATABASE_URL:-}")"
+    while IFS=$'\t' read -r kind email; do
+        [ -n "$email" ] || continue
+        print_info "Existing ${kind} account: ${email} (password left unchanged)"
+    done <<ACCOUNTS
+$existing_accounts
+ACCOUNTS
+    echo "  Sign in with the credentials this database was set up with. This install"
+    echo "  neither generated nor stored a password for an account that already exists,"
+    echo "  because the seed leaves such an account untouched and any password shown"
+    echo "  here would not work."
+    echo "  SeqDesk ships no password-reset command, so a forgotten password can only be"
+    echo "  replaced by updating that account's row in the User table directly."
+    echo "  For a clean instance with new credentials, install against a different"
+    echo "  database, for example:"
+    echo "    --database-url \"postgresql://USER:PASSWORD@HOST:5432/seqdesk_new\""
+}
+
+# Drop every credential this install generated for an account the seed will not
+# touch, so nothing downstream can advertise it. Paired with
+# strip_unapplied_bootstrap_password_hashes, which does the same for the copy
+# already written to settings.json.
+discard_unapplied_bootstrap_credentials() {
+    local existing_accounts="$1"
+    local kind email
+
+    while IFS=$'\t' read -r kind email; do
+        [ -n "$email" ] || continue
+        case "$kind" in
+            admin)
+                SEQDESK_BOOTSTRAP_ADMIN_EXISTED="true"
+                SEQDESK_BOOTSTRAP_ADMIN_PASSWORD=""
+                SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH=""
+                SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="false"
+                SEQDESK_GENERATED_ADMIN_PASSWORD=""
+                ;;
+            researcher)
+                SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED="true"
+                SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD=""
+                SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH=""
+                SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="false"
+                SEQDESK_GENERATED_RESEARCHER_PASSWORD=""
+                ;;
+        esac
+    done <<ACCOUNTS
+$existing_accounts
+ACCOUNTS
+}
+
+# Remove a bootstrap passwordHash that the seed is not going to apply.
+#
+# settings.json has to exist before the seed runs -- it is what tells the seed
+# which accounts to create -- while whether an account is already there can only
+# be answered once the database is reachable, which is after that write. So the
+# file is reconciled here instead of being written twice. A hash left behind for
+# an account the seed leaves untouched matches nothing in the database and is
+# exactly what misleads the next person debugging a failed login. Nothing has
+# read the file in between: the app is not started until much later.
+strip_unapplied_bootstrap_password_hashes() {
+    local existing_accounts="$1"
+    command_exists node || return 0
+
+    SEQDESK_STRIP_BOOTSTRAP_ACCOUNTS="$existing_accounts" node <<'NODE' || return 0
+const fs = require('fs');
+
+const kinds = (process.env.SEQDESK_STRIP_BOOTSTRAP_ACCOUNTS || '')
+  .split('\n')
+  .map((line) => line.split('\t')[0].trim())
+  .filter((kind) => kind === 'admin' || kind === 'researcher');
+if (kinds.length === 0) process.exit(0);
+
+const configPath = ['settings.json', 'seqdesk.config.json'].find((name) => fs.existsSync(name));
+if (!configPath) process.exit(0);
+
+let config;
+try {
+  config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (error) {
+  process.exit(0);
+}
+
+const users = config && config.bootstrap && config.bootstrap.users;
+if (!users || typeof users !== 'object') process.exit(0);
+
+let changed = false;
+for (const kind of kinds) {
+  const user = users[kind];
+  if (!user || typeof user !== 'object') continue;
+  for (const key of ['password', 'passwordHash']) {
+    if (Object.prototype.hasOwnProperty.call(user, key)) {
+      delete user[key];
+      changed = true;
+    }
+  }
+}
+if (changed) fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+NODE
+}
+
+# How many User rows the target database holds, through the same generated
+# Prisma client probe_existing_bootstrap_accounts uses.
+#
+# "Database initialized (new, empty SeqDesk database)" used to print whenever no
+# bootstrap account was found, which answers a different question. A facility
+# database whose administrator is not admin@example.com has no bootstrap
+# account and is still full of real data: the installer announced a new and
+# empty database, added its own FACILITY_ADMIN to that data and printed its
+# password. A claim about emptiness needs a row count, so the claim is made only
+# when this produces one.
+#
+# Deliberately a separate function rather than an extra line out of
+# probe_existing_bootstrap_accounts: that one is shared byte-for-byte with
+# scripts/install.sh and guarded by scripts/ci/check-installer-drift.sh.
+#
+# Called after `migrate deploy` and before the seed, so the User table exists
+# and nothing this install creates is counted yet. Prints the count and returns
+# 0; returns 1 when the count could not be established, which means "unknown".
+probe_database_user_count() {
+    command_exists node || return 1
+    [ -n "${DATABASE_URL:-}" ] || return 1
+
+    local count
+    count="$(node --no-warnings 2>/dev/null <<'NODE'
+let PrismaClient;
+try {
+  ({ PrismaClient } = require("@prisma/client"));
+} catch (error) {
+  process.exit(1);
+}
+
+const prisma = new PrismaClient();
+prisma.user
+  .count()
+  .then((count) => {
+    process.stdout.write(String(count));
+  })
+  .catch(() => {
+    // No table, no connection, no answer. Printing nothing keeps this "unknown"
+    // rather than letting a failure read as an empty database.
+    process.exitCode = 1;
+  })
+  .then(() => prisma.$disconnect().catch(() => {}));
+NODE
+    )" || return 1
+
+    case "$count" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+
+    printf '%s' "$count"
+    return 0
+}
+
+# Reconcile what the seed can actually apply with what this install generated.
+# Runs after the migrations (so the User table is there to look at) and before
+# the seed, the summary, and anything else that could advertise a credential.
+adopt_existing_bootstrap_accounts() {
+    local existing_accounts probe_status
+    probe_status=0
+    existing_accounts="$(probe_existing_bootstrap_accounts)" || probe_status=$?
+
+    case "$probe_status" in
+        0)
+            SEQDESK_DB_ADOPTED="true"
+            discard_unapplied_bootstrap_credentials "$existing_accounts"
+            strip_unapplied_bootstrap_password_hashes "$existing_accounts"
+            print_adopted_bootstrap_accounts_notice "$existing_accounts"
+            ;;
+        1)
+            detail "no bootstrap account exists in the target database yet"
+            # "No bootstrap account" is not "no data". Count the rows now, while
+            # the seed has not added any, so the closing summary can only call
+            # this database new and empty when that is what was measured.
+            SEQDESK_DB_USER_COUNT="$(probe_database_user_count)" || SEQDESK_DB_USER_COUNT=""
+            ;;
+        *)
+            # Visible, not just logged: this install is about to generate, store
+            # and print bootstrap credentials without having been able to check
+            # whether the accounts they belong to already exist. If they do, the
+            # seed leaves them untouched and everything printed later is inert --
+            # the exact failure this whole path exists to prevent. detail() alone
+            # put that only in the log file, which nobody reads before logging in.
+            SEQDESK_DB_PROBE_FAILED="true"
+            print_warning "Could not verify whether this database already contains SeqDesk accounts."
+            if [ -n "${DATABASE_URL:-}" ]; then
+                print_info "Database: $(redact_database_url "$DATABASE_URL")"
+            fi
+            echo "  If it does, the seed leaves those accounts exactly as they are and any"
+            echo "  password shown at the end of this install will not sign in -- use the"
+            echo "  credentials this database was set up with."
+            ;;
+    esac
+}
+
 probe_postgres_database() {
-    # Connect to DATABASE_URL using the pg module installed with the runtime
-    # dependencies and report a categorized failure if anything is wrong.
-    # Must be called from the install directory so node can resolve "pg".
+    # Connect to DATABASE_URL with the "pg" module and report a categorized
+    # failure if anything is wrong.
+    #
+    # "pg" is NOT a dependency of SeqDesk: it is in neither package.json nor
+    # package-lock.json, nothing installs it, and the Prisma client speaks to
+    # PostgreSQL through its own engine. So on a normal install the require
+    # below fails, this probe reports SKIP and does nothing at all -- it only
+    # runs where "pg" happens to be resolvable from the install directory.
+    # Nothing user-facing may be documented as coming from here for that reason;
+    # the checks the installer really performs on the target database live in
+    # probe_existing_bootstrap_accounts and probe_database_user_count, which go
+    # through the generated Prisma client and therefore always run.
     if [ -z "$SEQDESK_DATABASE_URL" ]; then
         return 0
     fi
@@ -1312,24 +1614,12 @@ async function main() {
   try {
     const meta = await client.query("SELECT current_database() AS db, current_user AS usr, current_setting('server_version') AS version");
     console.log("OK\t" + (meta.rows[0].db || "") + "\t" + (meta.rows[0].usr || "") + "\t" + (meta.rows[0].version || ""));
-    const tables = await client.query(`
-      SELECT
-        to_regclass('public."User"') IS NOT NULL AS has_users,
-        to_regclass('public."Order"') IS NOT NULL AS has_orders
-    `);
-    if (tables.rows[0]?.has_users || tables.rows[0]?.has_orders) {
-      let users = "unknown";
-      let orders = "unknown";
-      if (tables.rows[0]?.has_users) {
-        const result = await client.query('SELECT COUNT(*)::bigint AS count FROM "User"');
-        users = String(result.rows[0]?.count ?? "unknown");
-      }
-      if (tables.rows[0]?.has_orders) {
-        const result = await client.query('SELECT COUNT(*)::bigint AS count FROM "Order"');
-        orders = String(result.rows[0]?.count ?? "unknown");
-      }
-      console.log("EXISTING_SEQDESK\t" + users + "\t" + orders);
-    }
+    // No existing-data report here. It used to count User/Order rows and print
+    // "Existing SeqDesk data was detected in the selected database", which never
+    // once reached a screen because "pg" is not installed -- and its absence
+    // read as an all-clear. That disclosure is made after the migrations now,
+    // by print_adopted_bootstrap_accounts_notice and by the row count from
+    // probe_database_user_count, both over the Prisma client that is present.
     try {
       await client.query("CREATE TEMP TABLE _seqdesk_probe_temp (id INT)");
       await client.query("DROP TABLE _seqdesk_probe_temp");
@@ -1359,22 +1649,13 @@ NODE
 
     case "$first_line" in
         SKIP*)
+            detail "PostgreSQL preflight probe skipped: the 'pg' module is not installed (it is not a SeqDesk dependency)"
             return 0
             ;;
         OK*)
             local database_name database_role database_version
             IFS=$'\t' read -r _ database_name database_role database_version <<< "$first_line"
             print_kv "PostgreSQL server" "${database_version:-unknown} (${database_name:-unknown} as ${database_role:-unknown})"
-
-            local existing_line
-            existing_line="$(printf '%s\n' "$probe_output" | grep '^EXISTING_SEQDESK' | head -n 1)"
-            if [ -n "$existing_line" ] && ! is_truthy "$SEQDESK_RECONFIGURE"; then
-                local existing_users existing_orders
-                IFS=$'\t' read -r _ existing_users existing_orders <<< "$existing_line"
-                print_warning "Existing SeqDesk data was detected in the selected database."
-                print_kv "Existing records" "users=${existing_users:-unknown}, orders=${existing_orders:-unknown}"
-                print_info "Migrations preserve and update this database; use a different --database-url for an isolated installation."
-            fi
 
             if printf '%s\n' "$probe_output" | grep -q "^WRITE_OK$"; then
                 return 0
@@ -3011,6 +3292,49 @@ pm2_exec() {
     "$PM2_BIN" "$@"
 }
 
+# Start or restart the app under PM2 so the process it manages reads its
+# database configuration from settings.json instead of from this installer's
+# transient environment.
+#
+# PM2 stores the environment of whoever started the app and replays that same
+# copy on every later `pm2 restart`. The installer exports DATABASE_URL and
+# DIRECT_URL for its migration and seed steps, so starting PM2 from here froze
+# those values into the process for good: both start.sh and the app's runtime
+# env bootstrap (bootstrapRuntimeEnv, src/lib/config/runtime-env.ts) only fill
+# variables that are NOT already set, so the captured copy beat settings.json
+# forever, and editing settings.json changed nothing at all.
+#
+# The variables are set to an EMPTY value here rather than removed, because
+# removing them does not repair an installation that already has the old value
+# stored -- which is every installation that has this defect. `pm2 restart
+# --update-env` MERGES the current environment into the copy PM2 holds; it
+# deletes nothing from it. Measured against pm2 7.0.1 with an isolated PM2_HOME
+# and a throwaway app that prints its own environment:
+#
+#   DATABASE_URL=OLDVALUE pm2 start app.js --name t   -> process sees OLDVALUE
+#   env -u DATABASE_URL pm2 restart t --update-env    -> process sees OLDVALUE
+#   DATABASE_URL= pm2 restart t --update-env          -> process sees ""
+#
+# An empty value is what overwrites the stored one, and start.sh trims
+# DATABASE_URL/DIRECT_URL and falls back to settings.json when the result is
+# empty, so the process lands on the configured database and stays there: a
+# later plain `pm2 restart` replays the empty value, not the stale URL.
+#
+# A deliberate override still works exactly as before: export DATABASE_URL in
+# your own shell and run `pm2 restart --update-env` yourself, or run start.sh
+# directly with it set -- an env-set value still wins inside start.sh.
+# SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED goes the same way and for the same
+# reason: it is exported for the seed, settings.json carries the same decision,
+# empty reads as unset (envFlagFalse, src/lib/auto-seed.ts), and a copy frozen
+# into the process manager would outlive every later edit.
+pm2_exec_runtime() {
+    if [ -z "$PM2_BIN" ] && ! resolve_pm2_bin; then
+        return 127
+    fi
+    env DATABASE_URL= DIRECT_URL= SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED= \
+        "$PM2_BIN" "$@"
+}
+
 read_input() {
     local prompt="$1"
     local reply=""
@@ -3327,7 +3651,8 @@ Options:
   --additional-settings-file <path>
                               JSON overrides applied after --profile/--config
   --dir <path>                 Install directory
-  --overwrite-existing         With -y, back up an existing install dir (<dir>.backup.<ts>) and replace it
+  --overwrite-existing         With -y, back up an existing install dir (<dir>.backup.<ts>) and
+                               replace it. Install directory only -- no database is backed up or reset
   --version <version>          Release version (default: latest)
   --with-pipelines             Install optional Conda/Nextflow pipeline support
   --without-pipelines          Install the core app only (default)
@@ -4593,6 +4918,23 @@ is_writable_target() {
     [ -w "$parent" ]
 }
 
+# Exactly what "back up and replace" covers, and what it does not.
+#
+# The answer moves $SEQDESK_DIR to $SEQDESK_DIR.backup.<timestamp> and nothing
+# else, but it reads as a global reset. An operator who took it to mean "start
+# clean" got neither a fresh database nor a backup of the old one: the
+# PostgreSQL database is a separate object with a separate lifetime, and the new
+# install keeps using it with all of its data and user accounts. Say so before
+# the question, not afterwards.
+print_install_dir_only_scope() {
+    echo "  This covers the install directory only:"
+    echo "    Backed up   $SEQDESK_DIR  ->  ${SEQDESK_DIR}.backup.<timestamp>"
+    echo "    Untouched   the PostgreSQL database, its data and its user accounts"
+    echo "  No database is backed up, dropped or reset, and existing accounts keep"
+    echo "  their passwords. To start from an empty database, install against a"
+    echo "  different one with --database-url."
+}
+
 validate_or_confirm_install_target() {
     if is_truthy "$SEQDESK_RECONFIGURE" || [ ! -e "$SEQDESK_DIR" ]; then
         return 0
@@ -4600,18 +4942,20 @@ validate_or_confirm_install_target() {
 
     if is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
         print_warning "Target path already exists and will be backed up before replacement: $SEQDESK_DIR"
+        print_install_dir_only_scope
         return 0
     fi
 
     if is_truthy "$SEQDESK_YES"; then
-        print_error "Target path $SEQDESK_DIR already exists. Choose a new --dir, use --reconfigure for an installed instance, or pass --overwrite-existing to back it up and replace it."
+        print_error "Target path $SEQDESK_DIR already exists. Choose a new --dir, use --reconfigure for an installed instance, or pass --overwrite-existing to back up the directory and replace it."
         print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-target-exists-is-not-writable-or-has-too-little-space"
         exit 1
     fi
 
     print_warning "Target path already exists: $SEQDESK_DIR"
+    print_install_dir_only_scope
     local response
-    response=$(read_input "Backup and replace? (y/N): ")
+    response=$(read_input "Back up and replace the install directory? (y/N): ")
     if [[ ! "$response" =~ ^[Yy]$ ]]; then
         echo "Installation cancelled."
         exit 0
@@ -5730,10 +6074,68 @@ on_error() {
 }
 
 print_login_summary() {
+    local unchanged_accounts=""
+    local unchanged_noun="that account"
+    local unchanged_governs="the password it already had still governs"
+
     print_header "Login"
 
     if is_truthy "$SEQDESK_RECONFIGURE"; then
         echo "  Existing user accounts are unchanged (reconfigure mode)."
+    elif [ "${SEQDESK_BOOTSTRAP_ADMIN_EXISTED:-false}" = "true" ] || \
+        [ "${SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED:-false}" = "true" ]; then
+        # This database already had one or both bootstrap accounts, so the seed
+        # left them exactly as they were. Printing a password here — generated,
+        # profile-supplied or the documented default — would name a credential
+        # that does not open this installation.
+        if [ "${SEQDESK_BOOTSTRAP_ADMIN_EXISTED:-false}" = "true" ]; then
+            print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / existing password (unchanged)"
+        elif [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ]; then
+            print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}"
+            print_secret_kv "Admin password" "${SEQDESK_GENERATED_ADMIN_PASSWORD}"
+        elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ]; then
+            print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL} / configured password"
+        else
+            print_kv "Admin" "admin@example.com / admin"
+        fi
+        if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED:-false}" = "true" ]; then
+            print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com} / existing password (unchanged)"
+        elif [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
+            print_kv "Researcher" "not created"
+        elif [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
+            print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com}"
+            print_secret_kv "Researcher password" "${SEQDESK_GENERATED_RESEARCHER_PASSWORD}"
+        elif [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
+            print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL} / configured password"
+        else
+            print_kv "Researcher" "user@example.com / user (default; change after first login)"
+        fi
+        # Name the accounts the sentence is about. With one of the two adopted
+        # and the other freshly created, an unqualified "no password was
+        # generated, stored or changed for them" contradicted the generated
+        # password printed three lines above it.
+        if [ "${SEQDESK_BOOTSTRAP_ADMIN_EXISTED:-false}" = "true" ]; then
+            unchanged_accounts="${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}"
+        fi
+        if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED:-false}" = "true" ]; then
+            if [ -n "$unchanged_accounts" ]; then
+                unchanged_accounts="$unchanged_accounts, ${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com}"
+                unchanged_noun="those accounts"
+                unchanged_governs="the passwords they already had still govern"
+            else
+                unchanged_accounts="${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com}"
+            fi
+        fi
+        echo "  This install attached to a database that already had SeqDesk accounts."
+        echo "  Left unchanged: $unchanged_accounts"
+        echo "  No password was generated, stored or changed for $unchanged_noun;"
+        echo "  $unchanged_governs."
+        echo "  SeqDesk ships no password-reset command, so a forgotten password can only"
+        echo "  be replaced by updating that account's row in the User table directly."
+        if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] || \
+            [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
+            echo "  Save the generated password above — it is not stored anywhere else."
+        fi
     elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ] || [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
         # A password the installer generated is shown exactly once, here, next to the
         # URL it is used on — and via print_secret_kv, so it is not written to the
@@ -5764,6 +6166,18 @@ print_login_summary() {
         print_kv "Admin" "admin@example.com / admin"
         print_kv "Researcher" "user@example.com / user"
         echo "  Change the default admin password immediately after first login."
+    fi
+
+    # Everything above assumes the database was inspected. When it could not be,
+    # the credentials printed are the ones this install generated, not
+    # necessarily the ones that open it -- an account that was already there
+    # keeps its own password, and the seed does not touch it. Said here because
+    # this block is what the reader actually acts on; the warning at probe time
+    # has long scrolled away by now.
+    if [ "$SEQDESK_DB_PROBE_FAILED" = "true" ] && [ "$SEQDESK_DB_ADOPTED" != "true" ]; then
+        echo "  Unverified: this install could not check whether the database already had"
+        echo "  SeqDesk accounts. If it did, they were left unchanged and the credentials"
+        echo "  above do not apply -- sign in with the ones that database was set up with."
     fi
 }
 
@@ -6335,7 +6749,8 @@ else
         mv "$SEQDESK_DIR" "$existing_backup_path"
         RESTORE_BACKUP_PATH="$existing_backup_path"
         INSTALL_PHASE="backup_moved"
-        print_success "Moved existing install to $existing_backup_path"
+        print_success "Moved existing install directory to $existing_backup_path"
+        print_info "The PostgreSQL database was not moved, copied or reset; this install reuses it."
     fi
 
     RELEASE_DIR="$SEQDESK_DIR/releases/$LATEST_VERSION"
@@ -6462,6 +6877,11 @@ else
         print_postgres_setup_instructions
         exit 1
     fi
+    # The migrations have run, so the User table is there to look at, and the
+    # seed has not run yet. This is the only point where the installer can still
+    # tell whether the credentials it is holding will actually be applied.
+    adopt_existing_bootstrap_accounts
+
     ensure_seed_dependency "bcryptjs" || true
     if run_with_spinner_warn "Seed initial data" npm run db:seed; then
         SEED_OK="true"
@@ -6481,9 +6901,29 @@ fi
 if [ "$DB_INIT_SKIPPED" = "true" ]; then
     print_info "Database unchanged."
 elif [ "$SEED_OK" = "true" ]; then
-    print_success "Database initialized"
+    # "Database initialized" used to print either way, so a reviewer whose
+    # printed credentials were inert had nothing on screen to tell them the
+    # database was not new. Name which of the three happened -- and say "empty"
+    # only where a row count said so, never merely because the two bootstrap
+    # addresses were absent.
+    if [ "$SEQDESK_DB_ADOPTED" = "true" ]; then
+        print_success "Existing SeqDesk database adopted: schema updated, existing accounts and data kept"
+    elif [ "$SEQDESK_DB_USER_COUNT" = "0" ]; then
+        print_success "Database initialized (new, empty SeqDesk database)"
+    elif [ -n "$SEQDESK_DB_USER_COUNT" ]; then
+        print_success "Database initialized: schema updated"
+        print_warning "This database already held $SEQDESK_DB_USER_COUNT user account(s) before this install."
+        echo "  None of them uses a bootstrap address, so this install created its own"
+        echo "  account alongside them. No account, order or other record that was"
+        echo "  already there has been changed."
+    else
+        print_success "Database initialized"
+    fi
     if is_truthy "$SEQDESK_RECONFIGURE"; then
         print_info "Reconfigure mode: existing user accounts were kept."
+    elif [ "$SEQDESK_DB_ADOPTED" = "true" ]; then
+        # The adopted-accounts notice above already said which accounts govern.
+        :
     elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ] || [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
         print_info "Bootstrap account configuration applied."
         if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
@@ -6494,7 +6934,9 @@ elif [ "$SEED_OK" = "true" ]; then
     fi
 else
     print_info "Seed did not complete during install -- the app will auto-seed on first launch"
-    if ! is_truthy "$SEQDESK_RECONFIGURE"; then
+    if [ "$SEQDESK_DB_ADOPTED" = "true" ]; then
+        print_info "The accounts already in this database keep their current passwords."
+    elif ! is_truthy "$SEQDESK_RECONFIGURE"; then
         print_info "Default users after first launch: admin@example.com/admin and user@example.com/user"
     fi
 fi
@@ -6603,14 +7045,23 @@ if is_truthy "$SEQDESK_USE_PM2"; then
         fi
 
         if [ "$PM2_PROCESS_EXISTS" = "true" ]; then
-            if run_with_spinner_warn "Restart SeqDesk PM2 process" pm2_exec restart seqdesk; then
+            # --update-env: a plain restart replays the environment PM2 captured
+            # when the app was first started, which on an install that predates
+            # pm2_exec_runtime still holds that install's DATABASE_URL. The app
+            # would then keep the old database no matter what settings.json now
+            # says. --update-env merges this environment into that copy, and
+            # pm2_exec_runtime supplies empty DATABASE_URL/DIRECT_URL values --
+            # merging cannot delete a variable, so an empty value is what
+            # actually clears the frozen one and hands the process back to
+            # settings.json.
+            if run_with_spinner_warn "Restart SeqDesk PM2 process" pm2_exec_runtime restart seqdesk --update-env; then
                 PM2_CONFIGURED="true"
                 pm2_exec save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: $PM2_DISPLAY_CMD save)"
             else
-                print_warning "PM2 failed to restart seqdesk. You can restart manually with: $PM2_DISPLAY_CMD restart seqdesk"
+                print_warning "PM2 failed to restart seqdesk. You can restart manually with: DATABASE_URL= DIRECT_URL= $PM2_DISPLAY_CMD restart seqdesk --update-env"
             fi
         else
-            if run_with_spinner_warn "Start SeqDesk with PM2" pm2_exec start "$SEQDESK_DIR/start.sh" --name seqdesk; then
+            if run_with_spinner_warn "Start SeqDesk with PM2" pm2_exec_runtime start "$SEQDESK_DIR/start.sh" --name seqdesk; then
                 PM2_CONFIGURED="true"
                 pm2_exec save >/dev/null 2>&1 || print_warning "Could not save PM2 process list (run: $PM2_DISPLAY_CMD save)"
                 if pm2_exec startup >/dev/null 2>&1; then
@@ -6671,9 +7122,11 @@ fi
 if [ -n "$SEQDESK_PIPELINE_DATABASE_DIR" ] && [ "$PIPELINES_ENABLED" = "true" ]; then
     print_kv "Pipeline DB directory" "$SEQDESK_PIPELINE_DATABASE_DIR"
 fi
+INSTALLED_CONFIG_PATH="$SEQDESK_DIR/settings.json"
 for f in settings.json seqdesk.config.json; do
     if [ -f "$SEQDESK_DIR/$f" ]; then
-        print_kv "Config" "$SEQDESK_DIR/$f"
+        INSTALLED_CONFIG_PATH="$SEQDESK_DIR/$f"
+        print_kv "Config" "$INSTALLED_CONFIG_PATH"
         break
     fi
 done
@@ -6716,6 +7169,20 @@ if [ "$PM2_CONFIGURED" = "true" ]; then
     echo "  $PM2_DISPLAY_CMD status"
     echo "  $PM2_DISPLAY_CMD logs seqdesk"
     echo "  $PM2_DISPLAY_CMD restart seqdesk"
+    echo ""
+    # PM2 replays the environment it captured when the app was first started, so
+    # a plain restart keeps serving the old configuration after settings.json has
+    # been edited. --update-env alone is not enough either: it merges the current
+    # environment into that stored copy and cannot remove anything from it, so a
+    # database URL an older install froze into the process survives it. The empty
+    # values are what overwrite it -- start.sh treats an empty DATABASE_URL as
+    # unset and reads settings.json.
+    echo "  After editing $INSTALLED_CONFIG_PATH:"
+    echo "  DATABASE_URL= DIRECT_URL= $PM2_DISPLAY_CMD restart seqdesk --update-env"
+    echo "  $PM2_DISPLAY_CMD save"
+    echo "  (a plain restart replays the environment PM2 captured at first start;"
+    echo "   --update-env merges into it and cannot drop a variable, so the empty"
+    echo "   values above are what clear a database URL frozen in by an older install)"
     echo ""
     echo "  If the PM2 process was removed:"
     echo "  $PM2_DISPLAY_CMD start \"$SEQDESK_DIR/start.sh\" --name seqdesk"

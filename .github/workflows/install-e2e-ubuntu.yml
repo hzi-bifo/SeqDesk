@@ -66,6 +66,13 @@ jobs:
         # still exercises the path helpers and guards on a client-only runner.
         run: bash scripts/ci/test-private-postgres.sh
 
+      - name: Run printed-credential checker test
+        # Unit-tests the parser that the second-install job below depends on,
+        # against summaries rendered by the installer's own print_login_summary.
+        # A parser that silently matches nothing would turn that 60-minute job
+        # into a green light for the exact bug it exists to catch.
+        run: bash scripts/ci/test-printed-credentials-check.sh
+
       - name: Check installer drift
         # scripts/install.sh and scripts/install-dist.sh share ~50 helper
         # functions and fixes have repeatedly landed in only one of them.
@@ -1623,6 +1630,508 @@ jobs:
             ${{ env.SERVER_LOG }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.SETUP_JSON }}
+            ${{ env.MOCK_SERVER_LOG }}
+          if-no-files-found: warn
+          retention-days: 5
+
+  second-install-existing-database-ubuntu:
+    name: Second install over a database that already has accounts
+    # The gap that let v1.1.123 ship: every other installation leg in this
+    # workflow starts from an empty database, so the seeding always takes its
+    # `create` branch and a freshly generated password always works. A reviewer
+    # installing a SECOND time -- new install directory, same PostgreSQL
+    # database -- meets accounts that already exist. The installer still
+    # generates bootstrap passwords, still writes their hashes into
+    # settings.json, still prints them under "Login", and they do not
+    # authenticate, because the existing rows are left untouched.
+    #
+    # The assertion this job exists for, in one line: a password the installer
+    # PRINTS must work. Everything else here is scaffolding for that check.
+    #
+    # The second install is allowed to print no credentials at all -- that is
+    # the honest outcome for a database whose accounts it must not overwrite --
+    # but then it has to say so, and the accounts that were already there have
+    # to still work.
+    #
+    # KNOWN GAP -- PM2 is not covered here, deliberately. Both installs below
+    # run --no-pm2 and both application boots are a plain `./start.sh`, so the
+    # sibling defect shipped in the same version -- PM2 freezing the
+    # DATABASE_URL the installer exported into the process and replaying it on
+    # every later restart, which makes an edited settings.json have no effect --
+    # has no assertion anywhere in this workflow.
+    #
+    # It is not bolted on here because it is a different experiment, not a
+    # different line: it needs a PM2-managed install, an edit to settings.json,
+    # a restart, and proof that the app moved to the edited value -- none of
+    # which this job's database has any bearing on. It also needs a real pm2
+    # daemon to be meaningful, because the behaviour under test is pm2's own:
+    # `pm2 restart --update-env` MERGES the current environment into the copy
+    # pm2 stored and cannot remove a variable from it. Measured against pm2
+    # 7.0.1 with an isolated PM2_HOME and a throwaway app that prints its
+    # environment:
+    #
+    #   DATABASE_URL=OLD pm2 start app.js --name t     -> app sees OLD
+    #   env -u DATABASE_URL pm2 restart t --update-env -> app still sees OLD
+    #   DATABASE_URL= pm2 restart t --update-env       -> app sees ""
+    #
+    # which is why scripts/install-dist.sh passes EMPTY values rather than
+    # unsetting them (pm2_exec_runtime), and why the summary it prints leads
+    # with `DATABASE_URL= DIRECT_URL= pm2 restart seqdesk --update-env`. Until a
+    # job covers that end to end, treat the PM2 restart path as untested by CI.
+    #
+    # Heavy leg: pull requests need the `installer-e2e` label.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+    needs: build-public-release-artifact
+    runs-on: ubuntu-latest
+    # Two full installs plus two application boots, so roughly double a
+    # single-install leg.
+    timeout-minutes: 60
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      DB_NAME: seqdesk_second_install
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Start PostgreSQL
+        run: |
+          set -euo pipefail
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "DO \$\$ BEGIN CREATE ROLE seqdesk LOGIN PASSWORD 'seqdesk'; EXCEPTION WHEN duplicate_object THEN ALTER ROLE seqdesk WITH PASSWORD 'seqdesk'; END \$\$;"
+          if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
+            sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER seqdesk"
+          fi
+          # Its own database, not the shared `seqdesk` one: this job deliberately
+          # leaves populated accounts behind, and no other leg may inherit them.
+          sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1
+
+      - name: Configure paths
+        run: |
+          echo "PORT_ONE=8801" >> "$GITHUB_ENV"
+          echo "PORT_TWO=8802" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR_ONE=$RUNNER_TEMP/seqdesk-second-install-first" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR_TWO=$RUNNER_TEMP/seqdesk-second-install-second" >> "$GITHUB_ENV"
+          echo "FIRST_INSTALL_LOG=$RUNNER_TEMP/second-install-first.log" >> "$GITHUB_ENV"
+          echo "SECOND_INSTALL_LOG=$RUNNER_TEMP/second-install-second.log" >> "$GITHUB_ENV"
+          # The two summaries hold the plaintext passwords the installer printed.
+          # They are masked in the job log and never uploaded.
+          echo "FIRST_SUMMARY=$RUNNER_TEMP/second-install-first-summary.log" >> "$GITHUB_ENV"
+          echo "SECOND_SUMMARY=$RUNNER_TEMP/second-install-second-summary.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG_ONE=$RUNNER_TEMP/second-install-first-server.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG_TWO=$RUNNER_TEMP/second-install-second-server.log" >> "$GITHUB_ENV"
+          echo "FIRST_RESULT=$RUNNER_TEMP/second-install-first-credentials.json" >> "$GITHUB_ENV"
+          echo "SECOND_RESULT=$RUNNER_TEMP/second-install-second-credentials.json" >> "$GITHUB_ENV"
+          echo "GOVERNING_RESULT=$RUNNER_TEMP/second-install-governing-credentials.json" >> "$GITHUB_ENV"
+          echo "ADMIN_FINGERPRINT=$RUNNER_TEMP/second-install-admin-fingerprint.txt" >> "$GITHUB_ENV"
+          echo "PRE_EXISTING_EMAILS=$RUNNER_TEMP/second-install-pre-existing-emails.txt" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/second-install-release-artifact" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/second-install-release-server" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_PORT=8803" >> "$GITHUB_ENV"
+          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/second-install-release-server.log" >> "$GITHUB_ENV"
+          echo "DB_URL=postgresql://seqdesk:seqdesk@127.0.0.1:5432/$DB_NAME?schema=public" >> "$GITHUB_ENV"
+
+      - name: Download public release tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: public-release-tarball
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+
+      - name: Prepare mock release metadata
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_DATE="$(date -u +%F)"
+          mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/downloads"
+          TARBALL_PATH="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
+          if [ -z "$TARBALL_PATH" ]; then
+            echo "Release tarball not found in $RELEASE_ARTIFACT_DIR"
+            exit 1
+          fi
+          TARBALL_NAME="$(basename "$TARBALL_PATH")"
+          cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
+          CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
+          cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI second-install e2e release artifact","minNodeVersion":"22.13.0"},"updateAvailable":false,"currentVersion":null}
+          EOF
+
+      - name: First install (guided setup, generated credentials)
+        run: |
+          set -euo pipefail
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          # --interactive rather than -y, because only the guided wizard
+          # GENERATES the bootstrap passwords and prints them -- which is the
+          # install under test. There is no controlling terminal on a runner, so
+          # read_input/read_secret yield an empty answer and every prompt takes
+          # its default; a blank password is exactly the answer that asks the
+          # installer to generate one. The supplied --database-url survives that
+          # (the wizard's local-PostgreSQL default never overwrites a URL that is
+          # already set), so both installs share one database.
+          #
+          # Output is captured to a file rather than tee'd: it carries the
+          # generated plaintext, which is masked in the next command before
+          # anything can echo it.
+          set +e
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$FIRST_INSTALL_LOG" \
+            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+            --interactive --without-pipelines --no-pm2 \
+            --dir "$INSTALL_DIR_ONE" \
+            --port "$PORT_ONE" \
+            --nextauth-url "http://127.0.0.1:$PORT_ONE" \
+            --database-url "$DB_URL" \
+            --database-direct-url "$DB_URL" \
+            </dev/null >"$FIRST_SUMMARY" 2>&1
+          INSTALL_STATUS=$?
+          set -e
+          bash "$GITHUB_WORKSPACE/scripts/ci/mask-printed-credentials.sh" "$FIRST_SUMMARY"
+          cat "$FIRST_SUMMARY"
+          if [ "$INSTALL_STATUS" -ne 0 ]; then
+            echo "First install failed with status $INSTALL_STATUS"
+            exit "$INSTALL_STATUS"
+          fi
+          test -x "$INSTALL_DIR_ONE/start.sh"
+          # The install log outlives the session and is uploaded from this job,
+          # so a printed credential must not have reached it.
+          if grep -qE '^[[:space:]]+[A-Za-z]+ password[[:space:]]+[^[:space:]]' "$FIRST_INSTALL_LOG"; then
+            echo "A credential value was written to the install log."
+            exit 1
+          fi
+
+      - name: Verify the first install's printed credentials work
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR_ONE"
+
+          ./start.sh "$PORT_ONE" >"$SERVER_LOG_ONE" 2>&1 &
+          APP_PID=$!
+
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT_ONE}/api/auth/providers" >/dev/null; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG_ONE" || true
+            exit 1
+          fi
+
+          # --require-printed-password: if this install ever stops showing a
+          # generated password, the whole job would still pass while asserting
+          # nothing. Fail instead.
+          node "$GITHUB_WORKSPACE/scripts/ci/assert-printed-credentials.mjs" \
+            --summary "$FIRST_SUMMARY" \
+            --base-url "http://127.0.0.1:${PORT_ONE}" \
+            --label "first install" \
+            --require-printed-password \
+            --result-file "$FIRST_RESULT"
+
+      - name: Record the accounts the second install will meet
+        # NOTE: the SQL below names the table "User" (quoted, capitalised)
+        # because the Prisma model `User` carries no `@@map`, so Prisma's table
+        # name is the model name verbatim. That couples this job to a schema
+        # detail: adding `@@map("users")` to the model in prisma/schema.prisma
+        # renames the table and every `FROM "User"` in this workflow starts
+        # failing with `relation "User" does not exist`. Grep this file for
+        # `FROM \"User\"` when changing the mapping -- three steps read it (this
+        # one, "Assert the existing admin password was not overwritten" and
+        # "Assert settings.json kept no password the seed never applied").
+        run: |
+          set -euo pipefail
+          USER_COUNT="$(PGPASSWORD=seqdesk psql -h 127.0.0.1 -p 5432 -U seqdesk -d "$DB_NAME" -tAc 'SELECT count(*) FROM "User"')"
+          echo "Existing accounts in $DB_NAME: $USER_COUNT"
+          if [ "$USER_COUNT" -lt 1 ]; then
+            echo "The first install left no accounts behind; the second install would not be a second install."
+            exit 1
+          fi
+          # A fingerprint of the stored hash, not the hash itself, so the value
+          # can be compared after the second install without ever being written
+          # somewhere it does not belong.
+          PGPASSWORD=seqdesk psql -h 127.0.0.1 -p 5432 -U seqdesk -d "$DB_NAME" \
+            -tAc "SELECT md5(password) FROM \"User\" WHERE email = 'admin@example.com'" \
+            > "$ADMIN_FINGERPRINT"
+          test -s "$ADMIN_FINGERPRINT"
+          # Which addresses were already taken BEFORE the second install ran.
+          # "Exists now" is not the same question: the second install may
+          # legitimately create an account that was missing, and for that one a
+          # generated password (and its hash in settings.json) is correct.
+          PGPASSWORD=seqdesk psql -h 127.0.0.1 -p 5432 -U seqdesk -d "$DB_NAME" \
+            -tAc 'SELECT email FROM "User"' > "$PRE_EXISTING_EMAILS"
+          test -s "$PRE_EXISTING_EMAILS"
+          echo "Addresses the second install must not claim to have given a password:"
+          cat "$PRE_EXISTING_EMAILS"
+
+      - name: Second install over the same database
+        run: |
+          set -euo pipefail
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          # A fresh install directory, the same database. That is the shape the
+          # author hit: the installer's "Back up and replace the install
+          # directory? (y/N)" prompt moved the old directory aside, so the
+          # second install landed on an empty
+          # directory and a March database -- and it is also what a reviewer
+          # gets when they install on a second machine against a shared server.
+          set +e
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$SECOND_INSTALL_LOG" \
+            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+            --interactive --without-pipelines --no-pm2 \
+            --dir "$INSTALL_DIR_TWO" \
+            --port "$PORT_TWO" \
+            --nextauth-url "http://127.0.0.1:$PORT_TWO" \
+            --database-url "$DB_URL" \
+            --database-direct-url "$DB_URL" \
+            </dev/null >"$SECOND_SUMMARY" 2>&1
+          INSTALL_STATUS=$?
+          set -e
+          bash "$GITHUB_WORKSPACE/scripts/ci/mask-printed-credentials.sh" "$SECOND_SUMMARY"
+          cat "$SECOND_SUMMARY"
+          if [ "$INSTALL_STATUS" -ne 0 ]; then
+            echo "The second install failed with status $INSTALL_STATUS."
+            echo "Attaching to a database that already holds SeqDesk accounts is a supported"
+            echo "outcome: the install has to finish and tell the operator where they stand."
+            exit "$INSTALL_STATUS"
+          fi
+          test -x "$INSTALL_DIR_TWO/start.sh"
+          if grep -qE '^[[:space:]]+[A-Za-z]+ password[[:space:]]+[^[:space:]]' "$SECOND_INSTALL_LOG"; then
+            echo "A credential value was written to the install log."
+            exit 1
+          fi
+
+      - name: Assert the existing admin password was not overwritten
+        # `FROM "User"` again -- see the note on "Record the accounts the second
+        # install will meet" about the unmapped Prisma model name.
+        run: |
+          set -euo pipefail
+          AFTER="$(PGPASSWORD=seqdesk psql -h 127.0.0.1 -p 5432 -U seqdesk -d "$DB_NAME" \
+            -tAc "SELECT md5(password) FROM \"User\" WHERE email = 'admin@example.com'")"
+          BEFORE="$(cat "$ADMIN_FINGERPRINT")"
+          if [ "$AFTER" != "$BEFORE" ]; then
+            echo "The second install rewrote the existing admin password."
+            echo "Anyone able to run the installer against a database could reset its admin"
+            echo "account that way, so the fix for the printed-credential bug must not be to"
+            echo "overwrite the account."
+            exit 1
+          fi
+          echo "ok: the existing admin account was left untouched"
+
+      - name: Assert settings.json kept no password the seed never applied
+        # The original report in one file. settings.json has to be written
+        # before the seed runs (it is what tells the seed which accounts to
+        # create), but whether an account is already there can only be answered
+        # once the database is reachable -- after that write. So the second
+        # install writes bootstrap.users.<role>.passwordHash, then learns the
+        # account exists, and the seed leaves the existing row alone. A hash
+        # left behind in settings.json at that point matches nothing in the
+        # database: it is the artefact that makes the next person conclude the
+        # printed password "was configured" and hunt the bug in the app.
+        #
+        # `FROM "User"` again -- see the note on "Record the accounts the second
+        # install will meet" about the unmapped Prisma model name.
+        run: |
+          set -euo pipefail
+          SETTINGS_TWO="$INSTALL_DIR_TWO/settings.json"
+          if [ ! -f "$SETTINGS_TWO" ]; then
+            SETTINGS_TWO="$INSTALL_DIR_TWO/seqdesk.config.json"
+          fi
+          if [ ! -f "$SETTINGS_TWO" ]; then
+            echo "The second install left no settings.json in $INSTALL_DIR_TWO."
+            exit 1
+          fi
+          echo "Config under test: $SETTINGS_TWO"
+
+          BOOTSTRAP_TSV="$RUNNER_TEMP/second-install-bootstrap-users.tsv"
+          # One "<role><TAB><email><TAB><secret keys>" line per configured
+          # bootstrap user. Only the NAMES of the secret keys are printed; no
+          # value from the file reaches the job log.
+          SEQDESK_SETTINGS_PATH="$SETTINGS_TWO" node > "$BOOTSTRAP_TSV" <<'NODE'
+          const fs = require('fs');
+          const config = JSON.parse(fs.readFileSync(process.env.SEQDESK_SETTINGS_PATH, 'utf8'));
+          const users = (config && config.bootstrap && config.bootstrap.users) || {};
+          for (const [role, user] of Object.entries(users)) {
+            if (!user || typeof user !== 'object') continue;
+            const email = typeof user.email === 'string' ? user.email.trim() : '';
+            if (!email) continue;
+            const secrets = ['password', 'passwordHash'].filter((key) =>
+              Object.prototype.hasOwnProperty.call(user, key) &&
+              typeof user[key] === 'string' &&
+              user[key].trim() !== ''
+            );
+            process.stdout.write(`${role}\t${email}\t${secrets.join(',') || '-'}\n`);
+          }
+          NODE
+          cat "$BOOTSTRAP_TSV"
+
+          # Driven from the addresses that were already taken, not from
+          # settings.json, so the assertion cannot go quiet: dropping the whole
+          # bootstrap.users.<role> entry is an equally correct outcome (nothing
+          # unapplied is left behind) and must not read as "nothing to check".
+          FAILED=0
+          while read -r EMAIL; do
+            [ -n "${EMAIL:-}" ] || continue
+            MATCH_TSV="$RUNNER_TEMP/second-install-bootstrap-match.tsv"
+            awk -F'\t' -v want="$EMAIL" '$2 == want { print $1 "\t" $3 }' "$BOOTSTRAP_TSV" > "$MATCH_TSV"
+            if [ ! -s "$MATCH_TSV" ]; then
+              echo "ok: settings.json configures no bootstrap entry for the pre-existing account $EMAIL"
+              continue
+            fi
+            while IFS=$'\t' read -r ROLE SECRETS; do
+              [ -n "${ROLE:-}" ] || continue
+              if [ "$SECRETS" != "-" ]; then
+                echo "FAIL: settings.json still carries bootstrap.users.$ROLE.{$SECRETS} for $EMAIL,"
+                echo "      an account that already existed before this install ran. The seed does not"
+                echo "      touch such an account, so that value authenticates nothing -- it only makes"
+                echo "      the inert printed password look like it was applied."
+                FAILED=1
+              else
+                echo "ok: no password kept in settings.json for the pre-existing $ROLE account ($EMAIL)"
+              fi
+            done < "$MATCH_TSV"
+          done < "$PRE_EXISTING_EMAILS"
+
+          if [ "$FAILED" -ne 0 ]; then
+            exit 1
+          fi
+
+          # The same statement from the other side: whatever hash did survive in
+          # settings.json must be the hash the database actually stores. This
+          # also covers an account the second install legitimately created.
+          while IFS=$'\t' read -r ROLE EMAIL SECRETS; do
+            [ -n "${EMAIL:-}" ] || continue
+            case ",$SECRETS," in
+              *,passwordHash,*) ;;
+              *) continue ;;
+            esac
+            SETTINGS_FINGERPRINT="$(SEQDESK_SETTINGS_PATH="$SETTINGS_TWO" SEQDESK_ROLE="$ROLE" node -e '
+              const fs = require("fs");
+              const crypto = require("crypto");
+              const config = JSON.parse(fs.readFileSync(process.env.SEQDESK_SETTINGS_PATH, "utf8"));
+              const hash = config.bootstrap.users[process.env.SEQDESK_ROLE].passwordHash;
+              process.stdout.write(crypto.createHash("md5").update(hash).digest("hex"));
+            ')"
+            DB_FINGERPRINT="$(PGPASSWORD=seqdesk psql -h 127.0.0.1 -p 5432 -U seqdesk -d "$DB_NAME" \
+              -tAc "SELECT md5(password) FROM \"User\" WHERE email = '$EMAIL'")"
+            if [ "$SETTINGS_FINGERPRINT" != "$DB_FINGERPRINT" ]; then
+              echo "FAIL: bootstrap.users.$ROLE.passwordHash in settings.json is not the hash stored"
+              echo "      for $EMAIL in the database, so it was never applied."
+              FAILED=1
+            else
+              echo "ok: the stored bootstrap hash for $ROLE ($EMAIL) is the one the database uses"
+            fi
+          done < "$BOOTSTRAP_TSV"
+
+          if [ "$FAILED" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Assert the second install was honest about credentials
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR_TWO"
+
+          ./start.sh "$PORT_TWO" >"$SERVER_LOG_TWO" 2>&1 &
+          APP_PID=$!
+
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT_TWO}/api/auth/providers" >/dev/null; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG_TWO" || true
+            exit 1
+          fi
+
+          # 1. Whatever the second install printed has to be true: any password
+          #    in its summary must authenticate, and if it printed none it must
+          #    have said that the database already holds the accounts.
+          node "$GITHUB_WORKSPACE/scripts/ci/assert-printed-credentials.mjs" \
+            --summary "$SECOND_SUMMARY" \
+            --base-url "http://127.0.0.1:${PORT_TWO}" \
+            --label "second install" \
+            --require-disclosure \
+            --result-file "$SECOND_RESULT"
+
+          # 2. The credentials that were already there still govern. Checked by
+          #    replaying the FIRST install's summary against the SECOND
+          #    install's app, so the passwords stay in the file they were
+          #    captured in.
+          node "$GITHUB_WORKSPACE/scripts/ci/assert-printed-credentials.mjs" \
+            --summary "$FIRST_SUMMARY" \
+            --base-url "http://127.0.0.1:${PORT_TWO}" \
+            --label "first install, rechecked after the second" \
+            --require-printed-password \
+            --result-file "$GOVERNING_RESULT"
+
+      - name: Upload install e2e artifacts (second install)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # Neither installer summary is uploaded: both hold the plaintext
+          # passwords the installer printed. The credential-result JSONs record
+          # which accounts were checked and whether they authenticated, with no
+          # password values in them.
+          name: install-e2e-second-install-ubuntu
+          path: |
+            ${{ env.FIRST_INSTALL_LOG }}
+            ${{ env.SECOND_INSTALL_LOG }}
+            ${{ env.SERVER_LOG_ONE }}
+            ${{ env.SERVER_LOG_TWO }}
+            ${{ env.FIRST_RESULT }}
+            ${{ env.SECOND_RESULT }}
+            ${{ env.GOVERNING_RESULT }}
             ${{ env.MOCK_SERVER_LOG }}
           if-no-files-found: warn
           retention-days: 5

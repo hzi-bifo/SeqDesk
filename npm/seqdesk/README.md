@@ -79,6 +79,34 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
   A local socket owned by a different OS user (for example
   `/var/run/postgresql`) is skipped with a warning rather than treated as an
   error — the installer simply moves on and provisions its own cluster.
+- A reused server also means a reused database. When a database named `seqdesk`
+  already exists there — typically from an earlier install — the new install
+  attaches to it, data and user accounts included, and only creates the
+  bootstrap accounts that are missing. An administrator or researcher account
+  that already exists keeps its current password; the run does not rewrite it,
+  and a password that run generates does not apply to it, so log in with the
+  credentials from the earlier install. To
+  install against an empty database, pass `--database-url` naming a database
+  that does not exist yet (on a local host or socket the installer creates the
+  role and database; on a remote or managed server create it first). Replacing
+  the install directory is unrelated: the `Back up and replace the install
+  directory? (y/N)` prompt and `--overwrite-existing` move `<dir>` to
+  `<dir>.backup.<timestamp>` and never touch the database. When the run finds
+  one of its bootstrap accounts already in the database it says so during the
+  database step — `The selected database already contains SeqDesk accounts.`,
+  then one `Existing <role> account` line per account, each ending in
+  `(password left unchanged)` — and prints `existing password (unchanged)` for
+  it in the closing **Login** block instead of a password.
+- Editing `runtime.*` in `<dir>/settings.json` applies at the next process
+  start. The app only fills environment variables that are not already set, and
+  PM2 reuses the environment it captured when the process was first started, so
+  restart with `DATABASE_URL= DIRECT_URL= pm2 restart seqdesk --update-env`,
+  which is what the installer prints. The empty values matter: `--update-env`
+  merges the current environment into the copy PM2 stored and cannot delete
+  anything from it, so a `DATABASE_URL` captured at first start survives a plain
+  `--update-env` restart; an empty value overwrites it and `start.sh` then reads
+  `settings.json`. Check with `pm2 env <id>`, or sidestep it entirely with `pm2
+  delete seqdesk`, `pm2 start "<dir>/start.sh" --name seqdesk`, `pm2 save`.
 - `$HOME/seqdesk` is used above as a writable evaluation path. For a production
   system location, have an administrator prepare a parent owned by the
   non-root SeqDesk service account, then install into a new child directory.
