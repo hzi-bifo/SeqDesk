@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const readline = require("node:readline");
 const { version } = require("../package.json");
 
 const INSTALL_URL = process.env.SEQDESK_INSTALL_URL || "https://seqdesk.org/install.sh";
@@ -40,6 +41,30 @@ Options:
   --json             Print machine-readable JSON.
   --help, -h         Show this help.
 `;
+
+const RESET_PASSWORD_USAGE = `Usage:
+  seqdesk reset-password <address> [--dir /path/to/seqdesk] [--password <value>] [--yes] [--json]
+
+Example:
+  cd ~/seqdesk && seqdesk reset-password admin@example.com
+
+Options:
+  <address>          Account to reset. May also be given as --email <address>.
+  --email, -e        Account to reset, by email address. Required.
+  --dir, -d          Installed SeqDesk directory. Defaults to the current directory.
+  --password         Password to set. Omit to generate a strong one.
+  --yes, -y          Skip the confirmation prompt. Required with --json.
+  --json             Print machine-readable JSON.
+  --help, -h         Show this help.
+
+Resets one account. The new password is printed once and is stored nowhere:
+SeqDesk keeps only its bcrypt hash, and this command writes it to no file.
+`;
+
+// scripts/reset-password.mjs ships inside the release, so an install made before
+// that release has no worker to run. Name the version that introduced it instead
+// of failing with a bare ENOENT.
+const RESET_PASSWORD_MIN_APP_VERSION = "1.1.125";
 
 const ASSETS_USAGE = `Usage:
   seqdesk assets apply [--dir /path/to/seqdesk] (--profile <id> --profile-code <code> | --profile-config <file>)
@@ -137,7 +162,14 @@ function parseDoctorArgs(argv) {
     }
 
     if (token.startsWith("--dir=")) {
-      options.dir = token.slice("--dir=".length);
+      const dirValue = token.slice("--dir=".length);
+      // An empty value resolves to the current working directory, which is
+      // almost never the install that was meant and may be a different database
+      // entirely. Refuse it, the way --password= already does.
+      if (!dirValue) {
+        throw new Error("--dir requires a directory path");
+      }
+      options.dir = dirValue;
       continue;
     }
 
@@ -190,6 +222,136 @@ function parseDoctorArgs(argv) {
   }
 
   options.dir = path.resolve(options.dir);
+  return options;
+}
+
+function parseResetPasswordArgs(argv) {
+  const options = {
+    dir: process.cwd(),
+    email: "",
+    password: "",
+    yes: false,
+    json: false,
+    help: false,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+
+    if (token === "--help" || token === "-h") {
+      options.help = true;
+      continue;
+    }
+
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+
+    if (token === "--yes" || token === "-y") {
+      options.yes = true;
+      continue;
+    }
+
+    if (token === "--dir" || token === "-d") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error(`${token} requires a directory path`);
+      }
+      options.dir = value;
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith("--dir=")) {
+      const dirValue = token.slice("--dir=".length);
+      // An empty value resolves to the current working directory, which is
+      // almost never the install that was meant and may be a different database
+      // entirely. Refuse it, the way --password= already does.
+      if (!dirValue) {
+        throw new Error("--dir requires a directory path");
+      }
+      options.dir = dirValue;
+      continue;
+    }
+
+    if (token === "--email" || token === "-e") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error(`${token} requires an email address`);
+      }
+      options.email = value;
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith("--email=")) {
+      options.email = token.slice("--email=".length);
+      continue;
+    }
+
+    if (token === "--password") {
+      const value = argv[index + 1];
+      // A password may legitimately begin with "-". Consuming the next option as
+      // the password would silently set the account to something like "--yes",
+      // so require the inline form for those instead of guessing.
+      if (value === undefined || value.startsWith("-")) {
+        throw new Error(
+          "--password requires a value; write --password=<value> for a password that starts with '-'"
+        );
+      }
+      options.password = value;
+      index += 1;
+      continue;
+    }
+
+    if (token.startsWith("--password=")) {
+      const value = token.slice("--password=".length);
+      // An empty value is a mistake, not a request for an empty password: it
+      // would otherwise fall through and silently generate one instead.
+      if (!value) {
+        throw new Error("--password requires a value; omit --password entirely to generate one");
+      }
+      options.password = value;
+      continue;
+    }
+
+    if (token.startsWith("-")) {
+      throw new Error(`Unknown reset-password option: ${token}`);
+    }
+
+    // Accept the address positionally. Someone running this is locked out of
+    // their own installation; `seqdesk reset-password admin@example.com` is the
+    // command they can retype from a screenshot without consulting --help.
+    if (!options.email) {
+      options.email = token;
+      continue;
+    }
+
+    throw new Error(
+      `Unexpected reset-password argument: ${token} (the account ${options.email} was already given)`
+    );
+  }
+
+  options.dir = path.resolve(options.dir);
+  options.email = options.email.trim();
+
+  if (options.help) {
+    return options;
+  }
+
+  if (!options.email) {
+    throw new Error(
+      "Name the account whose password should be replaced, for example: seqdesk reset-password admin@example.com"
+    );
+  }
+
+  // The prompt has no answer in JSON mode, and silently skipping it would let a
+  // script change a password without ever asking.
+  if (options.json && !options.yes) {
+    throw new Error("--json requires --yes, because the confirmation prompt cannot be answered in JSON mode");
+  }
+
   return options;
 }
 
@@ -246,7 +408,14 @@ function parseAssetsArgs(argv) {
     }
 
     if (token.startsWith("--dir=")) {
-      options.dir = token.slice("--dir=".length);
+      const dirValue = token.slice("--dir=".length);
+      // An empty value resolves to the current working directory, which is
+      // almost never the install that was meant and may be a different database
+      // entirely. Refuse it, the way --password= already does.
+      if (!dirValue) {
+        throw new Error("--dir requires a directory path");
+      }
+      options.dir = dirValue;
       continue;
     }
 
@@ -356,7 +525,14 @@ function parsePipelineLauncherArgs(argv) {
     }
 
     if (token.startsWith("--dir=")) {
-      options.dir = token.slice("--dir=".length);
+      const dirValue = token.slice("--dir=".length);
+      // An empty value resolves to the current working directory, which is
+      // almost never the install that was meant and may be a different database
+      // entirely. Refuse it, the way --password= already does.
+      if (!dirValue) {
+        throw new Error("--dir requires a directory path");
+      }
+      options.dir = dirValue;
       continue;
     }
   }
@@ -404,6 +580,25 @@ function dirExists(file) {
   } catch {
     return false;
   }
+}
+
+// Distribution installs keep immutable app files under current/ while the root
+// holds shared config, data, and the start wrapper. Legacy/source installs still
+// place the app files directly in the requested directory.
+function resolveAppDir(installDir) {
+  const currentDir = path.join(installDir, "current");
+  return dirExists(currentDir) ? currentDir : installDir;
+}
+
+// A13: the installer writes settings.json on fresh installs (seqdesk.config.json
+// only on legacy upgrades). Resolve to whichever exists so the runtime config
+// that is actually in use is the one that gets read.
+function resolveConfigPath(installDir) {
+  return (
+    ["settings.json", "seqdesk.config.json"]
+      .map((name) => path.join(installDir, name))
+      .find(fileExists) || path.join(installDir, "settings.json")
+  );
 }
 
 function summarizePostgresUrl(value) {
@@ -708,11 +903,7 @@ async function runDoctor(argv) {
   }
   addCheck(checks, "pass", "Install directory", installDir);
 
-  // Distribution installs keep immutable app files under current/ while the
-  // root holds shared config, data, and the start wrapper. Legacy/source
-  // installs still place the app files directly in the requested directory.
-  const currentDir = path.join(installDir, "current");
-  const appDir = dirExists(currentDir) ? currentDir : installDir;
+  const appDir = resolveAppDir(installDir);
 
   const packagePath = path.join(installDir, "package.json");
   let packageJson = null;
@@ -741,13 +932,9 @@ async function runDoctor(argv) {
     }
   }
 
-  // A13: the installer writes settings.json on fresh installs (seqdesk.config.json
-  // only on legacy upgrades). Resolve to whichever exists so doctor reads the real
-  // runtime config and its runtime.* / TCP / HTTP checks actually run.
-  const configPath =
-    ["settings.json", "seqdesk.config.json"]
-      .map((n) => path.join(installDir, n))
-      .find(fileExists) || path.join(installDir, "settings.json");
+  // Read whichever runtime config the install actually uses, so doctor's
+  // runtime.* / TCP / HTTP checks run against the real values.
+  const configPath = resolveConfigPath(installDir);
   const configName = path.basename(configPath);
   let config = null;
   // Ready-to-paste repair commands, in the same form the installer prints when
@@ -1002,6 +1189,372 @@ async function runDoctor(argv) {
   }
 
   return result.summary.fail > 0 ? 1 : 0;
+}
+
+// Same shape as doctor's failing checks: what went wrong, then the next step on
+// its own indented line.
+function printResetPasswordError(message, remediation) {
+  console.error(`[seqdesk] ${message}`);
+  if (remediation) {
+    console.error(`  -> ${remediation}`);
+  }
+}
+
+function promptLine(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: Boolean(process.stdin.isTTY),
+    });
+
+    let answered = false;
+    rl.question(question, (answer) => {
+      answered = true;
+      rl.close();
+      resolve(answer);
+    });
+    // stdin can be closed or empty (a pipe, a CI step, `< /dev/null`). Report
+    // that as "nobody answered" rather than as a declined confirmation, because
+    // the two need different advice.
+    rl.on("close", () => {
+      if (!answered) {
+        resolve(null);
+      }
+    });
+  });
+}
+
+function runInstalledResetPasswordWorker({ appDir, workerPath, email, password, databaseUrl, directUrl }) {
+  return new Promise((resolve, reject) => {
+    const childArgs = [workerPath, "--email", email];
+    if (password) {
+      childArgs.push("--password", password);
+    }
+    childArgs.push("--json");
+
+    // stdout is captured rather than inherited: it carries the one JSON line of
+    // the contract, including the new password, and it must be printed by this
+    // process exactly once and in the agreed format.
+    const child = spawn(process.execPath, childArgs, {
+      cwd: appDir,
+      env: { ...env, DATABASE_URL: databaseUrl, DIRECT_URL: directUrl },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on("error", (error) => {
+      reject(new Error(`Failed to start the installed password-reset worker: ${error.message}`));
+    });
+
+    child.on("close", (code, signal) => {
+      if (signal) {
+        reject(new Error(`The installed password-reset worker exited with signal ${signal}`));
+        return;
+      }
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+  });
+}
+
+function parseWorkerPayload(stdout) {
+  const line = stdout
+    .split("\n")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .pop();
+  if (!line) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(line);
+    return isPlainObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function summarizeWorkerStderr(stderr) {
+  const lines = stderr
+    .split("\n")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    return "";
+  }
+  return lines.slice(-3).join(" | ");
+}
+
+function describeWorkerFailure(payload, context) {
+  const detail = firstString(payload.error) || "no reason reported";
+  switch (firstString(payload.code)) {
+    case "not-found":
+      return {
+        // The worker looks for a case-insensitive near-match and says so, which
+        // is the single most useful thing to print here: a wrong capital is the
+        // mistake a locked-out operator actually makes. Pass its wording through.
+        message: detail !== "no reason reported"
+          ? detail
+          : `No SeqDesk account has the email ${context.email} in ${context.database}.`,
+        remediation: `The address is matched exactly as stored. Check the spelling, or confirm --dir points at the install that owns this database: ${context.doctorHint}`,
+      };
+    case "db-unreachable":
+      return {
+        message: `PostgreSQL at ${context.database} did not answer: ${detail}`,
+        remediation: `Start the database and re-check the connection: ${context.doctorHint}. See ${DOCS_POSTGRES_URL}`,
+      };
+    case "bad-usage":
+      return {
+        message: `The installed password-reset worker rejected the request: ${detail}`,
+        remediation: `seqdesk ${version} and the release in ${context.installDir} disagree about the reset-password interface. Update the install: ${context.updateHint}`,
+      };
+    default:
+      return {
+        message: `The password was not changed: ${detail}`,
+        remediation: `Check the install first: ${context.doctorHint}. If it passes, see ${DOCS_COMMON_PROBLEMS_URL}`,
+      };
+  }
+}
+
+function printResetPasswordPlan({ email, installDir, database }) {
+  console.log(`${style.bold}SeqDesk reset-password${style.reset}`);
+  printKv("Account", email);
+  printKv("Directory", installDir);
+  printKv("Database", database);
+  console.log("");
+  console.log(`This replaces the password of ${email} in that database. Nothing else changes.`);
+}
+
+function printResetPasswordResult(result) {
+  console.log(`${style.bold}SeqDesk reset-password${style.reset}`);
+  printKv("Account", result.email);
+  const name = [result.firstName, result.lastName].filter(Boolean).join(" ").trim();
+  if (name) {
+    printKv("Name", name);
+  }
+  if (result.role) {
+    printKv("Role", result.role);
+  }
+  printKv("Directory", result.installDir);
+  printKv("Database", result.database);
+
+  printHeader("New password");
+  console.log(`  ${result.password}`);
+  console.log("");
+  console.log(
+    result.generated
+      ? "  Generated for this reset and printed here once."
+      : "  Set from the value you passed, and printed here once."
+  );
+  console.log(
+    "  It is stored nowhere: SeqDesk keeps only its bcrypt hash, and this command"
+  );
+  console.log("  writes it to no file. Copy it now, then change it after signing in.");
+}
+
+async function runResetPassword(argv) {
+  let options;
+  try {
+    options = parseResetPasswordArgs(argv);
+  } catch (error) {
+    console.error(`[seqdesk] ${error.message}`);
+    console.error("");
+    console.error(RESET_PASSWORD_USAGE.trim());
+    return 2;
+  }
+
+  if (options.help) {
+    console.log(RESET_PASSWORD_USAGE.trim());
+    return 0;
+  }
+
+  const installDir = options.dir;
+  const doctorHint = `npx -y seqdesk@latest doctor --dir ${shellQuote(installDir)}`;
+  const reconfigureHint = `npx -y seqdesk@latest -y --reconfigure --dir ${shellQuote(installDir)}`;
+  const updateHint = `curl -fsSL ${INSTALL_URL} | bash -s -- --dir ${shellQuote(installDir)}`;
+
+  const fail = (message, remediation) => {
+    if (options.json) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: false,
+            installDir,
+            email: options.email,
+            error: message,
+            ...(remediation ? { remediation } : {}),
+          },
+          null,
+          2
+        )
+      );
+    } else {
+      printResetPasswordError(message, remediation);
+    }
+    return 1;
+  };
+
+  if (!dirExists(installDir)) {
+    return fail(
+      `Install directory does not exist: ${installDir}`,
+      `Pass --dir with the directory the installer reported, or install first: curl -fsSL ${INSTALL_URL} | bash`
+    );
+  }
+
+  const configPath = resolveConfigPath(installDir);
+  const configName = path.basename(configPath);
+  if (!fileExists(configPath)) {
+    return fail(
+      `${installDir} has no ${configName}, so the database to change is unknown.`,
+      `Point --dir at the directory the installer reported, or recreate the runtime config with: ${reconfigureHint}`
+    );
+  }
+
+  let config;
+  try {
+    config = readJsonFile(configPath);
+  } catch (error) {
+    return fail(
+      `${configPath} is not valid JSON: ${error.message}`,
+      `Fix the JSON syntax in ${configPath}, or rewrite it with: ${reconfigureHint}`
+    );
+  }
+
+  const runtime = isPlainObject(config?.runtime) ? config.runtime : {};
+  const databaseUrl = firstString(runtime.databaseUrl, config?.databaseUrl);
+  const configuredDirectUrl = firstString(
+    runtime.directUrl,
+    runtime.databaseDirectUrl,
+    config?.directUrl
+  );
+
+  const databaseValidation = validatePostgresUrl(databaseUrl);
+  if (!databaseValidation.ok) {
+    return fail(
+      `runtime.databaseUrl in ${configName} is ${databaseValidation.detail}.`,
+      `Set runtime.databaseUrl in ${configName} to postgresql://user:password@host:5432/dbname (append ?host=/path/to/socket/dir for a Unix socket), or rewrite it with: ${reconfigureHint}`
+    );
+  }
+
+  if (configuredDirectUrl) {
+    const directValidation = validatePostgresUrl(configuredDirectUrl);
+    if (!directValidation.ok) {
+      return fail(
+        `runtime.directUrl in ${configName} is ${directValidation.detail}.`,
+        `Set runtime.directUrl in ${configName} to the same database in postgresql:// form, or remove it to fall back to runtime.databaseUrl.`
+      );
+    }
+  }
+
+  // The connection strings go to the worker verbatim, socket form and all: a
+  // "?host=/path" parameter is how libpq and Prisma are told to use a Unix
+  // socket, and rewriting it here would point the worker at a different server
+  // than the one doctor reports on.
+  const directUrl = configuredDirectUrl || databaseUrl;
+  const database = databaseValidation.detail;
+
+  const appDir = resolveAppDir(installDir);
+  const workerPath = path.join(appDir, "scripts", "reset-password.mjs");
+  if (!fileExists(workerPath)) {
+    let installedVersion = "";
+    try {
+      installedVersion = firstString(readJsonFile(path.join(installDir, "package.json")).version);
+    } catch {
+      // No readable package.json: report the missing worker without a version.
+    }
+    return fail(
+      `The installed release has no password-reset worker at ${workerPath}${installedVersion ? ` (installed release: ${installedVersion})` : ""}.`,
+      `reset-password needs SeqDesk ${RESET_PASSWORD_MIN_APP_VERSION} or newer in the install directory. Update it with: ${updateHint}`
+    );
+  }
+
+  if (!options.yes) {
+    printResetPasswordPlan({ email: options.email, installDir, database });
+    const answer = await promptLine("Reset this account's password? (y/N) ");
+    if (answer === null) {
+      printResetPasswordError(
+        "Cancelled: no confirmation was read from stdin, so nothing was changed.",
+        "Answer the prompt on a terminal, or pass --yes to confirm up front (that is what CI needs)."
+      );
+      return 1;
+    }
+    if (!/^(y|yes)$/i.test(answer.trim())) {
+      console.error("[seqdesk] Cancelled. No password was changed.");
+      return 1;
+    }
+    console.log("");
+  }
+
+  let worker;
+  try {
+    worker = await runInstalledResetPasswordWorker({
+      appDir,
+      workerPath,
+      email: options.email,
+      password: options.password,
+      databaseUrl,
+      directUrl,
+    });
+  } catch (error) {
+    return fail(error.message, `Check the install first: ${doctorHint}`);
+  }
+
+  const payload = parseWorkerPayload(worker.stdout);
+  if (!payload) {
+    const stderrSummary = summarizeWorkerStderr(worker.stderr);
+    return fail(
+      `The installed password-reset worker exited with code ${worker.code} without reporting a result${stderrSummary ? `: ${stderrSummary}` : "."}`,
+      `Run it directly to see the full output: DATABASE_URL=... ${shellQuote(process.execPath)} ${shellQuote(workerPath)} --email ${shellQuote(options.email)}. See ${DOCS_COMMON_PROBLEMS_URL}`
+    );
+  }
+
+  if (payload.ok !== true || worker.code !== 0) {
+    const described = describeWorkerFailure(payload, {
+      email: options.email,
+      database,
+      installDir,
+      doctorHint,
+      updateHint,
+    });
+    return fail(described.message, described.remediation);
+  }
+
+  const result = {
+    ok: true,
+    installDir,
+    database,
+    email: firstString(payload.email) || options.email,
+    role: firstString(payload.role),
+    firstName: firstString(payload.firstName),
+    lastName: firstString(payload.lastName),
+    generated: payload.generated === true,
+    password: typeof payload.password === "string" ? payload.password : "",
+  };
+
+  if (!result.password) {
+    return fail(
+      "The installed password-reset worker reported success but returned no password.",
+      `Check the account by signing in, and check the install: ${doctorHint}`
+    );
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    printResetPasswordResult(result);
+  }
+
+  return 0;
 }
 
 function resolveProfileCode(profileId, explicitCode) {
@@ -1318,6 +1871,7 @@ async function main() {
     console.log("Usage:");
     console.log("  seqdesk [installer options]");
     console.log("  seqdesk doctor [options]");
+    console.log("  seqdesk reset-password --email <address> [options]");
     console.log("  seqdesk assets apply [options]");
     console.log("  seqdesk pipeline <command> [options]");
     console.log("  seqdesk --version");
@@ -1342,6 +1896,11 @@ async function main() {
 
   if (args[0] === "doctor") {
     const exitCode = await runDoctor(args.slice(1));
+    process.exit(exitCode);
+  }
+
+  if (args[0] === "reset-password") {
+    const exitCode = await runResetPassword(args.slice(1));
     process.exit(exitCode);
   }
 

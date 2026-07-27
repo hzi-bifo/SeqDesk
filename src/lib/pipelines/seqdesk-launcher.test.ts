@@ -34,6 +34,101 @@ function makeInstallWithPipelineCli(): { dir: string; capturePath: string } {
   return { dir, capturePath };
 }
 
+// Password the stub worker reports back, standing in for what the real
+// scripts/reset-password.mjs generates.
+const STUB_PASSWORD = 'Xk7RtQm2sWpZ9vHb4Ncd';
+
+function stubResetPasswordWorker(capturePath: string, payload: Record<string, unknown>): string {
+  return [
+    "import fs from 'node:fs';",
+    `fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({`,
+    '  argv: process.argv.slice(2),',
+    '  databaseUrl: process.env.DATABASE_URL ?? null,',
+    '  directUrl: process.env.DIRECT_URL ?? null,',
+    '  cwd: process.cwd(),',
+    '}));',
+    `console.log(JSON.stringify(${JSON.stringify(payload)}));`,
+    `process.exit(${payload.ok === true ? 0 : 1});`,
+    '',
+  ].join('\n');
+}
+
+function makeResetPasswordInstall(
+  options: {
+    prefix?: string;
+    layout?: 'current' | 'flat';
+    worker?: string | null;
+    runtime?: Record<string, unknown> | null;
+    payload?: Record<string, unknown>;
+  } = {}
+): { dir: string; workerPath: string; capturePath: string; socketUrl: string } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), options.prefix || 'seqdesk-reset-password-'));
+  tempDirs.push(dir);
+  const appDir = options.layout === 'flat' ? dir : path.join(dir, 'current');
+  const capturePath = path.join(dir, 'worker-capture.json');
+  const workerPath = path.join(appDir, 'scripts', 'reset-password.mjs');
+
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    JSON.stringify({ name: 'seqdesk', version: '1.1.100' })
+  );
+
+  const socketDir = path.join(dir, 'postgres-socket');
+  const socketUrl =
+    'postgresql://seqdesk:secret@localhost:5432/seqdesk' +
+    `?schema=public&host=${socketDir}`;
+  const runtime =
+    options.runtime === undefined
+      ? { databaseUrl: socketUrl, nextAuthSecret: 'test-secret' }
+      : options.runtime;
+  if (runtime) {
+    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ runtime }));
+  }
+
+  if (options.worker !== null) {
+    fs.mkdirSync(path.dirname(workerPath), { recursive: true });
+    fs.writeFileSync(
+      workerPath,
+      options.worker ??
+        stubResetPasswordWorker(capturePath, {
+          ok: true,
+          email: 'reviewer@example.org',
+          role: 'ADMIN',
+          firstName: 'Ada',
+          lastName: 'Lovelace',
+          generated: true,
+          password: STUB_PASSWORD,
+          ...options.payload,
+        })
+    );
+  } else {
+    // Keep the release layout so only the worker itself is missing, which is
+    // what an install made before the command shipped looks like.
+    fs.mkdirSync(appDir, { recursive: true });
+  }
+
+  return { dir, workerPath, capturePath, socketUrl };
+}
+
+function readCapture(capturePath: string): {
+  argv: string[];
+  databaseUrl: string | null;
+  directUrl: string | null;
+  cwd: string;
+} {
+  return JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
+}
+
+function filesUnder(dir: string): string[] {
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .flatMap((entry) =>
+      entry.isDirectory()
+        ? filesUnder(path.join(dir, entry.name))
+        : [path.join(dir, entry.name)]
+    );
+}
+
 type DoctorCheck = {
   name: string;
   status: string;
@@ -315,6 +410,305 @@ describe('seqdesk npm launcher installer dispatch', () => {
     expect(result.stdout).toContain('--interactive');
     expect(result.stdout).toContain('-y, --yes');
     expect(result.stdout).toContain('--without-pipelines');
+  });
+});
+
+describe('seqdesk npm launcher reset-password', () => {
+  it('lists reset-password in the top-level help', () => {
+    const result = spawnSync(process.execPath, [launcherPath, '--help'], {
+      encoding: 'utf-8',
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('seqdesk reset-password --email <address>');
+  });
+
+  it('treats a missing --email as a usage error and prints the usage', () => {
+    const result = spawnSync(process.execPath, [launcherPath, 'reset-password'], {
+      encoding: 'utf-8',
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Name the account whose password should be replaced');
+    // The error names a command that can be retyped as-is, not a flag grammar.
+    expect(result.stderr).toContain('seqdesk reset-password admin@example.com');
+    expect(result.stderr).toContain('seqdesk reset-password <address>');
+  });
+
+  it('accepts the address positionally, so the command can be retyped from a screenshot', () => {
+    const { dir, capturePath } = makeResetPasswordInstall();
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', 'reviewer@example.org', '--dir', dir, '--yes'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(0);
+    expect(readCapture(capturePath).argv).toEqual([
+      '--email',
+      'reviewer@example.org',
+      '--json',
+    ]);
+  });
+
+  it('refuses an empty --dir= instead of silently targeting the current directory', () => {
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', 'reviewer@example.org', '--dir='],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--dir requires a directory path');
+  });
+
+  it('rejects --json without --yes so a script cannot skip the confirmation', () => {
+    const { dir, capturePath } = makeResetPasswordInstall();
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', '--email', 'reviewer@example.org', '--dir', dir, '--json'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--json requires --yes');
+    expect(fs.existsSync(capturePath)).toBe(false);
+  });
+
+  it('names the version that introduced the worker when the release predates it', () => {
+    const { dir, workerPath } = makeResetPasswordInstall({
+      prefix: 'seqdesk-reset-password-old-',
+      worker: null,
+    });
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', '--email', 'reviewer@example.org', '--dir', dir, '--yes'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('no password-reset worker');
+    expect(result.stderr).toContain(workerPath);
+    // The installed release version, then the version to update to.
+    expect(result.stderr).toContain('1.1.100');
+    expect(result.stderr).toContain('SeqDesk 1.1.125 or newer');
+    expect(result.stderr).not.toContain('ENOENT');
+  });
+
+  it('requires a confirmation before changing anything when --yes is absent', () => {
+    const { dir, capturePath } = makeResetPasswordInstall();
+
+    const declined = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', '--email', 'reviewer@example.org', '--dir', dir],
+      { encoding: 'utf-8', input: 'n\n' }
+    );
+
+    expect(declined.status).toBe(1);
+    // The account and the database it would be changed in are named before the
+    // question, so the operator can see what they are confirming.
+    expect(declined.stdout).toContain('reviewer@example.org');
+    expect(declined.stdout).toContain('(Unix socket)');
+    expect(declined.stdout).toContain("Reset this account's password? (y/N)");
+    expect(declined.stderr).toContain('No password was changed');
+    expect(fs.existsSync(capturePath)).toBe(false);
+
+    // An unanswered prompt (closed stdin, as in CI) must not be read as consent.
+    const unanswered = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', '--email', 'reviewer@example.org', '--dir', dir],
+      { encoding: 'utf-8' }
+    );
+
+    expect(unanswered.status).toBe(1);
+    expect(unanswered.stderr).toContain('no confirmation was read from stdin');
+    expect(unanswered.stderr).toContain('--yes');
+    expect(fs.existsSync(capturePath)).toBe(false);
+
+    const accepted = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', '--email', 'reviewer@example.org', '--dir', dir],
+      { encoding: 'utf-8', input: 'y\n' }
+    );
+
+    expect(accepted.status).toBe(0);
+    expect(fs.existsSync(capturePath)).toBe(true);
+  });
+
+  it('passes the socket-form database URL through to the installed worker', () => {
+    const { dir, capturePath, socketUrl } = makeResetPasswordInstall();
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', '--email', 'reviewer@example.org', '--dir', dir, '--yes'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(0);
+    const captured = readCapture(capturePath);
+    // Verbatim: "?host=/path" is how Prisma is told to use a Unix socket, so
+    // rewriting it would point the worker at a different server.
+    expect(captured.databaseUrl).toBe(socketUrl);
+    // No runtime.directUrl was configured, so databaseUrl is the fallback.
+    expect(captured.directUrl).toBe(socketUrl);
+    expect(captured.argv).toEqual(['--email', 'reviewer@example.org', '--json']);
+    expect(fs.realpathSync(captured.cwd)).toBe(fs.realpathSync(path.join(dir, 'current')));
+  });
+
+  it('passes a configured directUrl and an explicit --password to the worker', () => {
+    const directUrl = 'postgresql://seqdesk:secret@127.0.0.1:5433/seqdesk';
+    const { dir, capturePath, socketUrl } = makeResetPasswordInstall({
+      runtime: {
+        databaseUrl:
+          'postgresql://seqdesk:secret@127.0.0.1:5432/seqdesk',
+        directUrl,
+        nextAuthSecret: 'test-secret',
+      },
+      payload: { generated: false, password: 'chosen-by-operator' },
+    });
+    expect(socketUrl).toContain('host=');
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'reset-password',
+        '--email',
+        'reviewer@example.org',
+        '--dir',
+        dir,
+        '--password',
+        'chosen-by-operator',
+        '--yes',
+      ],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(0);
+    const captured = readCapture(capturePath);
+    expect(captured.directUrl).toBe(directUrl);
+    expect(captured.argv).toEqual([
+      '--email',
+      'reviewer@example.org',
+      '--password',
+      'chosen-by-operator',
+      '--json',
+    ]);
+    expect(result.stdout).toContain('Set from the value you passed');
+  });
+
+  it('prints the new password once and leaves it in no file under the install', () => {
+    const { dir, workerPath } = makeResetPasswordInstall();
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', '--email', 'reviewer@example.org', '--dir', dir, '--yes'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.split(STUB_PASSWORD).length - 1).toBe(1);
+    expect(result.stdout).toContain('Ada Lovelace');
+    expect(result.stdout).toContain('ADMIN');
+    expect(result.stdout).toContain('stored nowhere');
+
+    // The stub worker's own source carries the password it reports, so it is the
+    // one file that is expected to contain it.
+    const leaked = filesUnder(dir).filter(
+      (file) => file !== workerPath && fs.readFileSync(file, 'utf-8').includes(STUB_PASSWORD)
+    );
+    expect(leaked).toEqual([]);
+  });
+
+  it('turns worker failure codes into actionable messages', () => {
+    const notFound = makeResetPasswordInstall({
+      payload: { ok: false, error: 'No user with that email', code: 'not-found' },
+    });
+    const notFoundResult = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'reset-password',
+        '--email',
+        'nobody@example.org',
+        '--dir',
+        notFound.dir,
+        '--yes',
+      ],
+      { encoding: 'utf-8' }
+    );
+
+    expect(notFoundResult.status).toBe(1);
+    // The worker's own wording is passed through: it is the half that can say
+    // "this database has admin@example.com, which differs only in capitalisation",
+    // and a wrong capital is the mistake a locked-out operator actually makes.
+    expect(notFoundResult.stderr).toContain('No user with that email');
+    expect(notFoundResult.stderr).toContain('doctor --dir');
+
+    const unreachable = makeResetPasswordInstall({
+      payload: { ok: false, error: "Can't reach database server", code: 'db-unreachable' },
+    });
+    const unreachableResult = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'reset-password',
+        '--email',
+        'reviewer@example.org',
+        '--dir',
+        unreachable.dir,
+        '--yes',
+        '--json',
+      ],
+      { encoding: 'utf-8' }
+    );
+
+    expect(unreachableResult.status).toBe(1);
+    const report = JSON.parse(unreachableResult.stdout) as {
+      ok: boolean;
+      error: string;
+      remediation: string;
+    };
+    expect(report.ok).toBe(false);
+    expect(report.error).toContain("Can't reach database server");
+    expect(report.remediation).toContain('doctor --dir');
+  });
+
+  it('reports a worker that produced no result instead of a stack trace', () => {
+    const { dir } = makeResetPasswordInstall({
+      worker: [
+        "console.error(\"Error: Cannot find package '@prisma/client'\");",
+        'process.exit(1);',
+        '',
+      ].join('\n'),
+    });
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', '--email', 'reviewer@example.org', '--dir', dir, '--yes'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('without reporting a result');
+    expect(result.stderr).toContain('@prisma/client');
+  });
+
+  it('fails clearly when the install directory has no settings.json', () => {
+    const { dir } = makeResetPasswordInstall({ runtime: null });
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'reset-password', '--email', 'reviewer@example.org', '--dir', dir, '--yes'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('has no settings.json');
+    expect(result.stderr).toContain('--reconfigure');
   });
 });
 

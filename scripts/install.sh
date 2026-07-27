@@ -855,11 +855,15 @@ NODE
 print_adopted_bootstrap_accounts_notice() {
     local existing_accounts="$1"
     local kind email
+    # The reset command is only actionable with a concrete address, so keep the
+    # first account the probe reported and name that one in the example.
+    local reset_email=""
 
     print_warning "The selected database already contains SeqDesk accounts."
     print_info "Database: $(redact_database_url "${DATABASE_URL:-}")"
     while IFS=$'\t' read -r kind email; do
         [ -n "$email" ] || continue
+        [ -n "$reset_email" ] || reset_email="$email"
         print_info "Existing ${kind} account: ${email} (password left unchanged)"
     done <<ACCOUNTS
 $existing_accounts
@@ -868,8 +872,9 @@ ACCOUNTS
     echo "  neither generated nor stored a password for an account that already exists,"
     echo "  because the seed leaves such an account untouched and any password shown"
     echo "  here would not work."
-    echo "  SeqDesk ships no password-reset command, so a forgotten password can only be"
-    echo "  replaced by updating that account's row in the User table directly."
+    echo "  A forgotten one can be replaced for a single account, without editing the"
+    echo "  database by hand:"
+    echo "    npx -y seqdesk@latest reset-password ${reset_email:-admin@example.com} --dir $(shell_quote "$SEQDESK_DIR")"
     echo "  For a clean instance with new credentials, install against a different"
     echo "  database, for example:"
     echo "    --database-url \"postgresql://USER:PASSWORD@HOST:5432/seqdesk_new\""
@@ -2960,8 +2965,8 @@ if [ "$DB_ADOPTED" = "true" ]; then
     echo "  This install attached to a database that already had SeqDesk accounts."
     echo "  The accounts shown above as unchanged keep the passwords they already had;"
     echo "  this install neither generated, stored nor changed a password for them."
-    echo "  SeqDesk ships no password-reset command, so a forgotten password can only"
-    echo "  be replaced by updating that account's row in the User table directly."
+    echo "  To set a new one for a single account, without editing the database by hand:"
+    echo "    npx -y seqdesk@latest reset-password ${DB_ADOPTED_ADMIN_EMAIL:-${DB_ADOPTED_RESEARCHER_EMAIL:-admin@example.com}} --dir $(shell_quote "$SEQDESK_DIR")"
 elif [ "$DB_PROBE_UNVERIFIED" = "true" ]; then
     echo "  This database could not be inspected before seeding, so the credentials"
     echo "  above hold only if it had no SeqDesk accounts yet: the seed leaves an"

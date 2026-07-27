@@ -1374,11 +1374,15 @@ NODE
 print_adopted_bootstrap_accounts_notice() {
     local existing_accounts="$1"
     local kind email
+    # The reset command is only actionable with a concrete address, so keep the
+    # first account the probe reported and name that one in the example.
+    local reset_email=""
 
     print_warning "The selected database already contains SeqDesk accounts."
     print_info "Database: $(redact_database_url "${DATABASE_URL:-}")"
     while IFS=$'\t' read -r kind email; do
         [ -n "$email" ] || continue
+        [ -n "$reset_email" ] || reset_email="$email"
         print_info "Existing ${kind} account: ${email} (password left unchanged)"
     done <<ACCOUNTS
 $existing_accounts
@@ -1387,8 +1391,9 @@ ACCOUNTS
     echo "  neither generated nor stored a password for an account that already exists,"
     echo "  because the seed leaves such an account untouched and any password shown"
     echo "  here would not work."
-    echo "  SeqDesk ships no password-reset command, so a forgotten password can only be"
-    echo "  replaced by updating that account's row in the User table directly."
+    echo "  A forgotten one can be replaced for a single account, without editing the"
+    echo "  database by hand:"
+    echo "    npx -y seqdesk@latest reset-password ${reset_email:-admin@example.com} --dir $(shell_quote "$SEQDESK_DIR")"
     echo "  For a clean instance with new credentials, install against a different"
     echo "  database, for example:"
     echo "    --database-url \"postgresql://USER:PASSWORD@HOST:5432/seqdesk_new\""
@@ -6077,6 +6082,9 @@ print_login_summary() {
     local unchanged_accounts=""
     local unchanged_noun="that account"
     local unchanged_governs="the password it already had still governs"
+    # The address named in the reset-password example below: the first account
+    # this install left alone, so the command can be copied as printed.
+    local unchanged_reset_email=""
 
     print_header "Login"
 
@@ -6116,6 +6124,7 @@ print_login_summary() {
         # password printed three lines above it.
         if [ "${SEQDESK_BOOTSTRAP_ADMIN_EXISTED:-false}" = "true" ]; then
             unchanged_accounts="${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}"
+            unchanged_reset_email="$unchanged_accounts"
         fi
         if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED:-false}" = "true" ]; then
             if [ -n "$unchanged_accounts" ]; then
@@ -6124,14 +6133,15 @@ print_login_summary() {
                 unchanged_governs="the passwords they already had still govern"
             else
                 unchanged_accounts="${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com}"
+                unchanged_reset_email="$unchanged_accounts"
             fi
         fi
         echo "  This install attached to a database that already had SeqDesk accounts."
         echo "  Left unchanged: $unchanged_accounts"
         echo "  No password was generated, stored or changed for $unchanged_noun;"
         echo "  $unchanged_governs."
-        echo "  SeqDesk ships no password-reset command, so a forgotten password can only"
-        echo "  be replaced by updating that account's row in the User table directly."
+        echo "  To set a new one for a single account, without editing the database by hand:"
+        echo "    npx -y seqdesk@latest reset-password ${unchanged_reset_email:-admin@example.com} --dir $(shell_quote "$SEQDESK_DIR")"
         if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] || \
             [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
             echo "  Save the generated password above — it is not stored anywhere else."

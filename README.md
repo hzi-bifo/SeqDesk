@@ -348,18 +348,30 @@ already runs SeqDesk is to copy `runtime.databaseUrl` from the existing
 No flag empties, drops, or recreates an existing database; removing one is a
 deliberate manual step.
 
-If the password of an existing account is lost, replace its hash in that
-database directly (SeqDesk has no self-service password reset):
+If the password of an existing account is lost — the case the `existing password
+(unchanged)` line leaves you in — set a new one from the server shell:
 
 ```bash
-cd "$HOME/seqdesk/current"
-node -e 'const { hashSync } = require("bcryptjs"); console.log(hashSync(process.argv[1], 12));' 'replace-with-strong-password'
-
-# runtime.databaseUrl from settings.json, minus the schema parameter psql rejects
-SEQDESK_DB_URL="$(node -e 'const u = new URL(require(process.argv[1]).runtime.databaseUrl); u.searchParams.delete("schema"); console.log(u.toString());' "$HOME/seqdesk/settings.json")"
-psql "$SEQDESK_DB_URL" -c \
-  "UPDATE \"User\" SET password = '<hash>' WHERE email = 'admin@example.com'"
+cd "$HOME/seqdesk" && npx -y seqdesk@latest reset-password admin@example.com
 ```
+
+It shows the account, directory, and database it is about to change and asks for
+confirmation, then generates a strong password, replaces that one account's
+stored hash, and prints the account (email, name, role) and the new password
+once. Pass `--password 'chosen-value'` to supply your own instead, `--yes` to
+skip the prompt, or `--yes --json` for machine-readable output. The password is
+written to no file and no log and cannot be shown again, so copy it before
+closing the terminal; nothing changes but the account named by `--email`. The
+work runs inside the installed release, so the install directory needs SeqDesk
+1.1.125 or newer; against an older one the command changes nothing and says so.
+
+This is an operator command run on the host, not a self-service reset: SeqDesk
+has no forgot-password email flow, and no page in the UI does this. It reads
+`runtime.databaseUrl` from `<dir>/settings.json` and updates the database
+directly, so the application need not be running — and it confers nothing new,
+because anyone who can read `settings.json` already holds those database
+credentials. To sign in without changing anything, use the credentials from the
+earlier install.
 
 ### Applying a settings.json change
 
@@ -508,8 +520,17 @@ before allowing other users to connect.
 install reused a database that already contained those accounts, so their
 existing passwords still govern; see
 [Reinstalling on a host that already ran SeqDesk](#reinstalling-on-a-host-that-already-ran-seqdesk)
-for how to sign in, how to start from a genuinely fresh database, and how to
-reset a lost password.
+for how to sign in and how to start from a genuinely fresh database.
+
+**Nobody knows the password of the existing administrator account.** From a
+shell on the server, run
+`cd "$HOME/seqdesk" && npx -y seqdesk@latest reset-password admin@example.com`
+(or pass `--dir` instead of changing directory).
+It asks for confirmation, sets a new password for that one account, and prints
+it once. There is no self-service or emailed reset: the command needs local
+access to the install directory, and it grants nothing extra, because the
+`settings.json` there already contains the database credentials. Details in
+[Reinstalling on a host that already ran SeqDesk](#reinstalling-on-a-host-that-already-ran-seqdesk).
 
 **The installer aborts because the directory already exists.** With `-y` it
 refuses to overwrite. Use `--reconfigure` for a valid existing install. Use
@@ -563,6 +584,11 @@ Generate one bcrypt password hash per account after `npm ci`:
 ```bash
 node -e 'const { hashSync } = require("bcryptjs"); console.log(hashSync(process.argv[1], 12));' 'replace-with-strong-password'
 ```
+
+This hash is for accounts the seed has not created yet. For an account that
+already exists — in a development database or an installed instance — use
+`seqdesk reset-password --dir <dir> --email <address>` instead of writing a hash
+by hand; the seed leaves existing accounts alone.
 
 Then add the accounts to `seqdesk.config.json` before running `npm run db:seed`:
 

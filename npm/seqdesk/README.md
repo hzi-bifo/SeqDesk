@@ -28,6 +28,58 @@ seqdesk doctor --dir "$HOME/seqdesk" --url http://127.0.0.1:8000
 seqdesk doctor --dir "$HOME/seqdesk" --json
 ```
 
+Set a new password for one account, when the old one is lost:
+
+```bash
+seqdesk reset-password --dir "$HOME/seqdesk" --email admin@example.com
+seqdesk reset-password --dir "$HOME/seqdesk" --email admin@example.com --password 'chosen-value'
+seqdesk reset-password --dir "$HOME/seqdesk" --email admin@example.com --yes --json
+```
+
+`--email` (`-e`) is required and names the one account to reset; there is no
+bulk or all-accounts mode. `--dir` (`-d`) is the installed directory and
+defaults to the current one, as with `doctor`. `--password` sets a value you
+choose instead of a generated one — write `--password=<value>` if it starts with
+`-`. `--yes` (`-y`) skips the confirmation prompt and is required together with
+`--json`, which prints one machine-readable object instead of the human summary.
+
+By default the command first prints what it is about to do — `Account`,
+`Directory`, `Database` — and asks `Reset this account's password? (y/N)`;
+anything but `y`/`yes` cancels and changes nothing. On success it prints the
+account (email, name, role), the directory and database it used, and a
+**New password** block holding the new password. That is the only time the
+password is shown: SeqDesk stores only its bcrypt hash, the command writes the
+password to no file and no log, and it cannot be displayed again — copy it
+before closing the terminal. Nothing else is touched; only the row of the
+account named by `--email` changes. Sessions are JWTs, so a browser already
+signed in as that account stays signed in until its session expires — the new
+password takes effect at the next sign-in.
+
+Exit codes are `0` on success, `1` on a failed or cancelled reset, and `2` for a
+usage error (the usage text is reprinted). Failures name the account, the
+database, and what to do next — a missing address, an unreachable database, or a
+`settings.json` without a usable `runtime.databaseUrl` each get their own
+message rather than a stack trace. In `--json` mode a failure prints
+`{"ok": false, ...}` with `error` and usually `remediation`.
+
+The work happens inside the installed release, so the install directory must
+hold SeqDesk **1.1.125 or newer** — the release that first ships
+`current/scripts/reset-password.mjs`. Against an older install the command
+changes nothing and says which version is needed and how to update.
+
+This is a local operator command, not a self-service or remote reset — SeqDesk
+has no forgot-password email flow, and nothing in the web UI performs this. It
+needs shell access to the install directory: it reads `runtime.databaseUrl` (and
+`runtime.directUrl`) from `<dir>/settings.json` — or `seqdesk.config.json`, for
+an install that has one instead — and works on that database directly, including
+the private cluster's `?host=/path` Unix-socket form, so the app does not have to
+be running and no restart is needed afterwards. It
+therefore grants no privilege that was not already held — anyone who can read
+`settings.json` has the database credentials and could rewrite that row by hand.
+Treat access to `<dir>` accordingly. One practical caveat: a password passed
+with `--password` appears in this process's command line, so on a shared host
+prefer the generated form, which never travels through an argument you typed.
+
 Apply hosted profile assets to an existing install:
 
 ```bash
@@ -85,7 +137,9 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
   bootstrap accounts that are missing. An administrator or researcher account
   that already exists keeps its current password; the run does not rewrite it,
   and a password that run generates does not apply to it, so log in with the
-  credentials from the earlier install. To
+  credentials from the earlier install — or, if nobody still has them, set a new
+  password for that one account with `seqdesk reset-password --dir <dir> --email
+  <address>`. To
   install against an empty database, pass `--database-url` naming a database
   that does not exist yet (on a local host or socket the installer creates the
   role and database; on a remote or managed server create it first). Replacing
@@ -148,6 +202,16 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
   understood only in versions **newer than 1.1.122**; 1.1.122 falls back to a
   TCP probe of the URL's host name and reports a false
   `PostgreSQL TCP … unreachable` for such an install.
+- `seqdesk reset-password` also runs locally and downloads nothing. It reads the
+  database URL from `<dir>/settings.json` — including the private cluster's
+  `host=<socket dir>` Unix-socket form, passed through untouched — and dispatches
+  to the installed release's `current/scripts/reset-password.mjs` with
+  `DATABASE_URL`/`DIRECT_URL` in its environment, so the new hash is produced by
+  the same Prisma client and bcrypt cost the application's own login path
+  verifies against. The launcher itself has no dependencies and never opens the
+  database. It is a one-account, one-shot command: no bulk mode, no flag that
+  resets every bootstrap account, and it prompts for confirmation unless `--yes`
+  is passed.
 - `seqdesk assets apply` runs locally against an existing install. It resolves
   hosted install profiles into a temporary file, calls the installed
   `scripts/apply-install-profile-assets.mjs` script, and removes the temporary
