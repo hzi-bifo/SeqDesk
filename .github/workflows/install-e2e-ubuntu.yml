@@ -1941,17 +1941,23 @@ jobs:
           # second install landed on an empty
           # directory and a March database -- and it is also what a reviewer
           # gets when they install on a second machine against a shared server.
+          # Same pseudo-terminal treatment as the first install: the wizard is
+          # the only path that mints credentials, and it requires a terminal.
+          # See the first install step for why the answer stream is bounded.
+          INSTALL_CMD="SEQDESK_API=http://127.0.0.1:${MOCK_RELEASE_PORT}/api"
+          INSTALL_CMD="$INSTALL_CMD SEQDESK_LOG=$(printf '%q' "$SECOND_INSTALL_LOG")"
+          INSTALL_CMD="$INSTALL_CMD bash $(printf '%q' "$GITHUB_WORKSPACE/scripts/install-dist.sh")"
+          INSTALL_CMD="$INSTALL_CMD --interactive --without-pipelines --no-pm2"
+          INSTALL_CMD="$INSTALL_CMD --dir $(printf '%q' "$INSTALL_DIR_TWO")"
+          INSTALL_CMD="$INSTALL_CMD --port $(printf '%q' "$PORT_TWO")"
+          INSTALL_CMD="$INSTALL_CMD --nextauth-url $(printf '%q' "http://127.0.0.1:$PORT_TWO")"
+          INSTALL_CMD="$INSTALL_CMD --database-url $(printf '%q' "$DB_URL")"
+          INSTALL_CMD="$INSTALL_CMD --database-direct-url $(printf '%q' "$DB_URL")"
           set +e
-          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$SECOND_INSTALL_LOG" \
-            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
-            --interactive --without-pipelines --no-pm2 \
-            --dir "$INSTALL_DIR_TWO" \
-            --port "$PORT_TWO" \
-            --nextauth-url "http://127.0.0.1:$PORT_TWO" \
-            --database-url "$DB_URL" \
-            --database-direct-url "$DB_URL" \
-            </dev/null >"$SECOND_SUMMARY" 2>&1
-          INSTALL_STATUS=$?
+          printf '\n%.0s' $(seq 1 100) \
+            | timeout 20m script -qec "$INSTALL_CMD" /dev/null 2>&1 \
+            | head -c 8388608 >"$SECOND_SUMMARY"
+          INSTALL_STATUS=${PIPESTATUS[1]}
           set -e
           bash "$GITHUB_WORKSPACE/scripts/ci/mask-printed-credentials.sh" "$SECOND_SUMMARY"
           cat "$SECOND_SUMMARY"
