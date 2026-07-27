@@ -1780,26 +1780,38 @@ jobs:
           done
           # --interactive rather than -y, because only the guided wizard
           # GENERATES the bootstrap passwords and prints them -- which is the
-          # install under test. There is no controlling terminal on a runner, so
-          # read_input/read_secret yield an empty answer and every prompt takes
-          # its default; a blank password is exactly the answer that asks the
-          # installer to generate one. The supplied --database-url survives that
-          # (the wizard's local-PostgreSQL default never overwrites a URL that is
-          # already set), so both installs share one database.
+          # install under test. `-y` never mints a password, so it cannot
+          # exercise this at all.
+          #
+          # The wizard requires a controlling terminal and refuses without one
+          # ("No interactive TTY detected"), which a runner does not have. Run it
+          # under `script`, which allocates a pseudo-terminal; feeding empty lines
+          # takes every prompt's default, and a blank password is exactly the
+          # answer that asks the installer to generate one. This is also the only
+          # place --interactive -- the command the documentation leads with -- is
+          # exercised for real.
+          #
+          # The supplied --database-url survives the wizard (its local-PostgreSQL
+          # default never overwrites a URL that is already set), so both installs
+          # share one database.
           #
           # Output is captured to a file rather than tee'd: it carries the
           # generated plaintext, which is masked in the next command before
           # anything can echo it.
+          INSTALL_CMD="SEQDESK_API=http://127.0.0.1:${MOCK_RELEASE_PORT}/api"
+          INSTALL_CMD="$INSTALL_CMD SEQDESK_LOG=$(printf '%q' "$FIRST_INSTALL_LOG")"
+          INSTALL_CMD="$INSTALL_CMD bash $(printf '%q' "$GITHUB_WORKSPACE/scripts/install-dist.sh")"
+          INSTALL_CMD="$INSTALL_CMD --interactive --without-pipelines --no-pm2"
+          INSTALL_CMD="$INSTALL_CMD --dir $(printf '%q' "$INSTALL_DIR_ONE")"
+          INSTALL_CMD="$INSTALL_CMD --port $(printf '%q' "$PORT_ONE")"
+          INSTALL_CMD="$INSTALL_CMD --nextauth-url $(printf '%q' "http://127.0.0.1:$PORT_ONE")"
+          INSTALL_CMD="$INSTALL_CMD --database-url $(printf '%q' "$DB_URL")"
+          INSTALL_CMD="$INSTALL_CMD --database-direct-url $(printf '%q' "$DB_URL")"
           set +e
-          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$FIRST_INSTALL_LOG" \
-            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
-            --interactive --without-pipelines --no-pm2 \
-            --dir "$INSTALL_DIR_ONE" \
-            --port "$PORT_ONE" \
-            --nextauth-url "http://127.0.0.1:$PORT_ONE" \
-            --database-url "$DB_URL" \
-            --database-direct-url "$DB_URL" \
-            </dev/null >"$FIRST_SUMMARY" 2>&1
+          # `yes ''` never runs dry, so a prompt that rejects an empty answer
+          # would spin instead of failing. Bound it rather than burning the whole
+          # job timeout on a hung wizard.
+          yes '' | timeout 20m script -qec "$INSTALL_CMD" /dev/null >"$FIRST_SUMMARY" 2>&1
           INSTALL_STATUS=$?
           set -e
           bash "$GITHUB_WORKSPACE/scripts/ci/mask-printed-credentials.sh" "$FIRST_SUMMARY"
