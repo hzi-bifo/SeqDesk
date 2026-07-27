@@ -14,14 +14,14 @@ runs self-hosted on your own infrastructure.
 | --- | --- |
 | Host | Linux or a local macOS application install on `x64` or `arm64`. Native Windows is unsupported; WSL is guidance only and is not currently CI-tested. |
 | Node.js | **`>=22.13.0 <23` or `>=24 <25`** (Node 24 recommended). Node 23, 25, and future majors are rejected until explicitly supported. |
-| PostgreSQL | **14 or newer**; PostgreSQL 14 through 18 are represented in the current CI matrix. SQLite is not supported. You normally do not supply a database: when no reusable local server or socket is found, the installer creates and owns a private, socket-only cluster under `$SEQDESK_PG_HOME` (default `~/.seqdesk/postgres`; that path must be 85 characters or shorter because of the macOS Unix-socket limit). |
+| PostgreSQL | **14 or newer**; PostgreSQL 14 through 18 are represented in the current CI matrix. SQLite is not supported. You normally do not supply a database: when no reusable local server or socket is found, the installer creates and owns a private, socket-only cluster under `$SEQDESK_PG_HOME` (default `~/.seqdesk/postgres`). Because of the macOS Unix-socket length limit the cluster's socket directory `$SEQDESK_PG_HOME/socket` is capped at 85 characters, so `$SEQDESK_PG_HOME` itself must be **78 characters or shorter**. |
 | Installer tools | npm, Bash, `curl`, `tar`, and `sha256sum` or `shasum`. |
 | Install target | A new, writable directory with at least the larger of 2 GB or three times the release-archive size free. A SeqDesk-owned PostgreSQL cluster is created separately under `$SEQDESK_PG_HOME` and does not consume this directory. |
 | Optional pipelines | The installer reuses a working existing Conda base or provisions Miniconda with Python 3.11, Java 17, Nextflow, nf-core, and supporting tools; Slurm is optional for cluster execution. Pipeline evidence is Linux-only. |
 
 ## CI installation coverage
 
-The two required rows run for every pull request, `main` push, merge-queue
+The three required rows run for every pull request, `main` push, merge-queue
 candidate, and release. Extended rows run weekly and on manual workflow runs. A
 combination counts as demonstrated only when its corresponding job is green.
 
@@ -29,8 +29,9 @@ combination counts as demonstrated only when its corresponding job is green.
 | --- | --- | --- | --- | --- | --- |
 | Required minimum | Ubuntu 22.04 | x64 | 22.13.0 | 14 | Clean application install |
 | Required recommended | Ubuntu 24.04 | x64 | 24 | 16 | Clean application install |
+| Required macOS | macOS 15 | ARM64 | 24 | 16 | Clean application install |
 | Extended | Ubuntu 24.04 | ARM64 | 24 | 17 | Clean application install |
-| Extended | macOS 15 | ARM64 and Intel x64 | 24 | 16 | Application install only |
+| Extended | macOS 15 | ARM64 and Intel x64 | 24 | 16 | Application install only; the ARM64 leg repeats the required macOS job |
 | Extended | Debian 12 container | x64 | Current 22.x | 18 | Application install on Debian userland |
 | Extended | Rocky Linux 9 container | x64 | 24 | 15 | Application install on Rocky userland |
 | Extended pipeline | Ubuntu 24.04 | x64 | 24 | 16 | Install plus packaged `fastq-checksum` workflow |
@@ -68,7 +69,7 @@ job proves, its limitations, and how to download reviewer-facing evidence.
 </tr>
 <tr>
   <td><a href="https://github.com/hzi-bifo/SeqDesk/actions/workflows/reviewer-install-matrix.yml"><img alt="Reviewer install matrix" src="https://github.com/hzi-bifo/SeqDesk/actions/workflows/reviewer-install-matrix.yml/badge.svg?branch=main"></a></td>
-  <td>Required Ubuntu boundary installs on every change, plus scheduled/manual ARM64, macOS, Debian, Rocky Linux, Windows-contract, and pipeline-toolchain coverage</td>
+  <td>Required Ubuntu and macOS ARM64 boundary installs on every change, plus scheduled/manual ARM64 Linux, macOS Intel, Debian, Rocky Linux, Windows-contract, and pipeline-toolchain coverage</td>
 </tr>
 <tr>
   <td><em>private CI</em></td>
@@ -172,18 +173,45 @@ two cases: to install the PostgreSQL server package when it is absent (`apt`,
 `sudo -n -u postgres psql`. Do not run the installer itself under `sudo`: as
 root it refuses to create a PostgreSQL instance and requires an explicit
 `--database-url`. Supply `--database-url "postgresql://..."` for an existing
-PostgreSQL 14+ or managed server, or when the only local socket (for example a
-distribution server on `/var/run/postgresql`) is owned by another user —
-SeqDesk will not send generated credentials to an endpoint it does not own.
+PostgreSQL 14+ or managed server. You do **not** need it when the only local
+socket (for example a distribution server on `/var/run/postgresql`) belongs to
+another user: SeqDesk will not send generated credentials to an endpoint it does
+not own, so it warns, skips that socket, and provisions its own private cluster
+instead. Pass `--database-url` in that case only if you want that server used.
 
 Fresh installs now default to the smaller core application. Add
 `--with-pipelines` only on a Linux host that should also provision
-Conda/Nextflow workflows. When installation finishes, verify the instance and
-open <http://127.0.0.1:8000>:
+Conda/Nextflow workflows.
+
+Near the end the installer asks `Start SeqDesk with PM2 for auto-restart?
+(recommended)`. Accepting it starts the app, saves the PM2 process list, and
+tries to enable PM2's boot startup — if that needs privileges it did not have,
+the closing summary prints the `pm2 startup` / `pm2 save` commands to run.
+Declining leaves you to run `<dir>/start.sh` yourself, and a manual start does
+not come back after a reboot. When the installer provisioned its own PostgreSQL
+cluster, that same wrapper (`<dir>/start.sh`) checks
+`pg_ctl -D ~/.seqdesk/postgres/data status` and starts the database before
+launching the app — the private cluster is deliberately not a systemd service,
+so after a reboot PM2 resurrects the app and the app starts its own database.
+Installs that reuse an existing PostgreSQL server get no such snippet.
+
+If you left an account password blank, the installer generated a strong one and
+prints it exactly once, in the **Login** block near the end of the run. It is
+deliberately kept out of the install log, so copy it before closing the
+terminal.
+
+When installation finishes, verify the instance and open
+<http://127.0.0.1:8000>:
 
 ```bash
 npx -y seqdesk@latest doctor --dir "$HOME/seqdesk" --url http://127.0.0.1:8000
 ```
+
+`doctor` understands the private cluster's Unix-socket `DATABASE_URL` only in
+launcher versions **newer than 1.1.122**. On 1.1.122 it probes `localhost:5432`
+over TCP instead and reports `PostgreSQL TCP … unreachable` for an install that
+is healthy; check that database directly with
+`psql -h ~/.seqdesk/postgres/socket -d seqdesk -c 'select 1'`.
 
 For a service install under `/opt`, create a parent owned by the non-root
 service account, then install into a new child directory; do not run the
@@ -232,12 +260,18 @@ only when this Mac should also provision Conda/Nextflow workflows. If
 `~/seqdesk` already exists, use a different directory or follow the
 reconfiguration guide—do not overwrite it casually.
 
+The PM2 prompt and the one-time display of any generated account password work
+exactly as described in the Linux quick start above.
+
 When installation finishes, verify the instance and open
 <http://127.0.0.1:8000>:
 
 ```bash
 npx -y seqdesk@latest doctor --dir "$HOME/seqdesk" --url http://127.0.0.1:8000
 ```
+
+The same launcher caveat applies: only versions newer than 1.1.122 can check a
+socket-only database, which is what a private cluster gets.
 
 The installer records this local-only bind in the installation's root start
 wrapper, so later manual or PM2 starts retain it. When the installer provisioned
@@ -253,8 +287,12 @@ PostgreSQL service conflicts, pipelines, PM2 startup, and troubleshooting.
 
 Installer flags pass straight to the downloaded script — for example
 `--verbose` (or `SEQDESK_VERBOSE=1`), which prints the diagnostic detail that
-otherwise goes only to the install log
-(`/tmp/seqdesk-install-<timestamp>.log`, overridable with `SEQDESK_LOG`):
+otherwise goes only to the install log. The installer creates that log itself,
+under an unpredictable name in `$TMPDIR` (or `/tmp` when `TMPDIR` is unset) and
+readable only by you, so do not guess the path: it is printed as `Log:` in the
+banner before the first step, again in the closing summary, and again if the
+run fails. To choose the path yourself, set `SEQDESK_LOG=/path/install.log`
+before starting:
 
 ```bash
 bash /tmp/seqdesk-install.sh -y --verbose --config ./infrastructure-setup.json
@@ -282,6 +320,31 @@ Full installation, configuration, and unattended options are documented at
 > `public/install.sh` in the SeqDesk.com repository has been updated and
 > deployed.
 
+### Installer environment variables
+
+Most install options can also be given as a `SEQDESK_*` environment variable.
+The ones below govern logging, release integrity, and network behaviour — the
+settings a reviewer, a throttled link, or an offline mirror usually needs. The
+rest are documented at
+[seqdesk.org/docs/installation](https://seqdesk.org/docs/installation):
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `SEQDESK_LOG` | a private (mode 0600) file created with `mktemp` under `$TMPDIR`, else `/tmp` | Write the install log to a path you choose instead. |
+| `SEQDESK_REQUIRE_CHECKSUM` | unset — a missing checksum is a loud warning and the summary reports `Package integrity: NOT VERIFIED` | `=1` refuses to install a release whose metadata publishes no checksum. A *mismatching* checksum always aborts. |
+| `SEQDESK_CURL_CONNECT_TIMEOUT` | `10` | Seconds each download attempt may spend connecting. |
+| `SEQDESK_CURL_MAX_TIME` | `120` | Seconds per attempt for small fetches: release metadata, install profiles, a `--config` URL. |
+| `SEQDESK_CURL_DOWNLOAD_MAX_TIME` | `1800` | Seconds per attempt for the release tarball. Raise it on a slow or throttled link. The Miniconda installer is fetched with no time ceiling, so this does not apply to it. |
+| `SEQDESK_CURL_RETRIES` | `2` | Retries for a transient download failure. |
+| `SEQDESK_MINICONDA_BASE_URL` | `https://repo.anaconda.com/miniconda` | Fetch Miniconda from an internal mirror instead. |
+| `SEQDESK_MINICONDA_INSTALLER` | unset — the rolling `-latest-` build for the detected OS and CPU | Pin one exact installer file name, for a reproducible pipeline toolchain. |
+
+The table describes the downloaded installer, which the npm launcher also runs.
+The source installer (`scripts/install.sh`) honours `SEQDESK_LOG` — there it
+turns logging on, which is otherwise off — and both `SEQDESK_MINICONDA_*`
+overrides; its download timeouts are fixed and it downloads no release tarball
+to checksum.
+
 ### Ways to install SeqDesk
 
 Every path boots the same app — pick by your scenario. CI coverage exercises
@@ -292,15 +355,19 @@ green.
 | Method | Command | Best for | CI coverage |
 | --- | --- | --- | --- |
 | Downloaded guided installer (recommended) | Download `install.sh`, then run `bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"` | Almost everyone — no global npm package required; Node.js and npm are still prerequisites | Required Ubuntu |
-| npm launcher | `npm i -g seqdesk@latest` then `seqdesk --interactive` | Equivalent launcher-based install | Required Ubuntu; extended macOS; private AlmaLinux |
+| npm launcher | `npm i -g seqdesk@latest` then `seqdesk --interactive` | Equivalent launcher-based install | Required Ubuntu and macOS ARM64; private AlmaLinux |
 | Linux | `SEQDESK_BIND_HOST=127.0.0.1 bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"` | Local Linux workstation / evaluation install; prepare an owned service directory separately for production | Required Ubuntu; extended Debian, Rocky Linux, and ARM64; private AlmaLinux |
-| macOS (Homebrew) | `SEQDESK_BIND_HOST=127.0.0.1 bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"` | Local Mac workstation / evaluation installs | Extended weekly/manual |
+| macOS (Homebrew) | `SEQDESK_BIND_HOST=127.0.0.1 bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"` | Local Mac workstation / evaluation installs | Required macOS ARM64; extended Intel x64 weekly/manual |
 | Unattended | `seqdesk -y --config ./infrastructure-setup.json` | Fleet or scripted deployments; reapply configuration with `--reconfigure` | Required Ubuntu |
 | From source | `bash scripts/install.sh` | Developers / CI building a specific branch | Ubuntu; private AlmaLinux |
 
-The npm-launcher and source installs are also exercised under PM2. When the
-extended/private npm, AlmaLinux, and macOS jobs are green, they also verify that
-an administrator can log in to the running app.
+The Ubuntu install workflow additionally runs the downloaded installer once
+under PM2; its npm-launcher and source-install jobs start the app directly.
+Every reviewer installation-matrix job that installs SeqDesk, required and
+extended alike, also authenticates the seeded administrator and researcher
+against the running app. The one exception is the extended native-Windows job:
+it installs the launcher only, to confirm that it refuses to run and points at
+WSL.
 
 For the exact required and scheduled combinations, assertions, limitations, and
 downloadable evidence, see **[Installation compatibility](./INSTALLATION_COMPATIBILITY.md)**.

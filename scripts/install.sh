@@ -45,9 +45,14 @@
 #   METAXPATH_PACKAGE_URL=https://... - Alias for SEQDESK_METAXPATH_PACKAGE_URL
 #   METAXPATH_PACKAGE_TOKEN=...     - Alias for SEQDESK_METAXPATH_KEY
 #   METAXPATH_PACKAGE_SHA256=...    - Alias for SEQDESK_METAXPATH_SHA256
+#   SEQDESK_MINICONDA_BASE_URL=https://... - Miniconda download base (default: repo.anaconda.com)
+#   SEQDESK_MINICONDA_INSTALLER=Miniconda3-py312_24.9.2-0-Linux-x86_64.sh - Pin an exact installer
 #
 
-set -euo pipefail
+# -E (errtrace) is required for the ERR trap below: without it bash does not
+# inherit the trap into shell functions, so a failure inside any function would
+# exit silently and skip on_error's diagnostics and backup restore.
+set -Eeuo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -85,6 +90,9 @@ SEQDESK_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}"
 SEQDESK_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}"
 SEQDESK_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}"
 SEQDESK_LOG="${SEQDESK_LOG:-}"
+# Flipped to "true" only once the log file exists and is owner-only readable.
+# print_secret_kv keys off it to decide whether output is being teed to a file.
+SEQDESK_LOG_ENABLED="false"
 SEQDESK_CONFIG="${SEQDESK_CONFIG:-}"
 # Set after an existing install is moved aside; cleared once the new clone is in
 # place. on_error uses it to restore the backup if the install fails early.
@@ -103,6 +111,13 @@ SEQDESK_EXEC_WEBLOG_SECRET="${SEQDESK_EXEC_WEBLOG_SECRET:-}"
 SEQDESK_METAXPATH_PACKAGE_URL="${SEQDESK_METAXPATH_PACKAGE_URL:-${METAXPATH_PACKAGE_URL:-}}"
 SEQDESK_METAXPATH_KEY="${SEQDESK_METAXPATH_KEY:-${METAXPATH_PACKAGE_TOKEN:-}}"
 SEQDESK_METAXPATH_SHA256="${SEQDESK_METAXPATH_SHA256:-${METAXPATH_PACKAGE_SHA256:-}}"
+# Miniconda source. The default is still the rolling "-latest-" installer, so
+# two reviewers a month apart can get different Conda versions; pinning it needs
+# the matching upstream SHA256, which is not something this script may invent.
+# Until that decision is made, both halves are overridable so a site (or a
+# reproducibility appendix) can name an exact build and an internal mirror.
+SEQDESK_MINICONDA_BASE_URL="${SEQDESK_MINICONDA_BASE_URL:-https://repo.anaconda.com/miniconda}"
+SEQDESK_MINICONDA_INSTALLER="${SEQDESK_MINICONDA_INSTALLER:-}"
 CONDA_BIN_FROM_PATH=""
 CONDA_DISCOVERY_SOURCE=""
 CONDA_INSTALL_BASE=""
@@ -143,6 +158,18 @@ print_error() {
 
 print_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+# Credentials go to the terminal only. FD 3 is the original stdout, duplicated
+# before output is teed into the install log, so a generated password is not
+# written to a file that outlives the session. Falls back to normal output when
+# there is no log (and therefore no FD 3), where losing it entirely is worse.
+print_secret_kv() {
+    if [ "$SEQDESK_LOG_ENABLED" = "true" ]; then
+        printf "  %-20s %s\n" "$1" "$2" >&3
+        return 0
+    fi
+    printf "  %-20s %s\n" "$1" "$2"
 }
 
 command_exists() {
@@ -626,8 +653,13 @@ map_unknown_distro() {
         return 0
     fi
     local id="" id_like=""
-    id=$(grep -E '^ID=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
-    id_like=$(grep -E '^ID_LIKE=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
+    # Both greps legitimately find nothing: ID_LIKE is absent on Arch, Alpine,
+    # Gentoo, NixOS and Void. Under `set -Eeuo pipefail` an unguarded grep miss
+    # propagates through the pipe and fires the ERR trap inside the command
+    # substitution, which aborted the install on exactly the hosts this
+    # graceful-degradation path exists for.
+    id=$(grep -E '^ID=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]') || id=""
+    id_like=$(grep -E '^ID_LIKE=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]') || id_like=""
     local token=""
     for token in $id $id_like; do
         case "$token" in
@@ -656,7 +688,37 @@ generate_postgres_password() {
         return 0
     fi
 
-    date +%s | shasum | awk '{print $1}' | cut -c1-32
+    # Last resort: 16 bytes from the kernel CSPRNG, hex-encoded with od (POSIX,
+    # present on both macOS and Linux). The previous fallback hashed the current
+    # timestamp, which leaves only a few thousand candidates for anyone who
+    # knows roughly when the install ran.
+    if [ -r /dev/urandom ]; then
+        dd if=/dev/urandom bs=1 count=16 2>/dev/null | od -An -tx1 | tr -d ' \n'
+        return 0
+    fi
+
+    # No caller-visible message here: the caller reads this function's stdout
+    # into the password, so diagnostics have to be printed there.
+    return 1
+}
+
+redact_database_url() {
+    local value="$1"
+    if [ -z "$value" ]; then
+        echo ""
+        return
+    fi
+
+    node - "$value" <<'NODE'
+const raw = process.argv[2] || "";
+try {
+  const url = new URL(raw);
+  if (url.password) url.password = "********";
+  console.log(url.toString());
+} catch {
+  console.log(raw.replace(/(postgres(?:ql)?:\/\/[^:\s/@]+):([^@\s]+)@/i, "$1:********@"));
+}
+NODE
 }
 
 default_postgres_url() {
@@ -671,10 +733,17 @@ is_postgres_url() {
 configure_postgres_urls() {
     if [ -z "$SEQDESK_DATABASE_URL" ]; then
         local generated_password
-        generated_password="$(generate_postgres_password)"
+        if ! generated_password="$(generate_postgres_password)"; then
+            print_error "Cannot generate a database password: openssl, node and /dev/urandom are all unavailable."
+            print_error "Re-run with --database-url and a connection string you created yourself."
+            exit 1
+        fi
         SEQDESK_DATABASE_URL="$(default_postgres_url "$generated_password")"
         print_info "No DATABASE_URL supplied. Defaulting to local PostgreSQL on 127.0.0.1:5432."
-        print_info "Create role 'seqdesk' with this password: $generated_password"
+        # Terminal only: the password must not land in the install log, which
+        # outlives the session and is uploaded as a CI artifact.
+        print_info "Create role 'seqdesk' with the password shown below:"
+        print_secret_kv "Database password" "$generated_password"
     fi
 
     if [[ "$SEQDESK_DATABASE_URL" == file:* ]]; then
@@ -729,7 +798,9 @@ print_postgres_setup_instructions() {
     echo "  CREATE ROLE seqdesk LOGIN PASSWORD 'replace-with-password-from-DATABASE_URL';"
     echo "  CREATE DATABASE seqdesk OWNER seqdesk;"
     echo "  SQL"
-    echo "  Current DATABASE_URL: ${SEQDESK_DATABASE_URL}"
+    # Redacted: these instructions are printed on a failed migration, i.e. into
+    # the install log the user is most likely to share when asking for help.
+    echo "  Current DATABASE_URL: $(redact_database_url "${SEQDESK_DATABASE_URL}")"
 }
 
 resolve_absolute_dir() {
@@ -925,7 +996,10 @@ load_install_config() {
             exit 1
         fi
         temp_json=$(mktemp)
-        if ! curl -fsSL "$config_ref" -o "$temp_json"; then
+        # Bounded: behind an institutional proxy a blackholed route otherwise
+        # hangs the installer indefinitely with no output at all.
+        if ! curl -fsSL --connect-timeout 20 --max-time 120 --retry 3 --retry-delay 2 \
+            "$config_ref" -o "$temp_json"; then
             rm -f "$temp_json"
             print_error "Failed to download config: $config_ref"
             exit 1
@@ -1752,6 +1826,17 @@ if (
 fs.writeFileSync(configTarget, JSON.stringify(config, null, 2));
 console.log('Wrote ' + configTarget);
 NODE
+
+    # The config holds the database password, nextAuthSecret, adminSecret and
+    # the Anthropic API key, so it must not be world-readable under the default
+    # umask. Same filename resolution order as CONFIG_FILE_NAMES above.
+    local written_config_name="settings.json"
+    for f in settings.json seqdesk.config.json; do
+        if [ -e "$f" ]; then written_config_name="$f"; break; fi
+    done
+    if ! chmod 600 "$written_config_name" 2>/dev/null; then
+        print_warning "Could not restrict $written_config_name to owner-only access. Review its permissions before starting SeqDesk."
+    fi
 }
 
 has_infrastructure_overrides() {
@@ -2034,9 +2119,24 @@ db_tcp_reachable() {
 
 on_error() {
     local exit_code=$?
+    # Captured before anything else runs: BASH_COMMAND is overwritten as soon as
+    # this handler calls a function, so reading it further down reported a line
+    # from inside cleanup_miniconda_temp_files instead of the command that
+    # actually failed.
+    local failed_command="${BASH_COMMAND:-}"
     set +e
+
+    # errtrace also propagates this trap into subshells: command substitutions,
+    # pipeline elements, and backgrounded jobs. Only the top-level shell owns the
+    # failure epilogue and the restore -- a subshell must fail quietly, or the
+    # epilogue is captured into the assignment's target variable as if it were
+    # command output instead of reaching the terminal.
+    if [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+        exit "$exit_code"
+    fi
+
     cleanup_miniconda_temp_files
-    print_error "Command failed (exit ${exit_code}): ${BASH_COMMAND}"
+    print_error "Command failed (exit ${exit_code}): ${failed_command}"
     if [ -n "$SEQDESK_LOG" ]; then
         print_error "See log: $SEQDESK_LOG"
     fi
@@ -2073,8 +2173,26 @@ SEQDESK_DIR="$(resolve_absolute_dir "$SEQDESK_DIR")"
 trap on_error ERR
 
 if [ -n "$SEQDESK_LOG" ]; then
+    # FD 3 keeps a handle on the real stdout before it is redirected into the
+    # tee, so print_secret_kv can reach the terminal without the credential
+    # being written to the log file.
+    exec 3>&1 || true
     mkdir -p "$(dirname "$SEQDESK_LOG")" 2>/dev/null || true
-    exec > >(tee -a "$SEQDESK_LOG") 2>&1
+    # Create the log before anything is written to it and restrict it to the
+    # owner: the default umask would leave it 0644, and the install log is both
+    # long-lived and uploaded as a CI artifact. If it cannot be secured, drop
+    # logging entirely rather than record the session in a readable file.
+    if ! touch "$SEQDESK_LOG" 2>/dev/null; then
+        print_warning "Could not create install log: $SEQDESK_LOG"
+        SEQDESK_LOG=""
+    elif ! chmod 600 "$SEQDESK_LOG" 2>/dev/null; then
+        print_warning "Could not secure install log permissions; logging is disabled: $SEQDESK_LOG"
+        rm -f "$SEQDESK_LOG" 2>/dev/null || true
+        SEQDESK_LOG=""
+    else
+        SEQDESK_LOG_ENABLED="true"
+        exec > >(tee -a "$SEQDESK_LOG") 2>&1
+    fi
 fi
 
 if [ -z "$SEQDESK_YES" ] && [ ! -e /dev/tty ]; then
@@ -2166,7 +2284,11 @@ else
 fi
 
 if command_exists node; then
-    NODE_VERSION=$(node --version | sed 's/v//')
+    # A shim left behind by a version manager (nvm, asdf, volta) is on PATH but
+    # exits non-zero when it runs. Capture that as "no usable version" so the
+    # missing-dependency block below still prints install instructions, instead
+    # of the ERR trap aborting the whole install on the version probe.
+    NODE_VERSION=$(node --version | sed 's/v//') || NODE_VERSION=""
     if node_meets_minimum_version; then
         print_success "Node.js: $NODE_VERSION"
     else
@@ -2187,8 +2309,16 @@ else
 fi
 
 if command_exists conda; then
-    CONDA_VERSION=$(conda --version | cut -d' ' -f2)
-    print_success "Conda: $CONDA_VERSION (optional)"
+    # conda is regularly on PATH but not runnable (a stale shim from a removed
+    # base, or a wrapper that exits non-zero). resolve_conda_runtime already
+    # treats that as "no conda here" and falls through to the prefix search, so
+    # the version probe must not let the ERR trap abort the install.
+    CONDA_VERSION=$(conda --version 2>/dev/null | cut -d' ' -f2) || CONDA_VERSION=""
+    if [ -n "$CONDA_VERSION" ]; then
+        print_success "Conda: $CONDA_VERSION (optional)"
+    else
+        print_info "Conda: on PATH but not runnable (configured and standard user bases will also be checked)"
+    fi
 else
     print_info "Conda: not on PATH (configured and standard user bases will also be checked)"
 fi
@@ -2259,7 +2389,14 @@ fi
 if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     print_header "Installing Miniconda"
 
-    if ! CONDA_INSTALLER=$(select_miniconda_installer "$OS" "$ARCH"); then
+    # An explicitly named installer wins over platform detection, so a site (or a
+    # reproducibility appendix) can pin an exact Miniconda build and serve it
+    # from SEQDESK_MINICONDA_BASE_URL. The default remains the rolling
+    # "-latest-" build; see the note on SEQDESK_MINICONDA_BASE_URL above.
+    if [ -n "$SEQDESK_MINICONDA_INSTALLER" ]; then
+        CONDA_INSTALLER="$SEQDESK_MINICONDA_INSTALLER"
+        print_info "Using pinned Miniconda installer: $CONDA_INSTALLER"
+    elif ! CONDA_INSTALLER=$(select_miniconda_installer "$OS" "$ARCH"); then
         print_error "No supported Miniconda installer is available for $OS/$ARCH."
         print_info "Install Conda manually or re-run without pipeline support."
         exit 1
@@ -2270,7 +2407,11 @@ if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     MINICONDA_TEMP_DIR="${MINICONDA_TEMP_DIR%/}"
     MINICONDA_INSTALLER_FILE="$(mktemp "$MINICONDA_TEMP_DIR/seqdesk-miniconda.XXXXXX")"
     MINICONDA_OUTPUT_FILE="$(mktemp "$MINICONDA_TEMP_DIR/seqdesk-miniconda-output.XXXXXX")"
-    curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" \
+    # No --max-time: the installer is ~150 MB and a slow link is not an error.
+    # --connect-timeout still bounds an unreachable host, and --retry rides out
+    # a transient proxy or DNS failure.
+    curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 2 \
+        "${SEQDESK_MINICONDA_BASE_URL%/}/$CONDA_INSTALLER" \
         -o "$MINICONDA_INSTALLER_FILE"
 
     print_info "Installing Miniconda to $CONDA_INSTALL_BASE..."
@@ -2284,22 +2425,12 @@ if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     fi
 
     CURRENT_SHELL="$(basename "${SHELL:-}")"
-    INIT_SHELLS=()
-    case "$CURRENT_SHELL" in
-        bash|zsh) INIT_SHELLS+=("$CURRENT_SHELL") ;;
-    esac
-    for default_shell in bash zsh; do
-        already_added="false"
-        for init_shell in "${INIT_SHELLS[@]}"; do
-            if [ "$init_shell" = "$default_shell" ]; then
-                already_added="true"
-                break
-            fi
-        done
-        if [ "$already_added" != "true" ]; then
-            INIT_SHELLS+=("$default_shell")
-        fi
-    done
+    # Both shells are always initialized (the previous conditional build-up had
+    # exactly this result), and the unconditional assignment keeps the loop
+    # below safe: on macOS bash 3.2 with `set -u`, expanding an empty array
+    # aborts the installer, which is what happened when $SHELL was neither bash
+    # nor zsh (fish, ksh, tcsh) -- after Miniconda had already been installed.
+    INIT_SHELLS=(bash zsh)
     for init_shell in "${INIT_SHELLS[@]}"; do
         "$CONDA_INIT_BIN" init "$init_shell" 2>/dev/null || true
     done

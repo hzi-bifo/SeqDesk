@@ -64,7 +64,16 @@ describe.each(installerPaths)("%s Miniconda selection", (installerPath) => {
       'CONDA_INSTALLER=$(select_miniconda_installer "$OS" "$ARCH")'
     );
     expect(source).toContain(
-      '"https://repo.anaconda.com/miniconda/$CONDA_INSTALLER"'
+      '"${SEQDESK_MINICONDA_BASE_URL%/}/$CONDA_INSTALLER"'
+    );
+  });
+
+  it("still downloads Miniconda from repo.anaconda.com by default", () => {
+    // The base URL is overridable so a site can point at an internal mirror or
+    // a pinned build, but the shipped default is the upstream Anaconda host.
+    // Changing that default silently must fail here.
+    expect(source).toContain(
+      'SEQDESK_MINICONDA_BASE_URL="${SEQDESK_MINICONDA_BASE_URL:-https://repo.anaconda.com/miniconda}"'
     );
   });
 });

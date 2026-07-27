@@ -31,7 +31,7 @@
 #   SEQDESK_BLOB_READ_WRITE_TOKEN=... - Optional Blob token
 #   SEQDESK_ORDER_FORM_SETTINGS=/path/order.json - Optional exported order form preset
 #   SEQDESK_STUDY_FORM_SETTINGS=/path/study.json - Optional exported study form preset
-#   SEQDESK_LOG=/path/install.log  - Optional install log path (default: /tmp/seqdesk-install-*.log)
+#   SEQDESK_LOG=/path/install.log  - Optional install log path (default: mktemp under $TMPDIR)
 #   SEQDESK_USE_PM2=1             - Start with PM2 for auto-restart (recommended)
 #   SEQDESK_RUN_DOCTOR=1          - Run seqdesk doctor after install when the CLI is available
 #   SEQDESK_CONFIG=/path/or/url    - Optional infra JSON (flat or nested keys)
@@ -42,6 +42,15 @@
 #   SEQDESK_RECONFIGURE=1          - Reconfigure existing install in place (repeatable)
 #   SEQDESK_OVERWRITE_EXISTING=1   - With -y, back up an existing install dir and replace it
 #   SEQDESK_RESEED_DB=1            - Force DB push + seed (default off for reconfigure)
+#   SEQDESK_REQUIRE_CHECKSUM=1     - Refuse to install a release with no published checksum
+#   SEQDESK_CURL_CONNECT_TIMEOUT=10 - Per-attempt connect timeout for downloads (seconds)
+#   SEQDESK_CURL_MAX_TIME=120      - Per-attempt ceiling for metadata/config fetches (seconds)
+#   SEQDESK_CURL_DOWNLOAD_MAX_TIME=1800 - Per-attempt ceiling for the release
+#                                    tarball (seconds); the Miniconda installer
+#                                    is fetched with no ceiling
+#   SEQDESK_CURL_RETRIES=2         - Retries for transient download failures
+#   SEQDESK_MINICONDA_BASE_URL=https://... - Miniconda download base (default: repo.anaconda.com)
+#   SEQDESK_MINICONDA_INSTALLER=Miniconda3-py312_24.9.2-0-Linux-x86_64.sh - Pin an exact installer
 #   SEQDESK_PREPARE_POSTGRES=1     - Prepare local PostgreSQL role/database, then exit
 #   SEQDESK_EXEC_USE_SLURM=true    - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_QUEUE=cpu   - Optional pipeline execution override
@@ -62,7 +71,12 @@
 #   METAXPATH_PACKAGE_SHA256=...    - Alias for SEQDESK_METAXPATH_SHA256
 #
 
-set -euo pipefail
+# -E (errtrace) is load bearing, not decoration: without it bash does not
+# inherit the `trap on_error ERR` into shell functions, so a failure inside any
+# function -- which is where nearly all of this installer lives -- exits with a
+# bare non-zero status and no failure epilogue, no log path, and, on an upgrade,
+# no restore of the backed-up previous install.
+set -Eeuo pipefail
 
 # Terminal style
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -156,6 +170,24 @@ SEQDESK_ADDITIONAL_SETTINGS=()
 SEQDESK_RECONFIGURE="${SEQDESK_RECONFIGURE:-}"
 SEQDESK_OVERWRITE_EXISTING="${SEQDESK_OVERWRITE_EXISTING:-}"
 SEQDESK_RESEED_DB="${SEQDESK_RESEED_DB:-}"
+SEQDESK_REQUIRE_CHECKSUM="${SEQDESK_REQUIRE_CHECKSUM:-}"
+# Network policy for every download this installer performs. Previously no curl
+# invocation had a timeout at all, so a blackholed route or a captive
+# institutional proxy left the installer hanging indefinitely with nothing on
+# screen -- the hardest possible failure to diagnose from a bug report. The
+# values are per attempt and overridable, because a ~100 MB release tarball over
+# a throttled VPN legitimately needs longer than the metadata ceiling.
+SEQDESK_CURL_CONNECT_TIMEOUT="${SEQDESK_CURL_CONNECT_TIMEOUT:-10}"
+SEQDESK_CURL_MAX_TIME="${SEQDESK_CURL_MAX_TIME:-120}"
+SEQDESK_CURL_DOWNLOAD_MAX_TIME="${SEQDESK_CURL_DOWNLOAD_MAX_TIME:-1800}"
+SEQDESK_CURL_RETRIES="${SEQDESK_CURL_RETRIES:-2}"
+# Miniconda source. The default is still the rolling "-latest-" installer, so
+# two reviewers a month apart can get different Conda versions; pinning it needs
+# the matching upstream SHA256, which is not something this script may invent.
+# Until that decision is made, both halves are overridable so a site (or a
+# reproducibility appendix) can name an exact build and an internal mirror.
+SEQDESK_MINICONDA_BASE_URL="${SEQDESK_MINICONDA_BASE_URL:-https://repo.anaconda.com/miniconda}"
+SEQDESK_MINICONDA_INSTALLER="${SEQDESK_MINICONDA_INSTALLER:-}"
 SEQDESK_PREPARE_POSTGRES="${SEQDESK_PREPARE_POSTGRES:-}"
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
 SEQDESK_EXEC_SLURM_QUEUE="${SEQDESK_EXEC_SLURM_QUEUE:-}"
@@ -196,6 +228,10 @@ TOTAL_STEPS=9
 CURRENT_STEP=0
 RESTORE_BACKUP_PATH=""
 INSTALL_PHASE="init"
+# What the installer can actually say about the release tarball it unpacked.
+# Surfaced in the final summary, because "SUCCESS" next to an unverified
+# download is the one line a reviewer must not have to take on trust.
+RELEASE_INTEGRITY="not applicable (no release downloaded)"
 
 print_header() {
     echo ""
@@ -369,18 +405,50 @@ can_mirror_output_to_log() {
     ( : > >(cat >/dev/null) ) 2>/dev/null
 }
 
+# The default log used to be /tmp/seqdesk-install-<timestamp>.log, created with
+# `: >` and only then chmod 600. Both halves are a problem on a shared facility
+# or HPC login node: the name is guessable from the install time, and `: >`
+# follows symlinks, so another local user can pre-create that path as a link and
+# have an arbitrary file (possibly root-owned) truncated on their behalf.
+# mktemp picks an unpredictable name and refuses to follow an existing link, and
+# umask 077 makes the file private from the moment it exists rather than one
+# syscall later. An explicit SEQDESK_LOG is still honoured verbatim -- CI and
+# support workflows depend on naming the file -- but it too is created under the
+# restrictive umask.
 configure_install_log() {
+    local previous_umask
+    local log_dir
+    local log_stamp
+
     exec 3>&1 || true
 
+    previous_umask="$(umask)"
+    umask 077
+
     if [ -z "$SEQDESK_LOG" ]; then
-        SEQDESK_LOG="/tmp/seqdesk-install-$(date '+%Y%m%d-%H%M%S').log"
+        log_dir="${TMPDIR:-/tmp}"
+        log_dir="${log_dir%/}"
+        log_stamp="$(date '+%Y%m%d-%H%M%S')"
+        # A template suffix after the X's needs mktemp(1) from coreutils or BSD;
+        # fall back to a bare template where it is unsupported (busybox).
+        SEQDESK_LOG="$(mktemp "$log_dir/seqdesk-install-$log_stamp-XXXXXX.log" 2>/dev/null || \
+            mktemp "$log_dir/seqdesk-install-$log_stamp-XXXXXX" 2>/dev/null || true)"
+        if [ -z "$SEQDESK_LOG" ]; then
+            umask "$previous_umask"
+            print_warning "Could not create install log in $log_dir"
+            return 0
+        fi
+    else
+        mkdir -p "$(dirname "$SEQDESK_LOG")" 2>/dev/null || true
+        if ! : > "$SEQDESK_LOG" 2>/dev/null; then
+            umask "$previous_umask"
+            print_warning "Could not create install log: $SEQDESK_LOG"
+            return 0
+        fi
     fi
 
-    mkdir -p "$(dirname "$SEQDESK_LOG")" 2>/dev/null || true
-    : > "$SEQDESK_LOG" 2>/dev/null || {
-        print_warning "Could not create install log: $SEQDESK_LOG"
-        return 0
-    }
+    umask "$previous_umask"
+
     if ! chmod 600 "$SEQDESK_LOG" 2>/dev/null; then
         print_warning "Could not secure install log permissions; logging is disabled: $SEQDESK_LOG"
         rm -f "$SEQDESK_LOG" 2>/dev/null || true
@@ -494,6 +562,104 @@ run_with_spinner_warn() {
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+# --- Network fetches ---------------------------------------------------------
+#
+# Set by curl_fetch_to_file/curl_download_to_file so a caller can say WHY a
+# fetch failed. "000" as the status means curl never got a response at all
+# (DNS, connect, TLS, or timeout) and its exit code is the informative part.
+# curl keeps its own diagnostic on stderr (-S), which the install log captures,
+# so nothing is swallowed here the way `2>/dev/null || true` used to swallow it.
+CURL_LAST_HTTP_STATUS=""
+CURL_LAST_STATUS="0"
+
+curl_fetch_with_timeout() {
+    local max_time="$1"
+    local url="$2"
+    local dest="$3"
+    shift 3
+
+    # An empty max_time means "no per-attempt ceiling"; see
+    # curl_download_unbounded_to_file. The ${arr[@]+"${arr[@]}"} guard is not
+    # optional: bash 3.2, which is what stock macOS ships, treats "${arr[@]}" on
+    # an empty array as an unbound variable and aborts under set -u.
+    local max_time_args=()
+    if [ -n "$max_time" ]; then
+        max_time_args=(--max-time "$max_time")
+    fi
+
+    CURL_LAST_HTTP_STATUS=""
+    CURL_LAST_STATUS="0"
+    CURL_LAST_HTTP_STATUS="$(curl -fsS -L -o "$dest" -w '%{http_code}' \
+        --connect-timeout "$SEQDESK_CURL_CONNECT_TIMEOUT" \
+        ${max_time_args[@]+"${max_time_args[@]}"} \
+        --retry "$SEQDESK_CURL_RETRIES" \
+        --retry-delay 2 \
+        "$@" "$url")" || CURL_LAST_STATUS=$?
+    return "$CURL_LAST_STATUS"
+}
+
+# Small payloads: release metadata, install profiles, --config URLs.
+curl_fetch_to_file() {
+    local url="$1"
+    local dest="$2"
+    shift 2
+
+    curl_fetch_with_timeout "$SEQDESK_CURL_MAX_TIME" "$url" "$dest" "$@"
+}
+
+# Large payloads with a bounded size: the release tarball.
+curl_download_to_file() {
+    local url="$1"
+    local dest="$2"
+    shift 2
+
+    curl_fetch_with_timeout "$SEQDESK_CURL_DOWNLOAD_MAX_TIME" "$url" "$dest" "$@"
+}
+
+# The Miniconda installer, deliberately with no --max-time. It is ~150 MB, and
+# SEQDESK_CURL_DOWNLOAD_MAX_TIME (1800 s) would abort it below roughly 85 KB/s
+# on a link where the download would otherwise have finished. install.sh has
+# always fetched it without a ceiling for that reason; this keeps the two
+# installers on one policy. --connect-timeout still bounds an unreachable host
+# and --retry still rides out a dropped connection, so a dead endpoint does not
+# hang the install.
+curl_download_unbounded_to_file() {
+    local url="$1"
+    local dest="$2"
+    shift 2
+
+    curl_fetch_with_timeout "" "$url" "$dest" "$@"
+}
+
+curl_failure_detail() {
+    local detail=""
+
+    if [ -n "$CURL_LAST_HTTP_STATUS" ] && [ "$CURL_LAST_HTTP_STATUS" != "000" ]; then
+        detail="HTTP $CURL_LAST_HTTP_STATUS"
+    fi
+    if [ -n "$CURL_LAST_STATUS" ] && [ "$CURL_LAST_STATUS" != "0" ]; then
+        if [ -n "$detail" ]; then
+            detail="$detail, curl exit $CURL_LAST_STATUS"
+        else
+            detail="curl exit $CURL_LAST_STATUS"
+        fi
+    fi
+    printf '%s' "$detail"
+}
+
+# A configured proxy is the most common reason a fetch fails inside an institute
+# network and it is invisible in curl's own message. The proxy URL itself is
+# deliberately not echoed: it routinely embeds credentials.
+print_network_failure_hints() {
+    if [ -n "${https_proxy:-}${HTTPS_PROXY:-}${http_proxy:-}${HTTP_PROXY:-}" ]; then
+        print_info "A proxy is configured in this environment; confirm it allows the URL above."
+    else
+        print_info "No proxy is configured in this environment; if your site requires one, export https_proxy and retry."
+    fi
+    print_info "Slow link? Raise SEQDESK_CURL_MAX_TIME (small fetches) or SEQDESK_CURL_DOWNLOAD_MAX_TIME (release tarball), or SEQDESK_CURL_RETRIES."
+    print_info "The Miniconda download has no time ceiling, so a slow link cannot time it out."
 }
 
 path_exists_or_symlink() {
@@ -902,7 +1068,18 @@ generate_postgres_password() {
         return 0
     fi
 
-    date +%s | shasum | awk '{print $1}' | cut -c1-32
+    # Last resort: 16 bytes from the kernel CSPRNG, hex-encoded with od (POSIX,
+    # present on both macOS and Linux). The previous fallback hashed the current
+    # timestamp, which leaves only a few thousand candidates for anyone who
+    # knows roughly when the install ran.
+    if [ -r /dev/urandom ]; then
+        dd if=/dev/urandom bs=1 count=16 2>/dev/null | od -An -tx1 | tr -d ' \n'
+        return 0
+    fi
+
+    # No caller-visible message here: the caller reads this function's stdout
+    # into the password, so diagnostics have to be printed there.
+    return 1
 }
 
 # Percent-encode a value for use in a URL query parameter. Iterated over bytes
@@ -949,7 +1126,14 @@ configure_postgres_urls() {
 
     if [ -z "$SEQDESK_DATABASE_URL" ]; then
         local generated_password
-        generated_password="$(generate_postgres_password)"
+        # A guessable database password is worse than no install: it would be
+        # written into settings.json and the DATABASE_URL and never rotated.
+        if ! generated_password="$(generate_postgres_password)"; then
+            print_error "Cannot generate a database password: openssl, node and /dev/urandom are all unavailable."
+            print_error "Re-run with --database-url and a connection string you created yourself."
+            print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#postgresql-options"
+            exit 1
+        fi
         SEQDESK_DATABASE_URL="$(default_postgres_url "$generated_password")"
         if [ -n "${MACOS_POSTGRES_SOCKET_DIR:-}" ]; then
             print_info "No DATABASE_URL supplied. Using local PostgreSQL through Unix socket ${MACOS_POSTGRES_SOCKET_DIR}:5432."
@@ -1067,10 +1251,15 @@ print_postgres_setup_instructions() {
         echo "  SQL"
         echo "  Current DATABASE_URL: ${redacted_database_url}"
     else
+        # postgres_url_host returns non-zero for an empty or unparseable URL --
+        # an empty DIRECT_URL is the common case, which is precisely why the
+        # fallback below exists. Without the guards the first line aborts this
+        # diagnosis instead of falling through to it. Same form as the call in
+        # try_reuse_local_postgres_socket.
         local database_host
-        database_host="$(postgres_url_host "$SEQDESK_DATABASE_DIRECT_URL")"
+        database_host="$(postgres_url_host "$SEQDESK_DATABASE_DIRECT_URL" 2>/dev/null || true)"
         if [ -z "$database_host" ]; then
-            database_host="$(postgres_url_host "$SEQDESK_DATABASE_URL")"
+            database_host="$(postgres_url_host "$SEQDESK_DATABASE_URL" 2>/dev/null || true)"
         fi
 
         print_warning "Configured PostgreSQL is remote. The installer will not install or prepare a local database for this URL."
@@ -1523,6 +1712,23 @@ select_macos_postgres_socket() {
 # "/.s.PGSQL.<port>" to the directory, so the directory itself must stay short.
 PRIVATE_PG_MAX_SOCKET_DIR_LEN=85
 
+# The one port the private instance ever uses. It is pinned in the cluster's own
+# postgresql.conf, not merely assumed, because `port` falls back to the PGPORT
+# environment variable: a user with PGPORT exported got a socket named
+# .s.PGSQL.<their port> while the generated DATABASE_URL still said 5432, and
+# the install then aborted with no indication why. Everything that writes the
+# URL reads this constant, so the port in settings.json is the port in use.
+PRIVATE_PG_PORT="5432"
+
+# libpq variables that silently redirect the private cluster's own tooling.
+# PGPORT changes the socket the postmaster creates and PGHOST changes where
+# pg_ctl looks for it; neither has any business influencing a cluster SeqDesk
+# creates, owns and addresses by explicit path. Stripped from every initdb,
+# pg_ctl and status call rather than trusted to be unset.
+private_postgres_env() {
+    env -u PGPORT -u PGHOST -u PGDATA LC_ALL=C LANG=C "$@"
+}
+
 private_postgres_root() {
     printf '%s' "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}"
 }
@@ -1559,27 +1765,129 @@ private_postgres_running() {
     local pg_ctl_bin
     pg_ctl_bin="$(find_postgres_binary pg_ctl 2>/dev/null || true)"
     [ -n "$pg_ctl_bin" ] || return 1
-    if env LC_ALL=C LANG=C "$pg_ctl_bin" -D "$data_dir" status >/dev/null 2>&1; then
+    if private_postgres_env "$pg_ctl_bin" -D "$data_dir" status >/dev/null 2>&1; then
         return 0
     fi
     return 1
 }
 
+# Only used to restart a cluster whose configuration had to be repaired, so a
+# fast shutdown (roll back open transactions, do not wait for clients) is right.
+private_postgres_stop() {
+    local data_dir="${1:-$(private_postgres_data_dir)}"
+    local pg_ctl_bin
+
+    pg_ctl_bin="$(find_postgres_binary pg_ctl 2>/dev/null || true)"
+    [ -n "$pg_ctl_bin" ] || return 1
+    private_postgres_env "$pg_ctl_bin" -D "$data_dir" -m fast -w stop >/dev/null 2>&1
+}
+
+# The block SeqDesk owns in the cluster's postgresql.conf is delimited so it can
+# be replaced. Earlier installers appended it with no end marker, so a repair
+# used to append a second copy: PostgreSQL honours the last occurrence of a
+# setting, which left a stale, contradictory copy in the file that nobody would
+# find until they read it.
+PRIVATE_PG_CONFIG_BEGIN="# --- SeqDesk-managed private instance ---"
+PRIVATE_PG_CONFIG_END="# --- end SeqDesk-managed private instance ---"
+
+# Print $1 with any block SeqDesk previously wrote removed. A block written
+# before the end marker existed is unterminated; every version of it is a
+# contiguous run of comments and the four settings it owns, so it ends at the
+# first blank line or at the first line that is neither -- which keeps whatever
+# an operator appended after it. Blank lines are held back and only emitted
+# before real content, so repeated rewrites cannot grow a run of empty lines
+# where the block used to be.
+private_postgres_strip_config() {
+    local conf_file="$1"
+
+    awk -v begin_marker="$PRIVATE_PG_CONFIG_BEGIN" -v end_marker="$PRIVATE_PG_CONFIG_END" '
+        !inside && $0 == begin_marker { blanks = 0; inside = 1; next }
+        inside && $0 == end_marker { inside = 0; next }
+        inside {
+            if ($0 ~ /^[[:space:]]*$/) {
+                inside = 0
+            } else if ($0 ~ /^[[:space:]]*#/) {
+                next
+            } else if ($0 ~ /^[[:space:]]*(listen_addresses|unix_socket_directories|unix_socket_permissions|port)[[:space:]]*=/) {
+                next
+            } else {
+                inside = 0
+            }
+        }
+        /^[[:space:]]*$/ { blanks++; next }
+        {
+            while (blanks > 0) {
+                print ""
+                blanks--
+            }
+            print
+        }
+    ' "$conf_file"
+}
+
 # Both the config and the HBA file are written by SeqDesk rather than patched,
 # so the resulting cluster is identical on every machine and auditable in one
 # place. listen_addresses='' means the server never opens a TCP socket at all.
+# Writing goes through a temporary file in the same directory and one rename, so
+# an interrupted repair can never leave a truncated postgresql.conf behind.
 private_postgres_write_config() {
     local data_dir="$1"
     local socket_dir="$2"
+    local conf_file="$data_dir/postgresql.conf"
+    local tmp_file
 
-    cat >> "$data_dir/postgresql.conf" <<CONF
+    [ -f "$conf_file" ] || return 1
 
-# --- SeqDesk-managed private instance ---
+    tmp_file="$(mktemp "$data_dir/postgresql.conf.seqdesk.XXXXXX" 2>/dev/null)" || return 1
+    if ! private_postgres_strip_config "$conf_file" > "$tmp_file" 2>/dev/null; then
+        rm -f "$tmp_file" 2>/dev/null || true
+        return 1
+    fi
+
+    cat >> "$tmp_file" <<CONF
+
+$PRIVATE_PG_CONFIG_BEGIN
 # Unix socket only: no TCP listener is opened, on any interface or port.
 listen_addresses = ''
 unix_socket_directories = '$socket_dir'
 unix_socket_permissions = 0700
+# Pinned so an inherited PGPORT cannot move the socket out from under the
+# DATABASE_URL that names this instance.
+port = $PRIVATE_PG_PORT
+$PRIVATE_PG_CONFIG_END
 CONF
+
+    chmod 600 "$tmp_file" 2>/dev/null || true
+    if ! mv "$tmp_file" "$conf_file"; then
+        rm -f "$tmp_file" 2>/dev/null || true
+        return 1
+    fi
+}
+
+# Whether a cluster has actually received the configuration above, as opposed to
+# merely having been created by initdb. listen_addresses is the one line that
+# makes the instance private: without it the cluster still has PostgreSQL's
+# defaults -- a socket in /tmp and TCP listeners on 127.0.0.1 and [::1] -- while
+# looking, to a PG_VERSION check, fully provisioned. Missing it means the
+# cluster has to be stopped, reconfigured and restarted.
+private_postgres_configured() {
+    local data_dir="${1:-$(private_postgres_data_dir)}"
+
+    [ -f "$data_dir/postgresql.conf" ] || return 1
+    grep -q "^listen_addresses = ''" "$data_dir/postgresql.conf"
+}
+
+# The pinned port is a later addition, so every cluster the already-published
+# installer created is missing it while being otherwise correct and healthy.
+# That is a retrofit, not a half-provisioned cluster, and it is deliberately NOT
+# part of private_postgres_configured: treating it as half provisioned would
+# stop a working database, and appending the block a second time, on every
+# single re-run of install or --reconfigure.
+private_postgres_port_pinned() {
+    local data_dir="${1:-$(private_postgres_data_dir)}"
+
+    [ -f "$data_dir/postgresql.conf" ] || return 1
+    grep -q "^port = $PRIVATE_PG_PORT\$" "$data_dir/postgresql.conf"
 }
 
 # Peer authentication for the owning OS user keeps administration passwordless
@@ -1607,7 +1915,7 @@ private_postgres_start() {
 
     pg_ctl_bin="$(find_postgres_binary pg_ctl 2>/dev/null || true)"
     [ -n "$pg_ctl_bin" ] || return 1
-    env LC_ALL=C LANG=C "$pg_ctl_bin" -D "$data_dir" -l "$log_file" -w start >/dev/null 2>&1
+    private_postgres_env "$pg_ctl_bin" -D "$data_dir" -l "$log_file" -w start >/dev/null 2>&1
 }
 
 # initdb reads LC_* from the environment and aborts with "invalid locale
@@ -1621,7 +1929,7 @@ private_postgres_initdb() {
 
     initdb_bin="$(find_postgres_binary initdb 2>/dev/null || true)"
     [ -n "$initdb_bin" ] || return 1
-    env LC_ALL=C LANG=C "$initdb_bin" \
+    private_postgres_env "$initdb_bin" \
         -D "$data_dir" \
         --username="$owner" \
         --encoding=UTF8 \
@@ -1637,7 +1945,9 @@ select_private_postgres() {
     SEQDESK_PRIVATE_POSTGRES="true"
     MACOS_POSTGRES_SOCKET_DIR="$socket_dir"
     PG_HOST="$socket_dir"
-    PG_PORT="5432"
+    # Same constant the cluster's postgresql.conf pins, so the port recorded in
+    # settings.json is by construction the port the instance actually listens on.
+    PG_PORT="$PRIVATE_PG_PORT"
 }
 
 print_private_postgres_start_failure() {
@@ -1709,6 +2019,54 @@ provision_private_postgres() {
     chmod 700 "$root" "$socket_dir" 2>/dev/null || true
 
     if private_postgres_initialized "$data_dir"; then
+        # PG_VERSION alone does not mean "provisioned". If a previous run was
+        # interrupted between initdb and the config write, the cluster is still
+        # running PostgreSQL's defaults: a socket in /tmp and TCP listeners on
+        # 127.0.0.1 and [::1] -- the exact opposite of the socket-only guarantee
+        # this instance is documented to provide. Adopting that as a success made
+        # the mismatch invisible and left retrying useless. Complete it instead,
+        # stopping first so the corrected settings actually take effect.
+        if ! private_postgres_configured "$data_dir"; then
+            print_warning "The SeqDesk PostgreSQL instance in ${data_dir} is only half provisioned; completing it."
+            echo "  It was created but never received SeqDesk's socket-only configuration."
+            if private_postgres_running "$data_dir" && \
+                ! run_with_spinner "Stop half-provisioned SeqDesk PostgreSQL" private_postgres_stop "$data_dir"; then
+                print_error "Could not stop the half-provisioned instance in ${data_dir} to repair it."
+                echo "  Stop it manually with: pg_ctl -D $(shell_quote "$data_dir") -m fast stop"
+                echo "  then re-run the installer."
+                return 1
+            fi
+            if ! private_postgres_write_config "$data_dir" "$socket_dir" || \
+                ! private_postgres_write_hba "$data_dir" "$owner"; then
+                print_error "Could not write the PostgreSQL configuration in ${data_dir}."
+                echo "  The instance stays half provisioned until this succeeds. Check the directory"
+                echo "  permissions, or supply an existing database with --database-url \"postgresql://...\"."
+                return 1
+            fi
+            print_success "Repaired the configuration of the SeqDesk PostgreSQL instance."
+        elif ! private_postgres_port_pinned "$data_dir"; then
+            # A healthy cluster from an installer that predates the pinned port.
+            # Rewriting the managed block in place adds the line without a
+            # restart; the running server keeps the port it already has until it
+            # is next restarted, which is why nothing is stopped here. Failing
+            # to write it is not fatal either -- the cluster is usable as it is.
+            if private_postgres_write_config "$data_dir" "$socket_dir"; then
+                detail "pinned port $PRIVATE_PG_PORT in ${data_dir}/postgresql.conf; the running instance was left alone"
+            else
+                print_warning "Could not pin the PostgreSQL port in ${data_dir}/postgresql.conf; continuing with the instance as it is."
+            fi
+            # The DATABASE_URL names this exact socket file, so if the running
+            # server is on some other port (an inherited PGPORT at the time it
+            # was started -- the reason the pin exists), say so instead of
+            # handing out a URL that cannot connect.
+            if private_postgres_running "$data_dir" && \
+                [ ! -S "$socket_dir/.s.PGSQL.$PRIVATE_PG_PORT" ]; then
+                print_warning "The running SeqDesk PostgreSQL instance is not on port ${PRIVATE_PG_PORT}."
+                echo "  The pinned port applies at its next restart:"
+                echo "    pg_ctl -D $(shell_quote "$data_dir") -m fast restart"
+            fi
+        fi
+
         if private_postgres_running "$data_dir"; then
             select_private_postgres "$socket_dir"
             print_success "Using the existing SeqDesk PostgreSQL instance in ${root}."
@@ -1745,6 +2103,13 @@ provision_private_postgres() {
     return 0
 }
 
+# This gate decides whether the bootstrap in ensure_local_postgres_database can
+# run, so it has to probe the exact connection that bootstrap will use: -h/-p
+# only when PG_HOST names a Unix socket directory, and the default peer socket
+# otherwise. Forcing -h 127.0.0.1 here instead sends the probe through the TCP
+# path, where stock Debian/Ubuntu applies scram-sha-256 and rejects it for want
+# of a password -- on a machine whose peer socket would have worked. The role
+# then never gets created and the install fails blaming sudo.
 sudo_postgres_ready() {
     local psql_bin
     psql_bin="$(find_postgres_binary psql 2>/dev/null || true)"
@@ -1752,11 +2117,14 @@ sudo_postgres_ready() {
         return 1
     fi
 
-    PGCONNECT_TIMEOUT=5 run_as_postgres "$psql_bin" \
-        -X -w \
-        -h "${PG_HOST:-127.0.0.1}" \
-        -p "${PG_PORT:-5432}" \
-        -d postgres -qAt -c "select 1" >/dev/null 2>&1
+    if [[ "${PG_HOST:-}" == /* ]]; then
+        PGCONNECT_TIMEOUT=5 run_as_postgres "$psql_bin" \
+            -X -w -h "$PG_HOST" -p "${PG_PORT:-5432}" \
+            -d postgres -qAt -c "select 1" >/dev/null 2>&1
+    else
+        PGCONNECT_TIMEOUT=5 run_as_postgres "$psql_bin" \
+            -X -w -d postgres -qAt -c "select 1" >/dev/null 2>&1
+    fi
 }
 
 find_postgres_binary() {
@@ -2413,6 +2781,29 @@ ALTER DATABASE "${database.replace(/"/g, '""')}" OWNER TO "${user.replace(/"/g, 
 NODE
 }
 
+# Feed the bootstrap script to psql over an already-open file descriptor.
+#
+# On Linux run_as_postgres escalates to the system `postgres` account
+# (runuser/sudo -u postgres), which cannot read the mktemp file: it is mode 0600
+# and owned by the invoking user. Relaxing the mode is not an option -- the
+# script carries the seqdesk role's password in clear text. So the file is
+# opened HERE, by the user who owns it, and only the resulting descriptor is
+# handed down as psql's stdin ("-f -"); both runuser and sudo pass descriptor 0
+# through untouched.
+#
+# The redirection must live inside this function rather than on the
+# run_with_spinner call, because the spinner runs its command as a background
+# job and bash gives background jobs /dev/null on stdin unless the command
+# redirects stdin itself.
+run_postgres_bootstrap_sql() {
+    local psql_bin="$1"
+    local sql_file="$2"
+    shift 2
+
+    run_as_postgres "$psql_bin" -X -w "$@" \
+        -v ON_ERROR_STOP=1 -d postgres -f - < "$sql_file"
+}
+
 ensure_local_postgres_database() {
     if ! load_postgres_url_parts; then
         return 0
@@ -2458,14 +2849,14 @@ ensure_local_postgres_database() {
     write_postgres_bootstrap_sql "$sql_file"
 
     if [[ "${PG_HOST:-}" == /* ]]; then
-        if ! run_with_spinner "Local PostgreSQL database" run_as_postgres "$psql_bin" \
-            -X -w -h "$PG_HOST" -p "${PG_PORT:-5432}" \
-            -v ON_ERROR_STOP=1 -d postgres -f "$sql_file"; then
+        if ! run_with_spinner "Local PostgreSQL database" \
+            run_postgres_bootstrap_sql "$psql_bin" "$sql_file" \
+            -h "$PG_HOST" -p "${PG_PORT:-5432}"; then
             rm -f "$sql_file"
             return 1
         fi
-    elif ! run_with_spinner "Local PostgreSQL database" run_as_postgres "$psql_bin" \
-        -X -w -v ON_ERROR_STOP=1 -d postgres -f "$sql_file"; then
+    elif ! run_with_spinner "Local PostgreSQL database" \
+        run_postgres_bootstrap_sql "$psql_bin" "$sql_file"; then
         rm -f "$sql_file"
         return 1
     fi
@@ -2734,7 +3125,11 @@ interactive_prompt_password() {
     while true; do
         pw=$(read_secret "$label (leave blank to generate a strong one): ")
         if [ -z "$pw" ]; then
-            pw="$(generate_postgres_password)"
+            if ! pw="$(generate_postgres_password)"; then
+                print_error "  Cannot generate a password: openssl, node and /dev/urandom are all unavailable."
+                print_error "  Enter a password of your own instead."
+                continue
+            fi
             # Deliberately not printed here. A generated password shown mid-wizard
             # scrolls away behind the rest of the install (or behind a failure
             # that means the account was never created). It is printed once at
@@ -3408,13 +3803,21 @@ resolve_install_profile() {
 
     local profile_url
     local profile_config
+    local fetch_detail
     profile_url="${SEQDESK_PROFILE_REGISTRY_URL%/}/${SEQDESK_PROFILE}/resolve"
     profile_config="$(mktemp)"
 
     print_info "Resolving hosted install profile: $SEQDESK_PROFILE"
-    if ! curl -fsSL -H "Authorization: Bearer ${SEQDESK_PROFILE_CODE}" "$profile_url" -o "$profile_config"; then
+    if ! curl_fetch_to_file "$profile_url" "$profile_config" \
+        -H "Authorization: Bearer ${SEQDESK_PROFILE_CODE}"; then
         rm -f "$profile_config"
+        fetch_detail="$(curl_failure_detail)"
         print_error "Failed to resolve hosted install profile '$SEQDESK_PROFILE'. Check the profile id and access code."
+        print_kv "URL" "$profile_url"
+        if [ -n "$fetch_detail" ]; then
+            print_kv "Result" "$fetch_detail"
+        fi
+        print_network_failure_hints
         print_troubleshooting_url
         exit 1
     fi
@@ -3429,6 +3832,7 @@ load_install_config() {
     local config_path="$config_ref"
     local temp_json=""
     local temp_env=""
+    local fetch_detail=""
 
     if ! command_exists node; then
         print_error "Node.js is required to parse --config JSON."
@@ -3443,9 +3847,14 @@ load_install_config() {
             exit 1
         fi
         temp_json=$(mktemp)
-        if ! curl -fsSL "$config_ref" -o "$temp_json"; then
+        if ! curl_fetch_to_file "$config_ref" "$temp_json"; then
             rm -f "$temp_json"
+            fetch_detail="$(curl_failure_detail)"
             print_error "Failed to download config: $config_ref"
+            if [ -n "$fetch_detail" ]; then
+                print_kv "Result" "$fetch_detail"
+            fi
+            print_network_failure_hints
             print_troubleshooting_url
             exit 1
         fi
@@ -4149,8 +4558,14 @@ get_disk_info() {
         return 0
     fi
 
+    # `|| line=""` is not decoration: df exits non-zero on a path that does not
+    # exist or cannot be stat'ed, pipefail turns that into a failed assignment,
+    # and the ERR trap -- inherited into this command substitution by errtrace --
+    # then ends the subshell here, so the caller printed an empty string instead
+    # of the "unknown" this function exists to produce. Same guard as
+    # gating_disk_kb below.
     local line
-    line=$(df -Pk "$target" 2>/dev/null | awk 'NR==2')
+    line=$(df -Pk "$target" 2>/dev/null | awk 'NR==2') || line=""
     if [ -z "$line" ]; then
         printf 'unknown'
         return 0
@@ -4160,6 +4575,10 @@ get_disk_info() {
     local mount_point
     avail_kb=$(echo "$line" | awk '{print $4}')
     mount_point=$(echo "$line" | awk '{print $6}')
+    if ! [[ "$avail_kb" =~ ^[0-9]+$ ]] || [ -z "$mount_point" ]; then
+        printf 'unknown'
+        return 0
+    fi
     printf '%s free on %s' "$(format_kb "$avail_kb")" "$mount_point"
 }
 
@@ -4416,9 +4835,15 @@ map_unknown_distro() {
         echo "unknown"
         return 0
     fi
+    # A missing key is the normal case, not an error: Arch, Alpine, Gentoo,
+    # NixOS and Void ship no ID_LIKE at all. grep then exits 1, pipefail
+    # propagates it, and errtrace runs the ERR trap inside this command
+    # substitution -- which ends the subshell, so DISTRO=$(map_unknown_distro)
+    # returned non-zero and the install died on exactly the hosts this
+    # graceful-degradation path was written for. Absorb the miss instead.
     local id="" id_like=""
-    id=$(grep -E '^ID=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
-    id_like=$(grep -E '^ID_LIKE=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]')
+    id=$(grep -E '^ID=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]') || id=""
+    id_like=$(grep -E '^ID_LIKE=' "$osr" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '"' | tr '[:upper:]' '[:lower:]') || id_like=""
     local token=""
     for token in $id $id_like; do
         case "$token" in
@@ -4526,8 +4951,11 @@ if [ ! -x "$SEQDESK_PG_CTL" ]; then
     SEQDESK_PG_CTL="$(command -v pg_ctl 2>/dev/null || true)"
 fi
 if [ -n "$SEQDESK_PG_CTL" ] && [ -s "$SEQDESK_PG_DATA/PG_VERSION" ]; then
-    if ! LC_ALL=C LANG=C "$SEQDESK_PG_CTL" -D "$SEQDESK_PG_DATA" status >/dev/null 2>&1; then
-        if ! LC_ALL=C LANG=C "$SEQDESK_PG_CTL" -D "$SEQDESK_PG_DATA" \
+    # env -u: an exported PGPORT/PGHOST in the operator's (or pm2's) environment
+    # would move the socket this instance creates away from the one the
+    # DATABASE_URL names. The cluster is addressed by data directory only.
+    if ! env -u PGPORT -u PGHOST -u PGDATA LC_ALL=C LANG=C "$SEQDESK_PG_CTL" -D "$SEQDESK_PG_DATA" status >/dev/null 2>&1; then
+        if ! env -u PGPORT -u PGHOST -u PGDATA LC_ALL=C LANG=C "$SEQDESK_PG_CTL" -D "$SEQDESK_PG_DATA" \
             -l "$SEQDESK_PG_LOG" -w start >/dev/null 2>&1; then
             echo "[seqdesk] warning: could not start PostgreSQL in $SEQDESK_PG_DATA" >&2
             echo "[seqdesk] see $SEQDESK_PG_LOG" >&2
@@ -5242,9 +5670,24 @@ NODE
 
 on_error() {
     local exit_code=$?
+    # Captured before anything else runs: BASH_COMMAND is overwritten as soon as
+    # this handler calls a function, so reading it further down reported a line
+    # from inside print_warning instead of the command that actually failed.
+    local failed_command="${BASH_COMMAND:-}"
     local failed_at
     local elapsed
     set +e
+
+    # errtrace also propagates this trap into subshells: command substitutions,
+    # pipeline elements, and the backgrounded job run_with_progress_status uses
+    # for the spinner. Only the top-level shell owns the failure epilogue and the
+    # restore -- a subshell must fail quietly, or the epilogue is either captured
+    # into a variable as if it were command output or printed twice (once by the
+    # spinner's child, once by the real failure that follows it).
+    if [ "${BASH_SUBSHELL:-0}" -ne 0 ]; then
+        exit "$exit_code"
+    fi
+
     failed_at=$(date +%s)
     elapsed=$((failed_at - INSTALL_START_TS))
     cleanup_miniconda_temp_files
@@ -5274,7 +5717,7 @@ on_error() {
 
     echo ""
     print_error "Install failed after $(format_elapsed "$elapsed")."
-    print_info "Command: ${BASH_COMMAND}"
+    print_info "Command: ${failed_command}"
     print_info "Exit code: ${exit_code}"
     if [ "$SEQDESK_LOG_ENABLED" = "true" ]; then
         print_info "Log: $SEQDESK_LOG"
@@ -5611,7 +6054,14 @@ fi
 if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     print_header "Install Miniconda"
 
-    if ! CONDA_INSTALLER=$(select_miniconda_installer "$OS" "$ARCH"); then
+    # An explicitly named installer wins over platform detection, so a site (or a
+    # reproducibility appendix) can pin an exact Miniconda build and serve it
+    # from SEQDESK_MINICONDA_BASE_URL. The default remains the rolling
+    # "-latest-" build; see the note on SEQDESK_MINICONDA_BASE_URL above.
+    if [ -n "$SEQDESK_MINICONDA_INSTALLER" ]; then
+        CONDA_INSTALLER="$SEQDESK_MINICONDA_INSTALLER"
+        print_info "Using pinned Miniconda installer: $CONDA_INSTALLER"
+    elif ! CONDA_INSTALLER=$(select_miniconda_installer "$OS" "$ARCH"); then
         print_error "No supported Miniconda installer is available for $OS/$ARCH."
         print_info "Install Conda manually or re-run without pipeline support."
         print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#optional-pipeline-prerequisites"
@@ -5623,8 +6073,8 @@ if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     MINICONDA_INSTALLER_FILE="$(mktemp "$MINICONDA_TEMP_DIR/seqdesk-miniconda.XXXXXX")"
     MINICONDA_OUTPUT_FILE="$(mktemp "$MINICONDA_TEMP_DIR/seqdesk-miniconda-output.XXXXXX")"
     run_with_spinner "Download Miniconda" \
-        curl -fsSL "https://repo.anaconda.com/miniconda/$CONDA_INSTALLER" \
-        -o "$MINICONDA_INSTALLER_FILE"
+        curl_download_unbounded_to_file "${SEQDESK_MINICONDA_BASE_URL%/}/$CONDA_INSTALLER" \
+        "$MINICONDA_INSTALLER_FILE"
 
     install_miniconda_with_diagnostics "$MINICONDA_INSTALLER_FILE" "$CONDA_INSTALL_BASE"
 
@@ -5637,22 +6087,15 @@ if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     fi
 
     CURRENT_SHELL="$(basename "${SHELL:-}")"
-    INIT_SHELLS=()
-    case "$CURRENT_SHELL" in
-        bash|zsh) INIT_SHELLS+=("$CURRENT_SHELL") ;;
-    esac
-    for default_shell in bash zsh; do
-        already_added="false"
-        for init_shell in "${INIT_SHELLS[@]}"; do
-            if [ "$init_shell" = "$default_shell" ]; then
-                already_added="true"
-                break
-            fi
-        done
-        if [ "$already_added" != "true" ]; then
-            INIT_SHELLS+=("$default_shell")
-        fi
-    done
+    # Both shells are always initialised, with the operator's own shell first.
+    # The list must never be empty: bash 3.2 (still the system bash on macOS)
+    # treats "${array[@]}" on an empty array as an unbound variable under
+    # `set -u` and aborts -- which happened whenever $SHELL was neither bash nor
+    # zsh (fish, ksh, tcsh), immediately after Miniconda had been written to disk.
+    INIT_SHELLS=(bash zsh)
+    if [ "$CURRENT_SHELL" = "zsh" ]; then
+        INIT_SHELLS=(zsh bash)
+    fi
     for init_shell in "${INIT_SHELLS[@]}"; do
         "$CONDA_INIT_BIN" init "$init_shell" 2>/dev/null || true
     done
@@ -5687,16 +6130,34 @@ TEMP_FILE=""
 # extraction) fails; TEMP_FILE is "" until mktemp runs, so this is a no-op early.
 trap 'rm -f "$TEMP_FILE"' EXIT
 if is_truthy "$SEQDESK_RECONFIGURE"; then
+    RELEASE_INTEGRITY="not applicable (reconfigure; the installed release is kept)"
     print_info "Reconfigure mode enabled; skipping release download."
 else
+    VERSION_URL="$SEQDESK_API/version"
     if [ -n "$SEQDESK_VERSION" ]; then
-        VERSION_INFO=$(curl -fsSL "$SEQDESK_API/version?version=$SEQDESK_VERSION" 2>/dev/null || true)
-    else
-        VERSION_INFO=$(curl -fsSL "$SEQDESK_API/version" 2>/dev/null || true)
+        VERSION_URL="$SEQDESK_API/version?version=$SEQDESK_VERSION"
     fi
+    # Via a file rather than a command substitution so the HTTP status and curl
+    # exit code survive for the error message. The previous
+    # `2>/dev/null || true` form threw both away, leaving a reviewer behind an
+    # institute proxy with "Could not connect to SeqDesk server" and no clue.
+    VERSION_INFO=""
+    VERSION_INFO_FILE=$(mktemp)
+    if curl_fetch_to_file "$VERSION_URL" "$VERSION_INFO_FILE"; then
+        VERSION_INFO=$(cat "$VERSION_INFO_FILE")
+    fi
+    VERSION_FETCH_DETAIL="$(curl_failure_detail)"
+    rm -f "$VERSION_INFO_FILE"
 
     if [ -z "$VERSION_INFO" ]; then
-        print_error "Could not connect to SeqDesk server"
+        print_error "Could not fetch release metadata from the SeqDesk server."
+        print_kv "URL" "$VERSION_URL"
+        if [ -n "$VERSION_FETCH_DETAIL" ]; then
+            print_kv "Result" "$VERSION_FETCH_DETAIL"
+        else
+            print_kv "Result" "empty response"
+        fi
+        print_network_failure_hints
         print_troubleshooting_url
         exit 1
     fi
@@ -5733,7 +6194,14 @@ else
     # the target is not writable or free disk is below max(3x tarball, 2GB).
     gating_preflight "${FILE_SIZE:-0}"
 
-    run_with_spinner "Release package download" curl -fsSL "$DOWNLOAD_URL" -o "$TEMP_FILE"
+    if ! run_with_spinner "Release package download" \
+        curl_download_to_file "$DOWNLOAD_URL" "$TEMP_FILE"; then
+        print_error "Could not download the release package."
+        print_kv "URL" "$DOWNLOAD_URL"
+        print_network_failure_hints
+        print_troubleshooting_url
+        exit 1
+    fi
 
     if [ -n "$CHECKSUM" ]; then
         EXPECTED_CHECKSUM="$CHECKSUM"
@@ -5747,6 +6215,7 @@ else
         fi
 
         if [ "$ACTUAL_CHECKSUM" = "$EXPECTED_CHECKSUM" ]; then
+            RELEASE_INTEGRITY="sha256 verified"
             print_success "Checksum verified"
         else
             print_error "Checksum mismatch"
@@ -5756,6 +6225,23 @@ else
             print_troubleshooting_url
             exit 1
         fi
+    else
+        # The checksum field is optional in the release metadata, and its absence
+        # used to be completely silent: the install finished with a green SUCCESS
+        # footer having verified nothing at all. Say so, in the same place the
+        # verified case is reported, and let a reviewer or a regulated site turn
+        # it into a hard stop with SEQDESK_REQUIRE_CHECKSUM=1.
+        RELEASE_INTEGRITY="NOT VERIFIED (no checksum published for v$LATEST_VERSION)"
+        if is_truthy "$SEQDESK_REQUIRE_CHECKSUM"; then
+            print_error "No checksum published for v$LATEST_VERSION and SEQDESK_REQUIRE_CHECKSUM is set."
+            print_error "Refusing to install an unverified release package."
+            rm -f "$TEMP_FILE"
+            print_troubleshooting_url
+            exit 1
+        fi
+        print_warning "No checksum published for v$LATEST_VERSION -- the download was NOT verified."
+        print_warning "The release metadata from $SEQDESK_API carried no 'checksum' field."
+        print_info "To make this a hard failure instead, re-run with SEQDESK_REQUIRE_CHECKSUM=1."
     fi
 fi
 
@@ -5774,6 +6260,23 @@ if is_truthy "$SEQDESK_RECONFIGURE"; then
         APP_DIR="$SEQDESK_DIR/current"
     else
         APP_DIR="$SEQDESK_DIR"
+    fi
+    # A private PostgreSQL provisioned during THIS reconfigure is deliberately
+    # not registered with launchd or systemd: start.sh is the only thing that
+    # brings it up. Reconfigure never rewrote start.sh, so after the next reboot
+    # pm2 resurrected the app while the database stayed down -- ECONNREFUSED
+    # with nothing on screen to connect it to. Rewrite the wrapper, but only
+    # when there is a private cluster to add, and only for the releases/current
+    # layout the wrapper is written for: a legacy flat install has no "current"
+    # directory for it to cd into and would be broken by a rewrite.
+    if [ "${SEQDESK_PRIVATE_POSTGRES:-false}" = "true" ]; then
+        if [ -e "$SEQDESK_DIR/current" ]; then
+            write_root_start_wrapper
+            print_info "Updated $SEQDESK_DIR/start.sh so it starts the SeqDesk PostgreSQL instance."
+        else
+            print_warning "This install predates the releases/current layout; $SEQDESK_DIR/start.sh was left unchanged."
+            print_info "Start the SeqDesk PostgreSQL instance yourself before the app, or reinstall to adopt the current layout."
+        fi
     fi
 else
     if [ -e "$SEQDESK_DIR" ]; then
@@ -5901,6 +6404,27 @@ if [ -z "$SEQDESK_NEXTAUTH_SECRET" ]; then
 fi
 
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
+
+# Materialize the storage directories captured during configuration. The config
+# now points at these paths, but only the default $SEQDESK_DIR/data is created
+# above (sync_release_shared_paths) -- an explicitly provided --data-path or
+# --run-dir override is never created. This has to sit immediately after
+# write_config, unconditionally: it used to live inside the seed-success branch,
+# which is also inside the non-reconfigure branch, so `--reconfigure` (the
+# documented repeat-install command) and a failed-but-deliberately-non-fatal
+# seed both left settings.json pointing at directories that do not exist.
+# Warn-only: a privileged or network mount may need manual creation and must not
+# abort an otherwise successful install.
+for storage_dir in "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"; do
+    [ -n "$storage_dir" ] || continue
+    [ -d "$storage_dir" ] && continue
+    if mkdir -p "$storage_dir" 2>/dev/null; then
+        print_success "Created directory: $storage_dir"
+    else
+        print_warning "Could not create $storage_dir -- create it manually before use"
+    fi
+done
+
 clear_bootstrap_plaintext_passwords
 export DATABASE_URL="$SEQDESK_DATABASE_URL"
 export DIRECT_URL="$SEQDESK_DATABASE_DIRECT_URL"
@@ -5941,24 +6465,6 @@ else
     ensure_seed_dependency "bcryptjs" || true
     if run_with_spinner_warn "Seed initial data" npm run db:seed; then
         SEED_OK="true"
-
-# Materialize the storage directories captured during configuration. The config
-# and DB infrastructure record now point at these paths, but only the default
-# $SEQDESK_DIR/data is created above (sync_release_shared_paths) -- an explicitly
-# provided --data-path/--run-dir override is never created. Create any provided
-# directory so the app does not reference a path that is missing on disk.
-# Warn-only: a privileged or network mount may need manual creation and must not
-# abort an otherwise successful install.
-for storage_dir in "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"; do
-    [ -n "$storage_dir" ] || continue
-    [ -d "$storage_dir" ] && continue
-    if mkdir -p "$storage_dir" 2>/dev/null; then
-        print_success "Created directory: $storage_dir"
-    else
-        print_warning "Could not create $storage_dir -- create it manually before use"
-    fi
-done
-
     fi
 
     # Fallback: run seed.mjs directly if prisma db seed failed
@@ -6171,6 +6677,31 @@ for f in settings.json seqdesk.config.json; do
         break
     fi
 done
+print_kv "Package integrity" "$RELEASE_INTEGRITY"
+
+# A SeqDesk-owned PostgreSQL is invisible to `brew services` and `systemctl`, so
+# this summary is the only place its location and its control command are ever
+# stated -- and it is the block a reviewer screenshots for the supplementary
+# materials. Printed only when the installer actually provisioned one; an
+# adopted or remote database is the operator's to document.
+if [ "${SEQDESK_PRIVATE_POSTGRES:-false}" = "true" ]; then
+    print_kv "Database" "SeqDesk-managed PostgreSQL (Unix socket only, no TCP port)"
+    print_kv "Database home" "$(private_postgres_root)"
+    print_kv "Database socket" "$(private_postgres_socket_dir):$PRIVATE_PG_PORT"
+    print_kv "Database log" "$(private_postgres_log_file)"
+    echo "  $SEQDESK_DIR/start.sh starts it; it is not a launchd or systemd service."
+    PRIVATE_PG_CTL="$(find_postgres_binary pg_ctl 2>/dev/null || true)"
+    if [ -n "$PRIVATE_PG_CTL" ]; then
+        echo "  To control it directly:"
+        printf '  %s -D %s -l %s start\n' \
+            "$(shell_quote "$PRIVATE_PG_CTL")" \
+            "$(shell_quote "$(private_postgres_data_dir)")" \
+            "$(shell_quote "$(private_postgres_log_file)")"
+        printf '  %s -D %s -m fast stop\n' \
+            "$(shell_quote "$PRIVATE_PG_CTL")" \
+            "$(shell_quote "$(private_postgres_data_dir)")"
+    fi
+fi
 print_kv "Started" "$INSTALL_STARTED_AT"
 print_kv "Finished" "$INSTALL_FINISHED_AT"
 print_kv "Elapsed" "$(format_elapsed "$ELAPSED")"
