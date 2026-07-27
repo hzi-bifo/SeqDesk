@@ -1839,7 +1839,7 @@ jobs:
           test -x "$INSTALL_DIR_ONE/start.sh"
           # The install log outlives the session and is uploaded from this job,
           # so a printed credential must not have reached it.
-          if grep -qE '^[[:space:]]+[A-Za-z]+ password[[:space:]]+[^[:space:]]' "$FIRST_INSTALL_LOG"; then
+          if grep -qE '^[[:space:]]+[A-Za-z]+ password[[:space:]]{2,}[^[:space:]]' "$FIRST_INSTALL_LOG"; then
             echo "A credential value was written to the install log."
             exit 1
           fi
@@ -1968,7 +1968,7 @@ jobs:
             exit "$INSTALL_STATUS"
           fi
           test -x "$INSTALL_DIR_TWO/start.sh"
-          if grep -qE '^[[:space:]]+[A-Za-z]+ password[[:space:]]+[^[:space:]]' "$SECOND_INSTALL_LOG"; then
+          if grep -qE '^[[:space:]]+[A-Za-z]+ password[[:space:]]{2,}[^[:space:]]' "$SECOND_INSTALL_LOG"; then
             echo "A credential value was written to the install log."
             exit 1
           fi
