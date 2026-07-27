@@ -9,24 +9,30 @@ green; each run records the versions that were actually observed.
 ## Required checks
 
 Every pull request, merge-queue candidate, push to `main`, release, scheduled
-run, and manual run executes both of these clean-install boundaries:
+run, and manual run executes all three of these clean-install boundaries:
 
 | Operating system | CPU | Node.js | PostgreSQL | Purpose |
 |---|---:|---:|---:|---|
 | Ubuntu 24.04 | x64 | 24 | 16 | Recommended current LTS environment |
 | Ubuntu 22.04 | x64 | 22.13.0 | 14 | Exact minimum supported dependency boundary |
+| macOS 15 | ARM64 | 24 | 16 | Second operating system, checked at merge time |
 
-These jobs use a PostgreSQL service prepared by the workflow, pre-create the
-test role and database, and pass explicit database URLs to the installer. They
-prove that SeqDesk installs, migrates, and runs against those PostgreSQL
-versions. They do **not** prove that the installer or a guide can install an OS
-package, enable a database service, or satisfy every distribution-specific
-authentication policy on a bare host.
+The macOS boundary was promoted from the weekly matrix to a required check
+because Homebrew, launchd, and the macOS PostgreSQL reuse path behave
+differently there and were previously unverified when a change merged.
 
-A stable aggregate gate fails if the candidate build or either installation is
-failed or skipped. The release workflow must pass this gate before it can
-publish the exact checksummed archive exercised by the matrix; it does not
-rebuild the release after the installation tests pass.
+These jobs use a PostgreSQL instance prepared by the workflow — a container
+service on Ubuntu, a Homebrew `postgresql@16` cluster started with `pg_ctl` on
+macOS — pre-create the test role and database, and pass explicit database URLs
+to the installer. They prove that SeqDesk installs, migrates, and runs against
+those PostgreSQL versions. They do **not** prove that the installer or a guide
+can install an OS package, enable a database service, or satisfy every
+distribution-specific authentication policy on a bare host.
+
+A stable aggregate gate fails if the candidate build or any of the three
+installations is failed or skipped. The release workflow must pass this gate
+before it can publish the exact checksummed archive exercised by the matrix; it
+does not rebuild the release after the installation tests pass.
 
 ## Extended weekly and manual matrix
 
@@ -37,7 +43,7 @@ the candidate for every job.
 | Environment | CPU | Node.js | PostgreSQL | Scope |
 |---|---:|---:|---:|---|
 | Ubuntu 24.04 | ARM64 | 24 | 17 | Application install |
-| macOS 15 | ARM64 | 24 | 16 | Application install |
+| macOS 15 | ARM64 | 24 | 16 | Application install (weekly repeat of the required macOS check) |
 | macOS 15 | Intel x64 | 24 | 16 | Application install |
 | Debian 12 container | x64 | current 22 LTS | 18 | Application install |
 | Rocky Linux 9 container | x64 | 24 | 15 | Application install |

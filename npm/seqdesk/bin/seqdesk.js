@@ -11,6 +11,13 @@ const { version } = require("../package.json");
 
 const INSTALL_URL = process.env.SEQDESK_INSTALL_URL || "https://seqdesk.org/install.sh";
 const DEFAULT_PROFILE_REGISTRY_URL = "https://seqdesk.org/api/install-profiles";
+// Troubleshooting targets shared with the installer, which prints the same
+// pages next to its own failures. Keep them identical so a reviewer who hits
+// the problem during install and again in doctor lands on one page.
+const DOCS_INSTALLATION_URL = "https://seqdesk.org/docs/installation";
+const DOCS_COMMON_PROBLEMS_URL = "https://seqdesk.org/docs/installation/common-problems";
+const DOCS_POSTGRES_URL =
+  "https://seqdesk.org/docs/installation/quickstart#postgresql-cannot-be-reached-or-migrations-fail";
 const args = process.argv.slice(2);
 
 if (process.platform === "win32") {
@@ -83,6 +90,16 @@ function firstNumber(...values) {
     }
   }
   return undefined;
+}
+
+// Remediation text contains ready-to-paste shell commands, so paths with
+// spaces or shell metacharacters have to be quoted the way the installer's
+// shell_quote does it.
+function shellQuote(value) {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function parseDoctorArgs(argv) {
@@ -348,8 +365,15 @@ function parsePipelineLauncherArgs(argv) {
   return options;
 }
 
-function addCheck(checks, status, name, detail = "") {
-  checks.push({ status, name, detail });
+// `remediation` is optional and only added to the emitted check when a caller
+// supplies one, so the JSON report keeps its existing shape for passing checks
+// and for any consumer that compares whole check objects.
+function addCheck(checks, status, name, detail = "", remediation = "") {
+  const check = { status, name, detail };
+  if (remediation) {
+    check.remediation = remediation;
+  }
+  checks.push(check);
 }
 
 function readJsonFile(file) {
@@ -386,7 +410,40 @@ function summarizePostgresUrl(value) {
   const parsed = new URL(value);
   const database = decodeURIComponent(parsed.pathname.replace(/^\/+/, "")) || "(no database)";
   const port = parsed.port || "5432";
-  return `${parsed.hostname}:${port}/${database}`;
+  const socketDir = postgresSocketDirectory(parsed);
+  if (socketDir) {
+    return `${socketDir}:${port}/${database} (Unix socket)`;
+  }
+  return `${postgresTcpHost(parsed)}:${port}/${database}`;
+}
+
+function postgresSocketDirectory(parsed) {
+  const configuredHost = (parsed.searchParams.get("host") || "").trim();
+  return path.isAbsolute(configuredHost) ? path.normalize(configuredHost) : "";
+}
+
+// libpq lets a `host=` query parameter override the host component of the URI.
+// An absolute value selects a Unix socket directory (postgresSocketDirectory);
+// anything else is the real TCP host, and the URI host is then ignored. Without
+// this, postgresql://user:pw@ignored/db?host=db.example.org would be probed as
+// "ignored" and could report a pass for a server that was never contacted.
+function postgresTcpHost(parsed) {
+  const configuredHost = (parsed.searchParams.get("host") || "").trim();
+  if (configuredHost && !path.isAbsolute(configuredHost)) {
+    return configuredHost;
+  }
+  return parsed.hostname;
+}
+
+// URL.hostname keeps the square brackets around an IPv6 literal ("[::1]"), and
+// net.createConnection then treats them as part of a DNS name and fails with
+// ENOTFOUND. The shell installer strips them the same way before probing a
+// database host (scripts/install.sh, db_probe_host).
+function stripIpv6Brackets(host) {
+  if (host.length > 1 && host.startsWith("[") && host.endsWith("]")) {
+    return host.slice(1, -1);
+  }
+  return host;
 }
 
 function validatePostgresUrl(value) {
@@ -405,7 +462,9 @@ function validatePostgresUrl(value) {
     return { ok: false, detail: `expected postgresql:// URL, got ${parsed.protocol || "unknown"}` };
   }
 
-  if (!parsed.hostname) {
+  const socketDir = postgresSocketDirectory(parsed);
+  const host = postgresTcpHost(parsed);
+  if (!host && !socketDir) {
     return { ok: false, detail: "missing host" };
   }
 
@@ -413,12 +472,43 @@ function validatePostgresUrl(value) {
     return { ok: false, detail: "missing database name" };
   }
 
-  return { ok: true, detail: summarizePostgresUrl(value), parsed };
+  return {
+    ok: true,
+    detail: summarizePostgresUrl(value),
+    parsed,
+    socketDir,
+    host,
+  };
 }
 
 function connectTcp(host, port, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection({ host, port });
+    const socket = net.createConnection({ host: stripIpv6Brackets(host), port });
+    let settled = false;
+
+    function finish(error) {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    }
+
+    socket.setTimeout(timeoutMs, () => {
+      finish(new Error(`timed out after ${timeoutMs}ms`));
+    });
+    socket.once("connect", () => finish());
+    socket.once("error", (error) => finish(error));
+  });
+}
+
+function connectUnixSocket(socketDir, port, timeoutMs) {
+  const socketPath = path.join(socketDir, `.s.PGSQL.${port}`);
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ path: socketPath });
     let settled = false;
 
     function finish(error) {
@@ -548,6 +638,11 @@ function printCheck(check) {
   const color = check.status === "warn" ? style.yellow : style.red;
   const detailSuffix = check.detail ? ` - ${check.detail}` : "";
   console.log(`  ${color}${label}${style.reset} ${check.name}${detailSuffix}`);
+  if (check.remediation) {
+    // Print the next step directly under the failure it belongs to. A separate
+    // summary block would force the reader to match failures to advice by name.
+    console.log(`    -> ${check.remediation}`);
+  }
 }
 
 function printDoctorResult(result) {
@@ -596,7 +691,13 @@ async function runDoctor(argv) {
   };
 
   if (!dirExists(installDir)) {
-    addCheck(checks, "fail", "Install directory", "directory does not exist");
+    addCheck(
+      checks,
+      "fail",
+      "Install directory",
+      "directory does not exist",
+      `Pass --dir with the directory the installer reported, or install first: curl -fsSL ${INSTALL_URL} | bash`
+    );
     for (const check of checks) result.summary[check.status] += 1;
     if (options.json) {
       console.log(JSON.stringify(result, null, 2));
@@ -616,7 +717,13 @@ async function runDoctor(argv) {
   const packagePath = path.join(installDir, "package.json");
   let packageJson = null;
   if (!fileExists(packagePath)) {
-    addCheck(checks, "fail", "package.json", "missing");
+    addCheck(
+      checks,
+      "fail",
+      "package.json",
+      "missing",
+      `${installDir} is not a SeqDesk installation. Point --dir at the directory the installer reported.`
+    );
   } else {
     try {
       packageJson = readJsonFile(packagePath);
@@ -624,7 +731,13 @@ async function runDoctor(argv) {
       const appVersion = firstString(packageJson.version) || "unknown";
       addCheck(checks, "pass", "package.json", `${name}@${appVersion}`);
     } catch (error) {
-      addCheck(checks, "fail", "package.json", `invalid JSON: ${error.message}`);
+      addCheck(
+        checks,
+        "fail",
+        "package.json",
+        `invalid JSON: ${error.message}`,
+        `Reinstall over this directory to restore the release files. See ${DOCS_COMMON_PROBLEMS_URL}`
+      );
     }
   }
 
@@ -637,22 +750,44 @@ async function runDoctor(argv) {
       .find(fileExists) || path.join(installDir, "settings.json");
   const configName = path.basename(configPath);
   let config = null;
+  // Ready-to-paste repair commands, in the same form the installer prints when
+  // it tells an operator how to reconfigure or re-seed an existing install.
+  const reconfigureHint = `npx -y seqdesk@latest -y --reconfigure --dir ${shellQuote(installDir)}`;
+  const reseedHint = `npx -y seqdesk@latest -y --reconfigure --reseed-db --dir ${shellQuote(installDir)}`;
   if (!fileExists(configPath)) {
-    addCheck(checks, "fail", configName, "missing");
+    addCheck(
+      checks,
+      "fail",
+      configName,
+      "missing",
+      `The runtime config was never written or was deleted. Recreate it with: ${reconfigureHint}`
+    );
   } else {
     try {
       config = readJsonFile(configPath);
       addCheck(checks, "pass", configName, "parseable");
     } catch (error) {
-      addCheck(checks, "fail", configName, `invalid JSON: ${error.message}`);
+      addCheck(
+        checks,
+        "fail",
+        configName,
+        `invalid JSON: ${error.message}`,
+        `Fix the JSON syntax in ${configPath}, or rewrite it with: ${reconfigureHint}`
+      );
     }
   }
 
   const startPath = path.join(installDir, "start.sh");
   if (!fileExists(startPath)) {
-    addCheck(checks, "fail", "start.sh", "missing");
+    addCheck(
+      checks,
+      "fail",
+      "start.sh",
+      "missing",
+      `The start wrapper is missing, so SeqDesk cannot be started. Recreate it with: ${reconfigureHint}`
+    );
   } else if (!checkExecutable(startPath)) {
-    addCheck(checks, "fail", "start.sh", "not executable");
+    addCheck(checks, "fail", "start.sh", "not executable", `chmod +x ${shellQuote(startPath)}`);
   } else {
     addCheck(checks, "pass", "start.sh", "executable");
   }
@@ -665,7 +800,13 @@ async function runDoctor(argv) {
       appDir === installDir ? "present" : "present in current release"
     );
   } else {
-    addCheck(checks, "fail", "node_modules", "missing");
+    addCheck(
+      checks,
+      "fail",
+      "node_modules",
+      "missing",
+      `Production dependencies are absent, so the app cannot start. Reinstall the release: curl -fsSL ${INSTALL_URL} | bash`
+    );
   }
 
   if (dirExists(path.join(appDir, ".next", "static"))) {
@@ -692,14 +833,51 @@ async function runDoctor(argv) {
     if (databaseValidation.ok) {
       addCheck(checks, "pass", "runtime.databaseUrl", databaseValidation.detail);
       const port = Number(databaseValidation.parsed.port || "5432");
-      try {
-        await connectTcp(databaseValidation.parsed.hostname, port, options.timeoutMs);
-        addCheck(checks, "pass", "PostgreSQL TCP", `${databaseValidation.parsed.hostname}:${port} reachable`);
-      } catch (error) {
-        addCheck(checks, "fail", "PostgreSQL TCP", `${databaseValidation.parsed.hostname}:${port} unreachable: ${error.message}`);
+      if (databaseValidation.socketDir) {
+        try {
+          await connectUnixSocket(databaseValidation.socketDir, port, options.timeoutMs);
+          addCheck(
+            checks,
+            "pass",
+            "PostgreSQL socket",
+            `${databaseValidation.socketDir}:${port} reachable`
+          );
+        } catch (error) {
+          const socketPath = path.join(
+            databaseValidation.socketDir,
+            `.s.PGSQL.${port}`
+          );
+          addCheck(
+            checks,
+            "fail",
+            "PostgreSQL socket",
+            `${databaseValidation.socketDir}:${port} unreachable (${socketPath}): ${error.message}`,
+            `Start the server that owns this socket directory (an installer-managed cluster is started by ${shellQuote(startPath)}), or correct the host= parameter of runtime.databaseUrl. See ${DOCS_POSTGRES_URL}`
+          );
+        }
+      } else {
+        const host = databaseValidation.host;
+        try {
+          await connectTcp(host, port, options.timeoutMs);
+          addCheck(checks, "pass", "PostgreSQL TCP", `${host}:${port} reachable`);
+        } catch (error) {
+          addCheck(
+            checks,
+            "fail",
+            "PostgreSQL TCP",
+            `${host}:${port} unreachable: ${error.message}`,
+            `Confirm PostgreSQL is running and reachable: pg_isready -h ${shellQuote(stripIpv6Brackets(host))} -p ${port}. See ${DOCS_POSTGRES_URL}`
+          );
+        }
       }
     } else {
-      addCheck(checks, "fail", "runtime.databaseUrl", databaseValidation.detail);
+      addCheck(
+        checks,
+        "fail",
+        "runtime.databaseUrl",
+        databaseValidation.detail,
+        `Set runtime.databaseUrl in ${configName} to postgresql://user:password@host:5432/dbname (append ?host=/path/to/socket/dir for a Unix socket), or rewrite it with: ${reconfigureHint}`
+      );
     }
 
     if (directUrl) {
@@ -708,7 +886,10 @@ async function runDoctor(argv) {
         checks,
         directValidation.ok ? "pass" : "fail",
         "runtime.directUrl",
-        directValidation.detail
+        directValidation.detail,
+        directValidation.ok
+          ? ""
+          : `Set runtime.directUrl in ${configName} to the same database in postgresql:// form, or remove it to fall back to runtime.databaseUrl.`
       );
     } else {
       addCheck(checks, "warn", "runtime.directUrl", "missing; databaseUrl will be used as fallback");
@@ -723,7 +904,13 @@ async function runDoctor(argv) {
     if (nextAuthSecret) {
       addCheck(checks, "pass", "runtime.nextAuthSecret", "set");
     } else {
-      addCheck(checks, "fail", "runtime.nextAuthSecret", "missing");
+      addCheck(
+        checks,
+        "fail",
+        "runtime.nextAuthSecret",
+        "missing",
+        `Sessions cannot be signed without it. Add runtime.nextAuthSecret to ${configName} (generate one with: openssl rand -base64 32) and restart SeqDesk.`
+      );
     }
 
     addCheck(checks, config.telemetry?.enabled === true ? "pass" : "warn", "telemetry", summarizeTelemetry(config));
@@ -737,22 +924,38 @@ async function runDoctor(argv) {
         checks,
         inferred.source === "option" ? "fail" : "warn",
         "App URL",
-        `invalid URL: ${inferred.url}`
+        `invalid URL: ${inferred.url}`,
+        inferred.source === "option"
+          ? "Pass a full URL including the scheme, for example: --url http://127.0.0.1:8000"
+          : `Set runtime.nextAuthUrl in ${configName} to a full URL including the scheme, for example http://127.0.0.1:8000`
       );
       addCheck(checks, "warn", "HTTP checks", "skipped because app URL is invalid");
     } else if (!appUrl) {
       addCheck(checks, "warn", "HTTP checks", "skipped; pass --url or configure runtime.nextAuthUrl/app.port");
     } else {
       const unreachableStatus = inferred.source === "option" ? "fail" : "warn";
+      const unreachableRemediation = `Start SeqDesk with ${shellQuote(startPath)} (or check "pm2 status" if it runs under pm2) and confirm the URL is ${appUrl}. See ${DOCS_COMMON_PROBLEMS_URL}`;
       try {
         const providers = await fetchJson(`${appUrl}/api/auth/providers`, options.timeoutMs);
         if (providers && isPlainObject(providers.credentials)) {
           addCheck(checks, "pass", "HTTP /api/auth/providers", "credentials auth available");
         } else {
-          addCheck(checks, "fail", "HTTP /api/auth/providers", "credentials auth missing");
+          addCheck(
+            checks,
+            "fail",
+            "HTTP /api/auth/providers",
+            "credentials auth missing",
+            `SeqDesk answered but exposes no credentials login. Check runtime.nextAuthUrl and runtime.nextAuthSecret in ${configName}, restart SeqDesk, then re-run doctor.`
+          );
         }
       } catch (error) {
-        addCheck(checks, unreachableStatus, "HTTP /api/auth/providers", error.message);
+        addCheck(
+          checks,
+          unreachableStatus,
+          "HTTP /api/auth/providers",
+          error.message,
+          unreachableRemediation
+        );
       }
 
       try {
@@ -760,12 +963,30 @@ async function runDoctor(argv) {
         if (setupStatus?.configured === true) {
           addCheck(checks, "pass", "HTTP /api/setup/status", "database configured");
         } else if (setupStatus?.exists === true) {
-          addCheck(checks, "warn", "HTTP /api/setup/status", setupStatus.error || "database exists but is not seeded");
+          addCheck(
+            checks,
+            "warn",
+            "HTTP /api/setup/status",
+            setupStatus.error || "database exists but is not seeded",
+            `Seed the bootstrap accounts with: ${reseedHint}`
+          );
         } else {
-          addCheck(checks, "fail", "HTTP /api/setup/status", setupStatus?.error || "database not configured");
+          addCheck(
+            checks,
+            "fail",
+            "HTTP /api/setup/status",
+            setupStatus?.error || "database not configured",
+            `The app cannot use its database. Verify the PostgreSQL check above, then apply migrations and seed with: ${reseedHint}`
+          );
         }
       } catch (error) {
-        addCheck(checks, unreachableStatus, "HTTP /api/setup/status", error.message);
+        addCheck(
+          checks,
+          unreachableStatus,
+          "HTTP /api/setup/status",
+          error.message,
+          unreachableRemediation
+        );
       }
     }
   }
@@ -1110,7 +1331,7 @@ async function main() {
     console.log("  --config <path>      Read unattended installation settings from JSON");
     console.log("");
     console.log("Local-only binding: SEQDESK_BIND_HOST=127.0.0.1 seqdesk --interactive");
-    console.log("Full guide: https://seqdesk.org/docs/installation");
+    console.log(`Full guide: ${DOCS_INSTALLATION_URL}`);
     return;
   }
 

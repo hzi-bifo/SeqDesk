@@ -14,8 +14,10 @@ Required:
 - PostgreSQL 14+ *(optional)* — SeqDesk only needs an existing server if you
   want it to use one. When no reusable local server is found, the installer
   creates and starts its **own private, socket-only PostgreSQL cluster** under
-  `$HOME/.seqdesk/postgres` (override with `SEQDESK_PG_HOME`; the path must be
-  85 characters or shorter). This requires running the installer as a normal
+  `$HOME/.seqdesk/postgres` (override with `SEQDESK_PG_HOME`). The installer
+  appends `/socket` to that directory and caps the resulting socket directory
+  at 85 characters, so `SEQDESK_PG_HOME` itself must be **78 characters or
+  shorter**. This requires running the installer as a normal
   non-root user — it refuses to create a cluster owned by root. On Linux, root
   or passwordless sudo is needed only to install the `postgresql` server
   package when `initdb`/`pg_ctl` are missing.
@@ -64,8 +66,10 @@ SQL
 Note that when SeqDesk adopts a pre-existing *system* PostgreSQL it administers
 it via `sudo -n -u postgres psql`, so passwordless sudo is required on that
 path. The installer also will not adopt a socket owned by another OS user (for
-example `/var/run/postgresql` owned by `postgres`) — that is a hard failure
-unless you pass an explicit `--database-url`.
+example `/var/run/postgresql` owned by `postgres`). That is **not** a failure:
+it prints a warning naming the socket's real owner, skips that candidate, and
+continues down the list — normally ending at its own private cluster. Pass an
+explicit `--database-url` only when you want that other server to be used.
 
 Set database URLs (only for the self-managed path):
 
@@ -193,8 +197,21 @@ Expected result:
 - `/api/auth/providers` includes credentials auth.
 - `/api/setup/status` reports the database as configured.
 
+Reading the Unix-socket form of `runtime.databaseUrl` — the
+`…?schema=public&host=<socket dir>` URL a private cluster gets — requires a
+launcher **newer than 1.1.122**. Version 1.1.122 ignores the `host=` parameter,
+falls back to a TCP probe of `localhost:5432`, and reports
+`PostgreSQL TCP … unreachable` on an install that is in fact healthy. On that
+version, confirm the database by hand instead:
+
+```bash
+psql -h "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}/socket" \
+  -d seqdesk -c 'select 1'
+```
+
 Warnings are acceptable when the app is intentionally stopped and no `--url`
-is passed. Failures should be fixed before using the install for real data.
+is passed. Failures should be fixed before using the install for real data —
+except that one known socket false positive on launcher 1.1.122.
 
 ## 6. Hosted Profile Checks
 
@@ -292,10 +309,23 @@ npx -y seqdesk@latest --interactive \
   --without-pipelines
 ```
 
-Installer diagnostics are saved under `/tmp/seqdesk-install-*.log` (override
-with `SEQDESK_LOG`). Add `--verbose` (or `SEQDESK_VERBOSE=1`) to promote that
-diagnostic narration to the terminal instead of only the log — useful when a
-run fails before the log path is printed. Check the app and PostgreSQL with:
+Installer diagnostics go to a log the installer creates for itself: a file only
+you can read, with an unpredictable name under `$TMPDIR` (or `/tmp` when
+`TMPDIR` is unset). Do not guess the name — the installer prints it as `Log:`
+in the banner before the first step, in the closing summary, and again if the
+run fails. For a fixed, known path (the practical choice when the log is an
+attachment to a bug report), export `SEQDESK_LOG` before the run:
+
+```bash
+export SEQDESK_LOG="$HOME/seqdesk-install.log"
+```
+
+Add `--verbose` (or `SEQDESK_VERBOSE=1`) to promote that diagnostic narration to
+the terminal instead of only the log. The installer honours several other
+environment variables that matter on a locked-down or slow test host —
+`SEQDESK_REQUIRE_CHECKSUM`, the `SEQDESK_CURL_*` timeouts and retries, and the
+`SEQDESK_MINICONDA_*` mirror/pin overrides; see the notes in
+[README.md](./README.md) for their defaults. Check the app and PostgreSQL with:
 
 ```bash
 seqdesk doctor --dir "$SEQDESK_INSTALL_DIR" \

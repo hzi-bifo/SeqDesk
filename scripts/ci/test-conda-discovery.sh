@@ -81,9 +81,32 @@ TEST_ROOT="$(mktemp -d)"
 OUT="$TEST_ROOT/output.txt"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 ORIGINAL_PATH="$PATH"
-CLEAN_PATH="/usr/bin:/bin"
+# The discovery cases need a PATH that still has the ordinary tools (mkdir,
+# chmod, sed) but no working Conda, because resolve_conda_runtime checks PATH
+# before the $HOME standard prefixes. Dropping /usr/bin is not enough: GitHub's
+# ubuntu images ship a real Miniconda at /usr/share/miniconda linked into
+# /usr/bin, and on a usrmerge distro /bin is a symlink to /usr/bin, so conda
+# stays reachable either way. Instead put a stub that always fails in front of
+# it: `command -v conda` still finds something, `conda --version` fails, and the
+# installer falls through to the prefix search exactly as it does on a
+# Conda-free host.
+CLEAN_BIN="$TEST_ROOT/clean-bin"
+mkdir -p "$CLEAN_BIN"
+{
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' 'exit 127'
+} > "$CLEAN_BIN/conda"
+chmod +x "$CLEAN_BIN/conda"
+CLEAN_PATH="$CLEAN_BIN:/usr/bin:/bin"
 PATH="$CLEAN_PATH"
 unset CONDA_EXE
+
+# Fail the whole suite loudly if the isolation ever breaks again, instead of
+# letting every prefix assertion drift into a confusing mismatch.
+if command -v conda >/dev/null 2>&1 && conda --version >/dev/null 2>&1; then
+    echo "FAIL: test PATH is not conda-free: $(command -v conda)" >&2
+    exit 2
+fi
 
 echo "Testing $INSTALLER_VARIANT installer: $INSTALLER_PATH"
 echo ""

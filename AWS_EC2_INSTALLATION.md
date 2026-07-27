@@ -208,32 +208,41 @@ Answer the prompts as follows:
    PostgreSQL. PostgreSQL stays private on this instance. If no local
    PostgreSQL server is already running, SeqDesk creates and owns one: a private
    cluster under `${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}` holding `data/`,
-   `socket/`, and `server.log` at mode 0700. It is configured with
-   `listen_addresses = ''` and a Unix socket only — nothing is ever exposed on
-   TCP 5432, which is why the security group needs no 5432 rule — and its
-   superuser is the `ubuntu` login user through peer authentication. Set
-   `SEQDESK_PG_HOME` before installing to relocate it; the path must stay 85
-   characters or shorter.
+   `socket/`, and `server.log`, with the cluster directory and its socket
+   directory set to mode 0700. It is configured with `listen_addresses = ''` and
+   a Unix socket only — nothing is ever exposed on TCP 5432, which is why the
+   security group needs no 5432 rule — and its superuser is the `ubuntu` login
+   user through peer authentication. Set `SEQDESK_PG_HOME` before installing to
+   relocate it; that path must stay **78 characters or shorter**, because
+   SeqDesk appends `/socket` to it and caps the resulting socket directory at 85
+   characters.
 2. Enter an administrator email and a strong test password. Leaving the password
    blank makes the installer generate a strong one, but it is deliberately not
    printed at the prompt — the wizard only says that a strong password was
-   generated and is shown when the install finishes. It is printed exactly once
-   at the very end, next to the browser URL, and is never written to the install
-   log, so copy it from that final summary.
+   generated and is shown when the install finishes. It is printed exactly once,
+   in the **Login** block near the end of the run, and is never written to the
+   install log, so copy it before closing the terminal.
 3. Create a researcher account if you want to test both roles.
-4. The wizard asks nothing further; it covers only the database and the two
+4. The guided questions end here; they cover only the database and the two
    accounts.
-5. The installer then prints a **Preflight summary** (`Target directory
+5. The installer prints a **Preflight summary** (`Target directory
    /home/ubuntu/seqdesk`, `Writable`, `Disk available`, `Node.js`, `npm`,
-   `Pipelines`) and, after the download, a **Configuration summary**
-   (`Pipelines: enabled`, `Port: 8000`, `NEXTAUTH_URL: http://PUBLIC_IP:8000`,
+   `Conda`, `Nextflow`, `Pipelines`) and then downloads and extracts the
+   release.
+6. A short setup wizard runs next. It asks for the **App port** — press Enter to
+   keep the `8000` that `--port 8000` already selected — prints its own
+   **Review** block (port, `NEXTAUTH_URL`, data path, run directory,
+   `DATABASE_URL`) and asks `Continue with these settings?` itself.
+7. The installer then prints its own **Configuration summary** (`Pipelines:
+   enabled`, `Port: 8000`, `NEXTAUTH_URL: http://PUBLIC_IP:8000`,
    `DATABASE_URL`, the admin and researcher accounts, and `settings.json`),
-   followed by the prompt `Continue with these settings? (Y/n):`.
-6. Answer `Y` only if those values are correct; `n` cancels the installation.
+   followed by the prompt `Continue with these settings? (Y/n):`. Confirming the
+   wizard does not confirm this one; both have to be answered.
+8. Answer `Y` only if those values are correct; `n` cancels the installation.
 
 The installer downloads SeqDesk, creates the database, installs Conda/Nextflow,
 starts PM2, and runs health checks. Do not close the terminal. At the end note
-the printed **Browser URL**, **Install directory**, and **Log**.
+the printed **Browser URL**, **Directory**, and **Log**.
 
 ## 5. Enable startup after reboot
 
@@ -267,7 +276,19 @@ curl -fsS http://127.0.0.1:8000/api/setup/status
 ```
 
 The doctor should confirm the files, configuration, PostgreSQL, authentication,
-and HTTP endpoint. Fix failures before proceeding.
+and HTTP endpoint. Fix failures before proceeding — with one documented
+exception. Reading the Unix-socket `DATABASE_URL` of a SeqDesk-provisioned
+private cluster requires a launcher **newer than 1.1.122**; version 1.1.122
+ignores the `host=` parameter, probes `localhost:5432` over TCP instead, and
+reports `PostgreSQL TCP … unreachable` on a perfectly healthy install. If that
+is the only failure and this instance uses the private cluster, upgrade the
+launcher (`sudo npm install -g seqdesk@latest`) or confirm the database
+directly:
+
+```bash
+psql -h "${SEQDESK_PG_HOME:-$HOME/.seqdesk/postgres}/socket" \
+  -d seqdesk -c 'select 1'
+```
 
 Useful commands:
 
@@ -502,12 +523,23 @@ with `10.`, `172.16`–`172.31`, or `192.168`.
 Re-run the install with `--verbose` (or `SEQDESK_VERBOSE=1`) to promote the
 installer's diagnostic narration from the log to the terminal, for example
 `seqdesk --interactive --verbose --dir /home/ubuntu/seqdesk --port 8000 …`.
-Without it, that detail exists only in `/tmp/seqdesk-install-<timestamp>.log`
-(mode 0600, overridable with `SEQDESK_LOG`).
+Without it, that detail exists only in the install log, which the installer
+creates for itself under `$TMPDIR` (`/tmp` on this Ubuntu image) with an
+unpredictable name and mode 0600. Its path is printed as `Log:` in the banner
+before the first step, in the closing summary, and again when a run fails, so
+read it from the terminal — or pick a fixed path before re-running:
 
 ```bash
-ls -1t /tmp/seqdesk-install-*.log | head -n 1
-tail -n 100 /tmp/seqdesk-install-*.log
+export SEQDESK_LOG="$HOME/seqdesk-install.log"
+seqdesk --interactive --verbose --dir /home/ubuntu/seqdesk --port 8000
+tail -n 100 "$SEQDESK_LOG"
+```
+
+For a run that already finished and scrolled away, take the newest log in the
+temporary directory:
+
+```bash
+ls -1t "${TMPDIR:-/tmp}"/seqdesk-install-*.log | head -n 1
 df -h
 free -h
 ```
@@ -560,15 +592,38 @@ installer remains a valid choice, not a requirement.
 ### Conda or pipeline setup fails
 
 Pipeline setup needs more disk, memory, and network access than the UI-only
-install. Check the failed install log plus the host and environment:
+install.
+
+The Conda base is not always `/home/ubuntu/miniconda3`. The installer reuses a
+Conda already on `PATH` when it finds one, installs Miniconda to
+`/home/ubuntu/miniconda3` when that path is free, and falls back to
+`/home/ubuntu/seqdesk-miniconda3` when it is not. The installer does not record
+the base in `settings.json` — it stores it with the infrastructure settings in
+the database — so find it on disk rather than assuming one, and check the failed
+install log plus the host and environment:
 
 ```bash
 df -h
 free -h
-/home/ubuntu/miniconda3/bin/conda env list
-/home/ubuntu/miniconda3/bin/conda run -n seqdesk-pipelines java -version
-/home/ubuntu/miniconda3/bin/conda run -n seqdesk-pipelines nextflow -version
+
+CONDA_BASE=""
+for candidate in "$(command -v conda >/dev/null 2>&1 && conda info --base)" \
+                 /home/ubuntu/miniconda3 /home/ubuntu/seqdesk-miniconda3; do
+    if [ -n "$candidate" ] && [ -x "$candidate/bin/conda" ]; then
+        CONDA_BASE="$candidate"
+        break
+    fi
+done
+printf 'Conda base: %s\n' "${CONDA_BASE:-none found}"
+
+"$CONDA_BASE/bin/conda" env list
+"$CONDA_BASE/bin/conda" run -n seqdesk-pipelines java -version
+"$CONDA_BASE/bin/conda" run -n seqdesk-pipelines nextflow -version
 ```
+
+If neither directory holds a runnable `bin/conda`, Miniconda was never installed;
+read the install log to see how far the pipeline setup got. Settings → Infrastructure
+in the running app shows the Conda path SeqDesk recorded.
 
 Use at least the `t3.large` and 100 GiB configuration from this guide. If Conda
 package downloads timed out, confirm the instance has outbound HTTPS access and

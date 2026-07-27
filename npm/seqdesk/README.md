@@ -69,12 +69,16 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 - You normally do not need to set up PostgreSQL yourself. The installer reuses a
   healthy local server or a Unix socket it can administer when it finds one;
   otherwise it creates its own private, socket-only cluster under
-  `$HOME/.seqdesk/postgres` (override with `SEQDESK_PG_HOME`). That cluster
-  opens no TCP port and is not registered with systemd or launchd, so the
-  install directory's `start.sh` starts it before the app. Run the installer as
-  your normal non-root user: it refuses to create a cluster owned by root. Pass
-  `--database-url` only for a database you manage yourself; an explicit URL is
-  never silently retargeted.
+  `$HOME/.seqdesk/postgres` (override with `SEQDESK_PG_HOME`, which must be 78
+  characters or shorter: `/socket` is appended and the resulting socket
+  directory is capped at 85 characters). That cluster opens no TCP port and is
+  not registered with systemd or launchd, so the install directory's `start.sh`
+  starts it before the app. Run the installer as your normal non-root user: it
+  refuses to create a cluster owned by root. Pass `--database-url` only for a
+  database you manage yourself; an explicit URL is never silently retargeted.
+  A local socket owned by a different OS user (for example
+  `/var/run/postgresql`) is skipped with a warning rather than treated as an
+  error — the installer simply moves on and provisions its own cluster.
 - `$HOME/seqdesk` is used above as a writable evaluation path. For a production
   system location, have an administrator prepare a parent owned by the
   non-root SeqDesk service account, then install into a new child directory.
@@ -85,14 +89,37 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
   to the shell installer become visible at `https://seqdesk.org/install.sh`
   only after the SeqDesk.com `public/install.sh` file is updated and deployed.
 - By default it sets `SEQDESK_VERSION` to this package version (unless already set).
-- The installer writes a timestamped log to `/tmp/seqdesk-install-*.log` unless
-  `SEQDESK_LOG` is set.
+- The installer creates its own log: a file only you can read, with an
+  unpredictable name under `$TMPDIR` (or `/tmp` when `TMPDIR` is unset). Do not
+  guess the path — the installer prints it as `Log:` in the banner before the
+  first step, in the closing summary, and again if the run fails. Set
+  `SEQDESK_LOG=/path/install.log` beforehand to choose the path yourself.
+- Other environment variables worth knowing, all read by the installer this
+  launcher runs:
+  - `SEQDESK_REQUIRE_CHECKSUM=1` refuses to install a release whose metadata
+    publishes no checksum. Unset, a missing checksum is a loud warning and the
+    closing summary reports `Package integrity: NOT VERIFIED`; a *mismatching*
+    checksum always aborts.
+  - `SEQDESK_CURL_CONNECT_TIMEOUT` (default `10`), `SEQDESK_CURL_MAX_TIME`
+    (`120`, for release metadata, install profiles, and a `--config` URL),
+    `SEQDESK_CURL_DOWNLOAD_MAX_TIME` (`1800`, for the release tarball), and
+    `SEQDESK_CURL_RETRIES` (`2`) — all in seconds per attempt. Raise them on a
+    slow or proxied link. The Miniconda installer is fetched with no time
+    ceiling, so no `MAX_TIME` applies to it.
+  - `SEQDESK_MINICONDA_BASE_URL` (default
+    `https://repo.anaconda.com/miniconda`) and `SEQDESK_MINICONDA_INSTALLER`
+    (unset, meaning the rolling `-latest-` build for the detected OS and CPU)
+    point Miniconda at an internal mirror or pin one exact installer file name.
 - Interactive installs show a compact spinner for long-running work; command
   output stays in the install log. Pass `--verbose` (or set `SEQDESK_VERBOSE=1`)
   to mirror the diagnostic detail to the terminal.
 - `seqdesk doctor` runs locally and does not download the installer. It checks
   install files, PostgreSQL reachability, runtime config, auth providers, and
-  setup status when the app URL is known.
+  setup status when the app URL is known. Reachability over a Unix socket — the
+  `host=<socket dir>` form a private cluster's `DATABASE_URL` uses — is
+  understood only in versions **newer than 1.1.122**; 1.1.122 falls back to a
+  TCP probe of the URL's host name and reports a false
+  `PostgreSQL TCP … unreachable` for such an install.
 - `seqdesk assets apply` runs locally against an existing install. It resolves
   hosted install profiles into a temporary file, calls the installed
   `scripts/apply-install-profile-assets.mjs` script, and removes the temporary

@@ -3,16 +3,44 @@ name: Install (Ubuntu)
 on:
   push:
     branches: [main]
+  pull_request:
+    # `labeled` is in the list on purpose: the default set stops at
+    # opened/synchronize/reopened, so adding the `installer-e2e` label to an
+    # open PR would otherwise do nothing until the next push -- the label would
+    # look like a switch that is not wired to anything.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
+
+# Cost split between pull requests and main, implemented with the per-job `if:`
+# below rather than a second workflow file:
+#
+#   * The installer unit suites (wizard, Conda discovery, private PostgreSQL,
+#     drift guard) run on EVERY pull request. They need no database, no build
+#     and no network, finish in seconds, and are exactly the checks that would
+#     have caught the 2026-07-24 breakage before it reached main. Running them
+#     only after the merge is what let main go red in the first place.
+#
+#   * The heavy legs -- one full release build plus six real end-to-end
+#     installs, close to an hour of runner time in total -- stay on push to
+#     main and on workflow_dispatch. On a pull request they run only when the
+#     PR carries the `installer-e2e` label, so a change that actually touches
+#     scripts/install*.sh can be proven before the merge without charging every
+#     unrelated documentation PR for it. Add the label (or dispatch this
+#     workflow on the branch) whenever the installer itself changed.
+concurrency:
+  group: install-e2e-ubuntu-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  # Superseded pull-request runs are cancelled; runs on main always finish, so
+  # the record of what main was proven with stays complete.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   interactive-wizard-test:
-    # Fast unit test of the installer's --interactive guided wizard. Sources the
-    # installer in library-only mode and drives the wizard with scripted input
-    # (no real install/DB), so it runs in seconds and gates every push.
+    # The installer's unit suites. Every one of them sources an installer in
+    # library-only mode -- no real install, no database, no network -- so the
+    # whole job costs seconds and gates every push AND every pull request.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -24,15 +52,31 @@ jobs:
         with:
           node-version: "24"
 
+      # One step per suite: run together under `bash -e`, the first failing
+      # suite hid the other two for days, so a red Conda test also meant the
+      # private-PostgreSQL suite never executed at all.
       - name: Run interactive wizard test
-        run: |
-          bash scripts/ci/test-interactive-wizard.sh
-          bash scripts/ci/test-conda-discovery.sh
-          # Provisioning cases self-skip when initdb/pg_ctl are absent, so this
-          # still exercises the path helpers and guards on a client-only runner.
-          bash scripts/ci/test-private-postgres.sh
+        run: bash scripts/ci/test-interactive-wizard.sh
+
+      - name: Run Conda discovery test
+        run: bash scripts/ci/test-conda-discovery.sh
+
+      - name: Run private PostgreSQL test
+        # Provisioning cases self-skip when initdb/pg_ctl are absent, so this
+        # still exercises the path helpers and guards on a client-only runner.
+        run: bash scripts/ci/test-private-postgres.sh
+
+      - name: Check installer drift
+        # scripts/install.sh and scripts/install-dist.sh share ~50 helper
+        # functions and fixes have repeatedly landed in only one of them.
+        run: bash scripts/ci/check-installer-drift.sh
 
   build-public-release-artifact:
+    # Heavy leg: pull requests need the `installer-e2e` label. See the cost
+    # split at the top of this file.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -71,6 +115,10 @@ jobs:
           retention-days: 1
 
   public-installer-ubuntu:
+    # Heavy leg: pull requests need the `installer-e2e` label.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -285,6 +333,10 @@ jobs:
           retention-days: 5
 
   source-installer-ubuntu:
+    # Heavy leg: pull requests need the `installer-e2e` label.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -419,6 +471,10 @@ jobs:
           retention-days: 5
 
   public-installer-ubuntu-pm2:
+    # Heavy leg: pull requests need the `installer-e2e` label.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -627,6 +683,10 @@ jobs:
 
   npm-launcher-ubuntu:
     name: Install via npm launcher (npm i -g seqdesk)
+    # Heavy leg: pull requests need the `installer-e2e` label.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -817,6 +877,10 @@ jobs:
 
   install-profile-fixture-ubuntu:
     name: Apply checked-in install profile (no secret)
+    # Heavy leg: pull requests need the `installer-e2e` label.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1121,6 +1185,437 @@ jobs:
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.PROFILE_ASSERT_JSON }}
+            ${{ env.MOCK_SERVER_LOG }}
+          if-no-files-found: warn
+          retention-days: 5
+
+  private-postgres-install-ubuntu:
+    name: Install without --database-url (SeqDesk provisions PostgreSQL)
+    # Every other install job is handed a ready database plus --database-url,
+    # so the flagship path for a reviewer without a DBA — no usable server
+    # anywhere, SeqDesk builds and owns its own cluster — had no end-to-end
+    # coverage at all. This job runs it and then boots the installed app.
+    #
+    # Heavy leg: pull requests need the `installer-e2e` label. This is the one
+    # to label when scripts/install-dist.sh touches PostgreSQL at all.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+    needs: build-public-release-artifact
+    runs-on: ubuntu-latest
+    # Same budget as the other install jobs: unpack, npm install, migrate, seed
+    # and a cold Next.js boot all happen here too, and the readiness loop alone
+    # is allowed four minutes.
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Ensure no PostgreSQL server is running
+        run: |
+          set -euo pipefail
+          # Debian/Ubuntu ship a `postgresql.service` meta unit plus one
+          # `postgresql@<major>-main.service` per cluster. The instances are
+          # PartOf= the meta unit, so stopping it stops them; the glob is the
+          # belt-and-braces pass for an instance started on its own. Neither
+          # unit name is assumed to exist -- the assertions below are what
+          # actually decide whether the runner is quiet.
+          sudo systemctl stop postgresql.service >/dev/null 2>&1 || true
+          sudo systemctl stop 'postgresql@*.service' >/dev/null 2>&1 || true
+          # The path under test only exists when nothing already answers, so
+          # prove both transports are silent instead of assuming the image
+          # default never changes. pg_isready is required rather than probed
+          # with `command -v`: skipping the check when it is missing would turn
+          # this gate, and the "no TCP listener" assertion further down, into a
+          # pair of assertions that pass without testing anything.
+          if ! command -v pg_isready >/dev/null 2>&1; then
+            echo "pg_isready is not on PATH; this job cannot prove the runner is PostgreSQL-free"
+            exit 1
+          fi
+          if pg_isready -h 127.0.0.1 -p 5432 -q; then
+            echo "A PostgreSQL server is still accepting connections on 127.0.0.1:5432"
+            exit 1
+          fi
+          if [ -S /var/run/postgresql/.s.PGSQL.5432 ]; then
+            echo "A PostgreSQL socket is still present at /var/run/postgresql/.s.PGSQL.5432"
+            exit 1
+          fi
+          # The server programs themselves must be present, otherwise the
+          # installer would stop for the wrong reason and prove nothing. Both
+          # layouts find_postgres_binary knows about are accepted, so a runner
+          # image that switches to the PGDG packages does not fail here.
+          for tool in initdb pg_ctl; do
+            if ! ls "/usr/lib/postgresql/"*"/bin/$tool" >/dev/null 2>&1 &&
+               ! ls "/usr/pgsql-"*"/bin/$tool" >/dev/null 2>&1 &&
+               ! command -v "$tool" >/dev/null 2>&1; then
+              echo "PostgreSQL server program $tool is not installed on this runner"
+              exit 1
+            fi
+          done
+
+      - name: Configure paths
+        run: |
+          echo "PORT=8797" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-private-pg" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/private-pg-install.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/private-pg-server.log" >> "$GITHUB_ENV"
+          echo "PROVIDERS_JSON=$RUNNER_TEMP/private-pg-providers.json" >> "$GITHUB_ENV"
+          echo "SETUP_JSON=$RUNNER_TEMP/private-pg-setup.json" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/private-pg-release-artifact" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/private-pg-release-server" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_PORT=8798" >> "$GITHUB_ENV"
+          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/private-pg-release-server.log" >> "$GITHUB_ENV"
+          echo "PG_ROOT=$HOME/.seqdesk/postgres" >> "$GITHUB_ENV"
+          echo "PG_SERVER_LOG=$HOME/.seqdesk/postgres/server.log" >> "$GITHUB_ENV"
+
+      - name: Download public release tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: public-release-tarball
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+
+      - name: Prepare mock release metadata
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_DATE="$(date -u +%F)"
+          mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/downloads"
+          TARBALL_PATH="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
+          if [ -z "$TARBALL_PATH" ]; then
+            echo "Release tarball not found in $RELEASE_ARTIFACT_DIR"
+            exit 1
+          fi
+          TARBALL_NAME="$(basename "$TARBALL_PATH")"
+          cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
+          CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
+          cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI private PostgreSQL e2e release artifact","minNodeVersion":"22.13.0"},"updateAvailable":false,"currentVersion":null}
+          EOF
+
+      - name: Run installer without a database URL
+        run: |
+          set -euo pipefail
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          # No --database-url and no --config on purpose: the installer has to
+          # discover that nothing is usable and provision its own cluster.
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$INSTALL_LOG" \
+            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+            -y --without-pipelines --no-pm2 \
+            --dir "$INSTALL_DIR" \
+            --port "$PORT" \
+            --nextauth-url "http://127.0.0.1:$PORT"
+
+      - name: Assert SeqDesk provisioned its own PostgreSQL cluster
+        run: |
+          set -euo pipefail
+          test -s "$PG_ROOT/data/PG_VERSION"
+          test -S "$PG_ROOT/socket/.s.PGSQL.5432"
+          # Written by the installer, not by PostgreSQL's defaults: both lines
+          # are the socket-only guarantee the cluster is documented to provide.
+          grep -q "^listen_addresses = ''" "$PG_ROOT/data/postgresql.conf"
+          grep -q "^port = 5432$" "$PG_ROOT/data/postgresql.conf"
+          # The private cluster is documented never to open a TCP port. Not
+          # guarded by `command -v`: the first step of this job already refused
+          # to continue without pg_isready, so a missing binary must not
+          # silently downgrade this to an assertion that always passes.
+          if pg_isready -h 127.0.0.1 -p 5432 -q; then
+            echo "The private cluster opened a TCP listener on 127.0.0.1:5432"
+            exit 1
+          fi
+          CFG="$INSTALL_DIR/settings.json"; [ -f "$CFG" ] || CFG="$INSTALL_DIR/seqdesk.config.json"
+          test -x "$INSTALL_DIR/start.sh"
+          # The generated URL carries a generated password, so assert on the
+          # parsed host only and never echo the URL itself.
+          node -e '
+            const fs = require("node:fs");
+            const config = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const databaseUrl = config && config.runtime && config.runtime.databaseUrl;
+            if (typeof databaseUrl !== "string" || databaseUrl.length === 0) {
+              throw new Error("installed config has no runtime.databaseUrl");
+            }
+            const socketDir = new URL(databaseUrl).searchParams.get("host");
+            if (socketDir !== process.argv[2]) {
+              throw new Error("expected the generated URL to use the private socket " + process.argv[2] + ", got " + socketDir);
+            }
+          ' "$CFG" "$PG_ROOT/socket"
+
+      - name: Verify installed app startup against the private cluster
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR"
+
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG" || true
+            echo "--- private PostgreSQL server log ---"
+            tail -n 100 "$PG_SERVER_LOG" || true
+            exit 1
+          fi
+
+          curl -fsS "http://127.0.0.1:${PORT}/api/setup/status" >"$SETUP_JSON"
+          node -e '
+            const fs = require("node:fs");
+            const providers = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!providers || typeof providers !== "object" || !providers.credentials) {
+              throw new Error("credentials provider is missing");
+            }
+            const setup = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+            if (!setup || !setup.exists || !setup.configured) {
+              throw new Error("database is not configured: " + JSON.stringify(setup));
+            }
+          ' "$PROVIDERS_JSON" "$SETUP_JSON"
+
+      - name: Upload install e2e artifacts (private PostgreSQL)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # settings.json is deliberately not uploaded here: without a supplied
+          # --database-url it holds a generated database password.
+          name: install-e2e-private-postgres-ubuntu
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+            ${{ env.PROVIDERS_JSON }}
+            ${{ env.SETUP_JSON }}
+            ${{ env.MOCK_SERVER_LOG }}
+            ${{ env.PG_SERVER_LOG }}
+          if-no-files-found: warn
+          retention-days: 5
+
+  adopted-postgres-install-ubuntu:
+    name: Install without --database-url (adopt the running distro server)
+    # The cheaper half of the same gap: a distro PostgreSQL is running, the
+    # reviewer supplies no URL, so the installer adopts the server over TCP and
+    # has to bootstrap the seqdesk role and database through the postgres
+    # superuser account itself.
+    #
+    # Heavy leg: pull requests need the `installer-e2e` label.
+    if: >-
+      github.event_name != 'pull_request'
+      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+    needs: build-public-release-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Start PostgreSQL without creating the SeqDesk role
+        run: |
+          set -euo pipefail
+          sudo systemctl start postgresql.service
+          for _ in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -q; then
+              break
+            fi
+            sleep 1
+          done
+          pg_isready -h 127.0.0.1 -p 5432
+          # No CREATE ROLE/CREATE DATABASE here, unlike every other job in this
+          # workflow: bootstrapping them is exactly what is under test. Both are
+          # asserted absent, so the post-install check further down cannot pass
+          # on something the runner image happened to ship.
+          if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'seqdesk'" | grep -q 1; then
+            echo "Role seqdesk already exists; this job must start from a bare server"
+            exit 1
+          fi
+          if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'seqdesk'" | grep -q 1; then
+            echo "Database seqdesk already exists; this job must start from a bare server"
+            exit 1
+          fi
+
+      - name: Configure paths
+        run: |
+          echo "PORT=8799" >> "$GITHUB_ENV"
+          echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-adopted-pg" >> "$GITHUB_ENV"
+          echo "INSTALL_LOG=$RUNNER_TEMP/adopted-pg-install.log" >> "$GITHUB_ENV"
+          echo "SERVER_LOG=$RUNNER_TEMP/adopted-pg-server.log" >> "$GITHUB_ENV"
+          echo "PROVIDERS_JSON=$RUNNER_TEMP/adopted-pg-providers.json" >> "$GITHUB_ENV"
+          echo "SETUP_JSON=$RUNNER_TEMP/adopted-pg-setup.json" >> "$GITHUB_ENV"
+          echo "RELEASE_ARTIFACT_DIR=$RUNNER_TEMP/adopted-pg-release-artifact" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/adopted-pg-release-server" >> "$GITHUB_ENV"
+          echo "MOCK_RELEASE_PORT=8800" >> "$GITHUB_ENV"
+          echo "MOCK_SERVER_LOG=$RUNNER_TEMP/adopted-pg-release-server.log" >> "$GITHUB_ENV"
+          echo "PG_ROOT=$HOME/.seqdesk/postgres" >> "$GITHUB_ENV"
+
+      - name: Download public release tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: public-release-tarball
+          path: ${{ env.RELEASE_ARTIFACT_DIR }}
+
+      - name: Prepare mock release metadata
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          RELEASE_DATE="$(date -u +%F)"
+          mkdir -p "$MOCK_RELEASE_ROOT/api" "$MOCK_RELEASE_ROOT/downloads"
+          TARBALL_PATH="$(find "$RELEASE_ARTIFACT_DIR" -maxdepth 1 -name 'seqdesk-*.tar.gz' | head -n 1)"
+          if [ -z "$TARBALL_PATH" ]; then
+            echo "Release tarball not found in $RELEASE_ARTIFACT_DIR"
+            exit 1
+          fi
+          TARBALL_NAME="$(basename "$TARBALL_PATH")"
+          cp "$TARBALL_PATH" "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME"
+          CHECKSUM="sha256:$(sha256sum "$MOCK_RELEASE_ROOT/downloads/$TARBALL_NAME" | cut -d' ' -f1)"
+          cat > "$MOCK_RELEASE_ROOT/api/version" <<EOF
+          {"latest":{"version":"$VERSION","channel":"stable","releaseDate":"$RELEASE_DATE","downloadUrl":"http://127.0.0.1:$MOCK_RELEASE_PORT/downloads/$TARBALL_NAME","checksum":"$CHECKSUM","releaseNotes":"CI adopted PostgreSQL e2e release artifact","minNodeVersion":"22.13.0"},"updateAvailable":false,"currentVersion":null}
+          EOF
+
+      - name: Run installer without a database URL
+        run: |
+          set -euo pipefail
+          cd "$MOCK_RELEASE_ROOT"
+          python3 -m http.server "$MOCK_RELEASE_PORT" --bind 127.0.0.1 >>"$MOCK_SERVER_LOG" 2>&1 &
+          MOCK_SERVER_PID=$!
+          cleanup() {
+            kill "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+            wait "$MOCK_SERVER_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MOCK_RELEASE_PORT}/api/version" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$INSTALL_LOG" \
+            bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
+            -y --without-pipelines --no-pm2 \
+            --dir "$INSTALL_DIR" \
+            --port "$PORT" \
+            --nextauth-url "http://127.0.0.1:$PORT"
+
+      - name: Assert the running server was adopted
+        run: |
+          set -euo pipefail
+          test -x "$INSTALL_DIR/start.sh"
+          # A healthy server was already there, so nothing may have been
+          # provisioned under $HOME.
+          if [ -e "$PG_ROOT/data" ]; then
+            echo "A private cluster was created even though a server was already running"
+            exit 1
+          fi
+          # The distro server must still be the one answering, and the
+          # bootstrap that runs through the postgres superuser account must
+          # actually have created both objects. Without these two the job would
+          # only prove that a connection string was written to a file.
+          pg_isready -h 127.0.0.1 -p 5432
+          sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'seqdesk'" | grep -q 1
+          sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'seqdesk'" | grep -q 1
+          CFG="$INSTALL_DIR/settings.json"; [ -f "$CFG" ] || CFG="$INSTALL_DIR/seqdesk.config.json"
+          node -e '
+            const fs = require("node:fs");
+            const config = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            const databaseUrl = config && config.runtime && config.runtime.databaseUrl;
+            if (typeof databaseUrl !== "string" || databaseUrl.length === 0) {
+              throw new Error("installed config has no runtime.databaseUrl");
+            }
+            const parsed = new URL(databaseUrl);
+            if (parsed.hostname !== "127.0.0.1" || parsed.searchParams.get("host")) {
+              throw new Error("expected the adopted TCP server, got host " + parsed.hostname);
+            }
+          ' "$CFG"
+
+      - name: Verify installed app startup against the adopted server
+        run: |
+          set -euo pipefail
+          cd "$INSTALL_DIR"
+
+          ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
+          APP_PID=$!
+
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+            wait "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          READY=0
+          for _ in $(seq 1 120); do
+            if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
+              READY=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "Application did not become ready in time."
+            tail -n 200 "$SERVER_LOG" || true
+            exit 1
+          fi
+
+          curl -fsS "http://127.0.0.1:${PORT}/api/setup/status" >"$SETUP_JSON"
+          node -e '
+            const fs = require("node:fs");
+            const providers = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!providers || typeof providers !== "object" || !providers.credentials) {
+              throw new Error("credentials provider is missing");
+            }
+            const setup = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+            if (!setup || !setup.exists || !setup.configured) {
+              throw new Error("database is not configured: " + JSON.stringify(setup));
+            }
+          ' "$PROVIDERS_JSON" "$SETUP_JSON"
+
+      - name: Upload install e2e artifacts (adopted PostgreSQL)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # settings.json is deliberately not uploaded here: without a supplied
+          # --database-url it holds a generated database password.
+          name: install-e2e-adopted-postgres-ubuntu
+          path: |
+            ${{ env.INSTALL_LOG }}
+            ${{ env.SERVER_LOG }}
+            ${{ env.PROVIDERS_JSON }}
+            ${{ env.SETUP_JSON }}
             ${{ env.MOCK_SERVER_LOG }}
           if-no-files-found: warn
           retention-days: 5
