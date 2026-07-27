@@ -384,8 +384,15 @@ jobs:
       - name: Run source installer (headless)
         run: |
           set -euo pipefail
+          # The installer clones by branch name, and this job points it at the
+          # checkout itself. GITHUB_REF_NAME cannot be used for that: on a
+          # pull_request event it is "<pr>/merge", which is not a branch in the
+          # local repository, so the clone fails with "Remote branch not found".
+          # Name a branch at whatever commit was checked out instead, which holds
+          # for push and pull_request alike.
+          git -C "$GITHUB_WORKSPACE" branch --force ci-source-install HEAD
           SEQDESK_REPO="file://$GITHUB_WORKSPACE" SEQDESK_LOG="$INSTALL_LOG" bash "$GITHUB_WORKSPACE/scripts/install.sh" \
-            -y --without-pipelines --branch "$GITHUB_REF_NAME" --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
+            -y --without-pipelines --branch ci-source-install --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
 
       - name: Verify install artifacts
         run: |
