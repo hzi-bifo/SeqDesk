@@ -23,6 +23,7 @@ import {
 } from "react";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useHelpText } from "@/lib/useHelpText";
+import { startVisiblePolling } from "@/lib/polling";
 import { PANEL_NOTIFICATIONS_REFRESH_EVENT } from "@/lib/notifications/client";
 import {
   SIDEBAR_COLLAPSED_WIDTH,
@@ -466,7 +467,12 @@ function formatUnreadCount(count: number): string {
   return count > 99 ? "99+" : String(count);
 }
 
-export function Footer() {
+/**
+ * `isDemo` turns off the facility-admin polling. The demo has no background
+ * workers and no admin jobs to report, so those two five-second loops only cost
+ * the hosted demo database wake-ups.
+ */
+export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
   const confirm = useConfirm();
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const [activityJobs, setActivityJobs] = useState<AdminActivityJob[]>([]);
@@ -796,6 +802,11 @@ export function Footer() {
   }, []);
 
   useEffect(() => {
+    if (isDemo) {
+      setActivityJobs([]);
+      return;
+    }
+
     let cancelled = false;
 
     async function loadActivity() {
@@ -810,14 +821,20 @@ export function Footer() {
     }
 
     void loadActivity();
-    const timer = setInterval(() => void loadActivity(), 5000);
+    const stopPolling = startVisiblePolling(() => void loadActivity(), 5000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      stopPolling();
     };
-  }, []);
+  }, [isDemo]);
 
   useEffect(() => {
+    if (isDemo) {
+      setWorkers([]);
+      setPipelineLoad(null);
+      return;
+    }
+
     let cancelled = false;
 
     async function loadWorkers() {
@@ -842,12 +859,12 @@ export function Footer() {
     }
 
     void loadWorkers();
-    const timer = setInterval(() => void loadWorkers(), 5000);
+    const stopPolling = startVisiblePolling(() => void loadWorkers(), 5000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      stopPolling();
     };
-  }, [loadWorkerStatus, reconcileWorkerActionErrors]);
+  }, [isDemo, loadWorkerStatus, reconcileWorkerActionErrors]);
 
   useEffect(() => {
     let cancelled = false;
@@ -858,10 +875,10 @@ export function Footer() {
     }
 
     void loadNotifications();
-    const timer = setInterval(() => void loadNotifications(), 15_000);
+    const stopPolling = startVisiblePolling(() => void loadNotifications(), 15_000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      stopPolling();
     };
   }, [refreshNotifications]);
 

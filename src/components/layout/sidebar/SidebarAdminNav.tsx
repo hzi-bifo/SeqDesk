@@ -10,6 +10,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { startVisiblePolling } from "@/lib/polling";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useModuleEnabled } from "@/lib/modules";
 
@@ -101,10 +102,13 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
     };
 
     void fetchInfrastructureReadiness();
-    const interval = setInterval(fetchInfrastructureReadiness, 120000);
+    const stopPolling = startVisiblePolling(
+      () => void fetchInfrastructureReadiness(),
+      120000
+    );
     return () => {
       mounted = false;
-      clearInterval(interval);
+      stopPolling();
     };
   }, []);
 
