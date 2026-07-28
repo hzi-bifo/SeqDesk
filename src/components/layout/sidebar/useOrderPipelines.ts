@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { startVisiblePolling } from "@/lib/polling";
 import {
   getPipelineProgressStatuses,
   type PipelineProgressIndicatorStatus,
@@ -147,13 +148,11 @@ export function useOrderPipelines(
     };
 
     void refresh();
-    const intervalId = window.setInterval(() => {
-      void refresh();
-    }, 15000);
+    const stopPolling = startVisiblePolling(() => void refresh(), 15000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      stopPolling();
     };
   }, [showAdminControls, orderId]);
 

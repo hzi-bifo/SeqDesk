@@ -290,7 +290,7 @@ export function DashboardShell({ children, user, version }: DashboardShellProps)
         >
           {children}
         </DashboardContent>
-        <Footer />
+        <Footer isDemo={Boolean(user.isDemo)} />
       </FieldHelpProvider>
     </SidebarProvider>
   );

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { PipelineRunStatus } from "@/lib/pipelines/types";
+import { startVisiblePolling } from "@/lib/polling";
 import {
   getPipelineProgressStatuses,
   type PipelineProgressIndicatorStatus,
@@ -116,13 +117,11 @@ export function useStudyPipelines(
     };
 
     void refresh();
-    const intervalId = window.setInterval(() => {
-      void refresh();
-    }, 15000);
+    const stopPolling = startVisiblePolling(() => void refresh(), 15000);
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      stopPolling();
     };
   }, [showAdminControls, studyId]);
 

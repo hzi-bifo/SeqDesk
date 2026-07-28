@@ -11,6 +11,7 @@ import {
 import { ArrowLeft, Settings } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { startVisiblePolling } from "@/lib/polling";
 import {
   SIDEBAR_COLLAPSED_WIDTH,
   SIDEBAR_MAX_WIDTH,
@@ -89,8 +90,7 @@ export function Sidebar({ user, version }: SidebarProps) {
     };
 
     fetchUnreadCount();
-    const interval = setInterval(fetchUnreadCount, 30000);
-    return () => clearInterval(interval);
+    return startVisiblePolling(() => void fetchUnreadCount(), 30000);
   }, []);
 
   // Close mobile sidebar on navigation
