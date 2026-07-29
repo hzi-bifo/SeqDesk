@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     pipelineRun: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     pipelineRunEvent: {
       findFirst: vi.fn(),
@@ -29,7 +30,9 @@ const mocks = vi.hoisted(() => ({
   findStepByProcess: vi.fn(),
   getStepsForPipeline: vi.fn(),
   inferPipelineExitCode: vi.fn(),
+  finalizeCompletedPipelineRun: vi.fn(),
   processCompletedPipelineRun: vi.fn(),
+  notifyPipelineRunTerminalInApp: vi.fn(),
   execFileAsync: vi.fn(),
   isDemoSession: vi.fn(),
 }));
@@ -58,7 +61,12 @@ vi.mock("@/lib/pipelines/definitions", () => ({
 
 vi.mock("@/lib/pipelines/run-completion", () => ({
   inferPipelineExitCode: mocks.inferPipelineExitCode,
+  finalizeCompletedPipelineRun: mocks.finalizeCompletedPipelineRun,
   processCompletedPipelineRun: mocks.processCompletedPipelineRun,
+}));
+
+vi.mock("@/lib/notifications/in-app", () => ({
+  notifyPipelineRunTerminalInApp: mocks.notifyPipelineRunTerminalInApp,
 }));
 
 vi.mock("child_process", () => ({
@@ -128,12 +136,15 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     mocks.isDemoSession.mockReturnValue(false);
     mocks.db.pipelineRun.findUnique.mockResolvedValue(defaultRun);
     mocks.db.pipelineRun.update.mockResolvedValue({});
+    mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
     mocks.db.pipelineRunEvent.findFirst.mockResolvedValue(null);
     mocks.db.pipelineRunStep.upsert.mockResolvedValue({});
     mocks.findTraceFile.mockResolvedValue(null);
     mocks.execFileAsync.mockRejectedValue(new Error("not found"));
     mocks.inferPipelineExitCode.mockResolvedValue(null);
+    mocks.finalizeCompletedPipelineRun.mockResolvedValue("completed");
     mocks.processCompletedPipelineRun.mockResolvedValue(undefined);
+    mocks.notifyPipelineRunTerminalInApp.mockResolvedValue(undefined);
     mocks.getStepsForPipeline.mockReturnValue([]);
     mocks.findStepByProcess.mockReturnValue(null);
   });
@@ -303,8 +314,14 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     const body = await response.json();
     expect(body.success).toBe(true);
     expect(body.synced).toBe(true);
-    // The run status should be updated in the DB
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalled();
+    // Active lifecycle writes are guarded so cancellation cannot be overwritten.
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "failed",
+        }),
+      })
+    );
   });
 
   it("handles queue state transition from queued to running (no trace)", async () => {
@@ -318,7 +335,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     mocks.execFileAsync.mockImplementation(
       async (cmd: string) => {
         if (cmd === "squeue") {
-          return { stdout: "RUNNING|Resources\n" };
+          return {
+            stdout:
+              "RUNNING|Resources|seqdesk-run-1|/tmp/runs/run-1\n",
+          };
         }
         throw new Error("not found");
       }
@@ -331,7 +351,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(body.success).toBe(true);
     expect(body.status).toBe("running");
     expect(body.queueStatus).toBe("RUNNING");
-    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    const updateCall = mocks.db.pipelineRun.updateMany.mock.calls[0][0];
     expect(updateCall.data.currentStep).toBe("Running on compute node");
   });
 
@@ -358,7 +378,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
           throw new Error("not found");
         }
         if (cmd === "sacct") {
-          return { stdout: "99999|COMPLETED|None\n" };
+          return {
+            stdout:
+              "99999|COMPLETED|None|seqdesk-run-1|/tmp/runs/run-1|00:01:00|0:0\n",
+          };
         }
         throw new Error("not found");
       }
@@ -386,7 +409,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
           throw new Error("not found");
         }
         if (cmd === "sacct") {
-          return { stdout: "88888|CANCELLED by 1000|None\n" };
+          return {
+            stdout:
+              "88888|CANCELLED by 1000|None|seqdesk-run-1|/tmp/runs/run-1|00:01:00|0:15\n",
+          };
         }
         throw new Error("not found");
       }
@@ -413,7 +439,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
           throw new Error("not found");
         }
         if (cmd === "sacct") {
-          return { stdout: "77777|FAILED|NonZeroExitCode\n" };
+          return {
+            stdout:
+              "77777|FAILED|NonZeroExitCode|seqdesk-run-1|/tmp/runs/run-1|00:01:00|1:0\n",
+          };
         }
         throw new Error("not found");
       }
@@ -454,7 +483,9 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     });
     mocks.findTraceFile.mockResolvedValue(null);
     // ps check succeeds => process is running
-    mocks.execFileAsync.mockResolvedValue({ stdout: "11111\n" });
+    mocks.execFileAsync.mockResolvedValue({
+      stdout: "bash /tmp/runs/run-1/run.sh\n",
+    });
 
     const response = await POST(makeRequest(), { params: baseParams });
 
@@ -477,7 +508,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.success).toBe(true);
-    expect(body.queueStatus).toBeNull();
+    expect(body.queueStatus).toBe("UNKNOWN");
   });
 
   it("handles empty queueJobId gracefully", async () => {
@@ -555,7 +586,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(mocks.db.pipelineRunStep.upsert).toHaveBeenCalledTimes(3);
   });
 
-  it("overrides failed trace status when SLURM reports COMPLETED (nf-core tolerated failures)", async () => {
+  it("does not hide a failed trace task when SLURM reports COMPLETED", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       ...defaultRun,
       status: "running",
@@ -586,7 +617,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
           throw new Error("not found");
         }
         if (cmd === "sacct") {
-          return { stdout: "55555|COMPLETED|None\n" };
+          return {
+            stdout:
+              "55555|COMPLETED|None|seqdesk-run-1|/tmp/runs/run-1|00:01:00|0:0\n",
+          };
         }
         throw new Error("not found");
       }
@@ -598,11 +632,12 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.synced).toBe(true);
-    // The run should be updated to completed because SLURM says so
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith(
+    // A failed task remains authoritative even when the wrapper exits cleanly.
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          status: "completed",
+          status: "failed",
+          statusSource: "trace",
         }),
       })
     );
@@ -636,7 +671,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     mocks.execFileAsync.mockImplementation(
       async (cmd: string) => {
         if (cmd === "squeue") {
-          return { stdout: "RUNNING|Resources\n" };
+          return {
+            stdout:
+              "RUNNING|Resources|seqdesk-run-1|/tmp/runs/run-1\n",
+          };
         }
         throw new Error("not found");
       }
@@ -647,7 +685,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
 
     expect(response.status).toBe(200);
     // Status should be forced to running because queue is still active
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith(
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           completedAt: null,
@@ -694,7 +732,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     mocks.db.pipelineRunEvent.findFirst.mockResolvedValue({ id: "event-1" });
     mocks.execFileAsync.mockImplementation(async (cmd: string) => {
       if (cmd === "squeue") {
-        return { stdout: "RUNNING|Resources\n" };
+        return {
+          stdout:
+            "RUNNING|Resources|seqdesk-run-1|/tmp/runs/run-1\n",
+        };
       }
       throw new Error("not found");
     });
@@ -743,7 +784,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     mocks.getStepsForPipeline.mockReturnValue(metaxpathSteps);
     mocks.execFileAsync.mockImplementation(async (cmd: string) => {
       if (cmd === "squeue") {
-        return { stdout: "RUNNING|Resources\n" };
+        return {
+          stdout:
+            "RUNNING|Resources|seqdesk-run-1|/tmp/runs/run-1\n",
+        };
       }
       throw new Error("not found");
     });
@@ -751,7 +795,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     const response = await POST(makeRequest(), { params: baseParams });
 
     expect(response.status).toBe(200);
-    const updateData = mocks.db.pipelineRun.update.mock.calls.at(-1)?.[0].data;
+    const updateData = mocks.db.pipelineRun.updateMany.mock.calls.at(-1)?.[0].data;
     expect(updateData.currentStep).toBe("Metax Profiling");
     expect(updateData.progress).toBe(8);
     expect(updateData.status).toBeUndefined();
@@ -784,7 +828,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     mocks.db.pipelineRunEvent.findFirst.mockResolvedValue({ id: "event-1" });
     mocks.execFileAsync.mockImplementation(async (cmd: string) => {
       if (cmd === "squeue") {
-        return { stdout: "RUNNING|Resources\n" };
+        return {
+          stdout:
+            "RUNNING|Resources|seqdesk-run-1|/tmp/runs/run-1\n",
+        };
       }
       throw new Error("not found");
     });
@@ -792,7 +839,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     const response = await POST(makeRequest(), { params: baseParams });
 
     expect(response.status).toBe(200);
-    const updateData = mocks.db.pipelineRun.update.mock.calls.at(-1)?.[0].data;
+    const updateData = mocks.db.pipelineRun.updateMany.mock.calls.at(-1)?.[0].data;
     expect(updateData.currentStep).toBe("Finalizing...");
     expect(updateData.completedAt).toBeNull();
   });
@@ -811,7 +858,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
           throw new Error("not found");
         }
         if (cmd === "sacct") {
-          return { stdout: "66666|COMPLETED|None\n" };
+          return {
+            stdout:
+              "66666|COMPLETED|None|seqdesk-run-1|/tmp/runs/run-1|00:01:00|0:0\n",
+          };
         }
         throw new Error("not found");
       }
@@ -827,7 +877,14 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.status).toBe("completed");
-    expect(mocks.processCompletedPipelineRun).toHaveBeenCalledWith("run-1", "mag");
+    expect(mocks.finalizeCompletedPipelineRun).toHaveBeenCalledWith(
+      "run-1",
+      "mag",
+      expect.objectContaining({
+        statusSource: "queue",
+        queueStatus: "COMPLETED",
+      })
+    );
   });
 
   it("MAG pipeline stays running if outputs not materialized yet (no trace)", async () => {
@@ -844,13 +901,18 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
           throw new Error("not found");
         }
         if (cmd === "sacct") {
-          return { stdout: "66666|COMPLETED|None\n" };
+          return {
+            stdout:
+              "66666|COMPLETED|None|seqdesk-run-1|/tmp/runs/run-1|00:01:00|0:0\n",
+          };
         }
         throw new Error("not found");
       }
     );
     mocks.inferPipelineExitCode.mockResolvedValue(0);
-    mocks.processCompletedPipelineRun.mockResolvedValue(undefined);
+    mocks.finalizeCompletedPipelineRun.mockRejectedValue(
+      new Error("outputs not materialized")
+    );
     // No outputs yet
     mocks.db.assembly.count.mockResolvedValue(0);
     mocks.db.bin.count.mockResolvedValue(0);
@@ -862,6 +924,15 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     const body = await response.json();
     // Should stay "running" with progress 99 while waiting for outputs
     expect(body.status).toBe("running");
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "running",
+          progress: 99,
+          currentStep: "Finalizing outputs...",
+        }),
+      })
+    );
   });
 
   it("handles non-numeric queueJobId that is not local prefix", async () => {
@@ -877,7 +948,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.success).toBe(true);
-    expect(body.queueStatus).toBeNull();
+    expect(body.queueStatus).toBe("UNKNOWN");
   });
 
   it("allows the order owner (non-admin) to sync their published run", async () => {
@@ -910,7 +981,10 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     mocks.execFileAsync.mockImplementation(
       async (cmd: string) => {
         if (cmd === "squeue") {
-          return { stdout: "RUNNING|Resources\n" };
+          return {
+            stdout:
+              "RUNNING|Resources|seqdesk-run-1|/tmp/runs/run-1\n",
+          };
         }
         throw new Error("not found");
       }
@@ -922,7 +996,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     const body = await response.json();
     expect(body.queueStatus).toBe("RUNNING");
     expect(body.status).toBe("running");
-    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    const updateCall = mocks.db.pipelineRun.updateMany.mock.calls[0][0];
     expect(updateCall.data.status).toBe("running");
     expect(updateCall.data.currentStep).toBe("Running on compute node");
   });

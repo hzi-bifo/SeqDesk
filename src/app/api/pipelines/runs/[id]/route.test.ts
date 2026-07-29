@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   isDemoSession: vi.fn(),
+  execFile: vi.fn(),
   spawn: vi.fn(),
   fs: {
     access: vi.fn(),
@@ -49,7 +50,7 @@ vi.mock("@/lib/pipelines", () => ({
 
 vi.mock("child_process", () => ({
   spawn: mocks.spawn,
-  execFile: vi.fn(),
+  execFile: mocks.execFile,
 }));
 
 vi.mock("fs/promises", () => ({
@@ -518,6 +519,62 @@ describe("GET /api/pipelines/runs/[id]", () => {
 describe("DELETE /api/pipelines/runs/[id]", () => {
   const processKill = vi.spyOn(process, "kill");
 
+  const stubLocalJobActiveThenExited = (runFolder = "/runs/run-1") => {
+    let pipelineOutReads = 0;
+    mocks.fs.readFile.mockImplementation(async (filePath: string) => {
+      if (filePath.endsWith("/logs/pipeline.out")) {
+        pipelineOutReads += 1;
+        return pipelineOutReads === 1
+          ? ""
+          : "Pipeline completed with exit code: 143";
+      }
+      return "";
+    });
+    mocks.execFile.mockImplementation(
+      (
+        file: string,
+        _args: readonly string[],
+        _options: unknown,
+        callback: (
+          error: Error | null,
+          result?: { stdout: string; stderr: string }
+        ) => void
+      ) => {
+        callback(null, {
+          stdout: file === "ps" ? `bash ${runFolder}/run.sh\n` : "",
+          stderr: "",
+        });
+      }
+    );
+  };
+
+  const stubSlurmJobActiveThenCancelled = (runFolder = "/runs/run-1") => {
+    let probeCount = 0;
+    mocks.execFile.mockImplementation(
+      (
+        file: string,
+        _args: readonly string[],
+        _options: unknown,
+        callback: (
+          error: Error | null,
+          result?: { stdout: string; stderr: string }
+        ) => void
+      ) => {
+        if (file === "squeue") {
+          probeCount += 1;
+          callback(null, {
+            stdout:
+              `${probeCount === 1 ? "RUNNING" : "CANCELLED"}|None|` +
+              `seqdesk-run-1|${runFolder}\n`,
+            stderr: "",
+          });
+          return;
+        }
+        callback(null, { stdout: "", stderr: "" });
+      }
+    );
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getServerSession.mockResolvedValue({
@@ -530,11 +587,25 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       status: "running",
+      statusSource: "launcher",
+      currentStep: "Running",
       queueJobId: "local-321",
+      runFolder: "/runs/run-1",
     });
     mocks.db.pipelineRun.update.mockResolvedValue(null);
     // Cancel now writes via a guarded updateMany (terminal-state race fix).
     mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
+    mocks.execFile.mockImplementation(
+      (
+        _file: string,
+        _args: readonly string[],
+        _options: unknown,
+        callback: (
+          error: Error | null,
+          result?: { stdout: string; stderr: string }
+        ) => void
+      ) => callback(null, { stdout: "", stderr: "" })
+    );
     processKill.mockImplementation(() => true);
   });
 
@@ -598,6 +669,8 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
   });
 
   it("cancels local jobs and marks the run cancelled", async () => {
+    stubLocalJobActiveThenExited();
+
     const response = await DELETE(
       new NextRequest("http://localhost:3000/api/pipelines/runs/run-1", {
         method: "DELETE",
@@ -607,15 +680,23 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(processKill).toHaveBeenCalledWith(-321, "SIGTERM");
-    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
-      where: { id: "run-1", status: { in: ["pending", "queued", "running"] } },
-      data: expect.objectContaining({
-        status: "cancelled",
-        statusSource: "manual",
-        completedAt: expect.any(Date),
-        lastEventAt: expect.any(Date),
-      }),
-    });
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "run-1",
+          status: { in: ["pending", "queued", "running"] },
+          statusSource: "cancelling",
+          lastEventAt: expect.any(Date),
+        }),
+        data: expect.objectContaining({
+          status: "cancelled",
+          statusSource: "manual",
+          completedAt: expect.any(Date),
+          lastEventAt: expect.any(Date),
+        }),
+      })
+    );
     expect(await response.json()).toEqual({ success: true });
   });
 
@@ -637,8 +718,12 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       status: "running",
+      statusSource: "launcher",
+      currentStep: "Running",
       queueJobId: "12345",
+      runFolder: "/runs/run-1",
     });
+    stubSlurmJobActiveThenCancelled();
     const mockStderr = { on: vi.fn() };
     const mockProc = {
       stderr: mockStderr,
@@ -663,20 +748,31 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.spawn).toHaveBeenCalledWith("scancel", ["12345"]);
-    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
-      where: { id: "run-1", status: { in: ["pending", "queued", "running"] } },
-      data: expect.objectContaining({
-        status: "cancelled",
-      }),
-    });
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "run-1",
+          statusSource: "cancelling",
+          lastEventAt: expect.any(Date),
+        }),
+        data: expect.objectContaining({
+          status: "cancelled",
+        }),
+      })
+    );
   });
 
-  it("force-stops when local process kill throws non-ESRCH error", async () => {
+  it("keeps the run reconcilable when local process signalling fails", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       status: "running",
+      statusSource: "launcher",
+      currentStep: "Running",
       queueJobId: "local-999",
+      runFolder: "/runs/run-1",
     });
+    stubLocalJobActiveThenExited();
     processKill.mockImplementation(() => {
       const err = new Error("Process group failed") as NodeJS.ErrnoException;
       err.code = "EINVAL";
@@ -690,15 +786,28 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
       { params: Promise.resolve({ id: "run-1" }) }
     );
 
-    // EINVAL causes fallback to single-process kill, which also throws EINVAL
-    // Since that also throws, it force-stops
-    expect(response.status).toBe(200);
-    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
-      where: { id: "run-1", status: { in: ["pending", "queued", "running"] } },
-      data: expect.objectContaining({
-        status: "failed",
-      }),
+    expect(response.status).toBe(409);
+    expect(processKill).toHaveBeenNthCalledWith(1, -999, "SIGTERM");
+    expect(processKill).toHaveBeenNthCalledWith(2, 999, "SIGTERM");
+    expect(await response.json()).toMatchObject({
+      status: "running",
+      statusSource: "launcher",
+      error: expect.stringContaining("remains active for reconciliation"),
     });
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          statusSource: "launcher",
+          currentStep: "Running",
+          errorTail: expect.stringContaining("Process group failed"),
+        }),
+      })
+    );
+    expect(
+      mocks.db.pipelineRun.updateMany.mock.calls.find(
+        (call) => call[0]?.data?.status === "failed"
+      )
+    ).toBeUndefined();
   });
 
   it("treats pending runs as cancellable", async () => {
@@ -717,19 +826,29 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
 
     expect(response.status).toBe(200);
     // No queueJobId and status is pending (not running), so normal cancel
-    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
-      where: { id: "run-1", status: { in: ["pending", "queued", "running"] } },
-      data: expect.objectContaining({
-        status: "cancelled",
-      }),
-    });
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "run-1",
+          statusSource: "cancelling",
+          lastEventAt: expect.any(Date),
+        }),
+        data: expect.objectContaining({
+          status: "cancelled",
+        }),
+      })
+    );
   });
 
-  it("force-stops stuck running jobs without queue IDs", async () => {
+  it("keeps running jobs without queue IDs available for reconciliation", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       status: "running",
+      statusSource: "launcher",
+      currentStep: "Running",
       queueJobId: null,
+      runFolder: "/runs/run-1",
     });
 
     const response = await DELETE(
@@ -739,13 +858,26 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
       { params: Promise.resolve({ id: "run-1" }) }
     );
 
-    expect(response.status).toBe(200);
-    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
-      where: { id: "run-1", status: { in: ["pending", "queued", "running"] } },
-      data: expect.objectContaining({
-        status: "failed",
-        statusSource: "manual",
-      }),
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      status: "running",
+      statusSource: "launcher",
+      error: expect.stringContaining("no queue job ID"),
     });
+    expect(processKill).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          statusSource: "launcher",
+          currentStep: "Running",
+        }),
+      })
+    );
+    expect(
+      mocks.db.pipelineRun.updateMany.mock.calls.find(
+        (call) => ["failed", "cancelled"].includes(call[0]?.data?.status)
+      )
+    ).toBeUndefined();
   });
 });
