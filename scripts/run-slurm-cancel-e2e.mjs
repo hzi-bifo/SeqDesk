@@ -116,7 +116,11 @@ function sleep(ms) {
 
 async function commandExists(command) {
   try {
-    await execFileAsync("command", ["-v", command], { shell: true, timeout: 5000 });
+    await execFileAsync(
+      "sh",
+      ["-c", 'command -v "$1" >/dev/null 2>&1', "sh", command],
+      { timeout: 5000 }
+    );
     return true;
   } catch {
     return false;
@@ -206,13 +210,18 @@ function buildSlurmOverride(args) {
   const cores = toOptionalInt(args["slurm-cores"] || process.env.SEQDESK_SLURM_E2E_CORES);
   const memory = toOptionalString(args["slurm-memory"] || process.env.SEQDESK_SLURM_E2E_MEMORY);
   const timeLimit = toOptionalInt(args["slurm-time-limit"] || process.env.SEQDESK_SLURM_E2E_TIME_LIMIT);
-  const options = toOptionalString(args["slurm-options"] || process.env.SEQDESK_SLURM_E2E_OPTIONS);
+  const configuredOptions = toOptionalString(
+    args["slurm-options"] || process.env.SEQDESK_SLURM_E2E_OPTIONS
+  );
 
   if (queue) slurm.queue = queue;
   if (cores && cores > 0) slurm.cores = cores;
   if (memory) slurm.memory = memory;
   if (timeLimit && timeLimit > 0) slurm.timeLimit = timeLimit;
-  if (options !== undefined) slurm.options = options;
+  // A running job can remain in COMPLETING longer than the API's bounded
+  // verification window after scancel. Submit this throwaway cancellation
+  // target held so no payload starts and scheduler cancellation is immediate.
+  slurm.options = [configuredOptions, "--hold"].filter(Boolean).join(" ");
   return Object.keys(slurm).length > 0 ? slurm : undefined;
 }
 

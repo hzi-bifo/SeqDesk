@@ -26,6 +26,20 @@ const runtimeHarness = fs.readFileSync(
   path.join(repoRoot, "scripts", "run-pipeline-runtime-e2e.mjs"),
   "utf8"
 );
+const cancelHarness = fs.readFileSync(
+  path.join(repoRoot, "scripts", "run-slurm-cancel-e2e.mjs"),
+  "utf8"
+);
+const commandProbeHarnesses = [
+  "run-pipeline-appcheck-e2e.mjs",
+  "run-pipeline-runtime-e2e.mjs",
+  "run-slurm-cancel-e2e.mjs",
+  "run-slurm-failure-e2e.mjs",
+  "run-slurm-pipeline-e2e.mjs",
+].map((name) => [
+  name,
+  fs.readFileSync(path.join(repoRoot, "scripts", name), "utf8"),
+] as const);
 const metaxpathSlurmLeg = fs.readFileSync(
   path.join(repoRoot, "scripts", "metaxpath-slurm-leg.sh"),
   "utf8"
@@ -126,6 +140,24 @@ describe("self-hosted pipeline CI contract", () => {
       'echo "$CONDA_BASE/envs/$PIPELINE_CONDA_ENV/bin" >> "$GITHUB_PATH"'
     );
   });
+
+  it("holds the throwaway SLURM cancellation target for deterministic stop verification", () => {
+    expect(cancelHarness).toContain(
+      'slurm.options = [configuredOptions, "--hold"].filter(Boolean).join(" ")'
+    );
+  });
+
+  it.each(commandProbeHarnesses)(
+    "checks commands without deprecated shell argument concatenation in %s",
+    (_name, harness) => {
+      expect(harness).toContain(
+        `["-c", 'command -v "$1" >/dev/null 2>&1', "sh", command]`
+      );
+      expect(harness).not.toContain(
+        'execFileAsync("command", ["-v", command], { shell: true'
+      );
+    }
+  );
 
   it("makes installation, readiness, auth, local execution, and SLURM execution required", () => {
     const installGate = canonical.slice(

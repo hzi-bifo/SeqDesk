@@ -132,7 +132,11 @@ function sleep(ms) {
 
 async function commandExists(command) {
   try {
-    await execFileAsync("command", ["-v", command], { shell: true, timeout: 5000 });
+    await execFileAsync(
+      "sh",
+      ["-c", 'command -v "$1" >/dev/null 2>&1', "sh", command],
+      { timeout: 5000 }
+    );
     return true;
   } catch {
     return false;
