@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -87,6 +90,47 @@ describe('identity-checked queue probe', () => {
       pid: 42,
     });
     expect(queueSnapshotToRunStatus(snapshot)).toBe('running');
+  });
+
+  it('does not relax exact local argv identity across a real symlink', async () => {
+    const tempRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'seqdesk-queue-probe-local-')
+    );
+    const physicalRoot = path.join(tempRoot, 'physical-runs');
+    const configuredRoot = path.join(tempRoot, 'configured-runs');
+    const physicalRunFolder = path.join(physicalRoot, 'run-1');
+    const configuredRunFolder = path.join(configuredRoot, 'run-1');
+
+    try {
+      await fs.mkdir(physicalRunFolder, { recursive: true });
+      await fs.writeFile(path.join(physicalRunFolder, 'run.sh'), '#!/bin/sh\n');
+      await fs.symlink(physicalRoot, configuredRoot, 'dir');
+      mocks.execFile.mockImplementation((file, _args, callback) => {
+        if (file === 'ps') {
+          callback(null, {
+            stdout: `bash ${physicalRunFolder}/run.sh\n`,
+            stderr: '',
+          });
+          return;
+        }
+        callback(null, { stdout: '', stderr: '' });
+      });
+
+      const snapshot = await readIdentityCheckedQueueSnapshot({
+        jobId: 'local-42',
+        runId: 'run-1',
+        runFolder: configuredRunFolder,
+      });
+
+      expect(snapshot).toMatchObject({
+        identityVerified: false,
+        state: 'UNKNOWN',
+        source: 'local',
+      });
+      expect(snapshot.reason).toContain('another process');
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it('uses the canonical local exit marker before inspecting a recycled PID', async () => {
@@ -187,6 +231,47 @@ describe('identity-checked queue probe', () => {
       source: 'sacct',
     });
     expect(queueSnapshotToRunStatus(snapshot)).toBe('completed');
+  });
+
+  it('matches a scheduler WorkDir across a real run-root symlink', async () => {
+    const tempRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'seqdesk-queue-probe-slurm-')
+    );
+    const physicalRoot = path.join(tempRoot, 'physical-runs');
+    const configuredRoot = path.join(tempRoot, 'configured-runs');
+    const physicalRunFolder = path.join(physicalRoot, 'run-1');
+    const configuredRunFolder = path.join(configuredRoot, 'run-1');
+
+    try {
+      await fs.mkdir(physicalRunFolder, { recursive: true });
+      await fs.symlink(physicalRoot, configuredRoot, 'dir');
+      mocks.execFile.mockImplementation((file, _args, callback) => {
+        if (file === 'squeue') {
+          callback(null, {
+            stdout:
+              '123|cpu|seqdesk-run-1|runner|RUNNING|00:01|1|node-1|' +
+              `${physicalRunFolder}\n`,
+            stderr: '',
+          });
+          return;
+        }
+        callback(null, { stdout: '', stderr: '' });
+      });
+
+      const snapshot = await readIdentityCheckedQueueSnapshot({
+        jobId: '123',
+        runId: 'run-1',
+        runFolder: configuredRunFolder,
+      });
+
+      expect(snapshot).toMatchObject({
+        identityVerified: true,
+        state: 'RUNNING',
+        source: 'squeue',
+      });
+    } finally {
+      await fs.rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it('keeps missing scheduler records unknown and retryable', async () => {

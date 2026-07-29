@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   },
   getResolvedDataBasePath: vi.fn(),
   prepareGenericRun: vi.fn(),
+  writePipelineLaunchIdentity: vi.fn(),
   getPackage: vi.fn(),
   getExecutionSettings: vi.fn(),
   detectRuntimePlatform: vi.fn(),
@@ -54,6 +55,10 @@ vi.mock("@/lib/files/data-base-path", () => ({
 
 vi.mock("@/lib/pipelines/generic-executor", () => ({
   prepareGenericRun: mocks.prepareGenericRun,
+}));
+
+vi.mock("@/lib/pipelines/launch-identity", () => ({
+  writePipelineLaunchIdentity: mocks.writePipelineLaunchIdentity,
 }));
 
 vi.mock("@/lib/pipelines/package-loader", () => ({
@@ -222,6 +227,9 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
       success: true,
       runFolder: "/tmp/runs/run-1",
     });
+    mocks.writePipelineLaunchIdentity.mockResolvedValue(
+      "/tmp/runs/run-1/.seqdesk-launch-identity"
+    );
     mocks.fsAccess.mockResolvedValue(undefined);
 
     // exec mock: called via promisify -> returns (command, opts, callback)
@@ -734,6 +742,12 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
 
     expect(response.status).toBe(500);
     expect(body.error).toContain("automatic scancel of job 97531 also failed");
+    expect(mocks.writePipelineLaunchIdentity).toHaveBeenCalledWith({
+      runFolder: "/tmp/runs/run-1",
+      runId: "run-1",
+      kind: "slurm",
+      numericId: "97531",
+    });
     expect(
       mocks.db.pipelineRun.updateMany.mock.calls.some(
         (call) => call[0]?.data?.status === "failed"
@@ -998,6 +1012,20 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     expect(failedUpdate).toBeDefined();
   });
 
+  it("local execution: handles a spawn failure without an exposed PID", async () => {
+    const child = makeChildProcess();
+    Reflect.deleteProperty(child, "pid");
+    mocks.spawn.mockReturnValue(child);
+
+    const response = await POST(makeRequest(), { params: baseParams });
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.error).toContain("did not expose a valid PID");
+    expect(child.listenerCount("error")).toBe(1);
+    expect(mocks.writePipelineLaunchIdentity).not.toHaveBeenCalled();
+  });
+
   it("local execution: terminates the detached process group when queue-id persistence fails", async () => {
     mocks.db.pipelineRun.updateMany.mockImplementation(async (args) => {
       if (args?.data?.queueJobId === "local-12345") {
@@ -1011,6 +1039,12 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
       const response = await POST(makeRequest(), { params: baseParams });
 
       expect(response.status).toBe(500);
+      expect(mocks.writePipelineLaunchIdentity).toHaveBeenCalledWith({
+        runFolder: "/tmp/runs/run-1",
+        runId: "run-1",
+        kind: "local",
+        numericId: 12345,
+      });
       expect(
         killSpy.mock.calls.some(([pid, signal]) => {
           return pid === -12345 && signal === "SIGTERM";

@@ -82,6 +82,10 @@ describe("submg runner", () => {
   });
 
   it("prepares a submg run with metadata and launch script when inputs are complete", async () => {
+    const physicalRunRoot = path.join(tempDir, "physical-runs");
+    const configuredRunRoot = path.join(tempDir, "configured-runs");
+    await fs.mkdir(physicalRunRoot);
+    await fs.symlink(physicalRunRoot, configuredRunRoot, "dir");
     const executionSettings = {
       useSlurm: false,
       slurmQueue: "cpu",
@@ -91,7 +95,7 @@ describe("submg runner", () => {
       runtimeMode: "conda" as const,
       condaPath: "/opt/conda",
       condaEnv: "submg",
-      pipelineRunDir: tempDir,
+      pipelineRunDir: configuredRunRoot,
       dataBasePath: tempDir,
       nextflowProfile: "standard",
     };
@@ -191,7 +195,10 @@ describe("submg runner", () => {
 
     expect(result.success).toBe(true);
     expect(result.errors).toEqual([]);
-    expect(result.runFolder).toContain(path.join(tempDir, "SUBMG-"));
+    expect(path.dirname(result.runFolder!)).toBe(
+      await fs.realpath(physicalRunRoot)
+    );
+    expect(await fs.realpath(result.runFolder!)).toBe(result.runFolder);
     expect(result.runNumber).toMatch(/SUBMG-\d{8}-\d{3}/);
     expect(result.scriptPath).toBeDefined();
 
@@ -204,6 +211,8 @@ describe("submg runner", () => {
     expect(script).toContain("#SBATCH -p cpu");
     expect(script).toContain("#SBATCH --mem='16GB'");
     expect(script).toContain("#SBATCH --job-name=seqdesk-run-1");
+    expect(script).toContain(result.runFolder!);
+    expect(script).not.toContain(configuredRunRoot);
 
     const metadata = JSON.parse(
       await fs.readFile(path.join(result.runFolder!, "submg-metadata.json"), "utf8")

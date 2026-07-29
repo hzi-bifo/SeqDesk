@@ -34,8 +34,12 @@ identity_file="$(mktemp "${RUNNER_TEMP:-/tmp}/seqdesk-alma-identity.XXXXXX")" ||
   rm -f "$queue_file"
   exit 1
 }
-cleanup_temp_files() {
+marker_file="$(mktemp "${RUNNER_TEMP:-/tmp}/seqdesk-alma-markers.XXXXXX")" || {
   rm -f "$queue_file" "$identity_file"
+  exit 1
+}
+cleanup_temp_files() {
+  rm -f "$queue_file" "$identity_file" "$marker_file"
 }
 trap cleanup_temp_files EXIT
 
@@ -108,6 +112,7 @@ slurm_identity_state() {
   local run_folder="${2:-}"
   local expected_job_name="${3:-}"
   local info actual_job_name actual_work_dir
+  local resolved_expected_work_dir resolved_actual_work_dir
   if [[ ! "$job_id" =~ ^[0-9]+$ ]] ||
      [ -z "$run_folder" ] || [ -z "$expected_job_name" ]; then
     printf '%s\n' unknown
@@ -119,10 +124,15 @@ slurm_identity_state() {
   fi
   actual_job_name="$(printf '%s\n' "$info" | tr ' ' '\n' | sed -n 's/^JobName=//p' | head -n 1)"
   actual_work_dir="$(printf '%s\n' "$info" | tr ' ' '\n' | sed -n 's/^WorkDir=//p' | head -n 1)"
+  resolved_expected_work_dir="$(realpath -m "$run_folder" 2>/dev/null || true)"
+  resolved_actual_work_dir="$(realpath -m "$actual_work_dir" 2>/dev/null || true)"
   if [ -z "$actual_job_name" ] || [ -z "$actual_work_dir" ]; then
     printf '%s\n' unknown
+  elif [ -z "$resolved_expected_work_dir" ] ||
+       [ -z "$resolved_actual_work_dir" ]; then
+    printf '%s\n' unknown
   elif [ "$actual_job_name" = "$expected_job_name" ] &&
-       [ "$actual_work_dir" = "$run_folder" ]; then
+       [ "$resolved_actual_work_dir" = "$resolved_expected_work_dir" ]; then
     printf '%s\n' matches
   else
     printf '%s\n' mismatch
@@ -135,7 +145,10 @@ if ! PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql \
   -c "select id, \"queueJobId\", coalesce(\"runFolder\", '') from \"PipelineRun\" where coalesce(\"queueJobId\", '') <> '' order by \"createdAt\"" \
   > "$queue_file" 2>/dev/null; then
   echo "ERROR: could not query PipelineRun queue identities from $db_name." >&2
-  exit 1
+  # Keep the failure status so callers preserve the database/run tree, but
+  # still drain any atomic launch markers that do not depend on PostgreSQL.
+  : > "$queue_file"
+  cleanup_rc=1
 fi
 
 while IFS='|' read -r run_id queue_id run_folder; do
@@ -167,6 +180,65 @@ while IFS='|' read -r run_id queue_id run_folder; do
       ;;
   esac
 done < "$queue_file"
+
+# queueJobId is written after an external launch. If that database write and
+# the immediate compensating stop both fail, the durable marker written beside
+# run.sh is the only recovery identity. Discover those markers without
+# following symlinks, then subject them to the same exact process/job checks as
+# database identities.
+if [ -d "$resolved_root" ]; then
+  if ! find "$resolved_root" \
+    -name '.seqdesk-launch-identity' -print0 > "$marker_file" 2>/dev/null; then
+    echo "ERROR: could not scan pipeline launch identity markers under $resolved_root." >&2
+    cleanup_rc=1
+  fi
+
+  while IFS= read -r -d '' marker_path; do
+    resolved_run="$(realpath -m "$(dirname "$marker_path")" 2>/dev/null || true)"
+    resolved_marker="$(realpath -m "$marker_path" 2>/dev/null || true)"
+    if [ -z "$resolved_run" ] || [ -z "$resolved_marker" ] ||
+       [[ "$resolved_run" != "$resolved_root/"* ]] ||
+       [ "$resolved_marker" != "$resolved_run/.seqdesk-launch-identity" ] ||
+       [ -L "$marker_path" ] || [ ! -f "$marker_path" ]; then
+      echo "ERROR: refusing unscoped pipeline launch marker: $marker_path" >&2
+      cleanup_rc=1
+      continue
+    fi
+    if ! marker_size="$(wc -c < "$marker_path" 2>/dev/null)"; then
+      echo "ERROR: could not size pipeline launch marker: $marker_path" >&2
+      cleanup_rc=1
+      continue
+    fi
+    marker_size="${marker_size//[[:space:]]/}"
+    if [[ ! "$marker_size" =~ ^[0-9]+$ ]] ||
+       [ "$marker_size" -lt 1 ] || [ "$marker_size" -gt 256 ]; then
+      echo "ERROR: refusing malformed pipeline launch marker: $marker_path" >&2
+      cleanup_rc=1
+      continue
+    fi
+    if ! marker_contents="$(LC_ALL=C head -c 257 "$marker_path" 2>/dev/null)"; then
+      echo "ERROR: could not read pipeline launch marker: $marker_path" >&2
+      cleanup_rc=1
+      continue
+    fi
+
+    if [[ "$marker_contents" =~ ^local\|([1-9][0-9]*)\|-$ ]]; then
+      printf 'local|%s|%s|-\n' \
+        "${BASH_REMATCH[1]}" "$resolved_run" >> "$identity_file"
+    elif [[ "$marker_contents" =~ ^slurm\|([1-9][0-9]*)\|(seqdesk-[A-Za-z0-9_-]+)$ ]]; then
+      printf 'slurm|%s|%s|%s\n' \
+        "${BASH_REMATCH[1]}" "$resolved_run" "${BASH_REMATCH[2]}" >> "$identity_file"
+    else
+      echo "ERROR: refusing malformed pipeline launch marker contents at $marker_path." >&2
+      cleanup_rc=1
+    fi
+  done < "$marker_file"
+fi
+
+if ! sort -u "$identity_file" -o "$identity_file"; then
+  echo "ERROR: could not deduplicate pipeline cleanup identities." >&2
+  cleanup_rc=1
+fi
 
 # Signal all exact identities first so the bounded waits apply to the set.
 while IFS='|' read -r kind queue_id run_folder expected_job_name; do

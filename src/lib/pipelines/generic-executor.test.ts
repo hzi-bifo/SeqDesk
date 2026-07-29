@@ -729,12 +729,62 @@ describe("generic-executor", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.runFolder).toBe(path.resolve(relativeRunDir, path.basename(result.runFolder!)));
+    expect(result.runFolder).toBe(
+      path.join(await fs.realpath(relativeRunDir), path.basename(result.runFolder!))
+    );
+    expect(await fs.realpath(result.runFolder!)).toBe(result.runFolder);
     expect(path.isAbsolute(result.runFolder!)).toBe(true);
 
     const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
     expect(script).toContain(`STDOUT_LOG="${result.runFolder}/logs/pipeline.out"`);
     expect(script).toContain(`STDERR_LOG="${result.runFolder}/logs/pipeline.err"`);
+  });
+
+  it("persists the canonical run folder when the configured root is a symlink", async () => {
+    const adapter = createAdapter();
+    const physicalRunRoot = path.join(tempDir, "physical-runs");
+    const configuredRunRoot = path.join(tempDir, "configured-runs");
+    await fs.mkdir(physicalRunRoot);
+    await fs.symlink(physicalRunRoot, configuredRunRoot, "dir");
+
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-symlink",
+      pipelineId: "simulate-reads",
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(configuredRunRoot),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    expect(path.dirname(result.runFolder!)).toBe(
+      await fs.realpath(physicalRunRoot)
+    );
+    expect(await fs.realpath(result.runFolder!)).toBe(result.runFolder);
+    const persistedRunFolder = mocks.db.pipelineRun.updateMany.mock.calls.find(
+      (call) => call[0]?.data?.runFolder
+    )?.[0].data.runFolder;
+    expect(persistedRunFolder).toBe(result.runFolder);
+    const script = await fs.readFile(
+      path.join(result.runFolder!, "run.sh"),
+      "utf8"
+    );
+    expect(script).toContain(result.runFolder!);
+    expect(script).not.toContain(configuredRunRoot);
   });
 
   it("generates a SLURM script when useSlurm is enabled", async () => {

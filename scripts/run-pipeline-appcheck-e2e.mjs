@@ -250,12 +250,14 @@ function buildSlurmOverride(args) {
   const cores = toOptionalInt(args["slurm-cores"] || process.env.SEQDESK_SLURM_E2E_CORES);
   const memory = args["slurm-memory"] || process.env.SEQDESK_SLURM_E2E_MEMORY;
   const timeLimit = toOptionalInt(args["slurm-time-limit"] || process.env.SEQDESK_SLURM_E2E_TIME_LIMIT);
-  const options = args["slurm-options"] || process.env.SEQDESK_SLURM_E2E_OPTIONS;
+  const configuredOptions = args["slurm-options"] || process.env.SEQDESK_SLURM_E2E_OPTIONS;
   if (queue) slurm.queue = queue;
   if (cores && cores > 0) slurm.cores = cores;
   if (memory) slurm.memory = memory;
   if (timeLimit && timeLimit > 0) slurm.timeLimit = timeLimit;
-  if (options !== undefined) slurm.options = options;
+  // Keep the reconciliation target pending so it cannot complete naturally
+  // before the out-of-band scancel assertion.
+  slurm.options = [configuredOptions, "--hold"].filter(Boolean).join(" ");
   return Object.keys(slurm).length > 0 ? slurm : undefined;
 }
 
@@ -514,19 +516,32 @@ async function checkAccess({ baseUrl }) {
 // CHECK: stuck  (out-of-band scancel -> /sync reconciliation)
 // ---------------------------------------------------------------------------
 async function sacctState(jobId) {
-  if (!/^\d+$/.test(String(jobId || ""))) return { ok: false, reason: "no numeric job id" };
   try {
     const { stdout } = await execFileAsync(
       "sacct",
-      ["-j", String(jobId), "--noheader", "-o", "State", "-P"],
+      [
+        "-X",
+        "-P",
+        "-j",
+        String(jobId),
+        "--noheader",
+        "--format=JobIDRaw,State",
+      ],
       { timeout: 15000 }
     );
-    const states = stdout
+    const rows = stdout
       .split(/\r?\n/)
-      .map((line) => line.trim().toUpperCase())
-      .filter(Boolean);
-    const cancelled = states.some((s) => s.startsWith("CANCELLED") || s.startsWith("CANCELED"));
-    return { ok: cancelled, states };
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.split("|"));
+    const primary = rows.find(([rowJobId]) => rowJobId === String(jobId));
+    const rawState = primary?.[1]?.trim() || "";
+    const state = rawState.split(/\s+/)[0].replace(/\+$/, "").toUpperCase();
+    return {
+      ok: state === "CANCELLED" || state === "CANCELED",
+      state: state || null,
+      rawState: rawState || null,
+    };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
@@ -627,6 +642,12 @@ async function checkStuck({ baseUrl, pipelineId, timeoutSeconds, slurm }) {
     if (sacct.ok) break;
     await sleep(2000);
   }
+  if (!sacct.ok) {
+    fail(
+      `SLURM accounting did not prove out-of-band cancellation of job ${jobId} within the bounded retry window`,
+      JSON.stringify(sacct, null, 2)
+    );
+  }
 
   return {
     check: "stuck",
@@ -638,7 +659,7 @@ async function checkStuck({ baseUrl, pipelineId, timeoutSeconds, slurm }) {
     stateBeforeScancel: stateBefore,
     statusAfterReconcile: String(reconciled.status || "").toLowerCase(),
     statusSource: reconciled.statusSource || null,
-    sacctCancelled: sacct.ok,
+    sacctCancelled: true,
   };
 }
 

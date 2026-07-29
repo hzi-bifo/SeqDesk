@@ -30,16 +30,22 @@ const cancelHarness = fs.readFileSync(
   path.join(repoRoot, "scripts", "run-slurm-cancel-e2e.mjs"),
   "utf8"
 );
+const appcheckHarness = fs.readFileSync(
+  path.join(repoRoot, "scripts", "run-pipeline-appcheck-e2e.mjs"),
+  "utf8"
+);
 const commandProbeHarnesses = [
-  "run-pipeline-appcheck-e2e.mjs",
-  "run-pipeline-runtime-e2e.mjs",
-  "run-slurm-cancel-e2e.mjs",
-  "run-slurm-failure-e2e.mjs",
-  "run-slurm-pipeline-e2e.mjs",
-].map((name) => [
-  name,
-  fs.readFileSync(path.join(repoRoot, "scripts", name), "utf8"),
-] as const);
+  ["run-pipeline-appcheck-e2e.mjs", appcheckHarness],
+  ["run-pipeline-runtime-e2e.mjs", runtimeHarness],
+  ["run-slurm-cancel-e2e.mjs", cancelHarness],
+  ...["run-slurm-failure-e2e.mjs", "run-slurm-pipeline-e2e.mjs"].map(
+    (name) =>
+      [
+        name,
+        fs.readFileSync(path.join(repoRoot, "scripts", name), "utf8"),
+      ] as const
+  ),
+] as const;
 const metaxpathSlurmLeg = fs.readFileSync(
   path.join(repoRoot, "scripts", "metaxpath-slurm-leg.sh"),
   "utf8"
@@ -141,10 +147,40 @@ describe("self-hosted pipeline CI contract", () => {
     );
   });
 
-  it("holds the throwaway SLURM cancellation target for deterministic stop verification", () => {
+  it("requires app and scheduler cancellation to be proved within bounded checks", () => {
     expect(cancelHarness).toContain(
       'slurm.options = [configuredOptions, "--hold"].filter(Boolean).join(" ")'
     );
+    expect(cancelHarness).toContain(
+      '"SLURM start response did not include a submitted numeric job id"'
+    );
+    expect(cancelHarness).toContain('"--format=JobIDRaw,State"');
+    expect(cancelHarness).toContain(
+      "if (!CANCELLED_STATES.has(statusAfterCancel))"
+    );
+    expect(cancelHarness).toContain(
+      "SLURM accounting did not prove job ${jobId} reached CANCELLED within the bounded retry window"
+    );
+    expect(cancelHarness).toContain(
+      'assertion: "app-and-slurm-cancellation-confirmed"'
+    );
+    expect(cancelHarness).not.toContain(
+      "sacct did not show a CANCELLED state for job"
+    );
+
+    const stuckCheck = appcheckHarness.slice(
+      appcheckHarness.indexOf("async function checkStuck"),
+      appcheckHarness.indexOf("const ctx = {}")
+    );
+    expect(appcheckHarness).toContain(
+      'slurm.options = [configuredOptions, "--hold"].filter(Boolean).join(" ")'
+    );
+    expect(appcheckHarness).toContain('"--format=JobIDRaw,State"');
+    expect(stuckCheck).toContain("sacct = await sacctState(jobId)");
+    expect(stuckCheck).toContain(
+      "SLURM accounting did not prove out-of-band cancellation of job ${jobId} within the bounded retry window"
+    );
+    expect(stuckCheck).toContain("sacctCancelled: true");
   });
 
   it.each(commandProbeHarnesses)(
@@ -180,12 +216,25 @@ describe("self-hosted pipeline CI contract", () => {
     );
     expect(installGate).toContain('export SEQDESK_CONDA_CACHE_DIR="$INSTALLED_CONDA_CACHE"');
     expect(installGate).toContain(
-      'if [ -f "$APP_DIR/current/scripts/apply-install-profile.mjs" ]'
+      'if [ -L "$APP_DIR/start.sh" ] || [ ! -f "$APP_DIR/start.sh" ] || [ ! -x "$APP_DIR/start.sh" ]'
     );
+    expect(installGate).toContain(
+      `grep -F -q 'cd "$ROOT_DIR/current"' "$APP_DIR/start.sh"`
+    );
+    expect(installGate).toContain(
+      `grep -F -q 'exec ./start.sh "$@"' "$APP_DIR/start.sh"`
+    );
+    expect(installGate).toContain('if [ ! -L "$APP_DIR/current" ]');
     expect(installGate).toContain(
       'INSTALLED_RELEASE_DIR="$(cd "$APP_DIR/current" && pwd -P)"'
     );
     expect(installGate).toContain(
+      'EXPECTED_RELEASE_DIR="$INSTALL_ROOT/releases/$VERSION"'
+    );
+    expect(installGate).toContain(
+      'if [ "$INSTALLED_RELEASE_DIR" != "$EXPECTED_RELEASE_DIR" ]'
+    );
+    expect(installGate).not.toContain(
       'elif [ -f "$APP_DIR/scripts/apply-install-profile.mjs" ]'
     );
     expect(installGate).toContain(
@@ -260,16 +309,32 @@ describe("self-hosted pipeline CI contract", () => {
       '[ "$job_name" = "$expected_job_name" ]'
     );
     expect(canonical).toContain(
-      '[ "$work_dir" = "$run_folder" ]'
+      '[ "$resolved_actual_work_dir" = "$resolved_expected_work_dir" ]'
     );
     expect(canonical).toContain(
       "where coalesce(\\\"queueJobId\\\", '') <> ''"
+    );
+    expect(canonical).toContain(': > "$queue_file"');
+    expect(canonical).toContain(
+      "launch markers to stop jobs that never reached PostgreSQL"
+    );
+    expect(canonical).toContain(
+      "-name '.seqdesk-launch-identity' -print0"
+    );
+    expect(canonical).toContain(
+      '[[ "$marker_contents" =~ ^local\\|([1-9][0-9]*)\\|-$ ]]'
+    );
+    expect(canonical).toContain(
+      '[[ "$marker_contents" =~ ^slurm\\|([1-9][0-9]*)\\|(seqdesk-[A-Za-z0-9_-]+)$ ]]'
+    );
+    expect(canonical).toContain(
+      'sort -u "$identity_file" -o "$identity_file"'
     );
     expect(canonical).not.toContain(
       "where status in ('pending','queued','running')"
     );
     expect(canonical).toContain(
-      '[[ "$run_folder" != "$run_root/"* ]]'
+      '[[ "$resolved_run" != "$resolved_root/"* ]]'
     );
     expect(canonical).toContain(
       "SEQDESK_STAGED_PIPELINES_DIR=$SHARED_BASE/ci-seqdesk-pipelines-$RUN_SUFFIX"
@@ -528,6 +593,19 @@ describe("self-hosted pipeline CI contract", () => {
     expect(almaDbCleanup).toContain(
       "where coalesce(\\\"queueJobId\\\", '') <> ''"
     );
+    expect(almaDbCleanup).toContain(': > "$queue_file"');
+    expect(almaDbCleanup).toContain(
+      "still drain any atomic launch markers"
+    );
+    expect(almaDbCleanup).toContain(
+      "-name '.seqdesk-launch-identity' -print0"
+    );
+    expect(almaDbCleanup).toContain(
+      '[[ "$marker_contents" =~ ^local\\|([1-9][0-9]*)\\|-$ ]]'
+    );
+    expect(almaDbCleanup).toContain(
+      '[[ "$marker_contents" =~ ^slurm\\|([1-9][0-9]*)\\|(seqdesk-[A-Za-z0-9_-]+)$ ]]'
+    );
     expect(almaDbCleanup).not.toContain(
       "where status in ('pending','queued','running')"
     );
@@ -546,6 +624,24 @@ describe("self-hosted pipeline CI contract", () => {
     );
     expect(almaDbCleanup).toContain(
       'if ! processes="$(ps -eo pgid=,stat= 2>/dev/null)"; then'
+    );
+    expect(almaDbCleanup).toContain(
+      'resolved_root="$(realpath -m "$run_root" 2>/dev/null || true)"'
+    );
+    expect(almaDbCleanup).toContain(
+      'resolved_run="$(realpath -m "$run_folder" 2>/dev/null || true)"'
+    );
+    expect(almaDbCleanup).toContain(
+      'resolved_actual_work_dir="$(realpath -m "$actual_work_dir" 2>/dev/null || true)"'
+    );
+    expect(almaDbCleanup).toContain(
+      '[ "$resolved_actual_work_dir" = "$resolved_expected_work_dir" ]'
+    );
+    expect(canonical).toContain(
+      'resolved_root="$(realpath -m "$run_root" 2>/dev/null || true)"'
+    );
+    expect(canonical).toContain(
+      'resolved_actual_work_dir="$(realpath -m "$work_dir" 2>/dev/null || true)"'
     );
   });
 

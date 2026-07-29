@@ -1,4 +1,5 @@
 import { execFile } from 'child_process';
+import fs from 'node:fs/promises';
 import path from 'path';
 import { promisify } from 'util';
 
@@ -226,12 +227,27 @@ function unverifiedQueueIdentity(
   };
 }
 
-function exactWorkDirMatches(
+async function canonicalPathForComparison(value: string): Promise<string> {
+  const resolved = path.resolve(value);
+  try {
+    return await fs.realpath(resolved);
+  } catch {
+    // Historical rows or just-finished scheduler jobs can outlive their run
+    // folders. Preserve the previous lexical normalization as a safe fallback.
+    return resolved;
+  }
+}
+
+async function exactPathMatches(
   candidate: string | null | undefined,
   expected: string
-): boolean {
+): Promise<boolean> {
   if (!candidate?.trim()) return false;
-  return path.resolve(candidate.trim()) === expected;
+  const [canonicalCandidate, canonicalExpected] = await Promise.all([
+    canonicalPathForComparison(candidate.trim()),
+    canonicalPathForComparison(expected),
+  ]);
+  return canonicalCandidate === canonicalExpected;
 }
 
 export async function readIdentityCheckedQueueSnapshot({
@@ -389,7 +405,7 @@ export async function readIdentityCheckedQueueSnapshot({
           'Stored SLURM job identity is missing its work directory'
         );
       }
-      if (!exactWorkDirMatches(workDir, expectedWorkDir)) {
+      if (!(await exactPathMatches(workDir, expectedWorkDir))) {
         return unverifiedQueueIdentity(
           'squeue',
           'Stored SLURM job ID belongs to another work directory'
@@ -463,7 +479,7 @@ export async function readIdentityCheckedQueueSnapshot({
           'Stored SLURM job identity is missing its work directory'
         );
       }
-      if (!exactWorkDirMatches(primary.workDir, expectedWorkDir)) {
+      if (!(await exactPathMatches(primary.workDir, expectedWorkDir))) {
         return unverifiedQueueIdentity(
           'sacct',
           'Stored SLURM job ID belongs to another work directory'

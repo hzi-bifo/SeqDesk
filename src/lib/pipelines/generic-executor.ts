@@ -20,8 +20,8 @@ import { createGenericAdapter } from './generic-adapter';
 import { getAdapter, registerAdapter, type PipelineAdapter } from './adapters/types';
 import { SEQDESK_TRACE_FIELDS } from './nextflow';
 import {
-  buildPipelineRunFolder,
   buildSeqDeskSlurmJobName,
+  preparePipelineRunDirectory,
 } from './run-directory';
 import type { PipelineTarget } from './types';
 
@@ -162,19 +162,7 @@ async function prepareRunDirectory(
   runId: string,
   pipelineRunDir: string
 ): Promise<string> {
-  const runFolder = buildPipelineRunFolder(pipelineRunDir, runNumber, runId);
-
-  try {
-    await fs.mkdir(runFolder, { recursive: true });
-    await fs.mkdir(path.join(runFolder, 'logs'), { recursive: true });
-  } catch (error) {
-    // The folder identity includes the immutable database run ID, so this
-    // cleanup can only remove this preparation's partially-created tree.
-    await fs.rm(runFolder, { recursive: true, force: true }).catch(() => {});
-    throw error;
-  }
-
-  return runFolder;
+  return preparePipelineRunDirectory(pipelineRunDir, runNumber, runId);
 }
 
 /**

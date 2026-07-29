@@ -20,6 +20,7 @@ import {
 } from '@/lib/pipelines/execution-policy';
 import { prepareGenericRun } from '@/lib/pipelines/generic-executor';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
+import { writePipelineLaunchIdentity } from '@/lib/pipelines/launch-identity';
 import {
   buildMetaxPathCompatibilityMessage,
   checkMetaxPathPackageCompatibility,
@@ -1397,6 +1398,12 @@ export async function startPipelineRunForOperator({
         // orphan the job (running untracked, with queueJobId never saved). Once
         // submittedJobId is set, the catch can scancel it if anything fails.
         submittedJobId = jobId;
+        await writePipelineLaunchIdentity({
+          runFolder: prepResult.runFolder,
+          runId,
+          kind: 'slurm',
+          numericId: jobId,
+        });
         const jobIdPersisted = await persistWithRetry(() =>
           db.pipelineRun.updateMany({
             where: {
@@ -1530,15 +1537,29 @@ export async function startPipelineRunForOperator({
         detached: true,
       });
       childProcess.unref();
-      spawnedLocalPid =
-        typeof childProcess.pid === 'number' ? childProcess.pid : null;
-
       childProcess.on('close', (code) => {
         void finalizeLocalRun(run.id, pipelineId, code);
       });
       childProcess.on('error', (error) => {
         console.error('[Pipeline Run] Local execution error:', error);
         void finalizeLocalRun(run.id, pipelineId, 1);
+      });
+
+      const localPid =
+        typeof childProcess.pid === 'number' &&
+        Number.isSafeInteger(childProcess.pid) &&
+        childProcess.pid > 0
+          ? childProcess.pid
+          : null;
+      if (localPid === null) {
+        throw new Error('Local pipeline process did not expose a valid PID');
+      }
+      spawnedLocalPid = localPid;
+      await writePipelineLaunchIdentity({
+        runFolder: prepResult.runFolder,
+        runId,
+        kind: 'local',
+        numericId: localPid,
       });
 
       // Guard on status='running' (set by the launch claim above): if the child
@@ -1551,7 +1572,7 @@ export async function startPipelineRunForOperator({
           ...unlockedLifecycleSourceFilter(),
         },
         data: {
-          queueJobId: `local-${childProcess.pid}`,
+          queueJobId: `local-${localPid}`,
           startedAt: new Date(),
           queueStatus: 'RUNNING',
           queueUpdatedAt: new Date(),
@@ -1572,7 +1593,7 @@ export async function startPipelineRunForOperator({
       return jsonResponse({
         success: true,
         status: 'running',
-        pid: childProcess.pid,
+        pid: localPid,
         runFolder: prepResult.runFolder,
         executionMode: executionPolicy.mode,
         message: 'Pipeline started in background. Check the Analysis dashboard for status.',

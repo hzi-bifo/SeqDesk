@@ -231,19 +231,32 @@ const CANCELLABLE_STATES = new Set(["pending", "queued", "running"]);
 // sacct reports a cancelled job's state starting with "CANCELLED" (optionally
 // "CANCELLED by <uid>"). Confirms the SLURM job itself was actually scancel'd.
 async function sacctShowsCancelled(jobId) {
-  if (!/^\d+$/.test(String(jobId || ""))) return { ok: false, reason: "no numeric job id" };
   try {
     const { stdout } = await execFileAsync(
       "sacct",
-      ["-j", String(jobId), "--noheader", "-o", "State", "-P"],
+      [
+        "-X",
+        "-P",
+        "-j",
+        String(jobId),
+        "--noheader",
+        "--format=JobIDRaw,State",
+      ],
       { timeout: 15000 }
     );
-    const states = stdout
+    const rows = stdout
       .split(/\r?\n/)
-      .map((line) => line.trim().toUpperCase())
-      .filter(Boolean);
-    const cancelled = states.some((state) => state.startsWith("CANCELLED") || state.startsWith("CANCELED"));
-    return { ok: cancelled, states };
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.split("|"));
+    const primary = rows.find(([rowJobId]) => rowJobId === String(jobId));
+    const rawState = primary?.[1]?.trim() || "";
+    const state = rawState.split(/\s+/)[0].replace(/\+$/, "").toUpperCase();
+    return {
+      ok: state === "CANCELLED" || state === "CANCELED",
+      state: state || null,
+      rawState: rawState || null,
+    };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
@@ -295,6 +308,12 @@ async function main() {
     "Start SLURM pipeline run"
   );
   const jobId = startPayload?.jobId || startPayload?.queueJobId;
+  if (!/^\d+$/.test(String(jobId || ""))) {
+    fail(
+      "SLURM start response did not include a submitted numeric job id",
+      JSON.stringify({ runId, startPayload }, null, 2)
+    );
+  }
 
   // 2. Cancel immediately, while the job is still pending/queued/running. DELETE is
   //    synchronous: cancelPipelineRunForOperator scancels the job and sets the run to
@@ -328,7 +347,8 @@ async function main() {
   await sleep(2000);
   const runAfter = await requestJson(client, `/api/pipelines/runs/${runId}`, {}, "Fetch run after cancel");
   const run = runAfter?.run || runAfter;
-  if (!CANCELLED_STATES.has(run?.status)) {
+  const statusAfterCancel = String(run?.status || "").trim().toLowerCase();
+  if (!CANCELLED_STATES.has(statusAfterCancel)) {
     fail(
       `Run ${runId} was not recorded as cancelled (status='${run?.status}') after DELETE`,
       JSON.stringify({ runId, jobId, status: run?.status, currentStep: run?.currentStep }, null, 2)
@@ -338,9 +358,9 @@ async function main() {
     fail(`Cancelled run ${runId} did not record completedAt`, JSON.stringify({ runId }, null, 2));
   }
 
-  // 4. Confirm the SLURM job itself was actually cancelled (best-effort; sacct can
-  //    lag, so a non-CANCELLED reading is a warning, not a failure — the DB state is
-  //    the authoritative assertion above).
+  // 4. Confirm the exact top-level SLURM allocation reached CANCELLED. Accounting
+  //    can lag briefly, so retry within a fixed window; failure to prove scheduler
+  //    cancellation is a hard E2E failure.
   let sacct = { ok: false };
   for (let attempt = 0; attempt < 10; attempt += 1) {
     sacct = await sacctShowsCancelled(jobId);
@@ -348,19 +368,20 @@ async function main() {
     await sleep(2000);
   }
   if (!sacct.ok) {
-    console.warn(
-      `WARN: sacct did not show a CANCELLED state for job ${jobId} (non-fatal): ${JSON.stringify(sacct)}`
+    fail(
+      `SLURM accounting did not prove job ${jobId} reached CANCELLED within the bounded retry window`,
+      JSON.stringify(sacct, null, 2)
     );
   }
 
   const summary = {
     success: true,
-    assertion: "cancelled-run-recorded",
+    assertion: "app-and-slurm-cancellation-confirmed",
     pipelineId,
     runId,
-    jobId: jobId || null,
+    jobId: String(jobId),
     stateBeforeCancel: stateBefore,
-    statusAfterCancel: run?.status,
+    statusAfterCancel,
     currentStep: run?.currentStep || null,
     statusSource: run?.statusSource || null,
     sacctCancelled: sacct.ok,

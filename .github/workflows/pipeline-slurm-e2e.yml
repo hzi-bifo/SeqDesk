@@ -290,6 +290,7 @@ jobs:
             local run_folder="${2:-}"
             local expected_job_name="${3:-}"
             local info job_name work_dir
+            local resolved_expected_work_dir resolved_actual_work_dir
             if [[ ! "$job_id" =~ ^[0-9]+$ ]] ||
                [ -z "$run_folder" ] || [ -z "$expected_job_name" ]; then
               printf '%s\n' unknown
@@ -301,10 +302,15 @@ jobs:
             fi
             job_name="$(printf '%s\n' "$info" | tr ' ' '\n' | sed -n 's/^JobName=//p' | head -n 1)"
             work_dir="$(printf '%s\n' "$info" | tr ' ' '\n' | sed -n 's/^WorkDir=//p' | head -n 1)"
+            resolved_expected_work_dir="$(realpath -m "$run_folder" 2>/dev/null || true)"
+            resolved_actual_work_dir="$(realpath -m "$work_dir" 2>/dev/null || true)"
             if [ -z "$job_name" ] || [ -z "$work_dir" ]; then
               printf '%s\n' unknown
+            elif [ -z "$resolved_expected_work_dir" ] ||
+                 [ -z "$resolved_actual_work_dir" ]; then
+              printf '%s\n' unknown
             elif [ "$job_name" = "$expected_job_name" ] &&
-                 [ "$work_dir" = "$run_folder" ]; then
+                 [ "$resolved_actual_work_dir" = "$resolved_expected_work_dir" ]; then
               printf '%s\n' matches
             else
               printf '%s\n' mismatch
@@ -314,8 +320,10 @@ jobs:
           seqdesk_ci_cancel_pipeline_runs() {
             local db_name="${1:-}"
             local run_root="${2:-}"
-            local queue_file identity_file run_id queue_id run_folder safe_run_id
+            local queue_file identity_file marker_file run_id queue_id run_folder safe_run_id
             local kind expected_job_name pid process_state slurm_state identity_state
+            local marker_path marker_size marker_contents resolved_marker
+            local resolved_root resolved_run
             local cleanup_rc=0
             local remaining=0
 
@@ -327,10 +335,19 @@ jobs:
               echo "ERROR: psql is unavailable; cannot resolve this run's queue ids." >&2
               return 1
             fi
+            resolved_root="$(realpath -m "$run_root" 2>/dev/null || true)"
+            if [ -z "$resolved_root" ]; then
+              echo "ERROR: could not resolve pipeline run root $run_root." >&2
+              return 1
+            fi
 
             queue_file="$(mktemp "${RUNNER_TEMP:-/tmp}/seqdesk-ci-queue.XXXXXX")" || return 1
             identity_file="$(mktemp "${RUNNER_TEMP:-/tmp}/seqdesk-ci-identity.XXXXXX")" || {
               rm -f "$queue_file"
+              return 1
+            }
+            marker_file="$(mktemp "${RUNNER_TEMP:-/tmp}/seqdesk-ci-markers.XXXXXX")" || {
+              rm -f "$queue_file" "$identity_file"
               return 1
             }
             if ! PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql \
@@ -339,8 +356,10 @@ jobs:
               -c "select id, \"queueJobId\", coalesce(\"runFolder\", '') from \"PipelineRun\" where coalesce(\"queueJobId\", '') <> '' order by \"createdAt\"" \
               >"$queue_file" 2>/dev/null; then
               echo "ERROR: could not query PipelineRun queue identities from $db_name." >&2
-              rm -f "$queue_file" "$identity_file"
-              return 1
+              # Preserve cleanup failure so diagnostics survive, but still use
+              # launch markers to stop jobs that never reached PostgreSQL.
+              : > "$queue_file"
+              cleanup_rc=1
             fi
 
             # Database status is deliberately not part of this filter. A finalizer
@@ -348,8 +367,10 @@ jobs:
             # actually exits. Scope every identity to this run's exact generated folder,
             # then let ps/squeue determine whether anything still needs a signal.
             while IFS='|' read -r run_id queue_id run_folder; do
+              resolved_run="$(realpath -m "$run_folder" 2>/dev/null || true)"
               if [ -z "$run_id" ] || [ -z "$queue_id" ] ||
-                 [[ "$run_folder" != "$run_root/"* ]]; then
+                 [ -z "$resolved_run" ] ||
+                 [[ "$resolved_run" != "$resolved_root/"* ]]; then
                 echo "ERROR: refusing unscoped PipelineRun identity from $db_name (run=${run_id:-<missing>} queue=${queue_id:-<missing>} folder=${run_folder:-<missing>})." >&2
                 cleanup_rc=1
                 continue
@@ -377,6 +398,64 @@ jobs:
               esac
             done < "$queue_file"
             rm -f "$queue_file"
+
+            # Recover external launches whose queueJobId database write and
+            # immediate compensating stop both failed. The app writes this
+            # marker atomically beside run.sh before persisting queueJobId.
+            if [ -d "$resolved_root" ]; then
+              if ! find "$resolved_root" \
+                -name '.seqdesk-launch-identity' -print0 > "$marker_file" 2>/dev/null; then
+                echo "ERROR: could not scan pipeline launch identity markers under $resolved_root." >&2
+                cleanup_rc=1
+              fi
+
+              while IFS= read -r -d '' marker_path; do
+                resolved_run="$(realpath -m "$(dirname "$marker_path")" 2>/dev/null || true)"
+                resolved_marker="$(realpath -m "$marker_path" 2>/dev/null || true)"
+                if [ -z "$resolved_run" ] || [ -z "$resolved_marker" ] ||
+                   [[ "$resolved_run" != "$resolved_root/"* ]] ||
+                   [ "$resolved_marker" != "$resolved_run/.seqdesk-launch-identity" ] ||
+                   [ -L "$marker_path" ] || [ ! -f "$marker_path" ]; then
+                  echo "ERROR: refusing unscoped pipeline launch marker: $marker_path" >&2
+                  cleanup_rc=1
+                  continue
+                fi
+                if ! marker_size="$(wc -c < "$marker_path" 2>/dev/null)"; then
+                  echo "ERROR: could not size pipeline launch marker: $marker_path" >&2
+                  cleanup_rc=1
+                  continue
+                fi
+                marker_size="${marker_size//[[:space:]]/}"
+                if [[ ! "$marker_size" =~ ^[0-9]+$ ]] ||
+                   [ "$marker_size" -lt 1 ] || [ "$marker_size" -gt 256 ]; then
+                  echo "ERROR: refusing malformed pipeline launch marker: $marker_path" >&2
+                  cleanup_rc=1
+                  continue
+                fi
+                if ! marker_contents="$(LC_ALL=C head -c 257 "$marker_path" 2>/dev/null)"; then
+                  echo "ERROR: could not read pipeline launch marker: $marker_path" >&2
+                  cleanup_rc=1
+                  continue
+                fi
+
+                if [[ "$marker_contents" =~ ^local\|([1-9][0-9]*)\|-$ ]]; then
+                  printf 'local|%s|%s|-\n' \
+                    "${BASH_REMATCH[1]}" "$resolved_run" >> "$identity_file"
+                elif [[ "$marker_contents" =~ ^slurm\|([1-9][0-9]*)\|(seqdesk-[A-Za-z0-9_-]+)$ ]]; then
+                  printf 'slurm|%s|%s|%s\n' \
+                    "${BASH_REMATCH[1]}" "$resolved_run" "${BASH_REMATCH[2]}" >> "$identity_file"
+                else
+                  echo "ERROR: refusing malformed pipeline launch marker contents at $marker_path." >&2
+                  cleanup_rc=1
+                fi
+              done < "$marker_file"
+            fi
+            rm -f "$marker_file"
+
+            if ! sort -u "$identity_file" -o "$identity_file"; then
+              echo "ERROR: could not deduplicate pipeline cleanup identities." >&2
+              cleanup_rc=1
+            fi
 
             # Signal all verified jobs first, then wait for the whole set together.
             # This keeps cleanup bounded even if several clients timed out together.
@@ -978,6 +1057,9 @@ jobs:
 
       - name: Generate Prisma client
         run: npx prisma generate
+
+      - name: Type-check production sources
+        run: npm run typecheck:production
 
       - name: Apply database migrations
         run: npm run db:migrate:deploy
@@ -1896,14 +1978,39 @@ jobs:
             echo "Mock release server did not stop cleanly after installation." >&2
             exit 1
           fi
-          test -x "$APP_DIR/start.sh"
-          if [ -f "$APP_DIR/current/scripts/apply-install-profile.mjs" ]; then
-            INSTALLED_RELEASE_DIR="$(cd "$APP_DIR/current" && pwd -P)"
-          elif [ -f "$APP_DIR/scripts/apply-install-profile.mjs" ]; then
-            INSTALLED_RELEASE_DIR="$(cd "$APP_DIR" && pwd -P)"
-          else
-            echo "Installed release root is missing scripts/apply-install-profile.mjs." >&2
-            ls -la "$APP_DIR" "$APP_DIR/current" 2>/dev/null || true
+          if [ -L "$APP_DIR/start.sh" ] || [ ! -f "$APP_DIR/start.sh" ] || [ ! -x "$APP_DIR/start.sh" ]; then
+            echo "Fresh install is missing its executable root start wrapper: $APP_DIR/start.sh" >&2
+            exit 1
+          fi
+          if ! grep -F -q 'cd "$ROOT_DIR/current"' "$APP_DIR/start.sh" ||
+             ! grep -F -q 'exec ./start.sh "$@"' "$APP_DIR/start.sh"; then
+            echo "Fresh install root start.sh is not the releases/current wrapper." >&2
+            exit 1
+          fi
+          if [ ! -L "$APP_DIR/current" ]; then
+            echo "Fresh install did not create the required current symlink: $APP_DIR/current" >&2
+            ls -la "$APP_DIR" 2>/dev/null || true
+            exit 1
+          fi
+          INSTALL_ROOT="$(cd "$APP_DIR" && pwd -P)"
+          EXPECTED_RELEASE_DIR="$INSTALL_ROOT/releases/$VERSION"
+          if [ ! -d "$EXPECTED_RELEASE_DIR" ]; then
+            echo "Fresh install is missing the expected versioned release: $EXPECTED_RELEASE_DIR" >&2
+            exit 1
+          fi
+          EXPECTED_RELEASE_CANONICAL="$(cd "$EXPECTED_RELEASE_DIR" && pwd -P)"
+          if [ "$EXPECTED_RELEASE_CANONICAL" != "$EXPECTED_RELEASE_DIR" ]; then
+            echo "Expected versioned release resolves outside its canonical path: $EXPECTED_RELEASE_DIR -> $EXPECTED_RELEASE_CANONICAL" >&2
+            exit 1
+          fi
+          INSTALLED_RELEASE_DIR="$(cd "$APP_DIR/current" && pwd -P)"
+          if [ "$INSTALLED_RELEASE_DIR" != "$EXPECTED_RELEASE_DIR" ]; then
+            echo "Fresh install current target mismatch: expected $EXPECTED_RELEASE_DIR, found $INSTALLED_RELEASE_DIR" >&2
+            exit 1
+          fi
+          if [ ! -f "$INSTALLED_RELEASE_DIR/scripts/apply-install-profile.mjs" ]; then
+            echo "Installed versioned release is missing scripts/apply-install-profile.mjs." >&2
+            ls -la "$INSTALLED_RELEASE_DIR" 2>/dev/null || true
             exit 1
           fi
           test -f "$INSTALLED_RELEASE_DIR/package.json"

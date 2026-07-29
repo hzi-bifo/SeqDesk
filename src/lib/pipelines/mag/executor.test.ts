@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   },
   fs: {
     mkdir: vi.fn(),
+    realpath: vi.fn(),
+    lstat: vi.fn(),
     writeFile: vi.fn(),
     chmod: vi.fn(),
     rm: vi.fn(),
@@ -37,6 +39,8 @@ vi.mock('@/lib/pipelines/output-resolver', () => ({
 vi.mock('fs/promises', () => ({
   default: {
     mkdir: mocks.fs.mkdir,
+    realpath: mocks.fs.realpath,
+    lstat: mocks.fs.lstat,
     writeFile: mocks.fs.writeFile,
     chmod: mocks.fs.chmod,
     rm: mocks.fs.rm,
@@ -139,6 +143,11 @@ describe('prepareMagRun', () => {
     mocks.db.pipelineRun.update.mockResolvedValue({});
     mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
     mocks.fs.mkdir.mockResolvedValue(undefined);
+    mocks.fs.realpath.mockImplementation(async (filePath: string) => filePath);
+    mocks.fs.lstat.mockResolvedValue({
+      isDirectory: () => true,
+      isSymbolicLink: () => false,
+    });
     mocks.fs.writeFile.mockResolvedValue(undefined);
     mocks.fs.chmod.mockResolvedValue(undefined);
     mocks.fs.rm.mockResolvedValue(undefined);
@@ -295,6 +304,27 @@ describe('prepareMagRun', () => {
     expect(
       mocks.db.pipelineRun.updateMany.mock.calls[0][0].data.status
     ).toBeUndefined();
+  });
+
+  it('uses the canonical directory returned after creating the run folder', async () => {
+    const adapter = makeMockAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.fs.realpath.mockImplementation(async (filePath: string) =>
+      filePath.replace(/^\/runs/, '/physical/runs')
+    );
+
+    const result = await prepareMagRun(baseStartRunOptions());
+
+    expect(result.success).toBe(true);
+    expect(result.runFolder).toMatch(/^\/physical\/runs\/MAG-/);
+    const persistedRunFolder = mocks.db.pipelineRun.updateMany.mock.calls.find(
+      (call) => call[0]?.data?.runFolder
+    )?.[0].data.runFolder;
+    expect(persistedRunFolder).toBe(result.runFolder);
+    expect(mocks.fs.writeFile).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/physical\/runs\/MAG-.*\/run\.sh$/),
+      expect.stringContaining(result.runFolder!)
+    );
   });
 
   it('does not resurrect a run cancelled while MAG preparation writes its folder', async () => {
@@ -492,10 +522,9 @@ describe('prepareMagRun', () => {
     expect(result.success).toBe(false);
     expect(result.errors[0]).toContain('Failed to prepare run');
     expect(result.errors[0]).toContain('permission denied');
-    expect(mocks.fs.rm).toHaveBeenCalledWith(
-      expect.stringMatching(/MAG-.*--id-run-1$/),
-      { recursive: true, force: true }
-    );
+    // The configured root failed before this call created the generated leaf,
+    // so cleanup must not remove any pre-existing path.
+    expect(mocks.fs.rm).not.toHaveBeenCalled();
   });
 
   it('includes conda runtime bootstrap when condaPath is set', async () => {
