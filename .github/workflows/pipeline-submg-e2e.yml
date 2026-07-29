@@ -50,6 +50,7 @@ concurrency:
 jobs:
   submg_app_e2e:
     name: Pipeline submg E2E (ENA test server)
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:

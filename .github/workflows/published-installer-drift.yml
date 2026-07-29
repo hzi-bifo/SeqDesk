@@ -29,6 +29,7 @@ concurrency:
 jobs:
   compare:
     name: Published installer matches main
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

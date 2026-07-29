@@ -28,6 +28,7 @@ concurrency:
 jobs:
   ena-test-server:
     name: "Register a study on the ENA test server"
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -57,6 +58,7 @@ jobs:
 
   install-load-submit:
     name: "Install, load samples, submit to the ENA test server"
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

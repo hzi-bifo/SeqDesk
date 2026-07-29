@@ -21,6 +21,7 @@ concurrency:
 jobs:
   ubuntu-profile-smoke:
     name: Install ci-runner profile on Ubuntu
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     services:

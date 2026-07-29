@@ -41,6 +41,7 @@ jobs:
     # The installer's unit suites. Every one of them sources an installer in
     # library-only mode -- no real install, no database, no network -- so the
     # whole job costs seconds and gates every push AND every pull request.
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -82,8 +83,11 @@ jobs:
     # Heavy leg: pull requests need the `installer-e2e` label. See the cost
     # split at the top of this file.
     if: >-
-      github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      github.repository == 'hzi-bifo/SeqDesk'
+      && (
+        github.event_name != 'pull_request'
+        || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -124,8 +128,11 @@ jobs:
   public-installer-ubuntu:
     # Heavy leg: pull requests need the `installer-e2e` label.
     if: >-
-      github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      github.repository == 'hzi-bifo/SeqDesk'
+      && (
+        github.event_name != 'pull_request'
+        || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      )
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -342,8 +349,11 @@ jobs:
   source-installer-ubuntu:
     # Heavy leg: pull requests need the `installer-e2e` label.
     if: >-
-      github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      github.repository == 'hzi-bifo/SeqDesk'
+      && (
+        github.event_name != 'pull_request'
+        || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -487,8 +497,11 @@ jobs:
   public-installer-ubuntu-pm2:
     # Heavy leg: pull requests need the `installer-e2e` label.
     if: >-
-      github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      github.repository == 'hzi-bifo/SeqDesk'
+      && (
+        github.event_name != 'pull_request'
+        || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      )
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -699,8 +712,11 @@ jobs:
     name: Install via npm launcher (npm i -g seqdesk)
     # Heavy leg: pull requests need the `installer-e2e` label.
     if: >-
-      github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      github.repository == 'hzi-bifo/SeqDesk'
+      && (
+        github.event_name != 'pull_request'
+        || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      )
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -893,8 +909,11 @@ jobs:
     name: Apply checked-in install profile (no secret)
     # Heavy leg: pull requests need the `installer-e2e` label.
     if: >-
-      github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      github.repository == 'hzi-bifo/SeqDesk'
+      && (
+        github.event_name != 'pull_request'
+        || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      )
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1213,8 +1232,11 @@ jobs:
     # Heavy leg: pull requests need the `installer-e2e` label. This is the one
     # to label when scripts/install-dist.sh touches PostgreSQL at all.
     if: >-
-      github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      github.repository == 'hzi-bifo/SeqDesk'
+      && (
+        github.event_name != 'pull_request'
+        || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      )
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     # Same budget as the other install jobs: unpack, npm install, migrate, seed
@@ -1443,8 +1465,11 @@ jobs:
     #
     # Heavy leg: pull requests need the `installer-e2e` label.
     if: >-
-      github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      github.repository == 'hzi-bifo/SeqDesk'
+      && (
+        github.event_name != 'pull_request'
+        || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      )
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1681,8 +1706,11 @@ jobs:
     #
     # Heavy leg: pull requests need the `installer-e2e` label.
     if: >-
-      github.event_name != 'pull_request'
-      || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      github.repository == 'hzi-bifo/SeqDesk'
+      && (
+        github.event_name != 'pull_request'
+        || contains(github.event.pull_request.labels.*.name, 'installer-e2e')
+      )
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
     # Two full installs plus three application boots, so roughly double a

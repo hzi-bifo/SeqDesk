@@ -34,6 +34,7 @@ concurrency:
 jobs:
   npm-global-install:
     name: "npm i -g seqdesk (node ${{ matrix.node }})"
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -128,6 +129,7 @@ jobs:
 
   curl-install-sh:
     name: "curl https://seqdesk.org/install.sh | bash"
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -202,6 +204,7 @@ jobs:
 
   npm-global-install-macos:
     name: "npm i -g seqdesk (macOS, node 24)"
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: macos-latest
     timeout-minutes: 40
     env:

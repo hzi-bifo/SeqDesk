@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   e2e:
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:

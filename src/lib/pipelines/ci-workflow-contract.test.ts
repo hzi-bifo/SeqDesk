@@ -1,4 +1,5 @@
 import fs from "fs";
+import { load } from "js-yaml";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
@@ -37,8 +38,40 @@ const almaDbCleanup = fs.readFileSync(
   path.join(repoRoot, "scripts", "cleanup-db-pipeline-runs.sh"),
   "utf8"
 );
+const publicOnlyWorkflows = [
+  "ena-submission-e2e.yml",
+  "install-e2e-ubuntu.yml",
+  "install-profile-ubuntu-smoke.yml",
+  "install-real-network-smoke.yml",
+  "mirror-to-private.yml",
+  "pipeline-submg-e2e.yml",
+  "playwright.yml",
+  "published-installer-drift.yml",
+  "reviewer-install-matrix.yml",
+  "test.yml",
+] as const;
+
+interface WorkflowDocument {
+  jobs?: Record<string, { if?: string }>;
+}
 
 describe("self-hosted pipeline CI contract", () => {
+  it.each(publicOnlyWorkflows)(
+    "keeps every %s job out of the private CI mirror",
+    (workflowName) => {
+      const workflow = load(readWorkflow(workflowName)) as WorkflowDocument;
+      const jobs = Object.entries(workflow.jobs || {});
+
+      expect(jobs.length).toBeGreaterThan(0);
+      for (const [jobName, job] of jobs) {
+        expect(
+          job.if,
+          `${workflowName}/${jobName} must be guarded to the public repository`
+        ).toContain("github.repository == 'hzi-bifo/SeqDesk'");
+      }
+    }
+  );
+
   it.each(selfHostedWorkflows)(
     "keeps the %s workflow read-only and free of scheduled triggers",
     (_name, workflow) => {
