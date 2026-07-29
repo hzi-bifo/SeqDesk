@@ -165,6 +165,7 @@ export const ManifestSchema = z
         .object({
           id: z.string().min(1),
           scope: PackageScope,
+          required: z.boolean().optional(),
           destination: StandardDestination,
           type: OutputType.optional(),
           fromStep: z.string().min(1).optional(),

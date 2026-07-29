@@ -86,6 +86,12 @@ export interface PackageOutputParsed {
 export interface PackageOutput {
   id: string;
   scope: PackageScope;
+  /**
+   * Whether finalization must discover this output before marking a run
+   * terminal. Defaults to true. Set false only for genuinely optional branches
+   * (for example MAG bins when binning is disabled).
+   */
+  required?: boolean;
   destination: StandardDestination;
   type?: 'assembly' | 'bin' | 'report' | 'qc' | 'artifact';
   fromStep?: string;

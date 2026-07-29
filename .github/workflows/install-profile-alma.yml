@@ -1,10 +1,8 @@
 name: Alma Install E2E
 
 on:
-  # Runs once a day on the private mirror (jobs are guarded to SeqDesk-ci), plus
-  # on demand — not on every commit.
-  schedule:
-    - cron: "0 4 * * *" # daily 04:00 UTC (staggered after the SLURM run)
+  # Extended real-data/profile diagnostics are deliberately manual. The required
+  # change-driven install + pipeline gate lives in pipeline-slurm-e2e.yml.
   workflow_dispatch:
     inputs:
       profile_id:
@@ -16,7 +14,7 @@ on:
         required: true
         default: "https://seqdesk.org/api/install-profiles"
       subsample_reads:
-        description: "SHORT run: subsample the Gemma reads to this fraction (e.g. 0.1) so metaxpath finishes in ~30-60min. Empty = full run (the canonical validation)."
+        description: "Optional shorter extended run: subsample Gemma reads to this fraction (for example 0.1). Empty runs the full extended dataset."
         required: false
         default: ""
 
@@ -32,10 +30,13 @@ jobs:
     name: Build release and npm launcher artifacts
     # The whole Alma E2E (build + self-hosted installs) runs only on the private CI mirror.
     if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    runs-on:
+      group: bifo_dmz
+      labels: [self-hosted, Linux, X64, db-local, twincore, alma]
+    timeout-minutes: 90
     env:
       NEXT_TELEMETRY_DISABLED: 1
+      NODE_OPTIONS: --max-old-space-size=8192
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -166,7 +167,6 @@ jobs:
           done
           if [ -n "$ALMA_WORK_ROOT" ]; then
             WORK="$ALMA_WORK_ROOT/$RUN_SUFFIX"
-            find "$ALMA_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
           else
             WORK="$RUNNER_TEMP/seqdesk-alma-$RUN_SUFFIX"; mkdir -p "$WORK"
             echo "WARN: no shared FS writable — falling back to \$RUNNER_TEMP (/home may be full)"
@@ -369,7 +369,7 @@ jobs:
           set -euo pipefail
           cd "$INSTALL_DIR"
           # Persistent, shared Nextflow conda cacheDir (a sibling of the per-run work root, so
-          # the per-run cleanup and the canary stale-dir prune both leave it intact) so per-process
+          # the per-run cleanup leaves it intact) so per-process
           # pipeline conda envs — metaxpath's especially — are solved ONCE and reused across runs
           # instead of cold-built every run (the cold classic-conda solve was stalling metaxpath
           # past its timeout). The env override wins over the installed config; harmless when
@@ -451,16 +451,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 5
 
-      - name: Cleanup canary resources
+      - name: Cleanup run-scoped resources
         if: always()
         run: |
           set +e
-          if [ "${USE_EPHEMERAL_POSTGRES:-0}" = "1" ] && [ -n "${PGDATA_DIR:-}" ] && [ -n "${PG_CTL_BIN:-}" ]; then
-            "$PG_CTL_BIN" -D "$PGDATA_DIR" stop -m fast || true
-            rm -rf "$PGDATA_DIR"
+          cleanup_fail=0
+          cleanup_safe=1
+          if ! bash "$GITHUB_WORKSPACE/scripts/cleanup-db-pipeline-runs.sh" \
+               "${DB_NAME:-}" "${ALMA_WORK:-}"; then
+            echo "ERROR: exact cleanup of plain-install PipelineRun jobs/processes was not proven; preserving its database and work tree." >&2
+            cleanup_safe=0
+            cleanup_fail=1
           fi
-          if command -v psql >/dev/null 2>&1; then
-            PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME:-seqdesk_plain_missing}" >/dev/null 2>&1 || true
+          if [ "$cleanup_safe" = 1 ]; then
+            if command -v psql >/dev/null 2>&1; then
+              PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql \
+                -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" \
+                -U "${DB_USER:-seqdesk}" -d postgres \
+                -c "DROP DATABASE IF EXISTS \"${DB_NAME:-seqdesk_plain_missing}\"" \
+                >/dev/null 2>&1 || cleanup_fail=1
+            fi
+            if [ "${USE_EPHEMERAL_POSTGRES:-0}" = "1" ] && [ -n "${PGDATA_DIR:-}" ] && [ -n "${PG_CTL_BIN:-}" ]; then
+              "$PG_CTL_BIN" -D "$PGDATA_DIR" stop -m fast || cleanup_fail=1
+              rm -rf "$PGDATA_DIR"
+            fi
           fi
           # Stop any worker the installed app auto-started (e.g. pipeline-monitor).
           # It is spawned detached, so it keeps the release node_modules/.prisma
@@ -471,7 +485,12 @@ jobs:
             pkill -f "${INSTALL_DIR}.*-monitor" >/dev/null 2>&1 || true
             sleep 2
           fi
-          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" "${ALMA_WORK:-}" || true
+          if [ "$cleanup_safe" = 1 ]; then
+            rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" \
+              "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" \
+              "$NPM_PREFIX" "${ALMA_WORK:-}" || cleanup_fail=1
+          fi
+          exit "$cleanup_fail"
 
   install-with-profile:
     name: Install with hosted profile on AlmaLinux
@@ -600,8 +619,6 @@ jobs:
           done
           if [ -n "$ALMA_WORK_ROOT" ]; then
             WORK="$ALMA_WORK_ROOT/$RUN_SUFFIX"
-            # prune stale dirs from earlier runs (cleanup can leave NFS .nfs* silly-renames)
-            find "$ALMA_WORK_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
           else
             WORK="$RUNNER_TEMP/seqdesk-alma-$RUN_SUFFIX"; mkdir -p "$WORK"
             echo "WARN: no shared FS writable — falling back to \$RUNNER_TEMP (/home may be full)"
@@ -633,6 +650,10 @@ jobs:
           echo "MOCK_RELEASE_ROOT=$WORK/release-server" >> "$GITHUB_ENV"
           echo "MOCK_SERVER_LOG=$RUNNER_TEMP/profile-release-server-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "NPM_PACK_METADATA=$RUNNER_TEMP/profile-npm-pack-$RUN_SUFFIX.txt" >> "$GITHUB_ENV"
+          # The opt-in SLURM legs touch this guard only if an exact captured
+          # PipelineRun allocation cannot be safely cancelled. Final cleanup
+          # then preserves the database/run tree for recovery and forensics.
+          echo "SEQDESK_SLURM_CLEANUP_GUARD=$RUNNER_TEMP/profile-slurm-cleanup-unsafe-$RUN_SUFFIX" >> "$GITHUB_ENV"
 
       - name: Download release tarball
         uses: actions/download-artifact@v4
@@ -826,7 +847,7 @@ jobs:
           set -euo pipefail
           cd "$INSTALL_DIR"
           # Persistent, shared Nextflow conda cacheDir (a sibling of the per-run work root, so
-          # the per-run cleanup and the canary stale-dir prune both leave it intact) so per-process
+          # the per-run cleanup leaves it intact) so per-process
           # pipeline conda envs — metaxpath's especially — are solved ONCE and reused across runs
           # instead of cold-built every run (the cold classic-conda solve was stalling metaxpath
           # past its timeout). The env override wins over the installed config; harmless when
@@ -929,6 +950,18 @@ jobs:
               --email "admin@example.com" \
               --password "admin" \
               --output "$PIPELINE_SMOKE_JSON"
+            node -e '
+              const fs = require("node:fs");
+              const summary = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              const completed = Array.isArray(summary.tests)
+                ? summary.tests.filter((test) => test && test.status === "completed")
+                : [];
+              if (summary.skipped || completed.length === 0) {
+                throw new Error(
+                  `Install-profile pipeline smoke did not complete a test: ${summary.reason || "no completed tests"}`
+                );
+              }
+            ' "$PIPELINE_SMOKE_JSON"
 
             # Real-data pipeline runs: drive the read-consuming pipelines through the
             # installed app on the REAL 5-sample Gemma ONT dataset (order DEV-GEMMA-ONT-001
@@ -944,7 +977,6 @@ jobs:
                 --password "admin" \
                 --pipeline-id "${pid}" "$@" \
                 --skip-slurm \
-                --skip-if-disabled \
                 --timeout "${to}"; then
                 echo "Gemma real-data run OK: ${pid}"
               else
@@ -972,7 +1004,7 @@ jobs:
               fi
             }
             # Read-consuming pipelines that apply to the Gemma reads and run reliably
-            # (hard-asserted). study-demo-report skips cleanly if not enabled on the profile.
+            # (hard-asserted, including profile enablement).
             # read-cleaning is NOT run on the Gemma reads (they are already CLEANED, so they
             # fail detaxizer's dataClassIn:[raw,unknown] gate) — it runs further down on the
             # mag-smoke RAW minigut reads instead. reads-qc surfaced a local-run
@@ -981,8 +1013,8 @@ jobs:
             #
             # SHORT run (manual dispatch with -f subsample_reads=0.1): subsample the Gemma reads so
             # metaxpath classifies a fraction and the matrix finishes in ~30-60min instead of ~3h.
-            # An ITERATION smoke, NOT the canonical validation — the scheduled full run stays the
-            # source of truth. Empty input (scheduled / default) = full run.
+            # This is an iteration mode for manual diagnostics. Empty input runs
+            # the full extended dataset.
             SUBSAMPLE="${GEMMA_SUBSAMPLE:-}"
             if [ -n "$SUBSAMPLE" ]; then
               echo "::group::SHORT run — subsampling Gemma reads to fraction $SUBSAMPLE"
@@ -1017,7 +1049,6 @@ jobs:
             # downstream steps build their per-process conda envs cold the FIRST run that reaches
             # them. The cap finishes early once everything is cached, so a completing run proves
             # the whole 13-step DAG — a long first wait is expected and fine.
-            # Still a clean SKIP if the profile doesn't enable it (--skip-if-disabled).
             # METAX_PROFILE (64 GB) / PRED_VFS_AMRS (96 GB) are production-sized memory declarations
             # that exceed this runner's ~62 GB, so Nextflow's local executor rejects them pre-flight
             # ("Process requirement exceeds available memory"). The CI fixture is tiny (5 small
@@ -1030,10 +1061,12 @@ jobs:
             # job's scheduling is at the mercy of the shared cluster: across every allocation tried
             # (256/64/32 GB, 16/4/2 cores, 150/90 min limits, smaller subsets) it usually sits PENDING
             # for hours and never starts. So it can't be a reliable gate. Gate it to manual dispatch
-            # (subsample_reads set) so the scheduled nightly isn't bloated by ~hours of pending; a
-            # manual run can still get a green when the cluster happens to be free. Always exits 0.
+            # (subsample_reads set) so the full extended run is not bloated by hours of pending; a
+            # short manual run can still exercise it when the cluster is free.
+            # Pipeline failure is warn-only inside the script; cleanup identity
+            # failure is fatal so an owned allocation is never orphaned silently.
             if [ -n "${GEMMA_SUBSAMPLE:-}" ] && [ -n "${SLURM_SHARED_CONDA_BASE:-}" ] && command -v sbatch >/dev/null 2>&1; then
-              bash "$GITHUB_WORKSPACE/scripts/metaxpath-slurm-leg.sh" "$PORT" || true
+              bash "$GITHUB_WORKSPACE/scripts/metaxpath-slurm-leg.sh" "$PORT"
             else
               echo "metaxpath SLURM leg SKIPPED (manual-dispatch only, or no shared conda / sbatch)."
             fi
@@ -1126,13 +1159,14 @@ jobs:
             # OFFLINE compute node) AFTER the LOCAL mag leg above has seeded DEV-MAG-ILMN-001 onto the
             # shared FS and warmed mag's per-process conda envs into the shared cacheDir — the SLURM
             # leg reuses both by hash. Gated to manual dispatch (GEMMA_SUBSAMPLE set) like the metaxpath
-            # leg so the scheduled nightly isn't bloated by ~hours of cluster PENDING; a manual run can
-            # still green when the cluster is free. Resource admission (the metaxpath cpus trap recast):
+            # leg so the full extended run is not bloated by hours of cluster PENDING; a short manual
+            # run can still exercise it when the cluster is free. Resource admission:
             # the inline path skips process.resourceLimits, so the leg passes --max_cpus 4 / --max_memory
             # to cap mag's check_max() ceiling (MEGAHIT wants 8 cpus / 40.GB) to the -c 4 / 48G sbatch
-            # allocation. Always exits 0.
+            # allocation. Pipeline failure remains warn-only; an unverified
+            # cleanup is fatal and preserves this run's trees.
             if [ -n "${GEMMA_SUBSAMPLE:-}" ] && [ -n "${SLURM_SHARED_CONDA_BASE:-}" ] && command -v sbatch >/dev/null 2>&1; then
-              bash "$GITHUB_WORKSPACE/scripts/mag-slurm-leg.sh" "$PORT" || true
+              bash "$GITHUB_WORKSPACE/scripts/mag-slurm-leg.sh" "$PORT"
             else
               echo "mag SLURM leg SKIPPED (manual-dispatch only, or no shared conda / sbatch)."
             fi
@@ -1228,16 +1262,37 @@ jobs:
           if-no-files-found: warn
           retention-days: 5
 
-      - name: Cleanup canary resources
+      - name: Cleanup run-scoped resources
         if: always()
         run: |
           set +e
-          if [ "${USE_EPHEMERAL_POSTGRES:-0}" = "1" ] && [ -n "${PGDATA_DIR:-}" ] && [ -n "${PG_CTL_BIN:-}" ]; then
-            "$PG_CTL_BIN" -D "$PGDATA_DIR" stop -m fast || true
-            rm -rf "$PGDATA_DIR"
+          cleanup_fail=0
+          cleanup_safe=1
+          if ! bash "$GITHUB_WORKSPACE/scripts/cleanup-db-pipeline-runs.sh" \
+               "${DB_NAME:-}" "${PROFILE_RUN_DIR:-}"; then
+            echo "ERROR: exact cleanup of every profile PipelineRun job/process was not proven; preserving this profile database and work tree." >&2
+            cleanup_safe=0
+            cleanup_fail=1
           fi
-          if command -v psql >/dev/null 2>&1; then
-            PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME:-seqdesk_profile_missing}" >/dev/null 2>&1 || true
+          if [ -n "${SEQDESK_SLURM_CLEANUP_GUARD:-}" ] &&
+             [ -e "$SEQDESK_SLURM_CLEANUP_GUARD" ]; then
+            echo "ERROR: an exact SLURM cleanup could not be proven; preserving this profile database and work tree." >&2
+            cat "$SEQDESK_SLURM_CLEANUP_GUARD" >&2 2>/dev/null || true
+            cleanup_safe=0
+            cleanup_fail=1
+          fi
+          if [ "$cleanup_safe" = 1 ]; then
+            if command -v psql >/dev/null 2>&1; then
+              PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql \
+                -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" \
+                -U "${DB_USER:-seqdesk}" -d postgres \
+                -c "DROP DATABASE IF EXISTS \"${DB_NAME:-seqdesk_profile_missing}\"" \
+                >/dev/null 2>&1 || cleanup_fail=1
+            fi
+            if [ "${USE_EPHEMERAL_POSTGRES:-0}" = "1" ] && [ -n "${PGDATA_DIR:-}" ] && [ -n "${PG_CTL_BIN:-}" ]; then
+              "$PG_CTL_BIN" -D "$PGDATA_DIR" stop -m fast || cleanup_fail=1
+              rm -rf "$PGDATA_DIR"
+            fi
           fi
           # Stop any worker the installed app auto-started (e.g. pipeline-monitor).
           # It is spawned detached, so it keeps the release node_modules/.prisma
@@ -1248,6 +1303,10 @@ jobs:
             pkill -f "${INSTALL_DIR}.*-monitor" >/dev/null 2>&1 || true
             sleep 2
           fi
-          # Remove the whole shared-FS work dir (postgres stopped + monitor killed above). It
-          # lives on /net/runner, which is NOT auto-reclaimed between jobs like $RUNNER_TEMP.
-          rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" "${PROFILE_DATA_DIR:-}" "${PROFILE_RUN_DIR:-}" "${ALMA_WORK:-}" || true
+          # Remove the exact shared-FS work dir only after every captured
+          # allocation was proven gone. It is intentionally preserved on
+          # cleanup uncertainty rather than being removed beneath a live job.
+          if [ "$cleanup_safe" = 1 ]; then
+            rm -rf "${PG_TOOLCHAIN_DIR:-}" "$INSTALL_DIR" "$MOCK_RELEASE_ROOT" "$RELEASE_ARTIFACT_DIR" "$NPM_ARTIFACT_DIR" "$NPM_CACHE" "$NPM_PREFIX" "${PROFILE_DATA_DIR:-}" "${PROFILE_RUN_DIR:-}" "${ALMA_WORK:-}" || cleanup_fail=1
+          fi
+          exit "$cleanup_fail"

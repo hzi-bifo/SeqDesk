@@ -22,7 +22,7 @@ permissions:
 jobs:
   github_hosted:
     name: Study Pipeline E2E (GitHub-hosted)
-    if: ${{ github.event_name == 'push' || inputs.run_github_hosted }}
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' && (github.event_name == 'push' || inputs.run_github_hosted) }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:
@@ -56,7 +56,7 @@ jobs:
             -c bioconda \
             python=3.11 \
             openjdk=17 \
-            nodejs \
+            nodejs=24 \
             coreutils \
             nextflow \
             nf-core
@@ -88,9 +88,10 @@ jobs:
 
   self_hosted:
     name: Study Pipeline E2E (Self-hosted Twincore)
-    needs: github_hosted
-    # Self-hosted leg runs only on the private CI mirror (auto on its mirrored push).
-    if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' && (needs.github_hosted.result == 'success' || needs.github_hosted.result == 'skipped') }}
+    # The private mirror must not depend on a billable GitHub-hosted prerequisite.
+    # The canonical pipeline-slurm workflow owns change-driven runner acceptance;
+    # this lower-level package smoke is an explicit diagnostic only.
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk-ci' && github.event_name == 'workflow_dispatch' && inputs.run_self_hosted }}
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]
@@ -126,7 +127,7 @@ jobs:
             -c bioconda \
             python=3.11 \
             openjdk=17 \
-            nodejs \
+            nodejs=24 \
             coreutils \
             nextflow \
             nf-core

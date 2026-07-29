@@ -97,6 +97,7 @@
     {
       "id": "removed_reads",
       "scope": "sample",
+      "required": false,
       "destination": "run_artifact",
       "type": "artifact",
       "fromStep": "filter",

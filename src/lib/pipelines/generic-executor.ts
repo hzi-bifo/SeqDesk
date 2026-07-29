@@ -18,6 +18,11 @@ import { db } from '@/lib/db';
 import { getPackage, type LoadedPackage, type PackageExecution } from './package-loader';
 import { createGenericAdapter } from './generic-adapter';
 import { getAdapter, registerAdapter, type PipelineAdapter } from './adapters/types';
+import { SEQDESK_TRACE_FIELDS } from './nextflow';
+import {
+  buildPipelineRunFolder,
+  buildSeqDeskSlurmJobName,
+} from './run-directory';
 import type { PipelineTarget } from './types';
 
 // Extended execution type with paramMap and paramRules
@@ -64,9 +69,8 @@ export interface PrepareResult {
   runFolder?: string;
   errors: string[];
   /**
-   * Non-fatal issues from preparation — e.g. samples skipped during samplesheet
-   * generation. The run still launches, but these should be surfaced so the user
-   * knows the run covers fewer samples than were selected.
+   * Non-fatal preparation diagnostics. Samplesheet omissions are errors because
+   * the persisted run target and output-completion contract must stay identical.
    */
   warnings?: string[];
 }
@@ -155,12 +159,20 @@ function resolvePipelineLaunchTarget(pkg: LoadedPackage): PipelineLaunchTarget {
  */
 async function prepareRunDirectory(
   runNumber: string,
+  runId: string,
   pipelineRunDir: string
 ): Promise<string> {
-  const runFolder = path.resolve(pipelineRunDir, runNumber);
+  const runFolder = buildPipelineRunFolder(pipelineRunDir, runNumber, runId);
 
-  await fs.mkdir(runFolder, { recursive: true });
-  await fs.mkdir(path.join(runFolder, 'logs'), { recursive: true });
+  try {
+    await fs.mkdir(runFolder, { recursive: true });
+    await fs.mkdir(path.join(runFolder, 'logs'), { recursive: true });
+  } catch (error) {
+    // The folder identity includes the immutable database run ID, so this
+    // cleanup can only remove this preparation's partially-created tree.
+    await fs.rm(runFolder, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
 
   return runFolder;
 }
@@ -252,7 +264,13 @@ function buildRunConfig(
   // run folder is reused (a resubmit/retry, or local+SLURM runs landing in the same folder).
   // Each run regenerates these files, so overwriting is safe — and is nextflow's recommended fix.
   sections.push(
-    ['report.overwrite = true', 'timeline.overwrite = true', 'trace.overwrite = true', 'dag.overwrite = true'].join('\n'),
+    [
+      'report.overwrite = true',
+      'timeline.overwrite = true',
+      'trace.overwrite = true',
+      `trace.fields = '${SEQDESK_TRACE_FIELDS}'`,
+      'dag.overwrite = true',
+    ].join('\n'),
   );
 
   // Cap per-process resource REQUESTS to what THIS host actually has. nf-core pipelines (mag,
@@ -428,14 +446,27 @@ function sanitizeSlurmTimeLimit(value: number | undefined, fallback: number): nu
 }
 
 // slurmOptions is free-form admin text (e.g. "--gres=gpu:1"). Reject embedded
-// newlines (which would inject extra SBATCH/script lines) and shell-quote each
-// whitespace-separated token so it cannot break out of the directive.
+// newlines (which would inject extra SBATCH/script lines), reserve the job name
+// for SeqDesk's cleanup identity, and shell-quote each whitespace-separated
+// token so it cannot break out of the directive.
 function sanitizeSlurmOptions(value: string | undefined): string {
   const trimmed = value?.trim();
   if (!trimmed) return '';
   if (/[\r\n]/.test(trimmed)) return '';
-  return trimmed
-    .split(/\s+/)
+  const tokens = trimmed.split(/\s+/);
+  const filtered: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === '--job-name' || token === '-J') {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith('--job-name=') || /^-J\S+/.test(token)) {
+      continue;
+    }
+    filtered.push(token);
+  }
+  return filtered
     .map((token) => shellQuote(token))
     .join(' ');
 }
@@ -760,8 +791,10 @@ function generateSlurmScript(
   const slurmMemory = sanitizeSlurmMemory(settings.slurmMemory, '64GB');
   const slurmTimeLimit = sanitizeSlurmTimeLimit(settings.slurmTimeLimit, 12);
   const slurmOptions = sanitizeSlurmOptions(settings.slurmOptions);
+  const slurmJobName = buildSeqDeskSlurmJobName(runId);
 
   return `#!/bin/bash
+#SBATCH --job-name=${slurmJobName}
 #SBATCH -p ${slurmQueue}
 #SBATCH -c ${slurmCores}
 #SBATCH --mem='${slurmMemory}'
@@ -901,6 +934,8 @@ export async function prepareGenericRun(
   } = options;
   const errors: string[] = [];
   const warnings: string[] = [];
+  let ownedRunFolder: string | null = null;
+  let preparationSucceeded = false;
 
   try {
     // Load package
@@ -949,11 +984,12 @@ export async function prepareGenericRun(
       return { success: false, runId, errors };
     }
 
-    // Some samples were skipped but the run still has usable samples. These are
-    // non-fatal warnings — the run launches with fewer samples than selected, so
-    // they must be surfaced rather than silently dropped on the success path.
+    // The run's persisted target still contains every selected sample. Launching
+    // a reduced samplesheet would make output finalization wait forever for the
+    // skipped samples, so preserve the adapter's reasons and fail preparation.
     if (samplesheet.errors.length > 0) {
-      warnings.push(...samplesheet.errors);
+      errors.push(...samplesheet.errors);
+      return { success: false, runId, errors, warnings };
     }
 
     // Build pipeline flags
@@ -982,8 +1018,10 @@ export async function prepareGenericRun(
       const runNumber = await generateRunNumber(pipelineId);
       runFolder = await prepareRunDirectory(
         runNumber,
+        runId,
         executionSettings.pipelineRunDir
       );
+      ownedRunFolder = runFolder;
 
       // Write samplesheet
       const samplesheetPath = path.join(runFolder, 'samplesheet.csv');
@@ -1031,32 +1069,52 @@ export async function prepareGenericRun(
       await fs.writeFile(scriptPath, script);
       await fs.chmod(scriptPath, 0o755);
 
-      // Update run record with folder and paths
+      // Update the run record only while the start request still owns the
+      // queued preparation claim. An operator may cancel while samplesheets or
+      // scripts are being generated; an unconditional update here would
+      // resurrect that terminal row back to queued and the caller would launch
+      // work the operator explicitly stopped.
       try {
-        await db.pipelineRun.update({
-          where: { id: runId },
+        const prepared = await db.pipelineRun.updateMany({
+          where: {
+            id: runId,
+            status: 'queued',
+            OR: [
+              { statusSource: null },
+              {
+                statusSource: {
+                  notIn: ['finalizing', 'cancelling'],
+                },
+              },
+            ],
+          },
           data: {
             runNumber,
             runFolder,
             outputPath: path.join(runFolder, 'logs/pipeline.out'),
             errorPath: path.join(runFolder, 'logs/pipeline.err'),
-            status: 'queued',
             queuedAt: new Date(),
             config: JSON.stringify(config),
           },
         });
+        if (prepared.count === 0) {
+          errors.push('Run was cancelled or finalized during preparation');
+          return { success: false, runId, errors, warnings };
+        }
         break;
       } catch (error) {
         if (isRunNumberConflict(error) && attempt < MAX_RUN_NUMBER_ATTEMPTS - 1) {
           // Another run claimed this number first; drop the stale folder and
           // recompute on the next iteration.
           await fs.rm(runFolder, { recursive: true, force: true }).catch(() => {});
+          ownedRunFolder = null;
           continue;
         }
         throw error;
       }
     }
 
+    preparationSucceeded = true;
     return {
       success: true,
       runId,
@@ -1068,5 +1126,11 @@ export async function prepareGenericRun(
     const message = error instanceof Error ? error.message : 'Unknown error';
     errors.push(`Failed to prepare run: ${message}`);
     return { success: false, runId, errors, warnings };
+  } finally {
+    if (!preparationSucceeded && ownedRunFolder) {
+      await fs
+        .rm(ownedRunFolder, { recursive: true, force: true })
+        .catch(() => {});
+    }
   }
 }

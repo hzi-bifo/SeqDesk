@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     pipelineRun: {
       findMany: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
   packageLoader: {
@@ -88,6 +89,7 @@ describe("generic-executor", () => {
     vi.clearAllMocks();
     mocks.db.pipelineRun.findMany.mockResolvedValue([]);
     mocks.db.pipelineRun.update.mockResolvedValue({});
+    mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
   });
 
   afterEach(async () => {
@@ -148,7 +150,7 @@ describe("generic-executor", () => {
     ]);
     expect(accessSpy).toHaveBeenCalledWith(path.join(tempDir, "pipelines", "missing.nf"));
     expect(adapter.generateSamplesheet).not.toHaveBeenCalled();
-    expect(mocks.db.pipelineRun.update).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.updateMany).not.toHaveBeenCalled();
   });
 
   it("returns validation errors when samplesheet generation has no valid samples", async () => {
@@ -185,7 +187,151 @@ describe("generic-executor", () => {
     expect(result.errors).toContain("No valid samples for samplesheet");
     expect(result.errors).toContain("No samples selected");
     expect(adapter.generateSamplesheet).toHaveBeenCalled();
-    expect(mocks.db.pipelineRun.update).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("fails when samplesheet generation skips any selected sample", async () => {
+    const adapter = createAdapter({
+      generateSamplesheet: vi.fn().mockResolvedValue({
+        content: "sample_id\nSAMPLE-1",
+        sampleCount: 1,
+        errors: ["Sample SAMPLE-2: no paired reads"],
+      }),
+    });
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-partial",
+      pipelineId: "mag",
+      target: {
+        type: "study",
+        studyId: "study-1",
+        sampleIds: ["sample-1", "sample-2"],
+      },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain("Sample SAMPLE-2: no paired reads");
+    expect(mocks.db.pipelineRun.updateMany).not.toHaveBeenCalled();
+    expect(await fs.readdir(tempDir)).toEqual([]);
+  });
+
+  it("does not resurrect a run cancelled while generic preparation is writing its folder", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+    mocks.db.pipelineRun.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const result = await prepareGenericRun({
+      runId: "run-cancelled",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["sample-1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain("Run was cancelled or finalized during preparation");
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "run-cancelled",
+          status: "queued",
+          OR: expect.arrayContaining([
+            { statusSource: null },
+            {
+              statusSource: {
+                notIn: ["finalizing", "cancelling"],
+              },
+            },
+          ]),
+        }),
+      })
+    );
+    const remainingPreparedFolders = (await fs.readdir(tempDir)).filter((entry) =>
+      entry.startsWith("MAG-")
+    );
+    expect(remainingPreparedFolders).toEqual([]);
+  });
+
+  it("isolates concurrent preparations that calculate the same run number", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    // Both preparations observe the same empty allocation set. In production
+    // one database update then wins the unique runNumber constraint, but their
+    // files must already be isolated before that claim is attempted.
+    const [first, second] = await Promise.all([
+      prepareGenericRun({
+        runId: "run-concurrent-a",
+        pipelineId: "mag",
+        target: { type: "study", studyId: "study-1", sampleIds: ["sample-1"] },
+        config: {},
+        executionSettings: baseExecutionSettings(tempDir),
+        userId: "user-1",
+      }),
+      prepareGenericRun({
+        runId: "run-concurrent-b",
+        pipelineId: "mag",
+        target: { type: "study", studyId: "study-1", sampleIds: ["sample-1"] },
+        config: {},
+        executionSettings: baseExecutionSettings(tempDir),
+        userId: "user-1",
+      }),
+    ]);
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(first.runFolder).not.toBe(second.runFolder);
+    const preparedCalls = mocks.db.pipelineRun.updateMany.mock.calls;
+    expect(preparedCalls[0][0].data.runNumber).toBe(
+      preparedCalls[1][0].data.runNumber
+    );
+    expect(await fs.readFile(path.join(first.runFolder!, "run.sh"), "utf8")).toContain(
+      first.runFolder
+    );
+    expect(await fs.readFile(path.join(second.runFolder!, "run.sh"), "utf8")).toContain(
+      second.runFolder
+    );
   });
 
   it("prepares a local run script using existing adapter and writes runtime artifacts", async () => {
@@ -243,8 +389,8 @@ describe("generic-executor", () => {
     expect(result.success).toBe(true);
     expect(result.errors).toEqual([]);
     expect(result.runFolder).toContain(tempDir);
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(1);
-    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(1);
+    const updateCall = mocks.db.pipelineRun.updateMany.mock.calls[0][0];
     expect(updateCall.data.runNumber).toMatch(/^MAG-\d{8}-008$/);
     expect(result.runFolder).toContain(updateCall.data.runNumber);
     expect(mocks.genericAdapter.createGenericAdapter).not.toHaveBeenCalled();
@@ -280,8 +426,19 @@ describe("generic-executor", () => {
       }),
     }));
 
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "run-1",
+        status: "queued",
+        OR: expect.arrayContaining([
+          { statusSource: null },
+          {
+            statusSource: {
+              notIn: ["finalizing", "cancelling"],
+            },
+          },
+        ]),
+      }),
       data: expect.objectContaining({
         runNumber: expect.stringMatching(/^MAG-\d{8}-008$/),
         runFolder: result.runFolder,
@@ -318,6 +475,8 @@ describe("generic-executor", () => {
     // run folder; the generated config must enable overwrite so a resubmit/retry doesn't crash.
     expect(config).toContain("report.overwrite = true");
     expect(config).toContain("timeline.overwrite = true");
+    expect(config).toContain("trace.fields = '");
+    expect(config).toContain("process,tag,name,status,exit,attempt,");
 
     // And NOT emitted when unset.
     const result2 = await prepareGenericRun({
@@ -613,6 +772,7 @@ describe("generic-executor", () => {
 
     expect(result.success).toBe(true);
     const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain("#SBATCH --job-name=seqdesk-run-slurm");
     expect(script).toContain("#SBATCH -p gpu");
     expect(script).toContain("#SBATCH -c 16");
     expect(script).toContain("#SBATCH --mem='128GB'");
@@ -1109,9 +1269,9 @@ describe("generic-executor", () => {
       code: "P2002",
       meta: { target: ["runNumber"] },
     });
-    mocks.db.pipelineRun.update
+    mocks.db.pipelineRun.updateMany
       .mockRejectedValueOnce(conflict)
-      .mockResolvedValueOnce({});
+      .mockResolvedValueOnce({ count: 1 });
 
     const result = await prepareGenericRun({
       runId: "run-race",
@@ -1123,8 +1283,8 @@ describe("generic-executor", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(2);
-    const finalCall = mocks.db.pipelineRun.update.mock.calls[1][0];
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(2);
+    const finalCall = mocks.db.pipelineRun.updateMany.mock.calls[1][0];
     expect(finalCall.data.runNumber).toMatch(/^MAG-\d{8}-009$/);
     expect(result.runFolder).toContain(finalCall.data.runNumber);
   });
@@ -1149,7 +1309,7 @@ describe("generic-executor", () => {
       code: "P2002",
       meta: { target: ["someOtherField"] },
     });
-    mocks.db.pipelineRun.update.mockRejectedValue(conflict);
+    mocks.db.pipelineRun.updateMany.mockRejectedValue(conflict);
 
     const result = await prepareGenericRun({
       runId: "run-other-conflict",
@@ -1162,7 +1322,43 @@ describe("generic-executor", () => {
 
     expect(result.success).toBe(false);
     expect(result.errors[0]).toContain("Failed to prepare run");
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(1);
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(1);
+    expect(await fs.readdir(tempDir)).toEqual([]);
+  });
+
+  it("removes the final folder when run-number collision retries are exhausted", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+    const conflict = Object.assign(new Error("Unique constraint failed"), {
+      code: "P2002",
+      meta: { target: ["runNumber"] },
+    });
+    mocks.db.pipelineRun.updateMany.mockRejectedValue(conflict);
+
+    const result = await prepareGenericRun({
+      runId: "run-exhausted",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(5);
+    expect(await fs.readdir(tempDir)).toEqual([]);
   });
 
   it("keeps incrementing run numbers past 999 instead of stalling", async () => {
@@ -1192,7 +1388,7 @@ describe("generic-executor", () => {
     });
 
     expect(result.success).toBe(true);
-    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    const updateCall = mocks.db.pipelineRun.updateMany.mock.calls[0][0];
     expect(updateCall.data.runNumber).toMatch(/^MAG-\d{8}-1000$/);
   });
 
@@ -1269,6 +1465,48 @@ describe("generic-executor", () => {
     expect(result.success).toBe(true);
     const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
     expect(script).toContain("#SBATCH --gres=gpu:1 --constraint=intel");
+  });
+
+  it("does not let admin SLURM options override the SeqDesk cleanup job name", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-slurm-name",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        useSlurm: true,
+        slurmOptions:
+          "--job-name=admin-name -J another-name --gres=gpu:1",
+      },
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(
+      path.join(result.runFolder!, "run.sh"),
+      "utf8"
+    );
+    expect(script.match(/^#SBATCH --job-name=/gm)).toHaveLength(1);
+    expect(script).toContain("#SBATCH --job-name=seqdesk-run-slurm-name");
+    expect(script).not.toContain("#SBATCH --job-name=admin-name");
+    expect(script).not.toContain("-J another-name");
+    expect(script).toContain("#SBATCH --gres=gpu:1");
   });
 });
 

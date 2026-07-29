@@ -103,6 +103,7 @@
     {
       "id": "krona_html",
       "scope": "sample",
+      "required": false,
       "destination": "run_artifact",
       "type": "report",
       "fromStep": "krona",

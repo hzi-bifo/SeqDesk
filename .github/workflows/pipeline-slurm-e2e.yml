@@ -3,22 +3,24 @@
 # Exercises real SLURM pipeline execution *through the running SeqDesk app* on the
 # self-hosted AlmaLinux (Twincore) runner. It boots the built app against a local
 # PostgreSQL database, logs in via the API, then drives pipeline runs with
-# executionMode='slurm' so the SBATCH script generation (#SBATCH directives) and the
-# Nextflow `executor = 'slurm'` config path get real coverage.
+# executionMode='slurm' so the SBATCH wrapper generation (#SBATCH directives) and a
+# real allocation on the cluster get coverage. This runner uses the inline mode:
+# Nextflow itself runs with its local executor inside one outer SLURM allocation.
 #
-# REQUIREMENTS: the self-hosted runner MUST provide `sbatch`, `squeue`, and `sacct`
-# on PATH. The runtime/SLURM smoke scripts guard on those commands and will fail fast
-# if they are missing. Nextflow + Java are provisioned via a throwaway Conda env and
+# REQUIREMENTS: the self-hosted runner MUST provide `sbatch`, `squeue`, `sacct`,
+# `scancel`, and `scontrol` on PATH. The runtime/SLURM smoke scripts guard on those
+# commands and fail fast if they are missing. Nextflow + Java are provisioned via a
+# throwaway Conda env and
 # wired into the app through the SEQDESK_CONDA_* settings so the generated run scripts
 # can activate the toolchain.
 
 name: Pipeline SLURM E2E
 
 on:
-  # Runs once a day on the private mirror (jobs are guarded to SeqDesk-ci), plus
-  # on demand — not on every commit.
-  schedule:
-    - cron: "0 2 * * *" # daily 02:00 UTC
+  # The public repository mirrors main into SeqDesk-ci. That private push is the
+  # change signal for this self-hosted acceptance gate; there is no time-based run.
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       runtime_pipeline_id:
@@ -42,6 +44,8 @@ permissions:
 
 concurrency:
   group: pipeline-slurm-e2e
+  # Do not cancel a live outer SLURM allocation. GitHub still retains only the
+  # newest pending run when several mirrored pushes arrive while one is active.
   cancel-in-progress: false
 
 jobs:
@@ -52,17 +56,13 @@ jobs:
     runs-on:
       group: bifo_dmz
       labels: [self-hosted, Linux, X64, db-local, twincore, alma]
-    # Needs write access so the opt-in mouse-gut step can push the collected real reports to a
-    # `demo-mouse-reports` branch (a quota-proof alternative to the artifact upload). Other steps
-    # only read. Job-level overrides the top-level `contents: read`.
-    permissions:
-      contents: write
-    timeout-minutes: 90
+    timeout-minutes: 180
     defaults:
       run:
         shell: bash -el {0}
     env:
       NEXT_TELEMETRY_DISABLED: 1
+      NODE_OPTIONS: --max-old-space-size=8192
       PIPELINE_CONDA_ENV: seqdesk-pipelines-ci-${{ github.run_id }}-slurm
       # Compute nodes do NOT share /home or the runner _work tree with the runner
       # (each node mounts /home from a different NFS server); only a dedicated shared
@@ -88,12 +88,13 @@ jobs:
       DB_USER: seqdesk
       FALLBACK_DB_PORT: 55435
       # Short SLURM resource overrides so the smoke jobs are tiny and finish fast.
+      # SeqDesk expresses this value in hours (the wrapper writes -t <N>:0:0).
       SEQDESK_RUNTIME_E2E_SLURM_CORES: "1"
       SEQDESK_RUNTIME_E2E_SLURM_MEMORY: "1G"
-      SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT: "10"
+      SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT: "1"
       SEQDESK_SLURM_E2E_CORES: "1"
       SEQDESK_SLURM_E2E_MEMORY: "1G"
-      SEQDESK_SLURM_E2E_TIME_LIMIT: "10"
+      SEQDESK_SLURM_E2E_TIME_LIMIT: "1"
       # Pipeline id the runtime smoke drives through both local and SLURM modes.
       RUNTIME_PIPELINE_ID: ${{ github.event.inputs.runtime_pipeline_id || 'fastq-checksum' }}
     steps:
@@ -104,6 +105,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+
+      - name: Pin the supported SeqDesk Node.js runtime
+        run: |
+          set -euo pipefail
+          NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+          if [ "$NODE_MAJOR" != "24" ]; then
+            echo "Expected actions/setup-node to provide Node 24, got $(node --version)." >&2
+            exit 1
+          fi
+          echo "SEQDESK_NODE_BIN=$(dirname "$(command -v node)")" >> "$GITHUB_ENV"
+          echo "SeqDesk application runtime: $(node --version) ($(command -v node))"
 
       - name: Setup Miniconda
         uses: conda-incubator/setup-miniconda@v3
@@ -136,17 +148,524 @@ jobs:
             SHARED_BASE="$RUNNER_TEMP"
           fi
           echo "SEQDESK_DATA_DIR=$SHARED_BASE/seqdesk-data-$RUN_SUFFIX" >> "$GITHUB_ENV"
-          echo "SEQDESK_RUN_DIR=$SHARED_BASE/seqdesk-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "SEQDESK_RUN_DIR=$SHARED_BASE/ci-seqdesk-runs-$RUN_SUFFIX" >> "$GITHUB_ENV"
+          echo "SEQDESK_STAGED_PIPELINES_DIR=$SHARED_BASE/ci-seqdesk-pipelines-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "SEQDESK_DB_DIR=$SHARED_BASE/seqdesk-pipeline-dbs-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PGDATA_DIR=$RUNNER_TEMP/postgres-slurm-$RUN_SUFFIX" >> "$GITHUB_ENV"
           echo "PG_LOG=$RUNNER_TEMP/postgres-slurm-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "PG_TOOLCHAIN_DIR=$RUNNER_TEMP/seqdesk-postgres-tools-slurm-$RUN_SUFFIX" >> "$GITHUB_ENV"
 
+      - name: Prepare run-scoped process cleanup
+        run: |
+          set -euo pipefail
+          CLEANUP_HELPER="$RUNNER_TEMP/seqdesk-ci-cleanup-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.sh"
+          cat > "$CLEANUP_HELPER" <<'CLEANUP_HELPER'
+          # Functions in this file are sourced by later workflow steps. A PipelineRun
+          # queue id is not enough authority to signal a process: PIDs and SLURM ids
+          # can be reused. Match the generated run root (and SeqDesk job name for
+          # SLURM) before signalling anything.
+          seqdesk_ci_process_group_identity_state() {
+            local group_id="${1:-}"
+            local run_folder="${2:-}"
+            local expected_script processes identity_state
+            if [[ ! "$group_id" =~ ^[0-9]+$ ]] || [ -z "$run_folder" ]; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            expected_script="$run_folder/run.sh"
+            if ! processes="$(ps -eo pgid=,args= 2>/dev/null)"; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            if ! identity_state="$(printf '%s\n' "$processes" | awk \
+              -v expected="$group_id" -v script="$expected_script" '
+                $1 == expected {
+                  for (field = 2; field <= NF; field += 1) {
+                    if ($field == script) found = 1
+                  }
+                }
+                END { print(found ? "matches" : "mismatch") }
+              ')"; then
+              printf '%s\n' unknown
+            else
+              printf '%s\n' "$identity_state"
+            fi
+          }
+
+          seqdesk_ci_pid_state() {
+            local pid="${1:-}"
+            local processes pid_state
+            if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            if ! processes="$(ps -eo pid=,stat= 2>/dev/null)"; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            if ! pid_state="$(printf '%s\n' "$processes" | awk \
+              -v expected="$pid" '
+                $1 == expected && $2 !~ /^Z/ { active = 1 }
+                END { print(active ? "active" : "inactive") }
+              ')"; then
+              printf '%s\n' unknown
+            else
+              printf '%s\n' "$pid_state"
+            fi
+          }
+
+          seqdesk_ci_process_group_state() {
+            local group_id="${1:-}"
+            local processes group_state
+            if [[ ! "$group_id" =~ ^[0-9]+$ ]]; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            if ! processes="$(ps -eo pgid=,stat= 2>/dev/null)"; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            if ! group_state="$(printf '%s\n' "$processes" | awk \
+              -v expected="$group_id" '
+                $1 == expected && $2 !~ /^Z/ { active = 1 }
+                END { print(active ? "active" : "inactive") }
+              ')"; then
+              printf '%s\n' unknown
+            else
+              printf '%s\n' "$group_state"
+            fi
+          }
+
+          seqdesk_ci_pid_identity_state() {
+            local pid="${1:-}"
+            local expected_root="${2:-}"
+            local cwd processes identity_state
+            if [[ ! "$pid" =~ ^[0-9]+$ ]] || [ -z "$expected_root" ]; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+            if [[ "$cwd" == "$expected_root" || "$cwd" == "$expected_root/"* ]]; then
+              printf '%s\n' matches
+              return 0
+            fi
+            if ! processes="$(ps -eo pid=,args= 2>/dev/null)"; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            if ! identity_state="$(printf '%s\n' "$processes" | awk \
+              -v expected="$pid" -v root="$expected_root" '
+                $1 == expected && index($0, root) > 0 { matches = 1 }
+                END { print(matches ? "matches" : "mismatch") }
+              ')"; then
+              printf '%s\n' unknown
+            else
+              printf '%s\n' "$identity_state"
+            fi
+          }
+
+          # Print active, inactive, or unknown. Query the queue as a whole so a
+          # completed/nonexistent id is a successful empty match; a controller
+          # lookup failure remains distinguishable from an inactive job.
+          seqdesk_ci_slurm_job_state() {
+            local job_id="${1:-}"
+            local queue_ids
+            if [[ ! "$job_id" =~ ^[0-9]+$ ]]; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            if ! queue_ids="$(squeue -h -o '%i' 2>/dev/null)"; then
+              printf '%s\n' unknown
+            elif printf '%s\n' "$queue_ids" | grep -qx "$job_id"; then
+              printf '%s\n' active
+            else
+              printf '%s\n' inactive
+            fi
+          }
+
+          # Print matches, mismatch, or unknown. Only an exact JobName + WorkDir
+          # match authorizes a signal; controller errors are never an inactive job.
+          seqdesk_ci_slurm_job_identity_state() {
+            local job_id="${1:-}"
+            local run_folder="${2:-}"
+            local expected_job_name="${3:-}"
+            local info job_name work_dir
+            if [[ ! "$job_id" =~ ^[0-9]+$ ]] ||
+               [ -z "$run_folder" ] || [ -z "$expected_job_name" ]; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            if ! info="$(scontrol show job -o "$job_id" 2>/dev/null)"; then
+              printf '%s\n' unknown
+              return 0
+            fi
+            job_name="$(printf '%s\n' "$info" | tr ' ' '\n' | sed -n 's/^JobName=//p' | head -n 1)"
+            work_dir="$(printf '%s\n' "$info" | tr ' ' '\n' | sed -n 's/^WorkDir=//p' | head -n 1)"
+            if [ -z "$job_name" ] || [ -z "$work_dir" ]; then
+              printf '%s\n' unknown
+            elif [ "$job_name" = "$expected_job_name" ] &&
+                 [ "$work_dir" = "$run_folder" ]; then
+              printf '%s\n' matches
+            else
+              printf '%s\n' mismatch
+            fi
+          }
+
+          seqdesk_ci_cancel_pipeline_runs() {
+            local db_name="${1:-}"
+            local run_root="${2:-}"
+            local queue_file identity_file run_id queue_id run_folder safe_run_id
+            local kind expected_job_name pid process_state slurm_state identity_state
+            local cleanup_rc=0
+            local remaining=0
+
+            if [ -z "$db_name" ] || [ -z "$run_root" ]; then
+              echo "ERROR: refusing pipeline cleanup without a database and run root." >&2
+              return 1
+            fi
+            if ! command -v psql >/dev/null 2>&1; then
+              echo "ERROR: psql is unavailable; cannot resolve this run's queue ids." >&2
+              return 1
+            fi
+
+            queue_file="$(mktemp "${RUNNER_TEMP:-/tmp}/seqdesk-ci-queue.XXXXXX")" || return 1
+            identity_file="$(mktemp "${RUNNER_TEMP:-/tmp}/seqdesk-ci-identity.XXXXXX")" || {
+              rm -f "$queue_file"
+              return 1
+            }
+            if ! PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql \
+              -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" \
+              -U "${DB_USER:-seqdesk}" -d "$db_name" -At -F '|' \
+              -c "select id, \"queueJobId\", coalesce(\"runFolder\", '') from \"PipelineRun\" where coalesce(\"queueJobId\", '') <> '' order by \"createdAt\"" \
+              >"$queue_file" 2>/dev/null; then
+              echo "ERROR: could not query PipelineRun queue identities from $db_name." >&2
+              rm -f "$queue_file" "$identity_file"
+              return 1
+            fi
+
+            # Database status is deliberately not part of this filter. A finalizer
+            # bug or race can mark a run terminal before its detached process/allocation
+            # actually exits. Scope every identity to this run's exact generated folder,
+            # then let ps/squeue determine whether anything still needs a signal.
+            while IFS='|' read -r run_id queue_id run_folder; do
+              if [ -z "$run_id" ] || [ -z "$queue_id" ] ||
+                 [[ "$run_folder" != "$run_root/"* ]]; then
+                echo "ERROR: refusing unscoped PipelineRun identity from $db_name (run=${run_id:-<missing>} queue=${queue_id:-<missing>} folder=${run_folder:-<missing>})." >&2
+                cleanup_rc=1
+                continue
+              fi
+              case "$queue_id" in
+                local-*)
+                  pid="${queue_id#local-}"
+                  if [[ "$pid" =~ ^[0-9]+$ ]]; then
+                    printf 'local|%s|%s|-\n' "$pid" "$run_folder" >> "$identity_file"
+                  else
+                    echo "ERROR: malformed local queue id in $db_name: $queue_id" >&2
+                    cleanup_rc=1
+                  fi
+                  ;;
+                *[!0-9]*)
+                  echo "ERROR: unrecognized queue id in $db_name: $queue_id" >&2
+                  cleanup_rc=1
+                  ;;
+                *)
+                  safe_run_id="$(printf '%s' "$run_id" | sed 's/[^A-Za-z0-9_-]/-/g' | cut -c1-48)"
+                  expected_job_name="seqdesk-$safe_run_id"
+                  printf 'slurm|%s|%s|%s\n' \
+                    "$queue_id" "$run_folder" "$expected_job_name" >> "$identity_file"
+                  ;;
+              esac
+            done < "$queue_file"
+            rm -f "$queue_file"
+
+            # Signal all verified jobs first, then wait for the whole set together.
+            # This keeps cleanup bounded even if several clients timed out together.
+            while IFS='|' read -r kind queue_id run_folder expected_job_name; do
+              case "$kind" in
+                local)
+                  process_state="$(seqdesk_ci_process_group_state "$queue_id")"
+                  if [ "$process_state" = "active" ]; then
+                    identity_state="$(seqdesk_ci_process_group_identity_state \
+                      "$queue_id" "$run_folder")"
+                    if [ "$identity_state" = "matches" ]; then
+                      kill -TERM -- "-$queue_id" >/dev/null 2>&1 ||
+                        kill -TERM "$queue_id" >/dev/null 2>&1 || cleanup_rc=1
+                    else
+                      process_state="$(seqdesk_ci_process_group_state "$queue_id")"
+                      if [ "$process_state" != "inactive" ]; then
+                        echo "ERROR: refusing to signal process group $queue_id; state=$process_state identity=$identity_state." >&2
+                        cleanup_rc=1
+                      fi
+                    fi
+                  elif [ "$process_state" = "unknown" ]; then
+                    echo "ERROR: process-group state for $queue_id is unknown; preserving the run tree." >&2
+                    cleanup_rc=1
+                  fi
+                  ;;
+                slurm)
+                  slurm_state="$(seqdesk_ci_slurm_job_state "$queue_id")"
+                  case "$slurm_state" in
+                    inactive)
+                      continue
+                      ;;
+                    unknown)
+                      echo "ERROR: could not determine whether SLURM job $queue_id is active; preserving the run tree." >&2
+                      cleanup_rc=1
+                      continue
+                      ;;
+                  esac
+                  identity_state="$(seqdesk_ci_slurm_job_identity_state \
+                    "$queue_id" "$run_folder" "$expected_job_name")"
+                  if [ "$identity_state" = "matches" ]; then
+                    scancel "$queue_id" >/dev/null 2>&1 || cleanup_rc=1
+                  else
+                    slurm_state="$(seqdesk_ci_slurm_job_state "$queue_id")"
+                    if [ "$slurm_state" = "inactive" ]; then
+                      echo "SLURM job $queue_id exited before cleanup could signal it."
+                    else
+                      echo "ERROR: refusing to cancel SLURM job $queue_id; queue state=$slurm_state identity=$identity_state, expected JobName=$expected_job_name WorkDir=$run_folder." >&2
+                      cleanup_rc=1
+                    fi
+                  fi
+                  ;;
+              esac
+            done < "$identity_file"
+
+            for _ in $(seq 1 30); do
+              remaining=0
+              while IFS='|' read -r kind queue_id run_folder expected_job_name; do
+                if [ "$kind" = "local" ]; then
+                  process_state="$(seqdesk_ci_process_group_state "$queue_id")"
+                  if [ "$process_state" = "active" ]; then
+                    remaining=1
+                  elif [ "$process_state" = "unknown" ]; then
+                    cleanup_rc=1
+                  fi
+                else
+                  slurm_state="$(seqdesk_ci_slurm_job_state "$queue_id")"
+                  if [ "$slurm_state" = "active" ]; then
+                    identity_state="$(seqdesk_ci_slurm_job_identity_state \
+                      "$queue_id" "$run_folder" "$expected_job_name")"
+                    if [ "$identity_state" = "matches" ]; then
+                      remaining=1
+                    else
+                      cleanup_rc=1
+                    fi
+                  elif [ "$slurm_state" = "unknown" ]; then
+                    cleanup_rc=1
+                  fi
+                fi
+              done < "$identity_file"
+              [ "$remaining" = 0 ] && break
+              sleep 1
+            done
+
+            # Escalate only process groups that still prove ownership. scancel is
+            # repeated for verified SLURM jobs; SLURM performs its own signal policy.
+            while IFS='|' read -r kind queue_id run_folder expected_job_name; do
+              if [ "$kind" = "local" ]; then
+                process_state="$(seqdesk_ci_process_group_state "$queue_id")"
+                if [ "$process_state" = "active" ]; then
+                  identity_state="$(seqdesk_ci_process_group_identity_state \
+                    "$queue_id" "$run_folder")"
+                  if [ "$identity_state" = "matches" ]; then
+                    kill -KILL -- "-$queue_id" >/dev/null 2>&1 ||
+                      kill -KILL "$queue_id" >/dev/null 2>&1 || cleanup_rc=1
+                  else
+                    cleanup_rc=1
+                  fi
+                elif [ "$process_state" = "unknown" ]; then
+                  cleanup_rc=1
+                fi
+              elif [ "$kind" = "slurm" ]; then
+                slurm_state="$(seqdesk_ci_slurm_job_state "$queue_id")"
+                if [ "$slurm_state" = "active" ]; then
+                  identity_state="$(seqdesk_ci_slurm_job_identity_state \
+                    "$queue_id" "$run_folder" "$expected_job_name")"
+                  if [ "$identity_state" = "matches" ]; then
+                    scancel "$queue_id" >/dev/null 2>&1 || cleanup_rc=1
+                  else
+                    cleanup_rc=1
+                  fi
+                elif [ "$slurm_state" = "unknown" ]; then
+                  cleanup_rc=1
+                fi
+              fi
+            done < "$identity_file"
+
+            for _ in $(seq 1 10); do
+              remaining=0
+              while IFS='|' read -r kind queue_id run_folder expected_job_name; do
+                if [ "$kind" = "local" ]; then
+                  process_state="$(seqdesk_ci_process_group_state "$queue_id")"
+                  if [ "$process_state" = "active" ]; then
+                    remaining=1
+                  elif [ "$process_state" = "unknown" ]; then
+                    cleanup_rc=1
+                  fi
+                else
+                  slurm_state="$(seqdesk_ci_slurm_job_state "$queue_id")"
+                  if [ "$slurm_state" = "active" ]; then
+                    identity_state="$(seqdesk_ci_slurm_job_identity_state \
+                      "$queue_id" "$run_folder" "$expected_job_name")"
+                    if [ "$identity_state" = "matches" ]; then
+                      remaining=1
+                    else
+                      cleanup_rc=1
+                    fi
+                  elif [ "$slurm_state" = "unknown" ]; then
+                    cleanup_rc=1
+                  fi
+                fi
+              done < "$identity_file"
+              [ "$remaining" = 0 ] && break
+              sleep 1
+            done
+
+            while IFS='|' read -r kind queue_id run_folder expected_job_name; do
+              if [ "$kind" = "local" ]; then
+                process_state="$(seqdesk_ci_process_group_state "$queue_id")"
+                if [ "$process_state" = "active" ]; then
+                  identity_state="$(seqdesk_ci_process_group_identity_state \
+                    "$queue_id" "$run_folder")"
+                  if [ "$identity_state" = "matches" ]; then
+                    echo "ERROR: local pipeline process group $queue_id survived bounded cleanup." >&2
+                  else
+                    echo "ERROR: process group $queue_id is still active but its exact run.sh identity is $identity_state; preserving the run tree." >&2
+                  fi
+                  cleanup_rc=1
+                elif [ "$process_state" = "unknown" ]; then
+                  echo "ERROR: final process-group state for $queue_id is unknown; preserving the run tree." >&2
+                  cleanup_rc=1
+                fi
+              elif [ "$kind" = "slurm" ]; then
+                slurm_state="$(seqdesk_ci_slurm_job_state "$queue_id")"
+                if [ "$slurm_state" = "active" ]; then
+                  identity_state="$(seqdesk_ci_slurm_job_identity_state \
+                    "$queue_id" "$run_folder" "$expected_job_name")"
+                  if [ "$identity_state" = "matches" ]; then
+                    echo "ERROR: SLURM job $queue_id survived bounded cleanup." >&2
+                  else
+                    echo "ERROR: active SLURM id $queue_id could not be revalidated after cleanup; preserving the run tree." >&2
+                  fi
+                  cleanup_rc=1
+                elif [ "$slurm_state" = "unknown" ]; then
+                  echo "ERROR: final SLURM state for $queue_id is unknown; preserving the run tree." >&2
+                  cleanup_rc=1
+                fi
+              fi
+            done < "$identity_file"
+            rm -f "$identity_file"
+            return "$cleanup_rc"
+          }
+
+          seqdesk_ci_stop_child() {
+            local pid="${1:-}"
+            local label="${2:-child process}"
+            local expected_root="${3:-}"
+            local pid_state identity_state
+            [ -n "$pid" ] || return 0
+            pid_state="$(seqdesk_ci_pid_state "$pid")"
+            if [ "$pid_state" = "inactive" ]; then
+              wait "$pid" >/dev/null 2>&1 || true
+              return 0
+            fi
+            if [ "$pid_state" = "unknown" ]; then
+              echo "ERROR: state of $label PID $pid is unknown; preserving its tree." >&2
+              return 1
+            fi
+            identity_state="$(seqdesk_ci_pid_identity_state "$pid" "$expected_root")"
+            if [ "$identity_state" != "matches" ]; then
+              pid_state="$(seqdesk_ci_pid_state "$pid")"
+              if [ "$pid_state" = "inactive" ]; then
+                wait "$pid" >/dev/null 2>&1 || true
+                return 0
+              fi
+              echo "ERROR: refusing to signal $label PID $pid; state=$pid_state identity=$identity_state for $expected_root." >&2
+              return 1
+            fi
+            kill -TERM "$pid" >/dev/null 2>&1 || true
+            for _ in $(seq 1 20); do
+              pid_state="$(seqdesk_ci_pid_state "$pid")"
+              [ "$pid_state" = "inactive" ] && break
+              if [ "$pid_state" = "unknown" ]; then
+                echo "ERROR: state of $label PID $pid became unknown after TERM." >&2
+                return 1
+              fi
+              sleep 1
+            done
+            pid_state="$(seqdesk_ci_pid_state "$pid")"
+            if [ "$pid_state" = "active" ]; then
+              identity_state="$(seqdesk_ci_pid_identity_state "$pid" "$expected_root")"
+              if [ "$identity_state" != "matches" ]; then
+                pid_state="$(seqdesk_ci_pid_state "$pid")"
+                if [ "$pid_state" = "inactive" ]; then
+                  wait "$pid" >/dev/null 2>&1 || true
+                  return 0
+                fi
+                echo "ERROR: refusing to escalate $label PID $pid; state=$pid_state identity=$identity_state." >&2
+                return 1
+              fi
+              kill -KILL "$pid" >/dev/null 2>&1 || true
+              for _ in $(seq 1 5); do
+                pid_state="$(seqdesk_ci_pid_state "$pid")"
+                [ "$pid_state" = "inactive" ] && break
+                if [ "$pid_state" = "unknown" ]; then
+                  echo "ERROR: state of $label PID $pid became unknown after KILL." >&2
+                  return 1
+                fi
+                sleep 1
+              done
+            elif [ "$pid_state" = "unknown" ]; then
+              echo "ERROR: state of $label PID $pid is unknown before escalation." >&2
+              return 1
+            fi
+            wait "$pid" >/dev/null 2>&1 || true
+            pid_state="$(seqdesk_ci_pid_state "$pid")"
+            if [ "$pid_state" != "inactive" ]; then
+              echo "ERROR: final state of $label PID $pid is $pid_state after bounded cleanup." >&2
+              return 1
+            fi
+          }
+
+          seqdesk_ci_stop_monitors() {
+            local app_root="${1:-}"
+            local processes monitor_pids pid
+            [ -n "$app_root" ] || return 0
+            if ! processes="$(ps -eo pid=,args= 2>/dev/null)"; then
+              echo "ERROR: process-table lookup failed while finding monitors for $app_root." >&2
+              return 1
+            fi
+            monitor_pids="$(printf '%s\n' "$processes" | awk \
+              -v root="$app_root" '
+                index($0, root) > 0 && $0 ~ /-monitor/ { print $1 }
+              ')"
+            for pid in $monitor_pids; do
+              seqdesk_ci_stop_child "$pid" "pipeline monitor" "$app_root" || return 1
+            done
+            if ! processes="$(ps -eo pid=,args= 2>/dev/null)"; then
+              echo "ERROR: final process-table lookup failed for monitors under $app_root." >&2
+              return 1
+            fi
+            if printf '%s\n' "$processes" | awk \
+              -v root="$app_root" '
+                index($0, root) > 0 && $0 ~ /-monitor/ { found = 1 }
+                END { exit(found ? 0 : 1) }
+              '; then
+              echo "ERROR: monitor process scoped to $app_root survived bounded cleanup." >&2
+              return 1
+            fi
+          }
+          CLEANUP_HELPER
+          chmod 700 "$CLEANUP_HELPER"
+          bash -n "$CLEANUP_HELPER"
+          echo "SEQDESK_CI_CLEANUP_HELPER=$CLEANUP_HELPER" >> "$GITHUB_ENV"
+
       - name: Verify SLURM is available on the runner
         run: |
           set -euo pipefail
           missing=0
-          for cmd in sbatch squeue sacct; do
+          for cmd in sbatch squeue sacct scancel scontrol; do
             if command -v "$cmd" >/dev/null 2>&1; then
               echo "Found $cmd: $(command -v "$cmd")"
             else
@@ -155,31 +674,114 @@ jobs:
             fi
           done
           if [ "$missing" -ne 0 ]; then
-            echo "This workflow requires sbatch/squeue/sacct on the self-hosted runner." >&2
+            echo "This workflow requires sbatch/squeue/sacct/scancel/scontrol on the self-hosted runner." >&2
+            exit 1
+          fi
+          for required_var in SLURM_SHARED_CONDA_BASE SLURM_SHARED_RUN_ROOT SLURM_SHARED_CONDA_ENV; do
+            if [ -z "${!required_var:-}" ]; then
+              echo "Required private-repository variable $required_var is not configured." >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "The Twincore compute nodes require shared run and Conda paths." >&2
             exit 1
           fi
 
       - name: Free stale SLURM jobs from prior runs (QOS submit-slot cleanup)
         run: |
           set -euo pipefail
-          # This cluster caps concurrent submissions per user (QOS MaxSubmitJobPerUser): a job left
-          # PENDING by an earlier failed/cancelled run holds that slot and makes EVERY submission in
-          # this run fail (QOSMaxSubmitJobPerUserLimit) — including the very first pipeline step. Runs
-          # are serialized by the `pipeline-slurm-e2e` concurrency group, so any PENDING job for this
-          # user now is a stale leftover, not live work. Cancel those (PENDING only — never touch a
-          # running job) and wait for the queue to drain so the slot is free before the first submit.
+          # This cluster caps concurrent submissions per user. A PENDING allocation
+          # blocks the submit slot, while a RUNNING/COMPLETING allocation from a
+          # failed workflow can keep using a run tree the next cleanup wants to
+          # reclaim. Drain every active state from prior canonical runs. A SeqDesk
+          # name or account membership alone is never ownership proof: snapshot the
+          # exact controller JobName + WorkDir beneath a canonical CI run folder and
+          # revalidate both immediately before scancel.
+          source "$SEQDESK_CI_CLEANUP_HELPER"
           ME="$(whoami)"
-          stale="$(squeue -u "$ME" -h -t PENDING -o '%i' 2>/dev/null || true)"
-          if [ -n "$stale" ]; then
-            echo "cancelling stale PENDING SLURM job(s) from prior runs: $(echo $stale | tr '\n' ' ')"
-            echo "$stale" | xargs -r scancel 2>/dev/null || true
+          STALE_FILE="$RUNNER_TEMP/seqdesk-stale-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.txt"
+          ACTIVE_FILE="$RUNNER_TEMP/seqdesk-active-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.txt"
+          drain_fail=0
+          : > "$STALE_FILE"
+          if ! squeue -u "$ME" -h -o '%i|%j|%T' > "$ACTIVE_FILE" 2>/dev/null; then
+            echo "ERROR: could not query active SLURM jobs; refusing to start a new acceptance run." >&2
+            exit 1
+          fi
+          while IFS='|' read -r job_id listed_job_name job_state; do
+            [[ "$job_id" =~ ^[0-9]+$ ]] || continue
+            [[ "$listed_job_name" == seqdesk-* ]] || continue
+            if ! info="$(scontrol show job -o "$job_id" 2>/dev/null)"; then
+              echo "ERROR: controller lookup failed for active SeqDesk job $job_id; ownership is unknown." >&2
+              drain_fail=1
+              continue
+            fi
+            job_name="$(printf '%s\n' "$info" | tr ' ' '\n' | sed -n 's/^JobName=//p' | head -n 1)"
+            work_dir="$(printf '%s\n' "$info" | tr ' ' '\n' | sed -n 's/^WorkDir=//p' | head -n 1)"
+            if [ -z "$job_name" ] || [ -z "$work_dir" ]; then
+              echo "ERROR: controller metadata is incomplete for active SeqDesk job $job_id; ownership is unknown." >&2
+              drain_fail=1
+            elif [ "$job_name" = "$listed_job_name" ] &&
+               [[ "$work_dir" == "$SLURM_SHARED_RUN_ROOT"/ci-seqdesk-runs-*/* ]]; then
+              printf '%s|%s|%s|%s\n' \
+                "$job_id" "$job_name" "$work_dir" "$job_state" >> "$STALE_FILE"
+            else
+              echo "leaving active SeqDesk job $job_id untouched (state=${job_state:-unknown} JobName=${job_name:-unknown} WorkDir=${work_dir:-unknown})"
+            fi
+          done < "$ACTIVE_FILE"
+          if [ -s "$STALE_FILE" ]; then
+            echo "draining prior canonical-CI active allocation(s):"
+            sed 's/^/  /' "$STALE_FILE"
+            while IFS='|' read -r job_id job_name work_dir job_state; do
+              identity_state="$(seqdesk_ci_slurm_job_identity_state \
+                "$job_id" "$work_dir" "$job_name")"
+              if [ "$identity_state" = "matches" ]; then
+                echo "cancelling $job_id ($job_state, $job_name, $work_dir)"
+                scancel "$job_id" 2>/dev/null || drain_fail=1
+              else
+                slurm_state="$(seqdesk_ci_slurm_job_state "$job_id")"
+                if [ "$slurm_state" = "inactive" ]; then
+                  echo "prior canonical-CI allocation $job_id exited before the drain signal"
+                else
+                  echo "ERROR: identity for job $job_id is $identity_state and queue state is $slurm_state before cancellation; refusing scancel." >&2
+                  drain_fail=1
+                fi
+              fi
+            done < "$STALE_FILE"
             for _ in $(seq 1 24); do
-              if ! squeue -u "$ME" -h -t PENDING 2>/dev/null | grep -q .; then break; fi
+              remaining=0
+              while IFS='|' read -r job_id job_name work_dir job_state; do
+                slurm_state="$(seqdesk_ci_slurm_job_state "$job_id")"
+                if [ "$slurm_state" = "active" ]; then
+                  identity_state="$(seqdesk_ci_slurm_job_identity_state \
+                    "$job_id" "$work_dir" "$job_name")"
+                  if [ "$identity_state" = "matches" ]; then
+                    remaining=1
+                  else
+                    drain_fail=1
+                  fi
+                elif [ "$slurm_state" = "unknown" ]; then
+                  drain_fail=1
+                fi
+              done < "$STALE_FILE"
+              [ "$remaining" = 0 ] && break
               sleep 5
             done
+            while IFS='|' read -r job_id job_name work_dir job_state; do
+              slurm_state="$(seqdesk_ci_slurm_job_state "$job_id")"
+              if [ "$slurm_state" = "active" ]; then
+                echo "ERROR: SLURM id $job_id is still active after the bounded canonical-CI drain; refusing to start a new acceptance run." >&2
+                drain_fail=1
+              elif [ "$slurm_state" = "unknown" ]; then
+                echo "ERROR: final state of SLURM id $job_id is unknown after the canonical-CI drain; refusing to start." >&2
+                drain_fail=1
+              fi
+            done < "$STALE_FILE"
           else
-            echo "no stale PENDING SLURM jobs for $ME — QOS submit slot is free"
+            echo "no stale active canonical-CI SLURM allocations for $ME"
           fi
+          rm -f "$STALE_FILE" "$ACTIVE_FILE"
+          exit "$drain_fail"
 
       - name: Create pipeline Conda environment
         run: |
@@ -209,17 +811,27 @@ jobs:
             CONDA_BIN="$SLURM_SHARED_CONDA_BASE/bin/conda"
             ENV_PREFIX="${SLURM_SHARED_CONDA_ENV:-$SLURM_SHARED_RUN_ROOT/conda-envs/seqdesk-pipelines}"
             echo "PIPELINE_CONDA_ENV=$ENV_PREFIX" >> "$GITHUB_ENV"
-            PIPELINE_PKGS="python=3.11 openjdk=17 nodejs coreutils nextflow nf-core"
+            PIPELINE_PKGS="python=3.11 openjdk=17 nodejs=24 coreutils nextflow nf-core"
             # Pipelines run their process scripts inside this env on the compute node, so
             # it needs the full launcher toolchain (node + java + coreutils), not just
             # nextflow. Check the binaries INSIDE the env prefix directly — `conda run`
             # would also find tools on the runner's ambient PATH (e.g. the runner's own
             # node), giving a false "present" and skipping the top-up the compute node
             # needs. Reuse only when complete; else top up in place, or create new.
-            if [ -x "$ENV_PREFIX/bin/nextflow" ] && [ -x "$ENV_PREFIX/bin/node" ]; then
-              echo "Reusing existing shared conda env at $ENV_PREFIX (toolchain present)"
+            ENV_NODE_MAJOR=""
+            ENV_PYTHON_VERSION=""
+            if [ -x "$ENV_PREFIX/bin/node" ]; then
+              ENV_NODE_MAJOR="$("$ENV_PREFIX/bin/node" -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
+            fi
+            if [ -x "$ENV_PREFIX/bin/python" ]; then
+              ENV_PYTHON_VERSION="$("$ENV_PREFIX/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+            fi
+            if [ -x "$ENV_PREFIX/bin/nextflow" ] && [ -x "$ENV_PREFIX/bin/java" ] && \
+               [ -x "$ENV_PREFIX/bin/nf-core" ] && [ -x "$ENV_PREFIX/bin/md5sum" ] && \
+               [ "$ENV_NODE_MAJOR" = "24" ] && [ "$ENV_PYTHON_VERSION" = "3.11" ]; then
+              echo "Reusing existing shared conda env at $ENV_PREFIX (complete pinned toolchain present)"
             elif [ -d "$ENV_PREFIX" ]; then
-              echo "Topping up existing shared conda env at $ENV_PREFIX"
+              echo "Repairing existing shared conda env at $ENV_PREFIX (Node ${ENV_NODE_MAJOR:-missing}, Python ${ENV_PYTHON_VERSION:-missing})"
               "$CONDA_BIN" install -y -p "$ENV_PREFIX" \
                 --override-channels -c conda-forge -c bioconda $PIPELINE_PKGS
             else
@@ -228,13 +840,9 @@ jobs:
               "$CONDA_BIN" create -y -p "$ENV_PREFIX" \
                 --override-channels -c conda-forge -c bioconda $PIPELINE_PKGS
             fi
-            # Short-term band-aid: nf-core/detaxizer's RENAME_FASTQ_HEADERS step imports the
-            # `dnaio` Python module, but on this cluster the env that step lands in lacks it (it
-            # works on the install runner, so it's an env-assembly gap, not a true missing dep).
-            # Ensure it's present (idempotent — no-op if already there). LONG-TERM fix is
-            # Singularity containers, where every step ships its own complete software.
-            "$CONDA_BIN" install -y -p "$ENV_PREFIX" --override-channels -c conda-forge -c bioconda dnaio \
-              || echo "WARN: could not install dnaio into $ENV_PREFIX (read-cleaning may fail on the rename step)"
+            test "$("$ENV_PREFIX/bin/node" -p 'process.versions.node.split(".")[0]')" = "24"
+            test "$("$ENV_PREFIX/bin/python" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = "3.11"
+            for cmd in nextflow java nf-core md5sum; do test -x "$ENV_PREFIX/bin/$cmd"; done
           else
             conda create -y -n "$PIPELINE_CONDA_ENV" \
               --override-channels \
@@ -242,7 +850,7 @@ jobs:
               -c bioconda \
               python=3.11 \
               openjdk=17 \
-              nodejs \
+              nodejs=24 \
               coreutils \
               nextflow \
               nf-core
@@ -253,8 +861,10 @@ jobs:
           set -euo pipefail
           # On a SLURM cluster the app must point at the shared conda the compute nodes
           # see, not the runner-local one. Falls back to the runner conda when unset.
-          # Put the pipeline env tools (nextflow/java) on PATH so the app server can
-          # locate them while still leaving the system SLURM binaries reachable.
+          # Do not prepend the pipeline env to the job-wide PATH: doing so used to
+          # shadow setup-node's supported Node 24 with the persistent Conda env's
+          # Node 25 and made the real installer fail. Generated pipeline scripts
+          # activate this configured environment explicitly.
           if [ -n "${SLURM_SHARED_CONDA_BASE:-}" ]; then
             CONDA_BASE="$SLURM_SHARED_CONDA_BASE"
             # The env is referenced by full prefix path on this cluster (names don't
@@ -262,12 +872,12 @@ jobs:
             # NOT via PIPELINE_CONDA_ENV, whose job-level env default makes its value
             # ambiguous against $GITHUB_ENV. Its bin is <prefix>/bin.
             echo "SEQDESK_CONDA_ENV=$SLURM_SHARED_CONDA_ENV" >> "$GITHUB_ENV"
-            echo "$SLURM_SHARED_CONDA_ENV/bin" >> "$GITHUB_PATH"
           else
             CONDA_BASE="$(conda info --base)"
-            echo "$CONDA_BASE/envs/$PIPELINE_CONDA_ENV/bin" >> "$GITHUB_PATH"
           fi
           echo "SEQDESK_CONDA_PATH=$CONDA_BASE" >> "$GITHUB_ENV"
+          test "$(node -p 'process.versions.node.split(".")[0]')" = "24"
+          echo "Application Node remains pinned after Conda setup: $(node --version)"
 
       - name: Setup PostgreSQL toolchain
         run: |
@@ -376,11 +986,12 @@ jobs:
         run: npm run db:seed
 
       - name: Build SeqDesk app
-        run: npm run build
+        run: npm run build -- --webpack
 
       - name: Boot SeqDesk app and verify readiness
         run: |
           set -euo pipefail
+          source "$SEQDESK_CI_CLEANUP_HELPER"
           mkdir -p "$SEQDESK_DATA_DIR" "$SEQDESK_RUN_DIR" "$SEQDESK_DB_DIR"
           # Wire pipeline + conda execution into the running app so SLURM submissions
           # generate real #SBATCH scripts and activate the Nextflow toolchain.
@@ -398,9 +1009,9 @@ jobs:
           # SEQDESK_SLURM_INLINE_EXECUTOR is set at job level (inherited here).
           # SLURM compute nodes can't see the app's _work tree, so the pipeline
           # packages (Nextflow workflow scripts) must live on the shared FS. Stage
-          # them next to the shared run dir and point the app there.
+          # them in this workflow run's own package tree and point the app there.
           if [ -n "${SLURM_SHARED_RUN_ROOT:-}" ]; then
-            SHARED_PIPELINES_DIR="$(dirname "$SLURM_SHARED_RUN_ROOT")/pipelines"
+            SHARED_PIPELINES_DIR="$SEQDESK_STAGED_PIPELINES_DIR"
             rm -rf "$SHARED_PIPELINES_DIR"
             mkdir -p "$SHARED_PIPELINES_DIR"
             cp -R pipelines/. "$SHARED_PIPELINES_DIR/"
@@ -419,6 +1030,11 @@ jobs:
           echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
           READY=0
           for _ in $(seq 1 120); do
+            APP_PROCESS_STATE="$(seqdesk_ci_pid_state "$APP_PID")"
+            if [ "$APP_PROCESS_STATE" != "active" ]; then
+              echo "Source-boot SeqDesk process state is $APP_PROCESS_STATE before readiness." >&2
+              break
+            fi
             if curl -fsS "http://127.0.0.1:${PORT}/api/auth/providers" >"$PROVIDERS_JSON"; then
               READY=1
               break
@@ -430,7 +1046,28 @@ jobs:
             tail -n 200 "$SERVER_LOG" || true
             exit 1
           fi
-          echo "SeqDesk app is ready on port $PORT."
+          # Give bind failures from a competing stale listener time to terminate
+          # the process we launched before accepting the HTTP response as ours.
+          sleep 1
+          APP_PROCESS_STATE="$(seqdesk_ci_pid_state "$APP_PID")"
+          APP_IDENTITY_STATE="$(seqdesk_ci_pid_identity_state "$APP_PID" "$GITHUB_WORKSPACE")"
+          if [ "$APP_PROCESS_STATE" != "active" ] ||
+             [ "$APP_IDENTITY_STATE" != "matches" ]; then
+            echo "Readiness endpoint was served, but the source process started by this run is not alive in this checkout." >&2
+            tail -n 200 "$SERVER_LOG" || true
+            exit 1
+          fi
+          SOURCE_VERSION_JSON="$RUNNER_TEMP/source-version-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          curl -fsS "http://127.0.0.1:${PORT}/api/version" >"$SOURCE_VERSION_JSON"
+          EXPECTED_VERSION="$(node -p "require('./package.json').version")" \
+          SOURCE_VERSION_JSON="$SOURCE_VERSION_JSON" node -e '
+            const fs = require("node:fs");
+            const response = JSON.parse(fs.readFileSync(process.env.SOURCE_VERSION_JSON, "utf8"));
+            if (response.version !== process.env.EXPECTED_VERSION) {
+              throw new Error(`source app version mismatch: expected ${process.env.EXPECTED_VERSION}, got ${response.version}`);
+            }
+          '
+          echo "SeqDesk app is ready on port $PORT and serves the checked-out version."
 
       - name: Run runtime pipeline E2E (local + SLURM through the app)
         env:
@@ -512,15 +1149,14 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/reads-qc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
       # --- Opt-in: run the PUBLIC pipelines on the REAL ENA mouse-gut dataset (PRJDB6165) ---
-      # Gated to an explicit workflow_dispatch with run_mouse_real_data=true — the nightly schedule
-      # skips it (it downloads ~130 MB of real reads from ENA and runs extra pipelines). Seeds the
+      # Gated to an explicit workflow_dispatch with run_mouse_real_data=true, so mirrored pushes
+      # skip it (it downloads ~130 MB of real reads from ENA and runs extra pipelines). Seeds the
       # eight real mouse-gut read pairs as a real order/study, then runs fastqc + fastq-checksum
       # (order-scoped) and reads-qc + study-demo-report (study-scoped) on them. The per-process conda
       # envs (fastqc/seqkit) were already warmed into the shared cache by the dummy fastqc/reads-qc
       # steps above, so the SLURM runs here reuse them by hash (same data-independent env hash).
       # Resilient by design: the QOS submit slot is freed before each pipeline, one pipeline failing
-      # never aborts the rest, reports are always collected, and they are pushed to a dedicated
-      # `demo-mouse-reports` branch (quota-proof) for bundling into the SeqDesk demo viewer.
+      # never aborts the rest, and reports are always collected into the workflow artifact.
       - name: Run public pipelines on REAL mouse-gut data (PRJDB6165) — opt-in
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_mouse_real_data == true }}
         continue-on-error: true
@@ -528,8 +1164,6 @@ jobs:
           SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
           SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
           SEQDESK_RUNTIME_E2E_PASSWORD: admin
-          # Push the collected reports to a branch (quota-proof transport — see below).
-          GH_PUSH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # NOTE: intentionally NO `set -e` — a single pipeline failing (e.g. a transient SLURM
           # QOS rejection) must NOT abort the step before reports are collected and pushed.
@@ -545,13 +1179,12 @@ jobs:
           # This cluster caps concurrent SLURM submissions per user (QOS MaxSubmitJobPerUser=1):
           # a job still PENDING/RUNNING from the previous mouse pipeline makes the next sbatch fail
           # with QOSMaxSubmitJobPerUserLimit (the reads-qc failure in run 28405692814). Before each
-          # pipeline, cancel any PENDING job of ours and wait for our queue to drain so the submit
-          # slot is free — the same slot-management the read-cleaning step already does.
+          # pipeline, cancel only jobs resolved from this CI run's database and
+          # verified against its run root. The shared account may own other
+          # SeqDesk work, so a job-name prefix alone is never sufficient.
           free_qos_slot() {
-            command -v squeue >/dev/null 2>&1 || return 0
-            local stale; stale="$(squeue -u "$ME" -h -t PENDING -o '%i' 2>/dev/null || true)"
-            [ -n "$stale" ] && { echo "freeing stale PENDING SLURM job(s): $stale"; echo "$stale" | xargs -r scancel 2>/dev/null || true; }
-            for _ in $(seq 1 36); do squeue -u "$ME" -h 2>/dev/null | grep -q . || break; sleep 5; done
+            source "$SEQDESK_CI_CLEANUP_HELPER"
+            seqdesk_ci_cancel_pipeline_runs "$DB_NAME" "$SEQDESK_RUN_DIR"
           }
 
           # Resilient: each pipeline runs local + SLURM; the LOCAL run (head node, no sbatch) always
@@ -594,30 +1227,12 @@ jobs:
           echo "collected $NFILES report file(s):"
           find "$MOUSE_REPORTS_DIR" -type f -printf '  %f\n' 2>/dev/null | sort | head -120
 
-          # Quota-proof transport: the repo-wide artifact storage quota is frequently exhausted by the
-          # full run-dir upload (and GitHub's usage figure lags 6-12h after cleanup), which strands
-          # these tiny reports. So push them to a dedicated `demo-mouse-reports` branch instead — a
-          # fresh single-commit branch (force-pushed) that the demo maintainer fetches directly. No
-          # artifact dependency. Requires job-level `permissions: contents: write`.
           if [ "$NFILES" -gt 0 ]; then
-            PUSH_DIR="$RUNNER_TEMP/mouse-reports-push"
-            rm -rf "$PUSH_DIR"; mkdir -p "$PUSH_DIR/reports"
-            cp "$MOUSE_REPORTS_DIR"/* "$PUSH_DIR/reports/" 2>/dev/null || true
             printf 'Mouse-gut (PRJDB6165) real pipeline reports\nrun=%s attempt=%s\nfailed_pipelines=%s\n' \
-              "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${FAILS:- none}" > "$PUSH_DIR/reports/RUN_INFO.txt"
-            ( cd "$PUSH_DIR"
-              git init -q
-              git config user.email "ci@seqdesk.org"; git config user.name "SeqDesk CI"
-              git checkout -q -b demo-mouse-reports
-              git add -A
-              git commit -q -m "mouse-gut real reports (run $GITHUB_RUN_ID)"
-              if git push -q -f "https://x-access-token:${GH_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" demo-mouse-reports; then
-                echo "pushed $NFILES report file(s) -> demo-mouse-reports branch"
-              else
-                echo "WARN: branch push failed (reports also in the artifact if the quota recovers)"
-              fi )
+              "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${FAILS:- none}" > "$MOUSE_REPORTS_DIR/RUN_INFO.txt"
+            echo "mouse reports staged for the workflow artifact"
           else
-            echo "WARN: no reports collected — nothing to push"
+            echo "WARN: no reports collected"
           fi
           echo "mouse pipelines that failed:${FAILS:- none}"
           # Opt-in/experimental: never red the whole job on a mouse-data hiccup.
@@ -628,8 +1243,7 @@ jobs:
       # runner's Standard kraken2 DB (~12 GB; the head node has ~62 GB RAM so LOCAL mode is fine —
       # KRAKEN2 is capped to maxForks 1 / 16 GB in the package). The DB already ships the Bracken
       # kmer distributions (database150mers.kmer_distrib), so no bracken-build is needed. Collects
-      # the Kraken2 report + Bracken abundance + Krona HTML and pushes them to a dedicated
-      # `demo-human-gut-kraken` branch (quota-proof) for wiring into the demo viewer.
+      # the Kraken2 report + Bracken abundance + Krona HTML into the workflow artifact.
       - name: Run kraken2-bracken on the REAL human-gut shotgun study (taxonomy → demo, opt-in)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_human_gut_kraken == true }}
         continue-on-error: true
@@ -637,7 +1251,6 @@ jobs:
           SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
           SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
           SEQDESK_RUNTIME_E2E_PASSWORD: admin
-          GH_PUSH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
         run: |
           set -uo pipefail
@@ -670,19 +1283,12 @@ jobs:
           NFILES="$(find "$OUT" -type f | wc -l | tr -d ' ')"
           echo "collected $NFILES kraken/bracken/krona file(s):"
           find "$OUT" -type f -printf '  %f\n' 2>/dev/null | sort | head -60
-          # quota-proof transport -> demo-human-gut-kraken branch
           if [ "$NFILES" -gt 0 ]; then
-            PUSH_DIR="$RUNNER_TEMP/kraken-push"; rm -rf "$PUSH_DIR"; mkdir -p "$PUSH_DIR/reports"
-            cp "$OUT"/* "$PUSH_DIR/reports/" 2>/dev/null || true
-            printf 'Human-gut (PRJEB54724) kraken2-bracken taxonomy output\nrun=%s attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$PUSH_DIR/reports/RUN_INFO.txt"
-            ( cd "$PUSH_DIR"; git init -q
-              git config user.email "ci@seqdesk.org"; git config user.name "SeqDesk CI"
-              git checkout -q -b demo-human-gut-kraken; git add -A
-              git commit -q -m "human-gut kraken2-bracken taxonomy (run $GITHUB_RUN_ID)"
-              git push -q -f "https://x-access-token:${GH_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" demo-human-gut-kraken \
-                && echo "pushed $NFILES file(s) -> demo-human-gut-kraken branch" || echo "WARN: branch push failed" )
+            printf 'Human-gut (PRJEB54724) kraken2-bracken taxonomy output\nrun=%s attempt=%s\n' \
+              "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$OUT/RUN_INFO.txt"
+            echo "kraken/bracken reports staged for the workflow artifact"
           else
-            echo "WARN: no kraken output collected — nothing to push"
+            echo "WARN: no kraken output collected"
           fi
           exit 0
 
@@ -690,13 +1296,16 @@ jobs:
       # conda env into the shared cache on the networked head node; the SLURM run reuses it by
       # hash on the network-less compute node (the fastqc mechanism above). Heavy: detaxizer
       # loads a ~20 GB kraken2 DB into RAM, so this step right-sizes the SLURM request (the
-      # job-wide 1G/10min is for the light smokes) and packs the staged DB dir into a cached
+      # job-wide 1G/1h is for the light smokes) and packs the staged DB dir into a cached
       # .tar (detaxizer untars --kraken2db). Seeds the spiked raw dataset (30 human-mt + 30
       # E. coli reads/sample) and asserts host reads are removed + microbes retained
-      # (SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK). WARN-ONLY while brought up on SLURM — promote to a
-      # hard gate + flip the PIPELINE_E2E_COVERAGE.md source-boot SLURM mark to ✅ once green.
-      - name: Run read-cleaning E2E (local + SLURM, contamination removal) — warn-only
-        if: always()
+      # (SEQDESK_RUNTIME_E2E_RC_SPIKE_CHECK). This remains an optional extension because the
+      # external DB and sufficiently large nodes are not guaranteed. When prerequisites exist,
+      # failures are surfaced as a warning result rather than swallowed inside a green step.
+      - name: Run read-cleaning E2E (local + SLURM, contamination removal) — optional
+        # Keep the change-driven gate bounded: this extension can consume more
+        # than an hour before the required fresh-install proof even starts.
+        if: ${{ success() && github.event_name == 'workflow_dispatch' }}
         continue-on-error: true
         env:
           SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
@@ -706,6 +1315,11 @@ jobs:
           SLURM_SHARED_KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
         run: |
           set -euo pipefail
+          if [ ! -r "${SEQDESK_CI_CLEANUP_HELPER:-}" ]; then
+            echo "Required run-scoped cleanup helper is unavailable." >&2
+            exit 1
+          fi
+          source "$SEQDESK_CI_CLEANUP_HELPER"
           DB="$SLURM_SHARED_KRAKEN2_DB"
           if [ ! -e "$DB" ]; then echo "kraken2 DB absent at '$DB' — skipping read-cleaning SLURM (warn)."; exit 0; fi
           # detaxizer untars --kraken2db, so pack the staged DB dir into a cached .tar on the
@@ -726,9 +1340,9 @@ jobs:
           fi
           if [ "$MAXMEM_MB" -gt 36000 ]; then REQ_MB=32000; else REQ_MB=$((MAXMEM_MB - 4000)); fi
           export SEQDESK_RUNTIME_E2E_SLURM_MEMORY="${REQ_MB}M"
-          export SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT="60"
+          export SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT="2"
           export SEQDESK_RUNTIME_E2E_SLURM_CORES="2"
-          echo "read-cleaning SLURM request: mem=${REQ_MB}M cores=2 time=60m"
+          echo "read-cleaning SLURM request: mem=${REQ_MB}M cores=2 time=2h"
           # Shared conda cache (derive from SEQDESK_DATA_DIR, which IS in this step's env).
           CACHE_DIR="$(dirname "$(dirname "$SEQDESK_DATA_DIR")")/conda-cache"
           echo "conda cache dir: $CACHE_DIR ($([ -d "$CACHE_DIR" ] && echo exists || echo MISSING))"
@@ -752,35 +1366,47 @@ jobs:
             return "${PIPESTATUS[0]}"
           }
           rc_heal_broken_envs() {
-            local rcdir ec run env
+            local rcdir task_script run env removed
             rcdir="$(find "$SEQDESK_RUN_DIR" -maxdepth 1 -type d -name 'READ-CLEANING-*' 2>/dev/null | tail -1)"
             if [ -z "$rcdir" ]; then echo "heal: no read-cleaning run dir found"; return 0; fi
-            for ec in "$rcdir"/work/*/*/.exitcode; do
-              if [ -f "$ec" ] && [ "$(cat "$ec" 2>/dev/null)" != "0" ]; then
-                run="$(dirname "$ec")/.command.run"
-                env="$(grep -oE "$CACHE_DIR/env-[a-f0-9]+" "$run" 2>/dev/null | head -1)"
-                if [ -n "$env" ] && [ -d "$env" ] && ! "$env/bin/python" -c "import dnaio" >/dev/null 2>&1; then
-                  echo "heal: removing broken dnaio env $env"; rm -rf "$env"
-                fi
+            removed=0
+            # An interrupted Nextflow Conda solve may leave an env directory but
+            # no .exitcode. Inspect generated task scripts, but only heal the
+            # RENAME_FASTQ_HEADERS/dnaio task: other detaxizer processes use
+            # legitimate isolated envs that are not supposed to contain dnaio.
+            while IFS= read -r -d '' task_script; do
+              if ! grep -qiE 'dnaio|rename[_-]?fastq[_-]?headers' "$task_script" 2>/dev/null; then
+                continue
               fi
-            done
+              run="$(dirname "$task_script")/.command.run"
+              env="$(grep -oE "$CACHE_DIR/env-[a-f0-9]+" "$run" 2>/dev/null | head -1)"
+              if [ -n "$env" ] && [ -d "$env" ] && \
+                 { [ ! -x "$env/bin/python" ] || ! "$env/bin/python" -c "import dnaio" >/dev/null 2>&1; }; then
+                echo "heal: removing incomplete read-cleaning Conda env $env"
+                rm -rf "$env"
+                removed=$((removed + 1))
+              fi
+            done < <(find "$rcdir/work" -type f -name '.command.sh' -print0 2>/dev/null)
+            echo "heal: removed $removed incomplete read-cleaning env(s)"
             return 0
           }
           echo "::group::read-cleaning LOCAL warm-up — builds detaxizer's conda envs on the head node"
           if ! rc_warmup; then
             echo "warm-up failed — healing broken dnaio env(s) from the failed tasks, then retrying"
             rc_heal_broken_envs
-            rc_warmup || echo "warm-up still failing after heal+retry (see log)"
+            rc_warmup
           fi
           echo "::endgroup::"
           # SLURM-executor pass (best-effort). Reuses the head-node-built envs on the compute node to
           # exercise the real SLURM path. This cluster caps concurrent submissions per user (QOS
           # MaxSubmitJobPerUser): a job left PENDING here holds that slot and makes the next SLURM
           # step fail to submit (QOSMaxSubmitJobPerUserLimit). So cap the wait, tolerate non-completion,
-          # then cancel ONLY the job this pass started to free the slot. The warm-up above is the
-          # authoritative spike proof; this just confirms the SLURM path when the partition is free.
-          ME="$(whoami)"
-          jobs_before="$(squeue -u "$ME" -h -o '%i' 2>/dev/null || true)"
+          # then cancel ONLY the exact PipelineRun/job this pass started to free the slot. The
+          # warm-up above is the authoritative spike proof; this just confirms the SLURM path when
+          # the partition is free.
+          RC_STATE_FILE="$RUNNER_TEMP/read-cleaning-slurm-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          rm -f "$RC_STATE_FILE"
+          set +e
           npm run pipeline:e2e:runtime -- \
             --set-data-base-path "$SEQDESK_DATA_DIR" \
             --seed-example-dataset read-cleaning-spike \
@@ -789,26 +1415,84 @@ jobs:
             --config-json "$RC_JSON" \
             --timeout 1200 \
             --skip-local \
-            2>&1 | tee "$RUNNER_TEMP/read-cleaning-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log" \
-            || echo "read-cleaning SLURM pass did not complete in time (best-effort) — the warm-up already proved the spike"
-          # Cancel ONLY the job(s) this pass submitted (any pre-existing jobs on the shared cluster are
-          # left untouched), then wait for them to leave the queue so the QOS submit slot is released
-          # before the next SLURM step runs.
-          new_jobs=""
-          for j in $(squeue -u "$ME" -h -o '%i' 2>/dev/null || true); do
-            if ! echo "$jobs_before" | grep -qx "$j"; then new_jobs="$new_jobs $j"; fi
-          done
-          if [ -n "$new_jobs" ]; then
-            echo "freeing QOS slot — cancelling read-cleaning SLURM job(s):$new_jobs"
-            scancel $new_jobs 2>/dev/null || true
-            for _ in $(seq 1 12); do
-              gone=1
-              for j in $new_jobs; do
-                if squeue -h -j "$j" 2>/dev/null | grep -q .; then gone=0; fi
+            --run-state-file "$RC_STATE_FILE" \
+            2>&1 | tee "$RUNNER_TEMP/read-cleaning-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+          slurm_rc=${PIPESTATUS[0]}
+          set -e
+          # The harness writes this identity immediately after create/start, before
+          # polling. Cross-check it against the exact PipelineRun row, then require
+          # the standard SeqDesk job-name + run-root ownership proof before scancel.
+          if [ -s "$RC_STATE_FILE" ]; then
+            mapfile -t RC_IDENTITY < <(node -e '
+              const fs = require("node:fs");
+              const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              process.stdout.write(`${state.runId || ""}\n${state.jobId || ""}\n`);
+            ' "$RC_STATE_FILE")
+            RC_RUN_ID="${RC_IDENTITY[0]:-}"
+            RC_JOB_ID="${RC_IDENTITY[1]:-}"
+            if [[ ! "$RC_RUN_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+              echo "ERROR: read-cleaning state file has an invalid PipelineRun id." >&2
+              slurm_rc=1
+              RC_JOB_ID=""
+            else
+              RC_DB_ROW="$(PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql \
+                -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" \
+                -U "${DB_USER:-seqdesk}" -d "$DB_NAME" -At -F '|' \
+                -c "select coalesce(\"queueJobId\", ''), coalesce(\"runFolder\", ''), \"pipelineId\", coalesce(\"executionMode\", '') from \"PipelineRun\" where id='$RC_RUN_ID'" \
+                2>/dev/null || true)"
+              IFS='|' read -r RC_DB_JOB_ID RC_DB_RUN_FOLDER RC_DB_PIPELINE_ID RC_DB_MODE <<< "$RC_DB_ROW"
+              if [ "$RC_DB_PIPELINE_ID" != "read-cleaning" ] ||
+                 [ "$RC_DB_MODE" != "slurm" ] ||
+                 [[ "$RC_DB_RUN_FOLDER" != "$SEQDESK_RUN_DIR/"* ]] ||
+                 [[ ! "$RC_DB_JOB_ID" =~ ^[0-9]+$ ]] ||
+                 { [ -n "$RC_JOB_ID" ] && [ "$RC_JOB_ID" != "$RC_DB_JOB_ID" ]; }; then
+                echo "ERROR: refusing read-cleaning cleanup; captured run/job identity does not match its scoped PipelineRun row." >&2
+                slurm_rc=1
+                RC_JOB_ID=""
+              else
+                RC_JOB_ID="$RC_DB_JOB_ID"
+              fi
+            fi
+          else
+            echo "ERROR: read-cleaning runtime did not capture its PipelineRun/job identity." >&2
+            slurm_rc=1
+            RC_JOB_ID=""
+          fi
+          if [ -n "${RC_JOB_ID:-}" ]; then
+            RC_JOB_STATE="$(seqdesk_ci_slurm_job_state "$RC_JOB_ID")"
+            if [ "$RC_JOB_STATE" = "active" ]; then
+              RC_IDENTITY_STATE="$(seqdesk_ci_slurm_job_identity_state \
+                "$RC_JOB_ID" "$RC_DB_RUN_FOLDER" "seqdesk-$RC_RUN_ID")"
+              if [ "$RC_IDENTITY_STATE" != "matches" ]; then
+                echo "ERROR: refusing to cancel read-cleaning job $RC_JOB_ID; identity=$RC_IDENTITY_STATE." >&2
+                slurm_rc=1
+              else
+                echo "freeing QOS slot — cancelling scoped read-cleaning PipelineRun $RC_RUN_ID job $RC_JOB_ID"
+                scancel "$RC_JOB_ID" 2>/dev/null || slurm_rc=1
+              fi
+              for _ in $(seq 1 12); do
+                RC_JOB_STATE="$(seqdesk_ci_slurm_job_state "$RC_JOB_ID")"
+                [ "$RC_JOB_STATE" = "inactive" ] && break
+                if [ "$RC_JOB_STATE" = "unknown" ]; then
+                  echo "ERROR: read-cleaning job $RC_JOB_ID state became unknown during cancellation." >&2
+                  slurm_rc=1
+                  break
+                fi
+                sleep 5
               done
-              if [ "$gone" = 1 ]; then break; fi
-              sleep 5
-            done
+              RC_JOB_STATE="$(seqdesk_ci_slurm_job_state "$RC_JOB_ID")"
+              if [ "$RC_JOB_STATE" != "inactive" ]; then
+                echo "ERROR: scoped read-cleaning job $RC_JOB_ID final state is $RC_JOB_STATE after cancellation." >&2
+                slurm_rc=1
+              fi
+            elif [ "$RC_JOB_STATE" = "unknown" ]; then
+              echo "ERROR: read-cleaning job $RC_JOB_ID state is unknown; preserving its run tree." >&2
+              slurm_rc=1
+            fi
+          fi
+          if [ "$slurm_rc" != "0" ]; then
+            echo "read-cleaning SLURM pass failed or timed out (exit $slurm_rc)." >&2
+            exit "$slurm_rc"
           fi
 
       - name: Run SLURM-only pipeline smoke through the app
@@ -889,21 +1573,91 @@ jobs:
           npm run pipeline:e2e:appcheck -- --check stuck 2>&1 | tee -a "$APPCHECK_E2E_LOG"
 
       - name: SLURM shared-filesystem canary (diagnostic)
-        if: always()
+        if: ${{ always() && github.event_name == 'workflow_dispatch' }}
         run: |
           set +e
           if ! command -v sbatch >/dev/null 2>&1; then echo "sbatch unavailable; skip canary"; exit 0; fi
-          WORK_DIR="$SEQDESK_RUN_DIR/_canary"   # under the runner _work tree (suspect: local disk)
-          HOME_DIR="$HOME/seqdesk-ci-canary"    # under the shared home, OUTSIDE _work
+          if [ ! -r "${SEQDESK_CI_CLEANUP_HELPER:-}" ]; then
+            echo "run-scoped cleanup helper unavailable; refusing canary submission" >&2
+            exit 1
+          fi
+          source "$SEQDESK_CI_CLEANUP_HELPER"
+          CANARY_SUFFIX="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          CANARY_JOB_NAME="seqdesk-canary-$CANARY_SUFFIX"
+          WORK_DIR="$SEQDESK_RUN_DIR/_canary-$CANARY_SUFFIX"
+          HOME_DIR="$HOME/seqdesk-ci-canary-$CANARY_SUFFIX"
+          JID=""
+          cleanup_canary() {
+            local original_rc=$?
+            local job_id="${JID%%;*}"
+            local cleanup_rc=0
+            local job_state identity_state
+            trap - EXIT
+            if [ -n "$job_id" ]; then
+              job_state="$(seqdesk_ci_slurm_job_state "$job_id")"
+              if [ "$job_state" = "active" ]; then
+                identity_state="$(seqdesk_ci_slurm_job_identity_state \
+                  "$job_id" "$HOME_DIR" "$CANARY_JOB_NAME")"
+                if [ "$identity_state" = "matches" ]; then
+                  echo "canary still active after the diagnostic window; cancelling owned allocation $job_id"
+                  scancel "$job_id" >/dev/null 2>&1 || cleanup_rc=1
+                else
+                  job_state="$(seqdesk_ci_slurm_job_state "$job_id")"
+                  if [ "$job_state" = "inactive" ]; then
+                    echo "canary allocation $job_id exited before cleanup could signal it"
+                  else
+                    echo "ERROR: refusing canary scancel for $job_id; queue state=$job_state identity=$identity_state." >&2
+                    cleanup_rc=1
+                  fi
+                fi
+                if [ "$cleanup_rc" = 0 ]; then
+                  for _ in $(seq 1 24); do
+                    job_state="$(seqdesk_ci_slurm_job_state "$job_id")"
+                    [ "$job_state" = "inactive" ] && break
+                    if [ "$job_state" = "unknown" ]; then
+                      cleanup_rc=1
+                      break
+                    fi
+                    sleep 5
+                  done
+                fi
+              elif [ "$job_state" = "unknown" ]; then
+                echo "ERROR: canary allocation $job_id queue state is unknown." >&2
+                cleanup_rc=1
+              fi
+              job_state="$(seqdesk_ci_slurm_job_state "$job_id")"
+              if [ "$job_state" != "inactive" ]; then
+                echo "ERROR: canary allocation $job_id final state is $job_state; cleanup was not verified." >&2
+                cleanup_rc=1
+              fi
+            fi
+            if [ "$cleanup_rc" = 0 ]; then
+              rm -rf "$HOME_DIR"
+            else
+              echo "SEQDESK_CANARY_CLEANUP_FAILED=1" >> "$GITHUB_ENV"
+              echo "ERROR: preserving canary paths $HOME_DIR and $WORK_DIR." >&2
+            fi
+            if [ "$original_rc" -ne 0 ]; then
+              exit "$original_rc"
+            fi
+            exit "$cleanup_rc"
+          }
+          trap cleanup_canary EXIT
           rm -rf "$WORK_DIR" "$HOME_DIR"; mkdir -p "$WORK_DIR" "$HOME_DIR"
           echo "head wrote work $(date)" > "$WORK_DIR/head-marker.txt"
           echo "head wrote home $(date)" > "$HOME_DIR/head-marker.txt"
           # Run slurmd's --output under $HOME (likely shared+writable) so the probe
           # results survive even when the _work run dir is not usable on the node.
           # The probe reports df/mount for both trees and tries read/write on each.
-          JID=$(sbatch --parsable -p cpu -c 1 --mem=200M -t 5:00 -D "$HOME_DIR" \
+          JID=$(sbatch --parsable --job-name="$CANARY_JOB_NAME" \
+            -p cpu -c 1 --mem=200M -t 5:00 -D "$HOME_DIR" \
             --output="$HOME_DIR/canary-%j.out" --error="$HOME_DIR/canary-%j.err" \
             --wrap "set +e; echo node=\$(hostname); echo '--- df WORK ---'; df -hP '$WORK_DIR' 2>&1; echo '--- df HOME ---'; df -hP '$HOME_DIR' 2>&1; echo '--- mounts ---'; mount 2>/dev/null | grep -E ' nfs|on /home|_work' | head; echo '--- read _work marker? ---'; cat '$WORK_DIR/head-marker.txt' 2>&1; echo '--- write _work? ---'; (echo x > '$WORK_DIR/node-write' && echo WORK-WRITE-OK || echo WORK-WRITE-FAIL) 2>&1; echo '--- write HOME? ---'; (echo x > '$HOME_DIR/node-write' && echo HOME-WRITE-OK || echo HOME-WRITE-FAIL) 2>&1; echo '--- pipeline conda env nextflow? ---'; '$PIPELINE_CONDA_ENV/bin/nextflow' -version 2>&1 | head -3")
+          submit_rc=$?
+          if [ "$submit_rc" -ne 0 ] || [ -z "$JID" ]; then
+            echo "canary submission failed; diagnostic skipped"
+            exit 0
+          fi
           echo "canary job id: $JID"
           for _ in $(seq 1 90); do
             st=$(sacct -j "${JID%%;*}" --noheader -o State -P 2>/dev/null | head -1)
@@ -916,29 +1670,43 @@ jobs:
           echo "  _work/node-write: $(cat "$WORK_DIR/node-write" 2>&1)"
           echo "  HOME/node-write:  $(cat "$HOME_DIR/node-write" 2>&1)"
           echo "===== sacct (canary) ====="; sacct -j "${JID%%;*}" -o JobID,State,ExitCode,NodeList 2>&1
-          rm -rf "$HOME_DIR"
           true
 
       - name: Stop SeqDesk app
         if: always()
         run: |
           set +e
-          if [ -n "${APP_PID:-}" ]; then
-            kill "$APP_PID" >/dev/null 2>&1 || true
-            wait "$APP_PID" >/dev/null 2>&1 || true
+          cleanup_fail=0
+          if [ ! -r "${SEQDESK_CI_CLEANUP_HELPER:-}" ]; then
+            echo "ERROR: run-scoped cleanup helper is unavailable." >&2
+            cleanup_fail=1
+          else
+            # Cancel and wait for source-app jobs before the installed-app gate.
+            # This frees the single-job QOS slot and prevents either app from
+            # writing into a run tree that the other gate later removes.
+            source "$SEQDESK_CI_CLEANUP_HELPER"
+            seqdesk_ci_cancel_pipeline_runs "${DB_NAME:-}" "${SEQDESK_RUN_DIR:-}" || cleanup_fail=1
+            if seqdesk_ci_stop_child "${APP_PID:-}" "source SeqDesk app" "$GITHUB_WORKSPACE"; then
+              echo "APP_PID=" >> "$GITHUB_ENV"
+            else
+              cleanup_fail=1
+            fi
+            seqdesk_ci_stop_monitors "$GITHUB_WORKSPACE" || cleanup_fail=1
           fi
+          exit "$cleanup_fail"
 
       # PROOF: a REAL INSTALL can run a SLURM pipeline and write results back to the DB —
       # "install SeqDesk, then run a SLURM job through that installed instance". Reuses this
       # job's shared FS + prebuilt conda env + SLURM_SHARED_* + inline executor, installing
       # via the npm launcher + a mock release server (the Alma E2E pattern). Runs after the
-      # source-boot app is stopped (one app per DB). WARN-ONLY while it's brought up; the
-      # first target is fastq-checksum, to expand to every pipeline (see PIPELINE_E2E_COVERAGE.md).
-      - name: Install SeqDesk + run a SLURM pipeline on the installed app (warn-only)
-        # always() so an unrelated earlier flake (e.g. the failure-path timing race) can't
-        # skip this; continue-on-error so this experimental cut can't red the suite.
-        if: always()
-        continue-on-error: true
+      # source-boot app is stopped (one app per DB). This is a required acceptance gate:
+      # a green workflow means the candidate was installed, booted, authenticated, and
+      # executed pipelines in local and real outer-SLURM modes through that installation.
+      - name: Install SeqDesk + run pipelines on the installed app (required)
+        # Run independently so diagnostics include installability even if a source-boot
+        # assertion failed. Without continue-on-error, any install/pipeline failure still
+        # makes the canonical workflow fail.
+        if: ${{ always() && !cancelled() }}
         env:
           # Pinned into the install profile as read-cleaning's MANAGED kraken2 DB (same default
           # + override as the source-boot read-cleaning step). Empty/absent → the profile omits
@@ -946,6 +1714,28 @@ jobs:
           SLURM_SHARED_KRAKEN2_DB: ${{ vars.SLURM_SHARED_KRAKEN2_DB || '/net/broker/checkm_refdata/kraken2_db' }}
         run: |
           set -euo pipefail
+          export PATH="$SEQDESK_NODE_BIN:$PATH"
+          if [ "${SEQDESK_CANARY_CLEANUP_FAILED:-0}" = "1" ]; then
+            echo "A canary allocation survived cleanup; refusing to overlap it with the installed-app gate." >&2
+            exit 1
+          fi
+          # `always()` intentionally lets this independent install proof run
+          # after a source assertion fails, but never let it overlap surviving
+          # source jobs/processes. Re-run the ownership-checked drain here and
+          # require success before creating the second app/database.
+          if [ ! -r "${SEQDESK_CI_CLEANUP_HELPER:-}" ]; then
+            echo "Required run-scoped cleanup helper is unavailable." >&2
+            exit 1
+          fi
+          source "$SEQDESK_CI_CLEANUP_HELPER"
+          seqdesk_ci_cancel_pipeline_runs "$DB_NAME" "$SEQDESK_RUN_DIR"
+          seqdesk_ci_stop_child "${APP_PID:-}" "source SeqDesk app" "$GITHUB_WORKSPACE"
+          seqdesk_ci_stop_monitors "$GITHUB_WORKSPACE"
+          echo "APP_PID=" >> "$GITHUB_ENV"
+          if [ "$(node -p 'process.versions.node.split(".")[0]')" != "24" ]; then
+            echo "Installed-app gate requires Node 24; PATH resolved $(node --version) at $(command -v node)." >&2
+            exit 1
+          fi
           VERSION="$(node -p "require('./package.json').version")"
           # The installer's preflight needs ~2G free at --dir, but $RUNNER_TEMP is on /home
           # (only ~1G on this runner), so root the work area on the shared run FS that already
@@ -955,6 +1745,7 @@ jobs:
           # shared FS, which isn't auto-reclaimed between jobs like $RUNNER_TEMP is).
           WORK="${SLURM_SHARED_RUN_ROOT:-$RUNNER_TEMP}/install-slurm-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           APP_DIR="$WORK/app"; MOCK_ROOT="$WORK/mock"; NPM_PREFIX="$WORK/npm-prefix"
+          INSTALLED_CONDA_CACHE="$WORK/conda-cache"
           INSTALLED_PORT=$((PORT + 1)); MOCK_PORT=$((PORT + 2))
           INSTALLED_DATA="$SEQDESK_DATA_DIR-installed"; INSTALLED_RUNS="$SEQDESK_RUN_DIR-installed"
           DIAG_OUT="$RUNNER_TEMP/slurm-diag"
@@ -965,15 +1756,72 @@ jobs:
           # lands in $INSTALLED_DATA consistently.
           INSTALLED_DB_NAME="${DB_NAME}_installed"
           INSTALLED_DB_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${INSTALLED_DB_NAME}?schema=public"
+          if [ ! -r "${SEQDESK_CI_CLEANUP_HELPER:-}" ]; then
+            echo "Run-scoped cleanup helper is unavailable." >&2
+            exit 1
+          fi
+          source "$SEQDESK_CI_CLEANUP_HELPER"
           rm -rf "$WORK"
-          mkdir -p "$MOCK_ROOT/api" "$MOCK_ROOT/downloads" "$INSTALLED_DATA" "$INSTALLED_RUNS" "$NPM_PREFIX" "$DIAG_OUT"
+          mkdir -p "$MOCK_ROOT/api" "$MOCK_ROOT/downloads" "$INSTALLED_DATA" "$INSTALLED_RUNS" "$NPM_PREFIX" "$INSTALLED_CONDA_CACHE" "$DIAG_OUT"
           cleanup_install_slurm() {
+            local original_rc=$?
+            local cleanup_rc=0
+            local pipeline_cleanup_rc=0
+            local pid
+            trap - EXIT
+            set +e
+            # Stop every pipeline allocation/process owned by this temporary
+            # installed database before removing its run tree. Runtime clients
+            # can time out while their detached local process or SLURM job lives.
+            seqdesk_ci_cancel_pipeline_runs "$INSTALLED_DB_NAME" "$INSTALLED_RUNS" \
+              || { cleanup_rc=1; pipeline_cleanup_rc=1; }
+            seqdesk_ci_stop_child "${INSTALLED_APP_PID:-}" "installed SeqDesk app" "${APP_DIR:-}" \
+              || { cleanup_rc=1; pipeline_cleanup_rc=1; }
+            seqdesk_ci_stop_child "${MOCK_PID:-}" "mock release server" "${MOCK_ROOT:-}" \
+              || { cleanup_rc=1; pipeline_cleanup_rc=1; }
+            # The app can spawn detached monitors that outlive the parent PID.
+            # Scope cleanup to this one install tree so no other SeqDesk install
+            # or runner process is affected.
+            seqdesk_ci_stop_monitors "${APP_DIR:-}" \
+              || { cleanup_rc=1; pipeline_cleanup_rc=1; }
             for f in "$WORK"/install*.log "$WORK"/server.log "$WORK"/mock.log; do
               [ -f "$f" ] && cp "$f" "$DIAG_OUT/installslurm-$(basename "$f")" 2>/dev/null || true
             done
-            rm -rf "$WORK" "$INSTALLED_DATA" "$INSTALLED_RUNS" 2>/dev/null || true
-            psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U postgres -d postgres \
-              -c "DROP DATABASE IF EXISTS \"$INSTALLED_DB_NAME\"" >/dev/null 2>&1 || true
+            if [ -d "$INSTALLED_RUNS" ]; then
+              INSTALLED_LOGS="$DIAG_OUT/installed-run-logs"
+              mkdir -p "$INSTALLED_LOGS"
+              find "$INSTALLED_RUNS" -type f \( \
+                   -name 'pipeline.out' -o -name 'pipeline.err' \
+                -o -name 'slurm-*.out' -o -name 'slurm-*.err' \
+                -o -name '.nextflow.log*' -o -name 'run.sh' -o -name 'trace.txt' \
+                -o -name '.command.err' -o -name '.command.log' -o -name '.exitcode' \) \
+                2>/dev/null | while IFS= read -r f; do
+                  rel="${f#"$INSTALLED_RUNS"/}"
+                  target="$INSTALLED_LOGS/$rel"
+                  mkdir -p "$(dirname "$target")"
+                  cp "$f" "$target" 2>/dev/null || true
+                done
+            fi
+            if [ "$pipeline_cleanup_rc" = 0 ]; then
+              rm -rf "$WORK" "$INSTALLED_DATA" "$INSTALLED_RUNS" 2>/dev/null || true
+            else
+              echo "ERROR: preserving installed work/data/run trees because a scoped process survived cleanup." >&2
+            fi
+            rm -f "$GITHUB_WORKSPACE/seqdesk-${VERSION}.tar.gz" 2>/dev/null || true
+            if command -v psql >/dev/null 2>&1; then
+              psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U postgres -d postgres \
+                -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$INSTALLED_DB_NAME' AND pid <> pg_backend_pid()" \
+                >/dev/null 2>&1 || true
+              if ! psql -v ON_ERROR_STOP=1 -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" \
+                -U postgres -d postgres -c "DROP DATABASE IF EXISTS \"$INSTALLED_DB_NAME\"" >/dev/null 2>&1; then
+                echo "ERROR: failed to drop installed-app database $INSTALLED_DB_NAME" >&2
+                cleanup_rc=1
+              fi
+            fi
+            if [ "$original_rc" -ne 0 ]; then
+              exit "$original_rc"
+            fi
+            exit "$cleanup_rc"
           }
           trap cleanup_install_slurm EXIT
 
@@ -998,7 +1846,33 @@ jobs:
           echo "=== start mock release server ==="
           ( cd "$MOCK_ROOT" && exec python3 -m http.server "$MOCK_PORT" --bind 127.0.0.1 >"$WORK/mock.log" 2>&1 ) &
           MOCK_PID=$!
-          for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:$MOCK_PORT/api/version" >/dev/null 2>&1 && break; sleep 1; done
+          MOCK_READY=0
+          for _ in $(seq 1 30); do
+            MOCK_PROCESS_STATE="$(seqdesk_ci_pid_state "$MOCK_PID")"
+            if [ "$MOCK_PROCESS_STATE" != "active" ]; then
+              echo "Mock release server process state is $MOCK_PROCESS_STATE before readiness." >&2
+              break
+            fi
+            if curl -fsS "http://127.0.0.1:$MOCK_PORT/api/version" >/dev/null 2>&1; then
+              MOCK_READY=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$MOCK_READY" != "1" ]; then
+            echo "Mock release endpoint did not become ready." >&2
+            tail -n 100 "$WORK/mock.log" 2>/dev/null || true
+            exit 1
+          fi
+          sleep 1
+          MOCK_PROCESS_STATE="$(seqdesk_ci_pid_state "$MOCK_PID")"
+          MOCK_IDENTITY_STATE="$(seqdesk_ci_pid_identity_state "$MOCK_PID" "$MOCK_ROOT")"
+          if [ "$MOCK_PROCESS_STATE" != "active" ] ||
+             [ "$MOCK_IDENTITY_STATE" != "matches" ]; then
+            echo "Mock endpoint responded, but the server process started by this run is not alive in the mock root." >&2
+            tail -n 100 "$WORK/mock.log" 2>/dev/null || true
+            exit 1
+          fi
 
           echo "=== install with SLURM execution configured ==="
           PATH="$NPM_PREFIX/bin:$PATH" \
@@ -1010,14 +1884,74 @@ jobs:
           SEQDESK_EXEC_CONDA_ENV="$SEQDESK_CONDA_ENV" \
           SEQDESK_EXEC_SLURM_CORES=1 \
           SEQDESK_EXEC_SLURM_MEMORY=1G \
-          SEQDESK_EXEC_SLURM_TIME_LIMIT=10 \
+          SEQDESK_EXEC_SLURM_TIME_LIMIT=1 \
             seqdesk -y --no-pm2 --with-pipelines \
               --dir "$APP_DIR" --port "$INSTALLED_PORT" \
               --data-path "$INSTALLED_DATA" --run-dir "$INSTALLED_RUNS" \
               --nextauth-url "http://127.0.0.1:$INSTALLED_PORT" \
               --database-url "$INSTALLED_DB_URL" --database-direct-url "$INSTALLED_DB_URL"
-          kill "$MOCK_PID" >/dev/null 2>&1 || true
+          if seqdesk_ci_stop_child "$MOCK_PID" "mock release server" "$MOCK_ROOT"; then
+            MOCK_PID=""
+          else
+            echo "Mock release server did not stop cleanly after installation." >&2
+            exit 1
+          fi
           test -x "$APP_DIR/start.sh"
+          INSTALLED_VERSION="$(cd "$APP_DIR" && node -p "require('./package.json').version")"
+          if [ "$INSTALLED_VERSION" != "$VERSION" ]; then
+            echo "Installed version mismatch: expected $VERSION, found $INSTALLED_VERSION." >&2
+            exit 1
+          fi
+          echo "Installed SeqDesk $INSTALLED_VERSION at $APP_DIR"
+
+          echo "=== assert installer persisted runtime + pipeline execution settings ==="
+          ( cd "$APP_DIR" && \
+            EXPECTED_DATA_PATH="$INSTALLED_DATA" \
+            EXPECTED_RUN_DIR="$INSTALLED_RUNS" \
+            EXPECTED_CONDA_PATH="$SEQDESK_CONDA_PATH" \
+            EXPECTED_CONDA_ENV="$SEQDESK_CONDA_ENV" \
+            EXPECTED_DB_URL="$INSTALLED_DB_URL" \
+            EXPECTED_PORT="$INSTALLED_PORT" \
+            DATABASE_URL="$INSTALLED_DB_URL" DIRECT_URL="$INSTALLED_DB_URL" \
+            node -e '
+              const fs = require("node:fs");
+              const assert = require("node:assert/strict");
+              const configName = ["settings.json", "seqdesk.config.json"]
+                .find((name) => fs.existsSync(name));
+              assert.ok(configName, "installed runtime config is missing");
+              const config = JSON.parse(fs.readFileSync(configName, "utf8"));
+              assert.equal(config.site?.dataBasePath, process.env.EXPECTED_DATA_PATH);
+              assert.equal(config.pipelines?.enabled, true);
+              assert.equal(config.pipelines?.execution?.runDirectory, process.env.EXPECTED_RUN_DIR);
+              assert.equal(config.runtime?.databaseUrl, process.env.EXPECTED_DB_URL);
+              assert.equal(config.runtime?.directUrl, process.env.EXPECTED_DB_URL);
+              assert.equal(config.app?.port, Number(process.env.EXPECTED_PORT));
+
+              const { PrismaClient } = require("@prisma/client");
+              const prisma = new PrismaClient();
+              prisma.siteSettings.findUnique({
+                where: { id: "singleton" },
+                select: { dataBasePath: true, extraSettings: true },
+              }).then((settings) => {
+                assert.ok(settings, "SiteSettings singleton is missing");
+                assert.equal(settings.dataBasePath, process.env.EXPECTED_DATA_PATH);
+                const extra = JSON.parse(settings.extraSettings || "{}");
+                const execution = extra.pipelineExecution || {};
+                assert.equal(execution.useSlurm, true);
+                assert.equal(execution.runtimeMode, "conda");
+                assert.equal(execution.condaPath, process.env.EXPECTED_CONDA_PATH);
+                assert.equal(execution.condaEnv, process.env.EXPECTED_CONDA_ENV);
+                assert.equal(execution.pipelineRunDir, process.env.EXPECTED_RUN_DIR);
+                assert.equal(execution.slurmQueue, "cpu");
+                assert.equal(execution.slurmCores, 1);
+                assert.equal(execution.slurmMemory, "1G");
+                assert.equal(execution.slurmTimeLimit, 1);
+                console.log("Installer persistence verified in config file and SiteSettings.");
+              }).finally(() => prisma.$disconnect()).catch((error) => {
+                console.error(error);
+                process.exitCode = 1;
+              });
+            ' )
 
           echo "=== apply a facility install profile (managed pipeline config) ==="
           # Pin read-cleaning's managed kraken2 DB through the install profile, exactly as a
@@ -1048,11 +1982,9 @@ jobs:
           else
             echo "kraken2 DB absent at '${SLURM_SHARED_KRAKEN2_DB:-<unset>}' — profile omits kraken2Db (read-cleaning full run stays gated on a raw dataset)."
           fi
-          # Apply from the source checkout (it ships apply-install-profile.mjs + the apply-core
-          # lib + a generated Prisma client), targeting the INSTALLED app's own database, so the
-          # installed app honors the managed config. (The installer doesn't leave this dev script
-          # on the installed app's path post-install.)
-          ( cd "$GITHUB_WORKSPACE" && DATABASE_URL="$INSTALLED_DB_URL" DIRECT_URL="$INSTALLED_DB_URL" \
+          # Apply with the script and dependencies shipped in the installed artifact,
+          # targeting the installed app's own database.
+          ( cd "$APP_DIR" && DATABASE_URL="$INSTALLED_DB_URL" DIRECT_URL="$INSTALLED_DB_URL" \
               node scripts/apply-install-profile.mjs --profile-config "$PROFILE_JSON" ) \
             || { echo "ERROR: install-profile apply failed."; fail=1; }
 
@@ -1068,20 +2000,65 @@ jobs:
 
           echo "=== boot the INSTALLED app with the SLURM runtime env ==="
           ( cd "$APP_DIR"
-            export DATABASE_URL="$INSTALLED_DB_URL" DIRECT_URL="$INSTALLED_DB_URL"
-            export SEQDESK_SLURM_INLINE_EXECUTOR=1 SEQDESK_SLURM_ENABLED=true SEQDESK_CONDA_ENABLED=true
-            export SEQDESK_CONDA_PATH="$SEQDESK_CONDA_PATH" SEQDESK_CONDA_ENV="$SEQDESK_CONDA_ENV"
-            export SEQDESK_PIPELINE_RUN_DIR="$INSTALLED_RUNS" SEQDESK_DATA_PATH="$INSTALLED_DATA"
-            [ -n "${SEQDESK_PIPELINES_DIR:-}" ] && export SEQDESK_PIPELINES_DIR
-            # The source-boot steps already warmed every per-process conda env (simulate-reads,
-            # fastqc, seqkit…) in this shared cache earlier in the job. Point the installed app
-            # at it so SLURM runs REUSE them instead of trying to create on the network-less
-            # compute node (which fails / OOMs on the solve). This was never set job-wide — only
-            # inside the source-boot step — so the installed app had no cache before.
-            export SEQDESK_CONDA_CACHE_DIR="${SEQDESK_CONDA_CACHE_DIR:-$(dirname "$SLURM_SHARED_RUN_ROOT")/conda-cache}"
-            exec ./start.sh "$INSTALLED_PORT" ) >"$WORK/server.log" 2>&1 &
+            export PATH="$SEQDESK_NODE_BIN:$PATH"
+            # The installer must be the source of truth for port, database,
+            # data/run paths, SLURM policy, and Conda path/env. Unset inherited
+            # job variables so a broken persisted setting cannot be masked.
+            unset PORT DATABASE_URL DIRECT_URL
+            unset SEQDESK_SLURM_ENABLED SEQDESK_CONDA_ENABLED
+            unset SEQDESK_CONDA_PATH SEQDESK_CONDA_ENV
+            unset SEQDESK_PIPELINE_RUN_DIR SEQDESK_DATA_PATH
+            unset SEQDESK_PIPELINES_DIR
+            export SEQDESK_SLURM_INLINE_EXECUTOR=1
+            # Use a new shared cache for this installation. Installed local runs
+            # populate it before their SLURM counterparts, proving a fresh
+            # facility can provision pipeline process environments.
+            export SEQDESK_CONDA_CACHE_DIR="$INSTALLED_CONDA_CACHE"
+            exec ./start.sh ) >"$WORK/server.log" 2>&1 &
           INSTALLED_APP_PID=$!
-          for _ in $(seq 1 60); do curl -fsS "http://127.0.0.1:$INSTALLED_PORT/api/auth/providers" >/dev/null 2>&1 && break; sleep 2; done
+          INSTALLED_READY=0
+          for _ in $(seq 1 60); do
+            INSTALLED_PROCESS_STATE="$(seqdesk_ci_pid_state "$INSTALLED_APP_PID")"
+            if [ "$INSTALLED_PROCESS_STATE" != "active" ]; then
+              echo "Installed SeqDesk process state is $INSTALLED_PROCESS_STATE before readiness." >&2
+              break
+            fi
+            if curl -fsS "http://127.0.0.1:$INSTALLED_PORT/api/auth/providers" >"$WORK/providers.json" 2>/dev/null; then
+              INSTALLED_READY=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$INSTALLED_READY" != "1" ]; then
+            echo "Installed SeqDesk did not become ready in time." >&2
+            tail -n 200 "$WORK/server.log" 2>/dev/null || true
+            exit 1
+          fi
+          sleep 1
+          INSTALLED_PROCESS_STATE="$(seqdesk_ci_pid_state "$INSTALLED_APP_PID")"
+          INSTALLED_IDENTITY_STATE="$(seqdesk_ci_pid_identity_state "$INSTALLED_APP_PID" "$APP_DIR")"
+          if [ "$INSTALLED_PROCESS_STATE" != "active" ] ||
+             [ "$INSTALLED_IDENTITY_STATE" != "matches" ]; then
+            echo "Readiness endpoint responded, but this run's installed process is not alive in the install root." >&2
+            tail -n 200 "$WORK/server.log" 2>/dev/null || true
+            exit 1
+          fi
+          curl -fsS "http://127.0.0.1:$INSTALLED_PORT/api/version" >"$WORK/version.json"
+          EXPECTED_VERSION="$VERSION" node -e '
+            const fs = require("node:fs");
+            const response = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (response.version !== process.env.EXPECTED_VERSION) {
+              throw new Error(`installed app version mismatch: expected ${process.env.EXPECTED_VERSION}, got ${response.version}`);
+            }
+          ' "$WORK/version.json"
+          node -e '
+            const fs = require("node:fs");
+            const providers = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (!providers || typeof providers !== "object" || !providers.credentials) {
+              throw new Error("Installed SeqDesk did not expose the credentials provider");
+            }
+          ' "$WORK/providers.json"
+          echo "Installed SeqDesk is ready and exposes authentication."
 
           echo "=== run pipelines through the INSTALLED app (managed config from the install) ==="
           # Install once, exercise many — NO --config-json; managed config + execution come from
@@ -1097,34 +2074,47 @@ jobs:
             SEQDESK_RUNTIME_E2E_PASSWORD=admin \
             SEQDESK_RUNTIME_E2E_SLURM_CORES=1 \
             SEQDESK_RUNTIME_E2E_SLURM_MEMORY=1G \
-            SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=10 \
+            SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=1 \
               npm run pipeline:e2e:runtime -- --ensure-dummy-data "$@" \
                 2>&1 | tee "$WORK/install-$label.log" || prc=$?
             echo "::endgroup::"
             echo "installed-app [$label] exit: $prc"
             [ "$prc" = 0 ] || rc=1
           }
-          # Phase-1 matrix on the installed app. fastq-checksum in both modes; the rest SLURM
-          # (fastqc/reads-qc reuse the per-process conda envs the source-boot steps already
-          # warmed in the shared cacheDir earlier in this job). study-demo-report + reads-qc are
-          # study-scoped and auto-find the dummy study (no --study-alias), like the source-boot
-          # steps. read-cleaning/metaxpath/mag/submg stay out (dataset / package / DB gated).
-          run_installed fastq-checksum-slurm    --pipeline-id fastq-checksum    --skip-local
+          # Phase-1 matrix on the installed app. First prove that the installer's
+          # persisted default policy selects SLURM without the client forcing an
+          # execution mode; then explicitly prove local mode. Conda-backed
+          # pipelines run local before SLURM so this fresh installation builds
+          # each process env into its own empty shared cache before the offline
+          # compute node reuses it. Study-scoped pipelines auto-find the dummy
+          # study. read-cleaning/metaxpath/mag/submg stay in extended diagnostics.
+          run_installed fastq-checksum-default  --pipeline-id fastq-checksum \
+            --skip-local --skip-slurm --include-default-policy --expect-default-mode slurm
           run_installed fastq-checksum-local    --pipeline-id fastq-checksum    --skip-slurm
-          # simulate-reads runs BOTH modes (no --skip), matching the source-boot step: the
-          # E2E does local then SLURM as separate runs (separate run folders), which avoids the
-          # nextflow report.html collision the single SLURM-only run hit on the installed app.
+          # No --skip means local then SLURM as separate runs/run folders.
           run_installed simulate-reads          --pipeline-id simulate-reads
-          run_installed study-demo-report-slurm --pipeline-id study-demo-report --skip-local
-          run_installed fastqc-slurm            --pipeline-id fastqc            --skip-local
-          run_installed reads-qc-slurm          --pipeline-id reads-qc          --skip-local
+          run_installed study-demo-report       --pipeline-id study-demo-report
+          run_installed fastqc                  --pipeline-id fastqc
+          run_installed reads-qc                --pipeline-id reads-qc
+
+          echo "=== prove installed runs used the packaged pipeline tree ==="
+          PACKAGED_PIPELINES_ROOT="$APP_DIR/current/pipelines"
+          for pipeline_id in fastq-checksum simulate-reads study-demo-report fastqc reads-qc; do
+            expected_target="$PACKAGED_PIPELINES_ROOT/$pipeline_id/workflow"
+            if grep -R -F -l --include='run.sh' -- "$expected_target" "$INSTALLED_RUNS" >/dev/null 2>&1; then
+              echo "OK: $pipeline_id run.sh targets $expected_target"
+            else
+              echo "ERROR: no installed $pipeline_id run.sh targets the packaged workflow $expected_target" >&2
+              rc=1
+            fi
+          done
 
           # App-resilience on the INSTALLED app — the same pipeline-ops dimensions the
           # source-boot steps assert, now on the realistic facility install: no-data → clean
           # 400, run visibility/permissions (403/401) + pipeline.completed notification,
           # failure → DB failed, cancel → scancel → cancelled, stuck-run reconcile via /sync.
           # The scripts are HTTP-only (SLURM commands are host-level); point them at the
-          # installed app. Warn-only with the rest of this step.
+          # installed app. These are required along with the installed pipeline matrix.
           run_installed_resil() {
             local label="$1"; shift
             echo "::group::installed-app resilience: $label"
@@ -1145,7 +2135,12 @@ jobs:
           run_installed_resil cancel  npm run pipeline:e2e:slurm-cancel
           run_installed_resil stuck   npm run pipeline:e2e:appcheck -- --check stuck
 
-          kill "$INSTALLED_APP_PID" >/dev/null 2>&1 || true
+          if seqdesk_ci_stop_child "$INSTALLED_APP_PID" "installed SeqDesk app" "$APP_DIR"; then
+            INSTALLED_APP_PID=""
+          else
+            echo "Installed SeqDesk did not stop cleanly after the matrix." >&2
+            rc=1
+          fi
           echo "installed-app pipelines overall rc: $rc"
           if [ "$rc" != 0 ]; then
             echo "--- installed-app run logs (the cleanup trap frees these; dump them now) ---"
@@ -1186,24 +2181,68 @@ jobs:
 
           # 2) SLURM's own view — the only clue when a job fails before writing any log
           #    (e.g. compute node can't see the run dir, so --output can't be opened).
+          #    The runner account can own unrelated cluster work. Stage and print only
+          #    seqdesk-* jobs whose accounting WorkDir belongs to this CI run.
           if command -v sacct >/dev/null 2>&1; then
-            echo "### sacct (last 2h)" | tee "$DIAG/sacct.txt"
-            sacct -u "$USER" --starttime=now-2hours \
-              --format=JobID,JobName%45,State,ExitCode,Reason%50,WorkDir%140,NodeList 2>&1 \
-              | tee -a "$DIAG/sacct.txt"
+            SOURCE_RUN_ROOT="${SEQDESK_RUN_DIR:-}"
+            INSTALLED_RUN_ROOT=""
+            [ -n "$SOURCE_RUN_ROOT" ] && INSTALLED_RUN_ROOT="${SOURCE_RUN_ROOT}-installed"
+            SACCT_RAW="$RUNNER_TEMP/sacct-ci-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.raw"
+            SACCT_FILTERED="$DIAG/sacct.txt"
+            CI_SLURM_IDS="$DIAG/ci-slurm-job-ids.txt"
+            : > "$SACCT_FILTERED"
+            : > "$CI_SLURM_IDS"
+            if sacct -u "$USER" --starttime=now-4hours --noheader --parsable2 \
+              --format=JobIDRaw,JobName%128,State,ExitCode,Reason%128,WorkDir%220,NodeList \
+              >"$SACCT_RAW" 2>/dev/null; then
+              {
+                echo "JobIDRaw|JobName|State|ExitCode|Reason|WorkDir|NodeList"
+                awk -F'|' -v source_root="$SOURCE_RUN_ROOT" -v installed_root="$INSTALLED_RUN_ROOT" '
+                  function beneath(path, root) {
+                    return root != "" && (path == root || index(path, root "/") == 1)
+                  }
+                  $1 ~ /^[0-9]+$/ && $2 ~ /^seqdesk-/ &&
+                    (beneath($6, source_root) || beneath($6, installed_root)) {
+                    print
+                  }
+                ' "$SACCT_RAW"
+              } | tee "$SACCT_FILTERED"
+              awk -F'|' 'NR > 1 && $1 ~ /^[0-9]+$/ { print $1 }' \
+                "$SACCT_FILTERED" | sort -u > "$CI_SLURM_IDS"
+            else
+              echo "sacct query failed." | tee "$SACCT_FILTERED"
+            fi
+            rm -f "$SACCT_RAW"
             if command -v scontrol >/dev/null 2>&1; then
-              for jid in $(sacct -u "$USER" --starttime=now-2hours --noheader --format=JobID -P 2>/dev/null | grep -E '^[0-9]+$' | sort -u); do
+              while IFS= read -r jid; do
+                [ -n "$jid" ] || continue
+                job_info="$(scontrol show job -o "$jid" 2>/dev/null || true)"
+                job_name="$(printf '%s\n' "$job_info" | tr ' ' '\n' | sed -n 's/^JobName=//p' | head -n 1)"
+                work_dir="$(printf '%s\n' "$job_info" | tr ' ' '\n' | sed -n 's/^WorkDir=//p' | head -n 1)"
+                work_dir_matches=0
+                if [ -n "$SOURCE_RUN_ROOT" ] &&
+                   [[ "$work_dir" == "$SOURCE_RUN_ROOT" || "$work_dir" == "$SOURCE_RUN_ROOT/"* ]]; then
+                  work_dir_matches=1
+                fi
+                if [ -n "$INSTALLED_RUN_ROOT" ] &&
+                   [[ "$work_dir" == "$INSTALLED_RUN_ROOT" || "$work_dir" == "$INSTALLED_RUN_ROOT/"* ]]; then
+                  work_dir_matches=1
+                fi
+                if [[ "$job_name" != seqdesk-* ]] || [ "$work_dir_matches" != 1 ]; then
+                  echo "Skipping scontrol/log paths for $jid: current controller metadata is outside this CI run."
+                  continue
+                fi
                 echo "### scontrol show job $jid" | tee -a "$DIAG/scontrol.txt"
-                scontrol show job "$jid" 2>&1 | tee -a "$DIAG/scontrol.txt"
+                printf '%s\n' "$job_info" | tee -a "$DIAG/scontrol.txt"
                 # cat the StdOut/StdErr paths SLURM actually resolved, wherever they landed
                 for kind in StdOut StdErr; do
-                  p="$(scontrol show job "$jid" 2>/dev/null | tr ' ' '\n' | sed -n "s/^${kind}=//p")"
+                  p="$(printf '%s\n' "$job_info" | tr ' ' '\n' | sed -n "s/^${kind}=//p")"
                   if [ -n "$p" ] && [ -f "$p" ]; then
                     echo "::group::$kind($jid) = $p"; sed -n '1,300p' "$p"; echo "::endgroup::"
                     cp "$p" "$DIAG/" 2>/dev/null
                   fi
                 done
-              done
+              done < "$CI_SLURM_IDS"
             fi
           else
             echo "sacct not on PATH; cannot capture SLURM accounting." | tee "$DIAG/sacct.txt"
@@ -1229,6 +2268,8 @@ jobs:
             # Real mouse-gut (PRJDB6165) pipeline reports — only present when the opt-in step ran
             # (workflow_dispatch + run_mouse_real_data=true). Collected for the demo viewer.
             ${{ runner.temp }}/mouse-gut-reports
+            # Opt-in human-gut Kraken/Bracken/Krona reports.
+            ${{ runner.temp }}/kraken-output
             # Nextflow work dirs are intermediates, not useful as artifacts — and they get
             # huge (read-cleaning's detaxizer un-tars a ~20 GB kraken2 DB into one, which made
             # the upload hang ~1h). The per-process logs are echoed by the diagnostics step.
@@ -1240,21 +2281,51 @@ jobs:
         if: always()
         run: |
           set +e
+          cleanup_fail=0
+          pipeline_cleanup_fail=0
+          if [ "${SEQDESK_CANARY_CLEANUP_FAILED:-0}" = "1" ]; then
+            echo "ERROR: canary cleanup was not proven; preserving its source run tree." >&2
+            cleanup_fail=1
+            pipeline_cleanup_fail=1
+          fi
+          if [ -r "${SEQDESK_CI_CLEANUP_HELPER:-}" ]; then
+            source "$SEQDESK_CI_CLEANUP_HELPER"
+            seqdesk_ci_cancel_pipeline_runs "${DB_NAME:-}" "${SEQDESK_RUN_DIR:-}" \
+              || { cleanup_fail=1; pipeline_cleanup_fail=1; }
+            seqdesk_ci_stop_child "${APP_PID:-}" "source SeqDesk app" "$GITHUB_WORKSPACE" \
+              || { cleanup_fail=1; pipeline_cleanup_fail=1; }
+            seqdesk_ci_stop_monitors "$GITHUB_WORKSPACE" \
+              || { cleanup_fail=1; pipeline_cleanup_fail=1; }
+          else
+            echo "ERROR: run-scoped cleanup helper is unavailable." >&2
+            cleanup_fail=1
+            pipeline_cleanup_fail=1
+          fi
+          if command -v psql >/dev/null 2>&1; then
+            psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U postgres -d postgres \
+              -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${DB_NAME:-seqdesk_slurm_missing}' AND pid <> pg_backend_pid()" \
+              >/dev/null 2>&1 || true
+            if ! psql -v ON_ERROR_STOP=1 -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" \
+              -U postgres -d postgres -c "DROP DATABASE IF EXISTS \"${DB_NAME:-seqdesk_slurm_missing}\"" >/dev/null 2>&1; then
+              echo "ERROR: failed to drop source-app database ${DB_NAME:-<unset>}" >&2
+              cleanup_fail=1
+            fi
+          fi
           if [ "${USE_EPHEMERAL_POSTGRES:-0}" = "1" ] && [ -n "${PGDATA_DIR:-}" ] && [ -n "${PG_CTL_BIN:-}" ]; then
             "$PG_CTL_BIN" -D "$PGDATA_DIR" stop -m fast || true
             rm -rf "$PGDATA_DIR"
           fi
-          if command -v psql >/dev/null 2>&1; then
-            PGPASSWORD="${DB_PASSWORD:-seqdesk}" psql -h "${DB_HOST:-127.0.0.1}" -p "${DB_PORT:-5432}" -U "${DB_USER:-seqdesk}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME:-seqdesk_slurm_missing}" >/dev/null 2>&1 || true
-          fi
           # Remove temp dirs BEFORE the conda env: this shell runs with the env
           # active on PATH, so deleting it first leaves `rm` unresolvable (exit 127).
-          rm -rf "${PG_TOOLCHAIN_DIR:-}" "${SEQDESK_DATA_DIR:-}" "${SEQDESK_RUN_DIR:-}" "${SEQDESK_DB_DIR:-}"
-          if [ -n "${SLURM_SHARED_RUN_ROOT:-}" ]; then
-            rm -rf "$(dirname "$SLURM_SHARED_RUN_ROOT")/pipelines" || true
+          if [ "$pipeline_cleanup_fail" = 0 ]; then
+            rm -rf "${PG_TOOLCHAIN_DIR:-}" "${SEQDESK_DATA_DIR:-}" "${SEQDESK_RUN_DIR:-}" \
+              "${SEQDESK_STAGED_PIPELINES_DIR:-}" "${SEQDESK_DB_DIR:-}"
+          else
+            echo "ERROR: preserving source data/run/pipeline trees because a scoped process survived cleanup." >&2
           fi
           # Only remove a throwaway per-run env. With the shared cluster conda
           # (SLURM_SHARED_CONDA_BASE set) the env is persistent and reused across runs.
           if [ -z "${SLURM_SHARED_CONDA_BASE:-}" ]; then
             conda env remove -n "$PIPELINE_CONDA_ENV" || true
           fi
+          exit "$cleanup_fail"

@@ -11,9 +11,31 @@ import { getPipelineEnabled } from '@/lib/pipelines/enablement';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import { notifyPipelineRunTerminalInApp } from '@/lib/notifications/in-app';
 import { getAllPackages } from '@/lib/pipelines/package-loader';
-import { inferPipelineExitCode, processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
+import {
+  finalizeCompletedPipelineRun,
+  inferPipelineExitCode,
+  processCompletedPipelineRun,
+} from '@/lib/pipelines/run-completion';
 import { findTraceFile, parseTraceFile } from '@/lib/pipelines/nextflow';
 import { getPipelineRunTargetKey } from '@/lib/pipelines/result-files';
+import {
+  isActiveQueueState,
+  isCancelledQueueState,
+  isFailedQueueState,
+  isQueueSnapshotRetryable,
+  isTerminalQueueState,
+  normalizeQueueState,
+  readIdentityCheckedQueueSnapshot,
+  waitForIdentityCheckedQueueTerminal,
+  type QueueSnapshot,
+  type QueueWaitOptions,
+} from '@/lib/pipelines/queue-probe';
+import {
+  aggregateStepStatus,
+  combineTaskStatuses,
+  deriveStepStatus,
+  getTraceTaskAttemptGroupKeys,
+} from '@/lib/pipelines/monitor-status';
 
 const spawn = childProcess.spawn;
 const unavailableExecFile = (((
@@ -27,14 +49,10 @@ const MAX_COMMAND_OUTPUT = 16_000;
 const MAX_FILE_OUTPUT = 16_000;
 const MAX_TAIL_BYTES = 256 * 1024;
 const MAX_TAIL_LINES = 150;
-
-type QueueSource = 'local' | 'squeue' | 'sacct' | null;
-
-type QueueSnapshot = {
-  state: string | null;
-  reason: string | null;
-  source: QueueSource;
-};
+const ACTIVE_RUN_STATUSES = ['pending', 'queued', 'running'] as const;
+const TERMINAL_RUN_STATUSES = ['completed', 'failed', 'cancelled'] as const;
+const CANCELLATION_CLAIM_STALE_MS = 30 * 60 * 1000;
+const SCANCEL_TIMEOUT_MS = 10_000;
 
 type CommandResult = {
   command: string;
@@ -170,6 +188,42 @@ function jsonResponse<TBody extends Record<string, unknown>>(
   status = 200
 ): PipelineOpsResponse<TBody> {
   return { status, body };
+}
+
+function cancellationClaimUnavailableResponse(
+  current: { status: string; statusSource: string | null } | null,
+  fallbackStatus: string
+): PipelineOpsResponse {
+  const status = current?.status ?? fallbackStatus;
+  const statusSource = current?.statusSource ?? null;
+
+  if (
+    current &&
+    TERMINAL_RUN_STATUSES.includes(
+      status as (typeof TERMINAL_RUN_STATUSES)[number]
+    )
+  ) {
+    return jsonResponse({
+      success: true,
+      status,
+      statusSource,
+      alreadyFinalized: true,
+    });
+  }
+
+  return jsonResponse(
+    {
+      error:
+        statusSource === 'finalizing'
+          ? 'Run output finalization is already in progress'
+          : statusSource === 'cancelling'
+            ? 'Run cancellation is already in progress'
+            : 'Run cancellation claim is no longer available',
+      status,
+      statusSource,
+    },
+    409
+  );
 }
 
 function parseJson<T>(value: string | null): T | null {
@@ -358,177 +412,6 @@ async function buildExecutionCommands(
     scriptCommand: `bash ${shellQuote(scriptPath)}`,
     pipelineCommand: scriptExists ? await extractPipelineCommand(scriptPath) : null,
   };
-}
-
-function normalizeQueueState(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const normalized = value.trim().toUpperCase();
-  return normalized || null;
-}
-
-function isTerminalQueueState(value: string | null | undefined): boolean {
-  const normalized = normalizeQueueState(value);
-  if (!normalized) return false;
-  if (normalized === 'UNKNOWN') return false;
-
-  if (
-    normalized === 'COMPLETED' ||
-    normalized === 'EXITED' ||
-    normalized === 'REVOKED' ||
-    normalized === 'TIMEOUT' ||
-    normalized === 'OUT_OF_MEMORY' ||
-    normalized === 'NODE_FAIL' ||
-    normalized === 'BOOT_FAIL' ||
-    normalized === 'PREEMPTED' ||
-    normalized === 'DEADLINE'
-  ) {
-    return true;
-  }
-
-  return (
-    normalized.startsWith('CANCELLED') ||
-    normalized.startsWith('CANCELED') ||
-    normalized.startsWith('FAILED')
-  );
-}
-
-function isActiveQueueState(value: string | null | undefined): boolean {
-  const normalized = normalizeQueueState(value);
-  if (!normalized || normalized === 'UNKNOWN') return false;
-  return !isTerminalQueueState(normalized);
-}
-
-function isCancelledQueueState(value: string | null | undefined): boolean {
-  const normalized = normalizeQueueState(value);
-  if (!normalized) return false;
-  return (
-    normalized.startsWith('CANCELLED') ||
-    normalized.startsWith('CANCELED') ||
-    normalized === 'REVOKED'
-  );
-}
-
-function isFailedQueueState(value: string | null | undefined): boolean {
-  const normalized = normalizeQueueState(value);
-  if (!normalized) return false;
-  return (
-    normalized.startsWith('FAILED') ||
-    normalized === 'TIMEOUT' ||
-    normalized === 'OUT_OF_MEMORY' ||
-    normalized === 'NODE_FAIL' ||
-    normalized === 'BOOT_FAIL' ||
-    normalized === 'PREEMPTED' ||
-    normalized === 'DEADLINE'
-  );
-}
-
-function firstNonEmptyLine(value: string): string {
-  return value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)[0] || '';
-}
-
-async function readQueueSnapshot(
-  jobId: string | null | undefined,
-  runFolder?: string | null
-): Promise<QueueSnapshot> {
-  const normalizedJobId = (jobId || '').trim();
-  if (!normalizedJobId) {
-    return { state: null, reason: null, source: null };
-  }
-
-  if (normalizedJobId.startsWith('local-')) {
-    // The exit marker wins over PID liveness: once the pipeline has written a
-    // terminal exit code the run is finished, even if `ps` still reports the PID.
-    // The OS can recycle a finished pipeline's PID to an unrelated live process,
-    // which would otherwise be read as RUNNING and pin a completed run.
-    if (runFolder) {
-      const exitCode = await inferPipelineExitCode(runFolder);
-      if (exitCode !== null) {
-        return { state: 'EXITED', reason: null, source: 'local' };
-      }
-    }
-    const pid = Number(normalizedJobId.replace('local-', ''));
-    if (!Number.isInteger(pid) || pid <= 0) {
-      return { state: null, reason: null, source: 'local' };
-    }
-    try {
-      await execFileAsync('ps', ['-p', String(pid), '-o', 'pid='], { timeout: 5000 });
-      return { state: 'RUNNING', reason: null, source: 'local' };
-    } catch {
-      return { state: 'EXITED', reason: null, source: 'local' };
-    }
-  }
-
-  if (!/^\d+$/.test(normalizedJobId)) {
-    return { state: null, reason: null, source: null };
-  }
-
-  try {
-    const { stdout } = await execFileAsync(
-      'squeue',
-      ['-j', normalizedJobId, '-h', '-o', '%T|%R'],
-      { timeout: 5000 }
-    );
-    const line = firstNonEmptyLine(stdout);
-    if (line) {
-      const [state, reason] = line.split('|');
-      return {
-        state: state?.trim() || 'UNKNOWN',
-        reason: reason?.trim() || null,
-        source: 'squeue',
-      };
-    }
-  } catch {
-    // Ignore and try sacct.
-  }
-
-  try {
-    const { stdout } = await execFileAsync(
-      'sacct',
-      ['-X', '-P', '-j', normalizedJobId, '--format=JobID,State,Reason', '--noheader'],
-      { timeout: 5000 }
-    );
-    const rows = stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const [rowJobId, rowState, rowReason] = line.split('|');
-        return {
-          jobId: rowJobId?.trim() || '',
-          state: rowState?.trim() || '',
-          reason: rowReason?.trim() || null,
-        };
-      });
-
-    const primary =
-      rows.find((row) => row.jobId === normalizedJobId) ||
-      rows.find((row) => row.jobId.startsWith(`${normalizedJobId}.`)) ||
-      rows[0];
-
-    if (primary) {
-      return {
-        state: primary.state || 'UNKNOWN',
-        reason: primary.reason,
-        source: 'sacct',
-      };
-    }
-  } catch {
-    // Ignore and fall through.
-  }
-
-  return { state: null, reason: null, source: null };
-}
-
-async function countMaterializedOutputs(runId: string): Promise<number> {
-  const [assemblies, bins, artifacts] = await Promise.all([
-    db.assembly.count({ where: { createdByPipelineRunId: runId } }),
-    db.bin.count({ where: { createdByPipelineRunId: runId } }),
-    db.pipelineArtifact.count({ where: { pipelineRunId: runId } }),
-  ]);
-  return assemblies + bins + artifacts;
 }
 
 function clip(value: string, maxChars: number): string {
@@ -724,6 +607,8 @@ export async function getPipelineRunDetailsForOperator(runId: string): Promise<P
                   avgQuality2: true,
                   dataClass: true,
                   isActive: true,
+                  pipelineRunId: true,
+                  pipelineSources: true,
                 },
               },
             },
@@ -755,6 +640,8 @@ export async function getPipelineRunDetailsForOperator(runId: string): Promise<P
                   avgQuality2: true,
                   dataClass: true,
                   isActive: true,
+                  pipelineRunId: true,
+                  pipelineSources: true,
                 },
               },
             },
@@ -1114,7 +1001,11 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   if (!tracePath) {
     const now = new Date();
     const updateData: Record<string, unknown> = {};
-    const queueSnapshot = await readQueueSnapshot(run.queueJobId, run.runFolder);
+    const queueSnapshot = await readIdentityCheckedQueueSnapshot({
+      jobId: run.queueJobId,
+      runId: run.id,
+      runFolder: run.runFolder,
+    });
     const queueState = queueSnapshot.state;
     const queueReason = queueSnapshot.reason;
     const queueSource = queueSnapshot.source;
@@ -1153,6 +1044,8 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
       inTerminalCandidateState &&
       (isCompletedQueueState || isExitedLocalState || queueCancelled || queueFailed);
     let resolvedOutputsInThisSync = false;
+    let completionPersisted = false;
+    let lifecycleClaimUnavailable = false;
 
     if (shouldFinalize) {
       let inferredExitCode: number | null = null;
@@ -1164,18 +1057,32 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
         isCompletedQueueState || (isExitedLocalState && inferredExitCode === 0);
       if (consideredSuccessful) {
         let outputsReady = true;
-        if (run.pipelineId === 'mag') {
-          try {
-            await processCompletedPipelineRun(runId, run.pipelineId);
-            resolvedOutputsInThisSync = true;
-            outputsReady = (await countMaterializedOutputs(runId)) > 0;
-          } catch (processError) {
-            console.error('[Sync Pipeline Run Service] Post-completion processing failed:', processError);
-            outputsReady = false;
-          }
+        try {
+          const finalized = await finalizeCompletedPipelineRun(
+            runId,
+            run.pipelineId,
+            {
+              completedAt: now,
+              statusSource: 'queue',
+              lastEventAt: now,
+              queueStatus: queueState || 'COMPLETED',
+              queueReason,
+              queueUpdatedAt: now,
+            }
+          );
+          completionPersisted = finalized === 'completed';
+          lifecycleClaimUnavailable = finalized === 'claim-unavailable';
+          resolvedOutputsInThisSync = completionPersisted;
+        } catch (processError) {
+          console.error('[Sync Pipeline Run Service] Post-completion processing failed:', processError);
+          outputsReady = false;
         }
 
-        if (!outputsReady) {
+        if (lifecycleClaimUnavailable) {
+          // Cancellation or another finalizer owns the lifecycle row. Do not
+          // apply queue data derived from the stale pre-I/O snapshot.
+          for (const key of Object.keys(updateData)) delete updateData[key];
+        } else if (!outputsReady) {
           updateData.status = 'running';
           updateData.progress = 99;
           updateData.currentStep = 'Finalizing outputs...';
@@ -1183,19 +1090,12 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
           updateData.statusSource = 'queue';
           updateData.lastEventAt = now;
           updateData.queueStatus = queueState || 'COMPLETED';
-        } else {
+        } else if (completionPersisted) {
           console.warn(
             `[RUN-FINALIZE] ops-service no-trace completed run=${runId} pipeline=${run.pipelineId} ` +
               `queueState=${queueState} isCompletedQueueState=${isCompletedQueueState} ` +
               `isExitedLocalState=${isExitedLocalState} inferredExitCode=${inferredExitCode}`,
           );
-          updateData.status = 'completed';
-          updateData.progress = 100;
-          updateData.currentStep = 'Completed';
-          updateData.completedAt = now;
-          updateData.statusSource = 'queue';
-          updateData.lastEventAt = now;
-          updateData.queueStatus = queueState || 'COMPLETED';
         }
       } else if (queueCancelled) {
         updateData.status = 'cancelled';
@@ -1212,15 +1112,66 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
       }
     }
 
-    const nextStatus =
-      typeof updateData.status === 'string' ? (updateData.status as string) : run.status;
+    const nextStatus = completionPersisted
+      ? 'completed'
+      : typeof updateData.status === 'string'
+        ? (updateData.status as string)
+        : run.status;
 
-    if (Object.keys(updateData).length > 0) {
-      await db.pipelineRun.update({ where: { id: runId }, data: updateData });
+    let updateApplied = true;
+    let persistedStatus = nextStatus;
+    if (completionPersisted) {
+      // finalizeCompletedPipelineRun already committed the guarded terminal
+      // transition together with the queue snapshot.
+      updateApplied = true;
+    } else if (lifecycleClaimUnavailable) {
+      updateApplied = false;
+      const current = await db.pipelineRun.findUnique({
+        where: { id: runId },
+        select: { status: true },
+      });
+      persistedStatus = current?.status || run.status;
+    } else if (Object.keys(updateData).length > 0) {
+      // Every lifecycle write derived from a non-terminal snapshot is guarded.
+      // A cancel/stop request can win while queue inspection or output
+      // finalization is awaiting I/O; an unconditional queued/running write here
+      // would otherwise resurrect the terminal row.
+      if (inTerminalCandidateState) {
+        const { count } = await db.pipelineRun.updateMany({
+          where: {
+            id: runId,
+            status: { in: [...ACTIVE_RUN_STATUSES] },
+            OR: [
+              { statusSource: null },
+              { statusSource: { notIn: ['finalizing', 'cancelling'] } },
+            ],
+          },
+          data: updateData,
+        });
+        updateApplied = count > 0;
+        if (!updateApplied) {
+          const current = await db.pipelineRun.findUnique({
+            where: { id: runId },
+            select: { status: true },
+          });
+          persistedStatus = current?.status || run.status;
+        }
+      } else {
+        await db.pipelineRun.update({ where: { id: runId }, data: updateData });
+      }
     }
-    await notifyPipelineRunTerminalInApp(runId, run.status, nextStatus);
+    if (updateApplied) {
+      await notifyPipelineRunTerminalInApp(runId, run.status, nextStatus);
+    }
 
-    if (nextStatus === 'completed' && run.status !== 'completed' && !resolvedOutputsInThisSync) {
+    // A manual sync is also a repair path for terminal rows created by an older
+    // finalizer. Output resolution is idempotent, so reprocessing an already
+    // completed run safely fills any previously missed summary/writeback.
+    if (
+      updateApplied &&
+      nextStatus === 'completed' &&
+      !resolvedOutputsInThisSync
+    ) {
       try {
         await processCompletedPipelineRun(runId, run.pipelineId);
       } catch (processError) {
@@ -1232,27 +1183,25 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
       success: true,
       message: 'No trace file found yet',
       synced: false,
-      status: nextStatus,
+      status: persistedStatus,
       queueStatus: queueState,
       queueSource,
     });
   }
 
   const traceResult = await parseTraceFile(tracePath);
+  const taskGroupKeys = getTraceTaskAttemptGroupKeys(traceResult.tasks);
   const stepSignals = new Map<string, {
     stepName: string;
-    hasFailure: boolean;
-    hasRunning: boolean;
-    hasCompletion: boolean;
+    attemptsByTask: Map<
+      string,
+      Array<'pending' | 'running' | 'completed' | 'failed'>
+    >;
     startedAt?: Date;
     completedAt?: Date;
   }>();
 
-  const normalizeStatus = (value?: string) => (value ? value.toLowerCase() : '');
-  const hasNonZeroExit = (exitCode: unknown): boolean =>
-    typeof exitCode === 'number' && Number.isFinite(exitCode) && exitCode !== 0;
-
-  for (const task of traceResult.tasks) {
+  for (const [taskIndex, task] of traceResult.tasks.entries()) {
     const stepDef = findStepByProcess(run.pipelineId, task.process);
     const stepId = stepDef?.id || task.process;
     const stepName = stepDef?.name || task.process;
@@ -1260,27 +1209,15 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     if (!stepSignals.has(stepId)) {
       stepSignals.set(stepId, {
         stepName,
-        hasFailure: false,
-        hasRunning: false,
-        hasCompletion: false,
+        attemptsByTask: new Map(),
       });
     }
 
     const entry = stepSignals.get(stepId)!;
-    const status = normalizeStatus(task.status);
-
-    if (status.includes('fail') || hasNonZeroExit(task.exit)) {
-      entry.hasFailure = true;
-    } else if (status.includes('run') || status.includes('start') || status.includes('submit')) {
-      entry.hasRunning = true;
-    } else if (
-      status.includes('complete') ||
-      status.includes('done') ||
-      status.includes('success') ||
-      status.includes('cache')
-    ) {
-      entry.hasCompletion = true;
-    }
+    const taskIdentity = taskGroupKeys[taskIndex];
+    const attempts = entry.attemptsByTask.get(taskIdentity) ?? [];
+    attempts.push(deriveStepStatus(task.status, task.exit));
+    entry.attemptsByTask.set(taskIdentity, attempts);
 
     const startedAt = task.start || task.submit;
     if (startedAt && (!entry.startedAt || startedAt < entry.startedAt)) {
@@ -1300,14 +1237,9 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   }>();
 
   for (const [stepId, entry] of stepSignals) {
-    const status: 'pending' | 'running' | 'completed' | 'failed' =
-      entry.hasFailure
-        ? 'failed'
-        : entry.hasRunning
-          ? 'running'
-          : entry.hasCompletion
-            ? 'completed'
-            : 'pending';
+    const status = combineTaskStatuses(
+      Array.from(entry.attemptsByTask.values()).map(aggregateStepStatus)
+    );
 
     steps.set(stepId, {
       stepName: entry.stepName,
@@ -1321,19 +1253,12 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     .flatMap((task) => [task.submit, task.start, task.complete].filter((t): t is Date => !!t))
     .sort((a, b) => b.getTime() - a.getTime())[0];
 
-  const hasFailures = traceResult.tasks.some((task) => {
-    const status = normalizeStatus(task.status);
-    return (
-      status.includes('fail') ||
-      status.includes('error') ||
-      status.includes('aborted') ||
-      hasNonZeroExit(task.exit)
-    );
-  });
-  const hasRunning = traceResult.tasks.some((task) => {
-    const status = normalizeStatus(task.status);
-    return status.includes('run') || status.includes('start') || status.includes('submit');
-  });
+  const hasFailures = Array.from(steps.values()).some(
+    (step) => step.status === 'failed'
+  );
+  const hasRunning = Array.from(steps.values()).some(
+    (step) => step.status === 'running'
+  );
   const hasTasks = traceResult.tasks.length > 0;
 
   for (const [stepId, entry] of steps) {
@@ -1399,7 +1324,11 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
         : isMeaningfulActiveStepLabel(run.currentStep)
           ? run.currentStep
           : 'Processing...';
-  const traceQueueSnapshot = await readQueueSnapshot(run.queueJobId, run.runFolder);
+  const traceQueueSnapshot = await readIdentityCheckedQueueSnapshot({
+    jobId: run.queueJobId,
+    runId: run.id,
+    runFolder: run.runFolder,
+  });
   const queueIsActive = isActiveQueueState(traceQueueSnapshot.state);
   const workflowCompletionObserved =
     queueIsActive && traceResult.overallProgress === 100
@@ -1427,9 +1356,14 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   // runIsTerminal guard. (Surfaced by a slow pipeline whose post-completion re-sync
   // flipped a completed run back to running.)
   const runWasTerminal = ['completed', 'failed', 'cancelled'].includes(run.status);
+  const preserveTerminalOutcome =
+    run.status === 'failed' || run.status === 'cancelled';
 
   let nextStatus = run.status;
   let resolvedOutputsInThisSync = false;
+  let outputResolutionPending = false;
+  let completionPersisted = false;
+  let lifecycleClaimUnavailable = false;
   if (hasRunning && !runWasTerminal) {
     nextStatus = 'running';
   } else if (traceCompletedKnownWork) {
@@ -1444,18 +1378,11 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   const queueCancelled = isCancelledQueueState(normalizedQueueState);
   const queueFailed = isFailedQueueState(normalizedQueueState);
   const inferredExitCode = await inferPipelineExitCode(run.runFolder);
+  const queueConfirmationPending = Boolean(
+    run.queueJobId && isQueueSnapshotRetryable(traceQueueSnapshot)
+  );
+  let terminalBlockedByQueueConfirmation = false;
   let statusDeterminedByQueue = false;
-
-  if (nextStatus === 'failed' && !hasRunning) {
-    const workflowExitSucceeded =
-      queueCompleted ||
-      (queueExitedLocal && inferredExitCode === 0) ||
-      inferredExitCode === 0;
-    if (workflowExitSucceeded) {
-      nextStatus = 'completed';
-      statusDeterminedByQueue = true;
-    }
-  }
 
   if (!hasRunning && nextStatus === run.status) {
     const workflowExitSucceeded =
@@ -1468,11 +1395,14 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     }
   }
 
-  if (!hasRunning && queueCancelled) {
-    nextStatus = 'cancelled';
-    statusDeterminedByQueue = true;
-  } else if (!hasRunning && queueFailed) {
+  // Reconcile terminal evidence deterministically with the monitor: a failure
+  // from either the trace or scheduler wins, then cancellation, then success.
+  // In particular, a clean wrapper exit must never hide a genuinely failed task.
+  if (!hasRunning && queueFailed) {
     nextStatus = 'failed';
+    statusDeterminedByQueue = true;
+  } else if (!hasRunning && queueCancelled && nextStatus !== 'failed') {
+    nextStatus = 'cancelled';
     statusDeterminedByQueue = true;
   }
 
@@ -1484,13 +1414,38 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   // the success paths above require exit code 0.
   if (
     !hasRunning &&
-    nextStatus !== 'completed' &&
     nextStatus !== 'cancelled' &&
     inferredExitCode !== null &&
     inferredExitCode !== 0
   ) {
     nextStatus = 'failed';
     statusDeterminedByQueue = true;
+  }
+
+  // A trace can look terminal before the outer scheduler allocation reaches a
+  // terminal state. Failed tasks can still be retried while the wrapper remains
+  // alive, and cancellation is only authoritative once the exact job is
+  // inactive. If that identity cannot currently be verified, retain a retryable
+  // active status instead of accepting any trace-derived terminal outcome.
+  if (
+    queueConfirmationPending &&
+    !runWasTerminal &&
+    ['completed', 'failed', 'cancelled'].includes(nextStatus)
+  ) {
+    nextStatus =
+      run.status === 'pending' || run.status === 'queued'
+        ? run.status
+        : 'running';
+    statusDeterminedByQueue = true;
+    terminalBlockedByQueueConfirmation = true;
+  }
+
+  // Failed and cancelled rows are final outcomes. A completed row can only be
+  // demoted when the queue probe verifies that the stored PID/job still belongs
+  // to this run folder; recycled identifiers are reported as UNKNOWN/EXITED.
+  if (preserveTerminalOutcome) {
+    nextStatus = run.status;
+    statusDeterminedByQueue = false;
   }
 
   // A terminal run is demoted back to running ONLY when the trace shows work GENUINELY
@@ -1519,6 +1474,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     traceResult.overallProgress < 100 ||
     (isLocalRun && inferredExitCode === null);
   const forceRunningFromQueue =
+    !preserveTerminalOutcome &&
     (nextStatus === 'completed' || nextStatus === 'failed') &&
     queueIsActive &&
     (!runWasTerminal || traceShowsOutstandingWork);
@@ -1562,24 +1518,52 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
           ? run.currentStep
           : 'Running on compute node';
 
-  if (nextStatus === 'completed' && run.pipelineId === 'mag') {
+  if (nextStatus === 'completed') {
     try {
-      await processCompletedPipelineRun(runId, run.pipelineId);
-      resolvedOutputsInThisSync = true;
-      const outputCount = await countMaterializedOutputs(runId);
-      if (outputCount === 0) {
-        nextStatus = 'running';
+      if (runWasTerminal) {
+        // Manual sync remains an idempotent repair path for historical
+        // completed rows whose output writeback may predate the output gate.
+        await processCompletedPipelineRun(runId, run.pipelineId);
+        resolvedOutputsInThisSync = true;
+      } else {
+        const finalizationNow = new Date();
+        const finalized = await finalizeCompletedPipelineRun(
+          runId,
+          run.pipelineId,
+          {
+            completedAt:
+              traceResult.completedAt || latestEventAt || finalizationNow,
+            statusSource:
+              statusDeterminedByQueue || forceRunningFromQueue
+                ? 'queue'
+                : 'trace',
+            lastEventAt: latestEventAt || finalizationNow,
+            queueStatus: traceQueueSnapshot.state || undefined,
+            queueReason: traceQueueSnapshot.reason,
+            queueUpdatedAt: traceQueueSnapshot.state
+              ? finalizationNow
+              : undefined,
+          }
+        );
+        completionPersisted = finalized === 'completed';
+        lifecycleClaimUnavailable = finalized === 'claim-unavailable';
+        resolvedOutputsInThisSync = completionPersisted;
       }
     } catch (processError) {
       console.error('[Sync Pipeline Run Service] Post-completion processing failed:', processError);
-      nextStatus = 'running';
+      if (run.status !== 'completed') {
+        nextStatus = 'running';
+        outputResolutionPending = true;
+      }
     }
   }
 
   const updateData: Record<string, unknown> = {
     progress: nextStatus === 'completed' ? 100 : progress,
     currentStep:
-      forceRunningFromQueue || finalizingWhileQueueActive
+      terminalBlockedByQueueConfirmation
+        ? 'Waiting for scheduler confirmation...'
+        : forceRunningFromQueue || finalizingWhileQueueActive
         ? activeQueueCurrentStep
         : nextStatus === 'completed'
           ? 'Completed'
@@ -1604,11 +1588,18 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     updateData.lastTraceAt = latestEventAt;
   }
 
-  if (forceRunningFromQueue || finalizingWhileQueueActive) {
+  if (
+    terminalBlockedByQueueConfirmation ||
+    forceRunningFromQueue ||
+    finalizingWhileQueueActive
+  ) {
     updateData.completedAt = null;
     updateData.lastEventAt = new Date();
     updateData.progress = Math.min(99, progress);
-  } else if (nextStatus === 'running' && traceCompletedKnownWork) {
+  } else if (
+    nextStatus === 'running' &&
+    (traceCompletedKnownWork || outputResolutionPending)
+  ) {
     updateData.currentStep = 'Finalizing outputs...';
     updateData.progress = 99;
     updateData.completedAt = null;
@@ -1634,13 +1625,46 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     updateData.completedAt = latestEventAt || new Date();
   }
 
-  await db.pipelineRun.update({
-    where: { id: runId },
-    data: updateData,
-  });
-  await notifyPipelineRunTerminalInApp(runId, run.status, nextStatus);
+  // Guard every lifecycle write produced from a non-terminal snapshot, not only
+  // terminal/finalizing writes. Automatic sync runs frequently and can race a
+  // manual cancellation while trace parsing or output resolution is in flight.
+  const requiresLifecycleGuard = !runWasTerminal;
+  let updateApplied = true;
+  if (completionPersisted) {
+    // The centralized output gate already committed this terminal state.
+    updateApplied = true;
+  } else if (lifecycleClaimUnavailable) {
+    // A cancellation or another finalizer owns the row; all updateData below
+    // was derived from the earlier snapshot and must be discarded.
+    updateApplied = false;
+  } else if (requiresLifecycleGuard) {
+    const { count } = await db.pipelineRun.updateMany({
+      where: {
+        id: runId,
+        status: { in: [...ACTIVE_RUN_STATUSES] },
+        OR: [
+          { statusSource: null },
+          { statusSource: { notIn: ['finalizing', 'cancelling'] } },
+        ],
+      },
+      data: updateData,
+    });
+    updateApplied = count > 0;
+  } else {
+    await db.pipelineRun.update({
+      where: { id: runId },
+      data: updateData,
+    });
+  }
+  if (updateApplied) {
+    await notifyPipelineRunTerminalInApp(runId, run.status, nextStatus);
+  }
 
-  if (nextStatus === 'completed' && run.status !== 'completed' && !resolvedOutputsInThisSync) {
+  if (
+    updateApplied &&
+    nextStatus === 'completed' &&
+    !resolvedOutputsInThisSync
+  ) {
     try {
       await processCompletedPipelineRun(runId, run.pipelineId);
     } catch (processError) {
@@ -1658,7 +1682,13 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   });
 }
 
-export async function cancelPipelineRunForOperator(runId: string): Promise<PipelineOpsResponse> {
+export async function cancelPipelineRunForOperator(
+  runId: string,
+  options: {
+    queueWait?: QueueWaitOptions;
+    scancelTimeoutMs?: number;
+  } = {}
+): Promise<PipelineOpsResponse> {
   const run = await db.pipelineRun.findUnique({
     where: { id: runId },
   });
@@ -1671,7 +1701,126 @@ export async function cancelPipelineRunForOperator(runId: string): Promise<Pipel
     return jsonResponse({ error: 'Cannot cancel a completed or failed run' }, 400);
   }
 
-  const queueJobId = run.queueJobId;
+  // Claim cancellation before signalling any process. Completion uses the
+  // reciprocal `statusSource=finalizing` claim, so output writeback and a
+  // SIGTERM/scancel can never run concurrently for the same active row.
+  const claimedAt = new Date();
+  const staleBefore = new Date(
+    claimedAt.getTime() - CANCELLATION_CLAIM_STALE_MS
+  );
+  const cancellationClaim = await db.pipelineRun.updateMany({
+    where: {
+      id: runId,
+      status: { in: [...ACTIVE_RUN_STATUSES] },
+      OR: [
+        { statusSource: null },
+        { statusSource: { notIn: ['finalizing', 'cancelling'] } },
+        {
+          statusSource: 'cancelling',
+          lastEventAt: { lt: staleBefore },
+        },
+      ],
+    },
+    data: {
+      statusSource: 'cancelling',
+      currentStep: 'Cancelling...',
+      lastEventAt: claimedAt,
+    },
+  });
+  if (cancellationClaim.count === 0) {
+    const current = await db.pipelineRun.findUnique({
+      where: { id: runId },
+      select: { status: true, statusSource: true },
+    });
+    return cancellationClaimUnavailableResponse(current, run.status);
+  }
+
+  // Re-read the scheduler/process identifier only after owning cancellation.
+  // A launcher may persist it between the initial snapshot and the claim.
+  const claimedRun = await db.pipelineRun.findUnique({
+    where: { id: runId },
+    select: {
+      status: true,
+      statusSource: true,
+      queueJobId: true,
+      runFolder: true,
+    },
+  });
+  const renewedAt = new Date();
+  const claimRenewal = await db.pipelineRun.updateMany({
+    where: {
+      id: runId,
+      status: { in: [...ACTIVE_RUN_STATUSES] },
+      statusSource: 'cancelling',
+      lastEventAt: claimedAt,
+    },
+    data: {
+      lastEventAt: renewedAt,
+    },
+  });
+  if (!claimedRun || claimRenewal.count === 0) {
+    const current = await db.pipelineRun.findUnique({
+      where: { id: runId },
+      select: { status: true, statusSource: true },
+    });
+    return cancellationClaimUnavailableResponse(current, run.status);
+  }
+
+  const queueJobId = claimedRun.queueJobId;
+  const restoredStatusSource =
+    run.statusSource && run.statusSource !== 'cancelling'
+      ? run.statusSource
+      : 'manual';
+  const restoredCurrentStep =
+    run.currentStep && run.currentStep !== 'Cancelling...'
+      ? run.currentStep
+      : claimedRun.status === 'running'
+        ? 'Running'
+        : 'Waiting for scheduler';
+  const releaseCancellationClaim = async (
+    message: string
+  ): Promise<PipelineOpsResponse> => {
+    const releasedAt = new Date();
+    const released = await db.pipelineRun.updateMany({
+      where: {
+        id: runId,
+        status: { in: [...ACTIVE_RUN_STATUSES] },
+        statusSource: 'cancelling',
+        lastEventAt: renewedAt,
+      },
+      data: {
+        statusSource: restoredStatusSource,
+        currentStep: restoredCurrentStep,
+        errorTail: message,
+        lastEventAt: releasedAt,
+      },
+    });
+    if (released.count === 0) {
+      const current = await db.pipelineRun.findUnique({
+        where: { id: runId },
+        select: { status: true, statusSource: true },
+      });
+      return cancellationClaimUnavailableResponse(current, claimedRun.status);
+    }
+    return jsonResponse(
+      {
+        error: message,
+        status: claimedRun.status,
+        statusSource: restoredStatusSource,
+      },
+      409
+    );
+  };
+
+  // A pending/queued launcher is fenced by the cancellation claim before it can
+  // submit work. A row that is already running without an identifier is
+  // different: work may exist outside our visibility, so declaring it cancelled
+  // would create an unsafe false terminal. Release the claim for reconciliation.
+  if (!queueJobId && claimedRun.status === 'running') {
+    return releaseCancellationClaim(
+      'Cancellation could not verify the running job because no queue job ID is recorded'
+    );
+  }
 
   const cancelLocalJob = (jobId: string) => {
     const pidStr = jobId.replace(/^local-/, '');
@@ -1706,7 +1855,24 @@ export async function cancelPipelineRunForOperator(runId: string): Promise<Pipel
   const cancelSlurmJob = async (jobId: string) =>
     new Promise<void>((resolve, reject) => {
       const proc = spawn('scancel', [jobId]);
+      const timeoutMs = Math.max(
+        0,
+        options.scancelTimeoutMs ?? SCANCEL_TIMEOUT_MS
+      );
       let stderr = '';
+      let settled = false;
+      let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+
+      const settle = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
 
       proc.stderr.on('data', (data) => {
         stderr += data.toString();
@@ -1714,18 +1880,43 @@ export async function cancelPipelineRunForOperator(runId: string): Promise<Pipel
 
       proc.on('close', (code) => {
         if (code === 0) {
-          resolve();
+          settle();
         } else {
-          reject(new Error(stderr || `scancel exited with code ${code}`));
+          settle(new Error(stderr || `scancel exited with code ${code}`));
         }
       });
 
-      proc.on('error', reject);
+      proc.on('error', (error) => settle(error));
+
+      timeoutHandle = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try {
+          proc.kill('SIGTERM');
+        } catch {
+          // The timeout remains authoritative even if the child raced its exit
+          // or the OS could not deliver the termination signal.
+        }
+        reject(new Error(`scancel timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
     });
 
-  let forceStop = false;
-
+  let queueSnapshot: QueueSnapshot | null = null;
   if (queueJobId) {
+    queueSnapshot = await readIdentityCheckedQueueSnapshot({
+      jobId: queueJobId,
+      runId,
+      runFolder: claimedRun.runFolder,
+    });
+    if (isQueueSnapshotRetryable(queueSnapshot)) {
+      return releaseCancellationClaim(
+        queueSnapshot.reason ||
+          'Cancellation was not sent because the stored job identity could not be verified'
+      );
+    }
+  }
+
+  if (queueJobId && queueSnapshot && isActiveQueueState(queueSnapshot.state)) {
     try {
       if (queueJobId.startsWith('local-')) {
         cancelLocalJob(queueJobId);
@@ -1733,24 +1924,66 @@ export async function cancelPipelineRunForOperator(runId: string): Promise<Pipel
         await cancelSlurmJob(queueJobId);
       }
     } catch (err) {
-      console.warn('[Pipeline Run Service] Kill failed, force-stopping:', err);
-      forceStop = true;
+      const message =
+        err instanceof Error ? err.message : 'Scheduler cancellation failed';
+      console.warn('[Pipeline Run Service] Cancellation signal failed:', err);
+      return releaseCancellationClaim(
+        `Cancellation signal failed; the run remains active for reconciliation: ${message}`
+      );
     }
-  } else if (run.status === 'running') {
-    forceStop = true;
+
+    const waitResult = await waitForIdentityCheckedQueueTerminal(
+      {
+        jobId: queueJobId,
+        runId,
+        runFolder: claimedRun.runFolder,
+      },
+      options.queueWait
+    );
+    if (waitResult.outcome !== 'terminal') {
+      return releaseCancellationClaim(
+        waitResult.outcome === 'timeout'
+          ? 'Cancellation timed out while the exact job was still active'
+          : waitResult.snapshot.reason ||
+              'Cancellation could not verify that the exact job became inactive'
+      );
+    }
+
+    // If the scheduler reports natural success while scancel races the final
+    // task, release the claim so the normal output finalizer can preserve that
+    // completed outcome instead of overwriting it as a manual cancellation.
+    if (
+      waitResult.snapshot.source !== 'local' &&
+      normalizeQueueState(waitResult.snapshot.state) === 'COMPLETED'
+    ) {
+      return releaseCancellationClaim(
+        'The scheduler job completed while cancellation was in progress; waiting for output reconciliation'
+      );
+    }
+  } else if (
+    queueJobId &&
+    queueSnapshot &&
+    isTerminalQueueState(queueSnapshot.state) &&
+    !isCancelledQueueState(queueSnapshot.state)
+  ) {
+    return releaseCancellationClaim(
+      'The job already reached a terminal scheduler state; waiting for lifecycle reconciliation'
+    );
   }
 
-  const newStatus = forceStop ? 'failed' : 'cancelled';
+  const newStatus = 'cancelled';
 
-  // Guard the write to non-terminal states: the run may have completed (monitor,
-  // weblog, or finalizeLocalRun) between the status read above and now. An
-  // unconditional update would clobber a genuine `completed` outcome — and its
-  // ingested outputs — with `cancelled`/`failed`. If nothing was updated, the run
-  // already reached a terminal state, so report that instead.
+  // Commit the terminal state only while this invocation still owns the claim.
   const { count } = await db.pipelineRun.updateMany({
-    where: { id: runId, status: { in: ['pending', 'queued', 'running'] } },
+    where: {
+      id: runId,
+      status: { in: [...ACTIVE_RUN_STATUSES] },
+      statusSource: 'cancelling',
+      lastEventAt: renewedAt,
+    },
     data: {
       status: newStatus,
+      currentStep: 'Cancelled',
       completedAt: new Date(),
       statusSource: 'manual',
       lastEventAt: new Date(),
@@ -1760,9 +1993,9 @@ export async function cancelPipelineRunForOperator(runId: string): Promise<Pipel
   if (count === 0) {
     const current = await db.pipelineRun.findUnique({
       where: { id: runId },
-      select: { status: true },
+      select: { status: true, statusSource: true },
     });
-    return jsonResponse({ success: true, status: current?.status ?? newStatus, alreadyFinalized: true });
+    return cancellationClaimUnavailableResponse(current, newStatus);
   }
 
   return jsonResponse({ success: true, status: newStatus });

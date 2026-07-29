@@ -6,7 +6,12 @@ import { notifyPipelineRunTerminalInApp } from '@/lib/notifications/in-app';
 import { getAdapter } from '@/lib/pipelines/adapters';
 // Import to trigger adapter registration
 import '@/lib/pipelines/adapters/mag';
+import { SEQDESK_TRACE_FIELDS } from '@/lib/pipelines/nextflow';
 import { resolveOutputs, saveRunResults } from '@/lib/pipelines/output-resolver';
+import {
+  buildPipelineRunFolder,
+  buildSeqDeskSlurmJobName,
+} from '@/lib/pipelines/run-directory';
 import path from 'path';
 import fs from 'fs/promises';
 
@@ -109,12 +114,20 @@ function buildNextflowRunName(runNumber: string, runId: string): string {
  */
 async function prepareRunDirectory(
   runNumber: string,
+  runId: string,
   pipelineRunDir: string
 ): Promise<string> {
-  const runFolder = path.join(pipelineRunDir, runNumber);
+  const runFolder = buildPipelineRunFolder(pipelineRunDir, runNumber, runId);
 
-  await fs.mkdir(runFolder, { recursive: true });
-  await fs.mkdir(path.join(runFolder, 'logs'), { recursive: true });
+  try {
+    await fs.mkdir(runFolder, { recursive: true });
+    await fs.mkdir(path.join(runFolder, 'logs'), { recursive: true });
+  } catch (error) {
+    // The folder identity includes the immutable database run ID, so this
+    // cleanup can only remove this preparation's partially-created tree.
+    await fs.rm(runFolder, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
 
   return runFolder;
 }
@@ -184,8 +197,20 @@ function sanitizeSlurmOptions(value: string | undefined): string {
   const trimmed = value?.trim();
   if (!trimmed) return '';
   if (/[\r\n]/.test(trimmed)) return '';
-  return trimmed
-    .split(/\s+/)
+  const tokens = trimmed.split(/\s+/);
+  const filtered: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === '--job-name' || token === '-J') {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith('--job-name=') || /^-J\S+/.test(token)) {
+      continue;
+    }
+    filtered.push(token);
+  }
+  return filtered
     .map((token) => shellQuote(token))
     .join(' ');
 }
@@ -226,6 +251,8 @@ function buildRunConfig(
     processLines.push('}');
     sections.push(processLines.join('\n'));
   }
+
+  sections.push(`trace.fields = '${SEQDESK_TRACE_FIELDS}'`);
 
   // Enforce non-default channels to avoid Conda ToS prompts in non-interactive jobs.
   sections.push(
@@ -368,8 +395,10 @@ function generateSlurmScript(
   const slurmMemory = sanitizeSlurmMemory(settings.slurmMemory, '64GB');
   const slurmTimeLimit = sanitizeSlurmTimeLimit(settings.slurmTimeLimit, 12);
   const slurmOptions = sanitizeSlurmOptions(settings.slurmOptions);
+  const slurmJobName = buildSeqDeskSlurmJobName(runId);
 
   return `#!/bin/bash
+#SBATCH --job-name=${slurmJobName}
 #SBATCH -p ${slurmQueue}
 #SBATCH -c ${slurmCores}
 #SBATCH --mem='${slurmMemory}'
@@ -496,8 +525,10 @@ export async function prepareMagRun(
   runFolder?: string;
   errors: string[];
 }> {
-  const { runId, studyId, sampleIds, config, executionSettings, userId } = options;
+  const { runId, studyId, sampleIds, config, executionSettings } = options;
   const errors: string[] = [];
+  let ownedRunFolder: string | null = null;
+  let preparationSucceeded = false;
 
   try {
     // Generate samplesheet using adapter
@@ -525,6 +556,13 @@ export async function prepareMagRun(
       return { success: false, runId, errors };
     }
 
+    // The persisted run still targets every selected sample. A reduced
+    // samplesheet would leave completion waiting for outputs that can never be
+    // produced, so any adapter-reported omission is a hard preparation failure.
+    if (samplesheet.errors.length > 0) {
+      return { success: false, runId, errors };
+    }
+
     const weblogUrl = buildWeblogUrl(executionSettings.weblogUrl, runId, executionSettings.weblogSecret);
 
     // generateRunNumber reads the current max then increments, so two concurrent
@@ -539,8 +577,10 @@ export async function prepareMagRun(
       // Create run directory
       runFolder = await prepareRunDirectory(
         runNumber,
+        runId,
         executionSettings.pipelineRunDir
       );
+      ownedRunFolder = runFolder;
 
       // Write samplesheet
       const samplesheetPath = path.join(runFolder, 'samplesheet.csv');
@@ -566,33 +606,50 @@ export async function prepareMagRun(
       await fs.writeFile(scriptPath, script);
       await fs.chmod(scriptPath, 0o755);
 
-      // Update run record with folder and paths
-      // Steps will be populated dynamically from the Nextflow trace file
+      // Persist the prepared folder only while the start request still owns
+      // the queued lifecycle claim. Cancellation/finalization can legitimately
+      // arrive while the samplesheet and scripts are being written.
       try {
-        await db.pipelineRun.update({
-          where: { id: runId },
+        const prepared = await db.pipelineRun.updateMany({
+          where: {
+            id: runId,
+            status: 'queued',
+            OR: [
+              { statusSource: null },
+              {
+                statusSource: {
+                  notIn: ['finalizing', 'cancelling'],
+                },
+              },
+            ],
+          },
           data: {
             runNumber,
             runFolder,
             outputPath: path.join(runFolder, 'logs/pipeline.out'),
             errorPath: path.join(runFolder, 'logs/pipeline.err'),
-            status: 'queued',
             queuedAt: new Date(),
             config: JSON.stringify(config),
           },
         });
+        if (prepared.count === 0) {
+          errors.push('Run was cancelled or finalized during preparation');
+          return { success: false, runId, errors };
+        }
         break;
       } catch (error) {
         if (isRunNumberConflict(error) && attempt < MAX_RUN_NUMBER_ATTEMPTS - 1) {
           // Another run claimed this number first; drop the stale folder and
           // recompute on the next iteration.
           await fs.rm(runFolder, { recursive: true, force: true }).catch(() => {});
+          ownedRunFolder = null;
           continue;
         }
         throw error;
       }
     }
 
+    preparationSucceeded = true;
     return {
       success: true,
       runId,
@@ -603,6 +660,12 @@ export async function prepareMagRun(
     const message = error instanceof Error ? error.message : 'Unknown error';
     errors.push(`Failed to prepare run: ${message}`);
     return { success: false, runId, errors };
+  } finally {
+    if (!preparationSucceeded && ownedRunFolder) {
+      await fs
+        .rm(ownedRunFolder, { recursive: true, force: true })
+        .catch(() => {});
+    }
   }
 }
 

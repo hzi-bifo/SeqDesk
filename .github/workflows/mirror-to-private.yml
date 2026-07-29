@@ -14,7 +14,8 @@ name: Mirror to private CI
 #        paste mirror_key.pub, tick "Allow write access".
 #   3. On hzi-bifo/SeqDesk (this repo) -> Settings -> Secrets and variables ->
 #        Actions -> New repository secret named MIRROR_SSH_KEY = contents of mirror_key.
-# Until the secret exists, this workflow self-skips (stays green).
+# A missing secret is a configuration failure: this mirror is the only automatic
+# path to the required private self-hosted acceptance gate.
 
 on:
   push:
@@ -46,9 +47,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${MIRROR_SSH_KEY:-}" ]; then
-            echo "MIRROR_SSH_KEY secret is not set — skipping mirror."
-            echo "Add the deploy key (see this workflow's header) to enable mirroring."
-            exit 0
+            echo "ERROR: MIRROR_SSH_KEY secret is not set; the required private CI gate cannot run." >&2
+            echo "Add the deploy key described in this workflow's header." >&2
+            exit 1
           fi
           mkdir -p ~/.ssh
           printf '%s\n' "$MIRROR_SSH_KEY" > ~/.ssh/id_ed25519

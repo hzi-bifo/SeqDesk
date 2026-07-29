@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---- hoisted mocks --------------------------------------------------------
 const mocks = vi.hoisted(() => ({
@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     pipelineRun: {
       findMany: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       findUnique: vi.fn(),
     },
   },
@@ -59,7 +60,9 @@ function baseExecutionSettings() {
   };
 }
 
-function baseStartRunOptions(overrides?: Record<string, unknown>) {
+function baseStartRunOptions(
+  overrides?: Record<string, unknown>
+): Parameters<typeof prepareMagRun>[0] {
   return {
     runId: 'run-1',
     studyId: 'study-1',
@@ -67,7 +70,7 @@ function baseStartRunOptions(overrides?: Record<string, unknown>) {
     executionSettings: baseExecutionSettings(),
     userId: 'user-1',
     ...overrides,
-  };
+  } as Parameters<typeof prepareMagRun>[0];
 }
 
 function makeMockAdapter(overrides?: Record<string, unknown>) {
@@ -134,6 +137,7 @@ describe('prepareMagRun', () => {
     vi.clearAllMocks();
     mocks.db.pipelineRun.findMany.mockResolvedValue([]);
     mocks.db.pipelineRun.update.mockResolvedValue({});
+    mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
     mocks.fs.mkdir.mockResolvedValue(undefined);
     mocks.fs.writeFile.mockResolvedValue(undefined);
     mocks.fs.chmod.mockResolvedValue(undefined);
@@ -143,7 +147,7 @@ describe('prepareMagRun', () => {
   it('returns error when adapter is not registered', async () => {
     mocks.adapters.getAdapter.mockReturnValue(undefined);
 
-    const result = await prepareMagRun(baseStartRunOptions() as any);
+    const result = await prepareMagRun(baseStartRunOptions());
 
     expect(result.success).toBe(false);
     expect(result.errors).toContain('MAG adapter not registered');
@@ -159,13 +163,13 @@ describe('prepareMagRun', () => {
     });
     mocks.adapters.getAdapter.mockReturnValue(adapter);
 
-    const result = await prepareMagRun(baseStartRunOptions() as any);
+    const result = await prepareMagRun(baseStartRunOptions());
 
     expect(result.success).toBe(false);
     expect(result.errors).toContain('No valid samples for samplesheet');
   });
 
-  it('propagates samplesheet errors but succeeds when sampleCount > 0', async () => {
+  it('fails when samplesheet generation skips any selected sample', async () => {
     const adapter = makeMockAdapter({
       generateSamplesheet: vi.fn().mockResolvedValue({
         content: 'sample,group\nS1,G1',
@@ -175,17 +179,18 @@ describe('prepareMagRun', () => {
     });
     mocks.adapters.getAdapter.mockReturnValue(adapter);
 
-    const result = await prepareMagRun(baseStartRunOptions() as any);
+    const result = await prepareMagRun(baseStartRunOptions());
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
     expect(result.errors).toContain('Warning: platform fallback used');
+    expect(mocks.db.pipelineRun.updateMany).not.toHaveBeenCalled();
   });
 
   it('creates run directory with logs subdirectory', async () => {
     const adapter = makeMockAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);
 
-    await prepareMagRun(baseStartRunOptions() as any);
+    await prepareMagRun(baseStartRunOptions());
 
     // Should create the main run dir and logs subdir
     expect(mocks.fs.mkdir).toHaveBeenCalledWith(
@@ -198,11 +203,41 @@ describe('prepareMagRun', () => {
     );
   });
 
+  it('isolates concurrent preparations that calculate the same run number', async () => {
+    const adapter = makeMockAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+
+    const [first, second] = await Promise.all([
+      prepareMagRun(
+        baseStartRunOptions({
+          runId: 'run-concurrent-a',
+        }) as Parameters<typeof prepareMagRun>[0]
+      ),
+      prepareMagRun(
+        baseStartRunOptions({
+          runId: 'run-concurrent-b',
+        }) as Parameters<typeof prepareMagRun>[0]
+      ),
+    ]);
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(first.runFolder).not.toBe(second.runFolder);
+
+    const updateCalls = mocks.db.pipelineRun.updateMany.mock.calls;
+    expect(updateCalls[0][0].data.runNumber).toBe(
+      updateCalls[1][0].data.runNumber
+    );
+    expect(updateCalls[0][0].data.runFolder).not.toBe(
+      updateCalls[1][0].data.runFolder
+    );
+  });
+
   it('writes samplesheet and run script', async () => {
     const adapter = makeMockAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);
 
-    await prepareMagRun(baseStartRunOptions() as any);
+    await prepareMagRun(baseStartRunOptions());
 
     // Should write samplesheet.csv
     const writeFileCalls = mocks.fs.writeFile.mock.calls;
@@ -223,7 +258,7 @@ describe('prepareMagRun', () => {
     const adapter = makeMockAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);
 
-    await prepareMagRun(baseStartRunOptions() as any);
+    await prepareMagRun(baseStartRunOptions());
 
     expect(mocks.fs.chmod).toHaveBeenCalledWith(
       expect.stringContaining('run.sh'),
@@ -235,17 +270,46 @@ describe('prepareMagRun', () => {
     const adapter = makeMockAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);
 
-    await prepareMagRun(baseStartRunOptions() as any);
+    await prepareMagRun(baseStartRunOptions());
 
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith(
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'run-1' },
-        data: expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'run-1',
           status: 'queued',
+          OR: expect.arrayContaining([
+            { statusSource: null },
+            {
+              statusSource: {
+                notIn: ['finalizing', 'cancelling'],
+              },
+            },
+          ]),
+        }),
+        data: expect.objectContaining({
           runNumber: expect.stringMatching(/^MAG-/),
           runFolder: expect.stringContaining('/runs/MAG-'),
         }),
       })
+    );
+    expect(
+      mocks.db.pipelineRun.updateMany.mock.calls[0][0].data.status
+    ).toBeUndefined();
+  });
+
+  it('does not resurrect a run cancelled while MAG preparation writes its folder', async () => {
+    mocks.adapters.getAdapter.mockReturnValue(makeMockAdapter());
+    mocks.db.pipelineRun.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const result = await prepareMagRun(baseStartRunOptions());
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain(
+      'Run was cancelled or finalized during preparation'
+    );
+    expect(mocks.fs.rm).toHaveBeenCalledWith(
+      expect.stringMatching(/MAG-.*--id-run-1$/),
+      { recursive: true, force: true }
     );
   });
 
@@ -261,10 +325,11 @@ describe('prepareMagRun', () => {
         slurmCores: 8,
         slurmMemory: '32GB',
         slurmTimeLimit: 24,
+        slurmOptions: '--job-name=admin-name -J other-name --exclusive',
       },
     });
 
-    await prepareMagRun(options as any);
+    await prepareMagRun(options);
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -272,16 +337,21 @@ describe('prepareMagRun', () => {
     expect(scriptWrite).toBeDefined();
     const script = scriptWrite![1] as string;
     expect(script).toContain('#SBATCH');
+    expect(script).toContain('#SBATCH --job-name=seqdesk-run-1');
+    expect(script.match(/^#SBATCH --job-name=/gm)).toHaveLength(1);
     expect(script).toContain('-p batch');
     expect(script).toContain('-c 8');
     expect(script).toContain("--mem='32GB'");
+    expect(script).toContain('#SBATCH --exclusive');
+    expect(script).not.toContain('admin-name');
+    expect(script).not.toContain('other-name');
   });
 
   it('generates local script when useSlurm is false', async () => {
     const adapter = makeMockAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);
 
-    await prepareMagRun(baseStartRunOptions() as any);
+    await prepareMagRun(baseStartRunOptions());
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -299,7 +369,7 @@ describe('prepareMagRun', () => {
       config: { skipMegahit: true, skipSpades: true },
     });
 
-    await prepareMagRun(options as any);
+    await prepareMagRun(options);
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -317,7 +387,7 @@ describe('prepareMagRun', () => {
       config: { gtdbDb: '/db/gtdb; rm -rf /' },
     });
 
-    await prepareMagRun(options as any);
+    await prepareMagRun(options);
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -337,11 +407,11 @@ describe('prepareMagRun', () => {
         useSlurm: true,
         slurmQueue: 'evil queue; rm -rf /',
         slurmMemory: "32GB'; rm -rf /; echo '",
-        slurmOptions: '--gres=gpu:1\nmalicious line',
+        slurmOptions: '--job-name=evil -J other --gres=gpu:1\nmalicious line',
       },
     });
 
-    await prepareMagRun(options as any);
+    await prepareMagRun(options);
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -349,6 +419,8 @@ describe('prepareMagRun', () => {
     const script = scriptWrite![1] as string;
     expect(script).toContain('#SBATCH -p cpu');
     expect(script).toContain("#SBATCH --mem='64GB'");
+    expect(script.match(/^#SBATCH --job-name=/gm)).toHaveLength(1);
+    expect(script).toContain('#SBATCH --job-name=seqdesk-run-1');
     expect(script).not.toContain('rm -rf /');
     expect(script).not.toContain('malicious line');
   });
@@ -364,13 +436,15 @@ describe('prepareMagRun', () => {
       },
     });
 
-    await prepareMagRun(options as any);
+    await prepareMagRun(options);
 
     const configWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('nextflow.config')
     );
     expect(configWrite).toBeDefined();
     expect(configWrite![1]).toContain('weblog');
+    expect(configWrite![1]).toContain("trace.fields = '");
+    expect(configWrite![1]).toContain('process,tag,name,status,exit,attempt,');
   });
 
   it('includes stub flag when stubMode is true', async () => {
@@ -381,7 +455,7 @@ describe('prepareMagRun', () => {
       config: { stubMode: true },
     });
 
-    await prepareMagRun(options as any);
+    await prepareMagRun(options);
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -398,7 +472,7 @@ describe('prepareMagRun', () => {
       config: { skipBinQc: true },
     });
 
-    await prepareMagRun(options as any);
+    await prepareMagRun(options);
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -413,11 +487,15 @@ describe('prepareMagRun', () => {
     mocks.adapters.getAdapter.mockReturnValue(makeMockAdapter());
     mocks.fs.mkdir.mockRejectedValue(new Error('EACCES: permission denied'));
 
-    const result = await prepareMagRun(baseStartRunOptions() as any);
+    const result = await prepareMagRun(baseStartRunOptions());
 
     expect(result.success).toBe(false);
     expect(result.errors[0]).toContain('Failed to prepare run');
     expect(result.errors[0]).toContain('permission denied');
+    expect(mocks.fs.rm).toHaveBeenCalledWith(
+      expect.stringMatching(/MAG-.*--id-run-1$/),
+      { recursive: true, force: true }
+    );
   });
 
   it('includes conda runtime bootstrap when condaPath is set', async () => {
@@ -433,7 +511,7 @@ describe('prepareMagRun', () => {
       },
     });
 
-    await prepareMagRun(options as any);
+    await prepareMagRun(options);
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -455,7 +533,7 @@ describe('prepareMagRun', () => {
       },
     });
 
-    await prepareMagRun(options as any);
+    await prepareMagRun(options);
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -468,7 +546,7 @@ describe('prepareMagRun', () => {
     const adapter = makeMockAdapter();
     mocks.adapters.getAdapter.mockReturnValue(adapter);
 
-    await prepareMagRun(baseStartRunOptions() as any);
+    await prepareMagRun(baseStartRunOptions());
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -493,7 +571,7 @@ describe('prepareMagRun', () => {
       },
     });
 
-    await prepareMagRun(options as any);
+    await prepareMagRun(options);
 
     const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
       (c[0] as string).endsWith('run.sh')
@@ -524,17 +602,17 @@ describe('prepareMagRun', () => {
       code: 'P2002',
       meta: { target: ['runNumber'] },
     });
-    mocks.db.pipelineRun.update
+    mocks.db.pipelineRun.updateMany
       .mockRejectedValueOnce(conflict)
-      .mockResolvedValueOnce({});
+      .mockResolvedValueOnce({ count: 1 });
 
-    const result = await prepareMagRun(baseStartRunOptions() as any);
+    const result = await prepareMagRun(baseStartRunOptions());
 
     expect(result.success).toBe(true);
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(2);
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(2);
     // The stale folder from the losing attempt is removed before retrying.
     expect(mocks.fs.rm).toHaveBeenCalledTimes(1);
-    const finalCall = mocks.db.pipelineRun.update.mock.calls[1][0];
+    const finalCall = mocks.db.pipelineRun.updateMany.mock.calls[1][0];
     expect(finalCall.data.runNumber).toBe(`MAG-${todayStr}-009`);
     expect(result.runFolder).toContain(finalCall.data.runNumber);
   });
@@ -547,16 +625,31 @@ describe('prepareMagRun', () => {
       code: 'P2002',
       meta: { target: ['someOtherField'] },
     });
-    mocks.db.pipelineRun.update.mockRejectedValue(conflict);
+    mocks.db.pipelineRun.updateMany.mockRejectedValue(conflict);
 
-    const result = await prepareMagRun(baseStartRunOptions() as any);
+    const result = await prepareMagRun(baseStartRunOptions());
 
     expect(result.success).toBe(false);
     expect(result.errors[0]).toContain('Failed to prepare run');
-    // No retry: update is attempted exactly once and the stale folder is kept
-    // for the caller's error to surface unchanged.
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledTimes(1);
-    expect(mocks.fs.rm).not.toHaveBeenCalled();
+    // No retry: update is attempted exactly once, but its run-ID-scoped folder
+    // is still removed before the failure is returned.
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.fs.rm).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the final folder when run-number collision retries are exhausted', async () => {
+    mocks.adapters.getAdapter.mockReturnValue(makeMockAdapter());
+    const conflict = Object.assign(new Error('Unique constraint failed'), {
+      code: 'P2002',
+      meta: { target: ['runNumber'] },
+    });
+    mocks.db.pipelineRun.updateMany.mockRejectedValue(conflict);
+
+    const result = await prepareMagRun(baseStartRunOptions());
+
+    expect(result.success).toBe(false);
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(5);
+    expect(mocks.fs.rm).toHaveBeenCalledTimes(5);
   });
 });
 

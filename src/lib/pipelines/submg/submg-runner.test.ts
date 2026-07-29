@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     siteSettings: {
       findUnique: vi.fn(),
@@ -73,6 +74,7 @@ describe("submg runner", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-submg-"));
+    mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
   });
 
   afterEach(async () => {
@@ -201,6 +203,7 @@ describe("submg runner", () => {
     // matching the generic/mag executors).
     expect(script).toContain("#SBATCH -p cpu");
     expect(script).toContain("#SBATCH --mem='16GB'");
+    expect(script).toContain("#SBATCH --job-name=seqdesk-run-1");
 
     const metadata = JSON.parse(
       await fs.readFile(path.join(result.runFolder!, "submg-metadata.json"), "utf8")
@@ -211,8 +214,19 @@ describe("submg runner", () => {
       sampleCode: "SAMPLE-1",
     });
 
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "run-1",
+        status: "queued",
+        OR: expect.arrayContaining([
+          { statusSource: null },
+          {
+            statusSource: {
+              notIn: ["finalizing", "cancelling"],
+            },
+          },
+        ]),
+      }),
       data: expect.objectContaining({
         runNumber: result.runNumber,
         runFolder: result.runFolder,
@@ -1343,6 +1357,139 @@ describe("submg runner", () => {
     ...overrides,
   });
 
+  it("retries a P2002 collision so concurrent preparations get unique numbers and folders", async () => {
+    await fs.mkdir(path.join(tempDir, "reads"), { recursive: true });
+    await fs.mkdir(path.join(tempDir, "assemblies"), { recursive: true });
+    await fs.writeFile(path.join(tempDir, "reads/sample-1_R1.fastq.gz"), "r1");
+    await fs.writeFile(path.join(tempDir, "reads/sample-1_R2.fastq.gz"), "r2");
+    await fs.writeFile(
+      path.join(tempDir, "assemblies/sample-1_assembly.fasta.gz"),
+      "assembly"
+    );
+
+    mocks.db.pipelineRun.findUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) => ({
+        id: where.id,
+        inputSampleIds: null,
+      })
+    );
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [validSample()],
+    });
+    const reservedRunNumbers = new Set<string>();
+    let allocationReads = 0;
+    mocks.db.pipelineRun.findMany.mockImplementation(async () => {
+      allocationReads += 1;
+      if (allocationReads <= 2) return [];
+      return [...reservedRunNumbers].map((runNumber) => ({ runNumber }));
+    });
+    mocks.db.pipelineRun.updateMany.mockImplementation(async (args) => {
+      const runNumber = args?.data?.runNumber;
+      const isReservation = typeof runNumber === "string" && !args?.data?.runFolder;
+      if (!isReservation) return { count: 1 };
+      if (reservedRunNumbers.has(runNumber)) {
+        throw { code: "P2002", meta: { target: ["runNumber"] } };
+      }
+      reservedRunNumbers.add(runNumber);
+      return { count: 1 };
+    });
+
+    const [first, second] = await Promise.all([
+      prepareSubmgRun({
+        runId: "run-concurrent-a",
+        studyId: "study-1",
+        config: {},
+        executionSettings: baseExecutionSettings(),
+        dataBasePath: tempDir,
+      }),
+      prepareSubmgRun({
+        runId: "run-concurrent-b",
+        studyId: "study-1",
+        config: {},
+        executionSettings: baseExecutionSettings(),
+        dataBasePath: tempDir,
+      }),
+    ]);
+
+    expect(first.success).toBe(true);
+    expect(second.success).toBe(true);
+    expect(first.runNumber).not.toBe(second.runNumber);
+    expect(first.runFolder).not.toBe(second.runFolder);
+    expect(mocks.db.pipelineRun.findMany).toHaveBeenCalledTimes(3);
+
+    const firstMetadata = JSON.parse(
+      await fs.readFile(
+        path.join(first.runFolder!, "submg-metadata.json"),
+        "utf8"
+      )
+    );
+    const secondMetadata = JSON.parse(
+      await fs.readFile(
+        path.join(second.runFolder!, "submg-metadata.json"),
+        "utf8"
+      )
+    );
+    expect(firstMetadata.runId).toBe("run-concurrent-a");
+    expect(secondMetadata.runId).toBe("run-concurrent-b");
+  });
+
+  it("does not resurrect a run cancelled while submg preparation is writing its folder", async () => {
+    await fs.mkdir(path.join(tempDir, "reads"), { recursive: true });
+    await fs.mkdir(path.join(tempDir, "assemblies"), { recursive: true });
+    await fs.writeFile(path.join(tempDir, "reads/sample-1_R1.fastq.gz"), "r1");
+    await fs.writeFile(path.join(tempDir, "reads/sample-1_R2.fastq.gz"), "r2");
+    await fs.writeFile(path.join(tempDir, "assemblies/sample-1_assembly.fasta.gz"), "assembly");
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-cancelled",
+      inputSampleIds: null,
+    });
+    mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study 1",
+      studyAccessionId: "PRJ123456",
+      samples: [validSample()],
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+    mocks.db.pipelineRun.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const result = await prepareSubmgRun({
+      runId: "run-cancelled",
+      studyId: "study-1",
+      config: {},
+      executionSettings: baseExecutionSettings(),
+      dataBasePath: tempDir,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContain("Run was cancelled or finalized during preparation");
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "run-cancelled",
+          status: "queued",
+          OR: expect.arrayContaining([
+            { statusSource: null },
+            {
+              statusSource: {
+                notIn: ["finalizing", "cancelling"],
+              },
+            },
+          ]),
+        }),
+      })
+    );
+    const remainingPreparedFolders = (await fs.readdir(tempDir)).filter((entry) =>
+      entry.startsWith("SUBMG-")
+    );
+    expect(remainingPreparedFolders).toEqual([]);
+  });
+
   it("collects a sample error when taxId is missing", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: "run-1", inputSampleIds: null });
     mocks.db.siteSettings.findUnique.mockResolvedValue(baseSiteSettings());
@@ -1365,6 +1512,10 @@ describe("submg runner", () => {
     expect(result.success).toBe(false);
     expect(result.errors.some((e) => e.includes("missing taxId"))).toBe(true);
     expect(mocks.db.pipelineRun.update).not.toHaveBeenCalled();
+    const remainingPreparedFolders = (await fs.readdir(tempDir)).filter((entry) =>
+      entry.startsWith("SUBMG-")
+    );
+    expect(remainingPreparedFolders).toEqual([]);
   });
 
   it("collects sample errors for missing paired reads and missing checksums", async () => {
@@ -1631,7 +1782,7 @@ describe("submg runner", () => {
         slurmCores: 8,
         slurmMemory: "64GB",
         slurmTimeLimit: 12,
-        slurmOptions: "--exclusive",
+        slurmOptions: "--job-name=admin-name -J other-name --exclusive",
         pipelineRunDir: tempDir,
         dataBasePath: dataBaseDir,
       },
@@ -1647,6 +1798,10 @@ describe("submg runner", () => {
     const script = await fs.readFile(result.scriptPath!, "utf8");
     expect(script).toContain("#SBATCH --exclusive");
     expect(script).toContain("#SBATCH -p highmem");
+    expect(script.match(/^#SBATCH --job-name=/gm)).toHaveLength(1);
+    expect(script).toContain("#SBATCH --job-name=seqdesk-run-1");
+    expect(script).not.toContain("admin-name");
+    expect(script).not.toContain("other-name");
   });
 
   it("increments the run number based on the latest existing SUBMG run", async () => {

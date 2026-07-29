@@ -26,7 +26,7 @@ import {
 } from '@/lib/pipelines/metaxpath-compatibility';
 import { validatePipelineMetadata } from '@/lib/pipelines/metadata-validation';
 import { getPackage } from '@/lib/pipelines/package-loader';
-import { processCompletedPipelineRun } from '@/lib/pipelines/run-completion';
+import { finalizeCompletedPipelineRun } from '@/lib/pipelines/run-completion';
 import {
   buildPipelineRunResultFileSummary,
   getPipelineRunTargetKey,
@@ -74,6 +74,15 @@ function jsonResponse<TBody extends Record<string, unknown>>(
   status = 200
 ): PipelineServiceResponse<TBody> {
   return { status, body };
+}
+
+function unlockedLifecycleSourceFilter() {
+  return {
+    OR: [
+      { statusSource: null },
+      { statusSource: { notIn: ['finalizing', 'cancelling'] } },
+    ],
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -210,14 +219,13 @@ function buildSbatchSubmitArgs(scriptPath: string): string[] {
 // Persist a DB write with a few quick retries. Used to record a freshly
 // submitted SLURM job id so a transient DB blip does not orphan the job.
 async function persistWithRetry(
-  fn: () => Promise<unknown>,
+  fn: () => Promise<{ count: number }>,
   attempts = 3
-): Promise<void> {
+): Promise<{ count: number }> {
   let lastError: unknown;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      await fn();
-      return;
+      return await fn();
     } catch (error) {
       lastError = error;
       await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
@@ -231,6 +239,101 @@ async function persistWithRetry(
 // clobber a run that was already finalized out-of-band (e.g. cancelled).
 const NON_TERMINAL_LOCAL_STATUSES = ['pending', 'queued', 'running'];
 
+async function getRunStatus(runId: string): Promise<string> {
+  const current = await db.pipelineRun.findUnique({
+    where: { id: runId },
+    select: { status: true },
+  });
+  return current?.status ?? 'unknown';
+}
+
+async function buildLostLaunchClaimResponse(
+  runId: string,
+  phase: string
+): Promise<PipelineServiceResponse> {
+  const status = await getRunStatus(runId);
+  return jsonResponse(
+    {
+      error: `Run was cancelled or finalized during ${phase} (status: ${status})`,
+      status,
+    },
+    409
+  );
+}
+
+async function markClaimedRunFailed(
+  runId: string,
+  expectedStatuses: string[],
+  message: string
+): Promise<boolean> {
+  const now = new Date();
+  const { count } = await db.pipelineRun.updateMany({
+    where: {
+      id: runId,
+      status: { in: expectedStatuses },
+      ...unlockedLifecycleSourceFilter(),
+    },
+    data: {
+      status: 'failed',
+      errorTail: message,
+      completedAt: now,
+      statusSource: 'launcher',
+      lastEventAt: now,
+    },
+  });
+  return count > 0;
+}
+
+async function markPendingRunValidationFailed(
+  runId: string,
+  message: string
+): Promise<boolean> {
+  return markClaimedRunFailed(runId, ['pending'], message);
+}
+
+async function cancelSubmittedSlurmJob(jobId: string): Promise<boolean> {
+  try {
+    await execAsync(`scancel ${jobId}`, { timeout: 5000 });
+    console.error(
+      `[Pipeline Run] Cancelled orphaned SLURM job ${jobId} after losing the launch claim.`
+    );
+    return true;
+  } catch (cancelError) {
+    console.error(
+      `[Pipeline Run] Failed to scancel orphaned SLURM job ${jobId}:`,
+      cancelError instanceof Error ? cancelError.message : cancelError
+    );
+    return false;
+  }
+}
+
+function terminateDetachedLocalProcess(pid: number): void {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return;
+  try {
+    // Local pipeline children are spawned detached, so the negative PID
+    // terminates the whole process group (bash + Nextflow + task children).
+    process.kill(-pid, 'SIGTERM');
+    return;
+  } catch (error) {
+    const cause = error as NodeJS.ErrnoException;
+    // ESRCH means the process group is already gone. Never fall back to a
+    // positive PID in that case: the PID may already have been recycled for an
+    // unrelated process on this persistent runner.
+    if (cause.code === 'ESRCH') return;
+    if (cause.code === 'EINVAL' || cause.code === 'EPERM') {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch (inner) {
+        if ((inner as NodeJS.ErrnoException).code !== 'ESRCH') {
+          throw inner;
+        }
+      }
+      return;
+    }
+    throw error;
+  }
+}
+
 async function finalizeLocalRun(
   runId: string,
   pipelineId: string,
@@ -239,26 +342,22 @@ async function finalizeLocalRun(
   const completedAt = new Date();
   console.warn(`[RUN-FINALIZE] finalizeLocalRun run=${runId} pipeline=${pipelineId} exitCode=${exitCode}`);
   if (exitCode === 0) {
-    // Guard against a terminal state: if the run was already cancelled (or
-    // otherwise finalized) before the child exited, leave it alone.
-    const { count } = await db.pipelineRun.updateMany({
-      where: { id: runId, status: { in: NON_TERMINAL_LOCAL_STATUSES } },
-      data: {
-        status: 'completed',
-        progress: 100,
-        currentStep: 'Completed',
+    try {
+      const result = await finalizeCompletedPipelineRun(runId, pipelineId, {
         completedAt,
         statusSource: 'process',
         lastEventAt: completedAt,
         queueStatus: 'COMPLETED',
         queueUpdatedAt: completedAt,
-      },
-    });
-    if (count === 0) return;
-    await notifyPipelineRunTerminalInApp(runId, null, 'completed');
-    processCompletedPipelineRun(runId, pipelineId).catch((err) => {
+      });
+      if (result === 'claim-unavailable') return;
+    } catch (err) {
       console.error('[Pipeline Run] Output resolution failed:', err);
-    });
+      // Leave the row non-terminal. The pipeline monitor will retry the
+      // idempotent resolution on its next pass.
+      return;
+    }
+    await notifyPipelineRunTerminalInApp(runId, null, 'completed');
   } else {
     const run = await db.pipelineRun.findUnique({
       where: { id: runId },
@@ -276,7 +375,11 @@ async function finalizeLocalRun(
     // non-zero/null code. The status guard ensures we do NOT overwrite a run
     // that has already reached a terminal state such as 'cancelled'.
     const { count } = await db.pipelineRun.updateMany({
-      where: { id: runId, status: { in: NON_TERMINAL_LOCAL_STATUSES } },
+      where: {
+        id: runId,
+        status: { in: NON_TERMINAL_LOCAL_STATUSES },
+        ...unlockedLifecycleSourceFilter(),
+      },
       data: {
         status: 'failed',
         currentStep: 'Failed',
@@ -809,16 +912,10 @@ export async function startPipelineRunForOperator({
   });
   if (launchConfig.derivedIssues.length > 0) {
     const message = launchConfig.derivedIssues.join('\n');
-    await db.pipelineRun.update({
-      where: { id: runId },
-      data: {
-        status: 'failed',
-        errorTail: message,
-        completedAt: new Date(),
-        statusSource: 'launcher',
-        lastEventAt: new Date(),
-      },
-    });
+    const failed = await markPendingRunValidationFailed(runId, message);
+    if (!failed) {
+      return buildLostLaunchClaimResponse(runId, 'metadata validation');
+    }
     return jsonResponse(
       { error: 'Pipeline metadata validation failed', details: launchConfig.derivedIssues },
       400
@@ -829,16 +926,10 @@ export async function startPipelineRunForOperator({
   const configIssues = getPipelineRunConfigIssues(run.pipelineId, config);
   if (configIssues.length > 0) {
     const message = configIssues.join('\n');
-    await db.pipelineRun.update({
-      where: { id: runId },
-      data: {
-        status: 'failed',
-        errorTail: message,
-        completedAt: new Date(),
-        statusSource: 'launcher',
-        lastEventAt: new Date(),
-      },
-    });
+    const failed = await markPendingRunValidationFailed(runId, message);
+    if (!failed) {
+      return buildLostLaunchClaimResponse(runId, 'config validation');
+    }
     return jsonResponse(
       { error: 'Pipeline config validation failed', details: configIssues },
       400
@@ -876,16 +967,10 @@ export async function startPipelineRunForOperator({
   }
   if (pathValidation.issues.length > 0) {
     const message = pathValidation.issues.join('\n');
-    await db.pipelineRun.update({
-      where: { id: runId },
-      data: {
-        status: 'failed',
-        errorTail: message,
-        completedAt: new Date(),
-        statusSource: 'launcher',
-        lastEventAt: new Date(),
-      },
-    });
+    const failed = await markPendingRunValidationFailed(runId, message);
+    if (!failed) {
+      return buildLostLaunchClaimResponse(runId, 'path validation');
+    }
     return jsonResponse(
       { error: 'Pipeline config validation failed', details: pathValidation.issues },
       400
@@ -935,16 +1020,10 @@ export async function startPipelineRunForOperator({
     });
     if (!compatibility.compatible) {
       const message = buildMetaxPathCompatibilityMessage(compatibility);
-      await db.pipelineRun.update({
-        where: { id: runId },
-        data: {
-          status: 'failed',
-          errorTail: message,
-          completedAt: new Date(),
-          statusSource: 'launcher',
-          lastEventAt: new Date(),
-        },
-      });
+      const failed = await markPendingRunValidationFailed(runId, message);
+      if (!failed) {
+        return buildLostLaunchClaimResponse(runId, 'package compatibility validation');
+      }
       return jsonResponse(
         {
           error: 'MetaxPath package compatibility check failed',
@@ -974,16 +1053,13 @@ export async function startPipelineRunForOperator({
       : null;
 
   if (localCondaCompatibilityMessage) {
-    await db.pipelineRun.update({
-      where: { id: runId },
-      data: {
-        status: 'failed',
-        errorTail: localCondaCompatibilityMessage,
-        completedAt: new Date(),
-        statusSource: 'launcher',
-        lastEventAt: new Date(),
-      },
-    });
+    const failed = await markPendingRunValidationFailed(
+      runId,
+      localCondaCompatibilityMessage
+    );
+    if (!failed) {
+      return buildLostLaunchClaimResponse(runId, 'runtime compatibility validation');
+    }
     return jsonResponse({ error: localCondaCompatibilityMessage }, 400);
   }
   if (effectiveExecutionSettings.useSlurm && isMacOsArmRuntime(runtimePlatform)) {
@@ -1010,16 +1086,10 @@ export async function startPipelineRunForOperator({
     .filter((part) => forbiddenProfiles.has(part));
   if (forbiddenSelected.length > 0) {
     const message = `Unsupported Nextflow profile(s): ${forbiddenSelected.join(', ')}. SeqDesk only supports conda-based execution.`;
-    await db.pipelineRun.update({
-      where: { id: runId },
-      data: {
-        status: 'failed',
-        errorTail: message,
-        completedAt: new Date(),
-        statusSource: 'launcher',
-        lastEventAt: new Date(),
-      },
-    });
+    const failed = await markPendingRunValidationFailed(runId, message);
+    if (!failed) {
+      return buildLostLaunchClaimResponse(runId, 'execution profile validation');
+    }
     return jsonResponse({ error: message }, 400);
   }
 
@@ -1033,16 +1103,10 @@ export async function startPipelineRunForOperator({
   ) {
     const message =
       'Neither conda nor nextflow were found. Configure a conda path, or install nextflow on the host.';
-    await db.pipelineRun.update({
-      where: { id: runId },
-      data: {
-        status: 'failed',
-        errorTail: message,
-        completedAt: new Date(),
-        statusSource: 'launcher',
-        lastEventAt: new Date(),
-      },
-    });
+    const failed = await markPendingRunValidationFailed(runId, message);
+    if (!failed) {
+      return buildLostLaunchClaimResponse(runId, 'runtime availability validation');
+    }
     return jsonResponse({ error: message }, 400);
   }
   if (!condaBin && nextflowAvailable && !effectiveExecutionSettings.useSlurm && !isSubmgPipeline) {
@@ -1066,26 +1130,10 @@ export async function startPipelineRunForOperator({
     pendingRunUpdate.inputSampleIds = JSON.stringify(selectedSampleIds);
   }
 
-  if (selectedSampleIds && !run.inputSampleIds) {
-    await db.pipelineRun.update({
-      where: { id: run.id },
-      data: pendingRunUpdate,
-    });
-  } else if (
-    run.config !== normalizedConfigJson ||
-    run.executionMode !== executionPolicy.mode ||
-    run.executionProfile !== executionProfileJson
-  ) {
-    await db.pipelineRun.update({
-      where: { id: run.id },
-      data: pendingRunUpdate,
-    });
-  }
-
   // BUG #11: atomically claim the run BEFORE prepare. The run.status !== 'pending'
-  // check at the top of this function is a pure read; every validation between it
-  // and here is read-only and returns while the run is still 'pending' (so a
-  // rejected start never strands the run). Two concurrent starts (or a
+  // check at the top of this function is a pure read; validation failures are
+  // guarded and the normalized launch config is persisted as part of this
+  // claim. Two concurrent starts (or a
   // double-click) for the same runId both pass those reads, then both call
   // prepareGenericRun/prepareSubmgRun, which allocate a run folder and overwrite
   // runFolder/outputPath/errorPath on the DB row -- the loser clobbers the
@@ -1095,12 +1143,17 @@ export async function startPipelineRunForOperator({
   // and never prepares or launches. A claimed run that then fails prepare/launch
   // is reset to 'failed' by the existing failure branches below.
   const prepareClaim = await db.pipelineRun.updateMany({
-    where: { id: runId, status: 'pending' },
+    where: {
+      id: runId,
+      status: 'pending',
+      ...unlockedLifecycleSourceFilter(),
+    },
     data: {
       status: 'queued',
       statusSource: 'launcher',
       currentStep: 'Preparing',
       lastEventAt: new Date(),
+      ...pendingRunUpdate,
     },
   });
   if (prepareClaim.count === 0) {
@@ -1155,16 +1208,14 @@ export async function startPipelineRunForOperator({
         });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await db.pipelineRun.update({
-      where: { id: runId },
-      data: {
-        status: 'failed',
-        errorTail: `Failed to prepare run: ${message}`,
-        completedAt: new Date(),
-        statusSource: 'launcher',
-        lastEventAt: new Date(),
-      },
-    });
+    const failed = await markClaimedRunFailed(
+      runId,
+      ['queued'],
+      `Failed to prepare run: ${message}`
+    );
+    if (!failed) {
+      return buildLostLaunchClaimResponse(runId, 'preparation');
+    }
     return jsonResponse({ error: 'Failed to prepare run', details: [message] }, 500);
   }
 
@@ -1174,16 +1225,14 @@ export async function startPipelineRunForOperator({
         ? prepResult.warnings
         : [];
     const prepDetails = [...prepResult.errors, ...prepWarnings];
-    await db.pipelineRun.update({
-      where: { id: runId },
-      data: {
-        status: 'failed',
-        errorTail: prepDetails.join('\n'),
-        completedAt: new Date(),
-        statusSource: 'launcher',
-        lastEventAt: new Date(),
-      },
-    });
+    const failed = await markClaimedRunFailed(
+      runId,
+      ['queued'],
+      prepDetails.join('\n')
+    );
+    if (!failed) {
+      return buildLostLaunchClaimResponse(runId, 'preparation');
+    }
 
     return jsonResponse({ error: 'Failed to prepare run', details: prepDetails }, 400);
   }
@@ -1205,16 +1254,10 @@ export async function startPipelineRunForOperator({
       await fs.access(scriptPath);
     } catch {
       const message = `Run script not found: ${scriptPath}`;
-      await db.pipelineRun.update({
-        where: { id: runId },
-        data: {
-          status: 'failed',
-          errorTail: message,
-          completedAt: new Date(),
-          statusSource: 'launcher',
-          lastEventAt: new Date(),
-        },
-      });
+      const failed = await markClaimedRunFailed(runId, ['queued'], message);
+      if (!failed) {
+        return buildLostLaunchClaimResponse(runId, 'script validation');
+      }
       return jsonResponse({ error: message }, 500);
     }
 
@@ -1226,14 +1269,16 @@ export async function startPipelineRunForOperator({
     // submitting. The SLURM branch re-sets 'queued' (with the job id) and the
     // local branch re-sets 'running' (with the pid) immediately below.
     //
-    // The guard accepts both 'pending' (freshly created) and 'queued': prepare
-    // (prepareGenericRun/prepareSubmgRun) flips the run to 'queued' while it
-    // writes the run folder, so by this point the status is 'queued', not
-    // 'pending'. A genuinely already-launched run is rejected earlier by the
-    // run.status !== 'pending' check at the top of this function, so the only
-    // 'queued' state reachable here is the transient one set by prepare.
+    // Preparation is entered only after prepareClaim transitions pending ->
+    // queued, and both preparers now guard their folder/path write on that
+    // queued claim. Restrict launch to queued as well so a cancellation can
+    // never be bypassed by a stale pending snapshot.
     const launchClaim = await db.pipelineRun.updateMany({
-      where: { id: runId, status: { in: ['pending', 'queued'] } },
+      where: {
+        id: runId,
+        status: 'queued',
+        ...unlockedLifecycleSourceFilter(),
+      },
       data: {
         status: effectiveExecutionSettings.useSlurm ? 'queued' : 'running',
         statusSource: 'launcher',
@@ -1277,17 +1322,29 @@ export async function startPipelineRunForOperator({
       const sbatchAvailable = await commandExists('sbatch');
       if (!sbatchAvailable) {
         const message = 'SLURM sbatch command not found. Make sure SLURM is installed and in PATH.';
-        await db.pipelineRun.update({
-          where: { id: runId },
-          data: {
-            status: 'failed',
-            errorTail: message,
-            completedAt: new Date(),
-            statusSource: 'launcher',
-            lastEventAt: new Date(),
-          },
-        });
+        const failed = await markClaimedRunFailed(runId, ['queued'], message);
+        if (!failed) {
+          return buildLostLaunchClaimResponse(runId, 'SLURM launch');
+        }
         return jsonResponse({ error: message }, 500);
+      }
+
+      // commandExists may take long enough for an operator cancellation to
+      // arrive after launchClaim. Recheck atomically immediately before the
+      // irreversible sbatch call; if cancellation already won, submit nothing.
+      const submissionStillClaimed = await db.pipelineRun.updateMany({
+        where: {
+          id: runId,
+          status: 'queued',
+          ...unlockedLifecycleSourceFilter(),
+        },
+        data: {
+          currentStep: 'Submitting to scheduler',
+          lastEventAt: new Date(),
+        },
+      });
+      if (submissionStillClaimed.count === 0) {
+        return buildLostLaunchClaimResponse(runId, 'SLURM submission');
       }
 
       // Declared in the try's outer scope so the catch can scancel a job that
@@ -1340,21 +1397,48 @@ export async function startPipelineRunForOperator({
         // orphan the job (running untracked, with queueJobId never saved). Once
         // submittedJobId is set, the catch can scancel it if anything fails.
         submittedJobId = jobId;
-        await persistWithRetry(() =>
-          db.pipelineRun.update({
-            where: { id: runId },
+        const jobIdPersisted = await persistWithRetry(() =>
+          db.pipelineRun.updateMany({
+            where: {
+              id: runId,
+              status: 'queued',
+              ...unlockedLifecycleSourceFilter(),
+            },
             data: {
               queueJobId: jobId,
               queuedAt: new Date(),
             },
           })
         );
+        if (jobIdPersisted.count === 0) {
+          const stopped = await cancelSubmittedSlurmJob(jobId);
+          submittedJobId = '';
+          if (!stopped) {
+            const status = await getRunStatus(runId);
+            return jsonResponse(
+              {
+                error:
+                  `Run was finalized before SLURM job ${jobId} could be recorded, ` +
+                  'and automatic scancel failed',
+                status,
+              },
+              500
+            );
+          }
+          return buildLostLaunchClaimResponse(runId, 'SLURM submission');
+        }
 
-        await db.pipelineRun.update({
-          where: { id: runId },
-          data: {
+        // Commit the remaining scheduler state behind a second guard. This
+        // closes the interval after queueJobId is recorded: if cancellation
+        // wins there, do not put the row back into queued and scancel the job.
+        const launchPersisted = await db.pipelineRun.updateMany({
+          where: {
+            id: runId,
             status: 'queued',
             queueJobId: jobId,
+            ...unlockedLifecycleSourceFilter(),
+          },
+          data: {
             queueStatus: 'PENDING',
             queueReason: null,
             queueUpdatedAt: new Date(),
@@ -1363,6 +1447,23 @@ export async function startPipelineRunForOperator({
             lastEventAt: new Date(),
           },
         });
+        if (launchPersisted.count === 0) {
+          const stopped = await cancelSubmittedSlurmJob(jobId);
+          submittedJobId = '';
+          if (!stopped) {
+            const status = await getRunStatus(runId);
+            return jsonResponse(
+              {
+                error:
+                  `Run was finalized while SLURM job ${jobId} was being recorded, ` +
+                  'and automatic scancel failed',
+                status,
+              },
+              500
+            );
+          }
+          return buildLostLaunchClaimResponse(runId, 'SLURM launch persistence');
+        }
 
         return jsonResponse({
           success: true,
@@ -1379,41 +1480,58 @@ export async function startPipelineRunForOperator({
         // If sbatch already queued a job but we could not record it, the job
         // would run untracked. Cancel it so we never leave an orphan behind.
         if (submittedJobId) {
-          try {
-            await execAsync(`scancel ${submittedJobId}`, { timeout: 5000 });
-            console.error(
-              `[Pipeline Run] Cancelled orphaned SLURM job ${submittedJobId} after persistence failure.`
-            );
-          } catch (cancelError) {
-            console.error(
-              `[Pipeline Run] Failed to scancel orphaned SLURM job ${submittedJobId}:`,
-              cancelError instanceof Error ? cancelError.message : cancelError
+          const stopped = await cancelSubmittedSlurmJob(submittedJobId);
+          if (!stopped) {
+            const status = await getRunStatus(runId);
+            return jsonResponse(
+              {
+                error:
+                  `SLURM submission bookkeeping failed and automatic scancel of job ` +
+                  `${submittedJobId} also failed; the run remains ${status} for reconciliation`,
+                status,
+              },
+              500
             );
           }
         }
 
-        await db.pipelineRun.update({
-          where: { id: runId },
-          data: {
-            status: 'failed',
-            errorTail: message,
-            completedAt: new Date(),
-            statusSource: 'launcher',
-            lastEventAt: new Date(),
-          },
-        });
+        const failed = await markClaimedRunFailed(runId, ['queued'], message);
+        if (!failed) {
+          return buildLostLaunchClaimResponse(runId, 'SLURM submission');
+        }
 
         return jsonResponse({ error: message }, 500);
       }
     }
 
+    let spawnedLocalPid: number | null = null;
     try {
+      // Warning-event persistence and other post-claim work above can overlap
+      // with cancellation. Recheck immediately before spawning so a lost claim
+      // does not start a detached process unnecessarily.
+      const spawnStillClaimed = await db.pipelineRun.updateMany({
+        where: {
+          id: runId,
+          status: 'running',
+          ...unlockedLifecycleSourceFilter(),
+        },
+        data: {
+          currentStep: 'Launching',
+          lastEventAt: new Date(),
+        },
+      });
+      if (spawnStillClaimed.count === 0) {
+        return buildLostLaunchClaimResponse(runId, 'local launch');
+      }
+
       const childProcess = spawn('bash', [scriptPath], {
         cwd: prepResult.runFolder,
         stdio: 'ignore',
         detached: true,
       });
       childProcess.unref();
+      spawnedLocalPid =
+        typeof childProcess.pid === 'number' ? childProcess.pid : null;
 
       childProcess.on('close', (code) => {
         void finalizeLocalRun(run.id, pipelineId, code);
@@ -1426,8 +1544,12 @@ export async function startPipelineRunForOperator({
       // Guard on status='running' (set by the launch claim above): if the child
       // exited fast enough that finalizeLocalRun already moved the run to a
       // terminal state, this must NOT resurrect it back to 'running'.
-      await db.pipelineRun.updateMany({
-        where: { id: runId, status: 'running' },
+      const localLaunchPersisted = await db.pipelineRun.updateMany({
+        where: {
+          id: runId,
+          status: 'running',
+          ...unlockedLifecycleSourceFilter(),
+        },
         data: {
           queueJobId: `local-${childProcess.pid}`,
           startedAt: new Date(),
@@ -1437,6 +1559,15 @@ export async function startPipelineRunForOperator({
           lastEventAt: new Date(),
         },
       });
+      if (localLaunchPersisted.count === 0) {
+        if (spawnedLocalPid !== null) {
+          terminateDetachedLocalProcess(spawnedLocalPid);
+          console.error(
+            `[Pipeline Run] Terminated orphaned local process group ${spawnedLocalPid} after losing the launch claim.`
+          );
+        }
+        return buildLostLaunchClaimResponse(runId, 'local launch persistence');
+      }
 
       return jsonResponse({
         success: true,
@@ -1449,16 +1580,16 @@ export async function startPipelineRunForOperator({
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Local execution failed';
-      await db.pipelineRun.update({
-        where: { id: runId },
-        data: {
-          status: 'failed',
-          errorTail: message,
-          completedAt: new Date(),
-          statusSource: 'launcher',
-          lastEventAt: new Date(),
-        },
-      });
+      if (spawnedLocalPid !== null) {
+        terminateDetachedLocalProcess(spawnedLocalPid);
+        console.error(
+          `[Pipeline Run] Terminated orphaned local process group ${spawnedLocalPid} after launch persistence failure.`
+        );
+      }
+      const failed = await markClaimedRunFailed(runId, ['running'], message);
+      if (!failed) {
+        return buildLostLaunchClaimResponse(runId, 'local launch');
+      }
 
       return jsonResponse({ error: message }, 500);
     }

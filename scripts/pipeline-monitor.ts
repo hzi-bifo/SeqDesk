@@ -5,83 +5,19 @@ import {
   aggregateStepStatus,
   combineTaskStatuses,
   deriveStepStatus,
-  normalizeStatus,
+  getTraceTaskAttemptGroupKeys,
   reconcileRunStatus,
-  resolveLocalLiveness,
   type RunStatus,
 } from '../src/lib/pipelines/monitor-status';
-import { inferPipelineExitCode, processCompletedPipelineRun } from '../src/lib/pipelines/run-completion';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-
-const execFileAsync = promisify(execFile);
+import { finalizeCompletedPipelineRun } from '../src/lib/pipelines/run-completion';
+import {
+  isQueueSnapshotRetryable,
+  queueSnapshotToRunStatus,
+  readIdentityCheckedQueueSnapshot,
+} from '../src/lib/pipelines/queue-probe';
+import { notifyPipelineRunTerminalInApp } from '../src/lib/notifications/in-app';
 
 const DEFAULT_INTERVAL_MS = 15000;
-
-async function checkSlurmStatus(jobId: string): Promise<RunStatus | null> {
-  try {
-    const { stdout } = await execFileAsync('squeue', ['-h', '-j', jobId, '-o', '%T'], {
-      timeout: 5000,
-    });
-    const state = stdout.trim();
-    if (state) {
-      const normalized = normalizeStatus(state);
-      if (normalized.includes('run')) return 'running';
-      if (normalized.includes('pending') || normalized.includes('queue')) return 'queued';
-    }
-  } catch {
-    // Fall through to sacct
-  }
-
-  try {
-    const { stdout } = await execFileAsync('sacct', ['-j', jobId, '-o', 'State', '-n', '-P'], {
-      timeout: 5000,
-    });
-    const state = stdout.split('\n').map((line) => line.trim()).find(Boolean);
-    if (!state) return null;
-    const normalized = normalizeStatus(state);
-    if (normalized.includes('completed')) return 'completed';
-    if (normalized.includes('cancel')) return 'cancelled';
-    if (normalized.includes('fail') || normalized.includes('timeout') || normalized.includes('out_of_memory')) {
-      return 'failed';
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    // The PID is gone (ESRCH) or now owned by an unrelated, recycled process
-    // (EPERM). Either way our Nextflow process is no longer the live owner, so
-    // it is not safe to treat the PID as proof the run is still executing.
-    return false;
-  }
-}
-
-async function checkLocalStatus(
-  jobId: string,
-  runFolder: string | null,
-): Promise<RunStatus | null> {
-  const pidStr = jobId.replace(/^local-/, '');
-  const pid = Number.parseInt(pidStr, 10);
-  if (!Number.isFinite(pid) || pid <= 0) return null;
-
-  // Exit-marker-first: if the run already wrote a terminal exit code, it is
-  // terminal regardless of PID liveness. This stops a RECYCLED PID -- now owned
-  // by an unrelated live process -- from pinning a finished run as 'running'.
-  // PID liveness is only the fallback when no exit marker exists yet. A
-  // successful local run also makes the PID disappear, so a gone PID with no
-  // marker is 'unknown' (null), leaving a stuck trace status untouched rather
-  // than wrongly flipped to failed.
-  const exitCode = runFolder ? await inferPipelineExitCode(runFolder) : null;
-  return resolveLocalLiveness(exitCode, isPidAlive(pid));
-}
 
 export async function syncRun(run: {
   id: string;
@@ -98,24 +34,25 @@ export async function syncRun(run: {
 
   const pipelineSteps = getStepsForPipeline(run.pipelineId);
   const totalSteps = pipelineSteps.length;
+  const declaredStepIds = new Set(pipelineSteps.map((step) => step.id));
 
   if (run.runFolder) {
     const tracePath = await findTraceFile(run.runFolder);
     if (tracePath) {
       const trace = await parseTraceFile(tracePath);
+      const taskGroupKeys = getTraceTaskAttemptGroupKeys(trace.tasks);
       const stepMap = new Map<string, {
         stepName: string;
         status: 'pending' | 'running' | 'completed' | 'failed';
-        // Attempts grouped by logical task identity (process + tag). A step can
-        // map several DISTINCT processes/per-sample tasks to one id, so we keep
-        // each task's attempts separate to resolve retries WITHOUT letting one
-        // task's success mask a different task's failure.
+        // A step can map several DISTINCT processes/per-sample tasks to one id,
+        // so we keep each task's attempts separate to resolve retries WITHOUT
+        // letting one task's success mask a different task's failure.
         attemptsByTask: Map<string, ('pending' | 'running' | 'completed' | 'failed')[]>;
         startedAt?: Date;
         completedAt?: Date;
       }>();
 
-      for (const task of trace.tasks) {
+      for (const [taskIndex, task] of trace.tasks.entries()) {
         const stepDef = findStepByProcess(run.pipelineId, task.process);
         const stepId = stepDef?.id || task.process;
         const stepName = stepDef?.name || task.process;
@@ -125,12 +62,10 @@ export async function syncRun(run: {
         }
 
         const entry = stepMap.get(stepId)!;
-        // Group attempts by logical task identity (process + tag). Retries of the
-        // SAME task resolve together below (a later COMPLETED/CACHED clears its
-        // own earlier FAILED), while a DISTINCT sibling task can never clear
-        // another task's failure -- otherwise a genuinely failed task would be
-        // masked and the run falsely reported completed.
-        const taskIdentity = `${task.process}\u0000${task.tag ?? ''}`;
+        // The parser supplies task_id/attempt metadata when available. The
+        // grouping helper uses it to join retries while keeping blank/reused-tag
+        // siblings distinct; ambiguous legacy rows remain separate (fail-safe).
+        const taskIdentity = taskGroupKeys[taskIndex];
         const attempts = entry.attemptsByTask.get(taskIdentity) ?? [];
         attempts.push(deriveStepStatus(task.status, task.exit));
         entry.attemptsByTask.set(taskIdentity, attempts);
@@ -176,28 +111,23 @@ export async function syncRun(run: {
         });
       }
 
-      // SLURM runs are identified by a numeric queueJobId (local runs use a 'local-<pid>' id).
-      const isSlurmRun = /^\d+$/.test(run.queueJobId || '');
       const runningSteps = Array.from(stepMap.values()).filter((s) => s.status === 'running');
-      const completedSteps = Array.from(stepMap.values()).filter((s) => s.status === 'completed').length;
+      const completedKnownSteps = Array.from(stepMap.entries()).filter(
+        ([stepId, step]) => declaredStepIds.has(stepId) && step.status === 'completed'
+      ).length;
       if (runningSteps.length > 0) {
         currentStep = runningSteps[0].stepName;
         derivedStatus = 'running';
       } else if (
         stepMap.size > 0 &&
         Array.from(stepMap.values()).every((s) => s.status === 'completed') &&
-        (!isSlurmRun || (totalSteps > 0 && completedSteps >= totalSteps))
+        totalSteps > 0 &&
+        completedKnownSteps === totalSteps
       ) {
-        // "Every step that has appeared in the trace is completed" — but stepMap holds only steps whose
-        // processes have already run. For a SLURM run that is dangerous: the inline job ingests reads in
-        // an early wave (metaxpath: input + move_fastq), the gap before the next step is submitted reads
-        // as "all known steps done", and the run was falsely finalized 'completed' after 2 of 13 steps
-        // while the sbatch job was still RUNNING (cancelled by the e2e). So for SLURM runs ALSO require
-        // completedSteps >= the package's totalSteps (mirrors the ops-service traceCompletedKnownWork
-        // guard); a SLURM run with partial step coverage instead finalizes from the scheduler/exit
-        // marker via reconcileRunStatus(null, schedulerStatus) below. LOCAL runs keep the original
-        // every-appeared behaviour: their finalize path ingests outputs (e.g. read-cleaning's cleaned
-        // reads); routing them through the scheduler/marker path instead drops that ingestion.
+        // stepMap contains only processes that have appeared so far. Require every
+        // declared step for both local and SLURM runs; packages whose definitions
+        // intentionally cover only part of an external workflow finalize from the
+        // authoritative local exit marker or scheduler state below.
         derivedStatus = 'completed';
         currentStep = 'Completed';
       } else if (Array.from(stepMap.values()).some((s) => s.status === 'failed')) {
@@ -206,7 +136,7 @@ export async function syncRun(run: {
       }
 
       if (totalSteps > 0) {
-        progress = Math.min(99, Math.round((completedSteps / totalSteps) * 100));
+        progress = Math.min(99, Math.round((completedKnownSteps / totalSteps) * 100));
       } else {
         progress = trace.overallProgress;
       }
@@ -216,14 +146,53 @@ export async function syncRun(run: {
   // Always reconcile against the live scheduler job. A wedged Nextflow trace can
   // report "running 99%" long after the SLURM/local job has actually finished;
   // a terminal scheduler state overrides a stuck non-terminal trace status so a
-  // completed/failed run does not hang as running.
+  // completed/failed run does not hang as running. Conversely, an active job
+  // overrides a terminal-looking trace: the trace may only contain an early
+  // completed task wave while later tasks have not appeared yet.
   let schedulerStatus: RunStatus | null = null;
+  let schedulerConfirmationPending = false;
   if (run.queueJobId) {
-    schedulerStatus = run.queueJobId.startsWith('local-')
-      ? await checkLocalStatus(run.queueJobId, run.runFolder)
-      : await checkSlurmStatus(run.queueJobId);
+    const queueSnapshot = await readIdentityCheckedQueueSnapshot({
+      jobId: run.queueJobId,
+      runId: run.id,
+      runFolder: run.runFolder,
+    });
+    schedulerStatus = queueSnapshotToRunStatus(queueSnapshot);
+    schedulerConfirmationPending = isQueueSnapshotRetryable(queueSnapshot);
   }
+  const traceDerivedStatus = derivedStatus;
   derivedStatus = reconcileRunStatus(derivedStatus, schedulerStatus);
+  if (
+    schedulerConfirmationPending &&
+    derivedStatus !== null &&
+    ['completed', 'failed', 'cancelled'].includes(derivedStatus)
+  ) {
+    // A trace terminal label is not proof that the outer wrapper/allocation
+    // exited. Failed tasks may still retry while it is alive. Keep the run
+    // retryable until the exact stored identity is verified.
+    derivedStatus =
+      run.status === 'pending' || run.status === 'queued'
+        ? run.status
+        : 'running';
+    currentStep = 'Waiting for scheduler confirmation...';
+    progress = Math.min(99, progress ?? 99);
+  }
+
+  if (
+    (traceDerivedStatus === 'completed' ||
+      traceDerivedStatus === 'failed') &&
+    (derivedStatus === 'running' ||
+      derivedStatus === 'queued' ||
+      derivedStatus === 'pending')
+  ) {
+    currentStep =
+      schedulerConfirmationPending
+        ? 'Waiting for scheduler confirmation...'
+        : derivedStatus === 'running'
+        ? 'Running on compute node'
+        : 'Waiting for scheduler';
+    progress = Math.min(99, progress ?? 0);
+  }
 
   if (derivedStatus === 'completed') {
     progress = 100;
@@ -245,7 +214,23 @@ export async function syncRun(run: {
     // Resolution is idempotent (re-resolving skips existing artifacts).
     if (derivedStatus === 'completed') {
       try {
-        await processCompletedPipelineRun(run.id, run.pipelineId);
+        const finalized = await finalizeCompletedPipelineRun(
+          run.id,
+          run.pipelineId,
+          {
+            statusSource: 'monitor',
+          }
+        );
+        if (finalized === 'claim-unavailable') {
+          // Cancellation or another finalizer owns the lifecycle boundary.
+          return;
+        }
+        await notifyPipelineRunTerminalInApp(
+          run.id,
+          run.status,
+          'completed'
+        );
+        return;
       } catch (error) {
         console.error('[pipeline-monitor] Post-completion output resolution failed for run', run.id, error);
         derivedStatus = 'running';
@@ -257,7 +242,7 @@ export async function syncRun(run: {
     const update: Record<string, unknown> = { status: derivedStatus };
     if (currentStep) update.currentStep = currentStep;
     if (progress !== null) update.progress = progress;
-    if (derivedStatus === 'completed' || derivedStatus === 'failed' || derivedStatus === 'cancelled') {
+    if (derivedStatus === 'failed' || derivedStatus === 'cancelled') {
       update.completedAt = new Date();
     }
     if (derivedStatus === 'running' && run.status !== 'running') {
@@ -269,10 +254,27 @@ export async function syncRun(run: {
     const errorTail = await readTail(run.errorPath);
     if (errorTail) update.errorTail = errorTail;
 
-    await db.pipelineRun.update({
-      where: { id: run.id },
+    const { count } = await db.pipelineRun.updateMany({
+      where: {
+        id: run.id,
+        status: { in: ['pending', 'queued', 'running'] },
+        OR: [
+          { statusSource: null },
+          { statusSource: { notIn: ['finalizing', 'cancelling'] } },
+        ],
+      },
       data: update,
     });
+    if (
+      count > 0 &&
+      (derivedStatus === 'failed' || derivedStatus === 'cancelled')
+    ) {
+      await notifyPipelineRunTerminalInApp(
+        run.id,
+        run.status,
+        derivedStatus
+      );
+    }
   }
 }
 
@@ -309,7 +311,6 @@ async function main() {
     return;
   }
 
-  // eslint-disable-next-line no-console
   console.log(`[pipeline-monitor] running every ${interval}ms`);
   await runOnce();
   setInterval(runOnce, interval);

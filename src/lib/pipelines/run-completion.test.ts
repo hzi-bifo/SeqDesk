@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   db: {
     pipelineRun: {
       findUnique: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
   getAdapter: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock("./package-loader", () => ({
 }));
 
 import {
+  finalizeCompletedPipelineRun,
   inferPipelineExitCode,
   processCompletedPipelineRun,
 } from "./run-completion";
@@ -61,8 +63,59 @@ describe("run-completion", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  it("delegates submg runs directly to submg result processing", async () => {
-    mocks.processSubmgRunResults.mockResolvedValue({});
+  it("validates submg outputs and result processing before completing", async () => {
+    const runFolder = path.join(tempDir, "submg-run");
+    await fs.mkdir(
+      path.join(runFolder, "logging_0", "biological_samples"),
+      { recursive: true }
+    );
+    await fs.writeFile(
+      path.join(runFolder, "submg-metadata.json"),
+      JSON.stringify({
+        submission: {
+          samples: true,
+          reads: false,
+          assembly: false,
+          bins: false,
+        },
+        entries: [
+          {
+            index: 0,
+            sampleId: "sample-1",
+            readIds: [],
+            assemblyId: null,
+            bins: [],
+          },
+        ],
+      })
+    );
+    await fs.writeFile(
+      path.join(
+        runFolder,
+        "logging_0",
+        "biological_samples",
+        "sample_preliminary_accessions.txt"
+      ),
+      "alias\taccession\texternal_accession\nSAMPLE-1\tERS1\tSAMEA1\n"
+    );
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder,
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+      order: null,
+    });
+    mocks.processSubmgRunResults.mockResolvedValue({
+      samplesUpdated: 1,
+      readsUpdated: 1,
+      assembliesUpdated: 0,
+      binsUpdated: 0,
+      artifactsCreated: 2,
+      errors: [],
+      warnings: [],
+    });
 
     await processCompletedPipelineRun("run-1", "submg");
 
@@ -71,11 +124,208 @@ describe("run-completion", () => {
     expect(mocks.resolveOutputs).not.toHaveBeenCalled();
   });
 
-  it("returns when no adapter is available", async () => {
+  it("rejects submg receipts that produce no required accession writeback", async () => {
+    const runFolder = path.join(tempDir, "submg-no-writeback");
+    await fs.mkdir(
+      path.join(runFolder, "logging_0", "biological_samples"),
+      { recursive: true }
+    );
+    await fs.writeFile(
+      path.join(runFolder, "submg-metadata.json"),
+      JSON.stringify({
+        submission: {
+          samples: true,
+          reads: false,
+          assembly: false,
+          bins: false,
+        },
+        entries: [
+          {
+            index: 0,
+            sampleId: "sample-1",
+            readIds: [],
+            assemblyId: null,
+            bins: [],
+          },
+        ],
+      })
+    );
+    await fs.writeFile(
+      path.join(
+        runFolder,
+        "logging_0",
+        "biological_samples",
+        "sample_preliminary_accessions.txt"
+      ),
+      "alias\taccession\texternal_accession\nSAMPLE-1\tERS1\tSAMEA1\n"
+    );
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-submg-no-writeback",
+      runFolder,
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+      order: null,
+    });
+    mocks.processSubmgRunResults.mockResolvedValue({
+      samplesUpdated: 0,
+      readsUpdated: 0,
+      assembliesUpdated: 0,
+      binsUpdated: 0,
+      artifactsCreated: 2,
+      errors: [],
+      warnings: [],
+    });
+
+    await expect(
+      processCompletedPipelineRun("run-submg-no-writeback", "submg")
+    ).rejects.toThrow("missing accession writebacks: samples 0/1");
+  });
+
+  it("keeps submg retryable until every metadata entry has logging output", async () => {
+    const runFolder = path.join(tempDir, "submg-partial");
+    await fs.mkdir(
+      path.join(runFolder, "logging_0", "biological_samples"),
+      { recursive: true }
+    );
+    await fs.writeFile(
+      path.join(runFolder, "submg-metadata.json"),
+      JSON.stringify({
+        submission: {
+          samples: true,
+          reads: false,
+          assembly: false,
+          bins: false,
+        },
+        entries: [
+          {
+            index: 0,
+            sampleId: "sample-1",
+            readIds: [],
+            assemblyId: null,
+            bins: [],
+          },
+          {
+            index: 1,
+            sampleId: "sample-2",
+            readIds: [],
+            assemblyId: null,
+            bins: [],
+          },
+        ],
+      })
+    );
+    await fs.writeFile(
+      path.join(
+        runFolder,
+        "logging_0",
+        "biological_samples",
+        "sample_preliminary_accessions.txt"
+      ),
+      "alias\taccession\texternal_accession\nSAMPLE-1\tERS1\tSAMEA1\n"
+    );
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-submg-partial",
+      runFolder,
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      study: {
+        samples: [
+          { id: "sample-1", sampleId: "SAMPLE-1" },
+          { id: "sample-2", sampleId: "SAMPLE-2" },
+        ],
+      },
+      order: null,
+    });
+
+    await expect(
+      processCompletedPipelineRun("run-submg-partial", "submg")
+    ).rejects.toThrow("missing required accession receipts");
+
+    expect(mocks.processSubmgRunResults).not.toHaveBeenCalled();
+  }, 5_000);
+
+  it("does not accept an unrelated nonempty submg log as a submission receipt", async () => {
+    const runFolder = path.join(tempDir, "submg-unrelated-log");
+    await fs.mkdir(path.join(runFolder, "logging_0"), { recursive: true });
+    await fs.writeFile(
+      path.join(runFolder, "submg-metadata.json"),
+      JSON.stringify({
+        submission: {
+          samples: true,
+          reads: false,
+          assembly: false,
+          bins: false,
+        },
+        entries: [
+          {
+            index: 0,
+            sampleId: "sample-1",
+            readIds: [],
+            assemblyId: null,
+            bins: [],
+          },
+        ],
+      })
+    );
+    await fs.writeFile(
+      path.join(runFolder, "logging_0", "debug.log"),
+      "submg started"
+    );
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-submg-unrelated",
+      runFolder,
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+      order: null,
+    });
+
+    const nativeSetTimeout = globalThis.setTimeout;
+    vi.useFakeTimers();
+    try {
+      const promise = processCompletedPipelineRun(
+        "run-submg-unrelated",
+        "submg"
+      );
+      let settled = false;
+      void promise.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        }
+      );
+      const expectation = expect(promise).rejects.toThrow(
+        "missing required accession receipts"
+      );
+      for (let iteration = 0; iteration < 10 && !settled; iteration += 1) {
+        // Filesystem promises use the real event loop; allow each inspection to
+        // reach its settle timer before advancing the fake clock.
+        await new Promise((resolve) => nativeSetTimeout(resolve, 5));
+        if (vi.getTimerCount() > 0) {
+          await vi.runOnlyPendingTimersAsync();
+        }
+      }
+      await expectation;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(mocks.processSubmgRunResults).not.toHaveBeenCalled();
+  });
+
+  it("rejects when no output adapter is available", async () => {
     mocks.getAdapter.mockReturnValue(null);
     mocks.createGenericAdapter.mockReturnValue(null);
 
-    await processCompletedPipelineRun("run-1", "mag");
+    await expect(
+      processCompletedPipelineRun("run-1", "mag")
+    ).rejects.toThrow("has no output adapter");
 
     expect(mocks.db.pipelineRun.findUnique).not.toHaveBeenCalled();
     expect(mocks.registerAdapter).not.toHaveBeenCalled();
@@ -324,7 +574,381 @@ describe("run-completion", () => {
     expect(adapter.discoverOutputs).toHaveBeenCalledTimes(1);
   });
 
-  it("returns when run has no folder or no samples", async () => {
+  it("rejects instead of resolving a partial result when a required run output never appears", async () => {
+    const perSampleOnly = {
+      files: [
+        {
+          type: "artifact",
+          name: "SAMPLE-1_R1_fastqc.html",
+          path: "/tmp/run-1/output/fastqc_reports/SAMPLE-1_R1_fastqc.html",
+          outputId: "sample_qc_reports",
+          sampleId: "sample-1",
+        },
+      ],
+      errors: ["FastQC summary file was not produced"],
+      summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 1, reportsFound: 1 },
+    };
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue(perSampleOnly),
+    };
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          { id: "sample_qc_reports", scope: "sample" },
+          { id: "summary", scope: "run" },
+        ],
+      },
+    });
+    mocks.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder: "/tmp/run-1",
+      targetType: "order",
+      studyId: null,
+      orderId: "order-1",
+      study: null,
+      order: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+    });
+
+    vi.useFakeTimers();
+    try {
+      const promise = processCompletedPipelineRun("run-1", "fastqc");
+      const expectation = expect(promise).rejects.toThrow(
+        "missing required output(s) after 3 discovery attempts: summary"
+      );
+      await vi.runAllTimersAsync();
+      await expectation;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(adapter.discoverOutputs).toHaveBeenCalledTimes(3);
+    expect(mocks.resolveOutputs).not.toHaveBeenCalled();
+    expect(mocks.saveRunResults).not.toHaveBeenCalled();
+  });
+
+  it("requires each sample-scoped output for every target sample", async () => {
+    const onlyFirstSample = {
+      files: [
+        {
+          type: "artifact",
+          name: "SAMPLE-1.tsv",
+          path: "/tmp/run-1/output/per_sample/SAMPLE-1.tsv",
+          outputId: "sample_stats",
+          sampleId: "sample-1",
+        },
+      ],
+      errors: [],
+      summary: {
+        assembliesFound: 0,
+        binsFound: 0,
+        artifactsFound: 1,
+        reportsFound: 0,
+      },
+    };
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue(onlyFirstSample),
+    };
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "sample_stats", scope: "sample" }],
+      },
+    });
+    mocks.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runFolder: "/tmp/run-1",
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      study: {
+        samples: [
+          { id: "sample-1", sampleId: "SAMPLE-1" },
+          { id: "sample-2", sampleId: "SAMPLE-2" },
+        ],
+      },
+      order: null,
+    });
+
+    vi.useFakeTimers();
+    try {
+      const promise = processCompletedPipelineRun("run-1", "reads-qc");
+      const expectation = expect(promise).rejects.toThrow(
+        "sample_stats[sample:SAMPLE-2]"
+      );
+      await vi.runAllTimersAsync();
+      await expectation;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(adapter.discoverOutputs).toHaveBeenCalledTimes(3);
+    expect(mocks.resolveOutputs).not.toHaveBeenCalled();
+  });
+
+  it("requires sample-scoped outputs only for samples selected on the run", async () => {
+    const selectedSampleOutput = {
+      files: [
+        {
+          type: "artifact",
+          name: "SAMPLE-1.tsv",
+          path: "/tmp/run-subset/output/per_sample/SAMPLE-1.tsv",
+          outputId: "sample_stats",
+          sampleId: "sample-1",
+        },
+      ],
+      errors: [],
+      summary: {
+        assembliesFound: 0,
+        binsFound: 0,
+        artifactsFound: 1,
+        reportsFound: 0,
+      },
+    };
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue(selectedSampleOutput),
+    };
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "sample_stats", scope: "sample" }],
+      },
+    });
+    mocks.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-subset",
+      runFolder: "/tmp/run-subset",
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      inputSampleIds: JSON.stringify(["sample-1"]),
+      study: {
+        samples: [
+          { id: "sample-1", sampleId: "SAMPLE-1" },
+          { id: "sample-2", sampleId: "SAMPLE-2" },
+        ],
+      },
+      order: null,
+    });
+    mocks.resolveOutputs.mockResolvedValue({
+      success: true,
+      assembliesCreated: 0,
+      binsCreated: 0,
+      artifactsCreated: 1,
+      errors: [],
+      warnings: [],
+    });
+    mocks.saveRunResults.mockResolvedValue(undefined);
+
+    await processCompletedPipelineRun("run-subset", "reads-qc");
+
+    expect(adapter.discoverOutputs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }],
+      })
+    );
+    expect(mocks.resolveOutputs).toHaveBeenCalledWith(
+      "reads-qc",
+      "run-subset",
+      selectedSampleOutput
+    );
+  });
+
+  it("does not require outputs explicitly declared optional", async () => {
+    const discovered = {
+      files: [],
+      errors: [],
+      summary: {
+        assembliesFound: 0,
+        binsFound: 0,
+        artifactsFound: 0,
+        reportsFound: 0,
+      },
+    };
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue(discovered),
+    };
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "bins", scope: "sample", required: false }],
+      },
+    });
+    mocks.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-mag",
+      runFolder: "/tmp/run-mag",
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      study: {
+        samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }],
+      },
+      order: null,
+    });
+    mocks.resolveOutputs.mockResolvedValue({
+      success: true,
+      assembliesCreated: 0,
+      binsCreated: 0,
+      artifactsCreated: 0,
+      errors: [],
+      warnings: [],
+    });
+    mocks.saveRunResults.mockResolvedValue(undefined);
+
+    await processCompletedPipelineRun("run-mag", "mag");
+
+    expect(adapter.discoverOutputs).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveOutputs).toHaveBeenCalledWith(
+      "mag",
+      "run-mag",
+      discovered
+    );
+  });
+
+  it("requires config-controlled optional outputs when their branch is enabled", async () => {
+    const discovered = {
+      files: [],
+      errors: [],
+      summary: {
+        assembliesFound: 0,
+        binsFound: 0,
+        artifactsFound: 0,
+        reportsFound: 0,
+      },
+    };
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue(discovered),
+    };
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [
+          { id: "removed_reads", scope: "sample", required: false },
+        ],
+      },
+    });
+    mocks.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-read-cleaning",
+      runFolder: "/tmp/run-read-cleaning",
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      config: JSON.stringify({ outputRemovedReads: true }),
+      study: {
+        samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }],
+      },
+      order: null,
+    });
+
+    vi.useFakeTimers();
+    try {
+      const promise = processCompletedPipelineRun(
+        "run-read-cleaning",
+        "read-cleaning"
+      );
+      const expectation = expect(promise).rejects.toThrow(
+        "removed_reads[sample:SAMPLE-1]"
+      );
+      await vi.runAllTimersAsync();
+      await expectation;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(mocks.resolveOutputs).not.toHaveBeenCalled();
+  });
+
+  it("allows a disabled config-controlled optional output to be absent", async () => {
+    const discovered = {
+      files: [],
+      errors: [],
+      summary: {
+        assembliesFound: 0,
+        binsFound: 0,
+        artifactsFound: 0,
+        reportsFound: 0,
+      },
+    };
+    const adapter = {
+      discoverOutputs: vi.fn().mockResolvedValue(discovered),
+    };
+    mocks.getPackage.mockReturnValue({
+      manifest: {
+        outputs: [{ id: "krona_html", scope: "sample", required: false }],
+      },
+    });
+    mocks.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-krona-disabled",
+      runFolder: "/tmp/run-krona-disabled",
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      config: JSON.stringify({ krona: false }),
+      study: {
+        samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }],
+      },
+      order: null,
+    });
+    mocks.resolveOutputs.mockResolvedValue({
+      success: true,
+      assembliesCreated: 0,
+      binsCreated: 0,
+      artifactsCreated: 0,
+      errors: [],
+      warnings: [],
+    });
+    mocks.saveRunResults.mockResolvedValue(undefined);
+
+    await processCompletedPipelineRun(
+      "run-krona-disabled",
+      "kraken2-bracken"
+    );
+
+    expect(adapter.discoverOutputs).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveOutputs).toHaveBeenCalledWith(
+      "kraken2-bracken",
+      "run-krona-disabled",
+      discovered
+    );
+  });
+
+  it("persists resolver diagnostics but rejects an unsuccessful output resolution", async () => {
+    const discovered = {
+      files: [],
+      errors: [],
+      summary: { assembliesFound: 0, binsFound: 0, artifactsFound: 0, reportsFound: 0 },
+    };
+    const adapter = { discoverOutputs: vi.fn().mockResolvedValue(discovered) };
+    const failedResult = {
+      success: false,
+      assembliesCreated: 0,
+      binsCreated: 0,
+      artifactsCreated: 0,
+      errors: ["sample SAMPLE-1 could not be matched"],
+      warnings: [],
+    };
+    mocks.getPackage.mockReturnValue({ manifest: { outputs: [] } });
+    mocks.getAdapter.mockReturnValue(adapter);
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-2",
+      runFolder: "/tmp/run-2",
+      targetType: "order",
+      studyId: null,
+      orderId: "order-2",
+      study: null,
+      order: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+    });
+    mocks.resolveOutputs.mockResolvedValue(failedResult);
+    mocks.saveRunResults.mockResolvedValue(undefined);
+
+    await expect(
+      processCompletedPipelineRun("run-2", "fastq-checksum")
+    ).rejects.toThrow("sample SAMPLE-1 could not be matched");
+
+    expect(mocks.saveRunResults).toHaveBeenCalledWith("run-2", failedResult);
+  });
+
+  it("rejects when run state cannot support output resolution", async () => {
     const adapter = {
       discoverOutputs: vi.fn(),
     };
@@ -348,11 +972,437 @@ describe("run-completion", () => {
       order: null,
     });
 
-    await processCompletedPipelineRun("run-1", "mag");
-    await processCompletedPipelineRun("run-1", "mag");
+    await expect(
+      processCompletedPipelineRun("run-1", "mag")
+    ).rejects.toThrow("has no run folder");
+    await expect(
+      processCompletedPipelineRun("run-1", "mag")
+    ).rejects.toThrow("has no target samples");
 
     expect(adapter.discoverOutputs).not.toHaveBeenCalled();
     expect(mocks.resolveOutputs).not.toHaveBeenCalled();
+  });
+
+  it("keeps submg retryable when specialized result processing reports issues", async () => {
+    const runFolder = path.join(tempDir, "submg-failed");
+    await fs.mkdir(
+      path.join(runFolder, "logging_0", "biological_samples"),
+      { recursive: true }
+    );
+    await fs.writeFile(
+      path.join(runFolder, "submg-metadata.json"),
+      JSON.stringify({
+        submission: {
+          samples: true,
+          reads: false,
+          assembly: false,
+          bins: false,
+        },
+        entries: [
+          {
+            index: 0,
+            sampleId: "sample-1",
+            readIds: [],
+            assemblyId: null,
+            bins: [],
+          },
+        ],
+      })
+    );
+    await fs.writeFile(
+      path.join(
+        runFolder,
+        "logging_0",
+        "biological_samples",
+        "sample_preliminary_accessions.txt"
+      ),
+      "alias\taccession\texternal_accession\nSAMPLE-1\tERS1\tSAMEA1\n"
+    );
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-submg",
+      runFolder,
+      targetType: "study",
+      studyId: "study-1",
+      orderId: null,
+      study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+      order: null,
+    });
+    mocks.processSubmgRunResults.mockResolvedValue({
+      samplesUpdated: 0,
+      readsUpdated: 0,
+      assembliesUpdated: 0,
+      binsUpdated: 0,
+      artifactsCreated: 2,
+      errors: [],
+      warnings: ["Could not map read report"],
+    });
+
+    await expect(
+      processCompletedPipelineRun("run-submg", "submg")
+    ).rejects.toThrow("Could not map read report");
+  });
+
+  describe("finalizeCompletedPipelineRun", () => {
+    it("claims output finalization and commits completion after processing outputs", async () => {
+      const completedAt = new Date("2026-07-29T12:00:00.000Z");
+      const lastEventAt = new Date("2026-07-29T12:00:01.000Z");
+      const queueUpdatedAt = new Date("2026-07-29T12:00:02.000Z");
+      const discovered = {
+        files: [],
+        errors: [],
+        summary: {
+          assembliesFound: 0,
+          binsFound: 0,
+          artifactsFound: 0,
+          reportsFound: 0,
+        },
+      };
+      const adapter = {
+        discoverOutputs: vi.fn().mockResolvedValue(discovered),
+      };
+      const resolved = {
+        success: true,
+        assembliesCreated: 0,
+        binsCreated: 0,
+        artifactsCreated: 0,
+        errors: [],
+        warnings: [],
+      };
+
+      mocks.db.pipelineRun.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 1 });
+      mocks.getAdapter.mockReturnValue(adapter);
+      mocks.getPackage.mockReturnValue({ manifest: { outputs: [] } });
+      mocks.db.pipelineRun.findUnique.mockResolvedValue({
+        id: "run-finalize-success",
+        runFolder: "/tmp/run-finalize-success",
+        targetType: "study",
+        studyId: "study-1",
+        orderId: null,
+        inputSampleIds: null,
+        config: null,
+        study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+        order: null,
+      });
+      mocks.resolveOutputs.mockResolvedValue(resolved);
+      mocks.saveRunResults.mockResolvedValue(undefined);
+
+      const result = await finalizeCompletedPipelineRun(
+        "run-finalize-success",
+        "fastq-checksum",
+        {
+          completedAt,
+          statusSource: "weblog",
+          lastEventAt,
+          queueStatus: "COMPLETED",
+          queueReason: null,
+          queueUpdatedAt,
+        }
+      );
+
+      expect(result).toBe("completed");
+      expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(2);
+      expect(mocks.db.pipelineRun.updateMany).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: "run-finalize-success",
+            status: { in: ["pending", "queued", "running"] },
+          }),
+          data: expect.objectContaining({
+            statusSource: "finalizing",
+            currentStep: "Finalizing outputs...",
+            progress: 99,
+            completedAt: null,
+            lastEventAt: expect.any(Date),
+          }),
+        })
+      );
+      expect(adapter.discoverOutputs).toHaveBeenCalledTimes(1);
+      expect(mocks.resolveOutputs).toHaveBeenCalledWith(
+        "fastq-checksum",
+        "run-finalize-success",
+        discovered
+      );
+      expect(mocks.saveRunResults).toHaveBeenCalledWith(
+        "run-finalize-success",
+        resolved
+      );
+      const claimedAt =
+        mocks.db.pipelineRun.updateMany.mock.calls[0]?.[0]?.data?.lastEventAt;
+      expect(claimedAt).toBeInstanceOf(Date);
+      expect(mocks.db.pipelineRun.updateMany).toHaveBeenNthCalledWith(2, {
+        where: {
+          id: "run-finalize-success",
+          status: { in: ["pending", "queued", "running"] },
+          statusSource: "finalizing",
+          lastEventAt: claimedAt,
+        },
+        data: {
+          status: "completed",
+          progress: 100,
+          currentStep: "Completed",
+          completedAt,
+          statusSource: "weblog",
+          lastEventAt,
+          queueStatus: "COMPLETED",
+          queueReason: null,
+          queueUpdatedAt,
+        },
+      });
+    });
+
+    it("returns claim-unavailable without performing output work", async () => {
+      mocks.db.pipelineRun.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      const result = await finalizeCompletedPipelineRun(
+        "run-finalize-owned",
+        "fastq-checksum"
+      );
+
+      expect(result).toBe("claim-unavailable");
+      expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(1);
+      expect(mocks.getAdapter).not.toHaveBeenCalled();
+      expect(mocks.createGenericAdapter).not.toHaveBeenCalled();
+      expect(mocks.db.pipelineRun.findUnique).not.toHaveBeenCalled();
+      expect(mocks.resolveOutputs).not.toHaveBeenCalled();
+      expect(mocks.saveRunResults).not.toHaveBeenCalled();
+    });
+
+    it("renews the finalization lease while output processing is still running", async () => {
+      vi.useFakeTimers();
+      try {
+        const discovered = {
+          files: [],
+          errors: [],
+          summary: {
+            assembliesFound: 0,
+            binsFound: 0,
+            artifactsFound: 0,
+            reportsFound: 0,
+          },
+        };
+        let releaseDiscovery!: (value: typeof discovered) => void;
+        let markDiscoveryStarted!: () => void;
+        const discoveryStarted = new Promise<void>((resolve) => {
+          markDiscoveryStarted = resolve;
+        });
+        const pendingDiscovery = new Promise<typeof discovered>((resolve) => {
+          releaseDiscovery = resolve;
+        });
+        const adapter = {
+          discoverOutputs: vi.fn().mockImplementation(() => {
+            markDiscoveryStarted();
+            return pendingDiscovery;
+          }),
+        };
+        const resolved = {
+          success: true,
+          assembliesCreated: 0,
+          binsCreated: 0,
+          artifactsCreated: 0,
+          errors: [],
+          warnings: [],
+        };
+
+        mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
+        mocks.getAdapter.mockReturnValue(adapter);
+        mocks.getPackage.mockReturnValue({ manifest: { outputs: [] } });
+        mocks.db.pipelineRun.findUnique.mockResolvedValue({
+          id: "run-finalize-heartbeat",
+          runFolder: "/tmp/run-finalize-heartbeat",
+          targetType: "study",
+          studyId: "study-1",
+          orderId: null,
+          inputSampleIds: null,
+          config: null,
+          study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+          order: null,
+        });
+        mocks.resolveOutputs.mockResolvedValue(resolved);
+        mocks.saveRunResults.mockResolvedValue(undefined);
+
+        const finalization = finalizeCompletedPipelineRun(
+          "run-finalize-heartbeat",
+          "fastq-checksum"
+        );
+        await discoveryStarted;
+        expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(1);
+
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(2);
+        const originalToken =
+          mocks.db.pipelineRun.updateMany.mock.calls[0]?.[0]?.data?.lastEventAt;
+        const renewedToken =
+          mocks.db.pipelineRun.updateMany.mock.calls[1]?.[0]?.data?.lastEventAt;
+        expect(
+          mocks.db.pipelineRun.updateMany.mock.calls[1]?.[0]?.where?.lastEventAt
+        ).toBe(originalToken);
+        expect(renewedToken).toBeInstanceOf(Date);
+
+        releaseDiscovery(discovered);
+        await expect(finalization).resolves.toBe("completed");
+        expect(
+          mocks.db.pipelineRun.updateMany.mock.calls[2]?.[0]?.where?.lastEventAt
+        ).toBe(renewedToken);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not commit completion after a stale finalizer loses its lease", async () => {
+      vi.useFakeTimers();
+      try {
+        const discovered = {
+          files: [],
+          errors: [],
+          summary: {
+            assembliesFound: 0,
+            binsFound: 0,
+            artifactsFound: 0,
+            reportsFound: 0,
+          },
+        };
+        let releaseDiscovery!: () => void;
+        let markDiscoveryStarted!: () => void;
+        const discoveryStarted = new Promise<void>((resolve) => {
+          markDiscoveryStarted = resolve;
+        });
+        const pendingDiscovery = new Promise<typeof discovered>((resolve) => {
+          releaseDiscovery = () => resolve(discovered);
+        });
+        mocks.db.pipelineRun.updateMany
+          .mockResolvedValueOnce({ count: 1 })
+          .mockResolvedValueOnce({ count: 0 });
+        mocks.getAdapter.mockReturnValue({
+          discoverOutputs: vi.fn().mockImplementation(() => {
+            markDiscoveryStarted();
+            return pendingDiscovery;
+          }),
+        });
+        mocks.getPackage.mockReturnValue({ manifest: { outputs: [] } });
+        mocks.db.pipelineRun.findUnique.mockResolvedValue({
+          id: "run-finalize-stale",
+          runFolder: "/tmp/run-finalize-stale",
+          targetType: "study",
+          studyId: "study-1",
+          orderId: null,
+          inputSampleIds: null,
+          config: null,
+          study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+          order: null,
+        });
+        mocks.resolveOutputs.mockResolvedValue({
+          success: true,
+          assembliesCreated: 0,
+          binsCreated: 0,
+          artifactsCreated: 0,
+          errors: [],
+          warnings: [],
+        });
+        mocks.saveRunResults.mockResolvedValue(undefined);
+
+        const finalization = finalizeCompletedPipelineRun(
+          "run-finalize-stale",
+          "fastq-checksum"
+        );
+        await discoveryStarted;
+        await vi.advanceTimersByTimeAsync(60_000);
+        releaseDiscovery();
+
+        await expect(finalization).resolves.toBe("claim-unavailable");
+        expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(2);
+        expect(
+          mocks.db.pipelineRun.updateMany.mock.calls.some(
+            ([args]) => args?.data?.status === "completed"
+          )
+        ).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("releases the finalizing claim when output processing fails", async () => {
+      const discovered = {
+        files: [],
+        errors: [],
+        summary: {
+          assembliesFound: 0,
+          binsFound: 0,
+          artifactsFound: 0,
+          reportsFound: 0,
+        },
+      };
+      const adapter = {
+        discoverOutputs: vi.fn().mockResolvedValue(discovered),
+      };
+      const failedResolution = {
+        success: false,
+        assembliesCreated: 0,
+        binsCreated: 0,
+        artifactsCreated: 0,
+        errors: ["failed to persist output"],
+        warnings: [],
+      };
+
+      mocks.db.pipelineRun.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 1 });
+      mocks.getAdapter.mockReturnValue(adapter);
+      mocks.getPackage.mockReturnValue({ manifest: { outputs: [] } });
+      mocks.db.pipelineRun.findUnique.mockResolvedValue({
+        id: "run-finalize-failed",
+        runFolder: "/tmp/run-finalize-failed",
+        targetType: "study",
+        studyId: "study-1",
+        orderId: null,
+        inputSampleIds: null,
+        config: null,
+        study: { samples: [{ id: "sample-1", sampleId: "SAMPLE-1" }] },
+        order: null,
+      });
+      mocks.resolveOutputs.mockResolvedValue(failedResolution);
+      mocks.saveRunResults.mockResolvedValue(undefined);
+
+      await expect(
+        finalizeCompletedPipelineRun(
+          "run-finalize-failed",
+          "fastq-checksum",
+          { statusSource: "trace" }
+        )
+      ).rejects.toThrow("failed to persist output");
+
+      expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledTimes(2);
+      expect(mocks.saveRunResults).toHaveBeenCalledWith(
+        "run-finalize-failed",
+        failedResolution
+      );
+      const claimedAt =
+        mocks.db.pipelineRun.updateMany.mock.calls[0]?.[0]?.data?.lastEventAt;
+      expect(claimedAt).toBeInstanceOf(Date);
+      expect(mocks.db.pipelineRun.updateMany).toHaveBeenNthCalledWith(2, {
+        where: {
+          id: "run-finalize-failed",
+          status: { in: ["pending", "queued", "running"] },
+          statusSource: "finalizing",
+          lastEventAt: claimedAt,
+        },
+        data: {
+          status: "running",
+          statusSource: "trace",
+          currentStep: "Finalizing outputs...",
+          progress: 99,
+          completedAt: null,
+          lastEventAt: expect.any(Date),
+        },
+      });
+      expect(
+        mocks.db.pipelineRun.updateMany.mock.calls.some(
+          ([args]) => args?.data?.status === "completed"
+        )
+      ).toBe(false);
+    });
   });
 
   it("extracts exit code from stdout", async () => {

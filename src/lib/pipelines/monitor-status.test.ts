@@ -3,6 +3,7 @@ import {
   aggregateStepStatus,
   combineTaskStatuses,
   deriveStepStatus,
+  getTraceTaskAttemptGroupKeys,
   reconcileRunStatus,
   resolveLocalLiveness,
 } from "./monitor-status";
@@ -27,9 +28,16 @@ describe("reconcileRunStatus", () => {
     expect(reconcileRunStatus("running", null)).toBe("running");
   });
 
-  it("never overrides a terminal trace status (the pipeline's own report wins)", () => {
-    expect(reconcileRunStatus("completed", "running")).toBe("completed");
+  it("keeps a terminal-looking trace non-terminal while the scheduler is active", () => {
+    expect(reconcileRunStatus("completed", "running")).toBe("running");
+    expect(reconcileRunStatus("failed", "queued")).toBe("queued");
+  });
+
+  it("uses deterministic failure/cancellation precedence when both sources are terminal", () => {
     expect(reconcileRunStatus("failed", "completed")).toBe("failed");
+    expect(reconcileRunStatus("completed", "failed")).toBe("failed");
+    expect(reconcileRunStatus("cancelled", "completed")).toBe("cancelled");
+    expect(reconcileRunStatus("completed", "cancelled")).toBe("cancelled");
     expect(reconcileRunStatus("completed", null)).toBe("completed");
   });
 
@@ -135,6 +143,84 @@ describe("combineTaskStatuses", () => {
     // But a genuinely failed (never-retried) distinct task still fails the step.
     const failedConcot = aggregateStepStatus(["failed"]);
     expect(combineTaskStatuses([failedConcot, metabat])).toBe("failed");
+  });
+});
+
+describe("getTraceTaskAttemptGroupKeys", () => {
+  it("keeps first-attempt siblings separate even when their tags match", () => {
+    const keys = getTraceTaskAttemptGroupKeys([
+      {
+        process: "ALIGN",
+        tag: "same-sample",
+        taskId: "1",
+        attempt: 1,
+        status: "FAILED",
+        exit: 1,
+      },
+      {
+        process: "ALIGN",
+        tag: "same-sample",
+        taskId: "2",
+        attempt: 1,
+        status: "COMPLETED",
+        exit: 0,
+      },
+    ]);
+
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("joins an explicit retry to its failed predecessor", () => {
+    const keys = getTraceTaskAttemptGroupKeys([
+      {
+        process: "ALIGN",
+        tag: "same-sample",
+        taskId: "1",
+        attempt: 1,
+        status: "FAILED",
+        exit: 1,
+      },
+      {
+        process: "ALIGN",
+        tag: "same-sample",
+        taskId: "2",
+        attempt: 1,
+        status: "COMPLETED",
+        exit: 0,
+      },
+      {
+        process: "ALIGN",
+        tag: "same-sample",
+        taskId: "3",
+        attempt: 2,
+        status: "COMPLETED",
+        exit: 0,
+      },
+    ]);
+
+    expect(keys[2]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[1]);
+  });
+
+  it("keeps ambiguous legacy rows separate when attempt metadata is absent", () => {
+    const keys = getTraceTaskAttemptGroupKeys([
+      {
+        process: "ALIGN",
+        tag: "",
+        taskId: "1",
+        status: "FAILED",
+        exit: 1,
+      },
+      {
+        process: "ALIGN",
+        tag: "",
+        taskId: "2",
+        status: "COMPLETED",
+        exit: 0,
+      },
+    ]);
+
+    expect(keys[0]).not.toBe(keys[1]);
   });
 });
 

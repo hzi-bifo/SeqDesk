@@ -5,7 +5,38 @@ import { db } from '@/lib/db';
 import fs from 'fs/promises';
 import { isDemoSession } from '@/lib/demo/server';
 import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-service';
+import {
+  isActiveQueueState,
+  isQueueSnapshotRetryable,
+  isTerminalQueueState,
+  readIdentityCheckedQueueSnapshot,
+} from '@/lib/pipelines/queue-probe';
 import { cleanupRunOutputData } from '@/lib/pipelines/run-delete';
+
+const runInclude = {
+  study: {
+    select: {
+      id: true,
+      samples: {
+        select: {
+          id: true,
+          sampleId: true,
+        },
+      },
+    },
+  },
+  order: {
+    select: {
+      id: true,
+      samples: {
+        select: {
+          id: true,
+          sampleId: true,
+        },
+      },
+    },
+  },
+} as const;
 
 function parseSelectedSampleIds(value: string | null): string[] | null {
   if (!value) return null;
@@ -41,37 +72,27 @@ export async function POST(
 
     const { id } = await params;
 
-    const run = await db.pipelineRun.findUnique({
+    let run = await db.pipelineRun.findUnique({
       where: { id },
-      include: {
-        // queueJobId is included via the model fields by default with `include`.
-        study: {
-          select: {
-            id: true,
-            samples: {
-              select: {
-                id: true,
-                sampleId: true,
-              },
-            },
-          },
-        },
-        order: {
-          select: {
-            id: true,
-            samples: {
-              select: {
-                id: true,
-                sampleId: true,
-              },
-            },
-          },
-        },
-      },
+      include: runInclude,
     });
 
     if (!run) {
       return NextResponse.json({ error: 'Run not found' }, { status: 404 });
+    }
+
+    if (
+      run.statusSource === 'finalizing' ||
+      run.statusSource === 'cancelling'
+    ) {
+      return NextResponse.json(
+        {
+          error: 'Cannot delete while another lifecycle operation is active',
+          status: run.status,
+          statusSource: run.statusSource,
+        },
+        { status: 409 }
+      );
     }
 
     if (run.status === 'running') {
@@ -81,20 +102,96 @@ export async function POST(
       );
     }
 
-    // A queued/pending run can already have a live scheduler job (SLURM job or
-    // local PID) attached. Deleting the row + folder without cancelling would
-    // orphan that job: the scheduler later promotes it to running against a
-    // deleted run folder and a missing run row, wasting compute and producing
-    // failed weblog callbacks. Cancel the live job before deleting.
-    if (
-      run.queueJobId &&
-      (run.status === 'queued' || run.status === 'pending')
-    ) {
+    // Claim every pending/queued run, including the launch window before a job
+    // ID has been persisted. The cancellation claim fences the launcher; only a
+    // fresh terminal snapshot may proceed to destructive cleanup.
+    if (run.status === 'queued' || run.status === 'pending') {
       const cancelResult = await cancelPipelineRunForOperator(id);
       if (cancelResult.status >= 400) {
         return NextResponse.json(cancelResult.body, {
           status: cancelResult.status,
         });
+      }
+
+      // Deletion is destructive and must only continue once cancellation has
+      // positively reached a terminal state. This also prevents a future
+      // cancellation-response regression from treating an active lifecycle
+      // owner (`finalizing`/`cancelling`) as safe to delete.
+      const cancellationStatus =
+        typeof cancelResult.body.status === 'string'
+          ? cancelResult.body.status
+          : null;
+      if (
+        !cancellationStatus ||
+        !['completed', 'failed', 'cancelled'].includes(cancellationStatus)
+      ) {
+        return NextResponse.json(
+          {
+            error: 'Run cancellation has not reached a terminal state',
+            status: cancellationStatus ?? run.status,
+            statusSource:
+              typeof cancelResult.body.statusSource === 'string'
+                ? cancelResult.body.statusSource
+                : null,
+          },
+          { status: 409 }
+        );
+      }
+
+      run = await db.pipelineRun.findUnique({
+        where: { id },
+        include: runInclude,
+      });
+      if (!run) {
+        return NextResponse.json({ error: 'Run not found' }, { status: 404 });
+      }
+    }
+
+    if (
+      run.statusSource === 'finalizing' ||
+      run.statusSource === 'cancelling'
+    ) {
+      return NextResponse.json(
+        {
+          error: 'Cannot delete while another lifecycle operation is active',
+          status: run.status,
+          statusSource: run.statusSource,
+        },
+        { status: 409 }
+      );
+    }
+    if (!['completed', 'failed', 'cancelled'].includes(run.status)) {
+      return NextResponse.json(
+        {
+          error: 'Run has not reached a terminal state',
+          status: run.status,
+          statusSource: run.statusSource,
+        },
+        { status: 409 }
+      );
+    }
+
+    if (run.queueJobId) {
+      const queueSnapshot = await readIdentityCheckedQueueSnapshot({
+        jobId: run.queueJobId,
+        runId: run.id,
+        runFolder: run.runFolder,
+      });
+      if (
+        isQueueSnapshotRetryable(queueSnapshot) ||
+        isActiveQueueState(queueSnapshot.state) ||
+        !isTerminalQueueState(queueSnapshot.state)
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              queueSnapshot.reason ||
+              'Cannot delete until the exact queue job is verified inactive',
+            status: run.status,
+            queueStatus: queueSnapshot.state,
+          },
+          { status: 409 }
+        );
       }
     }
 
@@ -105,7 +202,7 @@ export async function POST(
           ? { type: 'study' as const, studyId: run.studyId }
           : null;
 
-    if (target && ['completed', 'failed', 'cancelled'].includes(run.status)) {
+    if (target) {
       const selectedSampleIds = parseSelectedSampleIds(run.inputSampleIds);
       const selectedSampleIdSet = selectedSampleIds
         ? new Set(selectedSampleIds)

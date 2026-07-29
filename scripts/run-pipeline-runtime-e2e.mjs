@@ -41,28 +41,25 @@ const WRITEBACK_SPEC = {
   // Artifacts + read-field writeback. The run GET select now exposes readCount1/2 +
   // avgQuality1/2 (pipeline-run-ops-service.ts), so on top of the per-sample QC artifacts
   // we assert fastqc's in-place Read merge actually landed in the DB
-  // (assertFastqcReadFieldWriteback) — not just that the artifact rows exist. The
-  // per-sample artifacts ingest reliably; the run-scoped `summary` artifact ingests
-  // inconsistently (the file is always produced, but the PipelineArtifact row sometimes
-  // isn't), so it is not required here — tracked as a known fastqc output-resolution flake.
+  // (assertReadFieldWriteback) — not just that the artifact rows exist. The
+  // finalizer now waits for all required manifest outputs, including the late
+  // summary, before recording completion.
   fastqc: {
     kind: "artifacts",
-    requiredOutputIds: ["sample_qc_reports", "sample_qc_data"],
+    requiredOutputIds: ["sample_qc_reports", "sample_qc_data", "summary"],
   },
-  // reads-qc (merge: Read.readCount/avgQuality) and read-cleaning (PendingReadCandidate
-  // rows, admin_review) write back via paths the run GET select does not expose, so on
-  // real Gemma data we assert the strong, observable thing: the run reaches `completed`
-  // with progress=100 and its outputs/logs are retrievable through the app (the
-  // universal gate + retrieval in assertPipelineWriteback). Proves the pipeline ran to
-  // completion on real ONT input and produced output.
-  "reads-qc": { kind: "completes" },
+  // reads-qc merges readCount/avgQuality fields into active Read rows. The run GET
+  // exposes both those fields and pipelineSources, so every mode must prove that
+  // this exact run (not a preceding local/SLURM run) performed the merge.
+  "reads-qc": { kind: "read-fields" },
+  // read-cleaning writes PendingReadCandidate rows exposed through a separate
+  // admin-review endpoint.
   "read-cleaning": { kind: "completes" },
   // metaxpath is a private, STUDY-scoped add-on (installed via the ci-runner profile, not in
   // this repo's pipelines/; the app rejects order targets). Hard `completes` gate. On top of it
-  // assertMetaxpathTaxonomy tries to prove it actually CLASSIFIED — fetch the top-50 report and
-  // require a populated table (+ the expected taxon when SEQDESK_METAXPATH_EXPECT_TAXON is set).
-  // BUT metaxpath currently exposes no curated run artifacts, so that content check WARNS until
-  // metaxpath curates its combined_report output; once it does, the check enforces automatically.
+  // assertMetaxpathTaxonomy proves it actually CLASSIFIED by fetching the combined
+  // report and requiring a populated table (+ the expected taxon when
+  // SEQDESK_METAXPATH_EXPECT_TAXON is set).
   metaxpath: { kind: "completes" },
   // mag (nf-core/mag, short-read paired-end) on a tiny public example dataset. `completes` is a
   // genuine assembly proof for mag: the app holds a mag run in `running` until materialized
@@ -216,7 +213,19 @@ async function commandExists(command) {
   }
 }
 
-function createClient(baseUrl) {
+function writeRunState(filePath, state) {
+  if (!filePath) return;
+  const parent = path.dirname(filePath);
+  const temporary = `${filePath}.${process.pid}.tmp`;
+  fs.mkdirSync(parent, { recursive: true });
+  fs.writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  fs.renameSync(temporary, filePath);
+}
+
+function createClient(baseUrl, requestTimeoutMs = 120_000) {
   const jar = new CookieJar();
   async function request(pathname, init = {}) {
     const headers = new Headers(init.headers || {});
@@ -227,6 +236,7 @@ function createClient(baseUrl) {
       ...init,
       headers,
       redirect: init.redirect || "manual",
+      signal: init.signal || AbortSignal.timeout(requestTimeoutMs),
     });
     jar.update(response);
     return response;
@@ -651,6 +661,119 @@ function assertSlurmRunShape(run, startPayload) {
   return jobId;
 }
 
+const SLURM_TERMINAL_STATES = new Set([
+  "BOOT_FAIL",
+  "CANCELLED",
+  "COMPLETED",
+  "DEADLINE",
+  "FAILED",
+  "NODE_FAIL",
+  "OUT_OF_MEMORY",
+  "PREEMPTED",
+  "REVOKED",
+  "TIMEOUT",
+]);
+
+function normalizeSlurmState(value) {
+  return String(value || "")
+    .trim()
+    .split(/\s+/)[0]
+    .replace(/\+$/, "")
+    .toUpperCase();
+}
+
+function pathIsWithin(candidate, expectedRoot) {
+  const relative = path.relative(path.resolve(expectedRoot), path.resolve(candidate));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
+async function assertSlurmAccounting({ jobId, runFolder }) {
+  const deadline = Date.now() + 90_000;
+  let latest = null;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    let stdout = "";
+    try {
+      ({ stdout } = await execFileAsync(
+        "sacct",
+        [
+          "-X",
+          "-P",
+          "-j",
+          jobId,
+          "--noheader",
+          "--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%220,NodeList",
+        ],
+        { timeout: 10_000, maxBuffer: 1024 * 1024 },
+      ));
+      lastError = null;
+    } catch (error) {
+      // Accounting can lag the job's output marker briefly. Preserve the last
+      // error and retry; a missing/failed accounting query is a hard failure at
+      // the deadline rather than a warning.
+      lastError = error instanceof Error ? error.message : String(error);
+      await sleep(2000);
+      continue;
+    }
+
+    const row = stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.split("|"))
+      .find(([rowJobId]) => rowJobId === jobId);
+
+    if (row) {
+      const [rowJobId, jobName, rawState, exitCode, workDir, nodeList] = row;
+      const state = normalizeSlurmState(rawState);
+      latest = {
+        jobId: rowJobId,
+        jobName: String(jobName || "").trim(),
+        state,
+        exitCode: String(exitCode || "").trim(),
+        workDir: String(workDir || "").trim(),
+        nodeList: String(nodeList || "").trim(),
+      };
+
+      if (state === "COMPLETED") {
+        if (!latest.jobName.startsWith("seqdesk-")) {
+          fail("SLURM accounting job name is not owned by SeqDesk", JSON.stringify(latest, null, 2));
+        }
+        if (!latest.workDir || !pathIsWithin(latest.workDir, runFolder)) {
+          fail(
+            "SLURM accounting WorkDir is outside the pipeline run folder",
+            JSON.stringify({ ...latest, expectedRunFolder: runFolder }, null, 2),
+          );
+        }
+        if (latest.exitCode !== "0:0") {
+          fail("SLURM accounting reported a non-zero allocation exit", JSON.stringify(latest, null, 2));
+        }
+        if (
+          !latest.nodeList ||
+          /^(?:none|unknown|n\/a|\(null\)|none assigned)$/i.test(latest.nodeList)
+        ) {
+          fail("SLURM accounting did not record an allocated node", JSON.stringify(latest, null, 2));
+        }
+        return latest;
+      }
+
+      if (SLURM_TERMINAL_STATES.has(state)) {
+        fail(
+          `SLURM allocation ${jobId} reached terminal state ${state}, expected COMPLETED`,
+          JSON.stringify(latest, null, 2),
+        );
+      }
+    }
+    await sleep(2000);
+  }
+
+  fail(
+    `SLURM accounting did not prove completed allocation ${jobId} within 90 seconds`,
+    JSON.stringify({ latest, lastError, expectedRunFolder: runFolder }, null, 2),
+  );
+}
+
 async function assertRunFiles({ mode, run, jobId, pipelineId }) {
   const runFolder = run?.runFolder;
   if (!runFolder) fail(`${mode} run did not report a runFolder`, JSON.stringify(run, null, 2));
@@ -713,15 +836,54 @@ async function assertRunFiles({ mode, run, jobId, pipelineId }) {
     fail(`${mode} simulate-reads run did not create simulation summary`, summaryPath);
   }
 
+  const slurmAccounting =
+    mode === "slurm"
+      ? await assertSlurmAccounting({ jobId, runFolder })
+      : null;
+
   return {
     runScript: `${runFolder}/run.sh`,
     nextflowConfig: nextflowConfig ? `${runFolder}/nextflow.config` : null,
     pipelineOut,
     summaryPath,
+    ...(slurmAccounting ? { slurmAccounting } : {}),
   };
 }
 
 const MD5_HEX = /^[0-9a-f]{32}$/;
+
+function parsePipelineSources(value) {
+  if (typeof value !== "string" || value.trim() === "") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function assertReadSource({ read, pipelineId, runId }) {
+  const sources = parsePipelineSources(read?.pipelineSources);
+  if (sources[pipelineId] !== runId) {
+    fail(
+      `Read writeback attribution: read ${read?.id ?? "<unknown>"} was not written by ${pipelineId} run ${runId}`,
+      JSON.stringify(
+        {
+          runId,
+          pipelineId,
+          readId: read?.id ?? null,
+          pipelineRunId: read?.pipelineRunId ?? null,
+          pipelineSources: sources,
+        },
+        null,
+        2,
+      ),
+    );
+  }
+  return sources;
+}
 
 function md5OfFile(filePath) {
   return new Promise((resolve, reject) => {
@@ -798,17 +960,21 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
     writeback = { ...writeback, content };
     if (pipelineId === "fastqc") {
       writeback.summaryMetrics = await assertFastqcSummaryMetrics({ client, run, runId });
-      writeback.readFields = assertFastqcReadFieldWriteback({ run, runId });
+      writeback.readFields = assertReadFieldWriteback({
+        run,
+        runId,
+        pipelineId,
+      });
     }
+  } else if (spec.kind === "read-fields") {
+    writeback = assertReadFieldWriteback({ run, runId, pipelineId });
   } else if (spec.kind === "completes") {
     // The universal gate above already proved completed/progress=100; observability +
     // retrieval (below the dispatch) prove the outputs/logs are reachable. Nothing more
     // to assert for pipelines whose writeback isn't exposed by the run GET.
     writeback = { kind: "completes", note: "ran to completion; writeback not exposed via run GET" };
-    // metaxpath: go beyond `completes` and prove it actually classified. The trace proof
-    // (hard) requires real classification processes to have COMPLETED — catches a run that
-    // finalized as completed after only ingesting reads. The taxonomy proof (content) is the
-    // stronger check but WARNS until metaxpath curates its combined_report artifact.
+  // metaxpath: go beyond `completes` and prove it actually classified. Both the
+  // trace and combined taxonomy report are required hard gates.
     if (pipelineId === "metaxpath") {
       writeback.trace = await assertMetaxpathTrace({ client, run, runId });
       writeback.taxonomy = await assertMetaxpathTaxonomy({ client, run, runId });
@@ -1048,16 +1214,19 @@ async function assertMetaxpathTaxonomy({ client, run, runId }) {
     artifacts.find((a) => /combined_report\.top50\.(txt|tsv|csv|html)$/i.test(a?.path || "")) ||
     artifacts.find((a) => /combined_report\./i.test(a?.path || ""));
   if (!report?.path) {
-    // metaxpath currently exposes NO curated run artifacts (run.artifacts === []), so the app
-    // can't serve its combined_report to the test. WARN rather than fail — the `completes` gate
-    // + retrieval still hold. To make this a hard taxonomy-content proof, metaxpath (the private
-    // package) must expose its combined_report.top50.* as a curated output (its own descriptor
-    // linter already recommends this); then this assertion enforces content + the expected taxon.
-    console.warn(
-      `WARN metaxpath: no combined_report artifact exposed on run ${runId} ` +
-        `(run.artifacts is empty) — taxonomy-content proof skipped until metaxpath curates its report.`,
+    fail(
+      `metaxpath: run ${runId} exposed no required combined_report artifact`,
+      JSON.stringify(
+        {
+          runId,
+          artifactPaths: artifacts
+            .map((artifact) => artifact?.path)
+            .filter(Boolean),
+        },
+        null,
+        2,
+      ),
     );
-    return { report: null, taxaRows: 0, exposed: false };
   }
   const res = await client.request(
     `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(report.path)}&download=1`,
@@ -1142,32 +1311,30 @@ export function summarizeTraceCompleteness(text) {
 // processes COMPLETED — not just the trivial INPUT_CHECK + MV_FASTQ that the false-green run
 // had. Thresholds sit far below a real Gemma run (~13 processes across 5 samples) and far
 // above the false-green (3 rows, 0 meaningful), so this cannot red a genuinely-working run.
-// If trace.txt can't be fetched or parses to zero completed rows (a format/plumbing issue,
-// not a real "did nothing"), WARN instead of failing.
+// Trace retrieval and parsing are part of this hard integration proof: a green
+// result must show actual classification work, not status=completed alone.
 async function assertMetaxpathTrace({ client, run, runId }) {
   const MIN_MEANINGFUL = 3; // distinct classification processes beyond INPUT_CHECK/MV_FASTQ
   if (!run?.runFolder) {
-    console.warn(`WARN metaxpath: run ${runId} has no runFolder — trace proof skipped.`);
-    return { checked: false, reason: "no-runFolder" };
+    fail(`metaxpath: run ${runId} has no runFolder for trace verification`);
   }
   const tracePath = `${run.runFolder}/trace.txt`;
   const res = await client.request(
     `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(tracePath)}&download=1`,
   );
   if (!res.ok) {
-    console.warn(
-      `WARN metaxpath: trace.txt not retrievable for run ${runId} (${res.status}) — trace proof skipped.`,
+    fail(
+      `metaxpath: trace.txt is not retrievable for run ${runId} (${res.status})`,
+      summarizeBody(await res.text()),
     );
-    return { checked: false, reason: `http-${res.status}` };
   }
   const text = Buffer.from(await res.arrayBuffer()).toString("utf8");
   const summary = summarizeTraceCompleteness(text);
   if (summary.completedRowCount === 0) {
-    console.warn(
-      `WARN metaxpath: trace.txt for run ${runId} parsed to 0 completed rows ` +
-        `(possible format change) — trace proof skipped.`,
+    fail(
+      `metaxpath: trace.txt for run ${runId} parsed to 0 completed rows`,
+      text.slice(0, 2000),
     );
-    return { checked: false, reason: "no-completed-rows" };
   }
   if (summary.meaningfulProcesses.length < MIN_MEANINGFUL) {
     // Diagnostic: the run was marked completed with no classification work. Dump the run's
@@ -1366,13 +1533,17 @@ async function assertSimulateConfigOutput({ client, run, runId }) {
   const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
   const summary = artifacts.find((a) => a?.outputId === "summary" && a?.path);
   if (!summary) {
-    console.warn(`WARN: simulate-reads run ${runId} has no summary artifact; skipping config->output check`);
-    return { skipped: true, reason: "no summary artifact" };
+    fail(
+      `Config->output: simulate-reads run ${runId} has no required summary artifact`,
+      JSON.stringify({ runId, outputIds: artifacts.map((artifact) => artifact?.outputId).filter(Boolean) }, null, 2),
+    );
   }
   const fetched = await tryFetchRunFileText({ client, runId, filePath: summary.path });
   if (!fetched) {
-    console.warn(`WARN: simulate-reads summary not servable (${summary.path}); skipping config->output check`);
-    return { skipped: true, reason: "summary not servable" };
+    fail(
+      `Config->output: simulate-reads summary is not servable (${summary.path})`,
+      JSON.stringify({ runId, path: summary.path }, null, 2),
+    );
   }
   const { header, rows } = parseTsv(fetched.text);
   const idx = header.indexOf("read_count1");
@@ -1393,15 +1564,11 @@ async function assertSimulateConfigOutput({ client, run, runId }) {
   return { expectedReadCount, sampleRows: counts.length, path: summary.path };
 }
 
-// fastqc read-field DB writeback: fastqc runs in MERGE mode — its per-sample QC step
-// writes readCount1/2 + avgQuality1/2 IN PLACE onto each target sample's active Read
-// (alongside the QC artifacts). The run GET select now exposes those fields, so assert
-// the writeback landed in the DB, not just that the artifact rows exist. This is the
-// complement to assertFastqcSummaryMetrics (which checks the TSV file content): here we
-// prove the metrics were ingested back onto the Read rows. Plausibility bounds catch a
-// writeback that ran but produced garbage (e.g. a read count leaking into the quality
-// field). Single-end reads (file1 only, e.g. Gemma ONT) correctly skip the *2 fields.
-function assertFastqcReadFieldWriteback({ run, runId }) {
+// Read-field DB writeback for FastQC/reads-qc. Both pipelines MERGE per-sample
+// readCount1/2 + avgQuality1/2 onto active Read rows. Besides validating the
+// values, require pipelineSources[pipelineId] to name this exact run so a SLURM
+// assertion cannot reuse fields written by a preceding local run.
+function assertReadFieldWriteback({ run, runId, pipelineId }) {
   const targetSamples =
     run?.targetType === "order"
       ? run?.order?.samples
@@ -1420,7 +1587,7 @@ function assertFastqcReadFieldWriteback({ run, runId }) {
   const readsWithFile1 = reads.filter((read) => read.file1 != null);
   if (readsWithFile1.length === 0) {
     fail(
-      `fastqc read-field writeback: run ${runId} exposed no active reads with a file1`,
+      `${pipelineId} read-field writeback: run ${runId} exposed no active reads with a file1`,
       JSON.stringify(
         { runId, targetType: run?.targetType, sampleCount: samples.length, readCount: reads.length },
         null,
@@ -1436,13 +1603,13 @@ function assertFastqcReadFieldWriteback({ run, runId }) {
   const assertCountAndQuality = (read, countField, qualField, count, qual) => {
     if (!(Number(count) > 0)) {
       fail(
-        `fastqc read-field writeback: read ${read.id} (sample ${read.sampleId}) has non-positive ${countField}=${count}`,
+        `${pipelineId} read-field writeback: read ${read.id} (sample ${read.sampleId}) has non-positive ${countField}=${count}`,
         JSON.stringify({ runId, [countField]: count ?? null }, null, 2),
       );
     }
     if (!(Number(qual) > 0 && Number(qual) <= QUAL_PLAUSIBLE_MAX)) {
       fail(
-        `fastqc read-field writeback: read ${read.id} (sample ${read.sampleId}) has implausible ${qualField}=${qual} (expected 0 < q <= ${QUAL_PLAUSIBLE_MAX})`,
+        `${pipelineId} read-field writeback: read ${read.id} (sample ${read.sampleId}) has implausible ${qualField}=${qual} (expected 0 < q <= ${QUAL_PLAUSIBLE_MAX})`,
         JSON.stringify({ runId, [qualField]: qual ?? null }, null, 2),
       );
     }
@@ -1451,6 +1618,7 @@ function assertFastqcReadFieldWriteback({ run, runId }) {
   let populated = 0;
   const warnings = [];
   for (const read of readsWithFile1) {
+    assertReadSource({ read, pipelineId, runId });
     if (read.readCount1 == null || read.avgQuality1 == null) {
       warnings.push(`read ${read.id} (sample ${read.sampleId}) missing readCount1/avgQuality1 writeback`);
       continue;
@@ -1466,49 +1634,36 @@ function assertFastqcReadFieldWriteback({ run, runId }) {
     populated += 1;
   }
 
-  // The read-field merge ingests inconsistently across finalization paths: the
-  // /sync/queue path persists it (the SLURM E2E saw it on every read), but the
-  // trace/pipeline-monitor path has finalized the run + per-sample artifacts WITHOUT the
-  // per-read merge (the real Gemma/Alma run saw 0 of 5) — same class as the known
-  // run-scoped summary-artifact flake. So a WHOLESALE miss warn+skips rather than reding
-  // the suite; we still hard-assert plausibility on any populated read above (a
-  // populated-but-garbage value is a real correctness failure, not a flake).
-  if (populated < 1) {
-    console.warn(
-      `WARN: fastqc read-field writeback not ingested for run ${runId} (0 of ${readsWithFile1.length} reads carried readCount1/avgQuality1) — skipping (cross-path writeback flake; see PIPELINE_E2E_COVERAGE.md)`,
+  if (warnings.length > 0 || populated !== readsWithFile1.length) {
+    fail(
+      `${pipelineId} read-field writeback incomplete for run ${runId}: ${populated} of ${readsWithFile1.length} reads populated`,
+      JSON.stringify({ runId, warnings, readsWithFile1: readsWithFile1.length, populated }, null, 2),
     );
-    return { skipped: true, reason: "read-field-writeback-not-ingested", readsWithFile1: readsWithFile1.length };
   }
-  for (const warning of warnings) console.warn(`WARN: fastqc read-field writeback — ${warning}`);
 
-  return { readsAsserted: populated, readsWithFile1: readsWithFile1.length, warnings: warnings.length };
+  return { readsAsserted: populated, readsWithFile1: readsWithFile1.length, warnings: 0 };
 }
 
 // fastqc summary-TSV metric correctness: fetch summary/fastqc-summary.tsv (the file is
-// reliably produced even when its PipelineArtifact row ingests flakily, so locate it by
-// path — the summary artifact if present, else derived as a sibling of the per-sample
-// reports) and assert the computed QC metrics are real (read counts > 0, mean quality in
-// a plausible Phred range), not blank/placeholder.
+// required to be ingested as a PipelineArtifact row) and assert the computed QC metrics
+// are real (read counts > 0, mean quality in a plausible Phred range), not
+// blank/placeholder.
 async function assertFastqcSummaryMetrics({ client, run, runId }) {
   const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
-  let summaryPath = artifacts.find((a) => a?.outputId === "summary" && a?.path)?.path;
+  const summaryPath = artifacts.find((a) => a?.outputId === "summary" && a?.path)?.path;
   if (!summaryPath) {
-    const report = artifacts.find(
-      (a) => a?.outputId === "sample_qc_reports" && typeof a?.path === "string" && a.path.includes("/fastqc_reports/"),
+    fail(
+      `fastqc summary metrics: run ${runId} has no required summary artifact`,
+      JSON.stringify({ runId, outputIds: artifacts.map((artifact) => artifact?.outputId).filter(Boolean) }, null, 2),
     );
-    if (report) {
-      summaryPath = report.path.replace(/\/fastqc_reports\/[^/]*$/, "/summary/fastqc-summary.tsv");
-    }
-  }
-  if (!summaryPath) {
-    console.warn(`WARN: could not locate fastqc-summary.tsv for run ${runId}; skipping metric check`);
-    return { skipped: true, reason: "no summary path" };
   }
 
   const fetched = await tryFetchRunFileText({ client, runId, filePath: summaryPath });
   if (!fetched) {
-    console.warn(`WARN: fastqc summary not servable (${summaryPath}); skipping metric check`);
-    return { skipped: true, reason: "summary not servable" };
+    fail(
+      `fastqc summary metrics: required summary is not servable (${summaryPath})`,
+      JSON.stringify({ runId, path: summaryPath }, null, 2),
+    );
   }
   const { header, rows } = parseTsv(fetched.text);
   const col = (name) => header.indexOf(name);
@@ -1594,6 +1749,7 @@ async function assertChecksumReads({ run, runId, client, baseUrl }) {
   // (A) FORMAT + COVERAGE: every read with a file path must carry a populated checksum.
   let populatedChecksum1 = 0;
   for (const read of readsWithFile1) {
+    assertReadSource({ read, pipelineId: "fastq-checksum", runId });
     if (typeof read.checksum1 !== "string" || !MD5_HEX.test(read.checksum1)) {
       fail(
         `Checksum writeback: read ${read.id} (sample ${read.sampleId}) has file1 but checksum1 is not a 32-char md5 hex`,
@@ -1620,8 +1776,8 @@ async function assertChecksumReads({ run, runId, client, baseUrl }) {
   // (B) CORRECTNESS: independently recompute md5(file1) on disk for at least one read
   // and require it to equal the stored checksum1. Read.file1 is stored RELATIVE to the
   // pipeline data base path, so resolve it against that root (the script runs on the
-  // runner, which can read the shared data dir) before hashing. If the path still isn't
-  // readable, WARN and skip the equality (format + coverage above still hard-fail).
+  // runner, which can read the shared data dir) before hashing. Readability is
+  // part of the end-to-end contract; a green gate must independently verify md5.
   let md5Verified = 0;
   const md5Warnings = [];
 
@@ -1673,9 +1829,18 @@ async function assertChecksumReads({ run, runId, client, baseUrl }) {
   }
 
   if (md5Verified === 0) {
-    console.warn(
-      `WARN: checksum writeback md5 equality could not be verified on disk for run ${runId} ` +
-        `(format + coverage still passed): ${md5Warnings.join("; ") || "no readable file1"}`,
+    fail(
+      `Checksum writeback: md5(file1) could not be verified on disk for run ${runId}`,
+      JSON.stringify(
+        {
+          runId,
+          warnings: md5Warnings,
+          dataBasePath,
+          readsWithFile1: readsWithFile1.length,
+        },
+        null,
+        2,
+      ),
     );
   }
   for (const warning of md5Warnings) {
@@ -1684,8 +1849,8 @@ async function assertChecksumReads({ run, runId, client, baseUrl }) {
 
   // (C) PAIRED-READ CORRECTNESS: for reads with a second file, independently recompute
   // md5(file2) and require it to equal the stored checksum2 (today only file1 was
-  // verified on disk). Best-effort: single-end orders have no file2, so absence is a
-  // warn, not a failure; a mismatch on a real paired read is a hard fail.
+  // verified on disk). Single-end orders legitimately have no file2; whenever
+  // paired reads are present, at least one R2 md5 must be independently verified.
   const readsWithFile2 = reads.filter((read) => read.file2 != null && read.checksum2 != null);
   let md5Verified2 = 0;
   for (const read of readsWithFile2) {
@@ -1707,9 +1872,13 @@ async function assertChecksumReads({ run, runId, client, baseUrl }) {
     break;
   }
   if (readsWithFile2.length > 0 && md5Verified2 === 0) {
-    console.warn(
-      `WARN: checksum2 md5 equality could not be verified on disk for run ${runId} ` +
-        `(${readsWithFile2.length} paired read(s) present but file2 unreadable here)`,
+    fail(
+      `Checksum writeback: md5(file2) could not be verified on disk for run ${runId}`,
+      JSON.stringify(
+        { runId, pairedReads: readsWithFile2.length, dataBasePath },
+        null,
+        2,
+      ),
     );
   }
 
@@ -1728,9 +1897,8 @@ async function assertChecksumReads({ run, runId, client, baseUrl }) {
 
 // simulate-reads runs in REPLACE mode: on completion it creates a NEW active Read for
 // each sample (file1/2 + checksum1/2 + readCount1/2) and supersedes the prior reads.
-// Attribute via pipelineRunId/pipelineSources when the run GET exposes them, else fall
-// back to "an active read carries a valid md5 checksum1" (the seed sets none, so a
-// populated checksum proves this run wrote it). Mirrors run-slurm-pipeline-e2e.mjs.
+// Require exact run attribution. A checksum-only fallback is unsafe because the
+// same fixture is intentionally reused across local and SLURM modes.
 function assertReplaceReads({ run, runId, baseUrl }) {
   const targetSamples =
     run?.targetType === "order"
@@ -1746,20 +1914,8 @@ function assertReplaceReads({ run, runId, baseUrl }) {
     }
   }
 
-  let attributionMode;
-  let attributed = [];
-  if (reads.some((read) => "pipelineRunId" in read)) {
-    attributionMode = "pipelineRunId";
-    attributed = reads.filter((read) => read.pipelineRunId === runId);
-  } else if (reads.some((read) => typeof read.pipelineSources === "string")) {
-    attributionMode = "pipelineSources";
-    attributed = reads.filter((read) => String(read.pipelineSources || "").includes(runId));
-  } else {
-    attributionMode = "checksum1-fallback";
-    attributed = reads.filter(
-      (read) => typeof read.checksum1 === "string" && MD5_HEX.test(read.checksum1),
-    );
-  }
+  const attributionMode = "pipelineRunId+pipelineSources";
+  const attributed = reads.filter((read) => read.pipelineRunId === runId);
 
   if (attributed.length === 0) {
     fail(
@@ -1771,17 +1927,19 @@ function assertReplaceReads({ run, runId, baseUrl }) {
       ),
     );
   }
-  // readCount1 is now exposed by the run GET select (pipeline-run-ops-service.ts), so the
-  // attributed read must carry a positive readCount1. The `in` guard keeps this passing
-  // against an older app build that predates the select change (key absent -> skipped).
-  if (attributionMode !== "checksum1-fallback") {
-    for (const read of attributed) {
-      if ("readCount1" in read && !(Number(read.readCount1) > 0)) {
-        fail(
-          `Replace writeback: attributed read ${read.id} has no positive readCount1`,
-          JSON.stringify({ runId, readCount1: read.readCount1 ?? null }, null, 2),
-        );
-      }
+  for (const read of attributed) {
+    assertReadSource({ read, pipelineId: "simulate-reads", runId });
+    if (!(Number(read.readCount1) > 0)) {
+      fail(
+        `Replace writeback: attributed read ${read.id} has no positive readCount1`,
+        JSON.stringify({ runId, readCount1: read.readCount1 ?? null }, null, 2),
+      );
+    }
+    if (typeof read.checksum1 !== "string" || !MD5_HEX.test(read.checksum1)) {
+      fail(
+        `Replace writeback: attributed read ${read.id} has no valid checksum1`,
+        JSON.stringify({ runId, checksum1: read.checksum1 ?? null }, null, 2),
+      );
     }
   }
 
@@ -1805,6 +1963,7 @@ async function createAndStartRun({
   slurm,
   timeoutSeconds,
   label,
+  runStateFile,
 }) {
   // Exactly one of orderId / studyId is sent, matching the pipeline's manifest target.
   const createBody = {
@@ -1828,6 +1987,14 @@ async function createAndStartRun({
   if (typeof runId !== "string" || !runId) {
     fail(`Create ${label} pipeline run did not return run.id`, JSON.stringify(createPayload, null, 2));
   }
+  writeRunState(runStateFile, {
+    pipelineId,
+    runId,
+    label,
+    requestedExecutionMode: executionMode,
+    runFolder: createPayload?.run?.runFolder || null,
+    jobId: null,
+  });
 
   const startPayload = await requestJson(
     client,
@@ -1842,6 +2009,15 @@ async function createAndStartRun({
     },
     `Start ${label} pipeline run`,
   );
+  writeRunState(runStateFile, {
+    pipelineId,
+    runId,
+    label,
+    requestedExecutionMode: executionMode,
+    resolvedExecutionMode: startPayload?.executionMode || null,
+    runFolder: startPayload?.runFolder || createPayload?.run?.runFolder || null,
+    jobId: startPayload?.jobId || null,
+  });
 
   const result = await pollUntilDone({
     client,
@@ -1874,6 +2050,11 @@ async function main() {
   const password = args.password || process.env.SEQDESK_RUNTIME_E2E_PASSWORD || "admin";
   const timeoutSeconds =
     toOptionalInt(args.timeout || process.env.SEQDESK_RUNTIME_E2E_TIMEOUT_SECONDS) || 600;
+  const httpTimeoutSeconds =
+    toOptionalInt(
+      args["http-timeout"] ||
+        process.env.SEQDESK_RUNTIME_E2E_HTTP_TIMEOUT_SECONDS,
+    ) || 120;
   const pipelineId =
     args["pipeline-id"] || process.env.SEQDESK_RUNTIME_E2E_PIPELINE_ID || "simulate-reads";
   const skipLocal = Boolean(args["skip-local"]);
@@ -1884,6 +2065,9 @@ async function main() {
     envFlag(process.env.SEQDESK_RUNTIME_E2E_ENSURE_DUMMY_DATA);
   const expectDefaultMode = toOptionalString(
     args["expect-default-mode"] || process.env.SEQDESK_RUNTIME_E2E_EXPECT_DEFAULT_MODE,
+  );
+  const runStateFile = toOptionalString(
+    args["run-state-file"] || process.env.SEQDESK_RUNTIME_E2E_RUN_STATE_FILE,
   );
 
   if (skipLocal && skipSlurm && !includeDefaultPolicy) {
@@ -1901,7 +2085,7 @@ async function main() {
     }
   }
 
-  const client = createClient(baseUrl);
+  const client = createClient(baseUrl, httpTimeoutSeconds * 1000);
   const session = await loginAdmin({ client, baseUrl, email, password });
 
   // Persist the sequencing data base path before any seed. Fixture extractors (mag-smoke,
@@ -2020,6 +2204,7 @@ async function main() {
       executionMode: "local",
       timeoutSeconds,
       label: "local override",
+      runStateFile,
     });
     assertLocalRunShape(localResult.run, localResult.startPayload);
     const files = await assertRunFiles({
@@ -2058,6 +2243,7 @@ async function main() {
       slurm,
       timeoutSeconds,
       label: "SLURM override",
+      runStateFile,
     });
     const jobId = assertSlurmRunShape(slurmResult.run, slurmResult.startPayload);
     const files = await assertRunFiles({
@@ -2097,6 +2283,7 @@ async function main() {
       executionMode: "default",
       timeoutSeconds,
       label: "configured default policy",
+      runStateFile,
     });
     const resolvedMode = defaultResult.startPayload.executionMode || defaultResult.run.executionMode;
     if (!["local", "slurm"].includes(resolvedMode)) {
@@ -2131,6 +2318,12 @@ async function main() {
       jobId,
       pipelineId,
     });
+    const writeback = await assertPipelineWriteback({
+      client,
+      baseUrl,
+      runId: defaultResult.runId,
+      pipelineId,
+    });
     runs.push({
       label: "configured default policy",
       executionMode: resolvedMode,
@@ -2140,6 +2333,7 @@ async function main() {
       status: defaultResult.run.status,
       runFolder: defaultResult.run.runFolder,
       files,
+      writeback,
       slurmLogs: jobId ? slurmLogPaths(defaultResult.run.runFolder, jobId) : [],
       debugEndpoint: debugEndpoint(baseUrl, defaultResult.runId),
     });

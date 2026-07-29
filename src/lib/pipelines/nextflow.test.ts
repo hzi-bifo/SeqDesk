@@ -85,6 +85,41 @@ describe("nextflow", () => {
     expect(result.completedAt?.getTime()).toBe(new Date("2024-01-01T10:09:00").getTime());
   });
 
+  it("parses task identity and attempt metadata for retry-aware aggregation", async () => {
+    const content = [
+      "task_id\thash\tprocess\ttag\tattempt\tstatus\texit",
+      "1\taa/111111\tALIGN\tsame-sample\t1\tFAILED\t1",
+      "2\tbb/222222\tALIGN\tsame-sample\t1\tCOMPLETED\t0",
+      "3\tcc/333333\tALIGN\tsame-sample\t2\tCOMPLETED\t0",
+    ].join("\n");
+
+    const tracePath = await writeFile("trace-retry.txt", content);
+    const result = await parseTraceFile(tracePath);
+
+    expect(result.tasks[0]).toMatchObject({
+      taskId: "1",
+      hash: "aa/111111",
+      attempt: 1,
+    });
+    // Task 3 retries failed task 1, while task 2 is a distinct same-tag
+    // sibling. Both logical tasks ultimately completed.
+    expect(result.overallProgress).toBe(100);
+  });
+
+  it("does not collapse distinct siblings that reuse a tag", async () => {
+    const content = [
+      "task_id\tprocess\ttag\tattempt\tstatus\texit",
+      "1\tALIGN\tsame-sample\t1\tFAILED\t1",
+      "2\tALIGN\tsame-sample\t1\tCOMPLETED\t0",
+    ].join("\n");
+
+    const tracePath = await writeFile("trace-reused-tag.txt", content);
+    const result = await parseTraceFile(tracePath);
+
+    expect(result.tasks).toHaveLength(2);
+    expect(result.overallProgress).toBe(50);
+  });
+
   it("parseTraceFile handles invalid and missing timestamp values", async () => {
     const content = [
       "process\tstatus\tsubmit\tstart\tcomplete\texit",

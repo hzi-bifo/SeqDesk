@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 
 import { ManifestSchema } from "./manifest-schema";
 
@@ -68,6 +70,50 @@ describe("manifest-schema", () => {
     expect(result.success).toBe(false);
     expect(result.error?.issues[0].path).toEqual(["outputs", 0, "destination"]);
   });
+
+  it("accepts an output explicitly declared optional", () => {
+    const result = ManifestSchema.safeParse({
+      ...baseManifest,
+      outputs: [
+        {
+          id: "conditional_report",
+          scope: "sample",
+          required: false,
+          destination: "run_artifact",
+          discovery: {
+            pattern: "reports/*.html",
+          },
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data.outputs[0].required).toBe(false);
+  });
+
+  it.each([
+    ["read-cleaning", "removed_reads"],
+    ["kraken2-bracken", "krona_html"],
+  ])(
+    "accepts the built-in %s optional output declaration",
+    (pipelineId, outputId) => {
+      const manifest = JSON.parse(
+        fs.readFileSync(
+          path.join(__dirname, "../../../pipelines", pipelineId, "manifest.json"),
+          "utf8"
+        )
+      );
+
+      const result = ManifestSchema.safeParse(manifest);
+
+      expect(result.success).toBe(true);
+      expect(
+        result.data.outputs.find(
+          (output: { id: string }) => output.id === outputId
+        )?.required
+      ).toBe(false);
+    }
+  );
 
   it("rejects unknown top-level keys when strict mode is enabled", () => {
     const badManifest = {

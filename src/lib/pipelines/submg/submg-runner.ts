@@ -6,6 +6,10 @@ import { decryptSecret } from "@/lib/security/secret-store";
 import type { ExecutionSettings } from "@/lib/pipelines/generic-executor";
 import { resolveAssemblySelection } from "@/lib/pipelines/assembly-selection";
 import { resolveOrderPlatform } from "@/lib/pipelines/order-platform";
+import {
+  buildPipelineRunFolder,
+  buildSeqDeskSlurmJobName,
+} from "@/lib/pipelines/run-directory";
 
 interface PrepareSubmgRunOptions {
   runId: string;
@@ -54,6 +58,12 @@ interface SubmgRunMetadata {
   runId: string;
   studyId: string;
   generatedAt: string;
+  submission?: {
+    samples: boolean;
+    reads: boolean;
+    assembly: boolean;
+    bins: boolean;
+  };
   entries: SubmgEntryMetadata[];
 }
 
@@ -269,8 +279,20 @@ function sanitizeSlurmOptions(value: string | undefined): string {
   const trimmed = value?.trim();
   if (!trimmed) return "";
   if (/[\r\n]/.test(trimmed)) return "";
-  return trimmed
-    .split(/\s+/)
+  const tokens = trimmed.split(/\s+/);
+  const filtered: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === "--job-name" || token === "-J") {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--job-name=") || /^-J\S+/.test(token)) {
+      continue;
+    }
+    filtered.push(token);
+  }
+  return filtered
     .map((token) => shellQuote(token))
     .join(" ");
 }
@@ -661,14 +683,70 @@ async function generateRunNumber(pipelineId: string): Promise<string> {
   return `${prefix}${nextNum.toString().padStart(3, "0")}`;
 }
 
-async function prepareRunDirectory(runNumber: string, pipelineRunDir: string): Promise<string> {
-  const runFolder = path.resolve(pipelineRunDir, runNumber);
-  await fs.mkdir(runFolder, { recursive: true });
-  await fs.mkdir(path.join(runFolder, "logs"), { recursive: true });
+function isRunNumberConflict(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
+}
+
+async function reserveRunNumber(
+  runId: string,
+  pipelineId: string
+): Promise<string | null> {
+  const maxAttempts = 5;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const runNumber = await generateRunNumber(pipelineId);
+    try {
+      const reserved = await db.pipelineRun.updateMany({
+        where: {
+          id: runId,
+          status: "queued",
+          OR: [
+            { statusSource: null },
+            {
+              statusSource: {
+                notIn: ["finalizing", "cancelling"],
+              },
+            },
+          ],
+        },
+        data: { runNumber },
+      });
+      if (reserved.count === 0) return null;
+      return runNumber;
+    } catch (error) {
+      if (isRunNumberConflict(error) && attempt < maxAttempts - 1) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("Could not allocate a unique SubMG run number");
+}
+
+async function prepareRunDirectory(
+  runNumber: string,
+  runId: string,
+  pipelineRunDir: string
+): Promise<string> {
+  const runFolder = buildPipelineRunFolder(pipelineRunDir, runNumber, runId);
+  try {
+    await fs.mkdir(runFolder, { recursive: true });
+    await fs.mkdir(path.join(runFolder, "logs"), { recursive: true });
+  } catch (error) {
+    // The folder identity includes the immutable database run ID, so this
+    // cleanup can only remove this preparation's partially-created tree.
+    await fs.rm(runFolder, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
   return runFolder;
 }
 
 function buildSubmgScript(params: {
+  runId: string;
   runFolder: string;
   entries: Array<{ index: number; yamlPath: string; hasBins: boolean; sampleCode: string }>;
   executionSettings: ExecutionSettings;
@@ -686,7 +764,7 @@ function buildSubmgScript(params: {
     testMode: boolean;
   };
 }): string {
-  const { runFolder, entries, executionSettings, config, credentials } = params;
+  const { runId, runFolder, entries, executionSettings, config, credentials } = params;
   const lines: string[] = [];
 
   const slurmQueue = sanitizeSlurmQueue(executionSettings.slurmQueue, "cpu");
@@ -699,8 +777,10 @@ function buildSubmgScript(params: {
   const slurmMemory = sanitizeSlurmMemory(executionSettings.slurmMemory, "32GB");
   const slurmTimeLimit = sanitizeSlurmTimeLimit(executionSettings.slurmTimeLimit, 6);
   const slurmOptions = sanitizeSlurmOptions(executionSettings.slurmOptions);
+  const slurmJobName = buildSeqDeskSlurmJobName(runId);
 
   lines.push("#!/bin/bash");
+  lines.push(`#SBATCH --job-name=${slurmJobName}`);
   lines.push(`#SBATCH -p ${slurmQueue}`);
   lines.push(`#SBATCH -c ${slurmCores}`);
   lines.push(`#SBATCH --mem='${slurmMemory}'`);
@@ -1159,10 +1239,26 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
   const binningSoftware = toString(options.config.binningSoftware, "MetaBAT2");
   const insertSize = toPositiveInteger(options.config.insertSize, DEFAULT_INSERT_SIZE);
 
-  const runNumber = await generateRunNumber("submg");
-  const runFolder = await prepareRunDirectory(runNumber, options.executionSettings.pipelineRunDir);
+  // Reserve the globally unique display number before writing any submission
+  // payload. The read-max allocator can race another preparation; Prisma's
+  // unique constraint selects the winner and the loser recomputes/retries.
+  const runNumber = await reserveRunNumber(run.id, "submg");
+  if (!runNumber) {
+    return {
+      success: false,
+      errors: ["Run was cancelled or finalized during preparation"],
+      warnings,
+    };
+  }
+  const runFolder = await prepareRunDirectory(
+    runNumber,
+    run.id,
+    options.executionSettings.pipelineRunDir
+  );
+  let preparationSucceeded = false;
 
-  const metadataEntries: SubmgEntryMetadata[] = [];
+  try {
+    const metadataEntries: SubmgEntryMetadata[] = [];
 
   for (let index = 0; index < selectedSamples.length; index += 1) {
     const sample = selectedSamples[index];
@@ -1525,6 +1621,12 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     runId: run.id,
     studyId: study.id,
     generatedAt: new Date().toISOString(),
+    submission: {
+      samples: true,
+      reads: submitReads,
+      assembly: submitAssembly,
+      bins: submitBins,
+    },
     entries: metadataEntries,
   };
 
@@ -1532,6 +1634,7 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
   await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2));
 
   const script = buildSubmgScript({
+    runId: run.id,
     runFolder,
     entries: metadataEntries.map((entry) => ({
       index: entry.index,
@@ -1559,19 +1662,41 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
   await fs.writeFile(scriptPath, script);
   await fs.chmod(scriptPath, 0o755);
 
-  await db.pipelineRun.update({
-    where: { id: run.id },
+  // Persist the prepared folder only while the start request still owns the
+  // queued claim. submg preparation can be comparatively slow (metadata,
+  // manifests, checksums), so cancellation can legitimately arrive before
+  // this point. Never turn that terminal row back into queued.
+  const prepared = await db.pipelineRun.updateMany({
+    where: {
+      id: run.id,
+      status: "queued",
+      OR: [
+        { statusSource: null },
+        {
+          statusSource: {
+            notIn: ["finalizing", "cancelling"],
+          },
+        },
+      ],
+    },
     data: {
       runNumber,
       runFolder,
       outputPath: path.join(runFolder, "logs", "pipeline.out"),
       errorPath: path.join(runFolder, "logs", "pipeline.err"),
-      status: "queued",
       queuedAt: new Date(),
       config: JSON.stringify(options.config),
     },
   });
+  if (prepared.count === 0) {
+    return {
+      success: false,
+      errors: ["Run was cancelled or finalized during preparation"],
+      warnings,
+    };
+  }
 
+  preparationSucceeded = true;
   return {
     success: true,
     runNumber,
@@ -1580,6 +1705,11 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
     errors,
     warnings,
   };
+  } finally {
+    if (!preparationSucceeded) {
+      await fs.rm(runFolder, { recursive: true, force: true }).catch(() => {});
+    }
+  }
 }
 
 export async function processSubmgRunResults(runId: string): Promise<SubmgProcessingResult> {

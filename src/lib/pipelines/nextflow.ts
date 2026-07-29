@@ -1,10 +1,39 @@
 import fs from 'fs/promises';
 import path from 'path';
 
+import { getTraceTaskAttemptGroupKeys } from './monitor-status';
+
+// Nextflow's default trace omits `attempt`, `process`, and `tag`. SeqDesk needs
+// those fields to distinguish same-tag sibling tasks from retry attempts.
+export const SEQDESK_TRACE_FIELDS = [
+  'task_id',
+  'hash',
+  'native_id',
+  'process',
+  'tag',
+  'name',
+  'status',
+  'exit',
+  'attempt',
+  'submit',
+  'start',
+  'complete',
+  'duration',
+  'realtime',
+  '%cpu',
+  'peak_rss',
+  'peak_vmem',
+  'rchar',
+  'wchar',
+].join(',');
+
 export interface TraceTask {
   process: string;
   status: string;
   exit?: number;
+  taskId?: string;
+  hash?: string;
+  attempt?: number;
   submit?: Date;
   start?: Date;
   complete?: Date;
@@ -85,15 +114,16 @@ function isSuccessStatus(status: string): boolean {
 
 /**
  * Collapse retried tasks (a FAILED attempt row plus a later COMPLETED/CACHED retry
- * row for the same logical task) to one row per logical identity (process + tag),
- * preferring a terminal-success row over an earlier failed attempt. Used only for
- * progress aggregation; the returned task list keeps every row.
+ * row for the same logical task) to one row per retry-aware identity, preferring
+ * a terminal-success row over an earlier failed attempt. Used only for progress
+ * aggregation; the returned task list keeps every row.
  */
 function dedupeRetriedTasks(tasks: TraceTask[]): TraceTask[] {
   const byIdentity = new Map<string, TraceTask>();
+  const taskGroupKeys = getTraceTaskAttemptGroupKeys(tasks);
 
-  for (const task of tasks) {
-    const identity = `${task.process}\u0000${task.tag ?? ''}`;
+  for (const [index, task] of tasks.entries()) {
+    const identity = taskGroupKeys[index];
     const existing = byIdentity.get(identity);
     if (!existing) {
       byIdentity.set(identity, task);
@@ -151,11 +181,24 @@ export async function parseTraceFile(tracePath: string): Promise<TraceResult> {
     const status = (get(cols, 'status') || get(cols, 'state') || '').trim();
     const exitRaw = get(cols, 'exit');
     const exit = exitRaw ? Number.parseInt(exitRaw, 10) : undefined;
+    const attemptRaw = get(cols, 'attempt');
+    const attempt = attemptRaw ? Number.parseInt(attemptRaw, 10) : undefined;
+    const taskId = get(cols, 'task_id')?.trim();
+    const hash = get(cols, 'hash')?.trim();
 
     tasks.push({
       process,
       status,
       exit: Number.isNaN(exit) ? undefined : exit,
+      taskId: taskId && taskId !== '-' ? taskId : undefined,
+      hash: hash && hash !== '-' ? hash : undefined,
+      attempt:
+        attempt !== undefined &&
+        !Number.isNaN(attempt) &&
+        Number.isInteger(attempt) &&
+        attempt > 0
+          ? attempt
+          : undefined,
       submit: parseTraceDate(get(cols, 'submit')),
       start: parseTraceDate(get(cols, 'start')),
       complete: parseTraceDate(get(cols, 'complete')),

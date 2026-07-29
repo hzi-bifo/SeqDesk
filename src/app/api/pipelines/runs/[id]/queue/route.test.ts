@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     pipelineRun: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -46,6 +47,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     });
     mocks.execFileAsync.mockReset();
     mocks.db.pipelineRun.update.mockResolvedValue({});
+    mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it("returns 401 without a session", async () => {
@@ -84,11 +86,15 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "local-42",
+      runFolder: "/runs/run-1",
       status: "completed",
       study: null,
       order: null,
     });
-    mocks.execFileAsync.mockResolvedValueOnce({ stdout: "42\n", stderr: "" });
+    mocks.execFileAsync.mockResolvedValueOnce({
+      stdout: "bash /runs/run-1/run.sh\n",
+      stderr: "",
+    });
 
     const response = await GET(
       new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/queue"),
@@ -119,6 +125,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "5371",
+      runFolder: "/runs/run-1",
       status: "queued",
       startedAt: null,
       study: null,
@@ -126,7 +133,11 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     });
     mocks.execFileAsync.mockImplementation(async (command: string) => {
       if (command === "squeue") {
-        return { stdout: "5371|cpu|run.sh|brokerdp|RUNNING|01:19|1|dzif-compute-01\n", stderr: "" };
+        return {
+          stdout:
+            "5371|cpu|seqdesk-run-1|brokerdp|RUNNING|01:19|1|dzif-compute-01|/runs/run-1\n",
+          stderr: "",
+        };
       }
       return { stdout: "", stderr: "" };
     });
@@ -139,7 +150,21 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.status).toBe("RUNNING");
-    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    const updateCall = mocks.db.pipelineRun.updateMany.mock.calls[0][0];
+    expect(updateCall.where).toEqual(
+      expect.objectContaining({
+        id: "run-1",
+        status: { in: ["pending", "queued", "running"] },
+        OR: [
+          { statusSource: null },
+          {
+            statusSource: {
+              notIn: ["finalizing", "cancelling"],
+            },
+          },
+        ],
+      })
+    );
     expect(updateCall.data).toEqual(
       expect.objectContaining({
         queueStatus: "RUNNING",
@@ -156,6 +181,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "1234",
+      runFolder: "/runs/run-1",
       status: "queued",
       study: null,
       order: null,
@@ -164,7 +190,11 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
       if (command === "squeue") {
         return { stdout: "", stderr: "" };
       }
-      return { stdout: "1234|FAILED|00:10|1:0\n", stderr: "" };
+      return {
+        stdout:
+          "1234|FAILED|scheduler failure|seqdesk-run-1|/runs/run-1|00:10|1:0\n",
+        stderr: "",
+      };
     });
 
     const response = await GET(
@@ -177,12 +207,16 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
       available: true,
       type: "slurm",
       status: "FAILED",
+      reason: "scheduler failure",
       elapsed: "00:10",
       exitCode: "1:0",
       source: "sacct",
     });
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "run-1",
+        status: { in: ["pending", "queued", "running"] },
+      }),
       data: expect.objectContaining({
         queueStatus: "FAILED",
       }),
@@ -193,6 +227,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "1234",
+      runFolder: "/runs/run-1",
       status: "queued",
       study: null,
       order: null,
@@ -207,7 +242,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       available: false,
-      message: "Job not found in squeue or sacct",
+      message: "Stored SLURM job identity was not found in squeue or sacct",
     });
   });
 
@@ -215,6 +250,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "local-abc",
+      runFolder: "/runs/run-1",
       status: "running",
       study: null,
       order: null,
@@ -228,14 +264,15 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       available: false,
-      message: "Invalid local job id",
+      message: "Stored local job ID is invalid",
     });
   });
 
-  it("reports exited local job when ps command fails", async () => {
+  it("keeps a disappeared local process retryable without an exit marker", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "local-99",
+      runFolder: "/runs/run-1",
       status: "running",
       study: null,
       order: null,
@@ -249,23 +286,17 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      available: true,
-      type: "local",
-      status: "exited",
-      pid: 99,
+      available: false,
+      message: "Stored local job identity could not be inspected",
     });
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
-      data: expect.objectContaining({
-        queueStatus: "EXITED",
-      }),
-    });
+    expect(mocks.db.pipelineRun.updateMany).not.toHaveBeenCalled();
   });
 
   it("returns unavailable for SLURM job with non-numeric ID format", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "abc-xyz",
+      runFolder: "/runs/run-1",
       status: "running",
       study: null,
       order: null,
@@ -279,7 +310,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       available: false,
-      message: "Unknown job id format",
+      message: "Stored SLURM job ID has an invalid format",
     });
   });
 
@@ -287,6 +318,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "5678",
+      runFolder: "/runs/run-1",
       status: "running",
       study: null,
       order: null,
@@ -295,7 +327,11 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
       if (command === "squeue") {
         return { stdout: "\n", stderr: "" };
       }
-      return { stdout: "5678|COMPLETED|01:30|0:0\n", stderr: "" };
+      return {
+        stdout:
+          "5678|COMPLETED|None|seqdesk-run-1|/runs/run-1|01:30|0:0\n",
+        stderr: "",
+      };
     });
 
     const response = await GET(
@@ -313,13 +349,18 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "9999",
+      runFolder: "/runs/run-1",
       status: "completed",
       study: null,
       order: null,
     });
     mocks.execFileAsync.mockImplementation(async (command: string) => {
       if (command === "squeue") {
-        return { stdout: "9999|batch|test|user1|TIMEOUT|01:00|1|(null)\n", stderr: "" };
+        return {
+          stdout:
+            "9999|batch|seqdesk-run-1|user1|TIMEOUT|01:00|1|(null)|/runs/run-1\n",
+          stderr: "",
+        };
       }
       return { stdout: "", stderr: "" };
     });
@@ -341,13 +382,18 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "8888",
+      runFolder: "/runs/run-1",
       status: "completed",
       study: null,
       order: null,
     });
     mocks.execFileAsync.mockImplementation(async (command: string) => {
       if (command === "squeue") {
-        return { stdout: "8888|batch|test|user1|NODE_FAIL|00:30|1|(null)\n", stderr: "" };
+        return {
+          stdout:
+            "8888|batch|seqdesk-run-1|user1|NODE_FAIL|00:30|1|(null)|/runs/run-1\n",
+          stderr: "",
+        };
       }
       return { stdout: "", stderr: "" };
     });
@@ -368,13 +414,18 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "7777",
+      runFolder: "/runs/run-1",
       status: "failed",
       study: null,
       order: null,
     });
     mocks.execFileAsync.mockImplementation(async (command: string) => {
       if (command === "squeue") {
-        return { stdout: "7777|batch|test|user1|PREEMPTED|00:15|1|(null)\n", stderr: "" };
+        return {
+          stdout:
+            "7777|batch|seqdesk-run-1|user1|PREEMPTED|00:15|1|(null)|/runs/run-1\n",
+          stderr: "",
+        };
       }
       return { stdout: "", stderr: "" };
     });
@@ -395,6 +446,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "6666",
+      runFolder: "/runs/run-1",
       status: "queued",
       study: null,
       order: null,
@@ -415,7 +467,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       available: false,
-      message: "Job not found in squeue or sacct",
+      message: "Stored SLURM job identity was not found in squeue or sacct",
     });
   });
 
@@ -514,13 +566,18 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "4444",
+      runFolder: "/runs/run-1",
       status: "failed",
       study: null,
       order: null,
     });
     mocks.execFileAsync.mockImplementation(async (command: string) => {
       if (command === "squeue") {
-        return { stdout: "4444|batch|test|user1|PENDING|00:00|1|(Resources)\n", stderr: "" };
+        return {
+          stdout:
+            "4444|batch|seqdesk-run-1|user1|PENDING|00:00|1|(Resources)|/runs/run-1\n",
+          stderr: "",
+        };
       }
       return { stdout: "", stderr: "" };
     });
@@ -545,6 +602,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       queueJobId: "5555",
+      runFolder: "/runs/run-1",
       status: "queued",
       startedAt: null,
       study: null,
@@ -552,7 +610,11 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     });
     mocks.execFileAsync.mockImplementation(async (command: string) => {
       if (command === "squeue") {
-        return { stdout: "5555|cpu|run.sh|user1|RUNNING|00:30|1|node-01\n", stderr: "" };
+        return {
+          stdout:
+            "5555|cpu|seqdesk-run-1|user1|RUNNING|00:30|1|node-01|/runs/run-1\n",
+          stderr: "",
+        };
       }
       return { stdout: "", stderr: "" };
     });
@@ -563,7 +625,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     );
 
     expect(response.status).toBe(200);
-    const updateCall = mocks.db.pipelineRun.update.mock.calls[0][0];
+    const updateCall = mocks.db.pipelineRun.updateMany.mock.calls[0][0];
     expect(updateCall.data.status).toBe("running");
     expect(updateCall.data.currentStep).toBe("Running on compute node");
   });

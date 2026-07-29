@@ -144,6 +144,7 @@ async function createManifestPackage(options: {
   outputs?: Array<{
     id: string;
     scope: "sample" | "study" | "order" | "run";
+    required?: boolean;
     destination: "sample_reads" | "sample_qc" | "sample_metadata" | "sample_assemblies" | "sample_bins" | "sample_annotations" | "study_report" | "order_files" | "order_report" | "run_artifact" | "download_only";
     writeback?: {
       target: "Read";
@@ -248,6 +249,30 @@ describe("package-loader", () => {
     expect(definitionFromCompatibility?.id).toBe(PIPELINE_ID);
     expect(definitionFromCompatibility?.requires.reads).toBe(false);
     expect(definitionFromCompatibility?.input.supportedScopes).toEqual(["study"]);
+  });
+
+  it("loads and preserves an explicitly optional output declaration", async () => {
+    await createManifestPackage({
+      id: "optional-output-pipe",
+      outputs: [
+        {
+          id: "conditional_report",
+          scope: "sample",
+          required: false,
+          destination: "run_artifact",
+          discovery: { pattern: "reports/*.html" },
+        },
+      ],
+    });
+
+    const manifest = getPackageManifest("optional-output-pipe");
+
+    expect(manifest?.outputs).toEqual([
+      expect.objectContaining({
+        id: "conditional_report",
+        required: false,
+      }),
+    ]);
   });
 
   it("normalizes explicit readMode into compatibility definitions", async () => {

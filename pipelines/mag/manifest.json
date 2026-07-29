@@ -133,6 +133,7 @@
     {
       "id": "bins",
       "scope": "sample",
+      "required": false,
       "destination": "sample_bins",
       "discovery": {
         "pattern": "GenomeBinning/DASTool/bins/**/*.fa",
@@ -151,6 +152,7 @@
     {
       "id": "taxonomy",
       "scope": "sample",
+      "required": false,
       "destination": "sample_metadata",
       "discovery": {
         "dependsOn": "bins",

@@ -8,6 +8,15 @@ export type RunStatus =
 
 export type StepStatus = 'pending' | 'running' | 'completed' | 'failed';
 
+export type TraceTaskAttempt = {
+  process: string;
+  tag?: string | null;
+  taskId?: string | null;
+  attempt?: number | null;
+  status: string;
+  exit?: number;
+};
+
 const TERMINAL_RUN_STATUSES: ReadonlySet<RunStatus> = new Set([
   'completed',
   'failed',
@@ -134,6 +143,81 @@ export function deriveStepStatus(status: string, exit?: number): StepStatus {
 }
 
 /**
+ * Assign each trace row to a logical task while keeping sibling tasks separate.
+ *
+ * Nextflow gives every execution attempt a new `task_id`, so task_id alone
+ * cannot join retries. Conversely, process/tag is not a task identity: tags are
+ * optional and need not be unique. When the trace includes Nextflow's `attempt`
+ * field, an attempt greater than one is joined to one failed predecessor with
+ * the same process/tag and immediately preceding attempt number. Every first
+ * attempt remains a separate task, even when tags are blank or reused.
+ *
+ * Older/default trace files can omit `attempt`. Those rows are grouped only
+ * when they repeat the exact task_id; otherwise each row stays distinct. That
+ * fail-safe may retain an old failed retry row, but it cannot turn a genuinely
+ * failed sibling into a false success.
+ */
+export function getTraceTaskAttemptGroupKeys(
+  tasks: readonly TraceTaskAttempt[]
+): string[] {
+  type GroupState = {
+    key: string;
+    lastAttempt: number;
+    lastStatus: StepStatus;
+  };
+
+  const groupsByCoarseIdentity = new Map<string, GroupState[]>();
+  const groupsByTaskId = new Map<string, GroupState>();
+  let groupSequence = 0;
+
+  return tasks.map((task) => {
+    const coarseIdentity = `${task.process}\u0000${task.tag?.trim() ?? ''}`;
+    const taskIdValue = task.taskId?.trim();
+    const taskId =
+      taskIdValue && taskIdValue !== '-' ? `${coarseIdentity}\u0000${taskIdValue}` : null;
+    const attempt =
+      typeof task.attempt === 'number' &&
+      Number.isInteger(task.attempt) &&
+      task.attempt > 0
+        ? task.attempt
+        : null;
+    const status = deriveStepStatus(task.status, task.exit);
+
+    let group = taskId ? groupsByTaskId.get(taskId) : undefined;
+
+    if (!group && attempt !== null && attempt > 1) {
+      group = groupsByCoarseIdentity
+        .get(coarseIdentity)
+        ?.find(
+          (candidate) =>
+            candidate.lastAttempt === attempt - 1 &&
+            candidate.lastStatus === 'failed'
+        );
+    }
+
+    if (!group) {
+      group = {
+        key: `trace-task-${groupSequence++}`,
+        lastAttempt: attempt ?? 1,
+        lastStatus: status,
+      };
+      const groups = groupsByCoarseIdentity.get(coarseIdentity) ?? [];
+      groups.push(group);
+      groupsByCoarseIdentity.set(coarseIdentity, groups);
+    } else {
+      group.lastAttempt = attempt ?? group.lastAttempt;
+      group.lastStatus = status;
+    }
+
+    if (taskId) {
+      groupsByTaskId.set(taskId, group);
+    }
+
+    return group.key;
+  });
+}
+
+/**
  * Reconcile the run status derived from the Nextflow trace with the live
  * scheduler (SLURM/local) job state.
  *
@@ -144,8 +228,13 @@ export function deriveStepStatus(status: string, exit?: number): StepStatus {
  * cancelled) but the trace is still non-terminal, trust the scheduler so a
  * finished run does not hang as running/queued.
  *
- * A terminal trace status (the pipeline itself reported completion/failure) is
- * authoritative and is never overridden.
+ * An active scheduler job is authoritative over a terminal-looking trace. A
+ * trace only contains tasks that have appeared so far, so an early completed
+ * wave can look terminal while downstream/sibling tasks are still running.
+ * Once both sources are terminal, failure is dominant, then cancellation, then
+ * completion. This prevents a clean wrapper exit from hiding a failed task and
+ * also prevents a completed trace from hiding a wrapper-level failure after the
+ * last task (for example, output publication or teardown).
  */
 export function reconcileRunStatus(
   traceStatus: RunStatus | null,
@@ -156,10 +245,30 @@ export function reconcileRunStatus(
   }
   if (
     schedulerStatus &&
+    NON_TERMINAL_RUN_STATUSES.has(schedulerStatus) &&
+    TERMINAL_RUN_STATUSES.has(traceStatus)
+  ) {
+    return schedulerStatus;
+  }
+  if (
+    schedulerStatus &&
     NON_TERMINAL_RUN_STATUSES.has(traceStatus) &&
     TERMINAL_RUN_STATUSES.has(schedulerStatus)
   ) {
     return schedulerStatus;
+  }
+  if (
+    schedulerStatus &&
+    TERMINAL_RUN_STATUSES.has(traceStatus) &&
+    TERMINAL_RUN_STATUSES.has(schedulerStatus)
+  ) {
+    if (traceStatus === 'failed' || schedulerStatus === 'failed') {
+      return 'failed';
+    }
+    if (traceStatus === 'cancelled' || schedulerStatus === 'cancelled') {
+      return 'cancelled';
+    }
+    return 'completed';
   }
   return traceStatus;
 }

@@ -98,7 +98,7 @@ vi.mock("@/lib/pipelines/submg/submg-runner", () => ({
 }));
 
 vi.mock("@/lib/pipelines/run-completion", () => ({
-  processCompletedPipelineRun: mocks.processCompletedPipelineRun,
+  finalizeCompletedPipelineRun: mocks.processCompletedPipelineRun,
 }));
 
 vi.mock("@/lib/pipelines/metadata-validation", () => ({
@@ -209,7 +209,7 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     mocks.resolveCondaBin.mockResolvedValue("/opt/conda/bin/conda");
     mocks.getLocalCondaCompatibilityBlockMessage.mockReturnValue(null);
     mocks.shouldSkipCondaOnMacArm.mockReturnValue(false);
-    mocks.processCompletedPipelineRun.mockResolvedValue(undefined);
+    mocks.processCompletedPipelineRun.mockResolvedValue("completed");
     mocks.validatePipelineMetadata.mockResolvedValue({ issues: [] });
     mocks.mergePipelineDerivedConfig.mockImplementation(
       async ({ config }: { config: Record<string, unknown> }) => ({
@@ -237,12 +237,11 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
       }
     );
 
-    // spawn: default returns a mock child process that emits close(0) on next tick
-    mocks.spawn.mockImplementation(() => {
-      const child = makeChildProcess();
-      process.nextTick(() => child.emit("close", 0));
-      return child;
-    });
+    // Most route tests only assert launch/setup. Keep the default child alive so
+    // an unobserved next-tick close cannot leak an async finalizer into the next
+    // test after mocks have been cleared. Completion-specific tests emit and
+    // await their own close event below.
+    mocks.spawn.mockImplementation(() => makeChildProcess());
   });
 
   it("returns 403 when not authenticated", async () => {
@@ -457,9 +456,12 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
       expect.stringContaining("older than required 0.1.1"),
     ]));
     expect(mocks.prepareGenericRun).not.toHaveBeenCalled();
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith(
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "run-1" },
+        where: expect.objectContaining({
+          id: "run-1",
+          status: { in: ["pending"] },
+        }),
         data: expect.objectContaining({
           status: "failed",
           statusSource: "launcher",
@@ -584,6 +586,159 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
       ["--parsable", "/tmp/runs/run-1/run.sh"],
       { cwd: "/tmp/runs/run-1" }
     );
+  });
+
+  it("scancels a submitted SLURM job when queue-job persistence loses to cancellation", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: true,
+      slurmQueue: "batch",
+    });
+    mocks.db.pipelineRun.findUnique
+      .mockResolvedValueOnce(defaultRun)
+      .mockResolvedValueOnce({ ...defaultRun, status: "cancelled" });
+    mocks.db.pipelineRun.updateMany.mockImplementation(async (args) => {
+      if (args?.data?.queueJobId === "24680") {
+        return { count: 0 };
+      }
+      return { count: 1 };
+    });
+    mocks.exec.mockImplementation(
+      (
+        cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        if (cmd.includes("command -v sbatch")) {
+          callback(null, { stdout: "/usr/bin/sbatch" });
+        } else if (cmd === "scancel 24680") {
+          callback(null, { stdout: "", stderr: "" });
+        } else {
+          callback(new Error("not found"), null);
+        }
+      }
+    );
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => {
+        child.stdout.emit("data", "24680\n");
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ status: "cancelled" });
+    expect(mocks.exec).toHaveBeenCalledWith(
+      "scancel 24680",
+      { timeout: 5000 },
+      expect.any(Function)
+    );
+    expect(
+      mocks.db.pipelineRun.updateMany.mock.calls.some(
+        (call) => call[0]?.data?.status === "failed"
+      )
+    ).toBe(false);
+  });
+
+  it("scancels a submitted SLURM job when the final scheduler-state guard loses", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: true,
+      slurmQueue: "batch",
+    });
+    mocks.db.pipelineRun.findUnique
+      .mockResolvedValueOnce(defaultRun)
+      .mockResolvedValueOnce({ ...defaultRun, status: "cancelled" });
+    mocks.db.pipelineRun.updateMany.mockImplementation(async (args) => {
+      if (args?.data?.queueStatus === "PENDING") {
+        return { count: 0 };
+      }
+      return { count: 1 };
+    });
+    mocks.exec.mockImplementation(
+      (
+        cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        if (cmd.includes("command -v sbatch")) {
+          callback(null, { stdout: "/usr/bin/sbatch" });
+        } else if (cmd === "scancel 13579") {
+          callback(null, { stdout: "", stderr: "" });
+        } else {
+          callback(new Error("not found"), null);
+        }
+      }
+    );
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => {
+        child.stdout.emit("data", "13579\n");
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ status: "cancelled" });
+    expect(mocks.exec).toHaveBeenCalledWith(
+      "scancel 13579",
+      { timeout: 5000 },
+      expect.any(Function)
+    );
+  });
+
+  it("keeps a submitted run reconcilable when bookkeeping and automatic scancel both fail", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({
+      ...defaultExecutionSettings,
+      useSlurm: true,
+      slurmQueue: "batch",
+    });
+    mocks.db.pipelineRun.updateMany.mockImplementation(async (args) => {
+      if (args?.data?.queueStatus === "PENDING") {
+        throw new Error("database write failed");
+      }
+      return { count: 1 };
+    });
+    mocks.exec.mockImplementation(
+      (
+        cmd: string,
+        _opts: unknown,
+        callback: (err: Error | null, result: unknown) => void
+      ) => {
+        if (cmd.includes("command -v sbatch")) {
+          callback(null, { stdout: "/usr/bin/sbatch" });
+        } else if (cmd === "scancel 97531") {
+          callback(new Error("scheduler unavailable"), null);
+        } else {
+          callback(new Error("not found"), null);
+        }
+      }
+    );
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => {
+        child.stdout.emit("data", "97531\n");
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.error).toContain("automatic scancel of job 97531 also failed");
+    expect(
+      mocks.db.pipelineRun.updateMany.mock.calls.some(
+        (call) => call[0]?.data?.status === "failed"
+      )
+    ).toBe(false);
   });
 
   it("does not check sbatch when a run override selects local execution", async () => {
@@ -843,6 +998,98 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     expect(failedUpdate).toBeDefined();
   });
 
+  it("local execution: terminates the detached process group when queue-id persistence fails", async () => {
+    mocks.db.pipelineRun.updateMany.mockImplementation(async (args) => {
+      if (args?.data?.queueJobId === "local-12345") {
+        throw new Error("database unavailable");
+      }
+      return { count: 1 };
+    });
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+
+    try {
+      const response = await POST(makeRequest(), { params: baseParams });
+
+      expect(response.status).toBe(500);
+      expect(
+        killSpy.mock.calls.some(([pid, signal]) => {
+          return pid === -12345 && signal === "SIGTERM";
+        })
+      ).toBe(true);
+      expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: "run-1",
+            status: { in: ["running"] },
+          }),
+          data: expect.objectContaining({ status: "failed" }),
+        })
+      );
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
+  it("local execution: kills the spawned process and preserves cancellation when PID persistence loses its guard", async () => {
+    mocks.db.pipelineRun.findUnique
+      .mockResolvedValueOnce(defaultRun)
+      .mockResolvedValueOnce({ ...defaultRun, status: "cancelled" });
+    mocks.db.pipelineRun.updateMany.mockImplementation(async (args) => {
+      if (args?.data?.queueJobId === "local-12345") {
+        return { count: 0 };
+      }
+      return { count: 1 };
+    });
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+
+    try {
+      const response = await POST(makeRequest(), { params: baseParams });
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ status: "cancelled" });
+      expect(
+        killSpy.mock.calls.some(([pid, signal]) => {
+          return pid === -12345 && signal === "SIGTERM";
+        })
+      ).toBe(true);
+      expect(
+        mocks.db.pipelineRun.updateMany.mock.calls.some(
+          (call) => call[0]?.data?.status === "failed"
+        )
+      ).toBe(false);
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
+
+  it("preserves cancellation when generic preparation loses its queued claim", async () => {
+    mocks.prepareGenericRun.mockResolvedValue({
+      success: false,
+      errors: ["Run was cancelled or finalized during preparation"],
+      warnings: [],
+    });
+    mocks.db.pipelineRun.findUnique
+      .mockResolvedValueOnce(defaultRun)
+      .mockResolvedValueOnce({ ...defaultRun, status: "cancelled" });
+    mocks.db.pipelineRun.updateMany.mockImplementation(async (args) => {
+      if (args?.data?.status === "failed") {
+        return { count: 0 };
+      }
+      return { count: 1 };
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ status: "cancelled" });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(
+      mocks.db.pipelineRun.update.mock.calls.some(
+        (call) => call[0]?.data?.status === "failed"
+      )
+    ).toBe(false);
+  });
+
   it("selects samples from inputSampleIds field on the run", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       ...defaultRun,
@@ -907,15 +1154,55 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     // Wait for the async close handler
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // finalizeLocalRun transitions via a status-guarded updateMany (#1).
-    const updateCalls = mocks.db.pipelineRun.updateMany.mock.calls;
-    const completedUpdate = updateCalls.find(
-      (call) => call[0]?.data?.status === "completed"
+    expect(mocks.processCompletedPipelineRun).toHaveBeenCalledWith(
+      "run-1",
+      "fastqc",
+      expect.objectContaining({
+        statusSource: "process",
+        queueStatus: "COMPLETED",
+      })
     );
-    expect(completedUpdate).toBeDefined();
-    expect(completedUpdate?.[0].data.progress).toBe(100);
-    expect(completedUpdate?.[0].data.currentStep).toBe("Completed");
-    expect(mocks.processCompletedPipelineRun).toHaveBeenCalledWith("run-1", "fastqc");
+    // Lifecycle claiming and the completed transition are centralized inside
+    // finalizeCompletedPipelineRun; the launcher must not duplicate them.
+    expect(
+      mocks.db.pipelineRun.updateMany.mock.calls.some(
+        (call) =>
+          call[0]?.data?.currentStep === "Finalizing outputs..." ||
+          call[0]?.data?.status === "completed"
+      )
+    ).toBe(false);
+  });
+
+  it("keeps a successful local process non-terminal when output resolution fails", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.processCompletedPipelineRun.mockRejectedValueOnce(
+      new Error("summary output not ready")
+    );
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => child.emit("close", 0));
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(mocks.processCompletedPipelineRun).toHaveBeenCalledWith(
+      "run-1",
+      "fastqc",
+      expect.objectContaining({
+        statusSource: "process",
+        queueStatus: "COMPLETED",
+      })
+    );
+    expect(
+      mocks.db.pipelineRun.updateMany.mock.calls.some(
+        (call) => call[0]?.data?.status === "completed"
+      )
+    ).toBe(false);
+    consoleError.mockRestore();
   });
 
   it("parses valid custom config object from run.config", async () => {
@@ -1028,9 +1315,13 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
       sequencer: "Nanopore",
       topn: 25,
     });
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith({
-      where: { id: "run-1" },
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "run-1",
+        status: "pending",
+      }),
       data: expect.objectContaining({
+        status: "queued",
         config: JSON.stringify({
           sequencer: "Nanopore",
           topn: 25,
@@ -1121,8 +1412,8 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     );
 
     expect(response.status).toBe(200);
-    // Should have called update to persist the sampleIds
-    const updateCalls = mocks.db.pipelineRun.update.mock.calls;
+    // The launch claim atomically persists the sampleIds.
+    const updateCalls = mocks.db.pipelineRun.updateMany.mock.calls;
     const sampleUpdate = updateCalls.find(
       (call) => call[0]?.data?.inputSampleIds !== undefined
     );
@@ -1141,14 +1432,34 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     const body = await response.json();
     expect(body.error).toContain("macOS ARM is not supported");
     // Should have updated the run to failed status
-    expect(mocks.db.pipelineRun.update).toHaveBeenCalledWith(
+    expect(mocks.db.pipelineRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: expect.objectContaining({
+          id: "run-1",
+          status: { in: ["pending"] },
+        }),
         data: expect.objectContaining({
           status: "failed",
           statusSource: "launcher",
         }),
       })
     );
+  });
+
+  it("does not overwrite a concurrent cancellation with a validation failure", async () => {
+    mocks.getLocalCondaCompatibilityBlockMessage.mockReturnValue(
+      "runtime compatibility failed"
+    );
+    mocks.db.pipelineRun.findUnique
+      .mockResolvedValueOnce(defaultRun)
+      .mockResolvedValueOnce({ ...defaultRun, status: "cancelled" });
+    mocks.db.pipelineRun.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ status: "cancelled" });
+    expect(mocks.prepareGenericRun).not.toHaveBeenCalled();
   });
 
   it("returns 400 when neither conda nor nextflow is available for local execution", async () => {
@@ -1381,21 +1692,11 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     );
   });
 
-  it("finalizeLocalRun does not resurrect a run that lost the terminal-state guard", async () => {
-    // Drive a local run all the way to its child 'close' handler, but make the
-    // FINALIZE updateMany (data.status === 'completed') match zero rows, as if
-    // the run had already been finalized out-of-band (e.g. cancelled) before
-    // the child exited. The launch claim (data.status === 'running') and the
-    // post-spawn guard (no data.status) still succeed so the run starts
-    // normally; only the terminal transition loses the race.
-    mocks.db.pipelineRun.updateMany.mockImplementation(
-      async (args: { data?: { status?: string } }) => {
-        const status = args?.data?.status;
-        if (status === "completed" || status === "failed") {
-          return { count: 0 };
-        }
-        return { count: 1 };
-      }
+  it("finalizeLocalRun preserves terminal state when the lifecycle claim is unavailable", async () => {
+    // The centralized finalizer owns the cancellation-vs-completion claim and
+    // reports when another terminal path already owns it.
+    mocks.processCompletedPipelineRun.mockResolvedValueOnce(
+      "claim-unavailable"
     );
     mocks.spawn.mockImplementation(() => {
       const child = makeChildProcess();
@@ -1410,15 +1711,20 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     // Wait for the async close handler to run finalizeLocalRun.
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // The finalize updateMany was attempted with the terminal status...
-    const updateCalls = mocks.db.pipelineRun.updateMany.mock.calls;
-    const completedUpdate = updateCalls.find(
-      (call) => call[0]?.data?.status === "completed"
+    expect(mocks.processCompletedPipelineRun).toHaveBeenCalledWith(
+      "run-1",
+      "fastqc",
+      expect.objectContaining({
+        statusSource: "process",
+        queueStatus: "COMPLETED",
+      })
     );
-    expect(completedUpdate).toBeDefined();
-
-    // ...but since it matched zero rows, finalizeLocalRun must return early:
-    // no output processing and no terminal notification side-effects fire.
-    expect(mocks.processCompletedPipelineRun).not.toHaveBeenCalled();
+    // Since the claim matched zero rows, no launcher-side completed transition
+    // may resurrect the cancelled row.
+    expect(
+      mocks.db.pipelineRun.updateMany.mock.calls.some(
+        (call) => call[0]?.data?.status === "completed"
+      )
+    ).toBe(false);
   });
 });

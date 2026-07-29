@@ -215,15 +215,21 @@ describe("install profile installer wiring", () => {
   });
 
   it("defines bifo_dmz AlmaLinux canaries for plain and hosted-profile installs", () => {
-    // Self-hosted runs on demand + on a daily schedule (the private CI mirror),
-    // not on push — see the github.repository guard on the jobs.
-    expect(profileWorkflow).toContain("schedule:");
+    // The required lightweight install/pipeline gate is change-driven in
+    // pipeline-slurm-e2e. This heavyweight real-data/profile matrix is manual.
+    expect(profileWorkflow).not.toContain("schedule:");
     expect(profileWorkflow).toContain("workflow_dispatch:");
     expect(profileWorkflow).toContain('PROFILE_ID: ${{ github.event.inputs.profile_id || \'ci-runner\' }}');
     expect(profileWorkflow).toContain("PROFILE_REGISTRY_URL: ${{ github.event.inputs.profile_registry_url || 'https://seqdesk.org/api/install-profiles' }}");
     expect(profileWorkflow).toContain("group: bifo_dmz");
     expect(profileWorkflow).toContain("labels: [self-hosted, Linux, X64, db-local, twincore, alma]");
     expect(profileWorkflow).toContain("build-install-artifacts:");
+    const buildJob = profileWorkflow.slice(
+      profileWorkflow.indexOf("build-install-artifacts:"),
+      profileWorkflow.indexOf("install-without-profile:")
+    );
+    expect(buildJob).toContain("group: bifo_dmz");
+    expect(buildJob).not.toContain("runs-on: ubuntu-latest");
     expect(profileWorkflow).toContain("install-without-profile:");
     expect(profileWorkflow).toContain("install-with-profile:");
     expect(profileWorkflow).toContain("default: \"ci-runner\"");
