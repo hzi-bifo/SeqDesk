@@ -5530,6 +5530,7 @@ write_config() {
     SEQDESK_INSTALL_RUN_DIR="$run_dir" \
     SEQDESK_INSTALL_PIPELINE_DATABASE_DIR="${SEQDESK_PIPELINE_DATABASE_DIR:-}" \
     SEQDESK_INSTALL_PIPELINES_ENABLED="$pipelines_enabled" \
+    SEQDESK_INSTALL_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}" \
     SEQDESK_INSTALL_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}" \
     SEQDESK_INSTALL_NEXTAUTH_SECRET="${SEQDESK_NEXTAUTH_SECRET:-}" \
     SEQDESK_INSTALL_DATABASE_URL="${SEQDESK_DATABASE_URL:-}" \
@@ -5567,6 +5568,7 @@ const dataPath = process.env.SEQDESK_INSTALL_DATA_PATH || '';
 const runDir = process.env.SEQDESK_INSTALL_RUN_DIR || '';
 const pipelineDatabaseDir = process.env.SEQDESK_INSTALL_PIPELINE_DATABASE_DIR || '';
 const pipelinesEnabled = process.env.SEQDESK_INSTALL_PIPELINES_ENABLED || '';
+const executionUseSlurmRaw = process.env.SEQDESK_INSTALL_EXEC_USE_SLURM || '';
 const nextAuthUrl = process.env.SEQDESK_INSTALL_NEXTAUTH_URL || '';
 const nextAuthSecret = process.env.SEQDESK_INSTALL_NEXTAUTH_SECRET || '';
 const databaseUrl = process.env.SEQDESK_INSTALL_DATABASE_URL || '';
@@ -5715,10 +5717,13 @@ config.pipelines = config.pipelines || {};
 if (pipelinesEnabled) config.pipelines.enabled = pipelinesEnabled === 'true';
 if (pipelineDatabaseDir) config.pipelines.databaseDirectory = pipelineDatabaseDir;
 
-if (runDir) {
+const executionUseSlurm = toOptionalBoolean(executionUseSlurmRaw);
+if (runDir || executionUseSlurm !== undefined) {
   config.pipelines.execution = config.pipelines.execution || {};
-  if (!config.pipelines.execution.mode) config.pipelines.execution.mode = 'local';
-  config.pipelines.execution.runDirectory = runDir;
+  if (executionUseSlurm !== undefined) {
+    config.pipelines.execution.mode = executionUseSlurm ? 'slurm' : 'local';
+  }
+  if (runDir) config.pipelines.execution.runDirectory = runDir;
 }
 
 const appPort = toOptionalPort(appPortRaw);

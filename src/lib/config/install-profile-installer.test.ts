@@ -1,4 +1,6 @@
+import { execFileSync } from "child_process";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
@@ -57,7 +59,71 @@ const hostedProfileSmokeOverrides = JSON.parse(
   )
 ) as Record<string, unknown>;
 
+interface GeneratedInstallConfig {
+  pipelines: {
+    execution: {
+      mode?: string;
+    };
+  };
+}
+
+function extractWriteConfigScript(installer: string): string {
+  const functionMarker = "\nwrite_config() {";
+  const functionStart = installer.indexOf(functionMarker) + 1;
+  const marker = "node <<'NODE'\n";
+  const markerStart = installer.indexOf(marker, functionStart);
+  const scriptStart = markerStart + marker.length;
+  const scriptEnd = installer.indexOf("\nNODE\n", scriptStart);
+
+  expect(functionStart).toBeGreaterThan(0);
+  expect(markerStart).toBeGreaterThanOrEqual(functionStart);
+  expect(scriptEnd).toBeGreaterThan(scriptStart);
+  return installer.slice(scriptStart, scriptEnd);
+}
+
+function runWriteConfigScript(
+  installer: string,
+  useSlurm?: boolean
+): GeneratedInstallConfig {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "seqdesk-write-config-"));
+  try {
+    execFileSync(process.execPath, ["-e", extractWriteConfigScript(installer)], {
+      cwd: tempDir,
+      env: {
+        PATH: process.env.PATH,
+        SEQDESK_INSTALL_PIPELINES_ENABLED: "true",
+        SEQDESK_INSTALL_RUN_DIR: path.join(tempDir, "runs"),
+        ...(useSlurm === undefined
+          ? {}
+          : { SEQDESK_INSTALL_EXEC_USE_SLURM: String(useSlurm) }),
+      },
+      stdio: "pipe",
+    });
+    return JSON.parse(
+      fs.readFileSync(path.join(tempDir, "settings.json"), "utf8")
+    ) as GeneratedInstallConfig;
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 describe("install profile installer wiring", () => {
+  it.each([
+    ["distribution", installDist],
+    ["source", sourceInstaller],
+  ])(
+    "persists the configured execution mode in the %s installer",
+    (_name, installer) => {
+      const slurmConfig = runWriteConfigScript(installer, true);
+      const localConfig = runWriteConfigScript(installer, false);
+      const pathOnlyConfig = runWriteConfigScript(installer);
+
+      expect(slurmConfig.pipelines.execution.mode).toBe("slurm");
+      expect(localConfig.pipelines.execution.mode).toBe("local");
+      expect(pathOnlyConfig.pipelines.execution.mode).toBeUndefined();
+    }
+  );
+
   it("adds hosted profile flags and aliases to the distribution installer", () => {
     expect(installDist).toContain("--profile <id>");
     expect(installDist).toContain("--profile-code <code>");

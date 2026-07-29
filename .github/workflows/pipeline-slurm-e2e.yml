@@ -1897,7 +1897,17 @@ jobs:
             exit 1
           fi
           test -x "$APP_DIR/start.sh"
-          INSTALLED_VERSION="$(cd "$APP_DIR" && node -p "require('./package.json').version")"
+          if [ -f "$APP_DIR/current/scripts/apply-install-profile.mjs" ]; then
+            INSTALLED_RELEASE_DIR="$(cd "$APP_DIR/current" && pwd -P)"
+          elif [ -f "$APP_DIR/scripts/apply-install-profile.mjs" ]; then
+            INSTALLED_RELEASE_DIR="$(cd "$APP_DIR" && pwd -P)"
+          else
+            echo "Installed release root is missing scripts/apply-install-profile.mjs." >&2
+            ls -la "$APP_DIR" "$APP_DIR/current" 2>/dev/null || true
+            exit 1
+          fi
+          test -f "$INSTALLED_RELEASE_DIR/package.json"
+          INSTALLED_VERSION="$(cd "$INSTALLED_RELEASE_DIR" && node -p "require('./package.json').version")"
           if [ "$INSTALLED_VERSION" != "$VERSION" ]; then
             echo "Installed version mismatch: expected $VERSION, found $INSTALLED_VERSION." >&2
             exit 1
@@ -1924,6 +1934,7 @@ jobs:
               const config = JSON.parse(fs.readFileSync(configName, "utf8"));
               assert.equal(config.site?.dataBasePath, process.env.EXPECTED_DATA_PATH);
               assert.equal(config.pipelines?.enabled, true);
+              assert.equal(config.pipelines?.execution?.mode, "slurm");
               assert.equal(config.pipelines?.execution?.runDirectory, process.env.EXPECTED_RUN_DIR);
               assert.equal(config.runtime?.databaseUrl, process.env.EXPECTED_DB_URL);
               assert.equal(config.runtime?.directUrl, process.env.EXPECTED_DB_URL);
@@ -1995,7 +2006,7 @@ jobs:
           fi
           # Apply with the script and dependencies shipped in the installed artifact,
           # targeting the installed app's own database.
-          ( cd "$APP_DIR" && DATABASE_URL="$INSTALLED_DB_URL" DIRECT_URL="$INSTALLED_DB_URL" \
+          ( cd "$INSTALLED_RELEASE_DIR" && DATABASE_URL="$INSTALLED_DB_URL" DIRECT_URL="$INSTALLED_DB_URL" \
               node scripts/apply-install-profile.mjs --profile-config "$PROFILE_JSON" ) \
             || { echo "ERROR: install-profile apply failed."; fail=1; }
 
@@ -2109,7 +2120,7 @@ jobs:
           run_installed reads-qc                --pipeline-id reads-qc
 
           echo "=== prove installed runs used the packaged pipeline tree ==="
-          PACKAGED_PIPELINES_ROOT="$APP_DIR/current/pipelines"
+          PACKAGED_PIPELINES_ROOT="$INSTALLED_RELEASE_DIR/pipelines"
           for pipeline_id in fastq-checksum simulate-reads study-demo-report fastqc reads-qc; do
             expected_target="$PACKAGED_PIPELINES_ROOT/$pipeline_id/workflow"
             if grep -R -F -l --include='run.sh' -- "$expected_target" "$INSTALLED_RUNS" >/dev/null 2>&1; then

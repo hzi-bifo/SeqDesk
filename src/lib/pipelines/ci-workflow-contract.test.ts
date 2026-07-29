@@ -114,8 +114,22 @@ describe("self-hosted pipeline CI contract", () => {
       '[ -n "${SEQDESK_PIPELINES_DIR:-}" ] && export SEQDESK_PIPELINES_DIR'
     );
     expect(installGate).toContain('export SEQDESK_CONDA_CACHE_DIR="$INSTALLED_CONDA_CACHE"');
-    expect(installGate).toContain('( cd "$APP_DIR" && DATABASE_URL="$INSTALLED_DB_URL"');
+    expect(installGate).toContain(
+      'if [ -f "$APP_DIR/current/scripts/apply-install-profile.mjs" ]'
+    );
+    expect(installGate).toContain(
+      'INSTALLED_RELEASE_DIR="$(cd "$APP_DIR/current" && pwd -P)"'
+    );
+    expect(installGate).toContain(
+      'elif [ -f "$APP_DIR/scripts/apply-install-profile.mjs" ]'
+    );
+    expect(installGate).toContain(
+      '( cd "$INSTALLED_RELEASE_DIR" && DATABASE_URL="$INSTALLED_DB_URL"'
+    );
     expect(installGate).toContain("assert.equal(config.pipelines?.enabled, true)");
+    expect(installGate).toContain(
+      'assert.equal(config.pipelines?.execution?.mode, "slurm")'
+    );
     expect(installGate).toContain(
       "assert.equal(config.runtime?.directUrl, process.env.EXPECTED_DB_URL)"
     );
@@ -139,6 +153,9 @@ describe("self-hosted pipeline CI contract", () => {
       'INSTALLED_PROCESS_STATE="$(seqdesk_ci_pid_state "$INSTALLED_APP_PID")"'
     );
     expect(installGate).toContain(
+      'PACKAGED_PIPELINES_ROOT="$INSTALLED_RELEASE_DIR/pipelines"'
+    );
+    expect(installGate).not.toContain(
       'PACKAGED_PIPELINES_ROOT="$APP_DIR/current/pipelines"'
     );
     expect(installGate).toContain(
