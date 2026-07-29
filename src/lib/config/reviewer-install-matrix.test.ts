@@ -62,9 +62,9 @@ describe("reviewer installation matrix contract", () => {
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(workflowSource).not.toContain("pull_request_target");
     expect(workflowSource).not.toContain("self-hosted");
-    expect(workflow.jobs["build-candidate"].if).toContain(
-      "github.repository == 'hzi-bifo/SeqDesk'"
-    );
+    for (const job of Object.values(workflow.jobs)) {
+      expect(job.if).toContain("github.repository == 'hzi-bifo/SeqDesk'");
+    }
   });
 
   it("builds the release and npm launcher once, then shares the checksummed candidate", () => {

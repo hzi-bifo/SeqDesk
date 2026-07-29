@@ -1915,7 +1915,9 @@ jobs:
             DATABASE_URL="$INSTALLED_DB_URL" DIRECT_URL="$INSTALLED_DB_URL" \
             node -e '
               const fs = require("node:fs");
+              const path = require("node:path");
               const assert = require("node:assert/strict");
+              const { createRequire } = require("node:module");
               const configName = ["settings.json", "seqdesk.config.json"]
                 .find((name) => fs.existsSync(name));
               assert.ok(configName, "installed runtime config is missing");
@@ -1927,7 +1929,16 @@ jobs:
               assert.equal(config.runtime?.directUrl, process.env.EXPECTED_DB_URL);
               assert.equal(config.app?.port, Number(process.env.EXPECTED_PORT));
 
-              const { PrismaClient } = require("@prisma/client");
+              // Distribution installs keep immutable application dependencies
+              // under current/, while settings.json stays at the install root.
+              // Resolve Prisma from the active release instead of the wrapper root.
+              const runtimeRoot = fs.existsSync(path.join("current", "package.json"))
+                ? path.join(process.cwd(), "current")
+                : process.cwd();
+              const requireFromInstall = createRequire(
+                path.join(runtimeRoot, "package.json")
+              );
+              const { PrismaClient } = requireFromInstall("@prisma/client");
               const prisma = new PrismaClient();
               prisma.siteSettings.findUnique({
                 where: { id: "singleton" },

@@ -25,7 +25,9 @@ env:
 jobs:
   build-candidate:
     name: Build candidate release and npm launcher once
-    if: ${{ github.event_name != 'schedule' || github.repository == 'hzi-bifo/SeqDesk' }}
+    # The private mirror exists only for the dedicated SLURM acceptance gate.
+    # Do not duplicate this GitHub-hosted installation matrix in SeqDesk-ci.
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -96,7 +98,7 @@ jobs:
   required-ubuntu:
     name: Required install / Ubuntu 24.04 x64 / Node 24 / PostgreSQL 16
     needs: build-candidate
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event_name == 'schedule') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     services:
@@ -147,7 +149,7 @@ jobs:
   required-minimum:
     name: Required minimum / Ubuntu 22.04 x64 / Node 22.13.0 / PostgreSQL 14
     needs: build-candidate
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event_name == 'schedule') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     services:
@@ -203,7 +205,7 @@ jobs:
   required-macos:
     name: Required install / macOS 15 ARM64 / Node 24 / PostgreSQL 16
     needs: build-candidate
-    if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event_name == 'schedule') }}
     runs-on: macos-15
     timeout-minutes: 60
     env:
@@ -271,7 +273,7 @@ jobs:
   required-install-gate:
     name: Required reviewer installation gate
     needs: [build-candidate, required-ubuntu, required-minimum, required-macos]
-    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk')) }}
+    if: ${{ always() && github.repository == 'hzi-bifo/SeqDesk' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event_name == 'schedule') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -293,7 +295,7 @@ jobs:
   extended-ubuntu:
     name: Extended / ${{ matrix.label }}
     needs: build-candidate
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 50
     strategy:
@@ -353,7 +355,7 @@ jobs:
   extended-macos:
     name: Extended / ${{ matrix.label }} / application only
     needs: build-candidate
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -433,7 +435,7 @@ jobs:
   extended-containers:
     name: Extended / ${{ matrix.label }}
     needs: build-candidate
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     container:
@@ -515,7 +517,7 @@ jobs:
   linux-pipeline-toolchain:
     name: Extended / Linux x64 / packaged fastq-checksum / Java 17 + Conda + Nextflow
     needs: build-candidate
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     defaults:
@@ -574,7 +576,7 @@ jobs:
   native-windows-contract:
     name: Extended / native Windows rejection directs reviewers to WSL
     needs: build-candidate
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.repository == 'hzi-bifo/SeqDesk') }}
+    if: ${{ github.repository == 'hzi-bifo/SeqDesk' && (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') }}
     runs-on: windows-2025
     timeout-minutes: 15
     steps:

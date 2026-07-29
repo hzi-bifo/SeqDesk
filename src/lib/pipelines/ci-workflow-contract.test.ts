@@ -121,6 +121,18 @@ describe("self-hosted pipeline CI contract", () => {
     );
     expect(installGate).toContain("Installer persistence verified in config file and SiteSettings.");
     expect(installGate).toContain(
+      'const { createRequire } = require("node:module")'
+    );
+    expect(installGate).toContain(
+      'fs.existsSync(path.join("current", "package.json"))'
+    );
+    expect(installGate).toContain(
+      'const { PrismaClient } = requireFromInstall("@prisma/client")'
+    );
+    expect(installGate).not.toContain(
+      'const { PrismaClient } = require("@prisma/client")'
+    );
+    expect(installGate).toContain(
       'curl -fsS "http://127.0.0.1:$INSTALLED_PORT/api/version"'
     );
     expect(installGate).toContain(
