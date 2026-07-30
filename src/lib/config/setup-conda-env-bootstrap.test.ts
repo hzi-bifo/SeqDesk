@@ -27,6 +27,15 @@ function createFakeBootstrapTools(testRoot: string, homeDir: string) {
   fs.mkdirSync(homeDir, { recursive: true });
   fs.mkdirSync(fakeBin, { recursive: true });
 
+  // Keep these tests independent of Conda installations supplied by the host
+  // runner (ubuntu-latest currently exposes one through /usr/bin/conda).
+  writeExecutable(
+    path.join(fakeBin, "conda"),
+    `#!/usr/bin/env bash
+exit 127
+`
+  );
+
   writeExecutable(
     fakeConda,
     `#!/usr/bin/env bash

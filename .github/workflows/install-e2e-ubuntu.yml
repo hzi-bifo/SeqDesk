@@ -569,6 +569,7 @@ jobs:
           # reject activation while still preserving v1 after a broken update.
           export SEQDESK_PIPELINES_DIR="$INSTALL_DIR/pipelines"
           export SEQDESK_PIPELINE_REGISTRY_URL="http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}/registry"
+          export SEQDESK_PIPELINE_STORE_E2E_FAULTS=1
           ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
 

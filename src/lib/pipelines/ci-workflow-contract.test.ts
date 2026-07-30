@@ -1105,6 +1105,9 @@ describe("self-hosted pipeline CI contract", () => {
       'export SEQDESK_PIPELINE_REGISTRY_URL="http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}/registry"'
     );
     expect(sourceInstallerGate).toContain(
+      "export SEQDESK_PIPELINE_STORE_E2E_FAULTS=1"
+    );
+    expect(sourceInstallerGate).toContain(
       'node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-e2e.mjs"'
     );
     expect(sourceInstallerGate).toContain(
