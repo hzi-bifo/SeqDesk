@@ -53,11 +53,17 @@ function runReport(
   directory: string,
   overrides: Record<string, string> = {}
 ) {
+  const emptyProbePath = path.join(directory, "empty-probe-path");
+  fs.mkdirSync(emptyProbePath, { recursive: true });
+
   return spawnSync(process.execPath, [reportScript], {
     encoding: "utf8",
     env: {
       ...process.env,
-      PATH: "/usr/bin:/bin",
+      // The report assertions under test are based on the files above. Keep
+      // unrelated host probes (notably runner-provided Conda environments)
+      // deterministic and fast instead of exercising the CI machine itself.
+      PATH: emptyProbePath,
       REVIEWER_OUTPUT_DIR: directory,
       REVIEWER_RESULT: "passed",
       REVIEWER_STAGE: "complete",
