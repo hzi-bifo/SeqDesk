@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "pipelines": {
+    "fastq-checksum": {
+      "tier": "required",
+      "proofs": ["local", "slurm", "app-retrieval", "read-writeback", "output-correctness"]
+    },
+    "fastqc": {
+      "tier": "required",
+      "proofs": ["local", "slurm", "app-retrieval", "read-writeback", "output-correctness"]
+    },
+    "multiqc": {
+      "tier": "required",
+      "proofs": ["local", "slurm", "app-retrieval", "prior-run-provenance", "output-correctness"]
+    },
+    "nanoplot": {
+      "tier": "required",
+      "proofs": ["local", "slurm", "app-retrieval", "read-writeback", "output-correctness"]
+    },
+    "reads-qc": {
+      "tier": "required",
+      "proofs": ["local", "slurm", "app-retrieval", "read-writeback", "output-correctness"]
+    },
+    "simulate-reads": {
+      "tier": "required",
+      "proofs": ["local", "slurm", "app-retrieval", "read-writeback", "persistent-files", "output-correctness"]
+    },
+    "study-demo-report": {
+      "tier": "required",
+      "proofs": ["local", "slurm", "app-retrieval", "config-plumbing", "sample-coverage", "output-correctness"]
+    },
+    "kraken2-bracken": {
+      "tier": "extended",
+      "reason": "Requires a large external Kraken2/Bracken reference database and a real shotgun dataset."
+    },
+    "mag": {
+      "tier": "extended",
+      "reason": "Assembly and binning are resource-intensive and use a separately dispatched real-data acceptance workflow."
+    },
+    "read-cleaning": {
+      "tier": "extended",
+      "reason": "Requires a large host-classification database and compute nodes with sufficient memory."
+    },
+    "submg": {
+      "tier": "extended",
+      "reason": "Submission requires ENA credentials and the live external ENA service."
+    }
+  }
+}

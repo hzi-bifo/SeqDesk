@@ -15,10 +15,17 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function makeInstallWithPipelineCli(): { dir: string; capturePath: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-'));
-  tempDirs.push(dir);
-  const scriptsDir = path.join(dir, 'scripts');
+function makeInstallWithPipelineCli(
+  layout: 'flat' | 'current' = 'flat',
+  rootDir?: string,
+  supportsCommandFamily = true
+): { dir: string; capturePath: string } {
+  const dir = rootDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-'));
+  if (!rootDir) {
+    tempDirs.push(dir);
+  }
+  const appDir = layout === 'current' ? path.join(dir, 'current') : dir;
+  const scriptsDir = path.join(appDir, 'scripts');
   fs.mkdirSync(scriptsDir, { recursive: true });
   const capturePath = path.join(dir, 'pipeline-argv.json');
   fs.writeFileSync(
@@ -26,12 +33,23 @@ function makeInstallWithPipelineCli(): { dir: string; capturePath: string } {
     [
       '#!/usr/bin/env node',
       'const fs = require("fs");',
+      ...(supportsCommandFamily ? ['// --command-family'] : []),
       `fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(2) }));`,
       'process.exit(0);',
       '',
     ].join('\n')
   );
   return { dir, capturePath };
+}
+
+function discoveryEnv(
+  overrides: Partial<NodeJS.ProcessEnv> = {}
+): NodeJS.ProcessEnv {
+  const baseEnv: NodeJS.ProcessEnv = { ...process.env };
+  delete baseEnv.SEQDESK_DIR;
+  delete baseEnv.SEQDESK_DEFAULT_INSTALL_FILE;
+  delete baseEnv.XDG_CONFIG_HOME;
+  return { ...baseEnv, ...overrides };
 }
 
 // Password the stub worker reports back, standing in for what the real
@@ -202,16 +220,19 @@ afterEach(() => {
 });
 
 describe('seqdesk npm launcher pipeline dispatch', () => {
-  it('prints pipeline help without requiring an installed app', () => {
-    const result = spawnSync(process.execPath, [launcherPath, 'pipeline', '--help'], {
+  it('prints canonical plural pipeline help without requiring an installed app', () => {
+    const result = spawnSync(process.execPath, [launcherPath, 'pipelines', '--help'], {
       encoding: 'utf-8',
     });
 
     expect(result.status).toBe(0);
+    expect(result.stdout).toContain('seqdesk pipelines install <pipelineId>');
+    expect(result.stdout).toContain('seqdesk pipelines setup <pipelineId>');
     expect(result.stdout).toContain('seqdesk pipeline run <pipelineId>');
+    expect(result.stdout).toContain('singular form, seqdesk pipeline ..., remains an alias');
   });
 
-  it('dispatches pipeline commands to the installed script under --dir', () => {
+  it('keeps the singular pipeline command as an alias', () => {
     const { dir, capturePath } = makeInstallWithPipelineCli();
     const result = spawnSync(
       process.execPath,
@@ -222,7 +243,253 @@ describe('seqdesk npm launcher pipeline dispatch', () => {
     expect(result.status).toBe(0);
     const captured = JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
     expect(fs.realpathSync(captured.cwd)).toBe(fs.realpathSync(dir));
-    expect(captured.argv).toEqual(['list', '--dir', dir, '--json']);
+    expect(captured.argv).toEqual([
+      'list',
+      '--json',
+      '--command-family',
+      'pipeline',
+      '--dir',
+      dir,
+    ]);
+  });
+
+  it('dispatches plural pipeline commands to a versioned install while keeping root cwd and --dir', () => {
+    const { dir, capturePath } = makeInstallWithPipelineCli('current');
+    const result = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'pipelines',
+        'list',
+        '--dir',
+        dir,
+        '--command-family',
+        'pipeline',
+        '--json',
+      ],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(0);
+    const captured = JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
+    expect(fs.realpathSync(captured.cwd)).toBe(fs.realpathSync(dir));
+    expect(captured.argv).toEqual([
+      'list',
+      '--json',
+      '--command-family',
+      'pipelines',
+      '--dir',
+      dir,
+    ]);
+  });
+
+  it('resolves an installer-written default from a neutral working directory', () => {
+    const { dir, capturePath } = makeInstallWithPipelineCli('current');
+    const neutralDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-neutral-cwd-'));
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-home-'));
+    tempDirs.push(neutralDir, homeDir);
+    const configHome = path.join(homeDir, '.config');
+    const pointerPath = path.join(configHome, 'seqdesk', 'default-install');
+    fs.mkdirSync(path.dirname(pointerPath), { recursive: true });
+    fs.writeFileSync(pointerPath, `${dir}\n`);
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'pipelines', 'list', '--json'],
+      {
+        cwd: neutralDir,
+        encoding: 'utf-8',
+        env: discoveryEnv({ HOME: homeDir, XDG_CONFIG_HOME: configHome }),
+      }
+    );
+
+    expect(result.status).toBe(0);
+    const captured = JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
+    expect(fs.realpathSync(captured.cwd)).toBe(fs.realpathSync(dir));
+    expect(captured.argv).toEqual([
+      'list',
+      '--json',
+      '--command-family',
+      'pipelines',
+      '--dir',
+      dir,
+    ]);
+  });
+
+  it('does not send the hidden family marker to an older installed worker', () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-old-worker-'));
+    tempDirs.push(rootDir);
+    const { dir, capturePath } = makeInstallWithPipelineCli(
+      'current',
+      rootDir,
+      false
+    );
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'pipeline', 'status', 'run-1', '--dir', dir, '--json'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(0);
+    const captured = JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
+    expect(captured.argv).toEqual([
+      'status',
+      'run-1',
+      '--json',
+      '--dir',
+      dir,
+    ]);
+  });
+
+  it('keeps JSON stdout as one document while forwarding the plural family', () => {
+    const { dir } = makeInstallWithPipelineCli('current');
+    const workerPath = path.join(dir, 'current', 'scripts', 'pipeline-cli.js');
+    fs.writeFileSync(
+      workerPath,
+      [
+        '#!/usr/bin/env node',
+        '// --command-family',
+        'process.stdout.write(JSON.stringify({ success: true, argv: process.argv.slice(2) }) + "\\n");',
+        '',
+      ].join('\n')
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'pipelines', 'status', 'fixture', '--dir', dir, '--json'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({
+      success: true,
+      argv: [
+        'status',
+        'fixture',
+        '--json',
+        '--command-family',
+        'pipelines',
+        '--dir',
+        dir,
+      ],
+    });
+  });
+
+  it('prefers --dir over SEQDESK_DIR and the default pointer', () => {
+    const explicit = makeInstallWithPipelineCli('current');
+    const fromEnv = makeInstallWithPipelineCli('current');
+    const fromPointer = makeInstallWithPipelineCli('current');
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-home-'));
+    tempDirs.push(homeDir);
+    const pointerPath = path.join(homeDir, '.config', 'seqdesk', 'default-install');
+    fs.mkdirSync(path.dirname(pointerPath), { recursive: true });
+    fs.writeFileSync(pointerPath, `${fromPointer.dir}\n`);
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'pipelines', 'list', '--dir', explicit.dir],
+      {
+        cwd: homeDir,
+        encoding: 'utf-8',
+        env: discoveryEnv({ HOME: homeDir, SEQDESK_DIR: fromEnv.dir }),
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(explicit.capturePath)).toBe(true);
+    expect(fs.existsSync(fromEnv.capturePath)).toBe(false);
+    expect(fs.existsSync(fromPointer.capturePath)).toBe(false);
+  });
+
+  it('prefers SEQDESK_DIR over the default pointer', () => {
+    const fromEnv = makeInstallWithPipelineCli('current');
+    const fromPointer = makeInstallWithPipelineCli('current');
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-home-'));
+    tempDirs.push(homeDir);
+    const pointerPath = path.join(homeDir, '.config', 'seqdesk', 'default-install');
+    fs.mkdirSync(path.dirname(pointerPath), { recursive: true });
+    fs.writeFileSync(pointerPath, `${fromPointer.dir}\n`);
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'pipelines', 'list'],
+      {
+        cwd: homeDir,
+        encoding: 'utf-8',
+        env: discoveryEnv({ HOME: homeDir, SEQDESK_DIR: fromEnv.dir }),
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(fromEnv.capturePath)).toBe(true);
+    expect(fs.existsSync(fromPointer.capturePath)).toBe(false);
+  });
+
+  it('prefers the installer pointer over a recognizable working directory', () => {
+    const fromPointer = makeInstallWithPipelineCli('current');
+    const fromCwd = makeInstallWithPipelineCli('current');
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-home-'));
+    tempDirs.push(homeDir);
+    const pointerPath = path.join(homeDir, '.config', 'seqdesk', 'default-install');
+    fs.mkdirSync(path.dirname(pointerPath), { recursive: true });
+    fs.writeFileSync(pointerPath, `${fromPointer.dir}\n`);
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'pipelines', 'list'],
+      {
+        cwd: path.join(fromCwd.dir, 'current'),
+        encoding: 'utf-8',
+        env: discoveryEnv({ HOME: homeDir }),
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(fromPointer.capturePath)).toBe(true);
+    expect(fs.existsSync(fromCwd.capturePath)).toBe(false);
+  });
+
+  it('recognizes a versioned install from its current directory', () => {
+    const recognized = makeInstallWithPipelineCli('current');
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-home-'));
+    tempDirs.push(homeDir);
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'pipelines', 'list'],
+      {
+        cwd: path.join(recognized.dir, 'current'),
+        encoding: 'utf-8',
+        env: discoveryEnv({ HOME: homeDir }),
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(recognized.capturePath)).toBe(true);
+  });
+
+  it('falls back to ~/seqdesk when no higher-priority install is discoverable', () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-home-'));
+    const neutralDir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-neutral-cwd-'));
+    tempDirs.push(homeDir, neutralDir);
+    const fallback = makeInstallWithPipelineCli(
+      'current',
+      path.join(homeDir, 'seqdesk')
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'pipelines', 'list'],
+      {
+        cwd: neutralDir,
+        encoding: 'utf-8',
+        env: discoveryEnv({ HOME: homeDir }),
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(fallback.capturePath)).toBe(true);
   });
 
   it('fails clearly when the installed pipeline script is missing', () => {
@@ -237,6 +504,41 @@ describe('seqdesk npm launcher pipeline dispatch', () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Installed pipeline CLI not found');
+  });
+
+  it('returns one JSON document when the installed pipeline script is missing', () => {
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'seqdesk-launcher-missing-json-')
+    );
+    tempDirs.push(dir);
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'pipelines', 'list', '--dir', dir, '--json'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({
+      success: false,
+      error: expect.stringContaining('Installed pipeline CLI not found'),
+    });
+  });
+
+  it('returns one JSON document for pipeline launcher argument errors', () => {
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'pipelines', 'list', '--dir=', '--json'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({
+      success: false,
+      error: '--dir requires a directory path',
+    });
   });
 });
 

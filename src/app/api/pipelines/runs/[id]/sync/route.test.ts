@@ -247,6 +247,8 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     const body = await response.json();
     expect(body.success).toBe(true);
     expect(body.synced).toBe(true);
+    expect(body.status).toBe("completed");
+    expect(body.updateApplied).toBe(true);
     expect(body.tasks).toBe(1);
   });
 

@@ -19,6 +19,7 @@ const DOCS_INSTALLATION_URL = "https://seqdesk.org/docs/installation";
 const DOCS_COMMON_PROBLEMS_URL = "https://seqdesk.org/docs/installation/common-problems";
 const DOCS_POSTGRES_URL =
   "https://seqdesk.org/docs/installation/quickstart#postgresql-cannot-be-reached-or-migrations-fail";
+const DEFAULT_INSTALL_POINTER_ENV = "SEQDESK_DEFAULT_INSTALL_FILE";
 const args = process.argv.slice(2);
 
 if (process.platform === "win32") {
@@ -35,7 +36,7 @@ const DOCTOR_USAGE = `Usage:
   seqdesk doctor [--dir /path/to/seqdesk] [--url http://127.0.0.1:8000]
 
 Options:
-  --dir, -d          Installed SeqDesk directory. Defaults to the current directory.
+  --dir, -d          Installed SeqDesk directory. Otherwise uses the configured/default install.
   --url, -u          Running SeqDesk URL for HTTP checks.
   --timeout-ms       Timeout for PostgreSQL and HTTP checks. Defaults to 5000.
   --json             Print machine-readable JSON.
@@ -51,7 +52,7 @@ Example:
 Options:
   <address>          Account to reset. May also be given as --email <address>.
   --email, -e        Account to reset, by email address. Required.
-  --dir, -d          Installed SeqDesk directory. Defaults to the current directory.
+  --dir, -d          Installed SeqDesk directory. Otherwise uses the configured/default install.
   --password         Password to set. Omit to generate a strong one.
   --yes, -y          Skip the confirmation prompt. Required with --json.
   --json             Print machine-readable JSON.
@@ -70,7 +71,7 @@ const ASSETS_USAGE = `Usage:
   seqdesk assets apply [--dir /path/to/seqdesk] (--profile <id> --profile-code <code> | --profile-config <file>)
 
 Options:
-  --dir, -d                    Installed SeqDesk directory. Defaults to the current directory.
+  --dir, -d                    Installed SeqDesk directory. Otherwise uses the configured/default install.
   --profile <id>               Hosted install profile id, for example dev.
   --profile-code, --key <code> Hosted profile access code.
   --profile-config <file>      Already-resolved install profile JSON.
@@ -80,14 +81,22 @@ Options:
 `;
 
 const PIPELINE_USAGE = `Usage:
-  seqdesk pipeline list --dir /path/to/seqdesk [--catalog study|order|all] [--enabled] [--json]
-  seqdesk pipeline run <pipelineId> --dir /path/to/seqdesk (--study <id>|--order <id>) [--samples id,id] [--config-file file|--config-json json] [--execution default|local|slurm] [--watch] [--json] [--user-email email]
-  seqdesk pipeline status <runId> --dir /path/to/seqdesk [--watch] [--json]
-  seqdesk pipeline sync <runId> --dir /path/to/seqdesk [--json]
-  seqdesk pipeline logs <runId> --dir /path/to/seqdesk [--type output|error] [--tail 200] [--json]
-  seqdesk pipeline outputs <runId> --dir /path/to/seqdesk [--json]
-  seqdesk pipeline debug <runId> --dir /path/to/seqdesk [--format text|json] [--out file]
-  seqdesk pipeline cancel <runId> --dir /path/to/seqdesk [--json]
+  seqdesk pipelines list [--dir /path/to/seqdesk] [--catalog study|order|all] [--installed] [--enabled] [--json]
+  seqdesk pipelines install <pipelineId> [--dir /path/to/seqdesk] [--source sourceId] [--version version] [--sha256 digest] [--runtime] [--yes] [--json]
+  seqdesk pipelines setup <pipelineId> [--dir /path/to/seqdesk] [--config-file file|--config-json json] [--runtime] [--yes] [--json]
+  seqdesk pipelines enable <pipelineId> [--dir /path/to/seqdesk] [--json]
+  seqdesk pipelines status <pipelineId> [--dir /path/to/seqdesk] [--json]
+  seqdesk pipeline run <pipelineId> [--dir /path/to/seqdesk] (--study <id>|--order <id>) [--samples id,id] [--config-file file|--config-json json] [--execution default|local|slurm] [--watch] [--json] [--user-email email]
+  seqdesk pipeline status <pipelineId|runId> [--dir /path/to/seqdesk] [--watch] [--json]
+  seqdesk pipeline sync <runId> [--dir /path/to/seqdesk] [--json]
+  seqdesk pipeline logs <runId> [--dir /path/to/seqdesk] [--type output|error] [--tail 200] [--json]
+  seqdesk pipeline outputs <runId> [--dir /path/to/seqdesk] [--json]
+  seqdesk pipeline debug <runId> [--dir /path/to/seqdesk] [--format text|json] [--out file]
+  seqdesk pipeline cancel <runId> [--dir /path/to/seqdesk] [--json]
+
+The older singular form, seqdesk pipeline ..., remains an alias.
+Without --dir, SeqDesk uses SEQDESK_DIR, the installer-written default,
+a recognizable current directory, then ~/seqdesk.
 
 Local shell access to the installed directory is treated as operator access.
 `;
@@ -129,7 +138,7 @@ function shellQuote(value) {
 
 function parseDoctorArgs(argv) {
   const options = {
-    dir: process.cwd(),
+    dir: resolveDefaultInstallDir(),
     url: "",
     json: false,
     timeoutMs: 5000,
@@ -227,7 +236,7 @@ function parseDoctorArgs(argv) {
 
 function parseResetPasswordArgs(argv) {
   const options = {
-    dir: process.cwd(),
+    dir: resolveDefaultInstallDir(),
     email: "",
     password: "",
     yes: false,
@@ -366,7 +375,7 @@ function safeProfileFileName(profileId) {
 
 function parseAssetsArgs(argv) {
   const options = {
-    dir: process.cwd(),
+    dir: resolveDefaultInstallDir(),
     profile: "",
     profileCode: "",
     profileConfig: "",
@@ -497,7 +506,7 @@ function parseAssetsArgs(argv) {
 
 function parsePipelineLauncherArgs(argv) {
   const options = {
-    dir: process.cwd(),
+    dir: resolveDefaultInstallDir(),
     help: false,
   };
 
@@ -588,6 +597,115 @@ function dirExists(file) {
 function resolveAppDir(installDir) {
   const currentDir = path.join(installDir, "current");
   return dirExists(currentDir) ? currentDir : installDir;
+}
+
+function expandHomePath(value) {
+  const homeDir = env.HOME || os.homedir();
+  if (value === "~") return homeDir;
+  if (value.startsWith("~/")) return path.join(homeDir, value.slice(2));
+  return value;
+}
+
+function defaultInstallPointerPath() {
+  const configured = firstString(env[DEFAULT_INSTALL_POINTER_ENV]);
+  if (configured) {
+    return path.resolve(expandHomePath(configured));
+  }
+
+  const homeDir = env.HOME || os.homedir();
+  const configHome = firstString(env.XDG_CONFIG_HOME) || path.join(homeDir, ".config");
+  return path.resolve(expandHomePath(configHome), "seqdesk", "default-install");
+}
+
+function readDefaultInstallPointer() {
+  try {
+    const firstLine = fs.readFileSync(defaultInstallPointerPath(), "utf8").split(/\r?\n/, 1)[0].trim();
+    if (!firstLine || firstLine.includes("\0")) return "";
+    const candidate = path.resolve(expandHomePath(firstLine));
+    return dirExists(candidate) ? candidate : "";
+  } catch {
+    return "";
+  }
+}
+
+function hasSeqDeskPackageJson(dir) {
+  try {
+    const packageJson = readJsonFile(path.join(dir, "package.json"));
+    return packageJson?.name === "seqdesk";
+  } catch {
+    return false;
+  }
+}
+
+function isRecognizableInstallRoot(dir) {
+  if (!dirExists(dir)) return false;
+  const appDir = resolveAppDir(dir);
+  if (fileExists(path.join(appDir, "scripts", "pipeline-cli.js"))) {
+    return true;
+  }
+  if (!hasSeqDeskPackageJson(appDir) && !hasSeqDeskPackageJson(dir)) {
+    return false;
+  }
+  return (
+    fileExists(path.join(dir, "start.sh")) ||
+    fileExists(path.join(dir, "settings.json")) ||
+    fileExists(path.join(dir, "seqdesk.config.json")) ||
+    dirExists(path.join(dir, "pipelines"))
+  );
+}
+
+function installRootForReleaseDir(candidate) {
+  const parent = path.dirname(candidate);
+  let root = "";
+  if (path.basename(candidate) === "current") {
+    root = parent;
+  } else if (path.basename(parent) === "releases") {
+    root = path.dirname(parent);
+  }
+  if (!root || !dirExists(path.join(root, "current"))) {
+    return "";
+  }
+  try {
+    return fs.realpathSync(path.join(root, "current")) === fs.realpathSync(candidate) ? root : "";
+  } catch {
+    return "";
+  }
+}
+
+function recognizableInstallFromCwd(cwd = process.cwd()) {
+  let candidate = path.resolve(cwd);
+  while (true) {
+    const releaseRoot = installRootForReleaseDir(candidate);
+    if (releaseRoot && isRecognizableInstallRoot(releaseRoot)) {
+      return releaseRoot;
+    }
+    if (isRecognizableInstallRoot(candidate)) {
+      return candidate;
+    }
+    const parent = path.dirname(candidate);
+    if (parent === candidate) break;
+    candidate = parent;
+  }
+  return "";
+}
+
+function resolveDefaultInstallDir() {
+  const configured = firstString(env.SEQDESK_DIR);
+  if (configured) {
+    return path.resolve(expandHomePath(configured));
+  }
+
+  const pointedInstall = readDefaultInstallPointer();
+  if (pointedInstall) {
+    return pointedInstall;
+  }
+
+  const cwdInstall = recognizableInstallFromCwd();
+  if (cwdInstall) {
+    return cwdInstall;
+  }
+
+  return path.resolve(env.HOME || os.homedir(), "seqdesk");
 }
 
 // A13: the installer writes settings.json on fresh installs (seqdesk.config.json
@@ -1679,9 +1797,45 @@ function runInstalledAssetScript({ installDir, scriptPath, profileConfig, json }
   });
 }
 
-function runInstalledPipelineScript({ installDir, argv }) {
+function pipelineScriptSupportsCommandFamily(scriptPath) {
+  try {
+    return fs.readFileSync(scriptPath, "utf8").includes("--command-family");
+  } catch {
+    return false;
+  }
+}
+
+function pipelineArgsWithInstallDir(argv, installDir, commandFamily, supportsCommandFamily) {
+  const forwarded = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === "--dir" || token === "-d") {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--dir=")) {
+      continue;
+    }
+    if (token === "--command-family") {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--command-family=")) {
+      continue;
+    }
+    forwarded.push(token);
+  }
+  if (supportsCommandFamily) {
+    forwarded.push("--command-family", commandFamily);
+  }
+  forwarded.push("--dir", installDir);
+  return forwarded;
+}
+
+function runInstalledPipelineScript({ installDir, argv, commandFamily }) {
   return new Promise((resolve, reject) => {
-    const scriptPath = path.join(installDir, "scripts", "pipeline-cli.js");
+    const appDir = resolveAppDir(installDir);
+    const scriptPath = path.join(appDir, "scripts", "pipeline-cli.js");
     if (!fileExists(scriptPath)) {
       reject(
         new Error(
@@ -1691,11 +1845,23 @@ function runInstalledPipelineScript({ installDir, argv }) {
       return;
     }
 
-    const child = spawn(process.execPath, [scriptPath, ...argv], {
-      cwd: installDir,
-      env,
-      stdio: "inherit",
-    });
+    const child = spawn(
+      process.execPath,
+      [
+        scriptPath,
+        ...pipelineArgsWithInstallDir(
+          argv,
+          installDir,
+          commandFamily,
+          pipelineScriptSupportsCommandFamily(scriptPath)
+        ),
+      ],
+      {
+        cwd: installDir,
+        env,
+        stdio: "inherit",
+      }
+    );
 
     child.on("error", (error) => {
       reject(new Error(`Failed to start installed pipeline CLI: ${error.message}`));
@@ -1757,14 +1923,28 @@ async function runAssets(argv) {
   }
 }
 
-async function runPipeline(argv) {
+async function runPipeline(argv, commandFamily) {
+  const json = argv.includes("--json");
+  const reportError = (error) => {
+    const message =
+      error instanceof Error ? error.message : String(error);
+    if (json) {
+      process.stdout.write(
+        `${JSON.stringify({ success: false, error: message })}\n`
+      );
+      return;
+    }
+    console.error(`[seqdesk] ${message}`);
+  };
   let options;
   try {
     options = parsePipelineLauncherArgs(argv);
   } catch (error) {
-    console.error(`[seqdesk] ${error.message}`);
-    console.error("");
-    console.error(PIPELINE_USAGE.trim());
+    reportError(error);
+    if (!json) {
+      console.error("");
+      console.error(PIPELINE_USAGE.trim());
+    }
     return 2;
   }
 
@@ -1777,9 +1957,10 @@ async function runPipeline(argv) {
     return await runInstalledPipelineScript({
       installDir: options.dir,
       argv,
+      commandFamily,
     });
   } catch (error) {
-    console.error(`[seqdesk] ${error.message}`);
+    reportError(error);
     return 1;
   }
 }
@@ -1873,7 +2054,7 @@ async function main() {
     console.log("  seqdesk doctor [options]");
     console.log("  seqdesk reset-password --email <address> [options]");
     console.log("  seqdesk assets apply [options]");
-    console.log("  seqdesk pipeline <command> [options]");
+    console.log("  seqdesk pipelines <command> [options]");
     console.log("  seqdesk --version");
     console.log("");
     console.log("Common installer options:");
@@ -1909,8 +2090,8 @@ async function main() {
     process.exit(exitCode);
   }
 
-  if (args[0] === "pipeline") {
-    const exitCode = await runPipeline(args.slice(1));
+  if (args[0] === "pipelines" || args[0] === "pipeline") {
+    const exitCode = await runPipeline(args.slice(1), args[0]);
     process.exit(exitCode);
   }
 

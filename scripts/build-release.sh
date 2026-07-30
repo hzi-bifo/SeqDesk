@@ -179,6 +179,10 @@ for (const entry of entries) {
 }
 NODE
 
+echo "Copying installed SeqDesk CLI launcher..."
+cp "${ROOT_DIR}/npm/seqdesk/bin/seqdesk.js" "${RELEASE_DIR}/scripts/seqdesk-launcher.js"
+chmod 755 "${RELEASE_DIR}/scripts/seqdesk-launcher.js"
+
 echo "Copying Next.js static assets..."
 mkdir -p "${RELEASE_DIR}/.next"
 cp -R "${ROOT_DIR}/.next/static" "${RELEASE_DIR}/.next/"

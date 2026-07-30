@@ -14,6 +14,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { db } from '@/lib/db';
 import { resolveAssemblySelection } from '@/lib/pipelines/assembly-selection';
+import { compilePackageGlobPattern } from '@/lib/pipelines/package-patterns';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import { getPipelineSampleWhere, isOrderTarget, isStudyTarget } from '@/lib/pipelines/target';
 
@@ -58,16 +59,7 @@ async function simpleGlob(pattern: string): Promise<string[]> {
   const baseDir = baseParts.length > 0 ? baseParts.join('/') : '.';
   const filePattern = parts.slice(patternStart).join('/');
 
-  // Convert glob pattern to regex
-  const regexPattern = filePattern
-    .replace(/\*\*/g, '{{RECURSIVE}}')
-    .replace(/\*/g, '[^/]*')
-    .replace(/\?/g, '[^/]')
-    .replace(/{{RECURSIVE}}/g, '.*')
-    // Expand brace patterns like {A,B} to regex alternation (A|B)
-    .replace(/\{([^}]+)\}/g, (_, content) => `(${content.replace(/,/g, '|')})`);
-
-  const regex = new RegExp(`^${regexPattern}$`);
+  const regex = compilePackageGlobPattern(filePattern);
 
   // Recursively find matching files
   async function findFiles(dir: string, relativePath: string = ''): Promise<void> {

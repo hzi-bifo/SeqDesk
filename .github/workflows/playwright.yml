@@ -60,6 +60,12 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      - name: Setup Miniconda for pipeline readiness
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-activate-base: false
+          miniconda-version: latest
+
       - name: Install Nextflow
         run: |
           mkdir -p "$HOME/.local/bin"
@@ -71,6 +77,24 @@ jobs:
 
       - name: Run Playwright tests
         run: npm run test:e2e
+
+      - name: Run real pipeline Store browser flow
+        env:
+          SEQDESK_PIPELINE_REGISTRY_URL: http://127.0.0.1:3219/registry
+          SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL: http://127.0.0.1:3219
+          SEQDESK_PIPELINE_STORE_E2E_FAULTS: "1"
+        run: |
+          set -euo pipefail
+          STORE_PIPELINES_DIR="$RUNNER_TEMP/playwright-real-store-pipelines"
+          mkdir -p "$STORE_PIPELINES_DIR"
+          SEQDESK_PIPELINES_DIR="$STORE_PIPELINES_DIR" \
+            npx playwright test \
+              playwright/tests/pipeline-store-real.admin.spec.ts \
+              --project=chromium-admin \
+              --no-deps \
+              --workers=1 \
+              --repeat-each=2 \
+              --reporter=list
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}

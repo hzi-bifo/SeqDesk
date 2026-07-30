@@ -2,7 +2,18 @@ import fs from "fs/promises";
 import path from "path";
 import yaml from "js-yaml";
 import { ManifestSchema, type Manifest } from "./manifest-schema";
+import {
+  DefinitionRuntimeSchema,
+  ParserRuntimeSchema,
+  RegistryRuntimeSchema,
+  SamplesheetRuntimeSchema,
+} from "./package-descriptor-schema";
 import { inferPipelineResultContract } from "./package-contracts";
+import { isSafePipelineFlagToken } from "./package-patterns";
+import {
+  hasSupportedCustomPipelineRunner,
+  isLocalPipelineReference,
+} from "./pipeline-paths";
 
 export type DescriptorLintLevel = "error" | "warning";
 
@@ -57,31 +68,41 @@ async function readYaml(filePath: string): Promise<unknown | null> {
   }
 }
 
-function resolvePackagePath(packageDir: string, relativePath?: string): string | null {
+function resolvePackagePath(
+  packageDir: string,
+  relativePath?: string,
+  options: { allowBase?: boolean } = {}
+): string | null {
   if (!relativePath) return null;
-  return path.resolve(packageDir, relativePath);
-}
-
-function isLocalPipelineRef(value: string): boolean {
-  return value.startsWith("/") || value.startsWith("./") || value.startsWith("../");
+  if (path.isAbsolute(relativePath) || path.win32.isAbsolute(relativePath)) return null;
+  const baseResolved = path.resolve(packageDir);
+  const resolved = path.resolve(baseResolved, relativePath);
+  const relative = path.relative(baseResolved, resolved);
+  if (
+    (!options.allowBase && relative.length === 0) ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    return null;
+  }
+  return resolved;
 }
 
 function looksLikeFlag(value: string): boolean {
-  return value === "" || value.startsWith("-") || /^[A-Za-z0-9_.-]+$/.test(value);
-}
-
-function hasCustomRunner(manifest: Manifest): boolean {
-  const execution = manifest.execution as Manifest["execution"] & {
-    runner?: unknown;
-    customRunner?: unknown;
-  };
-  return execution.runner === "custom" || execution.customRunner === "custom";
+  return value === "" || isSafePipelineFlagToken(value);
 }
 
 interface DefinitionDescriptor {
   pipeline?: string;
+  name?: unknown;
+  description?: unknown;
+  version?: unknown;
   steps?: Array<{
     id?: unknown;
+    name?: unknown;
+    description?: unknown;
+    category?: unknown;
     dependsOn?: unknown;
     processMatchers?: unknown;
   }>;
@@ -91,11 +112,76 @@ interface DefinitionDescriptor {
   }>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateManifestFilePaths(
+  packageDir: string,
+  manifest: Manifest,
+  issues: DescriptorLintIssue[]
+): void {
+  const paths = [
+    manifest.files.definition,
+    manifest.files.registry,
+    manifest.files.samplesheet,
+    manifest.files.readme,
+    ...(manifest.files.parsers || []),
+    ...Object.values(manifest.files.scripts || {}),
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+
+  for (const relativePath of paths) {
+    if (!resolvePackagePath(packageDir, relativePath)) {
+      addIssue(
+        issues,
+        "error",
+        "package-path-traversal",
+        `Package file path must stay inside the package directory: ${relativePath}.`,
+        "manifest.json"
+      );
+    }
+  }
+}
+
 function validateDefinitionContract(
   definition: DefinitionDescriptor,
   manifest: Manifest,
   issues: DescriptorLintIssue[]
 ) {
+  if (definition.pipeline !== manifest.package.id) {
+    addIssue(
+      issues,
+      "error",
+      "definition-id-mismatch",
+      `definition.pipeline "${String(definition.pipeline ?? "missing")}" does not match package.id "${manifest.package.id}".`,
+      manifest.files.definition
+    );
+  }
+  for (const [field, value] of [
+    ["name", definition.name],
+    ["description", definition.description],
+    ["version", definition.version],
+  ] as const) {
+    if (typeof value !== "string" || value.trim().length === 0) {
+      addIssue(
+        issues,
+        "error",
+        "definition-shape",
+        `definition.${field} must be a non-empty string.`,
+        manifest.files.definition
+      );
+    }
+  }
+  if (!Array.isArray(definition.steps)) {
+    addIssue(
+      issues,
+      "error",
+      "definition-shape",
+      "definition.steps must be an array.",
+      manifest.files.definition
+    );
+  }
+
   const steps = Array.isArray(definition.steps) ? definition.steps : [];
   const stepIds = new Set<string>();
 
@@ -109,6 +195,33 @@ function validateDefinitionContract(
         manifest.files.definition
       );
       continue;
+    }
+    for (const [field, value] of [
+      ["name", step.name],
+      ["description", step.description],
+      ["category", step.category],
+    ] as const) {
+      if (typeof value !== "string" || value.trim().length === 0) {
+        addIssue(
+          issues,
+          "error",
+          "definition-step-shape",
+          `Step "${step.id}" must have a non-empty ${field}.`,
+          manifest.files.definition
+        );
+      }
+    }
+    if (
+      !Array.isArray(step.dependsOn) ||
+      step.dependsOn.some((dependency) => typeof dependency !== "string")
+    ) {
+      addIssue(
+        issues,
+        "error",
+        "definition-step-shape",
+        `Step "${step.id}" dependsOn must be an array of step IDs.`,
+        manifest.files.definition
+      );
     }
 
     if (stepIds.has(step.id)) {
@@ -183,6 +296,115 @@ function validateDefinitionContract(
   }
 }
 
+function validateRegistryContract(
+  registry: Record<string, unknown>,
+  manifest: Manifest,
+  issues: DescriptorLintIssue[]
+): void {
+  const file = manifest.files.registry;
+  if (registry.id !== manifest.package.id) {
+    addIssue(
+      issues,
+      "error",
+      "registry-id-mismatch",
+      `registry.id "${String(registry.id ?? "missing")}" does not match package.id "${manifest.package.id}".`,
+      file
+    );
+  }
+
+  for (const field of ["name", "description", "category", "version", "icon"] as const) {
+    const value = registry[field];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      addIssue(
+        issues,
+        "error",
+        "registry-shape",
+        `registry.${field} must be a non-empty string.`,
+        file
+      );
+    }
+  }
+
+  if (!isRecord(registry.requires)) {
+    addIssue(issues, "error", "registry-shape", "registry.requires must be an object.", file);
+  }
+  if (!Array.isArray(registry.outputs)) {
+    addIssue(issues, "error", "registry-shape", "registry.outputs must be an array.", file);
+  }
+
+  const visibility = registry.visibility;
+  if (
+    !isRecord(visibility) ||
+    typeof visibility.showToUser !== "boolean" ||
+    typeof visibility.userCanStart !== "boolean"
+  ) {
+    addIssue(
+      issues,
+      "error",
+      "registry-shape",
+      "registry.visibility must define boolean showToUser and userCanStart values.",
+      file
+    );
+  }
+
+  const input = registry.input;
+  const perSample = isRecord(input) ? input.perSample : null;
+  if (
+    !isRecord(input) ||
+    !Array.isArray(input.supportedScopes) ||
+    !isRecord(perSample) ||
+    typeof perSample.reads !== "boolean" ||
+    typeof perSample.pairedEnd !== "boolean"
+  ) {
+    addIssue(
+      issues,
+      "error",
+      "registry-shape",
+      "registry.input must define supportedScopes and boolean perSample.reads/pairedEnd values.",
+      file
+    );
+  }
+
+  const samplesheet = registry.samplesheet;
+  if (
+    !isRecord(samplesheet) ||
+    typeof samplesheet.format !== "string" ||
+    typeof samplesheet.generator !== "string"
+  ) {
+    addIssue(
+      issues,
+      "error",
+      "registry-shape",
+      "registry.samplesheet must define format and generator.",
+      file
+    );
+  }
+
+  const configSchema = registry.configSchema;
+  if (
+    !isRecord(configSchema) ||
+    configSchema.type !== "object" ||
+    !isRecord(configSchema.properties)
+  ) {
+    addIssue(
+      issues,
+      "error",
+      "registry-shape",
+      'registry.configSchema must be an object schema with a "properties" object.',
+      file
+    );
+  }
+  if (!isRecord(registry.defaultConfig)) {
+    addIssue(
+      issues,
+      "error",
+      "registry-shape",
+      "registry.defaultConfig must be an object.",
+      file
+    );
+  }
+}
+
 async function validateExecution(
   packageDir: string,
   manifest: Manifest,
@@ -198,14 +420,29 @@ async function validateExecution(
     );
   }
 
-  if (isLocalPipelineRef(manifest.execution.pipeline)) {
-    const pipelinePath = path.resolve(packageDir, manifest.execution.pipeline);
-    if (!(await pathExists(pipelinePath)) && !hasCustomRunner(manifest)) {
+  if (isLocalPipelineReference(manifest.execution.pipeline)) {
+    const pipelinePath = resolvePackagePath(
+      packageDir,
+      manifest.execution.pipeline,
+      { allowBase: true }
+    );
+    if (!pipelinePath) {
       addIssue(
         issues,
-        "warning",
+        "error",
+        "execution-pipeline-path",
+        `Local execution.pipeline path must stay inside the package directory: ${manifest.execution.pipeline}.`,
+        "manifest.json"
+      );
+    } else if (
+      !(await pathExists(pipelinePath)) &&
+      !hasSupportedCustomPipelineRunner(manifest)
+    ) {
+      addIssue(
+        issues,
+        "error",
         "local-workflow-missing",
-        `Local execution.pipeline path does not exist: ${manifest.execution.pipeline}. This is OK only if a custom runner handles the package.`,
+        `Local execution.pipeline path does not exist: ${manifest.execution.pipeline}.`,
         "manifest.json"
       );
     }
@@ -215,9 +452,9 @@ async function validateExecution(
     if (!looksLikeFlag(flag)) {
       addIssue(
         issues,
-        "warning",
+        "error",
         "param-map-flag",
-        `paramMap.${key} should be a Nextflow flag, plain token, or empty SeqDesk-only mapping.`,
+        `paramMap.${key} must be a single safe Nextflow flag or an empty SeqDesk-only mapping.`,
         "manifest.json"
       );
     }
@@ -266,7 +503,7 @@ async function validateReferencedFiles(
     if (readmePath && !(await pathExists(readmePath))) {
       addIssue(
         issues,
-        "warning",
+        "error",
         "missing-readme",
         `README not found: ${manifest.files.readme}.`,
         "manifest.json"
@@ -309,39 +546,42 @@ async function validateDefinitionAndRegistry(
   const definitionPath = resolvePackagePath(packageDir, manifest.files.definition);
   if (definitionPath && (await pathExists(definitionPath))) {
     const definition = await readJson(definitionPath);
-    if (!definition || typeof definition !== "object") {
-      addIssue(issues, "error", "invalid-definition-json", "definition.json is not valid JSON.", manifest.files.definition);
+    const definitionResult = DefinitionRuntimeSchema.safeParse(definition);
+    if (!definitionResult.success) {
+      addIssue(
+        issues,
+        "error",
+        "definition-shape",
+        `definition.json is invalid: ${definitionResult.error.issues
+          .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
+          .join("; ")}`,
+        manifest.files.definition
+      );
     } else {
-      const pipelineId = (definition as { pipeline?: string }).pipeline;
-      if (pipelineId && pipelineId !== manifest.package.id) {
-        addIssue(
-          issues,
-          "error",
-          "definition-id-mismatch",
-          `definition.pipeline "${pipelineId}" does not match package.id "${manifest.package.id}".`,
-          manifest.files.definition
-        );
-      }
-      validateDefinitionContract(definition as DefinitionDescriptor, manifest, issues);
+      validateDefinitionContract(
+        definitionResult.data as DefinitionDescriptor,
+        manifest,
+        issues
+      );
     }
   }
 
   const registryPath = resolvePackagePath(packageDir, manifest.files.registry);
   if (registryPath && (await pathExists(registryPath))) {
     const registry = await readJson(registryPath);
-    if (!registry || typeof registry !== "object") {
-      addIssue(issues, "error", "invalid-registry-json", "registry.json is not valid JSON.", manifest.files.registry);
+    const registryResult = RegistryRuntimeSchema.safeParse(registry);
+    if (!registryResult.success) {
+      addIssue(
+        issues,
+        "error",
+        "registry-shape",
+        `registry.json is invalid: ${registryResult.error.issues
+          .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
+          .join("; ")}`,
+        manifest.files.registry
+      );
     } else {
-      const registryId = (registry as { id?: string }).id;
-      if (registryId && registryId !== manifest.package.id) {
-        addIssue(
-          issues,
-          "error",
-          "registry-id-mismatch",
-          `registry.id "${registryId}" does not match package.id "${manifest.package.id}".`,
-          manifest.files.registry
-        );
-      }
+      validateRegistryContract(registryResult.data, manifest, issues);
     }
   }
 }
@@ -355,21 +595,21 @@ async function validateSamplesheet(
   if (!samplesheetPath || !(await pathExists(samplesheetPath))) return;
 
   const samplesheet = await readYaml(samplesheetPath);
-  const columns = (samplesheet as {
-    samplesheet?: { columns?: Array<{ name?: string; source?: string | null }> };
-  } | null)?.samplesheet?.columns;
-
-  if (!Array.isArray(columns) || columns.length === 0) {
+  const samplesheetResult = SamplesheetRuntimeSchema.safeParse(samplesheet);
+  if (!samplesheetResult.success) {
     addIssue(
       issues,
       "error",
-      "samplesheet-columns",
-      "samplesheet.yaml must define at least one column.",
+      "samplesheet-shape",
+      `samplesheet.yaml is invalid: ${samplesheetResult.error.issues
+        .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
+        .join("; ")}`,
       manifest.files.samplesheet
     );
     return;
   }
 
+  const columns = samplesheetResult.data.samplesheet.columns;
   const hasSampleColumn = columns.some((column) =>
     column.name === "sample" || column.name === "sample_id"
   );
@@ -384,36 +624,62 @@ async function validateSamplesheet(
   }
 }
 
-async function collectParserIds(
+async function collectParserColumns(
   packageDir: string,
   manifest: Manifest,
   issues: DescriptorLintIssue[]
-): Promise<Set<string>> {
-  const parserIds = new Set<string>();
+): Promise<Map<string, Set<string>>> {
+  const parserColumns = new Map<string, Set<string>>();
   for (const parserFile of manifest.files.parsers || []) {
     const parserPath = resolvePackagePath(packageDir, parserFile);
     if (!parserPath || !(await pathExists(parserPath))) continue;
 
     const parserConfig = await readYaml(parserPath);
-    const parserId = (parserConfig as { parser?: { id?: string } } | null)?.parser?.id;
-    if (parserId) {
-      parserIds.add(parserId);
-    } else {
+    const parserResult = ParserRuntimeSchema.safeParse(parserConfig);
+    if (!parserResult.success) {
       addIssue(
         issues,
-        "warning",
-        "parser-id-missing",
-        `Parser file missing parser.id: ${parserFile}.`,
+        "error",
+        "parser-shape",
+        `Parser file is invalid: ${parserResult.error.issues
+          .map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`)
+          .join("; ")}`,
         parserFile
       );
+      continue;
     }
+    const parserId = parserResult.data.parser.id;
+    if (parserColumns.has(parserId)) {
+      addIssue(
+        issues,
+        "error",
+        "duplicate-parser-id",
+        `Duplicate parser id "${parserId}".`,
+        parserFile
+      );
+      continue;
+    }
+    const columnNames = new Set<string>();
+    for (const column of parserResult.data.parser.columns) {
+      if (columnNames.has(column.name)) {
+        addIssue(
+          issues,
+          "error",
+          "duplicate-parser-column",
+          `Parser "${parserId}" has duplicate column name "${column.name}".`,
+          parserFile
+        );
+      }
+      columnNames.add(column.name);
+    }
+    parserColumns.set(parserId, columnNames);
   }
-  return parserIds;
+  return parserColumns;
 }
 
 function validateOutputs(
   manifest: Manifest,
-  parserIds: Set<string>,
+  parserColumns: Map<string, Set<string>>,
   issues: DescriptorLintIssue[]
 ) {
   const seenOutputIds = new Set<string>();
@@ -429,14 +695,53 @@ function validateOutputs(
     }
     seenOutputIds.add(output.id);
 
-    if (output.parsed?.from && !parserIds.has(output.parsed.from)) {
+    if (
+      output.scope === "sample" &&
+      output.required !== false &&
+      !output.discovery.matchSampleBy &&
+      !manifest.files.scripts?.discoverOutputs
+    ) {
       addIssue(
         issues,
-        "warning",
-        "unknown-parser",
-        `Output "${output.id}" references parser "${output.parsed.from}" which was not found.`,
+        "error",
+        "sample-output-match-strategy",
+        `Required sample output "${output.id}" must define discovery.matchSampleBy unless a custom discoverOutputs script supplies sample IDs.`,
         "manifest.json"
       );
+    }
+
+    if (output.parsed) {
+      const columns = parserColumns.get(output.parsed.from);
+      if (!columns) {
+        addIssue(
+          issues,
+          "error",
+          "unknown-parser",
+          `Output "${output.id}" references parser "${output.parsed.from}" which was not found.`,
+          "manifest.json"
+        );
+      } else {
+        if (!columns.has(output.parsed.matchBy)) {
+          addIssue(
+            issues,
+            "error",
+            "unknown-parser-match-column",
+            `Output "${output.id}" matchBy references unknown parser column "${output.parsed.matchBy}".`,
+            "manifest.json"
+          );
+        }
+        for (const sourceColumn of Object.values(output.parsed.map)) {
+          if (!columns.has(sourceColumn)) {
+            addIssue(
+              issues,
+              "error",
+              "unknown-parser-map-column",
+              `Output "${output.id}" maps unknown parser column "${sourceColumn}".`,
+              "manifest.json"
+            );
+          }
+        }
+      }
     }
 
     if (output.writeback?.target === "Read" && output.destination !== "sample_reads") {
@@ -445,6 +750,15 @@ function validateOutputs(
         "error",
         "read-writeback-destination",
         `Output "${output.id}" uses Read writeback but destination is "${output.destination}" instead of "sample_reads".`,
+        "manifest.json"
+      );
+    }
+    if (output.writeback?.target === "Read" && output.scope !== "sample") {
+      addIssue(
+        issues,
+        "error",
+        "read-writeback-scope",
+        `Output "${output.id}" uses Read writeback but scope is "${output.scope}" instead of "sample".`,
         "manifest.json"
       );
     }
@@ -551,12 +865,13 @@ export async function lintPipelineDescriptor(
     );
   }
 
+  validateManifestFilePaths(packageDir, manifest, issues);
   await validateReferencedFiles(packageDir, manifest, issues);
   await validateDefinitionAndRegistry(packageDir, manifest, issues);
   await validateSamplesheet(packageDir, manifest, issues);
   await validateExecution(packageDir, manifest, issues);
-  const parserIds = await collectParserIds(packageDir, manifest, issues);
-  validateOutputs(manifest, parserIds, issues);
+  const parserColumns = await collectParserColumns(packageDir, manifest, issues);
+  validateOutputs(manifest, parserColumns, issues);
 
   return finalize(manifest.package.id, packageDir, issues);
 }

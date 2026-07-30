@@ -25,9 +25,15 @@ vi.mock("@/lib/pipelines/package-loader", () => ({
 const pipelinesDir = "/tmp/pipelines";
 const indexPath = path.join(pipelinesDir, ".pipeline-database-downloads.json");
 const statusPath = path.join(pipelinesDir, ".pipeline-database-download-status.json");
+const originalStoreFixtureUrl =
+  process.env.SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL;
+const originalPipelineRegistryUrl =
+  process.env.SEQDESK_PIPELINE_REGISTRY_URL;
 
 describe("database-downloads", () => {
   beforeEach(() => {
+    delete process.env.SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL;
+    delete process.env.SEQDESK_PIPELINE_REGISTRY_URL;
     vi.restoreAllMocks();
     vi.spyOn(fs.promises, "readFile");
     vi.spyOn(fs.promises, "writeFile");
@@ -36,6 +42,18 @@ describe("database-downloads", () => {
   });
 
   afterEach(async () => {
+    if (originalStoreFixtureUrl === undefined) {
+      delete process.env.SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL;
+    } else {
+      process.env.SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL =
+        originalStoreFixtureUrl;
+    }
+    if (originalPipelineRegistryUrl === undefined) {
+      delete process.env.SEQDESK_PIPELINE_REGISTRY_URL;
+    } else {
+      process.env.SEQDESK_PIPELINE_REGISTRY_URL =
+        originalPipelineRegistryUrl;
+    }
     await fs.promises.rm(pipelinesDir, { recursive: true, force: true }).catch(() => {});
     vi.restoreAllMocks();
   });
@@ -59,6 +77,56 @@ describe("database-downloads", () => {
       },
     });
     expect(getPipelineDatabaseDefinition("mag", "missing")).toBeNull();
+  });
+
+  it("exposes the hermetic Store fixture database only for an explicit loopback fixture", () => {
+    expect(
+      getPipelineDatabaseDefinitions("seqdesk-store-e2e-fixture")
+    ).toEqual([]);
+
+    process.env.SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL =
+      "http://127.0.0.1:3219";
+    expect(
+      getPipelineDatabaseDefinition(
+        "seqdesk-store-e2e-fixture",
+        "fixture-database"
+      )
+    ).toMatchObject({
+      id: "fixture-database",
+      fileName: "fixture-database.txt",
+      downloadUrl:
+        "http://127.0.0.1:3219/resources/fixture-database.txt",
+      configKey: "fixtureDatabase",
+      sha256:
+        "475198e07d34d6288f9d3e4c332a63e77fa1b701bc034a8698a932f0a027060f",
+    });
+    expect(
+      getPipelineDatabaseDefinition(
+        "seqdesk-cli-e2e-fixture",
+        "fixture-database"
+      )
+    ).toMatchObject({
+      id: "fixture-database",
+      downloadUrl:
+        "http://127.0.0.1:3219/resources/fixture-database.txt",
+      configKey: "fixtureDatabase",
+    });
+
+    process.env.SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL =
+      "https://registry.example.test";
+    expect(
+      getPipelineDatabaseDefinitions("seqdesk-store-e2e-fixture")
+    ).toEqual([]);
+
+    delete process.env.SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL;
+    process.env.SEQDESK_PIPELINE_REGISTRY_URL =
+      "http://localhost:4777/registry";
+    expect(
+      getPipelineDatabaseDefinition(
+        "seqdesk-store-e2e-fixture",
+        "fixture-database"
+      )?.downloadUrl
+    ).toBe("http://localhost:4777/resources/fixture-database.txt");
   });
 
   it("returns an empty status list for unknown pipeline IDs", async () => {
@@ -320,7 +388,9 @@ describe("database-downloads", () => {
     });
     vi.mocked(fs.promises.stat).mockImplementation(async (target) => {
       if (target.toString() === configuredPath) {
-        return { size: 1000 } as { size: number };
+        return {
+          size: 1000,
+        } as Awaited<ReturnType<typeof fs.promises.stat>>;
       }
       throw new Error("no");
     });
@@ -364,7 +434,9 @@ describe("database-downloads", () => {
     });
     vi.mocked(fs.promises.stat).mockImplementation(async (target) => {
       if (target.toString() === "/record/gtdb.tar.gz") {
-        return { size: 500 } as { size: number };
+        return {
+          size: 500,
+        } as Awaited<ReturnType<typeof fs.promises.stat>>;
       }
       throw new Error("no");
     });
@@ -374,7 +446,96 @@ describe("database-downloads", () => {
     expect(result[0]).toMatchObject({
       status: "missing",
       path: undefined,
-      detail: "Partial download detected (500/1200 bytes). Re-run download to resume.",
+      detail: "Database download is still in progress.",
+    });
+  });
+
+  it.each([
+    {
+      state: "running" as const,
+      error: undefined,
+      detail: "Database download is still in progress.",
+    },
+    {
+      state: "error" as const,
+      error: "Checksum mismatch",
+      detail: "Database download failed: Checksum mismatch",
+    },
+  ])(
+    "does not accept a full-size target while its download job is $state",
+    async ({ state, error, detail }) => {
+      vi.mocked(fs.promises.readFile).mockImplementation(async (target) => {
+        if (target.toString() === indexPath) {
+          return JSON.stringify({
+            "mag:gtdb": {
+              pipelineId: "mag",
+              databaseId: "gtdb",
+              path: "/record/gtdb.tar.gz",
+              sizeBytes: 1000,
+              updatedAt: "now",
+            },
+          });
+        }
+        if (target.toString() === statusPath) {
+          return JSON.stringify({
+            "mag:gtdb": {
+              pipelineId: "mag",
+              databaseId: "gtdb",
+              state,
+              targetPath: "/record/gtdb.tar.gz",
+              totalBytes: 1000,
+              error,
+            },
+          });
+        }
+        throw new Error("not expected");
+      });
+      vi.mocked(fs.promises.stat).mockImplementation(async (target) => {
+        if (target.toString() === "/record/gtdb.tar.gz") {
+          return {
+            size: 1000,
+          } as Awaited<ReturnType<typeof fs.promises.stat>>;
+        }
+        throw new Error("missing");
+      });
+
+      const result = await getPipelineDatabaseStatuses("mag", {}, "/run-root");
+
+      expect(result[0]).toMatchObject({
+        status: "missing",
+        path: undefined,
+        detail,
+      });
+    }
+  );
+
+  it("does not accept an empty configured database file", async () => {
+    const configuredPath = "/configured/empty-gtdb.tar.gz";
+    vi.mocked(fs.promises.readFile).mockImplementation(async (target) => {
+      if (target.toString() === indexPath || target.toString() === statusPath) {
+        return "{}";
+      }
+      throw new Error("not expected");
+    });
+    vi.mocked(fs.promises.stat).mockImplementation(async (target) => {
+      if (target.toString() === configuredPath) {
+        return {
+          size: 0,
+        } as Awaited<ReturnType<typeof fs.promises.stat>>;
+      }
+      throw new Error("missing");
+    });
+
+    const result = await getPipelineDatabaseStatuses("mag", {
+      gtdbDb: configuredPath,
+    });
+
+    expect(result[0]).toMatchObject({
+      status: "missing",
+      path: undefined,
+      configuredPath,
+      detail:
+        "Database file is empty. Re-run the download or link a valid existing file.",
     });
   });
 

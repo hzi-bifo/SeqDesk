@@ -5,9 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pipelinesDir = path.join(os.tmpdir(), "seqdesk-nextflow-downloads-tests");
 
-vi.mock("./package-loader", () => ({
-  getPipelinesDir: () => pipelinesDir,
-}));
+vi.mock("./pipeline-paths", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./pipeline-paths")>();
+  return {
+    ...actual,
+    getPipelinesDir: () => pipelinesDir,
+  };
+});
 
 import {
   clearDownloadJobStatus,
@@ -58,6 +62,10 @@ describe("nextflow-downloads", () => {
       reason: "Missing pipeline reference",
     });
     expect(resolvePipelineAssetsPath("./pipelines/mag")).toEqual({
+      kind: "local",
+      reason: "Local pipeline path",
+    });
+    expect(resolvePipelineAssetsPath(".")).toEqual({
       kind: "local",
       reason: "Local pipeline path",
     });

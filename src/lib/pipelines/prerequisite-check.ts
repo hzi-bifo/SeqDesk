@@ -2,9 +2,14 @@
 // Validates system requirements before running nf-core pipelines
 
 import { exec } from 'child_process';
+import { constants as fsConstants } from 'fs';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
+import {
+  buildCondaRunArgs,
+  resolveCondaEnvironmentReference,
+} from './conda-environment';
 import { detectRuntimePlatform, isMacOsArmRuntime } from './runtime-platform';
 
 const execAsync = promisify(exec);
@@ -38,19 +43,114 @@ interface ExecutionSettings {
   weblogSecret?: string;
 }
 
+const PIPELINE_RUNTIME_PREREQUISITE_TTL_MS = 15_000;
+const pipelineRuntimePrerequisiteCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    promise: Promise<PrerequisiteCheck[]>;
+  }
+>();
+
+function getPipelineRuntimePrerequisiteCacheKey(
+  executionSettings: ExecutionSettings
+): string {
+  return JSON.stringify({
+    mode: executionSettings.useSlurm ? 'slurm' : 'local',
+    slurmQueue: executionSettings.useSlurm
+      ? executionSettings.slurmQueue?.trim() || ''
+      : '',
+    condaPath: executionSettings.condaPath?.trim() || '',
+    condaEnv: resolveCondaEnvName(executionSettings.condaEnv),
+  });
+}
+
 function resolveCondaEnvName(condaEnv?: string): string {
-  return condaEnv?.trim() || 'seqdesk-pipelines';
+  return resolveCondaEnvironmentReference(condaEnv).value;
 }
 
 function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(value)) return value;
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+function buildCondaRunCommand(
+  condaBin: string,
+  condaEnv: string | undefined,
+  command: readonly string[]
+): string {
+  return [
+    shellQuote(condaBin),
+    ...buildCondaRunArgs(condaEnv, command).map(shellQuote),
+  ].join(' ');
+}
+
+function buildCondaActivationProbeCommand(
+  condaBase: string,
+  condaInitScript: string,
+  condaEnv: string
+): string {
+  // Match the generated run.sh bootstrap in an isolated Bash process. All
+  // user-configured values are positional arguments so neither a path nor an
+  // environment prefix can be interpreted as shell syntax.
+  const probeScript = [
+    'set -euo pipefail',
+    'export CONDA_BASE="$1"',
+    'CONDA_SH="$2"',
+    'CONDA_ENV="$3"',
+    'export PATH="$CONDA_BASE/bin:$PATH"',
+    'source "$CONDA_SH"',
+    'conda activate "$CONDA_ENV"',
+    'conda --version',
+  ].join('; ');
+  return [
+    '/bin/bash',
+    '-c',
+    shellQuote(probeScript),
+    'seqdesk-conda-readiness',
+    shellQuote(condaBase),
+    shellQuote(condaInitScript),
+    shellQuote(condaEnv),
+  ].join(' ');
+}
+
 function hasCondaEnv(envListOutput: string, envName: string): boolean {
+  const reference = resolveCondaEnvironmentReference(envName);
+  if (reference.kind === 'prefix') {
+    const escapedPrefix = reference.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(^|\\s)${escapedPrefix}(\\s|$)`, 'm').test(
+      envListOutput
+    );
+  }
   const escapedName = envName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const envNameRegex = new RegExp(`(^|\\s)${escapedName}(\\s|$)`, 'm');
   const envPathRegex = new RegExp(`[\\\\/]envs[\\\\/]${escapedName}(\\s|$)`, 'm');
   return envNameRegex.test(envListOutput) || envPathRegex.test(envListOutput);
+}
+
+async function condaEnvironmentExists(
+  condaBin: string,
+  condaEnv?: string
+): Promise<boolean> {
+  const reference = resolveCondaEnvironmentReference(condaEnv);
+  if (reference.kind === 'prefix') {
+    try {
+      await fs.access(path.join(reference.value, 'conda-meta'));
+      return true;
+    } catch {
+      // A prefix can still be registered by Conda even when the direct metadata
+      // probe is unavailable to the current process. Fall through to env list.
+    }
+  }
+
+  try {
+    const { stdout } = await execAsync(`${shellQuote(condaBin)} env list`, {
+      timeout: 10000,
+    });
+    return hasCondaEnv(stdout, reference.value);
+  } catch {
+    return false;
+  }
 }
 
 async function resolveCondaBinary(condaPath?: string): Promise<string | null> {
@@ -186,7 +286,10 @@ async function checkCondaChannels(condaPath?: string): Promise<PrerequisiteCheck
   }
 
   try {
-    const { stdout } = await execAsync(`${condaBin} config --show channels`, { timeout: 10000 });
+    const { stdout } = await execAsync(
+      `${shellQuote(condaBin)} config --show channels`,
+      { timeout: 10000 }
+    );
     const lines = stdout.split('\n');
     const channels: string[] = [];
     let inChannels = false;
@@ -313,7 +416,7 @@ async function checkJava(condaPath?: string, condaEnv?: string): Promise<Prerequ
   const check: PrerequisiteCheck = {
     id: 'java',
     name: 'Java Runtime',
-    description: 'Required by Nextflow (Java 11 or later)',
+    description: 'SeqDesk pipeline runtime (Java 17 or later)',
     status: 'unchecked',
     message: '',
     required: true,
@@ -352,21 +455,23 @@ async function checkJava(condaPath?: string, condaEnv?: string): Promise<Prerequ
   // Check in conda environment first
   if (condaBin) {
     try {
-      const { stdout: envList } = await execAsync(`${condaBin} env list`, { timeout: 10000 });
-      if (hasCondaEnv(envList, envName)) {
+      if (await condaEnvironmentExists(condaBin, envName)) {
         try {
-          const { stdout, stderr } = await execAsync(`${condaBin} run -n ${envName} java -version 2>&1`, { timeout: 20000 });
+          const { stdout, stderr } = await execAsync(
+            `${buildCondaRunCommand(condaBin, envName, ['java', '-version'])} 2>&1`,
+            { timeout: 20000 }
+          );
           const output = stdout || stderr;
           const versionMatch = output.match(/version\s+"?(\d+)(?:\.(\d+))?/i);
 
           if (versionMatch) {
             const majorVersion = parseInt(versionMatch[1], 10);
-            if (majorVersion >= 11) {
+            if (majorVersion >= 17) {
               check.status = 'pass';
               check.message = `Installed in conda env (Java ${majorVersion})`;
             } else {
               check.status = 'warning';
-              check.message = `Java ${majorVersion} in conda env (11+ recommended)`;
+              check.message = `Java ${majorVersion} in conda env (17+ required)`;
             }
             check.details = output.trim().split('\n')[0];
             return check;
@@ -395,12 +500,12 @@ async function checkJava(condaPath?: string, condaEnv?: string): Promise<Prerequ
 
     if (versionMatch) {
       const majorVersion = parseInt(versionMatch[1], 10);
-      if (majorVersion >= 11) {
+      if (majorVersion >= 17) {
         check.status = 'pass';
         check.message = `Installed (Java ${majorVersion})`;
       } else {
         check.status = 'warning';
-        check.message = `Java ${majorVersion} found (11+ recommended)`;
+        check.message = `Java ${majorVersion} found (17+ required)`;
       }
       check.details = output.trim().split('\n')[0];
     } else {
@@ -411,19 +516,28 @@ async function checkJava(condaPath?: string, condaEnv?: string): Promise<Prerequ
   } catch {
     check.status = 'fail';
     check.message = 'Not installed';
-    check.details = 'Install Java 11 or later';
+    check.details = 'Install Java 17 or later';
   }
 
   return check;
 }
 
 /**
- * Check if Conda/Mamba is available
+ * Check if Conda is available.
+ *
+ * The generated Nextflow configuration deliberately uses Conda
+ * (`useMamba = false`), so Mamba by itself must never satisfy a required
+ * runtime check.
  */
-async function checkConda(condaPath?: string): Promise<PrerequisiteCheck> {
+async function checkConda(
+  condaPath?: string,
+  condaEnv?: string,
+  requireConfiguredRuntime = false
+): Promise<PrerequisiteCheck> {
+  const configuredCondaPath = condaPath?.trim();
   const check: PrerequisiteCheck = {
     id: 'conda',
-    name: 'Conda/Mamba',
+    name: 'Conda',
     description: 'Package manager for pipeline dependencies',
     status: 'unchecked',
     message: '',
@@ -431,39 +545,105 @@ async function checkConda(condaPath?: string): Promise<PrerequisiteCheck> {
   };
 
   // Check configured conda path first. Probe both condabin/conda and
-  // bin/conda (and the mamba variants) to match every other conda resolver in
-  // this module, so condabin-only installs (e.g. Miniconda/Mambaforge with the
-  // path pointed at the install root) are still detected.
-  if (condaPath) {
+  // bin/conda to match every other conda resolver in this module, so
+  // condabin-only installs are still detected.
+  if (configuredCondaPath) {
     const condaCandidates = [
-      path.join(condaPath, 'condabin', 'conda'),
-      path.join(condaPath, 'bin', 'conda'),
+      path.join(configuredCondaPath, 'condabin', 'conda'),
+      path.join(configuredCondaPath, 'bin', 'conda'),
     ];
     const mambaCandidates = [
-      path.join(condaPath, 'condabin', 'mamba'),
-      path.join(condaPath, 'bin', 'mamba'),
+      path.join(configuredCondaPath, 'condabin', 'mamba'),
+      path.join(configuredCondaPath, 'bin', 'mamba'),
     ];
 
     for (const condaBin of condaCandidates) {
       try {
         await fs.access(condaBin);
-        const { stdout } = await execAsync(`${condaBin} --version`, { timeout: 10000 });
+        const { stdout } = await execAsync(
+          `${shellQuote(condaBin)} --version`,
+          { timeout: 10000 }
+        );
+
+        if (requireConfiguredRuntime) {
+          const condaInitScript = path.join(
+            configuredCondaPath,
+            'etc',
+            'profile.d',
+            'conda.sh'
+          );
+          try {
+            await fs.access(condaInitScript, fsConstants.R_OK);
+          } catch {
+            check.status = 'fail';
+            check.message = 'Configured Conda runtime cannot be initialized';
+            check.details =
+              `Run scripts require a readable activation script: ${condaInitScript}`;
+            return check;
+          }
+
+          const environment = resolveCondaEnvironmentReference(condaEnv);
+          if (!(await condaEnvironmentExists(condaBin, environment.value))) {
+            check.status = 'fail';
+            check.message = `Configured Conda environment not found: ${environment.value}`;
+            check.details =
+              `Run scripts activate this environment from ${configuredCondaPath} before launching Nextflow.`;
+            return check;
+          }
+
+          try {
+            await execAsync(
+              buildCondaActivationProbeCommand(
+                configuredCondaPath,
+                condaInitScript,
+                environment.value
+              ),
+              { timeout: 20_000, maxBuffer: 1024 * 1024 }
+            );
+          } catch (error) {
+            const details = extractExecErrorDetails(error);
+            check.status = 'fail';
+            check.message =
+              `Configured Conda environment cannot be activated: ${environment.value}`;
+            check.details = [
+              `The run.sh bootstrap failed while sourcing ${condaInitScript}.`,
+              details,
+            ]
+              .filter(Boolean)
+              .join('\n');
+            return check;
+          }
+        }
+
         check.status = 'pass';
         check.message = `Found at configured path`;
-        check.details = `${condaPath}\n${stdout.trim()}`;
+        check.details = requireConfiguredRuntime
+          ? `${configuredCondaPath}\nEnvironment: ${resolveCondaEnvName(condaEnv)}\n${stdout.trim()}`
+          : `${configuredCondaPath}\n${stdout.trim()}`;
         return check;
       } catch {
         // Try next candidate
       }
     }
 
+    if (requireConfiguredRuntime) {
+      check.status = 'fail';
+      check.message = 'Configured Conda runtime cannot be initialized';
+      check.details =
+        `Run scripts require Conda at ${condaCandidates.join(' or ')}.`;
+      return check;
+    }
+
     for (const mambaBin of mambaCandidates) {
       try {
         await fs.access(mambaBin);
-        const { stdout } = await execAsync(`${mambaBin} --version`, { timeout: 10000 });
+        const { stdout } = await execAsync(
+          `${shellQuote(mambaBin)} --version`,
+          { timeout: 10000 }
+        );
         check.status = 'pass';
         check.message = `Mamba found at configured path`;
-        check.details = `${condaPath}\n${stdout.trim()}`;
+        check.details = `${configuredCondaPath}\n${stdout.trim()}`;
         return check;
       } catch {
         // Try next candidate
@@ -471,29 +651,39 @@ async function checkConda(condaPath?: string): Promise<PrerequisiteCheck> {
     }
 
     check.status = 'warning';
-    check.message = `Configured path invalid: ${condaPath}`;
-    check.details = 'Conda/Mamba not found at the configured path';
+    check.message = `Configured path invalid: ${configuredCondaPath}`;
+    check.details = 'Conda not found at the configured path';
   }
 
-  // Check system conda/mamba
+  // Check system Conda. Local/managed execution cannot use Mamba as a
+  // substitute because the generated Nextflow config has useMamba disabled.
   try {
     const { stdout } = await execAsync('conda --version', { timeout: 10000 });
-    check.status = condaPath ? 'warning' : 'pass';
-    check.message = condaPath ? 'Found in PATH (not configured path)' : 'Available in PATH';
+    check.status = configuredCondaPath ? 'warning' : 'pass';
+    check.message = configuredCondaPath ? 'Found in PATH (not configured path)' : 'Available in PATH';
     check.details = stdout.trim();
     return check;
   } catch {
-    // Try mamba
+    if (requireConfiguredRuntime) {
+      check.status = 'fail';
+      check.message = 'Conda not found';
+      check.details =
+        'Local and managed pipeline runs require Conda; a Mamba-only runtime is not supported.';
+      return check;
+    }
+
+    // For a non-required application-host check (for example SLURM without a
+    // configured local runtime), report Mamba as informational only.
     try {
       const { stdout } = await execAsync('mamba --version', { timeout: 10000 });
-      check.status = condaPath ? 'warning' : 'pass';
-      check.message = condaPath ? 'Mamba found in PATH (not configured path)' : 'Mamba available in PATH';
+      check.status = configuredCondaPath ? 'warning' : 'pass';
+      check.message = configuredCondaPath ? 'Mamba found in PATH (not configured path)' : 'Mamba available in PATH';
       check.details = stdout.trim();
       return check;
     } catch {
       check.status = 'fail';
       check.message = 'Not found';
-      check.details = 'Install Conda/Mamba to run pipelines';
+      check.details = 'Install Conda to run pipelines';
     }
   }
 
@@ -504,7 +694,10 @@ async function checkConda(condaPath?: string): Promise<PrerequisiteCheck> {
 /**
  * Check if SLURM is available (when configured)
  */
-async function checkSlurm(useSlurm: boolean): Promise<PrerequisiteCheck> {
+async function checkSlurm(
+  useSlurm: boolean,
+  slurmQueue?: string
+): Promise<PrerequisiteCheck> {
   const check: PrerequisiteCheck = {
     id: 'slurm',
     name: 'SLURM',
@@ -520,23 +713,91 @@ async function checkSlurm(useSlurm: boolean): Promise<PrerequisiteCheck> {
     return check;
   }
 
-  try {
-    const { stdout } = await execAsync('sinfo --version', { timeout: 10000 });
-    check.status = 'pass';
-    check.message = 'Available';
-    check.details = stdout.trim();
+  const requiredCommands = [
+    'sinfo',
+    'sbatch',
+    'squeue',
+    'sacct',
+    'scontrol',
+    'scancel',
+  ];
+  const commandResults = await Promise.all(
+    requiredCommands.map(async (command) => {
+      try {
+        const { stdout, stderr } = await execAsync(`${command} --version`, {
+          timeout: 10000,
+        });
+        return {
+          command,
+          available: true,
+          version: (stdout || stderr).trim(),
+        };
+      } catch {
+        return { command, available: false, version: '' };
+      }
+    })
+  );
+  const missingCommands = commandResults
+    .filter((result) => !result.available)
+    .map((result) => result.command);
 
-    // Also check queue status
-    try {
-      const { stdout: queueInfo } = await execAsync('sinfo -h -o "%P %a"', { timeout: 10000 });
-      check.details += `\n\nAvailable partitions:\n${queueInfo.trim()}`;
-    } catch {
-      // Queue info is optional
-    }
-  } catch {
+  if (missingCommands.length > 0) {
     check.status = 'fail';
     check.message = 'Not available';
-    check.details = 'SLURM commands not found. Disable SLURM in settings to run locally.';
+    check.details = `Missing required SLURM command${
+      missingCommands.length === 1 ? '' : 's'
+    }: ${missingCommands.join(', ')}. Disable SLURM in settings to run locally.`;
+    return check;
+  }
+
+  const queue = slurmQueue?.trim();
+  const queueCommand = queue
+    ? `sinfo -h -p ${shellQuote(queue)} -o "%P %a"`
+    : 'sinfo -h -o "%P %a"';
+  try {
+    const { stdout: queueInfo } = await execAsync(queueCommand, {
+      timeout: 10000,
+    });
+    const partitions = queueInfo.trim();
+    if (!partitions) {
+      check.status = 'fail';
+      check.message = queue
+        ? `Partition ${queue} is not available`
+        : 'No SLURM partitions are available';
+      check.details = queue
+        ? `sinfo returned no entry for configured partition ${queue}.`
+        : 'sinfo returned no available partitions.';
+      return check;
+    }
+
+    const hasAvailablePartition = partitions
+      .split(/\r?\n/)
+      .some((line) => /\s+up\s*$/i.test(line.trim()));
+    if (!hasAvailablePartition) {
+      check.status = 'fail';
+      check.message = queue
+        ? `Partition ${queue} is down`
+        : 'No active SLURM partition is available';
+      check.details = partitions;
+      return check;
+    }
+
+    check.status = 'pass';
+    check.message = queue
+      ? `Partition ${queue} is available`
+      : 'Available';
+    check.details = [
+      ...commandResults.map(
+        (result) => `${result.command}: ${result.version || 'available'}`
+      ),
+      '',
+      `${queue ? 'Configured partition' : 'Available partitions'}:`,
+      partitions,
+    ].join('\n');
+  } catch (error) {
+    check.status = 'fail';
+    check.message = 'Cannot inspect SLURM partitions';
+    check.details = extractExecErrorDetails(error);
   }
 
   return check;
@@ -545,6 +806,71 @@ async function checkSlurm(useSlurm: boolean): Promise<PrerequisiteCheck> {
 /**
  * Check if pipeline run directory is writable
  */
+async function probeWritableRunDirectory(
+  requestedPath: string,
+  canonicalPath: string
+): Promise<void> {
+  let probeDirectory: string | null = null;
+  try {
+    probeDirectory = await fs.mkdtemp(
+      path.join(canonicalPath, '.seqdesk-readiness-')
+    );
+    const probeDirectoryStat = await fs.lstat(probeDirectory);
+    const canonicalProbeDirectory = await fs.realpath(probeDirectory);
+    if (
+      probeDirectoryStat.isSymbolicLink() ||
+      !probeDirectoryStat.isDirectory() ||
+      path.dirname(canonicalProbeDirectory) !== canonicalPath
+    ) {
+      throw new Error('Readiness probe escaped the configured directory.');
+    }
+
+    const probeFile = path.join(probeDirectory, 'write-probe');
+    await fs.writeFile(probeFile, 'seqdesk readiness\n', {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    const probeFileStat = await fs.lstat(probeFile);
+    if (probeFileStat.isSymbolicLink() || !probeFileStat.isFile()) {
+      throw new Error('Readiness probe file has an unsafe type.');
+    }
+    await fs.unlink(probeFile);
+    await fs.rmdir(probeDirectory);
+    probeDirectory = null;
+
+    if ((await fs.realpath(requestedPath)) !== canonicalPath) {
+      throw new Error(
+        'Configured pipeline run directory changed during its readiness probe.'
+      );
+    }
+  } finally {
+    if (probeDirectory) {
+      try {
+        const resolvedProbeDirectory = path.resolve(probeDirectory);
+        if (
+          path.dirname(resolvedProbeDirectory) === canonicalPath &&
+          path
+            .basename(resolvedProbeDirectory)
+            .startsWith('.seqdesk-readiness-')
+        ) {
+          const probeStat = await fs.lstat(resolvedProbeDirectory);
+          if (probeStat.isSymbolicLink()) {
+            await fs.unlink(resolvedProbeDirectory);
+          } else {
+            await fs.rm(resolvedProbeDirectory, {
+              recursive: true,
+              force: true,
+            });
+          }
+        }
+      } catch {
+        // Best-effort cleanup of the uniquely named readiness probe.
+      }
+    }
+  }
+}
+
 async function checkRunDirectory(pipelineRunDir: string): Promise<PrerequisiteCheck> {
   const check: PrerequisiteCheck = {
     id: 'run_directory',
@@ -562,33 +888,56 @@ async function checkRunDirectory(pipelineRunDir: string): Promise<PrerequisiteCh
     return check;
   }
 
+  let created = false;
   try {
-    // Check if directory exists
-    await fs.access(pipelineRunDir);
-
-    // Check if writable by creating a test file
-    const testFile = path.join(pipelineRunDir, '.seqdesk-test');
-    await fs.writeFile(testFile, 'test');
-    await fs.unlink(testFile);
-
-    check.status = 'pass';
-    check.message = 'Exists and writable';
-    check.details = pipelineRunDir;
-  } catch (error) {
-    const err = error as { code?: string };
-    if (err.code === 'ENOENT') {
-      // Try to create the directory
+    let entry;
+    try {
+      entry = await fs.lstat(pipelineRunDir);
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code !== 'ENOENT') throw error;
       try {
         await fs.mkdir(pipelineRunDir, { recursive: true });
-        check.status = 'pass';
-        check.message = 'Created successfully';
-        check.details = pipelineRunDir;
+        created = true;
+        entry = await fs.lstat(pipelineRunDir);
       } catch {
         check.status = 'fail';
         check.message = 'Cannot create directory';
         check.details = `${pipelineRunDir}\nCreate this directory manually or choose a different path`;
+        return check;
       }
-    } else if (err.code === 'EACCES') {
+    }
+
+    const stats = entry.isSymbolicLink()
+      ? await fs.stat(pipelineRunDir)
+      : entry;
+    if (!stats.isDirectory()) {
+      check.status = 'fail';
+      check.message = 'Configured path is not a directory';
+      check.details = pipelineRunDir;
+      return check;
+    }
+
+    const canonicalPath = await fs.realpath(pipelineRunDir);
+    if (canonicalPath === path.parse(canonicalPath).root) {
+      check.status = 'fail';
+      check.message = 'Filesystem root cannot be used';
+      check.details = pipelineRunDir;
+      return check;
+    }
+
+    await fs.access(
+      pipelineRunDir,
+      fsConstants.R_OK | fsConstants.W_OK
+    );
+    await probeWritableRunDirectory(pipelineRunDir, canonicalPath);
+
+    check.status = 'pass';
+    check.message = created ? 'Created successfully' : 'Exists and writable';
+    check.details = pipelineRunDir;
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === 'EACCES') {
       check.status = 'fail';
       check.message = 'Permission denied';
       check.details = `${pipelineRunDir}\nCheck directory permissions`;
@@ -623,7 +972,14 @@ async function checkDataBasePath(dataBasePath?: string): Promise<PrerequisiteChe
   }
 
   try {
-    await fs.access(dataBasePath);
+    const stats = await fs.stat(dataBasePath);
+    if (!stats.isDirectory()) {
+      check.status = 'fail';
+      check.message = 'Configured path is not a directory';
+      check.details = dataBasePath;
+      return check;
+    }
+    await fs.access(dataBasePath, fsConstants.R_OK);
     check.status = 'pass';
     check.message = 'Configured and accessible';
     check.details = dataBasePath;
@@ -682,22 +1038,31 @@ async function checkNfcoreTools(condaPath?: string, condaEnv?: string): Promise<
     }
   }
   if (condaBin) {
-    envInstallHint = `Install with: ${condaBin} install -n ${envName} -c conda-forge -c bioconda nf-core`;
+    const reference = resolveCondaEnvironmentReference(envName);
+    envInstallHint = `Install with: ${shellQuote(condaBin)} install ${reference.selector} ${shellQuote(reference.value)} -c conda-forge -c bioconda nf-core`;
   }
 
   // Check in conda environment first
   if (condaBin) {
     try {
-      const { stdout: envList } = await execAsync(
-        `${shellQuote(condaBin)} env list`,
-        { timeout: 10000 }
-      );
-      envExists = hasCondaEnv(envList, envName);
+      envExists = await condaEnvironmentExists(condaBin, envName);
       if (envExists) {
         const commands = [
-          `${shellQuote(condaBin)} run -n ${shellQuote(envName)} nf-core --version 2>&1`,
-          `${shellQuote(condaBin)} run -n ${shellQuote(envName)} python -m nf_core --version 2>&1`,
-          `${shellQuote(condaBin)} run -n ${shellQuote(envName)} python -c "import nf_core as n; print(getattr(n, '__version__', 'installed'))" 2>&1`,
+          `${buildCondaRunCommand(condaBin, envName, [
+            'nf-core',
+            '--version',
+          ])} 2>&1`,
+          `${buildCondaRunCommand(condaBin, envName, [
+            'python',
+            '-m',
+            'nf_core',
+            '--version',
+          ])} 2>&1`,
+          `${buildCondaRunCommand(condaBin, envName, [
+            'python',
+            '-c',
+            "import nf_core as n; print(getattr(n, '__version__', 'installed'))",
+          ])} 2>&1`,
         ];
 
         for (const command of commands) {
@@ -786,9 +1151,13 @@ export async function checkAllPrerequisites(
   ] = await Promise.all([
     checkNextflowInConda(executionSettings.condaPath, executionSettings.condaEnv),
     checkJava(executionSettings.condaPath, executionSettings.condaEnv),
-    checkConda(executionSettings.condaPath),
+    checkConda(
+      executionSettings.condaPath,
+      executionSettings.condaEnv,
+      true
+    ),
     checkCondaTermsOfService(executionSettings.condaPath),
-    checkSlurm(executionSettings.useSlurm),
+    checkSlurm(executionSettings.useSlurm, executionSettings.slurmQueue),
     checkRunDirectory(executionSettings.pipelineRunDir),
     checkDataBasePath(dataBasePath),
     checkNfcoreTools(executionSettings.condaPath, executionSettings.condaEnv),
@@ -810,7 +1179,9 @@ export async function checkAllPrerequisites(
   );
 
   condaCheck.required = true;
-  if (condaCheck.status === 'warning') condaCheck.status = 'fail';
+  if (condaCheck.status === 'warning') {
+    condaCheck.status = 'fail';
+  }
 
   // Calculate results
   const requiredChecks = checks.filter(c => c.required);
@@ -838,6 +1209,81 @@ export async function checkAllPrerequisites(
     checks,
     summary,
   };
+}
+
+/**
+ * Run only the live runtime checks that gate pipeline execution.
+ *
+ * The pipeline settings page uses this smaller check set for readiness. It
+ * deliberately follows the generated run script: every run needs Conda because
+ * SeqDesk always adds the Nextflow Conda profile and disables Mamba. SLURM runs
+ * additionally need the scheduler commands. When condaPath is configured,
+ * run.sh also sources that base and activates condaEnv before launching
+ * Nextflow. Nextflow and Java are required in both modes because SeqDesk
+ * launches the Nextflow process on the application/scheduler host.
+ */
+async function runPipelineRuntimePrerequisiteChecks(
+  executionSettings: ExecutionSettings
+): Promise<PrerequisiteCheck[]> {
+  const runtimeCheckPromises: Promise<PrerequisiteCheck>[] = [];
+  if (executionSettings.useSlurm) {
+    runtimeCheckPromises.push(
+      checkSlurm(true, executionSettings.slurmQueue)
+    );
+  }
+  runtimeCheckPromises.push(
+    checkConda(
+      executionSettings.condaPath,
+      executionSettings.condaEnv,
+      true
+    )
+  );
+
+  const [nextflowCheck, javaCheck, ...runtimeChecks] = await Promise.all([
+    checkNextflowInConda(executionSettings.condaPath, executionSettings.condaEnv),
+    checkJava(executionSettings.condaPath, executionSettings.condaEnv),
+    ...runtimeCheckPromises,
+  ]);
+
+  return [nextflowCheck, javaCheck, ...runtimeChecks];
+}
+
+export function clearPipelineRuntimePrerequisiteCache(): void {
+  pipelineRuntimePrerequisiteCache.clear();
+}
+
+export async function checkPipelineRuntimePrerequisites(
+  executionSettings: ExecutionSettings
+): Promise<PrerequisiteCheck[]> {
+  const cacheKey = getPipelineRuntimePrerequisiteCacheKey(executionSettings);
+  const now = Date.now();
+  const cached = pipelineRuntimePrerequisiteCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.promise;
+  }
+
+  const promise = runPipelineRuntimePrerequisiteChecks(executionSettings);
+  pipelineRuntimePrerequisiteCache.set(cacheKey, {
+    // Keep the in-flight probe shared even when a slow command exceeds the
+    // eventual TTL. The real expiry is assigned after the probe settles.
+    expiresAt: Number.POSITIVE_INFINITY,
+    promise,
+  });
+
+  try {
+    const checks = await promise;
+    const current = pipelineRuntimePrerequisiteCache.get(cacheKey);
+    if (current?.promise === promise) {
+      current.expiresAt = Date.now() + PIPELINE_RUNTIME_PREREQUISITE_TTL_MS;
+    }
+    return checks;
+  } catch (error) {
+    const current = pipelineRuntimePrerequisiteCache.get(cacheKey);
+    if (current?.promise === promise) {
+      pipelineRuntimePrerequisiteCache.delete(cacheKey);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -887,14 +1333,19 @@ async function checkNextflowInConda(condaPath?: string, condaEnv?: string): Prom
   if (condaBin) {
     // First verify the environment exists
     try {
-      const { stdout: envList } = await execAsync(`${condaBin} env list`, { timeout: 10000 });
-      if (!hasCondaEnv(envList, envName)) {
+      if (!(await condaEnvironmentExists(condaBin, envName))) {
         console.log(`[checkNextflowInConda] Environment ${envName} not found`);
         // Fall through to system check
       } else {
         // Environment exists, check for nextflow inside it
         try {
-          const { stdout, stderr } = await execAsync(`${condaBin} run -n ${envName} nextflow -version 2>&1`, { timeout: 30000 });
+          const { stdout, stderr } = await execAsync(
+            `${buildCondaRunCommand(condaBin, envName, [
+              'nextflow',
+              '-version',
+            ])} 2>&1`,
+            { timeout: 30000 }
+          );
           const output = stdout || stderr;
           const versionMatch = output.match(/version\s+(\d+\.\d+\.\d+)/i);
           if (versionMatch) {
@@ -932,31 +1383,22 @@ export async function quickPrerequisiteCheck(
   dataBasePath?: string
 ): Promise<{ ready: boolean; summary: string }> {
   try {
-    // Just check the critical requirements
-    const baseChecks = await Promise.all([
-      checkNextflowInConda(executionSettings.condaPath, executionSettings.condaEnv),
+    const [runtimeChecks, runDir, dataPath] = await Promise.all([
+      checkPipelineRuntimePrerequisites(executionSettings),
       checkRunDirectory(executionSettings.pipelineRunDir),
       checkDataBasePath(dataBasePath),
     ]);
-    const [runtimeCheck, condaTosCheck] = await Promise.all([
-      checkConda(executionSettings.condaPath),
-      checkCondaTermsOfService(executionSettings.condaPath),
-    ]);
-
-    const [nextflow, runDir, dataPath] = baseChecks;
-
-    const criticalPassed =
-      nextflow.status === 'pass' &&
-      runDir.status === 'pass' &&
-      dataPath.status === 'pass' &&
-      runtimeCheck.status === 'pass';
+    const criticalChecks = [...runtimeChecks, runDir, dataPath];
+    const criticalPassed = criticalChecks.every(
+      (check) => !check.required || check.status === 'pass'
+    );
 
     if (criticalPassed) {
       return { ready: true, summary: 'Ready to run pipelines' };
     }
 
-    const failed = [nextflow, runDir, dataPath, runtimeCheck].filter(
-      (check) => check.status === 'fail'
+    const failed = criticalChecks.filter(
+      (check) => check.required && check.status !== 'pass'
     );
     return {
       ready: false,
@@ -1014,7 +1456,10 @@ export async function testSetting(
       for (const bin of [condaBin, condabinConda]) {
         try {
           await fs.access(bin);
-          const { stdout } = await execAsync(`${bin} --version`, { timeout: 10000 });
+          const { stdout } = await execAsync(
+            `${shellQuote(bin)} --version`,
+            { timeout: 10000 }
+          );
           const tosCheck = await checkCondaTermsOfService(value);
           return {
             success: true,
@@ -1179,7 +1624,10 @@ export async function detectVersions(condaPath?: string, condaEnv?: string): Pro
 
   // Conda version (from base)
   try {
-    const { stdout } = await execAsync(`${condaBin} --version`, { timeout: 10000 });
+    const { stdout } = await execAsync(
+      `${shellQuote(condaBin)} --version`,
+      { timeout: 10000 }
+    );
     const match = stdout.match(/conda\s+([\d.]+)/i);
     if (match) versions.conda = match[1];
   } catch {
@@ -1188,22 +1636,19 @@ export async function detectVersions(condaPath?: string, condaEnv?: string): Pro
 
   // Check if seqdesk-pipelines environment exists
   const envName = resolveCondaEnvName(condaEnv);
-  let hasEnv = false;
-  try {
-    const { stdout } = await execAsync(`${condaBin} env list`, { timeout: 10000 });
-    if (hasCondaEnv(stdout, envName)) {
-      hasEnv = true;
-      versions.condaEnv = envName;
-    }
-  } catch {
-    // Ignore
+  const hasEnv = await condaEnvironmentExists(condaBin, envName);
+  if (hasEnv) {
+    versions.condaEnv = envName;
   }
 
   // If we have the environment, check versions inside it
   if (hasEnv) {
     // Nextflow version
     try {
-      const { stdout } = await execAsync(`${condaBin} run -n ${envName} nextflow -version`, { timeout: 15000 });
+      const { stdout } = await execAsync(
+        buildCondaRunCommand(condaBin, envName, ['nextflow', '-version']),
+        { timeout: 15000 }
+      );
       const match = stdout.match(/version\s+(\d+\.\d+\.\d+)/i);
       if (match) versions.nextflow = match[1];
     } catch {
@@ -1212,7 +1657,10 @@ export async function detectVersions(condaPath?: string, condaEnv?: string): Pro
 
     // nf-core version
     try {
-      const { stdout } = await execAsync(`${condaBin} run -n ${envName} nf-core --version`, { timeout: 15000 });
+      const { stdout } = await execAsync(
+        buildCondaRunCommand(condaBin, envName, ['nf-core', '--version']),
+        { timeout: 15000 }
+      );
       const match = stdout.match(/version\s+([\d.]+)/i);
       if (match) versions.nfcore = match[1];
     } catch {
@@ -1221,7 +1669,13 @@ export async function detectVersions(condaPath?: string, condaEnv?: string): Pro
 
     // Java version
     try {
-      const { stdout, stderr } = await execAsync(`${condaBin} run -n ${envName} java -version 2>&1`, { timeout: 15000 });
+      const { stdout, stderr } = await execAsync(
+        `${buildCondaRunCommand(condaBin, envName, [
+          'java',
+          '-version',
+        ])} 2>&1`,
+        { timeout: 15000 }
+      );
       const output = stdout || stderr;
       const match = output.match(/version\s+"?(\d+)/i);
       if (match) versions.java = match[1];

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   readNextflowManifestVersion: vi.fn(),
   updateDownloadRecord: vi.fn(),
   spawn: vi.fn(),
+  execAsync: vi.fn(),
   createWriteStream: vi.fn(),
 }));
 
@@ -43,26 +44,14 @@ vi.mock("@/lib/pipelines/nextflow-downloads", () => ({
 }));
 
 vi.mock("child_process", () => {
-  const mockChild = {
-    pid: 1234,
-    stdout: { pipe: vi.fn() },
-    stderr: { pipe: vi.fn() },
-    on: vi.fn(),
-  };
   return {
-    spawn: () => mockChild,
+    spawn: mocks.spawn,
     exec: vi.fn(),
   };
 });
 
 vi.mock("util", () => ({
-  promisify: () =>
-    vi.fn().mockImplementation(async (cmd: string) => {
-      if (typeof cmd === "string" && cmd.includes("nextflow")) {
-        return { stdout: "nextflow version 24.04.0", stderr: "" };
-      }
-      throw new Error("command not found");
-    }),
+  promisify: () => mocks.execAsync,
 }));
 
 vi.mock("fs", () => ({
@@ -92,6 +81,21 @@ function makeRequest(body: Record<string, unknown> = {}) {
 describe("POST /api/admin/settings/pipelines/download", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.execAsync.mockImplementation(async (cmd: string) => {
+      if (cmd === "which conda") {
+        return { stdout: "/usr/bin/conda\n", stderr: "" };
+      }
+      if (typeof cmd === "string" && cmd.includes("nextflow")) {
+        return { stdout: "nextflow version 24.04.0", stderr: "" };
+      }
+      throw new Error("command not found");
+    });
+    mocks.spawn.mockReturnValue({
+      pid: 1234,
+      stdout: { pipe: vi.fn() },
+      stderr: { pipe: vi.fn() },
+      on: vi.fn(),
+    });
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "FACILITY_ADMIN" },
     });
@@ -126,6 +130,34 @@ describe("POST /api/admin/settings/pipelines/download", () => {
     const body = await response.json();
     expect(body.success).toBe(true);
     expect(body.pipelineId).toBe("mag");
+  });
+
+  it("uses conda run -p when the configured environment is a prefix", async () => {
+    const environment = "/shared/conda/envs/seqdesk";
+    mocks.getExecutionSettings.mockResolvedValue({
+      condaPath: "/opt/conda",
+      condaEnv: environment,
+    });
+
+    const response = await POST(makeRequest({ pipelineId: "mag" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.execAsync).toHaveBeenCalledWith(
+      expect.stringContaining(`'run' '-p' '${environment}' 'nextflow'`),
+      expect.objectContaining({ timeout: 30000 })
+    );
+    expect(mocks.spawn).toHaveBeenCalledWith(
+      "conda",
+      expect.arrayContaining([
+        "run",
+        "-p",
+        environment,
+        "nextflow",
+        "pull",
+        "nf-core/mag",
+      ]),
+      expect.anything()
+    );
   });
 
   it("returns 403 when not authenticated", async () => {

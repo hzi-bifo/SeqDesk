@@ -16,6 +16,52 @@ import zlib from "node:zlib";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import {
+  assertSlurmCompletionAttestation,
+  assertExactNextflowRunTarget,
+  assertExactActiveRunAttributedReadCoverage,
+  assertChecksumVerificationCoverage,
+  assertExactSampleCoverage,
+  assertFastqChecksumSummaryRows,
+  assertFastqcArtifactCoverage,
+  assertFastqcHtmlInputFilename,
+  assertFastqcReportWritebackCoverage,
+  assertFastqcSummaryRows,
+  assertMultiqcFastqcCoverage,
+  assertMultiqcNanoplotMetrics,
+  assertNanoplotNanoStatsGroundTruth,
+  assertNanoplotSummaryRows,
+  assertPipelineExitMarker,
+  assertReadsQcSummaryRows,
+  assertReadsQcSampleArtifactRows,
+  assertRequiredRelativeOutput,
+  assertRunIdentity,
+  assertRuntimeProofContracts,
+  assertSampleBoundQcArtifactCoverage,
+  assertSimulateReadsSummaryRows,
+  assertStudyDemoSummaryRows,
+  assertSlurmAccountingRecord,
+  assertSlurmLaunchIdentity,
+  createUniqueProofRecord,
+  deriveMultiqcExpectedSamplesFromSourceInputs,
+  normalizeSlurmState,
+  parseNanoplotNanoStatsTsv,
+  parsePrimarySacctRecord,
+  pathIsWithin,
+  pathsReferToSameLocation,
+  resolveLocalManifestPipelineTarget,
+  slurmCompletionAttestationPath,
+} from "./lib/pipeline-e2e-proof.mjs";
+import {
+  computeFastqGroundTruth,
+  parseFastqcDataGroundTruth,
+} from "./lib/fastq-ground-truth.mjs";
+import {
+  buildRuntimeRunCreateBody,
+  resolveRuntimeRunConfig,
+} from "./lib/pipeline-e2e-config.mjs";
+import { syncPipelineRunFailClosed } from "./lib/pipeline-e2e-sync.mjs";
+
 const execFileAsync = promisify(execFile);
 const DUMMY_ORDER_PREFIX = "SEED-DUMMY-";
 const PROFILE_SMOKE_ORDER_NUMBERS = new Set([
@@ -25,50 +71,91 @@ const PROFILE_SMOKE_ORDER_NUMBERS = new Set([
 
 // Pipelines whose manifest targets.supported is ['study'] (not 'order'). The run is
 // created with a studyId instead of an orderId, and reads/samples come from the study.
-const STUDY_SCOPED_PIPELINES = new Set(["reads-qc", "study-demo-report", "metaxpath"]);
+const STUDY_SCOPED_PIPELINES = new Set([
+  "reads-qc",
+  "study-demo-report",
+  "multiqc",
+  "metaxpath",
+]);
+
+// Dummy order 3 is the bundled ONT single-end fixture; order 4 is the paired
+// short-read fixture. Both are linked to the dedicated "pipeline CI" study so
+// MultiQC can aggregate FastQC across every sample and NanoPlot for the
+// long-read subset. Selecting them explicitly prevents a compatibility test
+// from accidentally running on whichever dummy order happened to sort first.
+const PIPELINE_DUMMY_ORDER_INDEX = {
+  fastqc: 4,
+  nanoplot: 3,
+};
 
 // Per-pipeline DB-writeback expectations, asserted after a run completes. 'checksum'
 // verifies md5 checksums merged onto the order's reads; 'artifacts' verifies the
 // expected PipelineArtifact rows (by outputId) were persisted. Add entries as more
 // pipelines gain coverage.
-const WRITEBACK_SPEC = {
-  "fastq-checksum": { kind: "checksum" },
-  "simulate-reads": { kind: "replace" },
-  "study-demo-report": {
-    kind: "artifacts",
-    requiredOutputIds: ["html_report", "markdown_report", "sample_summary"],
-  },
+const WRITEBACK_SPEC = createUniqueProofRecord([
+  ["fastq-checksum", { kind: "checksum" }],
+  ["simulate-reads", { kind: "replace" }],
+  [
+    "study-demo-report",
+    {
+      kind: "artifacts",
+      requiredOutputIds: ["html_report", "markdown_report", "sample_summary"],
+    },
+  ],
   // Artifacts + read-field writeback. The run GET select now exposes readCount1/2 +
   // avgQuality1/2 (pipeline-run-ops-service.ts), so on top of the per-sample QC artifacts
   // we assert fastqc's in-place Read merge actually landed in the DB
   // (assertReadFieldWriteback) — not just that the artifact rows exist. The
   // finalizer now waits for all required manifest outputs, including the late
   // summary, before recording completion.
-  fastqc: {
-    kind: "artifacts",
-    requiredOutputIds: ["sample_qc_reports", "sample_qc_data", "summary"],
-  },
+  [
+    "fastqc",
+    {
+      kind: "artifacts",
+      requiredOutputIds: ["sample_qc_reports", "sample_qc_data", "summary"],
+    },
+  ],
   // reads-qc merges readCount/avgQuality fields into active Read rows. The run GET
   // exposes both those fields and pipelineSources, so every mode must prove that
   // this exact run (not a preceding local/SLURM run) performed the merge.
-  "reads-qc": { kind: "read-fields" },
+  [
+    "reads-qc",
+    {
+      kind: "artifacts",
+      requiredOutputIds: ["sample_stats", "summary_tsv", "summary_report"],
+    },
+  ],
+  [
+    "nanoplot",
+    {
+      kind: "artifacts",
+      requiredOutputIds: ["sample_report", "sample_stats", "summary_tsv"],
+    },
+  ],
+  [
+    "multiqc",
+    {
+      kind: "artifacts",
+      requiredOutputIds: ["multiqc_report", "multiqc_data"],
+    },
+  ],
   // read-cleaning writes PendingReadCandidate rows exposed through a separate
   // admin-review endpoint.
-  "read-cleaning": { kind: "completes" },
+  ["read-cleaning", { kind: "completes" }],
   // metaxpath is a private, STUDY-scoped add-on (installed via the ci-runner profile, not in
   // this repo's pipelines/; the app rejects order targets). Hard `completes` gate. On top of it
   // assertMetaxpathTaxonomy proves it actually CLASSIFIED by fetching the combined
   // report and requiring a populated table (+ the expected taxon when
   // SEQDESK_METAXPATH_EXPECT_TAXON is set).
-  metaxpath: { kind: "completes" },
+  ["metaxpath", { kind: "completes" }],
   // mag (nf-core/mag, short-read paired-end) on a tiny public example dataset. `completes` is a
   // genuine assembly proof for mag: the app holds a mag run in `running` until materialized
   // outputs exist (countMaterializedOutputs > 0 in pipeline-run-ops-service), so reaching
   // `completed` means an assembly was generated AND saved to the DB. Run lightweight (MEGAHIT only,
   // skip binning-QC/GTDB) so it fits the CI runner. assertMagAssembly additionally surfaces the
   // assembly count from the run results.
-  mag: { kind: "completes" },
-};
+  ["mag", { kind: "completes" }],
+], "Runtime writeback proof");
 
 // CONFIG -> OUTPUT plumbing marker for study-demo-report: a unique report_title we
 // pass as user config; it must reappear verbatim in the rendered HTML + Markdown,
@@ -76,23 +163,90 @@ const WRITEBACK_SPEC = {
 // else asserts this today). Lowercase + hyphenated so it survives shell-quoting and
 // the case-insensitive content match below.
 const STUDY_DEMO_REPORT_TITLE = "e2e-config-plumb-report-4q7x";
+const MULTIQC_REPORT_TITLE = "e2e-multiqc-aggregation-report-8v2k";
 
 // Output CORRECTNESS (not just "an artifact row exists"): for artifact pipelines,
 // download a required output through the app's file endpoint and assert its content
 // is the real thing — a marker string the pipeline itself writes. Markers are loose
 // and stable (a heading the report always emits, a TSV header column), grounded in
 // each pipeline's workflow/main.nf. Keyed by pipelineId -> outputId -> markers.
-const ARTIFACT_CONTENT_MARKERS = {
-  "study-demo-report": {
-    // <h1> proves a real report; the custom title proves config plumbed through.
-    html_report: { markers: ["<h1", STUDY_DEMO_REPORT_TITLE], label: "demo report HTML (custom title plumbed through)" },
-    markdown_report: { markers: [STUDY_DEMO_REPORT_TITLE], label: "demo report Markdown (custom title)" },
-    sample_summary: { markers: ["sample_id"], label: "sample-summary TSV header" },
-  },
-  fastqc: {
-    sample_qc_reports: { markers: ["fastqc"], label: "FastQC HTML report" },
-  },
-};
+const ARTIFACT_CONTENT_MARKERS = createUniqueProofRecord([
+  [
+    "study-demo-report",
+    {
+      // <h1> proves a real report; the custom title proves config plumbed through.
+      html_report: {
+        markers: ["<h1", STUDY_DEMO_REPORT_TITLE],
+        label: "demo report HTML (custom title plumbed through)",
+      },
+      markdown_report: {
+        markers: [STUDY_DEMO_REPORT_TITLE],
+        label: "demo report Markdown (custom title)",
+      },
+      sample_summary: {
+        markers: ["sample_id"],
+        label: "sample-summary TSV header",
+      },
+    },
+  ],
+  [
+    "fastqc",
+    {
+      sample_qc_reports: {
+        markers: ["fastqc"],
+        label: "FastQC HTML report",
+      },
+    },
+  ],
+  [
+    "nanoplot",
+    {
+      sample_report: {
+        markers: ["nanoplot"],
+        label: "NanoPlot HTML report",
+      },
+      sample_stats: {
+        markers: ["number_of_reads", "mean_qual"],
+        label: "NanoStats metrics",
+      },
+      summary_tsv: {
+        markers: ["sample_id", "num_reads", "mean_quality"],
+        label: "NanoPlot summary TSV",
+      },
+    },
+  ],
+  [
+    "reads-qc",
+    {
+      sample_stats: {
+        markers: ["sample_id", "num_reads", "avg_quality"],
+        label: "reads-QC per-sample metrics",
+      },
+      summary_tsv: {
+        markers: ["sample_id", "num_reads", "avg_quality"],
+        label: "reads-QC summary TSV",
+      },
+      summary_report: {
+        markers: ["reads qc report", "total reads", "mean quality"],
+        label: "reads-QC HTML report",
+      },
+    },
+  ],
+  [
+    "multiqc",
+    {
+      multiqc_report: {
+        markers: ["multiqc", "fastqc", MULTIQC_REPORT_TITLE],
+        label: "aggregated MultiQC report",
+      },
+    },
+  ],
+], "Runtime artifact content-marker proof");
+
+assertRuntimeProofContracts({
+  writebackSpec: WRITEBACK_SPEC,
+  artifactContentMarkers: ARTIFACT_CONTENT_MARKERS,
+});
 
 function fail(message, details) {
   const parts = [message];
@@ -106,7 +260,7 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (!arg.startsWith("--")) fail(`Unexpected argument: ${arg}`);
     const key = arg.slice(2);
-    if (["skip-local", "skip-slurm", "include-default-policy", "ensure-dummy-data", "skip-if-disabled"].includes(key)) {
+    if (["skip-local", "skip-slurm", "include-default-policy", "ensure-dummy-data", "skip-if-disabled", "saved-config-only"].includes(key)) {
       args[key] = true;
       continue;
     }
@@ -353,7 +507,15 @@ function scoreRuntimeOrder(order, dummyOrderPrefix) {
   return 0;
 }
 
-function selectRuntimeOrder(orders, dummyOrderPrefix) {
+function selectRuntimeOrder(orders, dummyOrderPrefix, preferredDummyOrderIndex) {
+  if (dummyOrderPrefix && preferredDummyOrderIndex) {
+    const preferredOrderNumber =
+      `${dummyOrderPrefix}${String(preferredDummyOrderIndex).padStart(3, "0")}`;
+    const preferred = orders.find(
+      (order) => String(order?.orderNumber || "") === preferredOrderNumber,
+    );
+    if (preferred) return preferred;
+  }
   const sorted = [...orders].sort(
     (left, right) => scoreRuntimeOrder(right, dummyOrderPrefix) - scoreRuntimeOrder(left, dummyOrderPrefix),
   );
@@ -388,9 +550,16 @@ async function ensureDummyData(client) {
   return { created: true, ...payload };
 }
 
-async function findOrder(client, { ensureSeededDummyData, dummyOrderPrefix }) {
+async function findOrder(
+  client,
+  { ensureSeededDummyData, dummyOrderPrefix, preferredDummyOrderIndex },
+) {
   let orders = await fetchOrders(client);
-  let selected = selectRuntimeOrder(orders, dummyOrderPrefix);
+  let selected = selectRuntimeOrder(
+    orders,
+    dummyOrderPrefix,
+    preferredDummyOrderIndex,
+  );
   const hasDummyOrder = orders.some((order) =>
     dummyOrderPrefix ? isSessionDummyOrder(order, dummyOrderPrefix) : isDummyOrder(order),
   );
@@ -399,11 +568,30 @@ async function findOrder(client, { ensureSeededDummyData, dummyOrderPrefix }) {
     const dummyStatus = await getDummyDataStatus(client);
     if (dummyStatus.ok && dummyStatus.seeded) {
       orders = await fetchOrders(client);
-      selected = selectRuntimeOrder(orders, dummyOrderPrefix);
+      selected = selectRuntimeOrder(
+        orders,
+        dummyOrderPrefix,
+        preferredDummyOrderIndex,
+      );
     } else if (ensureSeededDummyData) {
       await ensureDummyData(client);
       orders = await fetchOrders(client);
-      selected = selectRuntimeOrder(orders, dummyOrderPrefix);
+      selected = selectRuntimeOrder(
+        orders,
+        dummyOrderPrefix,
+        preferredDummyOrderIndex,
+      );
+    }
+  }
+
+  if (dummyOrderPrefix && preferredDummyOrderIndex) {
+    const requiredOrderNumber =
+      `${dummyOrderPrefix}${String(preferredDummyOrderIndex).padStart(3, "0")}`;
+    if (String(selected?.orderNumber || "") !== requiredOrderNumber) {
+      fail(
+        `The runtime E2E requires compatible dummy order ${requiredOrderNumber}, but it was not available. ` +
+          `Recreate the admin dummy data or pass --order-id/--order-number explicitly.`,
+      );
     }
   }
 
@@ -494,7 +682,25 @@ function defaultConfigForPipeline(pipelineId) {
     // value is asserted back in the rendered artifacts (ARTIFACT_CONTENT_MARKERS).
     return { report_title: STUDY_DEMO_REPORT_TITLE };
   }
+  if (pipelineId === "multiqc") {
+    return { reportTitle: MULTIQC_REPORT_TITLE };
+  }
   return {};
+}
+
+function effectiveSimulateReadsConfig(run) {
+  const persistedConfig =
+    run?.config && typeof run.config === "object" && !Array.isArray(run.config)
+      ? run.config
+      : {};
+  return {
+    qualityProfile: "standard",
+    insertMean: 350,
+    insertStdDev: 30,
+    seed: null,
+    ...defaultConfigForPipeline("simulate-reads"),
+    ...persistedConfig,
+  };
 }
 
 function buildSlurmOverride(args) {
@@ -572,11 +778,19 @@ async function fetchQueueStatus(client, runId) {
 }
 
 async function syncRun(client, runId) {
-  await client.request(`/api/pipelines/runs/${runId}/sync`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({}),
+  const payload = await syncPipelineRunFailClosed(client, runId, {
+    context: `Sync pipeline run ${runId}`,
   });
+  if (
+    typeof payload?.status !== "string" ||
+    payload.status.trim().length === 0
+  ) {
+    fail(
+      `Sync pipeline run ${runId} returned no status`,
+      JSON.stringify(payload, null, 2),
+    );
+  }
+  return payload;
 }
 
 async function pollUntilDone({ client, baseUrl, runId, startPayload, timeoutSeconds, label }) {
@@ -643,31 +857,37 @@ function assertLocalRunShape(run, startPayload) {
   if (typeof startPayload.pid !== "number" || !Number.isFinite(startPayload.pid)) {
     fail("Local start response did not include a numeric pid", JSON.stringify(startPayload, null, 2));
   }
-  if (!String(run.queueJobId || "").startsWith("local-")) {
-    fail("Local run did not record a local-* queueJobId", JSON.stringify({
+  if (run?.executionMode !== "local") {
+    fail("Local PipelineRun did not persist executionMode=local", JSON.stringify({
+      runId: run?.id,
+      executionMode: run?.executionMode ?? null,
+    }, null, 2));
+  }
+  const expectedQueueJobId = `local-${startPayload.pid}`;
+  if (String(run.queueJobId || "") !== expectedQueueJobId) {
+    fail("Local PipelineRun queueJobId does not match the process returned by start", JSON.stringify({
       runId: run.id,
+      expectedQueueJobId,
       queueJobId: run.queueJobId,
     }, null, 2));
   }
 }
 
 function assertSlurmRunShape(run, startPayload) {
-  if (startPayload.executionMode !== "slurm") {
-    fail("SLURM start response did not resolve to executionMode=slurm", JSON.stringify(startPayload, null, 2));
-  }
   const jobId = startPayload.jobId || run.queueJobId;
-  if (typeof jobId !== "string" || !/^\d+$/.test(jobId)) {
-    fail("SLURM start/run response did not include a numeric SLURM job id", JSON.stringify({
-      startPayload,
-      queueJobId: run.queueJobId,
-    }, null, 2));
-  }
-  return jobId;
+  const identity = assertSlurmLaunchIdentity({
+    runId: run?.id,
+    jobId,
+    run,
+    startPayload,
+  });
+  return identity.jobId;
 }
 
 const SLURM_TERMINAL_STATES = new Set([
   "BOOT_FAIL",
   "CANCELLED",
+  "CANCELED",
   "COMPLETED",
   "DEADLINE",
   "FAILED",
@@ -678,20 +898,7 @@ const SLURM_TERMINAL_STATES = new Set([
   "TIMEOUT",
 ]);
 
-function normalizeSlurmState(value) {
-  return String(value || "")
-    .trim()
-    .split(/\s+/)[0]
-    .replace(/\+$/, "")
-    .toUpperCase();
-}
-
-function pathIsWithin(candidate, expectedRoot) {
-  const relative = path.relative(path.resolve(expectedRoot), path.resolve(candidate));
-  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`));
-}
-
-async function assertSlurmAccounting({ jobId, runFolder }) {
+async function assertSlurmAccounting({ runId, jobId, runFolder }) {
   const deadline = Date.now() + 90_000;
   let latest = null;
   let lastError = null;
@@ -707,7 +914,7 @@ async function assertSlurmAccounting({ jobId, runFolder }) {
           "-j",
           jobId,
           "--noheader",
-          "--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%220,NodeList",
+          "--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%1024,NodeList",
         ],
         { timeout: 10_000, maxBuffer: 1024 * 1024 },
       ));
@@ -721,45 +928,17 @@ async function assertSlurmAccounting({ jobId, runFolder }) {
       continue;
     }
 
-    const row = stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => line.split("|"))
-      .find(([rowJobId]) => rowJobId === jobId);
+    latest = parsePrimarySacctRecord(stdout, jobId);
 
-    if (row) {
-      const [rowJobId, jobName, rawState, exitCode, workDir, nodeList] = row;
-      const state = normalizeSlurmState(rawState);
-      latest = {
-        jobId: rowJobId,
-        jobName: String(jobName || "").trim(),
-        state,
-        exitCode: String(exitCode || "").trim(),
-        workDir: String(workDir || "").trim(),
-        nodeList: String(nodeList || "").trim(),
-      };
-
+    if (latest) {
+      const state = normalizeSlurmState(latest.state);
       if (state === "COMPLETED") {
-        if (!latest.jobName.startsWith("seqdesk-")) {
-          fail("SLURM accounting job name is not owned by SeqDesk", JSON.stringify(latest, null, 2));
-        }
-        if (!latest.workDir || !pathIsWithin(latest.workDir, runFolder)) {
-          fail(
-            "SLURM accounting WorkDir is outside the pipeline run folder",
-            JSON.stringify({ ...latest, expectedRunFolder: runFolder }, null, 2),
-          );
-        }
-        if (latest.exitCode !== "0:0") {
-          fail("SLURM accounting reported a non-zero allocation exit", JSON.stringify(latest, null, 2));
-        }
-        if (
-          !latest.nodeList ||
-          /^(?:none|unknown|n\/a|\(null\)|none assigned)$/i.test(latest.nodeList)
-        ) {
-          fail("SLURM accounting did not record an allocated node", JSON.stringify(latest, null, 2));
-        }
-        return latest;
+        return assertSlurmAccountingRecord(latest, {
+          runId,
+          jobId,
+          runFolder,
+          expectedOutcome: "success",
+        });
       }
 
       if (SLURM_TERMINAL_STATES.has(state)) {
@@ -778,12 +957,125 @@ async function assertSlurmAccounting({ jobId, runFolder }) {
   );
 }
 
-async function assertRunFiles({ mode, run, jobId, pipelineId }) {
+async function resolveSlurmNodeHosts(nodeList, jobId) {
+  if (
+    typeof nodeList !== "string" ||
+    !nodeList.trim() ||
+    /^(?:none|unknown|n\/a|\(null\)|none assigned)$/i.test(nodeList.trim())
+  ) {
+    fail(
+      `SLURM allocation ${jobId} has no resolvable NodeList`,
+      JSON.stringify({ nodeList: nodeList ?? null }, null, 2),
+    );
+  }
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(
+      "scontrol",
+      ["show", "hostnames", nodeList.trim()],
+      { timeout: 10_000, maxBuffer: 1024 * 1024 },
+    ));
+  } catch (error) {
+    fail(
+      `Could not expand SLURM NodeList for allocation ${jobId}`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const hosts = [
+    ...new Set(
+      String(stdout || "")
+        .split(/\r?\n/)
+        .map((host) => host.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (hosts.length === 0) {
+    fail(
+      `scontrol returned no hosts for SLURM allocation ${jobId}`,
+      JSON.stringify({ nodeList }, null, 2),
+    );
+  }
+  return hosts;
+}
+
+async function waitForRequiredRegularFiles(paths, context) {
+  let missing = [...paths];
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    missing = paths.filter((filePath) => !fs.existsSync(filePath));
+    if (missing.length === 0) break;
+    await sleep(1000);
+  }
+  missing = paths.filter((filePath) => !fs.existsSync(filePath));
+  if (missing.length > 0) {
+    fail(`${context}: required files are missing after accounting completed`, missing.join("\n"));
+  }
+  for (const filePath of paths) {
+    const stat = fs.lstatSync(filePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      fail(`${context}: required path is not a regular file`, filePath);
+    }
+  }
+  return [...paths];
+}
+
+async function assertSlurmCompletionProof({
+  runId,
+  jobId,
+  runFolder,
+  accounting,
+}) {
+  const nodeHosts = await resolveSlurmNodeHosts(accounting.nodeList, jobId);
+  const attestationPath = slurmCompletionAttestationPath(runFolder, jobId);
+  await waitForRequiredRegularFiles(
+    [attestationPath],
+    `SLURM completion attestation for run ${runId}`,
+  );
+  const attestation = assertSlurmCompletionAttestation({
+    contents: fs.readFileSync(attestationPath, "utf8"),
+    runId,
+    jobId,
+    nodeHosts,
+    context: `SLURM completion attestation for run ${runId}`,
+  });
+  const captureLogs = await waitForRequiredRegularFiles(
+    slurmLogPaths(runFolder, jobId),
+    `SLURM capture logs for run ${runId}`,
+  );
+  return {
+    path: attestationPath,
+    ...attestation,
+    captureLogs,
+  };
+}
+
+async function assertRunFiles({
+  mode,
+  run,
+  jobId,
+  pipelineId,
+  requiredOutputExpectation,
+  expectedPipelineRoot,
+}) {
   const runFolder = run?.runFolder;
   if (!runFolder) fail(`${mode} run did not report a runFolder`, JSON.stringify(run, null, 2));
 
   const runScript = await maybeReadFile(`${runFolder}/run.sh`);
   if (!runScript) fail(`${mode} run did not create run.sh`, runFolder);
+  let pipelineTarget = null;
+  if (expectedPipelineRoot) {
+    const manifestTarget = resolveLocalManifestPipelineTarget({
+      pipelinesRoot: expectedPipelineRoot,
+      pipelineId,
+      context: `${mode} ${pipelineId} package target`,
+    });
+    pipelineTarget = assertExactNextflowRunTarget({
+      runScript,
+      runFolder,
+      expectedTarget: manifestTarget.expectedTarget,
+      context: `${mode} ${pipelineId} run ${run?.id ?? "<unknown>"}`,
+    });
+    pipelineTarget.manifest = manifestTarget;
+  }
 
   const nextflowConfig = await maybeReadFile(`${runFolder}/nextflow.config`);
   const hasSbatchDirectives = runScript.includes("#SBATCH");
@@ -808,29 +1100,25 @@ async function assertRunFiles({ mode, run, jobId, pipelineId }) {
     } else if (!hasSlurmExecutor) {
       fail("SLURM nextflow.config does not set process.executor = 'slurm'", `${runFolder}/nextflow.config`);
     }
-    // SLURM's own --output/--error capture files are copied back from the compute
-    // node's node-local /tmp at the very end of the job, so on a shared filesystem
-    // they can lag a few seconds behind the run before they're visible from here.
-    // Poll briefly. Their content is empty by design (all pipeline output goes to
-    // logs/pipeline.out, which is asserted below), so a continued absence after the
-    // wait is a warning rather than a hard failure.
-    let existingLogs = [];
-    for (let attempt = 0; attempt < 15; attempt += 1) {
-      existingLogs = slurmLogPaths(runFolder, jobId).filter((logPath) => fs.existsSync(logPath));
-      if (existingLogs.length > 0) break;
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-    if (existingLogs.length === 0) {
-      console.warn(
-        `WARN: SLURM capture logs not visible after wait (non-fatal): ${slurmLogPaths(runFolder, jobId).join(", ")}`
-      );
-    }
   }
 
   const pipelineOut = `${runFolder}/logs/pipeline.out`;
   if (!fs.existsSync(pipelineOut)) {
     fail(`${mode} run did not create logs/pipeline.out`, pipelineOut);
   }
+  const pipelineOutText = fs.readFileSync(pipelineOut, "utf8");
+  const pipelineExitCode = assertPipelineExitMarker(pipelineOutText, {
+    expectedOutcome: "success",
+    context: `${mode} ${pipelineId} run ${run?.id ?? "<unknown>"}`,
+  });
+  const requiredOutput = requiredOutputExpectation
+    ? assertRequiredRelativeOutput({
+        runFolder,
+        relativePath: requiredOutputExpectation.relativePath,
+        requiredContent: requiredOutputExpectation.requiredContent,
+        context: `${mode} ${pipelineId} run ${run?.id ?? "<unknown>"}`,
+      })
+    : null;
 
   const summaryPath =
     pipelineId === "simulate-reads"
@@ -842,15 +1130,28 @@ async function assertRunFiles({ mode, run, jobId, pipelineId }) {
 
   const slurmAccounting =
     mode === "slurm"
-      ? await assertSlurmAccounting({ jobId, runFolder })
+      ? await assertSlurmAccounting({ runId: run?.id, jobId, runFolder })
+      : null;
+  const slurmCompletion =
+    mode === "slurm"
+      ? await assertSlurmCompletionProof({
+          runId: run?.id,
+          jobId,
+          runFolder,
+          accounting: slurmAccounting,
+        })
       : null;
 
   return {
     runScript: `${runFolder}/run.sh`,
     nextflowConfig: nextflowConfig ? `${runFolder}/nextflow.config` : null,
     pipelineOut,
+    pipelineExitCode,
+    ...(pipelineTarget ? { pipelineTarget } : {}),
     summaryPath,
+    ...(requiredOutput ? { requiredOutput } : {}),
     ...(slurmAccounting ? { slurmAccounting } : {}),
+    ...(slurmCompletion ? { slurmCompletion } : {}),
   };
 }
 
@@ -899,15 +1200,498 @@ function md5OfFile(filePath) {
   });
 }
 
+function sha256OfFile(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", reject);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+const fastqGroundTruthCache = new Map();
+
+async function computeCachedFastqGroundTruth(filePath, context) {
+  if (typeof filePath !== "string" || !path.isAbsolute(filePath)) {
+    fail(`${context}: FASTQ input path must be absolute`, String(filePath ?? ""));
+  }
+  let canonicalPath;
+  let before;
+  try {
+    canonicalPath = await fs.promises.realpath(filePath);
+    before = await fs.promises.stat(canonicalPath);
+  } catch (error) {
+    fail(
+      `${context}: FASTQ input is missing or inaccessible (${filePath})`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  if (!before.isFile() || before.size <= 0) {
+    fail(`${context}: FASTQ input is not a non-empty regular file (${canonicalPath})`);
+  }
+  const fingerprint = `${canonicalPath}\u0000${before.size}\u0000${before.mtimeMs}`;
+  let pending = fastqGroundTruthCache.get(fingerprint);
+  if (!pending) {
+    pending = (async () => {
+      const metrics = await computeFastqGroundTruth(canonicalPath);
+      const after = await fs.promises.stat(canonicalPath);
+      if (
+        !after.isFile() ||
+        after.size !== before.size ||
+        after.mtimeMs !== before.mtimeMs
+      ) {
+        fail(
+          `${context}: FASTQ changed while independent ground truth was being calculated`,
+          JSON.stringify(
+            {
+              canonicalPath,
+              before: { size: before.size, mtimeMs: before.mtimeMs },
+              after: { size: after.size, mtimeMs: after.mtimeMs },
+            },
+            null,
+            2,
+          ),
+        );
+      }
+      return { canonicalPath, size: before.size, mtimeMs: before.mtimeMs, ...metrics };
+    })();
+    fastqGroundTruthCache.set(fingerprint, pending);
+    pending.catch(() => fastqGroundTruthCache.delete(fingerprint));
+  }
+  return pending;
+}
+
+function parseStrictCsv(text, context) {
+  if (typeof text !== "string" || text.length === 0) {
+    fail(`${context}: CSV is empty`);
+  }
+  const records = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  let quoteClosed = false;
+
+  const finishField = () => {
+    row.push(field);
+    field = "";
+    quoteClosed = false;
+  };
+  const finishRow = () => {
+    finishField();
+    records.push(row);
+    row = [];
+  };
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quoted) {
+      if (character === '"') {
+        if (text[index + 1] === '"') {
+          field += '"';
+          index += 1;
+        } else {
+          quoted = false;
+          quoteClosed = true;
+        }
+      } else {
+        field += character;
+      }
+      continue;
+    }
+    if (quoteClosed && character !== "," && character !== "\r" && character !== "\n") {
+      fail(`${context}: invalid character after a closing CSV quote`);
+    }
+    if (character === '"' && field.length === 0 && !quoteClosed) {
+      quoted = true;
+    } else if (character === ",") {
+      finishField();
+    } else if (character === "\n") {
+      finishRow();
+    } else if (character === "\r") {
+      if (text[index + 1] === "\n") index += 1;
+      finishRow();
+    } else if (character === '"') {
+      fail(`${context}: quote inside an unquoted CSV field`);
+    } else {
+      field += character;
+    }
+  }
+  if (quoted) fail(`${context}: unterminated quoted CSV field`);
+  if (field.length > 0 || row.length > 0 || quoteClosed) finishRow();
+  while (
+    records.length > 0 &&
+    records[records.length - 1].length === 1 &&
+    records[records.length - 1][0] === ""
+  ) {
+    records.pop();
+  }
+  if (records.length < 2) fail(`${context}: CSV has no data rows`);
+  const [header, ...rows] = records;
+  if (new Set(header).size !== header.length || header.some((name) => !name)) {
+    fail(`${context}: CSV header contains empty or duplicate columns`);
+  }
+  for (const [index, columns] of rows.entries()) {
+    if (columns.length !== header.length) {
+      fail(
+        `${context}: CSV row ${index + 2} has ${columns.length} columns, expected ${header.length}`,
+      );
+    }
+  }
+  return { header, rows };
+}
+
+async function fetchRunSamplesheet({ client, run, runId, context }) {
+  if (typeof run?.runFolder !== "string" || !run.runFolder) {
+    fail(`${context}: run ${runId} has no runFolder`);
+  }
+  const samplesheetPath = path.join(run.runFolder, "samplesheet.csv");
+  const fetched = await fetchRunFileText({
+    client,
+    runId,
+    filePath: samplesheetPath,
+    context,
+  });
+  return { path: samplesheetPath, ...parseStrictCsv(fetched.text, context) };
+}
+
+async function bindExpectedSamplesToRunInputs({
+  client,
+  run,
+  runId,
+  expectedSamples,
+  r1Column,
+  r2Column,
+  computeGroundTruth = true,
+  context,
+}) {
+  const samplesheet = await fetchRunSamplesheet({
+    client,
+    run,
+    runId,
+    context: `${context} samplesheet`,
+  });
+  const requiredColumns = ["sample_id", r1Column, ...(r2Column ? [r2Column] : [])];
+  const column = new Map();
+  for (const name of requiredColumns) {
+    const indexes = samplesheet.header.flatMap((value, index) =>
+      value === name ? [index] : [],
+    );
+    if (indexes.length !== 1) {
+      fail(`${context}: samplesheet must contain exactly one ${name} column`);
+    }
+    column.set(name, indexes[0]);
+  }
+  const expectedBySampleId = new Map(
+    expectedSamples.map((sample) => [sample.sampleId, sample]),
+  );
+  assertExactSampleCoverage({
+    expectedSampleIds: Array.from(expectedBySampleId.keys()),
+    observedSampleIds: samplesheet.rows.map((row) => row[column.get("sample_id")]),
+    context: `${context} samplesheet`,
+  });
+
+  const settings = await requestJson(
+    client,
+    "/api/admin/settings/sequencing-files",
+    {},
+    `${context}: fetch sequencing-files settings`,
+  );
+  const dataBasePath =
+    typeof settings?.dataBasePath === "string" &&
+    path.isAbsolute(settings.dataBasePath)
+      ? settings.dataBasePath
+      : null;
+  if (!dataBasePath) {
+    fail(`${context}: sequencing data base path is unavailable or not absolute`);
+  }
+  const resolveStoredReadPath = (storedPath, identity) => {
+    if (typeof storedPath !== "string" || !storedPath) return null;
+    const candidate = path.isAbsolute(storedPath)
+      ? path.resolve(storedPath)
+      : path.resolve(dataBasePath, storedPath);
+    if (!pathIsWithin(candidate, dataBasePath)) {
+      fail(`${context}: stored input path escapes sequencing storage for ${identity}`);
+    }
+    try {
+      const canonical = fs.realpathSync.native(candidate);
+      const stat = fs.statSync(canonical);
+      if (!stat.isFile() || stat.size <= 0) {
+        fail(`${context}: stored input is not a non-empty regular file for ${identity}`);
+      }
+      return canonical;
+    } catch (error) {
+      fail(
+        `${context}: could not resolve stored input for ${identity}`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  };
+
+  const groundTruthByIdentity = new Map();
+  const boundSamples = [];
+  for (const row of samplesheet.rows) {
+    const sampleId = row[column.get("sample_id")];
+    const expected = expectedBySampleId.get(sampleId);
+    const file1 = row[column.get(r1Column)];
+    const file2 = r2Column ? row[column.get(r2Column)] : "";
+    if (!expected || !file1 || !path.isAbsolute(file1)) {
+      fail(`${context}: samplesheet has an invalid R1 input for ${sampleId}`);
+    }
+    if (file2 && !path.isAbsolute(file2)) {
+      fail(`${context}: samplesheet has a non-absolute R2 input for ${sampleId}`);
+    }
+    const candidateReads = Array.isArray(expected.activeReads)
+      ? expected.activeReads
+      : [];
+    const matchingReads = candidateReads.filter((read) => {
+      const stored1 = resolveStoredReadPath(read?.file1, `${sampleId}/R1`);
+      const stored2 = resolveStoredReadPath(read?.file2, `${sampleId}/R2`);
+      return (
+        stored1 != null &&
+        pathsReferToSameLocation(stored1, file1) &&
+        Boolean(stored2) === Boolean(file2) &&
+        (!file2 || pathsReferToSameLocation(stored2, file2))
+      );
+    });
+    if (matchingReads.length !== 1) {
+      fail(
+        `${context}: samplesheet input must bind to exactly one active DB Read for ${sampleId}`,
+        JSON.stringify(
+          {
+            sampleId,
+            file1,
+            file2: file2 || null,
+            matchingReadIds: matchingReads.map((read) => read?.id ?? null),
+            candidateReadIds: candidateReads.map((read) => read?.id ?? null),
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    const selectedRead = matchingReads[0];
+    if (computeGroundTruth) {
+      const groundTruth1 = await computeCachedFastqGroundTruth(
+        file1,
+        `${context} ${sampleId}/R1`,
+      );
+      groundTruthByIdentity.set(`${sampleId}/R1`, {
+        ...groundTruth1,
+        inputBasename: path.basename(file1),
+      });
+    }
+    if (file2) {
+      if (computeGroundTruth) {
+        const groundTruth2 = await computeCachedFastqGroundTruth(
+          file2,
+          `${context} ${sampleId}/R2`,
+        );
+        groundTruthByIdentity.set(`${sampleId}/R2`, {
+          ...groundTruth2,
+          inputBasename: path.basename(file2),
+        });
+      }
+    }
+    boundSamples.push({
+      sampleId: expected.sampleId,
+      sampleRecordId: expected.sampleRecordId,
+      readRecordId: selectedRead.id,
+      activeRead: selectedRead,
+      fastqcReport1: selectedRead.fastqcReport1,
+      fastqcReport2: selectedRead.fastqcReport2,
+      readMetrics: {
+        readCount1: selectedRead.readCount1,
+        avgQuality1: selectedRead.avgQuality1,
+        readCount2: selectedRead.readCount2,
+        avgQuality2: selectedRead.avgQuality2,
+      },
+      file1,
+      file2: file2 || null,
+      pairedEnd: Boolean(file2),
+    });
+  }
+  return {
+    expectedSamples: boundSamples,
+    groundTruthByIdentity,
+    samplesheetPath: samplesheet.path,
+  };
+}
+
+async function groundTruthForPersistedReads({
+  client,
+  expectedReads,
+  context,
+}) {
+  const settings = await requestJson(
+    client,
+    "/api/admin/settings/sequencing-files",
+    {},
+    `${context}: fetch sequencing-files settings`,
+  );
+  const dataBasePath =
+    typeof settings?.dataBasePath === "string" &&
+    path.isAbsolute(settings.dataBasePath)
+      ? settings.dataBasePath
+      : null;
+  if (!dataBasePath) {
+    fail(`${context}: sequencing data base path is unavailable or not absolute`);
+  }
+  const groundTruthByIdentity = new Map();
+  for (const read of expectedReads) {
+    for (const [mate, field] of [
+      ["R1", "file1"],
+      ["R2", "file2"],
+    ]) {
+      const storedPath = read?.[field];
+      if (!storedPath) continue;
+      const candidate = path.resolve(dataBasePath, storedPath);
+      if (!pathIsWithin(candidate, dataBasePath)) {
+        fail(
+          `${context}: persisted ${field} escapes sequencing storage for ${read.sampleId}`,
+          String(storedPath),
+        );
+      }
+      groundTruthByIdentity.set(
+        `${read.sampleId}/${mate}`,
+        await computeCachedFastqGroundTruth(
+          candidate,
+          `${context} ${read.sampleId}/${mate}`,
+        ),
+      );
+    }
+  }
+  return groundTruthByIdentity;
+}
+
+async function resolveRegularNonSymlinkFile({
+  storedPath,
+  root,
+  context,
+}) {
+  const candidate = path.isAbsolute(storedPath)
+    ? storedPath
+    : path.resolve(root, storedPath);
+  const stat = await fs.promises.lstat(candidate).catch(() => null);
+  if (!stat || stat.isSymbolicLink() || !stat.isFile() || stat.size <= 0) {
+    fail(`${context}: expected a non-empty regular non-symlink file`, candidate);
+  }
+  const canonical = await fs.promises.realpath(candidate);
+  if (!pathIsWithin(canonical, root)) {
+    fail(`${context}: file escapes its owning run folder`, canonical);
+  }
+  return { path: canonical, size: stat.size };
+}
+
+async function extractFastqcDataFromZip({ zipPath, root, context }) {
+  const resolved = await resolveRegularNonSymlinkFile({
+    storedPath: zipPath,
+    root,
+    context,
+  });
+  let listing;
+  try {
+    listing = await execFileAsync("unzip", ["-Z1", resolved.path], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      timeout: 30_000,
+    });
+  } catch (error) {
+    fail(
+      `${context}: could not list FastQC ZIP`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const members = String(listing.stdout)
+    .split(/\r?\n/)
+    .filter((member) => /(^|\/)fastqc_data\.txt$/.test(member));
+  if (members.length !== 1) {
+    fail(
+      `${context}: FastQC ZIP must contain exactly one fastqc_data.txt member`,
+      JSON.stringify({ zipPath: resolved.path, members }, null, 2),
+    );
+  }
+  let extracted;
+  try {
+    extracted = await execFileAsync("unzip", ["-p", resolved.path, members[0]], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: 30_000,
+    });
+  } catch (error) {
+    fail(
+      `${context}: could not read fastqc_data.txt`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  return {
+    zipPath: resolved.path,
+    zipSize: resolved.size,
+    ...parseFastqcDataGroundTruth(String(extracted.stdout)),
+  };
+}
+
+async function addFastqcZipGroundTruth({
+  run,
+  expectedSamples,
+  groundTruthByIdentity,
+  context,
+}) {
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const enriched = new Map(groundTruthByIdentity);
+  for (const sample of expectedSamples) {
+    for (const mate of sample.pairedEnd ? ["R1", "R2"] : ["R1"]) {
+      const identity = `${sample.sampleId}/${mate}`;
+      const expectedBasename = `${sample.sampleId}_${mate}_fastqc.zip`;
+      const matches = artifacts.filter(
+        (artifact) =>
+          artifact?.outputId === "sample_qc_data" &&
+          path.basename(String(artifact?.path || "")) === expectedBasename,
+      );
+      if (
+        matches.length !== 1 ||
+        matches[0]?.sampleId !== sample.sampleRecordId
+      ) {
+        fail(
+          `${context}: expected exactly one sample-bound FastQC ZIP for ${identity}`,
+          JSON.stringify({ expectedBasename, matches }, null, 2),
+        );
+      }
+      const fastqcData = await extractFastqcDataFromZip({
+        zipPath: matches[0].path,
+        root: run.runFolder,
+        context: `${context} ${identity}`,
+      });
+      enriched.set(identity, {
+        ...enriched.get(identity),
+        fastqcData,
+      });
+    }
+  }
+  return enriched;
+}
+
 // fastq-checksum runs in MERGE mode: on completion it writes checksum1 = md5(file1)
 // and checksum2 = md5(file2) IN PLACE onto each target sample's existing active Read
 // (no new Read, no pipelineRunId). discover-outputs SKIPS samples whose FASTQ is
 // missing, so we only assert over reads that actually have a file path.
-async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
-  const spec = WRITEBACK_SPEC[pipelineId];
-  if (!spec) {
-    return { skipped: true, reason: `no writeback spec defined for pipeline=${pipelineId}` };
-  }
+async function assertPipelineWriteback({
+  client,
+  baseUrl,
+  runId,
+  pipelineId,
+  targetType,
+  orderId,
+  studyId,
+  requiredArtifactOutputIds,
+  requiredOutputExpectation,
+}) {
+  const builtInSpec = WRITEBACK_SPEC[pipelineId];
+  const externalArtifactSpec =
+    !builtInSpec && requiredArtifactOutputIds.length > 0
+      ? { kind: "artifacts", requiredOutputIds: requiredArtifactOutputIds }
+      : null;
+  const spec = builtInSpec || externalArtifactSpec;
 
   // Dual-writer race: status + the output writeback are produced by two async paths
   // (weblog callback + the 15s pipeline-monitor), and writeback happens during
@@ -923,6 +1707,14 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
     "Re-fetch pipeline run for writeback",
   );
   const run = runPayload?.run || runPayload;
+  assertRunIdentity({
+    run,
+    pipelineId,
+    targetType,
+    orderId,
+    studyId,
+    context: `Writeback refetch for run ${runId}`,
+  });
 
   // Universal run-shape gate (applies to every pipeline).
   if (run?.status !== "completed") {
@@ -950,11 +1742,18 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
   const observability = assertRunObservability(run, runId);
   const retrieval = await assertRunRetrieval({ client, run, runId });
 
+  if (!spec) {
+    fail(
+      `No app-writeback contract is defined for pipeline '${pipelineId}'. ` +
+        `Add it to WRITEBACK_SPEC or pass --required-artifact-output-id.`,
+    );
+  }
+
   let writeback;
   if (spec.kind === "checksum") {
     writeback = await assertChecksumReads({ run, runId, client, baseUrl });
   } else if (spec.kind === "replace") {
-    writeback = assertReplaceReads({ run, runId, baseUrl });
+    writeback = await assertReplaceReads({ client, run, runId, baseUrl });
     if (pipelineId === "simulate-reads") {
       writeback = { ...writeback, configOutput: await assertSimulateConfigOutput({ client, run, runId }) };
     }
@@ -962,12 +1761,111 @@ async function assertPipelineWriteback({ client, baseUrl, runId, pipelineId }) {
     writeback = assertArtifactWriteback({ run, runId, baseUrl, spec });
     const content = await assertArtifactContent({ client, run, runId, pipelineId });
     writeback = { ...writeback, content };
-    if (pipelineId === "fastqc") {
-      writeback.summaryMetrics = await assertFastqcSummaryMetrics({ client, run, runId });
-      writeback.readFields = assertReadFieldWriteback({
+    if (externalArtifactSpec && requiredOutputExpectation?.requiredContent) {
+      const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+      const requiredArtifact = artifacts.find(
+        (artifact) =>
+          externalArtifactSpec.requiredOutputIds.includes(artifact?.outputId) &&
+          artifact?.path,
+      );
+      if (!requiredArtifact) {
+        fail(
+          `External artifact content: no required artifact path was exposed for ${pipelineId} run ${runId}`,
+        );
+      }
+      const fetched = await fetchRunFileText({
+        client,
+        runId,
+        filePath: requiredArtifact.path,
+        context: `External artifact content (${requiredArtifact.outputId})`,
+      });
+      if (
+        fetched.bytes === 0 ||
+        !fetched.text.includes(requiredOutputExpectation.requiredContent)
+      ) {
+        fail(
+          `External artifact content: ${requiredArtifact.outputId} did not contain the required marker`,
+          JSON.stringify(
+            {
+              runId,
+              path: requiredArtifact.path,
+              bytes: fetched.bytes,
+              requiredContent: requiredOutputExpectation.requiredContent,
+            },
+            null,
+            2,
+          ),
+        );
+      }
+      writeback.externalContent = {
+        outputId: requiredArtifact.outputId,
+        path: requiredArtifact.path,
+        bytes: fetched.bytes,
+        requiredContent: requiredOutputExpectation.requiredContent,
+      };
+    }
+    if (pipelineId === "study-demo-report") {
+      writeback.sampleCoverage = await assertStudyDemoSampleCoverage({
+        client,
         run,
         runId,
+      });
+    }
+    if (pipelineId === "fastqc") {
+      const { boundSamples, ...summaryMetrics } =
+        await assertFastqcSummaryMetrics({ client, run, runId });
+      writeback.summaryMetrics = summaryMetrics;
+      writeback.readFields = assertReadFieldWriteback({
+        runId,
         pipelineId,
+        expectedSamples: boundSamples,
+      });
+    }
+    if (pipelineId === "nanoplot") {
+      const { boundSamples, ...summaryMetrics } =
+        await assertNanoplotSummaryMetrics({
+          client,
+          run,
+          runId,
+        });
+      writeback.summaryMetrics = summaryMetrics;
+      writeback.sampleArtifacts = assertSampleBoundQcArtifactCoverage({
+        pipelineId,
+        artifacts: run.artifacts,
+        expectedSamples: boundSamples,
+        context: `NanoPlot sample artifacts for run ${runId}`,
+      });
+      writeback.readFields = assertReadFieldWriteback({
+        runId,
+        pipelineId,
+        expectedSamples: boundSamples,
+      });
+    }
+    if (pipelineId === "reads-qc") {
+      const { boundSamples, ...summaryMetrics } =
+        await assertReadsQcSummaryMetrics({
+          client,
+          run,
+          runId,
+        });
+      writeback.summaryMetrics = summaryMetrics;
+      writeback.sampleArtifacts = assertSampleBoundQcArtifactCoverage({
+        pipelineId,
+        artifacts: run.artifacts,
+        expectedSamples: boundSamples,
+        context: `reads-QC sample artifacts for run ${runId}`,
+      });
+      writeback.readFields = assertReadFieldWriteback({
+        runId,
+        pipelineId,
+        expectedSamples: boundSamples,
+      });
+    }
+    if (pipelineId === "multiqc") {
+      writeback.aggregation = await assertMultiqcAggregation({
+        client,
+        run,
+        runId,
       });
     }
   } else if (spec.kind === "read-fields") {
@@ -1503,37 +2401,121 @@ async function assertArtifactContent({ client, run, runId, pipelineId }) {
   const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
   const checked = [];
   for (const [outputId, contentSpec] of Object.entries(markerMap)) {
-    const artifact = artifacts.find((a) => a?.outputId === outputId && a?.path);
-    if (!artifact) {
+    const matchingArtifacts = artifacts.filter(
+      (artifact) => artifact?.outputId === outputId,
+    );
+    if (matchingArtifacts.length === 0) {
       fail(
-        `Output content: ${pipelineId} run ${runId} has no artifact with a path for outputId '${outputId}'`,
+        `Output content: ${pipelineId} run ${runId} has no artifact for outputId '${outputId}'`,
         JSON.stringify({ runId, present: artifacts.map((a) => a?.outputId) }, null, 2),
       );
     }
-    const { text, bytes } = await fetchRunFileText({
-      client,
-      runId,
-      filePath: artifact.path,
-      context: `Output content (${outputId})`,
-    });
-    const haystack = text.toLowerCase();
-    const missing = contentSpec.markers.filter((marker) => !haystack.includes(marker.toLowerCase()));
-    if (bytes === 0 || missing.length > 0) {
-      fail(
-        `Output content: ${contentSpec.label} (${outputId}) for run ${runId} is empty or missing marker(s): ${missing.join(", ")}`,
-        JSON.stringify({ runId, path: artifact.path, bytes, head: haystack.slice(0, 200) }, null, 2),
+    for (const artifact of matchingArtifacts) {
+      if (typeof artifact?.path !== "string" || !artifact.path) {
+        fail(
+          `Output content: ${pipelineId} run ${runId} has a pathless artifact for outputId '${outputId}'`,
+          JSON.stringify(
+            {
+              artifactId: artifact?.id ?? null,
+              sampleId: artifact?.sampleId ?? null,
+            },
+            null,
+            2,
+          ),
+        );
+      }
+      const { text, bytes } = await fetchRunFileText({
+        client,
+        runId,
+        filePath: artifact.path,
+        context: `Output content (${outputId})`,
+      });
+      const haystack = text.toLowerCase();
+      const missing = contentSpec.markers.filter(
+        (marker) => !haystack.includes(marker.toLowerCase()),
       );
+      if (bytes === 0 || missing.length > 0) {
+        fail(
+          `Output content: ${contentSpec.label} (${outputId}) for run ${runId} is empty or missing marker(s): ${missing.join(", ")}`,
+          JSON.stringify({ runId, path: artifact.path, bytes, head: haystack.slice(0, 200) }, null, 2),
+        );
+      }
+      checked.push({
+        artifactId: artifact?.id ?? null,
+        sampleId: artifact?.sampleId ?? null,
+        outputId,
+        path: artifact.path,
+        bytes,
+        markers: contentSpec.markers,
+      });
     }
-    checked.push({ outputId, path: artifact.path, bytes, markers: contentSpec.markers });
   }
   return { checked };
 }
 
-// CONFIG -> OUTPUT (simulate-reads): the run was started with a non-default readCount;
-// the produced summary/simulation-summary.tsv must report that exact per-sample
-// read_count1, proving user config flowed through to the SLURM job and shaped output.
+async function assertStudyDemoSampleCoverage({ client, run, runId }) {
+  const selectedSamples = selectedTargetSamplesForRun({
+    run,
+    context: `study-demo-report run ${runId}`,
+  });
+  const expectedSampleIds = selectedSamples.map((sample) => sample?.sampleId);
+  if (expectedSampleIds.length === 0) {
+    fail(
+      `study-demo-report: run ${runId} exposed no target study samples`,
+      JSON.stringify({ targetType: run?.targetType, studyId: run?.study?.id ?? null }, null, 2),
+    );
+  }
+
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const summaries = artifacts.filter(
+    (artifact) => artifact?.outputId === "sample_summary",
+  );
+  if (
+    summaries.length !== 1 ||
+    typeof summaries[0]?.path !== "string" ||
+    !summaries[0].path
+  ) {
+    fail(
+      `study-demo-report: run ${runId} must have exactly one path-bound sample_summary artifact`,
+      JSON.stringify({ summaries }, null, 2),
+    );
+  }
+  const summary = summaries[0];
+  const samplesheet = await fetchRunSamplesheet({
+    client,
+    run,
+    runId,
+    context: `study-demo-report run ${runId} samplesheet`,
+  });
+  const { text, bytes } = await fetchRunFileText({
+    client,
+    runId,
+    filePath: summary.path,
+    context: "study-demo-report sample coverage",
+  });
+  const parsedSummary = parseTsv(text);
+  const proof = assertStudyDemoSummaryRows({
+    samplesheetHeader: samplesheet.header,
+    samplesheetRows: samplesheet.rows,
+    summaryHeader: parsedSummary.header,
+    summaryRows: parsedSummary.rows,
+    expectedSampleIds,
+    studyId: run?.study?.id,
+    studyTitle: run?.study?.title,
+    context: `study-demo-report run ${runId}`,
+  });
+  return {
+    path: summary.path,
+    samplesheetPath: samplesheet.path,
+    bytes,
+    ...proof,
+  };
+}
+
+// CONFIG + DB -> OUTPUT (simulate-reads): the summary must describe exactly the
+// active replacement Read persisted for every sample, including both mates and
+// the effective generation config.
 async function assertSimulateConfigOutput({ client, run, runId }) {
-  const expectedReadCount = Number(defaultConfigForPipeline("simulate-reads").readCount);
   const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
   const summary = artifacts.find((a) => a?.outputId === "summary" && a?.path);
   if (!summary) {
@@ -1550,50 +2532,53 @@ async function assertSimulateConfigOutput({ client, run, runId }) {
     );
   }
   const { header, rows } = parseTsv(fetched.text);
-  const idx = header.indexOf("read_count1");
-  if (idx < 0) {
-    fail(
-      `Config->output: simulate-reads summary TSV has no read_count1 column`,
-      JSON.stringify({ runId, path: summary.path, header }, null, 2),
-    );
-  }
-  const counts = rows.map((cols) => Number(cols[idx]));
-  const mismatches = counts.filter((count) => count !== expectedReadCount);
-  if (counts.length === 0 || mismatches.length > 0) {
-    fail(
-      `Config->output: simulate-reads produced read_count1 != configured ${expectedReadCount}`,
-      JSON.stringify({ runId, path: summary.path, expectedReadCount, counts }, null, 2),
-    );
-  }
-  return { expectedReadCount, sampleRows: counts.length, path: summary.path };
+  const samples = selectedTargetSamplesForRun({
+    run,
+    context: `simulate-reads summary for run ${runId}`,
+  });
+  const expectedReads = samples.flatMap((sample) =>
+    (Array.isArray(sample?.reads) ? sample.reads : [])
+      .filter((read) => read?.pipelineRunId === runId)
+      .map((read) => ({ sampleId: sample?.sampleId, ...read })),
+  );
+  const groundTruthByIdentity = await groundTruthForPersistedReads({
+    client,
+    expectedReads,
+    context: `simulate-reads summary for run ${runId}`,
+  });
+  const config = effectiveSimulateReadsConfig(run);
+  const proof = assertSimulateReadsSummaryRows({
+    header,
+    rows,
+    expectedReads,
+    groundTruthByIdentity,
+    config,
+    context: `simulate-reads summary for run ${runId}`,
+  });
+  return { path: summary.path, ...proof };
 }
 
 // Read-field DB writeback for FastQC/reads-qc. Both pipelines MERGE per-sample
 // readCount1/2 + avgQuality1/2 onto active Read rows. Besides validating the
 // values, require pipelineSources[pipelineId] to name this exact run so a SLURM
 // assertion cannot reuse fields written by a preceding local run.
-function assertReadFieldWriteback({ run, runId, pipelineId }) {
-  const targetSamples =
-    run?.targetType === "order"
-      ? run?.order?.samples
-      : run?.targetType === "study"
-        ? run?.study?.samples
-        : run?.order?.samples || run?.study?.samples;
-  const samples = Array.isArray(targetSamples) ? targetSamples : [];
-
-  const reads = [];
-  for (const sample of samples) {
-    for (const read of sample?.reads ?? []) {
-      reads.push({ sampleId: sample?.sampleId, ...read });
-    }
+function assertReadFieldWriteback({
+  runId,
+  pipelineId,
+  expectedSamples,
+}) {
+  if (!Array.isArray(expectedSamples) || expectedSamples.length === 0) {
+    fail(`${pipelineId} read-field writeback: no samplesheet-bound Reads supplied`);
   }
-
-  const readsWithFile1 = reads.filter((read) => read.file1 != null);
+  const readsWithFile1 = expectedSamples.map((sample) => ({
+    sampleId: sample.sampleId,
+    ...sample.activeRead,
+  }));
   if (readsWithFile1.length === 0) {
     fail(
       `${pipelineId} read-field writeback: run ${runId} exposed no active reads with a file1`,
       JSON.stringify(
-        { runId, targetType: run?.targetType, sampleCount: samples.length, readCount: reads.length },
+        { runId, sampleCount: expectedSamples.length },
         null,
         2,
       ),
@@ -1611,9 +2596,14 @@ function assertReadFieldWriteback({ run, runId, pipelineId }) {
         JSON.stringify({ runId, [countField]: count ?? null }, null, 2),
       );
     }
-    if (!(Number(qual) > 0 && Number(qual) <= QUAL_PLAUSIBLE_MAX)) {
+    const numericQuality = Number(qual);
+    if (
+      !Number.isFinite(numericQuality) ||
+      numericQuality < 0 ||
+      numericQuality > QUAL_PLAUSIBLE_MAX
+    ) {
       fail(
-        `${pipelineId} read-field writeback: read ${read.id} (sample ${read.sampleId}) has implausible ${qualField}=${qual} (expected 0 < q <= ${QUAL_PLAUSIBLE_MAX})`,
+        `${pipelineId} read-field writeback: read ${read.id} (sample ${read.sampleId}) has implausible ${qualField}=${qual} (expected 0 <= q <= ${QUAL_PLAUSIBLE_MAX})`,
         JSON.stringify({ runId, [qualField]: qual ?? null }, null, 2),
       );
     }
@@ -1648,10 +2638,96 @@ function assertReadFieldWriteback({ run, runId, pipelineId }) {
   return { readsAsserted: populated, readsWithFile1: readsWithFile1.length, warnings: 0 };
 }
 
+function selectedTargetSamplesForRun({ run, context }) {
+  const targetSamples =
+    run?.targetType === "order"
+      ? run?.order?.samples
+      : run?.targetType === "study"
+        ? run?.study?.samples
+        : run?.order?.samples || run?.study?.samples;
+  const allSamples = Array.isArray(targetSamples) ? targetSamples : [];
+  const selectedSampleIds =
+    Array.isArray(run?.inputSampleIds) && run.inputSampleIds.length > 0
+      ? new Set(run.inputSampleIds)
+      : null;
+  const samples = selectedSampleIds
+    ? allSamples.filter((sample) => selectedSampleIds.has(sample?.id))
+    : allSamples;
+
+  if (selectedSampleIds && samples.length !== selectedSampleIds.size) {
+    fail(
+      `${context}: selected sample IDs are missing from the run target`,
+      JSON.stringify(
+        {
+          selectedSampleIds: Array.from(selectedSampleIds),
+          targetSampleIds: allSamples.map((sample) => sample?.id ?? null),
+        },
+        null,
+        2,
+      ),
+    );
+  }
+  return samples;
+}
+
+function expectedFastqcSamplesForRun({
+  run,
+  context,
+  allowSamplesWithoutReads = false,
+}) {
+  const samples = selectedTargetSamplesForRun({ run, context });
+  const expectedSamples = [];
+  for (const sample of samples) {
+    const reads = Array.isArray(sample?.reads)
+      ? sample.reads.filter(
+          (read) => typeof read?.file1 === "string" && read.file1.length > 0,
+        )
+      : [];
+    if (reads.length === 0) {
+      if (allowSamplesWithoutReads) continue;
+      fail(
+        `${context}: target sample has no selectable input Read`,
+        JSON.stringify(
+          {
+            sampleId: sample?.sampleId ?? null,
+            sampleRecordId: sample?.id ?? null,
+            activeReads: reads.map((read) => ({
+              id: read?.id ?? null,
+              file1: read?.file1 ?? null,
+              file2: read?.file2 ?? null,
+            })),
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    if (
+      typeof sample?.id !== "string" ||
+      !sample.id ||
+      typeof sample?.sampleId !== "string" ||
+      !sample.sampleId
+    ) {
+      fail(`${context}: target sample has invalid identifiers`);
+    }
+    expectedSamples.push({
+      sampleId: sample.sampleId,
+      sampleRecordId: sample.id,
+      activeReads: reads,
+    });
+  }
+  if (expectedSamples.length === 0) {
+    fail(`${context}: run exposed no target samples with selectable Read inputs`);
+  }
+  return expectedSamples;
+}
+
 // fastqc summary-TSV metric correctness: fetch summary/fastqc-summary.tsv (the file is
-// required to be ingested as a PipelineArtifact row) and assert the computed QC metrics
-// are real (read counts > 0, mean quality in a plausible Phred range), not
-// blank/placeholder.
+// required to be ingested as a PipelineArtifact row), prove exact target-sample
+// coverage, validate every R1/R2 metric, and cross-check the summary against the Read
+// fields written back by this run. The deterministic seeded fixture additionally has
+// equal R1/R2 record counts by construction, so make that a hard invariant there
+// without imposing it on explicitly selected real datasets.
 async function assertFastqcSummaryMetrics({ client, run, runId }) {
   const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
   const summaryPath = artifacts.find((a) => a?.outputId === "summary" && a?.path)?.path;
@@ -1670,87 +2746,986 @@ async function assertFastqcSummaryMetrics({ client, run, runId }) {
     );
   }
   const { header, rows } = parseTsv(fetched.text);
-  const col = (name) => header.indexOf(name);
-  const r1Count = col("r1_read_count");
-  const r1Qual = col("r1_avg_quality");
-  const r2Count = col("r2_read_count");
-  const r2Qual = col("r2_avg_quality");
-  if (r1Count < 0 || r1Qual < 0) {
-    fail(
-      `fastqc summary metrics: TSV missing r1_read_count/r1_avg_quality columns`,
-      JSON.stringify({ runId, path: summaryPath, header }, null, 2),
-    );
-  }
-  if (rows.length === 0) {
-    fail(`fastqc summary metrics: no data rows in ${summaryPath}`, JSON.stringify({ runId }, null, 2));
-  }
-  const plausibleQuality = (value) => Number.isFinite(value) && value > 0 && value <= 45;
-  let checkedRows = 0;
-  for (const cols of rows) {
-    const sampleId = cols[0];
-    const c1 = Number(cols[r1Count]);
-    const q1 = Number(cols[r1Qual]);
-    if (!Number.isInteger(c1) || c1 <= 0) {
-      fail(
-        `fastqc summary metrics: r1_read_count is not a positive integer for sample ${sampleId}`,
-        JSON.stringify({ runId, path: summaryPath, value: cols[r1Count] }, null, 2),
+
+  const selectedSamples = expectedFastqcSamplesForRun({
+    run,
+    context: `fastqc summary metrics for run ${runId}`,
+  });
+  const inputEvidence = await bindExpectedSamplesToRunInputs({
+    client,
+    run,
+    runId,
+    expectedSamples: selectedSamples,
+    r1Column: "fastq_1",
+    r2Column: "fastq_2",
+    context: `fastqc summary metrics for run ${runId}`,
+  });
+  const expectedSamples = inputEvidence.expectedSamples;
+  const groundTruthByIdentity = await addFastqcZipGroundTruth({
+    run,
+    expectedSamples,
+    groundTruthByIdentity: inputEvidence.groundTruthByIdentity,
+    context: `fastqc run ${runId}`,
+  });
+  const deterministicDummyFixture =
+    run?.targetType === "order" &&
+    String(run?.order?.orderNumber || "").startsWith(DUMMY_ORDER_PREFIX);
+  const proof = assertFastqcSummaryRows({
+    header,
+    rows,
+    expectedSamples,
+    groundTruthByIdentity,
+    requireBalancedPairs: deterministicDummyFixture,
+    context: `fastqc summary metrics for run ${runId}`,
+  });
+  const artifactCoverage = assertFastqcArtifactCoverage({
+    artifacts,
+    expectedSamples,
+    context: `fastqc run ${runId}`,
+  });
+  const reportWriteback = assertFastqcReportWritebackCoverage({
+    artifacts,
+    expectedSamples,
+    context: `fastqc run ${runId}`,
+  });
+  const htmlInputBindings = [];
+  for (const sample of expectedSamples) {
+    for (const mate of sample.pairedEnd ? ["R1", "R2"] : ["R1"]) {
+      const reportBasename =
+        `${sample.sampleId}_${mate}_fastqc.html`;
+      const matches = artifacts.filter(
+        (artifact) =>
+          artifact?.outputId === "sample_qc_reports" &&
+          path.basename(String(artifact?.path || "")) ===
+            reportBasename,
       );
-    }
-    if (!plausibleQuality(q1)) {
-      fail(
-        `fastqc summary metrics: r1_avg_quality out of Phred range for sample ${sampleId}`,
-        JSON.stringify({ runId, path: summaryPath, value: cols[r1Qual] }, null, 2),
-      );
-    }
-    // Paired-end: r2 columns, when present and non-blank, must also be plausible.
-    if (r2Count >= 0 && cols[r2Count] != null && String(cols[r2Count]).trim() !== "") {
-      const c2 = Number(cols[r2Count]);
-      const q2 = Number(cols[r2Qual]);
-      if (Number.isFinite(c2) && c2 > 0 && !plausibleQuality(q2)) {
+      if (matches.length !== 1) {
         fail(
-          `fastqc summary metrics: r2_avg_quality out of Phred range for sample ${sampleId}`,
-          JSON.stringify({ runId, path: summaryPath, value: cols[r2Qual] }, null, 2),
+          `fastqc run ${runId}: expected exactly one HTML artifact for ${sample.sampleId}/${mate}`,
         );
       }
+      const inputPath = mate === "R1" ? sample.file1 : sample.file2;
+      const fetchedHtml = await fetchRunFileText({
+        client,
+        runId,
+        filePath: matches[0].path,
+        context: `FastQC HTML ${sample.sampleId}/${mate}`,
+      });
+      htmlInputBindings.push({
+        sampleId: sample.sampleId,
+        mate,
+        ...assertFastqcHtmlInputFilename({
+          html: fetchedHtml.text,
+          expectedInputBasename: path.basename(inputPath),
+          context: `FastQC HTML ${sample.sampleId}/${mate}`,
+        }),
+      });
     }
-    checkedRows += 1;
   }
-  return { path: summaryPath, checkedRows };
+
+  return {
+    path: summaryPath,
+    samplesheetPath: inputEvidence.samplesheetPath,
+    boundSamples: expectedSamples,
+    ...proof,
+    artifactCoverage,
+    reportWriteback,
+    htmlInputBindings,
+  };
 }
 
-// fastq-checksum (MERGE): checksum1 = md5(file1) written in place onto each target
-// sample's existing active Read. Asserts format + coverage + an on-disk md5 round-trip.
-async function assertChecksumReads({ run, runId, client, baseUrl }) {
-  // Reads live under order.samples (order target) or study.samples (study target);
-  // the run GET already filters reads to isActive=true. Collect whichever is present.
-  const targetSamples =
-    run?.targetType === "order"
-      ? run?.order?.samples
-      : run?.targetType === "study"
-        ? run?.study?.samples
-        : run?.order?.samples || run?.study?.samples;
-  const samples = Array.isArray(targetSamples) ? targetSamples : [];
+async function assertReadsQcSummaryMetrics({ client, run, runId }) {
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const summaryPath = artifacts.find(
+    (artifact) => artifact?.outputId === "summary_tsv" && artifact?.path,
+  )?.path;
+  if (!summaryPath) {
+    fail(
+      `reads-qc summary metrics: run ${runId} has no required summary_tsv artifact`,
+    );
+  }
 
-  const reads = [];
-  for (const sample of samples) {
-    for (const read of sample?.reads ?? []) {
-      reads.push({ sampleId: sample?.sampleId, ...read });
+  const fetched = await fetchRunFileText({
+    client,
+    runId,
+    filePath: summaryPath,
+    context: "reads-QC summary metrics",
+  });
+  const { header, rows } = parseTsv(fetched.text);
+  const selectedSamples = expectedFastqcSamplesForRun({
+    run,
+    context: `reads-QC summary for run ${runId}`,
+  });
+  const inputEvidence = await bindExpectedSamplesToRunInputs({
+    client,
+    run,
+    runId,
+    expectedSamples: selectedSamples,
+    r1Column: "fastq_1",
+    r2Column: "fastq_2",
+    context: `reads-QC summary for run ${runId}`,
+  });
+  const proof = assertReadsQcSummaryRows({
+    header,
+    rows,
+    expectedSamples: inputEvidence.expectedSamples,
+    groundTruthByIdentity: inputEvidence.groundTruthByIdentity,
+    context: `reads-QC summary for run ${runId}`,
+  });
+  const sampleArtifactCoverage = assertSampleBoundQcArtifactCoverage({
+    pipelineId: "reads-qc",
+    artifacts,
+    expectedSamples: inputEvidence.expectedSamples,
+    context: `reads-QC sample artifacts for run ${runId}`,
+  });
+  const samplesByRecordId = new Map(
+    inputEvidence.expectedSamples.map((sample) => [
+      sample.sampleRecordId,
+      sample,
+    ]),
+  );
+  const sampleArtifactContents = [];
+  for (const artifact of artifacts.filter(
+    (candidate) => candidate?.outputId === "sample_stats",
+  )) {
+    const expectedSample = samplesByRecordId.get(artifact?.sampleId);
+    if (!expectedSample) {
+      fail(
+        `reads-QC run ${runId}: sample_stats artifact is not bound to a selected sample`,
+      );
+    }
+    const fetchedSampleStats = await fetchRunFileText({
+      client,
+      runId,
+      filePath: artifact.path,
+      context: `reads-QC per-sample TSV ${expectedSample.sampleId}`,
+    });
+    const parsedSampleStats = parseTsv(fetchedSampleStats.text);
+    const sampleGroundTruth = new Map();
+    for (const mate of expectedSample.pairedEnd ? ["R1", "R2"] : ["R1"]) {
+      const identity = `${expectedSample.sampleId}/${mate}`;
+      sampleGroundTruth.set(
+        identity,
+        inputEvidence.groundTruthByIdentity.get(identity),
+      );
+    }
+    sampleArtifactContents.push({
+      sampleId: expectedSample.sampleId,
+      path: artifact.path,
+      ...assertReadsQcSampleArtifactRows({
+        ...parsedSampleStats,
+        expectedSample,
+        groundTruthByIdentity: sampleGroundTruth,
+        context: `reads-QC per-sample TSV ${expectedSample.sampleId}`,
+      }),
+    });
+  }
+
+  return {
+    path: summaryPath,
+    samplesheetPath: inputEvidence.samplesheetPath,
+    boundSamples: inputEvidence.expectedSamples,
+    ...proof,
+    sampleArtifactCoverage,
+    sampleArtifactContents,
+  };
+}
+
+async function assertNanoplotSummaryMetrics({ client, run, runId }) {
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const summaryPath = artifacts.find(
+    (artifact) => artifact?.outputId === "summary_tsv" && artifact?.path,
+  )?.path;
+  if (!summaryPath) {
+    fail(
+      `nanoplot summary metrics: run ${runId} has no required summary_tsv artifact`,
+    );
+  }
+
+  const fetched = await fetchRunFileText({
+    client,
+    runId,
+    filePath: summaryPath,
+    context: "NanoPlot summary metrics",
+  });
+  const { header, rows } = parseTsv(fetched.text);
+  const selectedSamples = expectedFastqcSamplesForRun({
+    run,
+    context: `NanoPlot summary for run ${runId}`,
+  });
+  const inputEvidence = await bindExpectedSamplesToRunInputs({
+    client,
+    run,
+    runId,
+    expectedSamples: selectedSamples.map((sample) => ({
+      ...sample,
+      pairedEnd: false,
+      file2: null,
+    })),
+    r1Column: "fastq",
+    context: `NanoPlot summary for run ${runId}`,
+  });
+  const proof = assertNanoplotSummaryRows({
+    header,
+    rows,
+    expectedSamples: inputEvidence.expectedSamples,
+    groundTruthByIdentity: inputEvidence.groundTruthByIdentity,
+    context: `NanoPlot summary for run ${runId}`,
+  });
+  const sampleArtifactCoverage = assertSampleBoundQcArtifactCoverage({
+    pipelineId: "nanoplot",
+    artifacts,
+    expectedSamples: inputEvidence.expectedSamples,
+    context: `NanoPlot sample artifacts for run ${runId}`,
+  });
+  const samplesByRecordId = new Map(
+    inputEvidence.expectedSamples.map((sample) => [
+      sample.sampleRecordId,
+      sample,
+    ]),
+  );
+  const sampleStatsContents = [];
+  for (const artifact of artifacts.filter(
+    (candidate) => candidate?.outputId === "sample_stats",
+  )) {
+    const expectedSample = samplesByRecordId.get(artifact?.sampleId);
+    if (!expectedSample) {
+      fail(
+        `NanoPlot run ${runId}: sample_stats artifact is not bound to a selected sample`,
+      );
+    }
+    const fetchedNanoStats = await fetchRunFileText({
+      client,
+      runId,
+      filePath: artifact.path,
+      context: `NanoPlot NanoStats ${expectedSample.sampleId}`,
+    });
+    const metrics = parseNanoplotNanoStatsTsv({
+      text: fetchedNanoStats.text,
+      context: `NanoPlot NanoStats ${expectedSample.sampleId}`,
+    });
+    sampleStatsContents.push({
+      path: artifact.path,
+      ...assertNanoplotNanoStatsGroundTruth({
+        sampleId: expectedSample.sampleId,
+        metrics,
+        groundTruth: inputEvidence.groundTruthByIdentity.get(
+          `${expectedSample.sampleId}/R1`,
+        ),
+        context: `NanoPlot NanoStats ${expectedSample.sampleId}`,
+      }),
+    });
+  }
+
+  return {
+    path: summaryPath,
+    samplesheetPath: inputEvidence.samplesheetPath,
+    boundSamples: inputEvidence.expectedSamples,
+    ...proof,
+    sampleArtifactCoverage,
+    sampleStatsContents,
+  };
+}
+
+async function buildMultiqcFastqcGroundTruth({
+  client,
+  run,
+  candidateSamples,
+  fastqcInputs,
+}) {
+  const expectedByArtifactBasename = new Map();
+  for (const sample of candidateSamples) {
+    for (const mate of ["R1", "R2"]) {
+      expectedByArtifactBasename.set(`${sample.sampleId}_${mate}_fastqc.zip`, {
+        sample,
+        mate,
+        identity: `${sample.sampleId}/${mate}`,
+      });
     }
   }
 
-  const readsWithFile1 = reads.filter((read) => read.file1 != null);
-  if (readsWithFile1.length === 0) {
+  const sourceRunCache = new Map();
+  const loadSourceRun = async (sourceRunId) => {
+    let pending = sourceRunCache.get(sourceRunId);
+    if (!pending) {
+      pending = (async () => {
+        const payload = await requestJson(
+          client,
+          `/api/pipelines/runs/${sourceRunId}`,
+          {},
+          `MultiQC: fetch source FastQC run ${sourceRunId}`,
+        );
+        const sourceRun = payload?.run || payload;
+        if (
+          sourceRun?.id !== sourceRunId ||
+          sourceRun?.pipelineId !== "fastqc" ||
+          sourceRun?.status !== "completed" ||
+          sourceRun?.targetType !== "order" ||
+          typeof sourceRun?.orderId !== "string" ||
+          sourceRun.orderId.length === 0 ||
+          sourceRun?.order?.id !== sourceRun.orderId ||
+          sourceRun?.studyId !== null ||
+          sourceRun?.study !== null
+        ) {
+          fail(
+            `MultiQC: source run ${sourceRunId} is not an exact completed order-scoped FastQC run`,
+            JSON.stringify(
+              {
+                id: sourceRun?.id ?? null,
+                pipelineId: sourceRun?.pipelineId ?? null,
+                status: sourceRun?.status ?? null,
+                targetType: sourceRun?.targetType ?? null,
+                orderId: sourceRun?.orderId ?? null,
+                relationOrderId: sourceRun?.order?.id ?? null,
+                studyId: sourceRun?.studyId ?? null,
+              },
+              null,
+              2,
+            ),
+          );
+        }
+        const samplesheet = await fetchRunSamplesheet({
+          client,
+          run: sourceRun,
+          runId: sourceRunId,
+          context: `MultiQC source FastQC run ${sourceRunId}`,
+        });
+        const columns = new Map();
+        for (const name of ["sample_id", "fastq_1", "fastq_2"]) {
+          const matches = samplesheet.header.flatMap((value, index) =>
+            value === name ? [index] : [],
+          );
+          if (matches.length !== 1) {
+            fail(
+              `MultiQC: source FastQC samplesheet must contain exactly one ${name} column`,
+            );
+          }
+          columns.set(name, matches[0]);
+        }
+        const sourceCandidates = expectedFastqcSamplesForRun({
+          run: sourceRun,
+          context: `MultiQC source FastQC run ${sourceRunId}`,
+        });
+        const sourceInputEvidence = await bindExpectedSamplesToRunInputs({
+          client,
+          run: sourceRun,
+          runId: sourceRunId,
+          expectedSamples: sourceCandidates,
+          r1Column: "fastq_1",
+          r2Column: "fastq_2",
+          context: `MultiQC source FastQC run ${sourceRunId}`,
+        });
+        return {
+          sourceRun,
+          samplesheet,
+          columns,
+          sourceInputEvidence,
+        };
+      })();
+      sourceRunCache.set(sourceRunId, pending);
+      pending.catch(() => sourceRunCache.delete(sourceRunId));
+    }
+    return pending;
+  };
+
+  const sequenceCountsByIdentity = new Map();
+  const sourceInputSamples = [];
+  let provenanceChecked = 0;
+  for (const inventoryArtifact of fastqcInputs) {
+    const basename = path.basename(String(inventoryArtifact?.stagedPath || ""));
+    const expected = expectedByArtifactBasename.get(basename);
+    if (!expected) {
+      fail(`MultiQC: staged FastQC ZIP is unexpected`, basename);
+    }
+    const sourceRunId = String(inventoryArtifact?.pipelineRunId || "");
+    const {
+      sourceRun,
+      samplesheet,
+      columns,
+      sourceInputEvidence,
+    } = await loadSourceRun(sourceRunId);
+    const sourceArtifacts = (sourceRun.artifacts ?? []).filter(
+      (artifact) => artifact?.id === inventoryArtifact?.artifactId,
+    );
+    if (sourceArtifacts.length !== 1) {
+      fail(
+        `MultiQC: source artifact ${inventoryArtifact?.artifactId ?? "<missing>"} is not unique in run ${sourceRunId}`,
+      );
+    }
+    const sourceArtifact = sourceArtifacts[0];
+    const sourceOrderSamples = Array.isArray(sourceRun?.order?.samples)
+      ? sourceRun.order.samples
+      : [];
+    if (
+      sourceArtifact?.outputId !== "sample_qc_data" ||
+      sourceArtifact?.sampleId !== expected.sample.sampleRecordId ||
+      !sourceOrderSamples.some(
+        (sample) => sample?.id === expected.sample.sampleRecordId,
+      ) ||
+      (Array.isArray(sourceRun?.inputSampleIds) &&
+        sourceRun.inputSampleIds.length > 0 &&
+        !sourceRun.inputSampleIds.includes(expected.sample.sampleRecordId))
+    ) {
+      fail(
+        `MultiQC: source FastQC artifact is not bound to the expected study sample for ${expected.identity}`,
+        JSON.stringify(
+          {
+            sourceRunId,
+            artifactId: sourceArtifact?.id ?? null,
+            outputId: sourceArtifact?.outputId ?? null,
+            artifactSampleId: sourceArtifact?.sampleId ?? null,
+            expectedSampleId: expected.sample.sampleRecordId,
+            inputSampleIds: sourceRun?.inputSampleIds ?? null,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+
+    const sourceFile = await resolveRegularNonSymlinkFile({
+      storedPath: sourceArtifact.path,
+      root: sourceRun.runFolder,
+      context: `MultiQC source artifact ${sourceArtifact.id}`,
+    });
+    const stagedFile = await resolveRegularNonSymlinkFile({
+      storedPath: inventoryArtifact.stagedPath,
+      root: run.runFolder,
+      context: `MultiQC staged artifact ${sourceArtifact.id}`,
+    });
+    if (
+      !pathsReferToSameLocation(sourceFile.path, inventoryArtifact.sourcePath) ||
+      path.basename(sourceFile.path) !== basename ||
+      sourceFile.size !== inventoryArtifact.size ||
+      stagedFile.size !== inventoryArtifact.size ||
+      (sourceArtifact.size != null &&
+        Number(sourceArtifact.size) !== inventoryArtifact.size)
+    ) {
+      fail(
+        `MultiQC: staged/source artifact metadata does not match for ${expected.identity}`,
+        JSON.stringify(
+          {
+            sourceArtifactPath: sourceArtifact.path,
+            inventorySourcePath: inventoryArtifact.sourcePath,
+            stagedPath: inventoryArtifact.stagedPath,
+            sourceSize: sourceFile.size,
+            stagedSize: stagedFile.size,
+            inventorySize: inventoryArtifact.size,
+            artifactSize: sourceArtifact.size ?? null,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    const [sourceSha256, stagedSha256] = await Promise.all([
+      sha256OfFile(sourceFile.path),
+      sha256OfFile(stagedFile.path),
+    ]);
+    if (sourceSha256 !== stagedSha256) {
+      fail(
+        `MultiQC: staged FastQC ZIP content differs from its source artifact for ${expected.identity}`,
+        JSON.stringify({ sourceSha256, stagedSha256 }, null, 2),
+      );
+    }
+
+    const sourceRows = samplesheet.rows.filter(
+      (row) => row[columns.get("sample_id")] === expected.sample.sampleId,
+    );
+    if (sourceRows.length !== 1) {
+      fail(
+        `MultiQC: source FastQC samplesheet does not contain exactly one row for ${expected.sample.sampleId}`,
+      );
+    }
+    const inputColumn = expected.mate === "R1" ? "fastq_1" : "fastq_2";
+    const sourceInput = sourceRows[0][columns.get(inputColumn)];
+    if (!sourceInput) {
+      fail(`MultiQC: source FastQC samplesheet has no ${expected.mate} input`);
+    }
+    const boundSourceSample = sourceInputEvidence.expectedSamples.find(
+      (sample) => sample.sampleId === expected.sample.sampleId,
+    );
+    const boundSourceInput =
+      expected.mate === "R1"
+        ? boundSourceSample?.file1
+        : boundSourceSample?.file2;
+    if (
+      !boundSourceSample ||
+      !boundSourceInput ||
+      !pathsReferToSameLocation(boundSourceInput, sourceInput)
+    ) {
+      fail(
+        `MultiQC: source FastQC input is not bound to exactly one active DB Read for ${expected.identity}`,
+      );
+    }
+    sourceInputSamples.push(boundSourceSample);
+    const rawGroundTruth =
+      sourceInputEvidence.groundTruthByIdentity.get(expected.identity);
+    if (!rawGroundTruth) {
+      fail(`MultiQC: raw FASTQ ground truth is missing for ${expected.identity}`);
+    }
+    const fastqcData = await extractFastqcDataFromZip({
+      zipPath: stagedFile.path,
+      root: run.runFolder,
+      context: `MultiQC staged FastQC ZIP ${expected.identity}`,
+    });
+    if (fastqcData.filename !== path.basename(sourceInput)) {
+      fail(
+        `MultiQC: FastQC ZIP Filename does not match the source-run input for ${expected.identity}`,
+        JSON.stringify(
+          {
+            sourceInput,
+            fastqcFilename: fastqcData.filename,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    if (fastqcData.totalSequences !== rawGroundTruth.readCount) {
+      fail(
+        `MultiQC: source FastQC Total Sequences does not match raw FASTQ ground truth for ${expected.identity}`,
+        JSON.stringify(
+          {
+            sourceInput,
+            fastqcTotalSequences: fastqcData.totalSequences,
+            rawReadCount: rawGroundTruth.readCount,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    const previousCount = sequenceCountsByIdentity.get(expected.identity);
+    if (
+      previousCount !== undefined &&
+      previousCount !== rawGroundTruth.readCount
+    ) {
+      fail(
+        `MultiQC: duplicate FastQC ZIPs have conflicting independently extracted sequence counts for ${expected.identity}`,
+        JSON.stringify(
+          { previousCount, currentCount: rawGroundTruth.readCount },
+          null,
+          2,
+        ),
+      );
+    }
+    sequenceCountsByIdentity.set(
+      expected.identity,
+      rawGroundTruth.readCount,
+    );
+    provenanceChecked += 1;
+  }
+  const expectedSamples = deriveMultiqcExpectedSamplesFromSourceInputs({
+    candidateSamples,
+    sourceInputSamples,
+    context: "MultiQC exact FastQC source inputs",
+  });
+  return { expectedSamples, sequenceCountsByIdentity, provenanceChecked };
+}
+
+async function buildMultiqcNanoplotGroundTruth({
+  client,
+  run,
+  candidateSamples,
+  nanoplotInputs,
+}) {
+  const candidatesByRecordId = new Map(
+    candidateSamples.map((sample) => [sample.sampleRecordId, sample]),
+  );
+  const sourceRunCache = new Map();
+  const loadSourceRun = async (sourceRunId) => {
+    let pending = sourceRunCache.get(sourceRunId);
+    if (!pending) {
+      pending = (async () => {
+        const payload = await requestJson(
+          client,
+          `/api/pipelines/runs/${sourceRunId}`,
+          {},
+          `MultiQC: fetch source NanoPlot run ${sourceRunId}`,
+        );
+        const sourceRun = payload?.run || payload;
+        if (
+          sourceRun?.id !== sourceRunId ||
+          sourceRun?.pipelineId !== "nanoplot" ||
+          sourceRun?.status !== "completed" ||
+          sourceRun?.targetType !== "order" ||
+          typeof sourceRun?.orderId !== "string" ||
+          sourceRun.orderId.length === 0 ||
+          sourceRun?.order?.id !== sourceRun.orderId ||
+          sourceRun?.studyId !== null ||
+          sourceRun?.study !== null ||
+          typeof sourceRun?.runFolder !== "string" ||
+          sourceRun.runFolder.length === 0
+        ) {
+          fail(
+            `MultiQC: source run ${sourceRunId} is not an exact completed order-scoped NanoPlot run`,
+            JSON.stringify(
+              {
+                id: sourceRun?.id ?? null,
+                pipelineId: sourceRun?.pipelineId ?? null,
+                status: sourceRun?.status ?? null,
+                targetType: sourceRun?.targetType ?? null,
+                orderId: sourceRun?.orderId ?? null,
+                relationOrderId: sourceRun?.order?.id ?? null,
+                studyId: sourceRun?.studyId ?? null,
+                runFolder: sourceRun?.runFolder ?? null,
+              },
+              null,
+              2,
+            ),
+          );
+        }
+        return sourceRun;
+      })();
+      sourceRunCache.set(sourceRunId, pending);
+      pending.catch(() => sourceRunCache.delete(sourceRunId));
+    }
+    return pending;
+  };
+
+  const expectedStats = [];
+  let provenanceChecked = 0;
+  for (const inventoryArtifact of nanoplotInputs) {
+    const sourceRunId =
+      typeof inventoryArtifact?.pipelineRunId === "string"
+        ? inventoryArtifact.pipelineRunId.trim()
+        : "";
+    const artifactId =
+      typeof inventoryArtifact?.artifactId === "string"
+        ? inventoryArtifact.artifactId.trim()
+        : "";
+    if (
+      !sourceRunId ||
+      !artifactId ||
+      inventoryArtifact?.pipelineId !== "nanoplot" ||
+      inventoryArtifact?.outputId !== "sample_stats" ||
+      !Number.isSafeInteger(inventoryArtifact?.size) ||
+      inventoryArtifact.size <= 0
+    ) {
+      fail(
+        "MultiQC: staged NanoPlot NanoStats inventory entry is malformed",
+        JSON.stringify({ artifact: inventoryArtifact }, null, 2),
+      );
+    }
+
+    const sourceRun = await loadSourceRun(sourceRunId);
+    const sourceArtifacts = (sourceRun.artifacts ?? []).filter(
+      (artifact) => artifact?.id === artifactId,
+    );
+    if (sourceArtifacts.length !== 1) {
+      fail(
+        `MultiQC: source NanoPlot artifact ${artifactId} is not unique in run ${sourceRunId}`,
+      );
+    }
+    const sourceArtifact = sourceArtifacts[0];
+    const expectedSample = candidatesByRecordId.get(sourceArtifact?.sampleId);
+    const sourceOrderSamples = Array.isArray(sourceRun?.order?.samples)
+      ? sourceRun.order.samples
+      : [];
+    if (
+      sourceArtifact?.outputId !== "sample_stats" ||
+      !expectedSample ||
+      !sourceOrderSamples.some(
+        (sample) => sample?.id === expectedSample.sampleRecordId,
+      ) ||
+      (Array.isArray(sourceRun?.inputSampleIds) &&
+        sourceRun.inputSampleIds.length > 0 &&
+        !sourceRun.inputSampleIds.includes(expectedSample.sampleRecordId))
+    ) {
+      fail(
+        "MultiQC: source NanoPlot artifact is not bound to an expected study sample",
+        JSON.stringify(
+          {
+            sourceRunId,
+            artifactId,
+            outputId: sourceArtifact?.outputId ?? null,
+            artifactSampleId: sourceArtifact?.sampleId ?? null,
+            selectedStudySampleIds: Array.from(candidatesByRecordId.keys()),
+            inputSampleIds: sourceRun?.inputSampleIds ?? null,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+
+    const expectedBasename = `${expectedSample.sampleId}_NanoStats.txt`;
+    const sourceFile = await resolveRegularNonSymlinkFile({
+      storedPath: sourceArtifact.path,
+      root: sourceRun.runFolder,
+      context: `MultiQC source NanoPlot artifact ${artifactId}`,
+    });
+    const stagedFile = await resolveRegularNonSymlinkFile({
+      storedPath: inventoryArtifact.stagedPath,
+      root: run.runFolder,
+      context: `MultiQC staged NanoPlot artifact ${artifactId}`,
+    });
+    if (
+      !pathsReferToSameLocation(sourceFile.path, inventoryArtifact.sourcePath) ||
+      path.basename(sourceFile.path) !== expectedBasename ||
+      path.basename(stagedFile.path) !== expectedBasename ||
+      sourceFile.size !== inventoryArtifact.size ||
+      stagedFile.size !== inventoryArtifact.size ||
+      (sourceArtifact.size != null &&
+        Number(sourceArtifact.size) !== inventoryArtifact.size)
+    ) {
+      fail(
+        `MultiQC: staged/source NanoPlot artifact metadata does not match for ${expectedSample.sampleId}`,
+        JSON.stringify(
+          {
+            expectedBasename,
+            sourceArtifactPath: sourceArtifact.path,
+            inventorySourcePath: inventoryArtifact.sourcePath,
+            stagedPath: inventoryArtifact.stagedPath,
+            sourceSize: sourceFile.size,
+            stagedSize: stagedFile.size,
+            inventorySize: inventoryArtifact.size,
+            artifactSize: sourceArtifact.size ?? null,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+
+    const [sourceSha256, stagedSha256, stagedText] = await Promise.all([
+      sha256OfFile(sourceFile.path),
+      sha256OfFile(stagedFile.path),
+      fs.promises.readFile(stagedFile.path, "utf8"),
+    ]);
+    if (sourceSha256 !== stagedSha256) {
+      fail(
+        `MultiQC: staged NanoPlot NanoStats content differs from its source artifact for ${expectedSample.sampleId}`,
+        JSON.stringify({ sourceSha256, stagedSha256 }, null, 2),
+      );
+    }
+    expectedStats.push({
+      sampleId: expectedSample.sampleId,
+      sampleRecordId: expectedSample.sampleRecordId,
+      sourceRunId,
+      artifactId,
+      metrics: parseNanoplotNanoStatsTsv({
+        text: stagedText,
+        context: `MultiQC staged NanoStats ${expectedSample.sampleId}`,
+      }),
+    });
+    provenanceChecked += 1;
+  }
+
+  return { expectedStats, provenanceChecked };
+}
+
+async function assertMultiqcAggregation({ client, run, runId }) {
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const dataArtifact = artifacts.find(
+    (artifact) =>
+      artifact?.outputId === "multiqc_data" &&
+      /(^|[/\\])multiqc_data\.json$/i.test(String(artifact?.path || "")),
+  );
+  if (!dataArtifact?.path) {
     fail(
-      `Checksum writeback: run ${runId} exposed no active reads with a file1 to verify`,
+      `multiqc aggregation: run ${runId} exposed no multiqc_data.json artifact`,
       JSON.stringify(
-        { runId, targetType: run?.targetType, sampleCount: samples.length, readCount: reads.length },
+        {
+          runId,
+          dataArtifacts: artifacts
+            .filter((artifact) => artifact?.outputId === "multiqc_data")
+            .map((artifact) => artifact?.path),
+        },
         null,
         2,
       ),
     );
   }
 
-  // (A) FORMAT + COVERAGE: every read with a file path must carry a populated checksum.
+  const fetchedData = await fetchRunFileText({
+    client,
+    runId,
+    filePath: dataArtifact.path,
+    context: "MultiQC parsed data",
+  });
+  let parsedData;
+  try {
+    parsedData = JSON.parse(fetchedData.text);
+  } catch (error) {
+    fail(
+      `multiqc aggregation: multiqc_data.json is invalid JSON`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const generalStats = Array.isArray(parsedData?.report_general_stats_data)
+    ? parsedData.report_general_stats_data
+    : [];
+  const populatedStats = generalStats.filter(
+    (row) => row && typeof row === "object" && Object.keys(row).length > 0,
+  );
+  if (populatedStats.length === 0) {
+    fail(
+      `multiqc aggregation: run ${runId} parsed no sample/module statistics`,
+      JSON.stringify({ runId, dataPath: dataArtifact.path }, null, 2),
+    );
+  }
+
+  if (!run?.runFolder) {
+    fail(`multiqc aggregation: run ${runId} has no runFolder`);
+  }
+  const inventoryPath = path.join(run.runFolder, "prior-run-inputs.json");
+  const fetchedInventory = await fetchRunFileText({
+    client,
+    runId,
+    filePath: inventoryPath,
+    context: "MultiQC prior-run input inventory",
+  });
+  let inventory;
+  try {
+    inventory = JSON.parse(fetchedInventory.text);
+  } catch (error) {
+    fail(
+      "multiqc aggregation: prior-run-inputs.json is invalid",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const stagedArtifacts = Array.isArray(inventory?.artifacts)
+    ? inventory.artifacts
+    : [];
+  const fastqcInputs = stagedArtifacts.filter(
+    (artifact) =>
+      artifact?.pipelineId === "fastqc" &&
+      artifact?.outputId === "sample_qc_data",
+  );
+  const nanoplotInputs = stagedArtifacts.filter(
+    (artifact) =>
+      artifact?.pipelineId === "nanoplot" &&
+      artifact?.outputId === "sample_stats",
+  );
+  const declaredTotalBytes = stagedArtifacts.reduce(
+    (total, artifact) =>
+      total +
+      (Number.isSafeInteger(artifact?.size) && artifact.size > 0
+        ? artifact.size
+        : 0),
+    0,
+  );
+  if (
+    inventory?.version !== 1 ||
+    inventory?.currentRunId !== runId ||
+    inventory?.studyId !== run?.study?.id ||
+    !pathsReferToSameLocation(
+      inventory?.inputDirectory,
+      path.join(run.runFolder, "prior-run-inputs"),
+    ) ||
+    inventory?.totalBytes !== declaredTotalBytes ||
+    fastqcInputs.length === 0 ||
+    nanoplotInputs.length === 0
+  ) {
+    fail(
+      `multiqc aggregation: staged-input provenance is incomplete for run ${runId}`,
+      JSON.stringify(
+        {
+          runId,
+          expectedStudyId: run?.study?.id ?? null,
+          inventoryRunId: inventory?.currentRunId ?? null,
+          inventoryStudyId: inventory?.studyId ?? null,
+          inventoryVersion: inventory?.version ?? null,
+          inventoryInputDirectory: inventory?.inputDirectory ?? null,
+          inventoryTotalBytes: inventory?.totalBytes ?? null,
+          calculatedTotalBytes: declaredTotalBytes,
+          stagedArtifacts: stagedArtifacts.map((artifact) => ({
+            pipelineId: artifact?.pipelineId,
+            outputId: artifact?.outputId,
+          })),
+        },
+        null,
+        2,
+      ),
+    );
+  }
+  for (const artifact of stagedArtifacts) {
+    if (
+      typeof artifact?.stagedPath !== "string" ||
+      typeof artifact?.sourcePath !== "string" ||
+      !pathIsWithin(artifact?.stagedPath, run.runFolder) ||
+      artifact?.sourcePath === artifact?.stagedPath
+    ) {
+      fail(
+        `multiqc aggregation: staged artifact provenance is unsafe`,
+        JSON.stringify({ runId, artifact }, null, 2),
+      );
+    }
+  }
+  const candidateSamples = expectedFastqcSamplesForRun({
+    run,
+    context: `multiqc aggregation for run ${runId}`,
+    allowSamplesWithoutReads: true,
+  });
+  const fastqcGroundTruth = await buildMultiqcFastqcGroundTruth({
+    client,
+    run,
+    candidateSamples,
+    fastqcInputs,
+  });
+  const expectedSamples = fastqcGroundTruth.expectedSamples;
+  const sampleMateCoverage = assertMultiqcFastqcCoverage({
+    expectedSamples,
+    generalStatsData: generalStats,
+    stagedFastqcArtifacts: fastqcInputs,
+    expectedSequenceCountsByIdentity:
+      fastqcGroundTruth.sequenceCountsByIdentity,
+    context: `multiqc aggregation for run ${runId}`,
+  });
+  const nanoplotGroundTruth = await buildMultiqcNanoplotGroundTruth({
+    client,
+    run,
+    candidateSamples,
+    nanoplotInputs,
+  });
+  const nanoplotCoverage = assertMultiqcNanoplotMetrics({
+    expectedStats: nanoplotGroundTruth.expectedStats,
+    multiqcNanostatData: parsedData?.multiqc_nanostat,
+    context: `multiqc aggregation for run ${runId}`,
+  });
+
+  return {
+    dataPath: dataArtifact.path,
+    generalStatsSections: populatedStats.length,
+    stagedArtifactCount: stagedArtifacts.length,
+    stagedFastqcInputs: fastqcInputs.length,
+    fastqcProvenanceChecked: fastqcGroundTruth.provenanceChecked,
+    sampleMateCoverage,
+    stagedNanoStatsInputs: nanoplotInputs.length,
+    nanoplotProvenanceChecked: nanoplotGroundTruth.provenanceChecked,
+    nanoplotCoverage,
+    inventoryPath,
+  };
+}
+
+// fastq-checksum (MERGE): checksum1 = md5(file1) written in place onto each target
+// sample's existing active Read. Asserts format + coverage + an on-disk md5 round-trip.
+async function assertChecksumReads({ run, runId, client, baseUrl }) {
+  const candidates = expectedFastqcSamplesForRun({
+    run,
+    context: `fastq-checksum run ${runId}`,
+  });
+  const inputEvidence = await bindExpectedSamplesToRunInputs({
+    client,
+    run,
+    runId,
+    expectedSamples: candidates,
+    r1Column: "fastq_1",
+    r2Column: "fastq_2",
+    computeGroundTruth: false,
+    context: `fastq-checksum run ${runId}`,
+  });
+  const readsWithFile1 = inputEvidence.expectedSamples.map((sample) => ({
+    ...sample.activeRead,
+    sampleId: sample.sampleId,
+    file1: sample.file1,
+    file2: sample.file2,
+  }));
+
+  // (A) FORMAT + EXACT SAMPLESHEET-BOUND COVERAGE: only the DB Reads that
+  // supplied the invocation inputs may count as checksum writeback evidence.
   let populatedChecksum1 = 0;
   for (const read of readsWithFile1) {
     assertReadSource({ read, pipelineId: "fastq-checksum", runId });
@@ -1761,140 +3736,113 @@ async function assertChecksumReads({ run, runId, client, baseUrl }) {
       );
     }
     populatedChecksum1 += 1;
-  }
-  for (const read of reads) {
-    if (read.file2 != null && read.checksum2 == null) {
+    if (
+      read.file2 != null &&
+      (typeof read.checksum2 !== "string" || !MD5_HEX.test(read.checksum2))
+    ) {
       fail(
-        `Checksum writeback: read ${read.id} (sample ${read.sampleId}) has file2 but checksum2 is null`,
+        `Checksum writeback: read ${read.id} (sample ${read.sampleId}) has file2 but checksum2 is not a 32-char md5 hex`,
         JSON.stringify({ runId, file2: read.file2, checksum2: read.checksum2 ?? null }, null, 2),
       );
     }
   }
-  if (populatedChecksum1 < 1) {
-    fail(
-      `Checksum writeback: run ${runId} did not populate any checksum1 (vacuous pass)`,
-      JSON.stringify({ runId, readsWithFile1: readsWithFile1.length }, null, 2),
-    );
-  }
 
-  // (B) CORRECTNESS: independently recompute md5(file1) on disk for at least one read
-  // and require it to equal the stored checksum1. Read.file1 is stored RELATIVE to the
-  // pipeline data base path, so resolve it against that root (the script runs on the
-  // runner, which can read the shared data dir) before hashing. Readability is
-  // part of the end-to-end contract; a green gate must independently verify md5.
-  let md5Verified = 0;
-  const md5Warnings = [];
-
-  let dataBasePath = null;
-  try {
-    const settings = await requestJson(
-      client,
-      "/api/admin/settings/sequencing-files",
-      {},
-      "Fetch sequencing-files settings",
-    );
-    dataBasePath = typeof settings?.dataBasePath === "string" ? settings.dataBasePath : null;
-  } catch (error) {
-    md5Warnings.push(
-      `could not resolve data base path (${error instanceof Error ? error.message : String(error)})`,
-    );
-  }
-  const resolveOnDisk = (file1) => {
-    if (typeof file1 !== "string" || !file1) return null;
-    const candidates = [];
-    if (path.isAbsolute(file1)) candidates.push(file1);
-    if (dataBasePath) candidates.push(path.resolve(dataBasePath, file1));
-    candidates.push(path.resolve(file1)); // last-ditch: cwd-relative
-    return candidates.find((candidate) => fs.existsSync(candidate)) || null;
-  };
-  for (const read of readsWithFile1) {
-    const onDisk = resolveOnDisk(read.file1);
-    if (!onDisk) {
-      md5Warnings.push(`read ${read.id}: file1 not readable here (${read.file1}, base=${dataBasePath ?? "<unknown>"})`);
-      continue;
-    }
-    let computed;
+  // (B) CORRECTNESS: every exact invocation input was necessarily readable by
+  // the completed workflow. Independently recompute all of them; no unresolved
+  // warning path is acceptable for this proof.
+  const configuredTargets = readsWithFile1.flatMap((read) => [
+    {
+      readId: read.id,
+      sampleId: read.sampleId,
+      mate: "R1",
+      configuredPath: read.file1,
+      storedChecksum: read.checksum1,
+    },
+    ...(read.file2 != null
+      ? [
+          {
+            readId: read.id,
+            sampleId: read.sampleId,
+            mate: "R2",
+            configuredPath: read.file2,
+            storedChecksum: read.checksum2,
+          },
+        ]
+      : []),
+  ]);
+  const verificationTargets = [];
+  for (const target of configuredTargets) {
+    let onDiskPath = null;
     try {
-      computed = await md5OfFile(onDisk);
+      onDiskPath = fs.realpathSync.native(target.configuredPath);
+      const stat = fs.statSync(onDiskPath);
+      if (!stat.isFile() || stat.size <= 0) {
+        fail(
+          `Checksum writeback: invocation input is not a non-empty regular file`,
+          JSON.stringify({ target, onDiskPath }, null, 2),
+        );
+      }
+      verificationTargets.push({
+        ...target,
+        onDiskPath,
+        computedChecksum: await md5OfFile(onDiskPath),
+      });
     } catch (error) {
-      md5Warnings.push(
-        `read ${read.id}: md5 of ${onDisk} failed (${error instanceof Error ? error.message : String(error)})`,
-      );
-      continue;
+      verificationTargets.push({
+        ...target,
+        onDiskPath,
+        computedChecksum: null,
+        error: `md5 failed (${error instanceof Error ? error.message : String(error)})`,
+      });
     }
-    if (computed !== read.checksum1) {
-      fail(
-        `Checksum writeback: stored checksum1 does not match recomputed md5 for read ${read.id} (sample ${read.sampleId})`,
-        JSON.stringify({ runId, file1: read.file1, onDisk, stored: read.checksum1, computed }, null, 2),
-      );
-    }
-    md5Verified += 1;
-    break; // one independently verified read is sufficient for the correctness claim
   }
+  const checksumVerification = assertChecksumVerificationCoverage({
+    targets: verificationTargets,
+    requireEveryConfiguredFile: true,
+    context: `Checksum writeback for run ${runId}`,
+  });
 
-  if (md5Verified === 0) {
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const summaryArtifacts = artifacts.filter(
+    (artifact) => artifact?.outputId === "summary",
+  );
+  if (
+    summaryArtifacts.length !== 1 ||
+    typeof summaryArtifacts[0]?.path !== "string" ||
+    !summaryArtifacts[0].path
+  ) {
     fail(
-      `Checksum writeback: md5(file1) could not be verified on disk for run ${runId}`,
-      JSON.stringify(
-        {
-          runId,
-          warnings: md5Warnings,
-          dataBasePath,
-          readsWithFile1: readsWithFile1.length,
-        },
-        null,
-        2,
-      ),
+      `Checksum writeback: run ${runId} must expose exactly one path-bound summary artifact`,
+      JSON.stringify({ summaryArtifacts }, null, 2),
     );
   }
-  for (const warning of md5Warnings) {
-    if (md5Verified > 0) console.warn(`WARN: ${warning}`);
-  }
-
-  // (C) PAIRED-READ CORRECTNESS: for reads with a second file, independently recompute
-  // md5(file2) and require it to equal the stored checksum2 (today only file1 was
-  // verified on disk). Single-end orders legitimately have no file2; whenever
-  // paired reads are present, at least one R2 md5 must be independently verified.
-  const readsWithFile2 = reads.filter((read) => read.file2 != null && read.checksum2 != null);
-  let md5Verified2 = 0;
-  for (const read of readsWithFile2) {
-    const onDisk = resolveOnDisk(read.file2);
-    if (!onDisk) continue;
-    let computed;
-    try {
-      computed = await md5OfFile(onDisk);
-    } catch {
-      continue;
-    }
-    if (computed !== read.checksum2) {
-      fail(
-        `Checksum writeback: stored checksum2 does not match recomputed md5(file2) for read ${read.id} (sample ${read.sampleId})`,
-        JSON.stringify({ runId, file2: read.file2, onDisk, stored: read.checksum2, computed }, null, 2),
-      );
-    }
-    md5Verified2 += 1;
-    break;
-  }
-  if (readsWithFile2.length > 0 && md5Verified2 === 0) {
-    fail(
-      `Checksum writeback: md5(file2) could not be verified on disk for run ${runId}`,
-      JSON.stringify(
-        { runId, pairedReads: readsWithFile2.length, dataBasePath },
-        null,
-        2,
-      ),
-    );
-  }
+  const summaryFetched = await fetchRunFileText({
+    client,
+    runId,
+    filePath: summaryArtifacts[0].path,
+    context: `fastq-checksum summary for run ${runId}`,
+  });
+  const parsedSummary = parseTsv(summaryFetched.text);
+  const summaryProof = assertFastqChecksumSummaryRows({
+    header: parsedSummary.header,
+    rows: parsedSummary.rows,
+    targets: verificationTargets,
+    context: `fastq-checksum summary for run ${runId}`,
+  });
 
   return {
     runId,
     targetType: run?.targetType,
     readsChecked: readsWithFile1.length,
     populatedChecksum1,
-    md5Verified,
-    pairedReadsChecked: readsWithFile2.length,
-    md5Verified2,
-    md5Warnings,
+    md5Verified: checksumVerification.verifiedR1,
+    pairedReadsChecked: checksumVerification.configuredR2,
+    md5Verified2: checksumVerification.verifiedR2,
+    checksumVerification,
+    samplesheetPath: inputEvidence.samplesheetPath,
+    summaryPath: summaryArtifacts[0].path,
+    summaryBytes: summaryFetched.bytes,
+    summaryProof,
     debugEndpoint: debugEndpoint(baseUrl, runId),
   };
 }
@@ -1903,23 +3851,26 @@ async function assertChecksumReads({ run, runId, client, baseUrl }) {
 // each sample (file1/2 + checksum1/2 + readCount1/2) and supersedes the prior reads.
 // Require exact run attribution. A checksum-only fallback is unsafe because the
 // same fixture is intentionally reused across local and SLURM modes.
-function assertReplaceReads({ run, runId, baseUrl }) {
-  const targetSamples =
-    run?.targetType === "order"
-      ? run?.order?.samples
-      : run?.targetType === "study"
-        ? run?.study?.samples
-        : run?.order?.samples || run?.study?.samples;
-  const samples = Array.isArray(targetSamples) ? targetSamples : [];
+async function assertReplaceReads({ client, run, runId, baseUrl }) {
+  const samples = selectedTargetSamplesForRun({
+    run,
+    context: `Replace writeback for run ${runId}`,
+  });
+  if (samples.length === 0) {
+    fail(`Replace writeback: run ${runId} exposed no target samples`);
+  }
   const reads = [];
   for (const sample of samples) {
-    for (const read of sample?.reads ?? []) {
+    for (const read of Array.isArray(sample?.reads) ? sample.reads : []) {
       reads.push({ sampleId: sample?.sampleId, ...read });
     }
   }
 
+  const config = effectiveSimulateReadsConfig(run);
+  const pairedEnd = config.mode === "shortReadPaired";
   const attributionMode = "pipelineRunId+pipelineSources";
   const attributed = reads.filter((read) => read.pipelineRunId === runId);
+  const notAttributed = reads.filter((read) => read.pipelineRunId !== runId);
 
   if (attributed.length === 0) {
     fail(
@@ -1931,9 +3882,34 @@ function assertReplaceReads({ run, runId, baseUrl }) {
       ),
     );
   }
+  if (notAttributed.length > 0 || reads.length !== samples.length) {
+    fail(
+      `Replace writeback: expected exactly one active run-attributed Read per target sample`,
+      JSON.stringify(
+        {
+          runId,
+          targetSamples: samples.map((sample) => sample?.sampleId ?? null),
+          activeReads: reads.map((read) => ({
+            id: read?.id ?? null,
+            sampleId: read?.sampleId ?? null,
+            pipelineRunId: read?.pipelineRunId ?? null,
+          })),
+          notAttributed: notAttributed.map((read) => read?.id ?? null),
+        },
+        null,
+        2,
+      ),
+    );
+  }
   for (const read of attributed) {
     assertReadSource({ read, pipelineId: "simulate-reads", runId });
-    if (!(Number(read.readCount1) > 0)) {
+    if (typeof read.file1 !== "string" || read.file1.length === 0) {
+      fail(
+        `Replace writeback: attributed read ${read.id} has no file1`,
+        JSON.stringify({ runId, file1: read.file1 ?? null }, null, 2),
+      );
+    }
+    if (!Number.isSafeInteger(Number(read.readCount1)) || !(Number(read.readCount1) > 0)) {
       fail(
         `Replace writeback: attributed read ${read.id} has no positive readCount1`,
         JSON.stringify({ runId, readCount1: read.readCount1 ?? null }, null, 2),
@@ -1945,6 +3921,92 @@ function assertReplaceReads({ run, runId, baseUrl }) {
         JSON.stringify({ runId, checksum1: read.checksum1 ?? null }, null, 2),
       );
     }
+    if (pairedEnd) {
+      if (typeof read.file2 !== "string" || read.file2.length === 0) {
+        fail(
+          `Replace writeback: paired attributed read ${read.id} has no file2`,
+          JSON.stringify({ runId, file2: read.file2 ?? null }, null, 2),
+        );
+      }
+      if (typeof read.checksum2 !== "string" || !MD5_HEX.test(read.checksum2)) {
+        fail(
+          `Replace writeback: paired attributed read ${read.id} has no valid checksum2`,
+          JSON.stringify({ runId, checksum2: read.checksum2 ?? null }, null, 2),
+        );
+      }
+      if (!Number.isSafeInteger(Number(read.readCount2)) || !(Number(read.readCount2) > 0)) {
+        fail(
+          `Replace writeback: paired attributed read ${read.id} has no positive readCount2`,
+          JSON.stringify({ runId, readCount2: read.readCount2 ?? null }, null, 2),
+        );
+      }
+    }
+  }
+
+  const expectedSampleIds = samples.map((sample) => sample?.sampleId);
+  const sampleCoverage = assertExactActiveRunAttributedReadCoverage({
+    expectedSampleIds,
+    activeReads: reads,
+    runId,
+    context: `Replace writeback for run ${runId}`,
+  });
+
+  const settings = await requestJson(
+    client,
+    "/api/admin/settings/sequencing-files",
+    {},
+    "Fetch sequencing-files settings for replace writeback",
+  );
+  const dataBasePath =
+    typeof settings?.dataBasePath === "string" && settings.dataBasePath
+      ? settings.dataBasePath
+      : null;
+  if (!dataBasePath) {
+    fail(
+      `Replace writeback: sequencing data base path is unavailable for run ${runId}`,
+      JSON.stringify(settings, null, 2),
+    );
+  }
+  const resolveOnDisk = (file) => {
+    if (typeof file !== "string" || !file) return null;
+    const candidate = path.isAbsolute(file)
+      ? file
+      : path.resolve(dataBasePath, file);
+    if (!pathIsWithin(candidate, dataBasePath)) return null;
+    return fs.existsSync(candidate) ? candidate : null;
+  };
+  let persistedFilesVerified = 0;
+  for (const read of attributed) {
+    for (const [fileField, checksumField] of [
+      ["file1", "checksum1"],
+      ["file2", "checksum2"],
+    ]) {
+      if (!read[fileField]) continue;
+      const onDisk = resolveOnDisk(read[fileField]);
+      if (!onDisk) {
+        fail(
+          `Replace writeback: ${fileField} for read ${read.id} is not present in persistent sequencing storage`,
+          JSON.stringify({ runId, [fileField]: read[fileField], dataBasePath }, null, 2),
+        );
+      }
+      const computed = await md5OfFile(onDisk);
+      if (computed !== read[checksumField]) {
+        fail(
+          `Replace writeback: persisted ${fileField} checksum does not match ${checksumField} for read ${read.id}`,
+          JSON.stringify(
+            {
+              runId,
+              onDisk,
+              stored: read[checksumField] ?? null,
+              computed,
+            },
+            null,
+            2,
+          ),
+        );
+      }
+      persistedFilesVerified += 1;
+    }
   }
 
   return {
@@ -1952,6 +4014,11 @@ function assertReplaceReads({ run, runId, baseUrl }) {
     attributionMode,
     activeReadCount: reads.length,
     attributedReadCount: attributed.length,
+    targetSampleCount: sampleCoverage.expectedSampleCount,
+    mode: config.mode,
+    pairedEnd,
+    persistedFilesVerified,
+    dataBasePath,
     debugEndpoint: debugEndpoint(baseUrl, runId),
   };
 }
@@ -1970,13 +4037,14 @@ async function createAndStartRun({
   runStateFile,
 }) {
   // Exactly one of orderId / studyId is sent, matching the pipeline's manifest target.
-  const createBody = {
+  const createBody = buildRuntimeRunCreateBody({
     pipelineId,
-    ...(studyId ? { studyId } : { orderId }),
+    orderId,
+    studyId,
     config,
     executionMode,
-    ...(executionMode === "slurm" && slurm ? { slurm } : {}),
-  };
+    slurm,
+  });
   const createPayload = await requestJson(
     client,
     "/api/pipelines/runs",
@@ -2031,6 +4099,14 @@ async function createAndStartRun({
     timeoutSeconds,
     label,
   });
+  assertRunIdentity({
+    run: result.run,
+    pipelineId,
+    targetType: orderId ? "order" : "study",
+    orderId: orderId ?? null,
+    studyId: studyId ?? null,
+    context: `${label} completion fetch for run ${runId}`,
+  });
 
   return { runId, startPayload, ...result };
 }
@@ -2061,6 +4137,12 @@ async function main() {
     ) || 120;
   const pipelineId =
     args["pipeline-id"] || process.env.SEQDESK_RUNTIME_E2E_PIPELINE_ID || "simulate-reads";
+  const requestedDummyOrderIndex = toOptionalInt(
+    args["dummy-order-index"] ||
+      process.env.SEQDESK_RUNTIME_E2E_DUMMY_ORDER_INDEX,
+  );
+  const preferredDummyOrderIndex =
+    requestedDummyOrderIndex || PIPELINE_DUMMY_ORDER_INDEX[pipelineId];
   const skipLocal = Boolean(args["skip-local"]);
   const skipSlurm = Boolean(args["skip-slurm"]);
   const includeDefaultPolicy = Boolean(args["include-default-policy"]);
@@ -2073,6 +4155,32 @@ async function main() {
   const runStateFile = toOptionalString(
     args["run-state-file"] || process.env.SEQDESK_RUNTIME_E2E_RUN_STATE_FILE,
   );
+  const expectedPipelineRoot = toOptionalString(
+    args["expected-pipeline-root"] ||
+      process.env.SEQDESK_RUNTIME_E2E_EXPECTED_PIPELINE_ROOT,
+  );
+  const requiredRelativeOutput = toOptionalString(
+    args["required-relative-output"] ||
+      process.env.SEQDESK_RUNTIME_E2E_REQUIRED_RELATIVE_OUTPUT,
+  );
+  const requiredOutputContains = toOptionalString(
+    args["required-output-contains"] ||
+      process.env.SEQDESK_RUNTIME_E2E_REQUIRED_OUTPUT_CONTAINS,
+  );
+  const requiredOutputExpectation = requiredRelativeOutput
+    ? {
+        relativePath: requiredRelativeOutput,
+        requiredContent: requiredOutputContains,
+      }
+    : null;
+  const requiredArtifactOutputIds = String(
+    args["required-artifact-output-id"] ||
+      process.env.SEQDESK_RUNTIME_E2E_REQUIRED_ARTIFACT_OUTPUT_ID ||
+      "",
+  )
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   if (skipLocal && skipSlurm && !includeDefaultPolicy) {
     fail("Nothing to run: remove --skip-local/--skip-slurm or add --include-default-policy.");
@@ -2080,9 +4188,31 @@ async function main() {
   if (expectDefaultMode && !["local", "slurm"].includes(expectDefaultMode)) {
     fail("--expect-default-mode must be local or slurm");
   }
+  if (requiredOutputContains && !requiredRelativeOutput) {
+    fail("--required-output-contains requires --required-relative-output");
+  }
+  if (
+    requiredArtifactOutputIds.some(
+      (outputId) => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(outputId),
+    )
+  ) {
+    fail("--required-artifact-output-id must contain safe comma-separated output IDs");
+  }
+  if (requiredArtifactOutputIds.length > 0 && !requiredOutputExpectation) {
+    fail("--required-artifact-output-id requires --required-relative-output");
+  }
+  if (
+    preferredDummyOrderIndex !== undefined &&
+    (preferredDummyOrderIndex < 1 || preferredDummyOrderIndex > 999)
+  ) {
+    fail("--dummy-order-index must be an integer between 1 and 999");
+  }
+  if (expectedPipelineRoot && !path.isAbsolute(expectedPipelineRoot)) {
+    fail("--expected-pipeline-root must be an absolute path");
+  }
 
   if (!skipSlurm || expectDefaultMode === "slurm") {
-    for (const command of ["sbatch", "squeue", "sacct"]) {
+    for (const command of ["sbatch", "squeue", "sacct", "scontrol"]) {
       if (!(await commandExists(command))) {
         fail(`Required SLURM command is not available on this host: ${command}`);
       }
@@ -2173,14 +4303,25 @@ async function main() {
       selectedOrder = await findOrder(client, {
         ensureSeededDummyData,
         dummyOrderPrefix: dummyOrderPrefixForSession(session),
+        preferredDummyOrderIndex,
       });
     }
     orderId = selectedOrder.id;
   }
-  const config = {
-    ...defaultConfigForPipeline(pipelineId),
-    ...parseJsonObject(args["config-json"] || process.env.SEQDESK_RUNTIME_E2E_CONFIG_JSON, "config JSON"),
-  };
+  const savedConfigOnly = Boolean(args["saved-config-only"]);
+  const configJsonArgument = args["config-json"];
+  const configJsonEnvironment = process.env.SEQDESK_RUNTIME_E2E_CONFIG_JSON;
+  const configJson =
+    configJsonArgument !== undefined
+      ? configJsonArgument
+      : configJsonEnvironment;
+  const config = resolveRuntimeRunConfig({
+    defaultConfig: defaultConfigForPipeline(pipelineId),
+    overrideConfig: parseJsonObject(configJson, "config JSON"),
+    overrideProvided:
+      configJsonArgument !== undefined || configJsonEnvironment !== undefined,
+    savedConfigOnly,
+  });
   const slurm = buildSlurmOverride(args);
   const policy = await getPipelinePolicy(client, pipelineId);
   if (!policy) fail(`Pipeline ${pipelineId} was not returned by /api/admin/settings/pipelines`);
@@ -2215,12 +4356,19 @@ async function main() {
       mode: "local",
       run: localResult.run,
       pipelineId,
+      requiredOutputExpectation,
+      expectedPipelineRoot,
     });
     const writeback = await assertPipelineWriteback({
       client,
       baseUrl,
       runId: localResult.runId,
       pipelineId,
+      targetType,
+      orderId,
+      studyId,
+      requiredArtifactOutputIds,
+      requiredOutputExpectation,
     });
     runs.push({
       label: "local override",
@@ -2255,12 +4403,19 @@ async function main() {
       run: slurmResult.run,
       jobId,
       pipelineId,
+      requiredOutputExpectation,
+      expectedPipelineRoot,
     });
     const writeback = await assertPipelineWriteback({
       client,
       baseUrl,
       runId: slurmResult.runId,
       pipelineId,
+      targetType,
+      orderId,
+      studyId,
+      requiredArtifactOutputIds,
+      requiredOutputExpectation,
     });
     runs.push({
       label: "SLURM override",
@@ -2321,12 +4476,19 @@ async function main() {
       run: defaultResult.run,
       jobId,
       pipelineId,
+      requiredOutputExpectation,
+      expectedPipelineRoot,
     });
     const writeback = await assertPipelineWriteback({
       client,
       baseUrl,
       runId: defaultResult.runId,
       pipelineId,
+      targetType,
+      orderId,
+      studyId,
+      requiredArtifactOutputIds,
+      requiredOutputExpectation,
     });
     runs.push({
       label: "configured default policy",
@@ -2351,7 +4513,8 @@ async function main() {
     order: selectedOrder,
     study: selectedStudy,
     configuredPolicy: policy.executionPolicy || null,
-    config,
+    configSource: savedConfigOnly ? "saved-pipeline-config" : "per-run",
+    config: config ?? null,
     slurmOverride: slurm || null,
     runs,
   };

@@ -406,7 +406,9 @@ export function buildDummySeedDataset(
     ]),
   ];
 
-  // Order 3 — dedicated single-end long-read order (always single-end).
+  // Order 3 — dedicated single-end long-read order (always single-end). It is
+  // linked to the same pipeline-CI study as order 4 so study aggregators can
+  // prove mixed FastQC + NanoPlot input coverage.
   const longReadSamples: DummySampleSpec[] = [
     fromTemplate(SAMPLE_SR_01, 3, 1, (id) => [
       buildRead(id, id, false, {
@@ -424,8 +426,8 @@ export function buildDummySeedDataset(
     ]),
   ];
 
-  // Order 4 — study-scoped order whose samples connect to the dedicated study so
-  // study-level pipelines (mag, study-demo-report) have a studyId target with reads.
+  // Order 4 — paired short-read order whose samples connect to the dedicated
+  // study so study-level pipelines have a studyId target with mixed read types.
   const studySamples: DummySampleSpec[] = [
     fromTemplate(SAMPLE_GR_01, 4, 1, (id) => [
       buildRead(id, id, studyPlatform.pairedEnd, {
@@ -488,7 +490,7 @@ export function buildDummySeedDataset(
       libraryStrategy: longReadPlatform.libraryStrategy,
       librarySource: longReadPlatform.librarySource,
       samples: longReadSamples,
-      studyLink: null,
+      studyLink: "study",
     },
     {
       orderNumber: orderNumber(prefix, 4),

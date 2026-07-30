@@ -36,6 +36,14 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import {
+  assertSlurmAccountingIdentity,
+  assertSlurmAccountingRecord,
+  assertSlurmLaunchIdentity,
+  parsePrimarySacctRecord,
+  parsePrimarySqueueRecord,
+} from "./lib/pipeline-e2e-proof.mjs";
+
 const execFileAsync = promisify(execFile);
 
 function fail(message, details) {
@@ -161,6 +169,28 @@ async function requestJson(client, pathname, init, context) {
     fail(`${context} failed (${response.status})`, summarizeBody(body));
   }
   return parseJson(response, context);
+}
+
+function assertSuccessfulSyncPayload(payload, context) {
+  const validBase =
+    payload &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    payload.success === true &&
+    typeof payload.synced === "boolean";
+  const validShape = payload?.synced
+    ? [payload.progress, payload.processes, payload.tasks].every(
+        (value) => typeof value === "number" && Number.isFinite(value),
+      )
+    : typeof payload?.status === "string" &&
+      payload.status.trim().length > 0 &&
+      typeof payload?.message === "string" &&
+      payload.message.trim().length > 0;
+
+  if (!validBase || !validShape) {
+    fail(`${context} returned an invalid success payload`, JSON.stringify(payload, null, 2));
+  }
+  return payload;
 }
 
 // Never throws on status: returns { status, ok, body } so a check can assert a
@@ -515,7 +545,7 @@ async function checkAccess({ baseUrl }) {
 // ---------------------------------------------------------------------------
 // CHECK: stuck  (out-of-band scancel -> /sync reconciliation)
 // ---------------------------------------------------------------------------
-async function sacctState(jobId) {
+async function readSacctRecord(jobId) {
   try {
     const { stdout } = await execFileAsync(
       "sacct",
@@ -525,22 +555,35 @@ async function sacctState(jobId) {
         "-j",
         String(jobId),
         "--noheader",
-        "--format=JobIDRaw,State",
+        "--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%1024,NodeList",
       ],
       { timeout: 15000 }
     );
-    const rows = stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => line.split("|"));
-    const primary = rows.find(([rowJobId]) => rowJobId === String(jobId));
-    const rawState = primary?.[1]?.trim() || "";
-    const state = rawState.split(/\s+/)[0].replace(/\+$/, "").toUpperCase();
     return {
-      ok: state === "CANCELLED" || state === "CANCELED",
-      state: state || null,
-      rawState: rawState || null,
+      ok: true,
+      record: parsePrimarySacctRecord(stdout, jobId),
+    };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function readSqueueRecord(jobId) {
+  try {
+    const { stdout } = await execFileAsync(
+      "squeue",
+      [
+        "-h",
+        "-j",
+        String(jobId),
+        "-o",
+        "%A|%.128j|%T|%.1024Z|%N",
+      ],
+      { timeout: 15000 },
+    );
+    return {
+      ok: true,
+      record: parsePrimarySqueueRecord(stdout, jobId),
     };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
@@ -587,9 +630,11 @@ async function checkStuck({ baseUrl, pipelineId, timeoutSeconds, slurm }) {
   // 2. Wait until the run is non-terminally active (running/queued) with a job id.
   const activeDeadline = Date.now() + Math.min(timeoutSeconds, 180) * 1000;
   let stateBefore = null;
+  let activeRun = null;
   while (Date.now() < activeDeadline) {
     const payload = await requestJson(client, `/api/pipelines/runs/${runId}`, {}, "Fetch run (stuck)");
     const current = payload?.run || payload;
+    activeRun = current;
     stateBefore = String(current?.status || "").toLowerCase();
     jobId = jobId || current?.queueJobId || current?.jobId;
     if (TERMINAL_STATES.has(stateBefore)) {
@@ -606,6 +651,49 @@ async function checkStuck({ baseUrl, pipelineId, timeoutSeconds, slurm }) {
   if (!/^\d+$/.test(String(jobId || ""))) {
     fail(`Could not obtain a numeric SLURM job id for run ${runId}`, JSON.stringify({ stateBefore }, null, 2));
   }
+  if (!["running", "queued", "pending"].includes(stateBefore)) {
+    fail(
+      `Run ${runId} never reached an active SLURM state before the scancel deadline`,
+      JSON.stringify({ jobId, stateBefore }, null, 2),
+    );
+  }
+  const launchIdentity = assertSlurmLaunchIdentity({
+    runId,
+    jobId,
+    run: activeRun,
+    startPayload,
+  });
+
+  // Prove the numeric id belongs to this exact PipelineRun before issuing the
+  // intentionally out-of-band scancel. This is both a safety invariant and a
+  // false-green guard: cancelling some other user's allocation must never satisfy
+  // the stuck-run test.
+  let identityAccounting = null;
+  let identityError = null;
+  for (let attempt = 0; attempt < 10 && !identityAccounting; attempt += 1) {
+    const liveQuery = await readSqueueRecord(jobId);
+    const accountingQuery = liveQuery.record ? null : await readSacctRecord(jobId);
+    const record = liveQuery.record || accountingQuery?.record || null;
+    identityError =
+      liveQuery.ok && (accountingQuery?.ok ?? true)
+        ? null
+        : [liveQuery.reason, accountingQuery?.reason].filter(Boolean).join("; ");
+    if (record) {
+      identityAccounting = assertSlurmAccountingIdentity(record, {
+        runId,
+        jobId: String(jobId),
+        runFolder: launchIdentity.runFolder,
+      });
+      break;
+    }
+    await sleep(1000);
+  }
+  if (!identityAccounting) {
+    fail(
+      `Could not prove SLURM job ${jobId} belongs to PipelineRun ${runId} before scancel`,
+      JSON.stringify({ identityError, runFolder: launchIdentity.runFolder }, null, 2),
+    );
+  }
 
   // 3. Kill the scheduler job OUT OF BAND — the app still believes it is active.
   await execFileAsync("scancel", [String(jobId)], { timeout: 15000 });
@@ -613,33 +701,85 @@ async function checkStuck({ baseUrl, pipelineId, timeoutSeconds, slurm }) {
   // 4. The app must reconcile the vanished job to a terminal status via /sync,
   //    NOT leave the run wedged at running/queued (the 99%-stuck regression).
   let reconciled = null;
+  let successfulSync = null;
   for (let attempt = 0; attempt < 12 && !reconciled; attempt += 1) {
-    await client.request(`/api/pipelines/runs/${runId}/sync`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    const syncContext = `Sync run after out-of-band scancel (attempt ${attempt + 1})`;
+    const syncPayload = assertSuccessfulSyncPayload(
+      await requestJson(
+        client,
+        `/api/pipelines/runs/${runId}/sync`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({}),
+        },
+        syncContext,
+      ),
+      syncContext,
+    );
     await sleep(3000);
     const payload = await requestJson(client, `/api/pipelines/runs/${runId}`, {}, "Fetch run after scancel");
     const current = payload?.run || payload;
-    if (TERMINAL_STATES.has(String(current?.status || "").toLowerCase())) {
-      reconciled = current;
+    const persistedStatus = String(current?.status || "").trim().toLowerCase();
+    if (!TERMINAL_STATES.has(persistedStatus)) {
+      continue;
     }
+    const responseStatus =
+      String(syncPayload.status || "").trim().toLowerCase() || null;
+    if (responseStatus && responseStatus !== persistedStatus) {
+      fail(
+        `Run ${runId} did not persist the terminal status returned by POST /sync`,
+        JSON.stringify({ responseStatus, persistedStatus, syncPayload }, null, 2),
+      );
+    }
+    successfulSync = {
+      attempt: attempt + 1,
+      responseStatus,
+      persistedStatus,
+      synced: syncPayload.synced,
+      queueStatus: syncPayload.queueStatus ?? null,
+      queueSource: syncPayload.queueSource ?? null,
+    };
+    reconciled = current;
   }
   if (!reconciled) {
     fail(
-      `Run ${runId} stayed wedged (non-terminal) after its SLURM job ${jobId} was scancelled out of band — the monitor did not reconcile it`,
+      `Run ${runId} stayed wedged (non-terminal) after its SLURM job ${jobId} was scancelled out of band — no successful POST /sync returned a terminal status`,
       JSON.stringify({ runId, jobId, stateBefore }, null, 2)
     );
   }
   if (!reconciled.completedAt) {
     fail(`Reconciled run ${runId} did not record completedAt`, JSON.stringify({ runId }, null, 2));
   }
+  const reconciledStatus = String(reconciled.status || "").toLowerCase();
+  if (reconciledStatus !== "cancelled" && reconciledStatus !== "canceled") {
+    fail(
+      `Out-of-band scancel reconciled run ${runId} to '${reconciledStatus}', expected cancelled`,
+      JSON.stringify({ runId, jobId, statusSource: reconciled.statusSource ?? null }, null, 2),
+    );
+  }
 
   let sacct = { ok: false };
   for (let attempt = 0; attempt < 6; attempt += 1) {
-    sacct = await sacctState(jobId);
-    if (sacct.ok) break;
+    const query = await readSacctRecord(jobId);
+    const record = query.record;
+    if (record && (record.state === "CANCELLED" || record.state === "CANCELED")) {
+      assertSlurmAccountingRecord(record, {
+        runId,
+        jobId: String(jobId),
+        runFolder: launchIdentity.runFolder,
+        expectedOutcome: "cancelled",
+        requireAllocatedNode: false,
+      });
+      sacct = { ok: true, record };
+      break;
+    }
+    sacct = {
+      ok: false,
+      reason: query.reason,
+      state: record?.state ?? null,
+      record,
+    };
     await sleep(2000);
   }
   if (!sacct.ok) {
@@ -657,9 +797,12 @@ async function checkStuck({ baseUrl, pipelineId, timeoutSeconds, slurm }) {
     runId,
     jobId,
     stateBeforeScancel: stateBefore,
-    statusAfterReconcile: String(reconciled.status || "").toLowerCase(),
+    statusAfterReconcile: reconciledStatus,
     statusSource: reconciled.statusSource || null,
+    successfulSync,
     sacctCancelled: true,
+    accountingIdentity: identityAccounting,
+    accountingAfterCancel: sacct.record,
   };
 }
 

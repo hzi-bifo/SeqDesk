@@ -3,6 +3,7 @@ import path from 'path';
 import yaml from 'js-yaml';
 import type { LoadedPackage, PackageManifest } from './package-loader';
 import { deriveManifestTargets, type PackageTargetType } from './package-contracts';
+import { isLocalPipelineReference } from './pipeline-paths';
 
 export const METAXPATH_MIN_COMPATIBLE_VERSION = '0.1.1';
 export const METAXPATH_SAFE_DEFAULTS_VERSION = '0.1.5';
@@ -202,17 +203,9 @@ export async function collectMetaxPathRuntimeWarnings(input: {
   });
 }
 
-function isLocalPipelineRef(value: string): boolean {
-  return (
-    value.startsWith('/') ||
-    value.startsWith('./') ||
-    value.startsWith('../')
-  );
-}
-
 function resolveWorkflowPath(pkg: MetaxPathPackageForCompatibility): string | undefined {
-  const pipelineRef = pkg.manifest.execution.pipeline;
-  if (!isLocalPipelineRef(pipelineRef)) return undefined;
+  const pipelineRef = pkg.manifest.execution.pipeline.trim();
+  if (!isLocalPipelineReference(pipelineRef)) return undefined;
   return path.isAbsolute(pipelineRef)
     ? pipelineRef
     : path.resolve(pkg.basePath, pipelineRef);

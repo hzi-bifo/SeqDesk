@@ -17,10 +17,15 @@ import { promisify } from 'util';
 import fs from 'fs/promises';
 import { createWriteStream } from 'fs';
 import path from 'path';
+import { buildCondaRunArgs } from '@/lib/pipelines/conda-environment';
 
 const execAsync = promisify(exec);
 
 export const runtime = 'nodejs';
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 
 async function resolveCondaBin(condaPath?: string): Promise<string | null> {
   if (condaPath) {
@@ -55,9 +60,12 @@ async function resolveNextflowCommand(
   const condaBin = await resolveCondaBin(condaPath);
 
   if (condaBin) {
-    const condaArgs = ['run', '-n', envName, 'nextflow'];
+    const condaArgs = buildCondaRunArgs(envName, ['nextflow']);
     try {
-      await execAsync(`${condaBin} run -n ${envName} nextflow -version 2>&1`, { timeout: 30000 });
+      await execAsync(
+        `${[condaBin, ...condaArgs, '-version'].map(shellQuote).join(' ')} 2>&1`,
+        { timeout: 30000 }
+      );
       return { command: condaBin, baseArgs: condaArgs, source: 'conda' };
     } catch {
       // fall back to system nextflow

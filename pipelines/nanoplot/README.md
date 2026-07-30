@@ -52,5 +52,7 @@ artifact metadata.
 
 ## Notes
 
-- A long-read demo dataset for SeqDesk does not yet exist; the pipeline has not
-  been exercised against bundled demo data.
+- SeqDesk's admin dummy dataset includes a dedicated single-end ONT order. The
+  required self-hosted acceptance gate runs this package against that order in
+  both local and real SLURM modes and verifies report/stat artifacts, summary
+  metrics, and exact per-run `Read` writeback.

@@ -9,6 +9,9 @@ const readWorkflow = (name: string) =>
 
 const canonical = readWorkflow("pipeline-slurm-e2e.yml");
 const mirror = readWorkflow("mirror-to-private.yml");
+const publicTests = readWorkflow("test.yml");
+const publicInstaller = readWorkflow("install-e2e-ubuntu.yml");
+const playwrightWorkflow = readWorkflow("playwright.yml");
 const almaExtended = readWorkflow("install-profile-alma.yml");
 const orderPipeline = readWorkflow("order-pipeline-e2e.yml");
 const studyPipeline = readWorkflow("study-pipeline-e2e.yml");
@@ -32,6 +35,31 @@ const cancelHarness = fs.readFileSync(
 );
 const appcheckHarness = fs.readFileSync(
   path.join(repoRoot, "scripts", "run-pipeline-appcheck-e2e.mjs"),
+  "utf8"
+);
+const storeHarness = fs.readFileSync(
+  path.join(repoRoot, "scripts", "run-pipeline-store-e2e.mjs"),
+  "utf8"
+);
+const pipelineCliHarness = fs.readFileSync(
+  path.join(repoRoot, "scripts", "run-pipeline-cli-e2e.mjs"),
+  "utf8"
+);
+const pipelineProofHarness = fs.readFileSync(
+  path.join(repoRoot, "scripts", "lib", "pipeline-e2e-proof.mjs"),
+  "utf8"
+);
+const realStoreBrowserSpec = fs.readFileSync(
+  path.join(
+    repoRoot,
+    "playwright",
+    "tests",
+    "pipeline-store-real.admin.spec.ts"
+  ),
+  "utf8"
+);
+const externalStorePlaywrightConfig = fs.readFileSync(
+  path.join(repoRoot, "playwright.pipeline-store.config.ts"),
   "utf8"
 );
 const commandProbeHarnesses = [
@@ -75,6 +103,15 @@ interface WorkflowDocument {
   jobs?: Record<string, { if?: string }>;
 }
 
+interface PackageManifest {
+  scripts?: Record<string, string>;
+}
+
+interface TypeScriptConfig {
+  extends?: string;
+  exclude?: string[];
+}
+
 describe("self-hosted pipeline CI contract", () => {
   it.each(publicOnlyWorkflows)(
     "keeps every %s job out of the private CI mirror",
@@ -111,6 +148,968 @@ describe("self-hosted pipeline CI contract", () => {
     expect(canonical).not.toContain("cron:");
     expect(canonical).toContain(
       "github.repository == 'hzi-bifo/SeqDesk-ci'"
+    );
+  });
+
+  it("gates production types without treating test-only typing debt as a release failure", () => {
+    const packageManifest = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")
+    ) as PackageManifest;
+    const productionConfig = JSON.parse(
+      fs.readFileSync(
+        path.join(repoRoot, "tsconfig.production.json"),
+        "utf8"
+      )
+    ) as TypeScriptConfig;
+    const nextConfig = fs.readFileSync(
+      path.join(repoRoot, "next.config.ts"),
+      "utf8"
+    );
+
+    expect(packageManifest.scripts?.["typecheck:production"]).toContain(
+      "tsc -p tsconfig.production.json"
+    );
+    expect(packageManifest.scripts?.["typecheck:all"]).toContain(
+      "tsc -p tsconfig.json"
+    );
+    expect(productionConfig.extends).toBe("./tsconfig.json");
+    expect(productionConfig.exclude).toEqual(
+      expect.arrayContaining([
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.spec.ts",
+        "**/*.spec.tsx",
+        "playwright/**",
+      ])
+    );
+    expect(nextConfig).toContain(
+      'tsconfigPath: "tsconfig.production.json"'
+    );
+    expect(publicTests).toContain("run: npm run typecheck:production");
+    expect(canonical).toContain("npm run build -- --webpack");
+  });
+
+  it("runs focused Store, readiness, activation, rollback, and workflow contracts before full-tier coverage", () => {
+    const focusedGate = publicTests.slice(
+      publicTests.indexOf(
+        "- name: Gate pipeline Store, readiness, enable, and rollback contracts"
+      ),
+      publicTests.indexOf("- name: Run tests with coverage")
+    );
+
+    expect(focusedGate).not.toContain("continue-on-error:");
+    expect(focusedGate).toContain(
+      "scripts/fastq-ground-truth.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "scripts/lib/conda-environment.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "scripts/pipeline-e2e-config.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "scripts/pipeline-e2e-proof.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "scripts/pipeline-e2e-sync.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "scripts/pipeline-cli-e2e.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "scripts/pipeline-store-e2e-fixture.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/app/admin/settings/pipelines/client-utils.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/app/api/admin/settings/pipelines/download-db/route.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/app/api/admin/settings/pipelines/install/route.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/app/api/admin/settings/pipelines/route.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/app/api/admin/settings/pipelines/store/route.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/config/miniconda-installer-selection.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/config/setup-conda-env-bootstrap.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/conda-environment.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/config-schema-validation.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/database-downloads.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/generic-executor.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/manifest-schema.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/multiqc-contract.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/package-descriptor-schema.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/package-install.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/pipeline-cli-script.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/pipeline-e2e-coverage.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/prior-run-artifact-staging.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/prerequisite-check.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/slurm-completion-attestation.test.ts"
+    );
+    expect(focusedGate).toContain(
+      "src/lib/pipelines/ci-workflow-contract.test.ts"
+    );
+    expect(publicTests).toMatch(
+      /^\s*run: npm run test:coverage:all\s*$/m
+    );
+    expect(publicTests).not.toMatch(
+      /^\s*run: npm run test:coverage\s*$/m
+    );
+  });
+
+  it("provisions and migrates the database required by the all-tier coverage run", () => {
+    expect(publicTests).toContain("services:\n      postgres:");
+    expect(publicTests).toContain("image: postgres:16");
+    expect(publicTests).toContain("POSTGRES_DB: seqdesk_test");
+    expect(publicTests).toContain(
+      "DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public"
+    );
+    expect(publicTests).toContain(
+      "DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public"
+    );
+    expect(publicTests).toContain("- name: Prepare test database");
+    expect(publicTests).toContain("run: npm run db:migrate:deploy");
+    expect(publicTests.indexOf("- name: Prepare test database")).toBeLessThan(
+      publicTests.indexOf("- name: Run tests with coverage")
+    );
+  });
+
+  it("runs the real Store browser journey separately against an isolated package tree and fixture registry", () => {
+    const broadBrowserGate = playwrightWorkflow.slice(
+      playwrightWorkflow.indexOf("- name: Run Playwright tests"),
+      playwrightWorkflow.indexOf("- name: Run real pipeline Store browser flow")
+    );
+    const realStoreGate = playwrightWorkflow.slice(
+      playwrightWorkflow.indexOf("- name: Run real pipeline Store browser flow"),
+      playwrightWorkflow.indexOf("- name: Upload Playwright report")
+    );
+
+    expect(broadBrowserGate).toContain("run: npm run test:e2e");
+    expect(realStoreGate).not.toContain("continue-on-error:");
+    expect(realStoreGate).toContain(
+      "SEQDESK_PIPELINE_REGISTRY_URL: http://127.0.0.1:3219/registry"
+    );
+    expect(realStoreGate).toContain(
+      "SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL: http://127.0.0.1:3219"
+    );
+    expect(realStoreGate).toContain(
+      'SEQDESK_PIPELINE_STORE_E2E_FAULTS: "1"'
+    );
+    expect(realStoreGate).toContain(
+      'STORE_PIPELINES_DIR="$RUNNER_TEMP/playwright-real-store-pipelines"'
+    );
+    expect(realStoreGate).toContain('mkdir -p "$STORE_PIPELINES_DIR"');
+    expect(realStoreGate).toContain(
+      'SEQDESK_PIPELINES_DIR="$STORE_PIPELINES_DIR"'
+    );
+    expect(realStoreGate).toContain(
+      "playwright/tests/pipeline-store-real.admin.spec.ts"
+    );
+    expect(realStoreGate).toContain("--project=chromium-admin");
+    expect(realStoreGate).toContain("--no-deps");
+    expect(realStoreGate).toContain("--workers=1");
+    expect(realStoreGate).toContain("--repeat-each=2");
+
+    expect(realStoreBrowserSpec).toContain("startPipelineStoreFixture({");
+    expect(realStoreBrowserSpec).toContain("fixtureUrl: fixtureUrl!");
+    expect(realStoreBrowserSpec).not.toContain("page.route(");
+    expect(realStoreBrowserSpec).not.toContain("route.fulfill(");
+    expect(realStoreBrowserSpec).toContain(
+      'getByRole("button", { name: "Install", exact: true })'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      'data-setup-action",\n        "configure"'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      'data-setup-action",\n        "download-db"'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      'data-setup-action",\n        "configure-runtime"'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      'data-setup-action",\n        "enable"'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      'data-setup-action",\n        "complete"'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      "activeFixture.advertiseBrokenUpdate()"
+    );
+    expect(realStoreBrowserSpec).toContain(
+      "version: PIPELINE_STORE_FIXTURE_V1"
+    );
+    expect(realStoreBrowserSpec).toContain("enabled: true");
+    expect(realStoreBrowserSpec).toContain(
+      "fixtureLabel: CONFIGURED_LABEL"
+    );
+    expect(realStoreBrowserSpec).toContain(
+      "provisionPipelineStoreFixtureResource({"
+    );
+    expect(realStoreBrowserSpec).not.toContain(
+      'getByLabel("Fixture database")'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      '.endsWith("/api/admin/settings/pipelines/download-db")'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      'getByRole("button", { name: "Download", exact: true })'
+    );
+    expect(realStoreBrowserSpec).toContain("blockResourceDownload: true");
+    expect(realStoreBrowserSpec).toContain(
+      "await activeFixture.waitForResourceDownloadRequest()"
+    );
+    expect(realStoreBrowserSpec).toContain(
+      "activeFixture.releaseResourceDownload()"
+    );
+    expect(realStoreBrowserSpec).toContain('state: "running"');
+    expect(realStoreBrowserSpec).toContain('state: "success"');
+    expect(realStoreBrowserSpec).toContain(
+      "PIPELINE_STORE_FIXTURE_DATABASE_SHA256"
+    );
+    expect(realStoreBrowserSpec).toContain(
+      'getByLabel("Pipeline Run Directory")'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      'name: "Save Runtime Settings"'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      'message: "Exists and writable"'
+    );
+    expect(realStoreBrowserSpec).toContain(
+      "path: new URL(activeFixture.v1Url).pathname"
+    );
+    expect(realStoreBrowserSpec).toContain(
+      "path: new URL(activeFixture.v2Url).pathname"
+    );
+    expect(realStoreBrowserSpec).toContain(
+      "assertActiveFixturePackageOnDisk()"
+    );
+    expect(realStoreBrowserSpec).toContain(
+      "buildValidPipelineStorePackage(PIPELINE_ID)"
+    );
+    expect(realStoreBrowserSpec).toContain(
+      `/api/admin/settings/pipelines/\${encodeURIComponent(PIPELINE_ID)}/lint`
+    );
+    expect(realStoreBrowserSpec).toContain(
+      "packageStats.isSymbolicLink()"
+    );
+  });
+
+  it("runs the full real-browser guided setup as a required self-hosted gate", () => {
+    const sourceBoot = canonical.slice(
+      canonical.indexOf("- name: Boot SeqDesk app and verify readiness"),
+      canonical.indexOf(
+        "- name: Gate source app guided Store setup in a real browser"
+      )
+    );
+    const browserGate = canonical.slice(
+      canonical.indexOf(
+        "- name: Gate source app guided Store setup in a real browser"
+      ),
+      canonical.indexOf(
+        "- name: Gate source app pipeline Store, readiness, enable, and rollback"
+      )
+    );
+
+    expect(canonical).toContain(
+      "- name: Install Chromium for the required guided Store browser gate"
+    );
+    expect(sourceBoot).not.toContain(
+      'export SEQDESK_PIPELINE_RUN_DIR="$SEQDESK_RUN_DIR"'
+    );
+    expect(sourceBoot).toContain("unset SEQDESK_PIPELINE_RUN_DIR");
+    expect(sourceBoot).toContain(
+      'export SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL="http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}"'
+    );
+    expect(sourceBoot).toContain(
+      "export SEQDESK_PIPELINE_STORE_E2E_FAULTS=1"
+    );
+    expect(browserGate).not.toContain("continue-on-error:");
+    expect(browserGate).toContain(
+      "playwright/tests/pipeline-store-real.admin.spec.ts"
+    );
+    expect(browserGate).toContain(
+      "--config=playwright.pipeline-store.config.ts"
+    );
+    expect(browserGate).toContain("--project=chromium-real-store");
+    expect(browserGate).toContain("--repeat-each=2");
+    expect(browserGate).toContain(
+      "SEQDESK_PLAYWRIGHT_RUNTIME_READY_DIR: ${{ env.SEQDESK_RUN_DIR }}"
+    );
+    expect(browserGate).toContain(
+      "SEQDESK_PLAYWRIGHT_HANDOFF_RUN_DIR: ${{ env.SEQDESK_RUN_DIR }}"
+    );
+    expect(browserGate).toContain(
+      "SEQDESK_PLAYWRIGHT_HANDOFF_DATABASE_DIR: ${{ env.SEQDESK_DB_DIR }}"
+    );
+    expect(browserGate).toContain(
+      "SEQDESK_PLAYWRIGHT_STORE_PIPELINES_ROOT: ${{ env.SEQDESK_STAGED_PIPELINES_DIR }}"
+    );
+    expect(externalStorePlaywrightConfig).toContain(
+      'const baseURL = process.env.PLAYWRIGHT_BASE_URL'
+    );
+    expect(externalStorePlaywrightConfig).toContain("workers: 1");
+    expect(externalStorePlaywrightConfig).not.toContain("webServer:");
+    const realBrowserTestBody = realStoreBrowserSpec.slice(
+      realStoreBrowserSpec.indexOf(
+        '"drives the real Store install, config, database, runtime, enable, and failed-update flow"'
+      )
+    );
+    expect(
+      realBrowserTestBody.indexOf(
+        "siteSettingsSnapshot = await readSiteSettingsSnapshot()"
+      )
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      realBrowserTestBody.indexOf(
+        "siteSettingsSnapshot = await readSiteSettingsSnapshot()"
+      )
+    ).toBeLessThan(
+      realBrowserTestBody.indexOf("await setPipelineExecutionPaths(")
+    );
+    expect(realStoreBrowserSpec).toMatch(
+      /restoreSiteSettings\(\s*siteSettingsSnapshot,\s*persistentHandoff/
+    );
+    expect(realStoreBrowserSpec).toContain(
+      "cannot point into the disposable Pipeline Store resource root"
+    );
+    expect(canonical).toContain(
+      "${{ github.workspace }}/playwright-report"
+    );
+    expect(canonical).toContain("${{ github.workspace }}/test-results");
+  });
+
+  it("requires the deterministic Store/readiness/enable/rollback flow on source and freshly installed self-hosted apps", () => {
+    const sourceBoot = canonical.slice(
+      canonical.indexOf("- name: Boot SeqDesk app and verify readiness"),
+      canonical.indexOf(
+        "- name: Gate source app pipeline Store, readiness, enable, and rollback"
+      )
+    );
+    const sourceStoreGate = canonical.slice(
+      canonical.indexOf(
+        "- name: Gate source app pipeline Store, readiness, enable, and rollback"
+      ),
+      canonical.indexOf(
+        "- name: Run the Store-installed pipeline locally and through SLURM"
+      )
+    );
+    const sourceStoreRuntimeGate = canonical.slice(
+      canonical.indexOf(
+        "- name: Run the Store-installed pipeline locally and through SLURM"
+      ),
+      canonical.indexOf(
+        "- name: Run required fastq-checksum E2E"
+      )
+    );
+    const installedGate = canonical.slice(
+      canonical.indexOf(
+        "- name: Install SeqDesk + run pipelines on the installed app (required)"
+      ),
+      canonical.indexOf("- name: Collect SLURM + pipeline diagnostics")
+    );
+    const installedStoreRuntimeGate = installedGate.slice(
+      installedGate.indexOf(
+        "::group::installed Store pipeline -> local + real SLURM execution"
+      ),
+      installedGate.indexOf(
+        "=== run pipelines through the INSTALLED app"
+      )
+    );
+
+    expect(canonical).toContain(
+      'echo "STORE_E2E_FIXTURE_PORT=$((PORT + 3))" >> "$GITHUB_ENV"'
+    );
+    expect(sourceBoot).toContain(
+      'SHARED_PIPELINES_DIR="$SEQDESK_STAGED_PIPELINES_DIR"'
+    );
+    expect(sourceBoot).toContain(
+      'export SEQDESK_PIPELINES_DIR="$SHARED_PIPELINES_DIR"'
+    );
+    expect(sourceBoot).toContain(
+      'export SEQDESK_PIPELINE_REGISTRY_URL="http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}/registry"'
+    );
+    expect(sourceStoreGate).not.toContain("continue-on-error:");
+    expect(sourceStoreGate).toContain(
+      'node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-e2e.mjs"'
+    );
+    expect(sourceStoreGate).toContain(
+      '--fixture-url "http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}"'
+    );
+    expect(sourceStoreGate).toContain("--expect-readiness ready");
+    expect(sourceStoreGate).toContain("--expected-execution-mode slurm");
+    expect(sourceStoreGate).toContain(
+      '--fixture-resource-root "$SEQDESK_DB_DIR/source-store-e2e"'
+    );
+    expect(sourceStoreGate).toContain('--result-file "$STORE_E2E_JSON"');
+    expect(sourceStoreRuntimeGate).not.toContain("continue-on-error:");
+    expect(sourceStoreRuntimeGate).toContain(
+      'result?.fixture?.pipelineId'
+    );
+    expect(sourceStoreRuntimeGate).toContain(
+      'result?.configuration?.value'
+    );
+    expect(sourceStoreRuntimeGate).toContain(
+      "npm run pipeline:e2e:runtime --"
+    );
+    expect(sourceStoreRuntimeGate).toContain(
+      '--pipeline-id "$FIXTURE_PIPELINE_ID"'
+    );
+    expect(sourceStoreRuntimeGate).toContain(
+      '--expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR"'
+    );
+    expect(sourceStoreRuntimeGate).toContain("--saved-config-only");
+    expect(sourceStoreRuntimeGate).not.toContain("--config-json");
+    expect(sourceStoreRuntimeGate).not.toContain("FIXTURE_DATABASE");
+    expect(sourceStoreRuntimeGate).not.toContain("FIXTURE_CONFIG");
+    expect(sourceStoreRuntimeGate).toContain(
+      "--required-relative-output output/results/fixture-report.txt"
+    );
+    expect(sourceStoreRuntimeGate).toContain(
+      '--required-output-contains "$FIXTURE_LABEL"'
+    );
+    expect(sourceStoreRuntimeGate).toContain(
+      "--required-artifact-output-id fixture_report"
+    );
+    expect(sourceStoreRuntimeGate).toContain(
+      '--run-state-file "$STORE_RUNTIME_E2E_STATE"'
+    );
+    expect(sourceStoreRuntimeGate).toContain(
+      "Runtime harness verified the saved Store configuration in every local and SLURM run."
+    );
+    expect(sourceStoreRuntimeGate).not.toContain("STORE_RUN_FOLDER=");
+    expect(sourceStoreRuntimeGate).not.toContain("STORE_REPORT=");
+    expect(installedGate).toContain(
+      'export SEQDESK_PIPELINE_REGISTRY_URL="http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}/registry"'
+    );
+    expect(installedGate).toContain(
+      "::group::installed app Store -> configure -> readiness -> enable -> failed update -> rollback"
+    );
+    expect(installedGate).toContain(
+      'node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-e2e.mjs"'
+    );
+    expect(installedGate).toContain(
+      '--result-file "$INSTALLED_STORE_E2E_JSON"'
+    );
+    expect(installedGate).toContain("--expect-readiness ready");
+    expect(installedGate).toContain("--expected-execution-mode slurm");
+    expect(installedGate).toContain(
+      '--fixture-resource-root "$SEQDESK_DB_DIR/installed-store-e2e"'
+    );
+    expect(installedGate).toContain(
+      'INSTALLED_STORE_E2E_JSON="$DIAG_OUT/installed-store-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"'
+    );
+    expect(installedGate.indexOf("::group::installed app Store ->")).toBeLessThan(
+      installedGate.indexOf(
+        "::group::installed Store pipeline -> local + real SLURM execution"
+      )
+    );
+    expect(installedGate).toContain(
+      '--pipeline-id "$INSTALLED_FIXTURE_PIPELINE_ID"'
+    );
+    expect(installedStoreRuntimeGate).toContain(
+      '--expected-pipeline-root "$PACKAGED_PIPELINES_ROOT"'
+    );
+    expect(installedGate).toContain("--saved-config-only");
+    expect(installedGate).not.toContain("INSTALLED_FIXTURE_DATABASE");
+    expect(installedGate).not.toContain("INSTALLED_FIXTURE_CONFIG");
+    expect(installedStoreRuntimeGate).not.toContain("--config-json");
+    expect(installedGate).toContain(
+      "--required-relative-output output/results/fixture-report.txt"
+    );
+    expect(installedGate).toContain(
+      '--required-output-contains "$INSTALLED_FIXTURE_LABEL"'
+    );
+    expect(installedGate).toContain(
+      "--required-artifact-output-id fixture_report"
+    );
+    expect(installedGate).toContain(
+      '--run-state-file "$INSTALLED_STORE_RUNTIME_STATE"'
+    );
+    expect(installedGate).toContain(
+      "Runtime harness verified the installed app's saved Store configuration in every local and real SLURM run."
+    );
+    expect(installedGate).not.toContain("INSTALLED_STORE_RUN_FOLDER=");
+    expect(installedGate).not.toContain("INSTALLED_STORE_REPORT=");
+    expect(
+      installedGate.indexOf(
+        "::group::installed Store pipeline -> local + real SLURM execution"
+      )
+    ).toBeLessThan(
+      installedGate.indexOf(
+        "=== run pipelines through the INSTALLED app"
+      )
+    );
+    expect(canonical).toContain("${{ env.STORE_E2E_LOG }}");
+    expect(canonical).toContain("${{ env.STORE_E2E_JSON }}");
+    expect(canonical).toContain("${{ env.STORE_RUNTIME_E2E_LOG }}");
+    expect(canonical).toContain("${{ env.STORE_RUNTIME_E2E_STATE }}");
+    expect(canonical.match(/--fixture-url/g)).toHaveLength(3);
+    expect(canonical.match(/--required-relative-output/g)).toHaveLength(3);
+    expect(canonical.match(/--required-output-contains/g)).toHaveLength(3);
+    expect(canonical.match(/--required-artifact-output-id/g)).toHaveLength(3);
+    expect(canonical.match(/--saved-config-only/g)).toHaveLength(3);
+
+    expect(runtimeHarness).toContain('"saved-config-only"');
+    expect(runtimeHarness).toContain(
+      "buildRuntimeRunCreateBody({"
+    );
+    expect(runtimeHarness).toContain(
+      'configSource: savedConfigOnly ? "saved-pipeline-config" : "per-run"'
+    );
+
+    expect(storeHarness).toContain("startPipelineStoreFixture({");
+    expect(storeHarness).toContain(
+      "AbortSignal.timeout(APP_REQUEST_TIMEOUT_MS)"
+    );
+    expect(storeHarness).toContain(
+      "SeqDesk request timed out after ${APP_REQUEST_TIMEOUT_MS / 1000}s"
+    );
+    expect(storeHarness).toContain(
+      'requiredConfigBefore?.status === "missing"'
+    );
+    expect(storeHarness).toContain(
+      'configuredPipeline.readiness?.canEnable === true'
+    );
+    expect(storeHarness).toContain(
+      'activation.response.status === 200'
+    );
+    expect(storeHarness).toContain("fixture.advertiseBrokenUpdate()");
+    expect(storeHarness).toContain(
+      'update.response.status === 422'
+    );
+    expect(storeHarness).toContain(
+      'afterRollback?.version === PIPELINE_STORE_FIXTURE_V1'
+    );
+    expect(storeHarness).toContain(
+      'afterRollback?.enabled === expectedEnabled'
+    );
+    expect(storeHarness).toContain(
+      'afterRollback?.config?.fixtureLabel === configuredValue'
+    );
+  });
+
+  it("runs the installed user CLI from a neutral directory and executes its installed package locally and on real SLURM", () => {
+    const installedGate = canonical.slice(
+      canonical.indexOf(
+        "- name: Install SeqDesk + run pipelines on the installed app (required)"
+      ),
+      canonical.indexOf("- name: Collect SLURM + pipeline diagnostics")
+    );
+    const cliGate = installedGate.slice(
+      installedGate.indexOf(
+        "::group::installed user CLI -> list -> install -> setup -> idempotence -> concurrency -> rollback"
+      ),
+      installedGate.indexOf(
+        "::group::installed app Store -> configure -> readiness -> enable -> failed update -> rollback"
+      )
+    );
+    const cliRuntimeGate = cliGate.slice(
+      cliGate.indexOf(
+        "::group::CLI-installed pipeline -> local + real SLURM execution"
+      )
+    );
+
+    expect(installedGate).toContain(
+      'USER_CLI_BIN="$WORK/user-bin"; USER_CLI_CONFIG_HOME="$WORK/user-config"'
+    );
+    expect(installedGate).toContain(
+      'USER_CLI_COMMAND="$USER_CLI_BIN/seqdesk"'
+    );
+    expect(installedGate).toContain(
+      'USER_CLI_POINTER="$USER_CLI_CONFIG_HOME/seqdesk/default-install"'
+    );
+    expect(installedGate).toContain(
+      'XDG_CONFIG_HOME="$USER_CLI_CONFIG_HOME"'
+    );
+    expect(installedGate).toContain(
+      'SEQDESK_CLI_BIN_DIR="$USER_CLI_BIN"'
+    );
+    expect(installedGate).toContain(
+      'if [ ! -x "$USER_CLI_COMMAND" ]'
+    );
+    expect(installedGate).toContain(
+      'if [ ! -r "$USER_CLI_POINTER" ]'
+    );
+    expect(installedGate).toContain(
+      'if [ "$USER_CLI_POINTER_VALUE" != "$APP_DIR" ]'
+    );
+    expect(installedGate).toContain(
+      'if [ ! -L "$INSTALLED_RELEASE_DIR/pipelines" ]'
+    );
+    expect(installedGate).toContain(
+      'ROOT_PIPELINES_REAL="$(cd "$APP_DIR/pipelines" && pwd -P)"'
+    );
+    expect(installedGate).toContain(
+      'RELEASE_PIPELINES_REAL="$(cd "$INSTALLED_RELEASE_DIR/pipelines" && pwd -P)"'
+    );
+    expect(installedGate).toContain(
+      'if [ "$ROOT_PIPELINES_REAL" != "$RELEASE_PIPELINES_REAL" ]'
+    );
+
+    expect(cliGate).not.toContain("continue-on-error:");
+    expect(cliGate).toContain("env -u SEQDESK_DIR");
+    expect(cliGate).toContain(
+      'node "$GITHUB_WORKSPACE/scripts/run-pipeline-cli-e2e.mjs"'
+    );
+    expect(cliGate).toContain('--seqdesk-command "$USER_CLI_COMMAND"');
+    expect(cliGate).toContain(
+      '--neutral-cwd "$INSTALLED_CLI_NEUTRAL_CWD"'
+    );
+    expect(cliGate).toContain(
+      '--fixture-resource-root "$SEQDESK_DB_DIR/installed-cli-e2e"'
+    );
+    expect(cliGate).toContain('--result-file "$INSTALLED_CLI_E2E_JSON"');
+    expect(cliGate).not.toContain('--dir "$APP_DIR"');
+    expect(cliGate).toContain("result?.primary?.pipelineId");
+    expect(cliGate).toContain("result?.primary?.marker");
+
+    expect(cliRuntimeGate).toContain("npm run pipeline:e2e:runtime --");
+    expect(cliRuntimeGate).toContain(
+      '--expected-pipeline-root "$PACKAGED_PIPELINES_ROOT"'
+    );
+    expect(cliRuntimeGate).toContain(
+      '--pipeline-id "$INSTALLED_CLI_FIXTURE_PIPELINE_ID"'
+    );
+    expect(cliRuntimeGate).toContain("--saved-config-only");
+    expect(cliRuntimeGate).toContain(
+      "--required-relative-output output/results/fixture-report.txt"
+    );
+    expect(cliRuntimeGate).toContain(
+      '--required-output-contains "$INSTALLED_CLI_FIXTURE_LABEL"'
+    );
+    expect(cliRuntimeGate).toContain(
+      "--required-artifact-output-id fixture_report"
+    );
+    expect(cliRuntimeGate).toContain(
+      '--run-state-file "$INSTALLED_CLI_RUNTIME_STATE"'
+    );
+    expect(cliRuntimeGate).not.toContain("--skip-local");
+    expect(cliRuntimeGate).not.toContain("--skip-slurm");
+
+    expect(pipelineCliHarness).toContain(
+      "cwd: context.neutralCwd"
+    );
+    expect(pipelineCliHarness).toContain(
+      'available?.packageState === "available"'
+    );
+    expect(pipelineCliHarness).toMatch(/"--catalog",\s*"order"/);
+    expect(pipelineCliHarness).toMatch(/"--catalog",\s*"study"/);
+    expect(pipelineCliHarness).toContain(
+      '["pipelines", "install", pipelineId, "--json"]'
+    );
+    expect(pipelineCliHarness).toContain(
+      'findReadiness(blockedPipeline, "required-config")?.status === "missing"'
+    );
+    expect(pipelineCliHarness).toContain(
+      'findReadiness(blockedPipeline, "databases")?.status === "missing"'
+    );
+    expect(pipelineCliHarness).toContain(
+      'readyPipeline?.activationState === "enabled"'
+    );
+    expect(pipelineCliHarness).toContain(
+      '"--installed",'
+    );
+    expect(pipelineCliHarness).toContain(
+      "fixture.advertiseBrokenUpdate()"
+    );
+    expect(pipelineCliHarness).toContain(
+      "packageVersion(rollbackPipeline) === PIPELINE_STORE_FIXTURE_V1"
+    );
+    expect(pipelineCliHarness).toContain(
+      "Promise.all([cliPromise, apiPromise])"
+    );
+    expect(pipelineCliHarness).toContain(
+      "assertNoInstallDebris(path.dirname(packageDir), pipelineId)"
+    );
+  });
+
+  it("isolates the core-only Conda bootstrap regression test on the self-hosted runner", () => {
+    const bootstrapGate = canonical.slice(
+      canonical.indexOf(
+        "- name: Verify core-only pipeline runtime bootstrap"
+      ),
+      canonical.indexOf(
+        "- name: Install Chromium for the required guided Store browser gate"
+      )
+    );
+
+    expect(bootstrapGate).not.toContain("continue-on-error:");
+    expect(bootstrapGate).toContain(
+      "src/lib/config/miniconda-installer-selection.test.ts"
+    );
+    expect(bootstrapGate).toContain(
+      "src/lib/config/setup-conda-env-bootstrap.test.ts"
+    );
+  });
+
+  it("verifies the configured Store output inside every runtime run, not only the final run-state", () => {
+    const sourceStoreRuntimeGate = canonical.slice(
+      canonical.indexOf(
+        "- name: Run the Store-installed pipeline locally and through SLURM"
+      ),
+      canonical.indexOf(
+        "- name: Run required fastq-checksum E2E"
+      )
+    );
+    const installedGate = canonical.slice(
+      canonical.indexOf(
+        "- name: Install SeqDesk + run pipelines on the installed app (required)"
+      ),
+      canonical.indexOf("- name: Collect SLURM + pipeline diagnostics")
+    );
+    const runFilesGate = runtimeHarness.slice(
+      runtimeHarness.indexOf("async function assertRunFiles"),
+      runtimeHarness.indexOf("const MD5_HEX")
+    );
+    const localRuntime = runtimeHarness.slice(
+      runtimeHarness.indexOf("if (!skipLocal)"),
+      runtimeHarness.indexOf("if (!skipSlurm)")
+    );
+    const slurmRuntime = runtimeHarness.slice(
+      runtimeHarness.indexOf("if (!skipSlurm)"),
+      runtimeHarness.indexOf("if (includeDefaultPolicy)")
+    );
+    const defaultRuntime = runtimeHarness.slice(
+      runtimeHarness.indexOf("if (includeDefaultPolicy)"),
+      runtimeHarness.indexOf(
+        "\n  return {",
+        runtimeHarness.indexOf("if (includeDefaultPolicy)")
+      )
+    );
+
+    expect(runtimeHarness).toContain('args["required-relative-output"]');
+    expect(runtimeHarness).toContain('args["required-output-contains"]');
+    expect(runtimeHarness).toContain(
+      'args["required-artifact-output-id"]'
+    );
+    expect(runtimeHarness).toContain(
+      "SEQDESK_RUNTIME_E2E_REQUIRED_RELATIVE_OUTPUT"
+    );
+    expect(runtimeHarness).toContain(
+      "SEQDESK_RUNTIME_E2E_REQUIRED_OUTPUT_CONTAINS"
+    );
+    expect(runtimeHarness).toContain(
+      '"--required-output-contains requires --required-relative-output"'
+    );
+    expect(runtimeHarness).toContain(
+      '"--required-artifact-output-id requires --required-relative-output"'
+    );
+    expect(runFilesGate).toContain("assertRequiredRelativeOutput({");
+    expect(runFilesGate).toContain(
+      "relativePath: requiredOutputExpectation.relativePath"
+    );
+    expect(runFilesGate).toContain(
+      "requiredContent: requiredOutputExpectation.requiredContent"
+    );
+    expect(localRuntime).toContain("requiredOutputExpectation,");
+    expect(slurmRuntime).toContain("requiredOutputExpectation,");
+    expect(defaultRuntime).toContain("requiredOutputExpectation,");
+    expect(localRuntime).toContain("requiredArtifactOutputIds,");
+    expect(slurmRuntime).toContain("requiredArtifactOutputIds,");
+    expect(defaultRuntime).toContain("requiredArtifactOutputIds,");
+
+    // The state file still captures the most recently started run for cleanup;
+    // output correctness is now checked per run before that run is accepted.
+    expect(sourceStoreRuntimeGate).not.toContain("STORE_RUN_FOLDER=");
+    expect(installedGate).not.toContain("INSTALLED_STORE_RUN_FOLDER=");
+  });
+
+  it("boots a real managed runtime from the fresh core-only public install through its installed user CLI", () => {
+    const publicInstallJob = publicInstaller.slice(
+      publicInstaller.indexOf("\n  public-installer-ubuntu:"),
+      publicInstaller.indexOf("\n  source-installer-ubuntu:")
+    );
+    const cliGate = publicInstallJob.slice(
+      publicInstallJob.indexOf(
+        "- name: Bootstrap pipeline runtime through the installed user CLI"
+      ),
+      publicInstallJob.indexOf(
+        "- name: Verify public app startup and auth flows"
+      )
+    );
+    const cliInstallCommand = cliGate.slice(
+      cliGate.indexOf(
+        'if ! "$PUBLIC_CLI_BIN_DIR/seqdesk" pipelines install simulate-reads'
+      ),
+      cliGate.indexOf(
+        "then",
+        cliGate.indexOf(
+          'if ! "$PUBLIC_CLI_BIN_DIR/seqdesk" pipelines install simulate-reads'
+        )
+      )
+    );
+
+    expect(publicInstallJob).toContain("timeout-minutes: 60");
+    expect(publicInstallJob).toContain(
+      'echo "PUBLIC_CLI_BIN_DIR=$RUNNER_TEMP/seqdesk-public-cli-bin" >> "$GITHUB_ENV"'
+    );
+    expect(publicInstallJob).toContain(
+      'echo "PUBLIC_CLI_CONFIG_HOME=$RUNNER_TEMP/seqdesk-public-cli-config" >> "$GITHUB_ENV"'
+    );
+    expect(publicInstallJob).toContain(
+      'echo "PUBLIC_CLI_NEUTRAL_CWD=$RUNNER_TEMP/seqdesk-public-cli-neutral" >> "$GITHUB_ENV"'
+    );
+    expect(publicInstallJob).toContain(
+      'echo "PUBLIC_CLI_CONDA_PREFIX=$RUNNER_TEMP/seqdesk-public-cli-miniconda" >> "$GITHUB_ENV"'
+    );
+    expect(publicInstallJob).toContain(
+      'XDG_CONFIG_HOME="$PUBLIC_CLI_CONFIG_HOME"'
+    );
+    expect(publicInstallJob).toContain(
+      'SEQDESK_CLI_BIN_DIR="$PUBLIC_CLI_BIN_DIR"'
+    );
+    expect(publicInstallJob).toContain(
+      '-y --without-pipelines --no-pm2 --dir "$INSTALL_DIR"'
+    );
+    expect(
+      publicInstallJob.indexOf("- name: Run public installer (headless)")
+    ).toBeLessThan(
+      publicInstallJob.indexOf(
+        "- name: Bootstrap pipeline runtime through the installed user CLI"
+      )
+    );
+    expect(
+      publicInstallJob.indexOf("- name: Reconfigure public install in place")
+    ).toBeLessThan(
+      publicInstallJob.indexOf(
+        "- name: Bootstrap pipeline runtime through the installed user CLI"
+      )
+    );
+
+    expect(cliGate).not.toContain("continue-on-error:");
+    expect(cliGate).toContain("timeout-minutes: 30");
+    expect(cliGate).toContain('cd "$PUBLIC_CLI_NEUTRAL_CWD"');
+    expect(cliGate).toContain(
+      'test -x "$PUBLIC_CLI_BIN_DIR/seqdesk"'
+    );
+    expect(cliGate).toContain(
+      'test -f "$PUBLIC_CLI_CONFIG_HOME/seqdesk/default-install"'
+    );
+    expect(cliGate).toContain(
+      'test "$(sed -n \'1p\' "$PUBLIC_CLI_CONFIG_HOME/seqdesk/default-install")" = "$INSTALL_DIR"'
+    );
+    expect(cliGate).toContain(
+      'test ! -e "$PUBLIC_CLI_CONDA_PREFIX"'
+    );
+    expect(cliGate).toContain(
+      'config?.pipelines?.enabled !== false'
+    );
+    expect(cliGate).toContain(
+      "the CLI bootstrap must start from a core-only install"
+    );
+    expect(cliGate).toContain(
+      'export SEQDESK_CONDA_PATH="$PUBLIC_CLI_CONDA_PREFIX"'
+    );
+    expect(cliInstallCommand).toContain(
+      '"$PUBLIC_CLI_BIN_DIR/seqdesk" pipelines install simulate-reads'
+    );
+    expect(cliInstallCommand).toContain("--runtime --yes --json");
+    expect(cliInstallCommand).not.toContain("--dir");
+    expect(cliGate).not.toContain("SEQDESK_PIPELINE_REGISTRY_URL");
+    expect(cliGate).toContain(
+      '"$PUBLIC_CLI_BIN_DIR/seqdesk" pipelines status simulate-reads --json'
+    );
+    expect(cliGate).toContain(
+      'test -x "$PUBLIC_CLI_CONDA_PREFIX/bin/conda"'
+    );
+    expect(cliGate).toContain(
+      'pipeline?.setupState !== "ready"'
+    );
+    expect(cliGate).toContain(
+      'pipeline?.activationState !== "enabled"'
+    );
+    expect(cliGate).toContain(
+      'pipeline?.readiness?.status !== "ready"'
+    );
+    expect(cliGate).toContain(
+      '["runtime-nextflow", "runtime-java", "runtime-conda"]'
+    );
+    expect(cliGate).toContain(
+      'config?.pipelines?.execution?.conda?.path !== condaPrefix'
+    );
+    expect(cliGate).toContain(
+      'config?.pipelines?.enabled !== true'
+    );
+    expect(publicInstallJob).toContain(
+      "${{ env.PUBLIC_CLI_INSTALL_JSON }}"
+    );
+    expect(publicInstallJob).toContain(
+      "${{ env.PUBLIC_CLI_STATUS_JSON }}"
+    );
+    expect(publicInstallJob).toContain(
+      "${{ env.PUBLIC_CLI_RUNTIME_LOG }}"
+    );
+  });
+
+  it("proves the no-runtime installer fails activation closed while retaining a valid Store package", () => {
+    const sourceInstallerGate = publicInstaller.slice(
+      publicInstaller.indexOf(
+        "- name: Verify source app auth and blocked-readiness Store rollback"
+      ),
+      publicInstaller.indexOf(
+        "- name: Upload install e2e artifacts (source installer)"
+      )
+    );
+
+    expect(publicInstaller).toContain(
+      'echo "STORE_E2E_FIXTURE_PORT=$((PORT + 1))" >> "$GITHUB_ENV"'
+    );
+    expect(sourceInstallerGate).not.toContain("continue-on-error:");
+    expect(sourceInstallerGate).toContain(
+      'export SEQDESK_PIPELINES_DIR="$INSTALL_DIR/pipelines"'
+    );
+    expect(sourceInstallerGate).toContain(
+      'export SEQDESK_PIPELINE_REGISTRY_URL="http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}/registry"'
+    );
+    expect(sourceInstallerGate).toContain(
+      'node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-e2e.mjs"'
+    );
+    expect(sourceInstallerGate).toContain(
+      '--fixture-url "http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}"'
+    );
+    expect(sourceInstallerGate).toContain("--expect-readiness blocked");
+    expect(sourceInstallerGate).toContain("--expected-execution-mode local");
+    expect(sourceInstallerGate).toContain('--result-file "$STORE_E2E_JSON"');
+    expect(publicInstaller).toContain("${{ env.STORE_E2E_LOG }}");
+    expect(storeHarness).toContain(
+      'runtimeItems.some((item) => item?.status !== "ready")'
+    );
+    expect(storeHarness).toContain(
+      "The fixture was expected to be blocked by a missing runtime prerequisite"
     );
   });
 
@@ -154,7 +1153,18 @@ describe("self-hosted pipeline CI contract", () => {
     expect(cancelHarness).toContain(
       '"SLURM start response did not include a submitted numeric job id"'
     );
-    expect(cancelHarness).toContain('"--format=JobIDRaw,State"');
+    expect(cancelHarness).toContain(
+      '"--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%1024,NodeList"'
+    );
+    expect(cancelHarness).toContain(
+      '"%A|%.128j|%T|%.1024Z|%N"'
+    );
+    expect(cancelHarness).toContain(
+      "assertSlurmAccountingRecord(record, {"
+    );
+    expect(cancelHarness).toContain(
+      'expectedOutcome: "cancelled"'
+    );
     expect(cancelHarness).toContain(
       "if (!CANCELLED_STATES.has(statusAfterCancel))"
     );
@@ -163,6 +1173,21 @@ describe("self-hosted pipeline CI contract", () => {
     );
     expect(cancelHarness).toContain(
       'assertion: "app-and-slurm-cancellation-confirmed"'
+    );
+    expect(cancelHarness).toContain(
+      "const syncPayload = assertSuccessfulSyncPayload("
+    );
+    expect(cancelHarness).toContain(
+      "payload.success === true"
+    );
+    expect(cancelHarness).toContain(
+      'typeof payload.synced === "boolean"'
+    );
+    expect(cancelHarness).toContain(
+      "statusAfterSync && !CANCELLED_STATES.has(statusAfterSync)"
+    );
+    expect(cancelHarness).not.toContain(
+      "await client.request(`/api/pipelines/runs/${runId}/sync`"
     );
     expect(cancelHarness).not.toContain(
       "sacct did not show a CANCELLED state for job"
@@ -175,10 +1200,47 @@ describe("self-hosted pipeline CI contract", () => {
     expect(appcheckHarness).toContain(
       'slurm.options = [configuredOptions, "--hold"].filter(Boolean).join(" ")'
     );
-    expect(appcheckHarness).toContain('"--format=JobIDRaw,State"');
-    expect(stuckCheck).toContain("sacct = await sacctState(jobId)");
+    expect(appcheckHarness).toContain(
+      '"--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%1024,NodeList"'
+    );
+    expect(appcheckHarness).toContain(
+      '"%A|%.128j|%T|%.1024Z|%N"'
+    );
+    expect(stuckCheck).toContain(
+      "identityAccounting = assertSlurmAccountingIdentity(record, {"
+    );
+    expect(stuckCheck).toContain(
+      "const query = await readSacctRecord(jobId)"
+    );
+    expect(stuckCheck).toContain(
+      "assertSlurmAccountingRecord(record, {"
+    );
+    expect(stuckCheck).toContain(
+      'expectedOutcome: "cancelled"'
+    );
     expect(stuckCheck).toContain(
       "SLURM accounting did not prove out-of-band cancellation of job ${jobId} within the bounded retry window"
+    );
+    expect(stuckCheck).toContain(
+      "const syncPayload = assertSuccessfulSyncPayload("
+    );
+    expect(appcheckHarness).toContain(
+      "payload.success === true"
+    );
+    expect(appcheckHarness).toContain(
+      'typeof payload.synced === "boolean"'
+    );
+    expect(stuckCheck).toContain(
+      "successfulSync = {"
+    );
+    expect(stuckCheck).toContain(
+      "persistedStatus,"
+    );
+    expect(stuckCheck).toContain(
+      "responseStatus && responseStatus !== persistedStatus"
+    );
+    expect(stuckCheck).not.toContain(
+      "await client.request(`/api/pipelines/runs/${runId}/sync`"
     );
     expect(stuckCheck).toContain("sacctCancelled: true");
   });
@@ -208,7 +1270,21 @@ describe("self-hosted pipeline CI contract", () => {
     expect(installGate).toContain("Installed SeqDesk is ready and exposes authentication.");
     expect(installGate).toContain("run_installed fastq-checksum-default");
     expect(installGate).toContain("--include-default-policy --expect-default-mode slurm");
-    expect(installGate).toContain("run_installed fastq-checksum-local");
+    expect(installGate).toContain(
+      "run_installed fastq-checksum          --pipeline-id fastq-checksum"
+    );
+    expect(installGate).toContain(
+      "run_installed fastqc                  --pipeline-id fastqc --dummy-order-index 4"
+    );
+    expect(installGate).toContain(
+      "run_installed fastqc-long-read        --pipeline-id fastqc --dummy-order-index 3"
+    );
+    expect(installGate).toContain(
+      "run_installed nanoplot                --pipeline-id nanoplot --dummy-order-index 3"
+    );
+    expect(installGate).toContain(
+      "run_installed multiqc                 --pipeline-id multiqc"
+    );
     expect(installGate).toContain('unset PORT DATABASE_URL DIRECT_URL');
     expect(installGate).toContain("unset SEQDESK_PIPELINES_DIR");
     expect(installGate).not.toContain(
@@ -269,6 +1345,9 @@ describe("self-hosted pipeline CI contract", () => {
     expect(installGate).toContain(
       'PACKAGED_PIPELINES_ROOT="$INSTALLED_RELEASE_DIR/pipelines"'
     );
+    expect(installGate).toContain(
+      '--expected-pipeline-root "$PACKAGED_PIPELINES_ROOT"'
+    );
     expect(installGate).not.toContain(
       'PACKAGED_PIPELINES_ROOT="$APP_DIR/current/pipelines"'
     );
@@ -281,10 +1360,117 @@ describe("self-hosted pipeline CI contract", () => {
     expect(installGate).not.toContain("SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=10");
   });
 
+  it("requires correctness proofs for every lightweight built-in pipeline in source and installed modes", () => {
+    const requiredSourceSteps = [
+      "Run required fastq-checksum E2E",
+      "Run fastqc E2E",
+      "Run nanoplot E2E",
+      "Run fastqc E2E (local + SLURM, long-read aggregation input)",
+      "Run study-demo-report E2E",
+      "Run simulate-reads E2E",
+      "Run reads-qc E2E",
+      "Run multiqc E2E",
+    ];
+    for (const stepName of requiredSourceSteps) {
+      const start = canonical.indexOf(`- name: ${stepName}`);
+      expect(start, `${stepName} must exist`).toBeGreaterThanOrEqual(0);
+      const next = canonical.indexOf("\n      - name:", start + 1);
+      const step = canonical.slice(start, next < 0 ? canonical.length : next);
+      expect(step).not.toContain("continue-on-error:");
+      expect(step).toContain("npm run pipeline:e2e:runtime --");
+      expect(step).toContain(
+        '--expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR"'
+      );
+    }
+
+    expect(canonical).toContain("--pipeline-id fastqc \\\n            --dummy-order-index 4");
+    expect(canonical).toContain("--pipeline-id fastqc \\\n            --dummy-order-index 3");
+    expect(canonical).toContain("--pipeline-id nanoplot \\\n            --dummy-order-index 3");
+    expect(canonical).toContain("--pipeline-id multiqc");
+    expect(canonical.indexOf("- name: Run nanoplot E2E")).toBeLessThan(
+      canonical.indexOf(
+        "- name: Run fastqc E2E (local + SLURM, long-read aggregation input)"
+      )
+    );
+    expect(
+      canonical.indexOf(
+        "- name: Run fastqc E2E (local + SLURM, long-read aggregation input)"
+      )
+    ).toBeLessThan(
+      canonical.indexOf("- name: Run multiqc E2E")
+    );
+    expect(canonical).toContain(
+      "inputs.runtime_pipeline_id != 'fastq-checksum'"
+    );
+    expect(canonical.indexOf("- name: Run required fastq-checksum E2E")).toBeLessThan(
+      canonical.indexOf("- name: Run additionally requested runtime pipeline")
+    );
+
+    expect(runtimeHarness).toContain("nanoplot: 3");
+    expect(runtimeHarness).toContain("fastqc: 4");
+    expect(runtimeHarness).toContain(
+      'requiredOutputIds: ["sample_report", "sample_stats", "summary_tsv"]'
+    );
+    expect(runtimeHarness).toContain(
+      'requiredOutputIds: ["multiqc_report", "multiqc_data"]'
+    );
+    expect(runtimeHarness).toContain(
+      "async function assertNanoplotSummaryMetrics"
+    );
+    expect(runtimeHarness).toContain(
+      "async function assertMultiqcAggregation"
+    );
+    expect(runtimeHarness).toContain(
+      "assertFastqcArtifactCoverage({"
+    );
+    expect(runtimeHarness).toContain(
+      "assertMultiqcFastqcCoverage({"
+    );
+    expect(runtimeHarness).toContain("nanoplotInputs.length === 0");
+    expect(runtimeHarness).toContain(
+      "async function buildMultiqcNanoplotGroundTruth"
+    );
+    expect(runtimeHarness).toContain(
+      "sourceSha256 !== stagedSha256"
+    );
+    expect(runtimeHarness).toContain(
+      "parseNanoplotNanoStatsTsv({"
+    );
+    expect(runtimeHarness).toContain(
+      "multiqcNanostatData: parsedData?.multiqc_nanostat"
+    );
+    const readsQcProof = runtimeHarness.slice(
+      runtimeHarness.indexOf("async function assertReadsQcSummaryMetrics"),
+      runtimeHarness.indexOf("async function assertNanoplotSummaryMetrics")
+    );
+    expect(readsQcProof).toContain("assertReadsQcSummaryRows({");
+    expect(readsQcProof).toContain("header,");
+    expect(readsQcProof).toContain("rows,");
+    expect(readsQcProof).toContain("expectedSamples,");
+    expect(readsQcProof).not.toContain("new Set(");
+    expect(runtimeHarness).toContain(
+      "No app-writeback contract is defined for pipeline"
+    );
+    expect(runtimeHarness).not.toContain(
+      "no writeback spec defined for pipeline="
+    );
+    expect(runtimeHarness).toContain(
+      "async function syncRun(client, runId)"
+    );
+    expect(runtimeHarness).toContain(
+      "if (!response.ok)"
+    );
+    expect(runtimeHarness).toContain(
+      'typeof payload?.status !== "string"'
+    );
+  });
+
   it("bounds cleanup to this run before switching apps or deleting shared trees", () => {
     const sourceBoot = canonical.slice(
       canonical.indexOf("- name: Boot SeqDesk app and verify readiness"),
-      canonical.indexOf("- name: Run runtime pipeline E2E")
+      canonical.indexOf(
+        "- name: Run required fastq-checksum E2E"
+      )
     );
     const stopSource = canonical.slice(
       canonical.indexOf("- name: Stop SeqDesk app"),
@@ -469,6 +1655,9 @@ describe("self-hosted pipeline CI contract", () => {
     expect(diagnostics).toContain("$2 ~ /^seqdesk-/");
     expect(diagnostics).toContain("beneath($6, source_root)");
     expect(diagnostics).toContain("beneath($6, installed_root)");
+    expect(diagnostics).toContain(
+      "Reason%128,WorkDir%1024,NodeList"
+    );
     expect(diagnostics).toContain('done < "$CI_SLURM_IDS"');
     expect(diagnostics).not.toContain("--starttime=now-2hours");
     expect(diagnostics).not.toContain(
@@ -650,22 +1839,37 @@ describe("self-hosted pipeline CI contract", () => {
       "async function assertSlurmAccounting"
     );
     expect(runtimeHarness).toContain(
-      "--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%220,NodeList"
+      "--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%1024,NodeList"
     );
     expect(runtimeHarness).toContain(
-      'latest.jobName.startsWith("seqdesk-")'
+      "assertSlurmAccountingRecord(latest, {"
     );
     expect(runtimeHarness).toContain(
-      "pathIsWithin(latest.workDir, runFolder)"
+      'expectedOutcome: "success"'
     );
-    expect(runtimeHarness).toContain(
-      'latest.exitCode !== "0:0"'
+    expect(pipelineProofHarness).toContain(
+      "const expectedJobName = expectedSeqDeskJobName(runId)"
     );
-    expect(runtimeHarness).toContain(
-      'state === "COMPLETED"'
+    expect(pipelineProofHarness).toContain(
+      "record.jobName !== expectedJobName"
     );
-    expect(runtimeHarness).toContain(
-      "SLURM accounting did not record an allocated node"
+    expect(pipelineProofHarness).toContain(
+      "!pathIsWithin(record.workDir, runFolder)"
+    );
+    expect(pipelineProofHarness).toContain(
+      'record.state !== "COMPLETED"'
+    );
+    expect(pipelineProofHarness).toContain(
+      "!exitCodeIsZero(record.exitCode)"
+    );
+    expect(pipelineProofHarness).toContain(
+      'requireAllocatedNode = expectedOutcome === "success"'
+    );
+    expect(pipelineProofHarness).toContain(
+      "requireAllocatedNode &&"
+    );
+    expect(pipelineProofHarness).toContain(
+      "!record.nodeList"
     );
 
     const runFilesGate = runtimeHarness.slice(
@@ -673,7 +1877,35 @@ describe("self-hosted pipeline CI contract", () => {
       runtimeHarness.indexOf("const MD5_HEX")
     );
     expect(runFilesGate).toContain(
-      "await assertSlurmAccounting({ jobId, runFolder })"
+      "await assertSlurmAccounting({ runId: run?.id, jobId, runFolder })"
+    );
+    expect(runFilesGate).toContain("await assertSlurmCompletionProof({");
+    expect(runtimeHarness).toContain(
+      '["show", "hostnames", nodeList.trim()]'
+    );
+    expect(runtimeHarness).toContain(
+      "assertSlurmCompletionAttestation({"
+    );
+    expect(runtimeHarness).toContain(
+      "slurmCompletionAttestationPath(runFolder, jobId)"
+    );
+    expect(runtimeHarness).toContain(
+      "required files are missing after accounting completed"
+    );
+    expect(runtimeHarness).not.toContain(
+      "SLURM capture logs not visible after wait (non-fatal)"
+    );
+    expect(pipelineProofHarness).toContain(
+      'attestation.phase !== "completed"'
+    );
+    expect(pipelineProofHarness).toContain(
+      'attestation.exitCode !== "0"'
+    );
+    expect(pipelineProofHarness).toContain(
+      "attestation.jobId !== expectedJobId"
+    );
+    expect(pipelineProofHarness).toContain(
+      "attested host is not part of the scheduler allocation"
     );
   });
 

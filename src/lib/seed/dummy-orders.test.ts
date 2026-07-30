@@ -88,6 +88,7 @@ describe("dummy order seed dataset", () => {
     expect(longReadOrder!.sequencingTechSelection.platformFamily).toBe(
       "oxford-nanopore"
     );
+    expect(longReadOrder!.studyLink).toBe("study");
     const reads = longReadOrder!.samples.flatMap((s) => s.reads);
     expect(reads.length).toBeGreaterThan(0);
     for (const read of reads) {
@@ -107,26 +108,35 @@ describe("dummy order seed dataset", () => {
     const dataset = build();
 
     expect(dataset.studyScoped.title).not.toBe(dataset.study.title);
-    const studyOrder = dataset.orders.find((o) => o.studyLink === "study");
-    expect(studyOrder).toBeDefined();
-    expect(studyOrder!.samples.length).toBeGreaterThanOrEqual(2);
-    for (const sample of studyOrder!.samples) {
-      expect(sample.reads.length).toBeGreaterThan(0);
-      for (const read of sample.reads) {
-        expect(
-          dataset.sampleFastqTargets.some(
-            (t) => t.file1Relative === read.file1Relative
-          )
-        ).toBe(true);
+    const studyOrders = dataset.orders.filter((o) => o.studyLink === "study");
+    expect(studyOrders).toHaveLength(2);
+    expect(studyOrders.map((order) => order.orderNumber)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/-003$/),
+        expect.stringMatching(/-004$/),
+      ])
+    );
+    for (const studyOrder of studyOrders) {
+      expect(studyOrder.samples.length).toBeGreaterThanOrEqual(2);
+      for (const sample of studyOrder.samples) {
+        expect(sample.reads.length).toBeGreaterThan(0);
+        for (const read of sample.reads) {
+          expect(
+            dataset.sampleFastqTargets.some(
+              (t) => t.file1Relative === read.file1Relative
+            )
+          ).toBe(true);
+        }
       }
     }
-    // Exactly one order links to the primary study, one to the study-scoped study.
+    // One order links to the primary study; both dedicated CI input orders
+    // (long-read + paired short-read) link to the study-scoped study.
     expect(
       dataset.orders.filter((o) => o.studyLink === "primary").length
     ).toBe(1);
     expect(
       dataset.orders.filter((o) => o.studyLink === "study").length
-    ).toBe(1);
+    ).toBe(2);
   });
 
   it("produces dataClass-varied reads including raw + cleaned and an inactive superseded read", () => {

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
@@ -151,6 +152,41 @@ describe("generic-executor", () => {
     expect(accessSpy).toHaveBeenCalledWith(path.join(tempDir, "pipelines", "missing.nf"));
     expect(adapter.generateSamplesheet).not.toHaveBeenCalled();
     expect(mocks.db.pipelineRun.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('treats "." as the installed package directory instead of a remote pipeline name', async () => {
+    const adapter = createAdapter();
+    const packageRoot = path.join(tempDir, "package-root");
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(path.join(packageRoot, "main.nf"), "workflow {}\n");
+
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: ".",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+          paramMap: {},
+        },
+      },
+      basePath: packageRoot,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-package-root",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["sample-1"] },
+      config: {},
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain(`run ${packageRoot} \\`);
   });
 
   it("returns validation errors when samplesheet generation has no valid samples", async () => {
@@ -365,6 +401,14 @@ describe("generic-executor", () => {
           ],
         },
       },
+      samplesheet: {
+        samplesheet: {
+          format: "tsv",
+          filename: "inputs/pipeline-samples.tsv",
+          rows: { scope: "sample" },
+          columns: [],
+        },
+      },
       basePath: tempDir,
     } as never);
     mocks.db.pipelineRun.findMany.mockResolvedValue([{ runNumber: "MAG-20260303-007" }]);
@@ -414,8 +458,14 @@ describe("generic-executor", () => {
     expect(nextflowConfig).not.toContain("executor = 'slurm'");
     expect(script).not.toContain("#SBATCH");
 
-    const samplesheet = await fs.readFile(path.join(result.runFolder!, "samplesheet.csv"), "utf8");
+    const descriptorSamplesheetPath = path.join(
+      result.runFolder!,
+      "inputs",
+      "pipeline-samples.tsv"
+    );
+    const samplesheet = await fs.readFile(descriptorSamplesheetPath, "utf8");
     expect(samplesheet).toBe("sample_id\nSAMPLE-1\nSAMPLE-2");
+    expect(script).toContain(`--input ${descriptorSamplesheetPath}`);
     expect(adapter.generateSamplesheet).toHaveBeenCalledWith(expect.objectContaining({
       target: { type: "order", orderId: "order-1", sampleIds: ["sample-1", "sample-2"] },
       dataBasePath: tempDir,
@@ -830,6 +880,19 @@ describe("generic-executor", () => {
     expect(script).toContain("#SBATCH --gres=gpu:1");
     expect(script).toContain("nf-core/mag");
     expect(script).toContain("-r 2.0.0");
+    expect(script).toContain("SEQDESK_PIPELINE_RUN_ID='run-slurm'");
+    expect(script).toContain(
+      'SLURM_ATTESTATION_FILE="$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.attestation"',
+    );
+    expect(script).toContain("slurm_job_id=%s");
+    expect(script).toContain("phase=completed");
+    expect(
+      script.match(/^write_seqdesk_slurm_completion_attestation$/gm),
+    ).toHaveLength(1);
+    expect(
+      script.lastIndexOf("write_seqdesk_slurm_completion_attestation"),
+    ).toBeGreaterThan(script.indexOf('"${NEXTFLOW_RUNNER[@]}" run'));
+    expect(() => execFileSync("bash", ["-n"], { input: script })).not.toThrow();
 
     const config = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
     expect(config).toContain("executor = 'slurm'");
@@ -1190,8 +1253,50 @@ describe("generic-executor", () => {
     // These values are now passed through shellQuote; safe values render bare.
     expect(script).toContain("CONDA_BASE=/opt/miniconda3");
     expect(script).toContain("CONDA_ENV=my-env");
+    expect(script).toContain("CONDA_ENV_SELECTOR=-n");
     expect(script).toContain("source \"$CONDA_SH\"");
     expect(script).toContain("conda activate");
+  });
+
+  it("uses conda run -p for a configured shared environment prefix", async () => {
+    const adapter = createAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "nf-core/mag",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      },
+      basePath: tempDir,
+    } as never);
+
+    const result = await prepareGenericRun({
+      runId: "run-conda-prefix",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        condaPath: "/opt/miniconda3",
+        condaEnv: "/shared/conda/envs/seqdesk",
+      },
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(
+      path.join(result.runFolder!, "run.sh"),
+      "utf8"
+    );
+    expect(script).toContain("CONDA_ENV=/shared/conda/envs/seqdesk");
+    expect(script).toContain("CONDA_ENV_SELECTOR=-p");
+    expect(script).toContain(
+      'NEXTFLOW_RUNNER=(conda run "$CONDA_ENV_SELECTOR" "$CONDA_ENV" nextflow)'
+    );
   });
 
   it("records the exit code via an EXIT trap so failures still write the marker", async () => {
@@ -1240,10 +1345,14 @@ describe("generic-executor", () => {
     expect(slurmResult.success).toBe(true);
     const slurmScript = await fs.readFile(path.join(slurmResult.runFolder!, "run.sh"), "utf8");
     expect(slurmScript).toContain(
-      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG";`
+      "trap finalize_seqdesk_slurm_wrapper EXIT"
     );
-    expect(slurmScript).toContain("exit $EXIT_CODE' EXIT");
+    expect(slurmScript).toContain("SEQDESK_WRAPPER_EXIT_CODE=$?");
+    expect(slurmScript.indexOf("trap finalize_seqdesk_slurm_wrapper EXIT")).toBeLessThan(
+      slurmScript.indexOf('for _ in $(seq 1 15)')
+    );
     expect(slurmScript).not.toContain("EXIT_CODE=$?\necho");
+    expect(slurmScript).not.toContain("trap '");
     // SLURM's own logs go to node-local /tmp (root-squash safe) and are copied back.
     expect(slurmScript).toContain('#SBATCH --output="/tmp/seqdesk-slurm-%j.out"');
     expect(slurmScript).toContain('mkdir -p "');
@@ -1515,6 +1624,24 @@ describe("generic-executor", () => {
     expect(result.success).toBe(true);
     const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
     expect(script).toContain("#SBATCH --gres=gpu:1 --constraint=intel");
+    expect(script).toContain(`#SBATCH -D "${result.runFolder}"`);
+
+    const blocked = await prepareGenericRun({
+      runId: "run-slurm-owned-path",
+      pipelineId: "mag",
+      target: { type: "study", studyId: "study-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: {
+        ...baseExecutionSettings(tempDir),
+        useSlurm: true,
+        slurmOptions: "--output=/tmp/hijacked.out --exclusive",
+      },
+      userId: "user-1",
+    });
+    expect(blocked.success).toBe(false);
+    expect(blocked.errors.join("\n")).toMatch(
+      /overrides SeqDesk-owned WorkDir or capture-log paths/,
+    );
   });
 
   it("does not let admin SLURM options override the SeqDesk cleanup job name", async () => {
@@ -1557,6 +1684,100 @@ describe("generic-executor", () => {
     expect(script).not.toContain("#SBATCH --job-name=admin-name");
     expect(script).not.toContain("-J another-name");
     expect(script).toContain("#SBATCH --gres=gpu:1");
+  });
+
+  it("stages declared same-study artifacts and injects the protected input directory", async () => {
+    const adapter = createAdapter();
+    const packageRoot = path.join(tempDir, "multiqc-package");
+    const workflowDir = path.join(packageRoot, "workflow");
+    const priorRunFolder = path.join(tempDir, "prior-fastqc-run");
+    const priorArtifact = path.join(
+      priorRunFolder,
+      "output",
+      "fastqc_reports",
+      "SAMPLE-1_fastqc.zip"
+    );
+    await fs.mkdir(workflowDir, { recursive: true });
+    await fs.mkdir(path.dirname(priorArtifact), { recursive: true });
+    await fs.writeFile(path.join(workflowDir, "main.nf"), "workflow {}\n");
+    await fs.writeFile(priorArtifact, "fastqc archive bytes");
+
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+    mocks.packageLoader.getPackage.mockReturnValue({
+      manifest: {
+        execution: {
+          type: "nextflow",
+          pipeline: "./workflow",
+          version: "0.1.0",
+          profiles: ["conda"],
+          defaultParams: {},
+          priorRunArtifacts: {
+            scope: "study",
+            configKey: "qcDir",
+            sources: {
+              fastqc: ["sample_qc_data"],
+            },
+          },
+          paramMap: {
+            qcDir: "--qc_dir",
+          },
+        },
+      },
+      basePath: packageRoot,
+    } as never);
+    mocks.db.pipelineRun.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "prior-fastqc",
+          pipelineId: "fastqc",
+          studyId: "study-1",
+          runFolder: priorRunFolder,
+          order: null,
+          artifacts: [
+            {
+              id: "fastqc-zip",
+              outputId: "sample_qc_data",
+              path: priorArtifact,
+              sampleId: "sample-1",
+            },
+          ],
+        },
+      ]);
+
+    const result = await prepareGenericRun({
+      runId: "run-multiqc",
+      pipelineId: "multiqc",
+      target: {
+        type: "study",
+        studyId: "study-1",
+        sampleIds: ["sample-1"],
+      },
+      config: {
+        // A user-supplied path must never override the executor-owned staging path.
+        qcDir: "/tmp/untrusted-qc-inputs",
+      },
+      executionSettings: baseExecutionSettings(tempDir),
+      userId: "user-1",
+    });
+
+    expect(result.success).toBe(true);
+    const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
+    expect(script).toContain("--qc_dir");
+    expect(script).toContain(path.join(result.runFolder!, "prior-run-inputs"));
+    expect(script).not.toContain("/tmp/untrusted-qc-inputs");
+
+    const inventory = JSON.parse(
+      await fs.readFile(
+        path.join(result.runFolder!, "prior-run-inputs.json"),
+        "utf8"
+      )
+    );
+    expect(inventory.studyId).toBe("study-1");
+    expect(inventory.artifacts).toHaveLength(1);
+    expect(
+      await fs.readFile(inventory.artifacts[0].stagedPath, "utf8")
+    ).toBe("fastqc archive bytes");
   });
 });
 

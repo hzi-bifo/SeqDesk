@@ -61,7 +61,7 @@ job proves, its limitations, and how to download reviewer-facing evidence.
 </tr>
 <tr>
   <td><a href="https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml"><img alt="Study Pipeline" src="https://github.com/hzi-bifo/SeqDesk/actions/workflows/study-pipeline-e2e.yml/badge.svg?branch=main"></a></td>
-  <td>Study-level pipelines (simulate-reads, study demo report, nf-core/mag) run end to end on small synthetic reads; nf-core/mag runs a reduced configuration (megahit assembly only — bin QC, GTDB-Tk taxonomy, and annotation are skipped), verifying the wiring rather than producing a real assembly</td>
+  <td>Study-level pipelines (Study Demo Report and nf-core/mag) run end to end on small synthetic reads prepared by the order-level Simulate Reads utility; nf-core/mag runs a reduced configuration (megahit assembly only — bin QC, GTDB-Tk taxonomy, and annotation are skipped), verifying the wiring rather than producing a real assembly</td>
 </tr>
 <tr>
   <td><a href="https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml"><img alt="Install (Ubuntu)" src="https://github.com/hzi-bifo/SeqDesk/actions/workflows/install-e2e-ubuntu.yml/badge.svg?branch=main"></a></td>
@@ -126,6 +126,51 @@ curl -fsSLo /tmp/seqdesk-install.sh https://seqdesk.org/install.sh &&
 bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"
 ```
 
+### Add pipelines after installation
+
+A normal installation starts with the core SeqDesk application. It does not
+provision the optional Conda, Java, and Nextflow runtime up front. The installer
+creates a user command at `~/.local/bin/seqdesk` and remembers the selected
+installation, so `--dir` is normally unnecessary. If a new shell cannot find
+the command, add `~/.local/bin` to `PATH` or run it by its full path.
+
+List every supported pipeline, or filter by where it can run:
+
+```bash
+seqdesk pipelines list
+seqdesk pipelines list --catalog order
+seqdesk pipelines list --catalog study
+seqdesk pipelines list --installed
+```
+
+The table separates the pipeline's target, package state, setup state,
+activation state, and next required action. `available` means the package can be
+installed, `bundled` means it already ships with the current SeqDesk release,
+and `installed` means it was added or updated through the Pipeline Store.
+
+For example, install the lightweight, order-level **Simulate Reads** demo and
+provision the managed runtime if it is missing:
+
+```bash
+seqdesk pipelines install simulate-reads --runtime
+seqdesk pipelines status simulate-reads
+```
+
+SeqDesk enables the pipeline automatically only when all readiness checks pass.
+Otherwise the package remains installed but disabled, and the status lists the
+missing runtime, configuration, reference database, storage path, or run path.
+Database assets are never downloaded silently: install or link them under
+**Admin → Pipelines → _pipeline_ → Databases**, then check the status again.
+
+`simulate-reads` creates demo FASTQ files—either synthetically or from
+configured facility templates—and links them to samples in one sequencing
+order. Use it only with a dedicated test order. For a safe demo, explicitly
+select the synthetic source and disable replacement of existing linked reads.
+
+See [Installing and setting up pipelines](https://seqdesk.org/docs/pipelines/installing-pipelines)
+for the guided setup flow, automation options, private sources, and a complete
+safe demo.
+
 SeqDesk binds to `0.0.0.0` (every interface) unless `SEQDESK_BIND_HOST` is set
 at install or start time. For a local-only evaluation, prefix the command with
 `SEQDESK_BIND_HOST=127.0.0.1`, as the Linux and macOS quick starts below do.
@@ -181,7 +226,9 @@ instead. Pass `--database-url` in that case only if you want that server used.
 
 Fresh installs now default to the smaller core application. Add
 `--with-pipelines` only on a Linux host that should also provision
-Conda/Nextflow workflows.
+Conda, Java, and Nextflow during the initial install. You can leave it off and
+provision the same managed runtime later with
+`seqdesk pipelines install <name> --runtime`.
 
 Near the end the installer asks `Start SeqDesk with PM2 for auto-restart?
 (recommended)`. Accepting it starts the app, saves the PM2 process list, and

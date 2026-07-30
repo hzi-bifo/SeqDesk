@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
@@ -211,8 +212,27 @@ describe("submg runner", () => {
     expect(script).toContain("#SBATCH -p cpu");
     expect(script).toContain("#SBATCH --mem='16GB'");
     expect(script).toContain("#SBATCH --job-name=seqdesk-run-1");
+    expect(script).toContain(`#SBATCH -D "${result.runFolder}"`);
     expect(script).toContain(result.runFolder!);
     expect(script).not.toContain(configuredRunRoot);
+    expect(script).toContain("SEQDESK_PIPELINE_RUN_ID='run-1'");
+    expect(script).toContain(
+      'SLURM_ATTESTATION_FILE="$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.attestation"',
+    );
+    expect(script).toContain("slurm_job_id=%s");
+    expect(script).toContain("phase=completed");
+    expect(script).toContain("trap finalize_seqdesk_slurm_wrapper EXIT");
+    expect(
+      script.indexOf("trap finalize_seqdesk_slurm_wrapper EXIT"),
+    ).toBeLessThan(script.indexOf("for _ in $(seq 1 15)"));
+    expect(script).not.toContain("trap '");
+    expect(
+      script.match(/^write_seqdesk_slurm_completion_attestation$/gm),
+    ).toHaveLength(1);
+    expect(
+      script.lastIndexOf("write_seqdesk_slurm_completion_attestation"),
+    ).toBeGreaterThan(script.lastIndexOf('"$SUBMG_BIN" submit'));
+    expect(() => execFileSync("bash", ["-n"], { input: script })).not.toThrow();
 
     const metadata = JSON.parse(
       await fs.readFile(path.join(result.runFolder!, "submg-metadata.json"), "utf8")
@@ -1811,6 +1831,28 @@ describe("submg runner", () => {
     expect(script).toContain("#SBATCH --job-name=seqdesk-run-1");
     expect(script).not.toContain("admin-name");
     expect(script).not.toContain("other-name");
+
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-owned-path",
+      inputSampleIds: null,
+    });
+    await expect(
+      prepareSubmgRun({
+        runId: "run-owned-path",
+        studyId: "study-1",
+        config: {},
+        executionSettings: {
+          ...baseExecutionSettings(),
+          pipelineRunDir: tempDir,
+          dataBasePath: dataBaseDir,
+          useSlurm: true,
+          slurmOptions: "--chdir=/tmp/hijacked --exclusive",
+        },
+        dataBasePath: dataBaseDir,
+      }),
+    ).rejects.toThrow(
+      /overrides SeqDesk-owned WorkDir or capture-log paths/,
+    );
   });
 
   it("increments the run number based on the latest existing SUBMG run", async () => {

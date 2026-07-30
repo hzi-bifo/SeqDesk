@@ -1,12 +1,23 @@
 import fs from "fs/promises";
 import path from "path";
 import type { PackageManifest } from "./package-loader";
-import { installPackageDirectory } from "./package-install";
 import {
-  METAXPATH_DESCRIPTOR_RELATIVE_PATH,
+  installPackageDirectory,
+  type PackageInstallOptions,
+} from "./package-install";
+import {
+  getPipelinesDir,
+  isLocalPipelineReference,
+  resolvePathWithinDirectory,
+} from "./pipeline-paths";
+import {
   METAXPATH_PIPELINE_ID,
   METAXPATH_REPOSITORY,
 } from "./metaxpath-config";
+import {
+  writePipelineInstallProvenanceToPackageDir,
+} from "./pipeline-install-provenance";
+import type { PipelineSourceKind } from "./store-sources";
 
 export {
   DEFAULT_METAXPATH_REF,
@@ -49,8 +60,22 @@ export interface GitHubPipelineInstallOptions {
   cloneDir: string;
   repo: string;
   ref: string;
+  commit?: string;
   descriptorPath?: string;
   includeWorkflow?: boolean;
+  replaceExisting?: boolean;
+  beforeLockedInstall?: PackageInstallOptions["beforeLockedInstall"];
+  installProvenance?: {
+    sourceId: string;
+    sourceKind: PipelineSourceKind;
+  };
+}
+
+export class PipelineDescriptorValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PipelineDescriptorValidationError";
+  }
 }
 
 function normalizeErrorText(value: string): string {
@@ -113,12 +138,90 @@ function getDescriptorPath(pipelineId: string, descriptorPath?: string): string 
 }
 
 function shouldRequireWorkflowSnapshot(
-  pipelineId: string,
   manifest: PackageManifest,
   includeWorkflow?: boolean
 ): boolean {
+  const pipelineReference = manifest.execution?.pipeline;
+  if (
+    typeof pipelineReference !== "string" ||
+    !isLocalPipelineReference(pipelineReference)
+  ) {
+    return false;
+  }
   if (typeof includeWorkflow === "boolean") return includeWorkflow;
-  return pipelineId === METAXPATH_PIPELINE_ID || manifest.execution.pipeline === "./workflow";
+  return true;
+}
+
+interface DeclaredDescriptorFile {
+  label: string;
+  relativePath: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function collectDeclaredDescriptorFiles(
+  manifest: PackageManifest
+): { files: DeclaredDescriptorFile[]; errors: string[] } {
+  const files: DeclaredDescriptorFile[] = [
+    { label: "manifest.json", relativePath: "manifest.json" },
+  ];
+  const errors: string[] = [];
+  const manifestFiles = (manifest as { files?: unknown }).files;
+  if (!isRecord(manifestFiles)) {
+    errors.push("manifest.json files must be an object.");
+    return { files, errors };
+  }
+
+  const addFile = (label: string, value: unknown, required = false) => {
+    if (value === undefined && !required) return;
+    if (typeof value !== "string" || value.trim().length === 0) {
+      errors.push(`manifest.json ${label} must be a non-empty string.`);
+      return;
+    }
+    files.push({ label, relativePath: value });
+  };
+
+  addFile("files.definition", manifestFiles.definition, true);
+  addFile("files.registry", manifestFiles.registry, true);
+  addFile("files.samplesheet", manifestFiles.samplesheet, true);
+  addFile("files.readme", manifestFiles.readme);
+
+  if (manifestFiles.parsers !== undefined) {
+    if (!Array.isArray(manifestFiles.parsers)) {
+      errors.push("manifest.json files.parsers must be an array.");
+    } else {
+      for (const [index, parserPath] of manifestFiles.parsers.entries()) {
+        addFile(`files.parsers[${index}]`, parserPath, true);
+      }
+    }
+  }
+
+  if (manifestFiles.scripts !== undefined) {
+    if (!isRecord(manifestFiles.scripts)) {
+      errors.push("manifest.json files.scripts must be an object.");
+    } else {
+      addFile(
+        "files.scripts.samplesheet",
+        manifestFiles.scripts.samplesheet
+      );
+      addFile(
+        "files.scripts.discoverOutputs",
+        manifestFiles.scripts.discoverOutputs
+      );
+    }
+  }
+
+  const seen = new Set<string>();
+  return {
+    files: files.filter(({ relativePath }) => {
+      if (seen.has(relativePath)) return false;
+      seen.add(relativePath);
+      return true;
+    }),
+    errors,
+  };
 }
 
 export async function validatePipelineDescriptorDir(
@@ -138,30 +241,46 @@ export async function validatePipelineDescriptorDir(
     return { valid: false, errors };
   }
 
-  for (const fileName of REQUIRED_DESCRIPTOR_FILES) {
-    const filePath = path.join(descriptorDir, fileName);
-    try {
-      const stat = await fs.stat(filePath);
-      if (!stat.isFile()) {
-        errors.push(`Descriptor file is not a regular file: ${fileName}`);
-      }
-    } catch {
-      errors.push(`Missing descriptor file: ${fileName}`);
-    }
-  }
-
-  if (errors.length > 0) {
-    return { valid: false, errors };
-  }
-
   const manifestPath = path.join(descriptorDir, "manifest.json");
   let manifest: PackageManifest | undefined;
   try {
     const raw = await fs.readFile(manifestPath, "utf8");
-    manifest = JSON.parse(raw) as PackageManifest;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) {
+      errors.push("manifest.json must contain a JSON object.");
+      return { valid: false, errors };
+    }
+    manifest = parsed as unknown as PackageManifest;
   } catch {
     errors.push("manifest.json is not valid JSON.");
     return { valid: false, errors };
+  }
+
+  const declaredFiles = collectDeclaredDescriptorFiles(manifest);
+  errors.push(...declaredFiles.errors);
+  for (const { label, relativePath } of declaredFiles.files) {
+    let filePath: string;
+    try {
+      filePath = resolvePathWithinDirectory(
+        descriptorDir,
+        relativePath,
+        label
+      );
+    } catch (error) {
+      errors.push(
+        error instanceof Error ? error.message : `Invalid ${label}.`
+      );
+      continue;
+    }
+
+    try {
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile()) {
+        errors.push(`Descriptor file is not a regular file: ${relativePath}`);
+      }
+    } catch {
+      errors.push(`Missing descriptor file: ${relativePath}`);
+    }
   }
 
   if (manifest.package?.id !== pipelineId) {
@@ -203,50 +322,82 @@ export async function validateMetaxPathDescriptorDir(
 export async function installGitHubPipelineSnapshot(
   options: GitHubPipelineInstallOptions
 ): Promise<{ action: "install" | "update"; syncedAt: string; manifest?: PackageManifest }> {
-  const pipelinesDir = path.join(process.cwd(), "pipelines");
+  const pipelinesDir = getPipelinesDir();
   const descriptorPath = getDescriptorPath(options.pipelineId, options.descriptorPath);
-  const descriptorDir = path.join(options.cloneDir, descriptorPath);
+  const descriptorDir = resolvePathWithinDirectory(
+    options.cloneDir,
+    descriptorPath,
+    "descriptor path",
+    { allowBase: true }
+  );
   const validation = await validatePipelineDescriptorDir(
     descriptorDir,
     options.pipelineId
   );
   if (!validation.valid) {
-    throw new Error(validation.errors.join(" "));
+    throw new PipelineDescriptorValidationError(validation.errors.join(" "));
   }
 
   const manifest = validation.manifest;
+  if (!manifest) {
+    throw new PipelineDescriptorValidationError(
+      "Validated descriptor did not contain a manifest."
+    );
+  }
+  const declaredFiles = collectDeclaredDescriptorFiles(manifest);
+  if (declaredFiles.errors.length > 0) {
+    throw new PipelineDescriptorValidationError(
+      declaredFiles.errors.join(" ")
+    );
+  }
   const syncedAt = new Date().toISOString();
   const action = await installPackageDirectory(
     pipelinesDir,
     options.pipelineId,
     async (stageDir) => {
-      for (const fileName of REQUIRED_DESCRIPTOR_FILES) {
-        await fs.copyFile(
-          path.join(descriptorDir, fileName),
-          path.join(stageDir, fileName)
-        );
-      }
-
-      const readmePath = path.join(descriptorDir, "README.md");
-      try {
-        const stat = await fs.stat(readmePath);
-        if (stat.isFile()) {
-          await fs.copyFile(readmePath, path.join(stageDir, "README.md"));
-        }
-      } catch {
-        // README is optional for generic GitHub installs.
-      }
-
-      if (manifest && shouldRequireWorkflowSnapshot(options.pipelineId, manifest, options.includeWorkflow)) {
-        const workflowDir = path.join(stageDir, "workflow");
-        await fs.mkdir(workflowDir, { recursive: true });
+      if (shouldRequireWorkflowSnapshot(manifest, options.includeWorkflow)) {
+        const fileEntrypoint = manifest.execution.pipeline
+          .toLowerCase()
+          .endsWith(".nf");
+        const workflowRoot = fileEntrypoint
+          ? stageDir
+          : resolvePathWithinDirectory(
+              stageDir,
+              manifest.execution.pipeline,
+              "execution.pipeline",
+              { allowBase: true }
+            );
+        await fs.mkdir(workflowRoot, { recursive: true });
         const rootEntries = await fs.readdir(options.cloneDir, { withFileTypes: true });
         for (const entry of rootEntries) {
           if (!shouldCopyWorkflowEntry(entry.name)) continue;
-          const sourcePath = path.join(options.cloneDir, entry.name);
-          const destinationPath = path.join(workflowDir, entry.name);
+          const sourcePath = resolvePathWithinDirectory(
+            options.cloneDir,
+            entry.name,
+            "workflow source"
+          );
+          const destinationPath = resolvePathWithinDirectory(
+            workflowRoot,
+            entry.name,
+            "workflow destination"
+          );
           await fs.cp(sourcePath, destinationPath, { recursive: true });
         }
+      }
+
+      for (const { label, relativePath } of declaredFiles.files) {
+        const sourcePath = resolvePathWithinDirectory(
+          descriptorDir,
+          relativePath,
+          label
+        );
+        const destinationPath = resolvePathWithinDirectory(
+          stageDir,
+          relativePath,
+          label
+        );
+        await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+        await fs.copyFile(sourcePath, destinationPath);
       }
 
       await fs.writeFile(
@@ -256,6 +407,7 @@ export async function installGitHubPipelineSnapshot(
             kind: "github",
             repo: options.repo,
             ref: options.ref,
+            ...(options.commit ? { commit: options.commit } : {}),
             descriptorPath,
             syncedAt,
           },
@@ -264,6 +416,22 @@ export async function installGitHubPipelineSnapshot(
         )}\n`,
         "utf8"
       );
+      if (options.installProvenance) {
+        await writePipelineInstallProvenanceToPackageDir(
+          {
+            pipelineId: options.pipelineId,
+            version: manifest.package.version,
+            sourceId: options.installProvenance.sourceId,
+            sourceKind: options.installProvenance.sourceKind,
+            installedAt: syncedAt,
+          },
+          stageDir
+        );
+      }
+    },
+    {
+      replaceExisting: options.replaceExisting,
+      beforeLockedInstall: options.beforeLockedInstall,
     }
   );
 

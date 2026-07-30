@@ -31,6 +31,15 @@ function readText(file) {
   }
 }
 
+function isRegularFile(file, { nonEmpty = false } = {}) {
+  try {
+    const stat = fs.statSync(file);
+    return stat.isFile() && (!nonEmpty || stat.size > 0);
+  } catch {
+    return false;
+  }
+}
+
 function markdown(value) {
   return String(value ?? "not available")
     .replace(/\|/g, "\\|")
@@ -40,6 +49,17 @@ function markdown(value) {
 function assertion(value) {
   if (value === null) return "not exercised";
   return value ? "PASS" : "FAIL";
+}
+
+function condaRunArgs(environment, commandArgs) {
+  const isPrefix =
+    environment.startsWith("/") ||
+    environment.startsWith("./") ||
+    environment.startsWith("../") ||
+    /^[a-zA-Z]:[\\/]/.test(environment) ||
+    environment.includes("/") ||
+    environment.includes("\\");
+  return ["run", isPrefix ? "-p" : "-n", environment, ...commandArgs];
 }
 
 const outputDir = path.resolve(process.env.REVIEWER_OUTPUT_DIR || "reviewer-compatibility");
@@ -68,11 +88,58 @@ const osRelease = readText("/etc/os-release");
 const macVersion = process.platform === "darwin" ? command("sw_vers") : "not applicable";
 const providers = readJson(path.join(outputDir, "providers.json"));
 const setup = readJson(path.join(outputDir, "setup.json"));
+const requestedResult = process.env.REVIEWER_RESULT || "unknown";
+const assertions = {
+  candidateChecksums: isRegularFile(
+    path.join(outputDir, "candidate-checksums.ok")
+  ),
+  credentialsProvider:
+    providers?.credentials !== null &&
+    typeof providers?.credentials === "object" &&
+    !Array.isArray(providers.credentials),
+  setupDatabaseExists: setup?.exists === true,
+  setupConfigured: setup?.configured === true,
+  adminAuthentication: isRegularFile(path.join(outputDir, "auth-admin.ok")),
+  researcherAuthentication: isRegularFile(
+    path.join(outputDir, "auth-researcher.ok")
+  ),
+  packagedFastqChecksum: pipelineSmoke
+    ? isRegularFile(
+        path.join(
+          outputDir,
+          "fastq-checksum-output",
+          "checksum-output",
+          "summary",
+          "checksum-summary.tsv"
+        ),
+        { nonEmpty: true }
+      )
+    : null,
+};
+const requiredAssertions = [
+  "candidateChecksums",
+  "credentialsProvider",
+  "setupDatabaseExists",
+  "setupConfigured",
+  "adminAuthentication",
+  "researcherAuthentication",
+  ...(pipelineSmoke ? ["packagedFastqChecksum"] : []),
+];
+const failedRequiredAssertions = requiredAssertions.filter(
+  (name) => assertions[name] !== true
+);
+const evidenceComplete = failedRequiredAssertions.length === 0;
+const requestedPassMissingEvidence =
+  requestedResult === "passed" && !evidenceComplete;
 
 const report = {
   schemaVersion: 1,
-  result: process.env.REVIEWER_RESULT || "unknown",
-  failureStage: process.env.REVIEWER_STAGE || "unknown",
+  result:
+    requestedResult === "passed" && evidenceComplete ? "passed" : "failed",
+  requestedResult,
+  failureStage: requestedPassMissingEvidence
+    ? "validate-report-evidence"
+    : process.env.REVIEWER_STAGE || "unknown",
   completedAt: new Date().toISOString(),
   candidateVersion: process.env.REVIEWER_CANDIDATE_VERSION || "unknown",
   job: {
@@ -109,31 +176,18 @@ const report = {
     conda: command("conda", ["--version"]),
     pipelineCondaEnvironment: pipelineSmoke ? condaEnv : "not exercised",
     pipelineJava: pipelineSmoke
-      ? command("conda", ["run", "-n", condaEnv, "java", "-version"])
+      ? command("conda", condaRunArgs(condaEnv, ["java", "-version"]))
       : "not exercised",
     nextflow: pipelineSmoke
-      ? command("conda", ["run", "-n", condaEnv, "nextflow", "-version"])
+      ? command("conda", condaRunArgs(condaEnv, ["nextflow", "-version"]))
       : "not exercised",
   },
-  assertions: {
-    candidateChecksums: fs.existsSync(path.join(outputDir, "candidate-checksums.ok")),
-    credentialsProvider: Boolean(providers?.credentials),
-    setupDatabaseExists: Boolean(setup?.exists),
-    setupConfigured: Boolean(setup?.configured),
-    adminAuthentication: fs.existsSync(path.join(outputDir, "auth-admin.ok")),
-    researcherAuthentication: fs.existsSync(path.join(outputDir, "auth-researcher.ok")),
-    packagedFastqChecksum: pipelineSmoke
-      ? fs.existsSync(
-          path.join(
-            outputDir,
-            "fastq-checksum-output",
-            "checksum-output",
-            "summary",
-            "checksum-summary.tsv"
-          )
-        )
-      : null,
+  evidence: {
+    complete: evidenceComplete,
+    requiredAssertions,
+    failedRequiredAssertions,
   },
+  assertions,
 };
 
 fs.writeFileSync(
@@ -198,3 +252,10 @@ if (process.env.GITHUB_STEP_SUMMARY) {
 }
 
 console.log(`Wrote reviewer compatibility report to ${outputDir}`);
+
+if (requestedPassMissingEvidence) {
+  console.error(
+    `Reviewer smoke requested PASS without required evidence: ${failedRequiredAssertions.join(", ")}`
+  );
+  process.exitCode = 1;
+}

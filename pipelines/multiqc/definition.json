@@ -11,12 +11,10 @@
     {
       "id": "qc_outputs",
       "name": "Prior QC outputs",
-      "description": "QC output directories produced by earlier runs in the study (FastQC zips, seqkit TSVs, read-cleaning multiqc_data)",
+      "description": "Recognized QC artifacts produced by earlier runs in the study (FastQC zips and NanoPlot NanoStats files)",
       "fileTypes": [
         ".zip",
-        ".tsv",
-        ".txt",
-        ".json"
+        ".txt"
       ],
       "source": "sample_reads",
       "sourceDescription": "Gathered output directories of prior QC runs in the same study"

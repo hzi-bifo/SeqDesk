@@ -30,42 +30,13 @@ process NANOPLOT {
       --N50 \\
       --no_static
 
-    # NanoStats.txt is the human-readable "key:value" summary NanoPlot writes.
-    # Pull the metrics we care about by label so column order changes upstream
-    # do not silently break the summary row.
+    # NanoPlot 1.42 keeps the .txt filename with --tsv_stats, but NanoMath
+    # writes an exact two-column TSV with machine keys such as
+    # number_of_reads and mean_qual. Parse that contract fail-closed: missing,
+    # duplicate, malformed, or wrongly formatted required metrics must fail
+    # the task rather than silently becoming zero.
     STATS="nanoplot/${sample_id}_NanoStats.txt"
-
-    extract() {
-      # \$1 = label prefix to match at start of line
-      awk -F'\\t' -v key="\$1" '
-        index(\$1, key) == 1 {
-          gsub(/,/, "", \$2);
-          gsub(/[^0-9.]/, "", \$2);
-          print \$2;
-          exit
-        }
-      ' "\$STATS"
-    }
-
-    NUM_READS=\$(extract "Number of reads")
-    TOTAL_BASES=\$(extract "Total bases")
-    MEAN_LEN=\$(extract "Mean read length")
-    MEDIAN_LEN=\$(extract "Median read length")
-    READ_N50=\$(extract "Read length N50")
-    MEAN_QUAL=\$(extract "Mean read quality")
-
-    : "\${NUM_READS:=0}"
-    : "\${TOTAL_BASES:=0}"
-    : "\${MEAN_LEN:=0}"
-    : "\${MEDIAN_LEN:=0}"
-    : "\${READ_N50:=0}"
-    : "\${MEAN_QUAL:=0}"
-
-    {
-      printf "sample_id\\tnum_reads\\ttotal_bases\\tmean_length\\tmedian_length\\tread_n50\\tmean_quality\\n"
-      printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" \\
-        "${sample_id}" "\$NUM_READS" "\$TOTAL_BASES" "\$MEAN_LEN" "\$MEDIAN_LEN" "\$READ_N50" "\$MEAN_QUAL"
-    } > "per_sample/${sample_id}.tsv"
+    build_nanoplot_summary.py "\$STATS" "${sample_id}" > "per_sample/${sample_id}.tsv"
     """
 }
 

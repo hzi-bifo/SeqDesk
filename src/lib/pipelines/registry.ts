@@ -6,6 +6,7 @@ import { PipelineDefinition } from './types';
 import {
   getAllPackages,
   getAllPackageIds,
+  getPackageCacheGeneration,
   packageToPipelineDefinition,
 } from './package-loader';
 import { pipelineRequiresPairedReads } from './read-mode';
@@ -29,10 +30,15 @@ function buildRegistry(): Record<string, PipelineDefinition> {
 
 // Lazy-initialized registry
 let _registry: Record<string, PipelineDefinition> | null = null;
+let _registryGeneration: string | null = null;
 
 function getRegistry(): Record<string, PipelineDefinition> {
-  if (!_registry) {
+  const generation = getPackageCacheGeneration();
+  if (!_registry || _registryGeneration !== generation) {
     _registry = buildRegistry();
+    // Remember the token observed before rebuilding. If an install completed
+    // during the scan, the next access sees its newer token and rebuilds again.
+    _registryGeneration = generation;
   }
   return _registry;
 }
@@ -42,6 +48,7 @@ function getRegistry(): Record<string, PipelineDefinition> {
  */
 export function clearRegistryCache(): void {
   _registry = null;
+  _registryGeneration = null;
 }
 
 // Export the registry for backward compatibility

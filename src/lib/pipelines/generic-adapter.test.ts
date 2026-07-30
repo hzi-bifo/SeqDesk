@@ -1178,7 +1178,7 @@ describe("generic-adapter", () => {
       {
         id: "artifact",
         scope: "sample",
-        destination: "artifact",
+        destination: "run_artifact",
         discovery: {
           pattern: "output/**/result.txt",
           matchSampleBy: "path",
@@ -1211,7 +1211,7 @@ describe("generic-adapter", () => {
       {
         id: "missing",
         scope: "sample",
-        destination: "artifact",
+        destination: "run_artifact",
         discovery: {
           pattern: "nonexistent/*.txt",
         },

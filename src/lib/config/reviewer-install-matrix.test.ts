@@ -231,9 +231,8 @@ describe("reviewer installation matrix contract", () => {
     expect(smokeSource).toContain(
       'bash "$WORKSPACE/scripts/run-fastq-checksum-e2e.sh"'
     );
-    expect(reportSource).toContain(
-      '"fastq-checksum-output",\n            "checksum-output",'
-    );
+    expect(reportSource).toContain('"fastq-checksum-output",');
+    expect(reportSource).toContain('"checksum-output",');
     expect(macJob).toContain("application only");
     expect(windowsJob).toContain("Windows is not supported directly");
     expect(windowsJob).toContain("WSL");

@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   getPackage: vi.fn(),
   getAllPackages: vi.fn(),
   getAllPackageIds: vi.fn(),
+  getPackageCacheGeneration: vi.fn(),
   packageToPipelineDefinition: vi.fn(),
 }));
 
@@ -29,6 +30,7 @@ vi.mock("@/lib/pipelines/package-loader", () => ({
   getPackage: mocks.getPackage,
   getAllPackages: mocks.getAllPackages,
   getAllPackageIds: mocks.getAllPackageIds,
+  getPackageCacheGeneration: mocks.getPackageCacheGeneration,
   packageToPipelineDefinition: mocks.packageToPipelineDefinition,
 }));
 
@@ -76,6 +78,7 @@ describe("metadata-validation", () => {
     mocks.getPackage.mockReturnValue(null);
     mocks.getAllPackages.mockReturnValue([]);
     mocks.getAllPackageIds.mockReturnValue([]);
+    mocks.getPackageCacheGeneration.mockReturnValue("test-generation");
     mocks.packageToPipelineDefinition.mockReturnValue(null);
   });
 

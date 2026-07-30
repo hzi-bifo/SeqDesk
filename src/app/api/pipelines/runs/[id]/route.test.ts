@@ -122,6 +122,8 @@ describe("GET /api/pipelines/runs/[id]", () => {
                 file2: "/reads/S1_R2.fastq",
                 checksum1: "aaa",
                 checksum2: "bbb",
+                fastqcReport1: "/runs/fastqc/S1_R1_fastqc.html",
+                fastqcReport2: "/runs/fastqc/S1_R2_fastqc.html",
               },
             ],
           },
@@ -135,6 +137,8 @@ describe("GET /api/pipelines/runs/[id]", () => {
                 file2: null,
                 checksum1: "ccc",
                 checksum2: null,
+                fastqcReport1: null,
+                fastqcReport2: null,
               },
             ],
           },
@@ -298,7 +302,15 @@ describe("GET /api/pipelines/runs/[id]", () => {
             id: "s-db-1",
             sampleId: "ST1",
             reads: [
-              { id: "rd-1", file1: "/reads/ST1_R1.fastq", file2: null, checksum1: "x", checksum2: null },
+              {
+                id: "rd-1",
+                file1: "/reads/ST1_R1.fastq",
+                file2: null,
+                checksum1: "x",
+                checksum2: null,
+                fastqcReport1: "/runs/fastqc/ST1_R1_fastqc.html",
+                fastqcReport2: null,
+              },
             ],
           },
         ],
@@ -325,6 +337,10 @@ describe("GET /api/pipelines/runs/[id]", () => {
         sampleId: "ST1",
       }),
     ]);
+    expect(body.run.study.samples[0].reads[0]).toMatchObject({
+      fastqcReport1: "/runs/fastqc/ST1_R1_fastqc.html",
+      fastqcReport2: null,
+    });
   });
 
   it("detects SLURM log files for numeric queue job IDs", async () => {
@@ -506,6 +522,16 @@ describe("GET /api/pipelines/runs/[id]", () => {
     expect(
       body.run.inputFiles.some((file: { path: string }) => file.path === "/reads/S2_R1.fastq")
     ).toBe(false);
+    expect(body.run.order.samples[0].reads[0]).toMatchObject({
+      file2: "/reads/S1_R2.fastq",
+      fastqcReport1: "/runs/fastqc/S1_R1_fastqc.html",
+      fastqcReport2: "/runs/fastqc/S1_R2_fastqc.html",
+    });
+    expect(body.run.order.samples[1].reads[0]).toMatchObject({
+      file2: null,
+      fastqcReport1: null,
+      fastqcReport2: null,
+    });
     expect(body.run.artifacts).toEqual([
       expect.objectContaining({
         id: "artifact-1",

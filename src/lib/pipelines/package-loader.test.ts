@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
 import yaml from "js-yaml";
+import { advancePipelinePackageGeneration } from "./package-cache-generation";
 
 import {
   clearPackageCache,
@@ -26,6 +27,9 @@ import {
 } from "./package-loader";
 
 const PIPELINE_ID = "testpipe";
+const validSamplesheetColumns = [
+  { name: "sample", source: "sample.sampleId" },
+];
 
 async function writeJson(filePath: string, data: unknown): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -187,9 +191,9 @@ async function createManifestPackage(options: {
       format: "csv",
       filename: `${options.id}_samples.csv`,
       rows: {
-        scope: "study",
+        scope: "sample",
       },
-      columns: [],
+      columns: validSamplesheetColumns,
     },
   });
 
@@ -251,6 +255,22 @@ describe("package-loader", () => {
     expect(definitionFromCompatibility?.input.supportedScopes).toEqual(["study"]);
   });
 
+  it("reloads a long-lived package cache after another process advances generation", async () => {
+    expect(getAllPackageIds()).toEqual([]);
+
+    await createManifestPackage({ id: "installed-later" });
+    // Creating files alone does not mutate this process's in-memory state. The
+    // installer commits this marker after its atomic directory swap.
+    await advancePipelinePackageGeneration(
+      path.join(process.cwd(), "pipelines")
+    );
+
+    expect(getAllPackageIds()).toEqual(["installed-later"]);
+    expect(getPackage("installed-later")?.manifest.package.id).toBe(
+      "installed-later"
+    );
+  });
+
   it("loads and preserves an explicitly optional output declaration", async () => {
     await createManifestPackage({
       id: "optional-output-pipe",
@@ -295,7 +315,7 @@ describe("package-loader", () => {
       },
     });
     await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "readmode.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "readmode.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
 
     const definition = packageToPipelineDefinition("readmodepipe");
@@ -360,12 +380,229 @@ describe("package-loader", () => {
     expect(getAllPackageIds()).toEqual([]);
   });
 
+  it("omits packages with duplicate parser IDs", async () => {
+    await createManifestPackage({
+      id: "duplicate-parser-pipe",
+      parserFiles: [
+        { file: "parsers/first.yaml", id: "duplicate" },
+        { file: "parsers/second.yaml", id: "duplicate" },
+      ],
+    });
+
+    expect(getPackage("duplicate-parser-pipe")).toBeUndefined();
+    expect(getAllPackageIds()).toEqual([]);
+  });
+
+  it("omits packages whose parsed outputs reference unknown parser columns", async () => {
+    await createManifestPackage({
+      id: "bad-parser-column-pipe",
+      parserFiles: [
+        {
+          file: "parsers/metrics.yaml",
+          id: "metrics",
+        },
+      ],
+      outputs: [
+        {
+          id: "metrics",
+          scope: "sample",
+          destination: "sample_metadata",
+          discovery: { pattern: "metrics.tsv" },
+          parsed: {
+            from: "metrics",
+            matchBy: "name",
+            map: { quality: "missing_quality" },
+          },
+        },
+      ],
+    });
+
+    expect(getPackage("bad-parser-column-pipe")).toBeUndefined();
+    expect(getAllPackageIds()).toEqual([]);
+  });
+
   it("does not load directories without a manifest", async () => {
     await fs.mkdir(path.join(process.cwd(), "pipelines", "nomanifest"), { recursive: true });
 
     expect(getAllPackageIds()).toEqual([]);
     expect(hasPackage("nomanifest")).toBe(false);
     expect(getPackage("nomanifest")).toBeUndefined();
+  });
+
+  it("continues scanning after malformed manifest and descriptor object shapes", async () => {
+    const malformedManifestDir = path.join(
+      process.cwd(),
+      "pipelines",
+      "a-malformed-manifest"
+    );
+    await fs.mkdir(malformedManifestDir, { recursive: true });
+    await writeJson(path.join(malformedManifestDir, "manifest.json"), {
+      package: null,
+      files: [],
+    });
+
+    const malformedDefinitionDir = path.join(
+      process.cwd(),
+      "pipelines",
+      "b-malformed-definition"
+    );
+    await fs.mkdir(malformedDefinitionDir, { recursive: true });
+    await writeJson(
+      path.join(malformedDefinitionDir, "manifest.json"),
+      baseManifest("b-malformed-definition")
+    );
+    await writeJson(
+      path.join(malformedDefinitionDir, "definition.json"),
+      []
+    );
+    await writeJson(
+      path.join(malformedDefinitionDir, "registry.json"),
+      baseRegistry("b-malformed-definition")
+    );
+    await writeYaml(
+      path.join(malformedDefinitionDir, "samplesheet.yaml"),
+      {
+        samplesheet: {
+          format: "csv",
+          filename: "samples.csv",
+          rows: { scope: "sample" },
+          columns: validSamplesheetColumns,
+        },
+      }
+    );
+    await createManifestPackage({ id: "z-valid-package" });
+
+    expect(getAllPackageIds()).toEqual(["z-valid-package"]);
+  });
+
+  it("skips temporary and backup install directories", async () => {
+    const tempPackage = path.join(
+      process.cwd(),
+      "pipelines",
+      "custom.__tmp-install"
+    );
+    const backupPackage = path.join(
+      process.cwd(),
+      "pipelines",
+      "custom.__backup-install"
+    );
+    await fs.mkdir(tempPackage, { recursive: true });
+    await fs.mkdir(backupPackage, { recursive: true });
+    await fs.writeFile(path.join(tempPackage, "manifest.json"), "{invalid");
+    await fs.writeFile(path.join(backupPackage, "manifest.json"), "{invalid");
+    await createManifestPackage({ id: "custom" });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(getAllPackageIds()).toEqual(["custom"]);
+    expect(
+      errorSpy.mock.calls.some((call) =>
+        call.some(
+          (value) =>
+            typeof value === "string" &&
+            (value.includes("custom.__tmp-install") ||
+              value.includes("custom.__backup-install"))
+        )
+      )
+    ).toBe(false);
+
+    errorSpy.mockRestore();
+  });
+
+  it("does not load manifest file paths that escape the package directory", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "escape");
+    await fs.mkdir(packageDir, { recursive: true });
+    await writeJson(
+      path.join(process.cwd(), "pipelines", "outside-definition.json"),
+      baseDefinition("escape")
+    );
+    await writeJson(path.join(packageDir, "manifest.json"), {
+      ...baseManifest("escape"),
+      files: {
+        ...baseManifest("escape").files,
+        definition: "../outside-definition.json",
+      },
+    });
+    await writeJson(path.join(packageDir, "registry.json"), baseRegistry("escape"));
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: {
+        format: "csv",
+        filename: "samples.csv",
+        rows: { scope: "sample" },
+        columns: validSamplesheetColumns,
+      },
+    });
+    await createManifestPackage({ id: "valid-after-escape" });
+
+    expect(getPackage("escape")).toBeUndefined();
+    expect(getAllPackageIds()).toEqual(["valid-after-escape"]);
+  });
+
+  it("does not load local execution paths that escape the package directory", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "escape-execution");
+    await fs.mkdir(packageDir, { recursive: true });
+    await fs.mkdir(path.join(process.cwd(), "pipelines", "outside-workflow"), {
+      recursive: true,
+    });
+    await writeJson(path.join(packageDir, "manifest.json"), {
+      ...baseManifest("escape-execution"),
+      execution: {
+        ...baseManifest("escape-execution").execution,
+        pipeline: "../outside-workflow",
+      },
+    });
+    await writeJson(
+      path.join(packageDir, "definition.json"),
+      baseDefinition("escape-execution")
+    );
+    await writeJson(
+      path.join(packageDir, "registry.json"),
+      baseRegistry("escape-execution")
+    );
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: {
+        format: "csv",
+        filename: "samples.csv",
+        rows: { scope: "sample" },
+        columns: validSamplesheetColumns,
+      },
+    });
+    await createManifestPackage({ id: "valid-after-execution-escape" });
+
+    expect(getPackage("escape-execution")).toBeUndefined();
+    expect(getAllPackageIds()).toEqual(["valid-after-execution-escape"]);
+  });
+
+  it("does not let an unsupported custom runner hide a missing local workflow", async () => {
+    const packageDir = path.join(process.cwd(), "pipelines", "missing-workflow");
+    await fs.mkdir(packageDir, { recursive: true });
+    await writeJson(path.join(packageDir, "manifest.json"), {
+      ...baseManifest("missing-workflow"),
+      execution: {
+        ...baseManifest("missing-workflow").execution,
+        runner: "custom",
+        pipeline: "./workflow",
+      },
+    });
+    await writeJson(
+      path.join(packageDir, "definition.json"),
+      baseDefinition("missing-workflow")
+    );
+    await writeJson(
+      path.join(packageDir, "registry.json"),
+      baseRegistry("missing-workflow")
+    );
+    await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
+      samplesheet: {
+        format: "csv",
+        filename: "samples.csv",
+        rows: { scope: "sample" },
+        columns: validSamplesheetColumns,
+      },
+    });
+    await createManifestPackage({ id: "valid-after-missing-workflow" });
+
+    expect(getPackage("missing-workflow")).toBeUndefined();
+    expect(getAllPackageIds()).toEqual(["valid-after-missing-workflow"]);
   });
 
   it("loads empty parser maps when no parsers are configured", async () => {
@@ -469,8 +706,8 @@ describe("package-loader", () => {
       samplesheet: {
         format: "csv",
         filename: "metaxpath.csv",
-        rows: { scope: "study" },
-        columns: [],
+        rows: { scope: "sample" },
+        columns: validSamplesheetColumns,
       },
     });
 
@@ -523,8 +760,8 @@ describe("package-loader", () => {
       samplesheet: {
         format: "csv",
         filename: "metaxpath.csv",
-        rows: { scope: "study" },
-        columns: [],
+        rows: { scope: "sample" },
+        columns: validSamplesheetColumns,
       },
     });
 
@@ -562,8 +799,8 @@ describe("package-loader", () => {
       samplesheet: {
         format: "csv",
         filename: "badwriteback.csv",
-        rows: { scope: "study" },
-        columns: [],
+        rows: { scope: "sample" },
+        columns: validSamplesheetColumns,
       },
     });
 
@@ -602,7 +839,7 @@ describe("package-loader", () => {
     await writeJson(path.join(packageDirB, "definition.json"), baseDefinition("beta"));
     await writeJson(path.join(packageDirB, "registry.json"), { ...baseRegistry("beta"), sortOrder: 2, name: "Beta" });
     await writeYaml(path.join(packageDirB, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "beta.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "beta.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
 
     const packageDirA = path.join(process.cwd(), "pipelines", "alpha");
@@ -611,7 +848,7 @@ describe("package-loader", () => {
     await writeJson(path.join(packageDirA, "definition.json"), baseDefinition("alpha"));
     await writeJson(path.join(packageDirA, "registry.json"), { ...baseRegistry("alpha"), sortOrder: 1, name: "Alpha" });
     await writeYaml(path.join(packageDirA, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "alpha.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "alpha.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
 
     const ids = getAllPackageIds();
@@ -636,13 +873,13 @@ describe("package-loader", () => {
     });
     await writeJson(path.join(packageDir, "registry.json"), baseRegistry("dagpipe"));
     await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "dagpipe.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "dagpipe.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
 
     const dag = packageToDagData("dagpipe");
 
     expect(dag).not.toBeNull();
-    expect(dag!.pipeline.name).toBe("dagpipe");
+    expect(dag?.pipeline?.name).toBe("dagpipe");
     // 1 input node + 2 step nodes + 1 output node = 4
     const inputNodes = dag!.nodes.filter((n) => n.nodeType === "input");
     const stepNodes = dag!.nodes.filter((n) => n.nodeType === "step");
@@ -674,7 +911,7 @@ describe("package-loader", () => {
     });
     await writeJson(path.join(packageDir, "registry.json"), baseRegistry("findstep"));
     await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "findstep.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "findstep.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
 
     expect(findStepByProcessFromPackage("findstep", "NFCORE_MAG:MAG:FASTQC (sample1)")?.id).toBe("fastqc_raw");
@@ -701,7 +938,7 @@ describe("package-loader", () => {
     });
     await writeJson(path.join(packageDir, "registry.json"), baseRegistry("sortsteps"));
     await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "sortsteps.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "sortsteps.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
 
     const steps = getStepsFromPackage("sortsteps");
@@ -743,7 +980,7 @@ describe("package-loader", () => {
     });
     await writeJson(path.join(packageDir, "registry.json"), baseRegistry("nodef"));
     await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "nodef.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "nodef.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
 
     expect(getPackage("nodef")).toBeUndefined();
@@ -762,7 +999,7 @@ describe("package-loader", () => {
     });
     await writeJson(path.join(packageDir, "definition.json"), baseDefinition("noreg"));
     await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "noreg.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "noreg.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
 
     expect(getPackage("noreg")).toBeUndefined();
@@ -785,7 +1022,7 @@ describe("package-loader", () => {
     await writeJson(path.join(packageDir, "definition.json"), baseDefinition("scriptpipe"));
     await writeJson(path.join(packageDir, "registry.json"), baseRegistry("scriptpipe"));
     await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "scriptpipe.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "scriptpipe.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
     // Create the script file so validation passes
     await fs.mkdir(path.join(packageDir, "scripts"), { recursive: true });
@@ -817,7 +1054,7 @@ describe("package-loader", () => {
     await writeJson(path.join(packageDir, "definition.json"), baseDefinition("badscope"));
     await writeJson(path.join(packageDir, "registry.json"), baseRegistry("badscope"));
     await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "badscope.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "badscope.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
 
     expect(getPackage("badscope")).toBeUndefined();
@@ -840,7 +1077,7 @@ describe("package-loader", () => {
     await writeJson(path.join(packageDir, "definition.json"), baseDefinition("missingscript"));
     await writeJson(path.join(packageDir, "registry.json"), baseRegistry("missingscript"));
     await writeYaml(path.join(packageDir, "samplesheet.yaml"), {
-      samplesheet: { format: "csv", filename: "missingscript.csv", rows: { scope: "study" }, columns: [] },
+      samplesheet: { format: "csv", filename: "missingscript.csv", rows: { scope: "sample" }, columns: validSamplesheetColumns },
     });
 
     expect(getPackage("missingscript")).toBeUndefined();

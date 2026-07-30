@@ -4,7 +4,7 @@
     "id": "multiqc",
     "name": "Study MultiQC",
     "version": "0.1.0",
-    "description": "Aggregate the QC outputs of prior study runs (FastQC, seqkit, read-cleaning MultiQC data) into a single study-level MultiQC report",
+    "description": "Aggregate verified FastQC and NanoPlot artifacts from prior runs into a single study-level MultiQC report",
     "provider": "SeqDesk"
   },
   "files": {
@@ -46,11 +46,23 @@
       "allowMacOsArmConda": true
     },
     "defaultParams": {
-      "report_title": "Study MultiQC report"
+      "reportTitle": "Study MultiQC report"
+    },
+    "priorRunArtifacts": {
+      "scope": "study",
+      "configKey": "qcDir",
+      "sources": {
+        "fastqc": [
+          "sample_qc_data"
+        ],
+        "nanoplot": [
+          "sample_stats"
+        ]
+      }
     },
     "paramMap": {
       "reportTitle": "--report_title",
-      "qcDir": ""
+      "qcDir": "--qc_dir"
     }
   },
   "outputs": [

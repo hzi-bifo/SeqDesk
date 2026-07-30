@@ -53,11 +53,56 @@ function baseManifest(overrides: Record<string, unknown> = {}) {
 
 async function writeValidPackage(
   manifest = baseManifest(),
-  definition: Record<string, unknown> = { pipeline: manifest.package.id }
+  definition: Record<string, unknown> = {}
 ) {
+  const packageId = manifest.package.id;
   await writeFile("manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeFile("definition.json", JSON.stringify(definition));
-  await writeFile("registry.json", JSON.stringify({ id: manifest.package.id }));
+  await writeFile(
+    "definition.json",
+    JSON.stringify({
+      pipeline: packageId,
+      name: `${packageId} pipeline`,
+      description: "Test pipeline",
+      version: "1.0.0",
+      steps: [],
+      inputs: [],
+      outputs: [],
+      ...definition,
+    })
+  );
+  await writeFile(
+    "registry.json",
+    JSON.stringify({
+      id: packageId,
+      name: `${packageId} pipeline`,
+      description: "Test pipeline",
+      category: "analysis",
+      version: "1.0.0",
+      requires: {},
+      outputs: [],
+      visibility: {
+        showToUser: true,
+        userCanStart: true,
+      },
+      input: {
+        supportedScopes: ["study"],
+        perSample: {
+          reads: false,
+          pairedEnd: false,
+        },
+      },
+      samplesheet: {
+        format: "csv",
+        generator: "internal",
+      },
+      configSchema: {
+        type: "object",
+        properties: {},
+      },
+      defaultConfig: {},
+      icon: "beaker",
+    })
+  );
   await writeFile(
     "samplesheet.yaml",
     "samplesheet:\n  format: csv\n  filename: samplesheet.csv\n  rows:\n    scope: sample\n  columns:\n    - name: sample\n      source: sample.sampleId\n"
@@ -81,6 +126,203 @@ describe("descriptor-linter", () => {
 
     expect(result.valid).toBe(true);
     expect(result.errors).toBe(0);
+  });
+
+  it.each(["../outside-workflow", "C:\\outside-workflow"])(
+    "rejects local execution path outside the package directory: %s",
+    async (pipeline) => {
+      await writeValidPackage(
+        baseManifest({
+          execution: {
+            type: "nextflow",
+            pipeline,
+            version: "1.0.0",
+            profiles: ["conda"],
+            defaultParams: {},
+          },
+        })
+      );
+
+      const result = await lintPipelineDescriptor(tempDir, "demo");
+
+      expect(result.valid).toBe(false);
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: "execution-pipeline-path" }),
+        ])
+      );
+    }
+  );
+
+  it("rejects a missing local workflow before installation", async () => {
+    await writeValidPackage();
+    await fs.rm(path.join(tempDir, "workflow"), { recursive: true });
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "local-workflow-missing" }),
+      ])
+    );
+  });
+
+  it("does not let an unsupported custom runner hide a missing workflow", async () => {
+    await writeValidPackage(
+      baseManifest({
+        execution: {
+          type: "nextflow",
+          runner: "custom",
+          pipeline: "./missing-custom-runner",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      })
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "local-workflow-missing" }),
+      ])
+    );
+  });
+
+  it("keeps the built-in submg custom runner installable without a workflow target", async () => {
+    await writeValidPackage(
+      baseManifest({
+        package: {
+          id: "submg",
+          name: "submg",
+          version: "1.0.0",
+          description: "Built-in custom runner",
+        },
+        execution: {
+          type: "nextflow",
+          runner: "custom",
+          pipeline: "./submg",
+          version: "1.0.0",
+          profiles: ["conda"],
+          defaultParams: {},
+        },
+      })
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "submg");
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toBe(0);
+  });
+
+  it("rejects duplicate parser IDs before installation", async () => {
+    const manifest = baseManifest({
+      files: {
+        definition: "definition.json",
+        registry: "registry.json",
+        samplesheet: "samplesheet.yaml",
+        parsers: ["parsers/first.yaml", "parsers/second.yaml"],
+      },
+    });
+    await writeValidPackage(manifest);
+    const parser =
+      "parser:\n  id: duplicate\n  type: tsv\n  description: Duplicate parser\n  trigger:\n    filePattern: '*.tsv'\n  columns:\n    - name: sample\n      index: 0\n";
+    await writeFile("parsers/first.yaml", parser);
+    await writeFile("parsers/second.yaml", parser);
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "duplicate-parser-id" }),
+      ])
+    );
+  });
+
+  it("rejects parser column contracts that would be ignored at runtime", async () => {
+    const manifest = baseManifest({
+      files: {
+        definition: "definition.json",
+        registry: "registry.json",
+        samplesheet: "samplesheet.yaml",
+        parsers: ["parsers/metrics.yaml"],
+      },
+      outputs: [
+        {
+          id: "metrics",
+          scope: "sample",
+          destination: "sample_metadata",
+          type: "qc",
+          discovery: { pattern: "metrics.tsv" },
+          parsed: {
+            from: "metrics",
+            matchBy: "missing_sample",
+            map: { quality: "missing_quality" },
+          },
+        },
+      ],
+    });
+    await writeValidPackage(manifest);
+    await writeFile(
+      "parsers/metrics.yaml",
+      "parser:\n  id: metrics\n  type: tsv\n  description: Metrics parser\n  trigger:\n    filePattern: metrics.tsv\n  columns:\n    - name: sample\n      index: 0\n    - name: sample\n      index: 1\n"
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "duplicate-parser-column" }),
+        expect.objectContaining({ code: "unknown-parser-match-column" }),
+        expect.objectContaining({ code: "unknown-parser-map-column" }),
+      ])
+    );
+  });
+
+  it("requires a sample matching strategy for required sample outputs", async () => {
+    await writeValidPackage(
+      baseManifest({
+        outputs: [
+          {
+            id: "sample-report",
+            scope: "sample",
+            destination: "sample_qc",
+            discovery: { pattern: "reports/*.html" },
+          },
+        ],
+      })
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "sample-output-match-strategy" }),
+      ])
+    );
+  });
+
+  it("requires the registry per-sample flags used by the package loader", async () => {
+    await writeValidPackage();
+    const registryPath = path.join(tempDir, "registry.json");
+    const registry = JSON.parse(await fs.readFile(registryPath, "utf8"));
+    delete registry.input.perSample.pairedEnd;
+    await fs.writeFile(registryPath, JSON.stringify(registry));
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "registry-shape" }),
+      ])
+    );
   });
 
   it("reports missing required files and package id mismatches", async () => {
@@ -129,6 +371,116 @@ describe("descriptor-linter", () => {
         expect.objectContaining({ code: "read-candidate-scope" }),
         expect.objectContaining({ code: "read-candidate-destination" }),
         expect.objectContaining({ code: "read-candidate-review-policy" }),
+      ])
+    );
+  });
+
+  it("rejects outputs that reference an unavailable parser", async () => {
+    await writeValidPackage(
+      baseManifest({
+        outputs: [
+          {
+            id: "quality",
+            scope: "sample",
+            destination: "sample_qc",
+            type: "qc",
+            discovery: {
+              pattern: "quality.tsv",
+            },
+            parsed: {
+              from: "missing-parser",
+              matchBy: "sample",
+              map: {
+                quality: "quality",
+              },
+            },
+          },
+        ],
+      })
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "unknown-parser", level: "error" }),
+      ])
+    );
+  });
+
+  it("rejects parser descriptors that would crash the parser runtime", async () => {
+    await writeValidPackage(
+      baseManifest({
+        files: {
+          definition: "definition.json",
+          registry: "registry.json",
+          samplesheet: "samplesheet.yaml",
+          parsers: ["parsers/incomplete.yaml"],
+        },
+      })
+    );
+    await writeFile(
+      "parsers/incomplete.yaml",
+      "parser:\n  id: incomplete\n  type: tsv\n"
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "parser-shape", level: "error" }),
+      ])
+    );
+  });
+
+  it("rejects malformed samplesheet columns before installation", async () => {
+    await writeValidPackage();
+    await writeFile(
+      "samplesheet.yaml",
+      "samplesheet:\n  format: csv\n  filename: samples.csv\n  rows:\n    scope: sample\n  columns:\n    - name: sample\n      source: 42\n"
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "samplesheet-shape", level: "error" }),
+      ])
+    );
+  });
+
+  it("rejects Read writeback outside sample scope", async () => {
+    await writeValidPackage(
+      baseManifest({
+        outputs: [
+          {
+            id: "reads",
+            scope: "study",
+            destination: "sample_reads",
+            type: "artifact",
+            discovery: {
+              pattern: "reads/*.fastq.gz",
+            },
+            writeback: {
+              target: "Read",
+              fields: {
+                file1: "file1",
+              },
+            },
+          },
+        ],
+      })
+    );
+
+    const result = await lintPipelineDescriptor(tempDir, "demo");
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "read-writeback-scope" }),
       ])
     );
   });
@@ -184,6 +536,9 @@ describe("descriptor-linter", () => {
         steps: [
           {
             id: "classification",
+            name: "Classification",
+            description: "Classify reads",
+            category: "annotation",
             dependsOn: [],
             processMatchers: ["KRAKEN2"],
           },
@@ -209,6 +564,9 @@ describe("descriptor-linter", () => {
         steps: [
           {
             id: "qc",
+            name: "QC",
+            description: "Quality control",
+            category: "qc",
             dependsOn: [],
             processMatchers: ["FASTQC"],
           },
@@ -216,6 +574,7 @@ describe("descriptor-linter", () => {
         outputs: [
           {
             id: "report",
+            name: "Report",
             fromStep: "missing",
           },
         ],
@@ -240,6 +599,9 @@ describe("descriptor-linter", () => {
         steps: [
           {
             id: "simulate_reads",
+            name: "Simulate reads",
+            description: "Generate test reads",
+            category: "preprocessing",
             dependsOn: [],
           },
         ],

@@ -44,6 +44,11 @@ const nextConfig: NextConfig = {
   // Standalone output for distribution
   // Creates minimal deployment without node_modules
   output: "standalone",
+  // Test sources have an explicit `typecheck:all` command. Keep the production
+  // build focused on deployable code so test-only debt cannot block artifacts.
+  typescript: {
+    tsconfigPath: "tsconfig.production.json",
+  },
   env: {
     NEXT_PUBLIC_SEQDESK_ENABLE_PUBLIC_DEMO:
       process.env.NEXT_PUBLIC_SEQDESK_ENABLE_PUBLIC_DEMO ??

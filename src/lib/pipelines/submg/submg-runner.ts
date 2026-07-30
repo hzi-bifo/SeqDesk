@@ -10,6 +10,13 @@ import {
   buildSeqDeskSlurmJobName,
   preparePipelineRunDirectory,
 } from "@/lib/pipelines/run-directory";
+import {
+  assertNoReservedSlurmPathOptions,
+  buildSlurmCompletionAttestationBlock,
+  buildSlurmWrapperFinalizerBlock,
+  renderSlurmChdirDirective,
+  WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND,
+} from "@/lib/pipelines/slurm-completion-attestation";
 
 interface PrepareSubmgRunOptions {
   runId: string;
@@ -276,6 +283,7 @@ function sanitizeSlurmTimeLimit(value: number | undefined, fallback: number): nu
 // newlines (which would inject extra SBATCH/script lines) and shell-quote each
 // whitespace-separated token so it cannot break out of the directive.
 function sanitizeSlurmOptions(value: string | undefined): string {
+  assertNoReservedSlurmPathOptions(value);
   const trimmed = value?.trim();
   if (!trimmed) return "";
   if (/[\r\n]/.test(trimmed)) return "";
@@ -775,7 +783,7 @@ function buildSubmgScript(params: {
   lines.push(`#SBATCH -c ${slurmCores}`);
   lines.push(`#SBATCH --mem='${slurmMemory}'`);
   lines.push(`#SBATCH -t ${slurmTimeLimit}:0:0`);
-  lines.push(`#SBATCH -D ${runFolder}`);
+  lines.push(renderSlurmChdirDirective(runFolder));
   // slurmd writes these as the daemon user (often root), which fails on a
   // root-squashed NFS run dir; use node-local /tmp and copy back in the trap.
   lines.push('#SBATCH --output="/tmp/seqdesk-slurm-%j.out"');
@@ -786,7 +794,7 @@ function buildSubmgScript(params: {
   lines.push("");
   lines.push("set -euo pipefail");
   lines.push("");
-  lines.push(`RUN_FOLDER=${shellEscape(runFolder)}`);
+  lines.push(buildSlurmWrapperFinalizerBlock(runFolder));
   // The run dir is created on the submit node ~1s before this job starts; on a
   // shared NFS home the compute node may not see the fresh dir yet, so a plain
   // mkdir/redirect can fail. Retry creating the logs dir + a write probe until
@@ -801,13 +809,9 @@ function buildSubmgScript(params: {
   lines.push("  fi");
   lines.push("  sleep 2");
   lines.push("done");
-  lines.push('STDOUT_LOG="$RUN_FOLDER/logs/pipeline.out"');
-  lines.push('STDERR_LOG="$RUN_FOLDER/logs/pipeline.err"');
+  lines.push(buildSlurmCompletionAttestationBlock({ runId, runFolder }));
   lines.push('echo "Starting submg submission at $(date)" > "$STDOUT_LOG"');
   lines.push('echo "" > "$STDERR_LOG"');
-  lines.push(
-    "trap 'EXIT_CODE=$?; echo \"Pipeline completed with exit code: ${EXIT_CODE} at $(date)\" >> \"$STDOUT_LOG\"; cp -f \"/tmp/seqdesk-slurm-${SLURM_JOB_ID:-local}.out\" \"$RUN_FOLDER/logs/slurm-${SLURM_JOB_ID:-local}.out\" 2>/dev/null || true; cp -f \"/tmp/seqdesk-slurm-${SLURM_JOB_ID:-local}.err\" \"$RUN_FOLDER/logs/slurm-${SLURM_JOB_ID:-local}.err\" 2>/dev/null || true; exit ${EXIT_CODE}' EXIT"
-  );
   lines.push("");
 
   lines.push(`export ENA_USERNAME=${shellEscape(credentials.username)}`);
@@ -943,6 +947,8 @@ function buildSubmgScript(params: {
     lines.push('if [ -d "$READS_PREP_DIR" ]; then rm -rf "$READS_PREP_DIR"; fi');
     lines.push("");
   }
+
+  lines.push(WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND);
 
   return `${lines.join("\n")}\n`;
 }

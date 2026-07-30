@@ -22,6 +22,7 @@ export interface PipelineSourceDescriptor {
   registryUrl?: string;
   browseUrl?: string;
   downloadUrl?: string;
+  sha256?: string;
   packageUrlDefault?: string;
   keyLabel?: string;
   repository?: string;
@@ -33,12 +34,14 @@ export interface PipelineSourceDescriptor {
 export interface RegistryPipelineVersion {
   version: string;
   downloadUrl?: string;
+  sha256?: string;
 }
 
 export interface RegistryPipelineSourceOverride {
   kind?: PipelineSourceKind;
   label?: string;
   downloadUrl?: string;
+  sha256?: string;
   packageUrlDefault?: string;
   keyLabel?: string;
   repository?: string;
@@ -65,6 +68,7 @@ export interface RegistryPipelineEntry {
   icon?: string;
   featured?: boolean;
   downloadUrl?: string;
+  sha256?: string;
   isPrivate?: boolean;
   licenseRequired?: boolean;
   targets?: {
@@ -215,7 +219,9 @@ export function normalizeRegistryPipeline(
     "unknown";
   const sourceKind = pipeline.source?.kind
     ? pipeline.source.kind
-    : pipeline.isPrivate === true || pipeline.licenseRequired === true
+    : pipeline.isPrivate === true ||
+        pipeline.licenseRequired === true ||
+        pipeline.privateInstall?.requiresKey === true
       ? "privateRegistry"
       : "registry";
   const matchingVersionEntry =
@@ -223,6 +229,10 @@ export function normalizeRegistryPipeline(
     pipeline.versions?.[0];
   const resolvedDownloadUrl =
     pipeline.source?.downloadUrl || pipeline.downloadUrl || matchingVersionEntry?.downloadUrl;
+  const resolvedSha256 =
+    pipeline.source?.sha256 ||
+    pipeline.sha256 ||
+    matchingVersionEntry?.sha256;
   const resolvedRepository =
     pipeline.id === METAXPATH_PIPELINE_ID && sourceKind === "github"
       ? resolveMetaxPathRepository(pipeline.source?.repository)
@@ -241,6 +251,7 @@ export function normalizeRegistryPipeline(
     registryUrl: registry.registryUrl,
     browseUrl: registry.browseUrl,
     downloadUrl: resolvedDownloadUrl,
+    sha256: resolvedSha256,
     packageUrlDefault:
       pipeline.source?.packageUrlDefault || pipeline.privateInstall?.packageUrlDefault,
     keyLabel: pipeline.source?.keyLabel || pipeline.privateInstall?.keyLabel,
@@ -251,11 +262,12 @@ export function normalizeRegistryPipeline(
   };
   const localManifest = getPackageManifest(pipeline.id);
   const localTargets = deriveManifestTargets(localManifest);
-  const supportedTargets = localTargets.length > 0
-    ? localTargets
-    : Array.isArray(pipeline.targets?.supported)
-      ? pipeline.targets.supported
-      : [];
+  // The registry describes the available package version, while a local
+  // manifest may describe an older installed version. Explicit remote targets
+  // therefore win, including an explicit empty list.
+  const supportedTargets = Array.isArray(pipeline.targets?.supported)
+    ? Array.from(new Set(pipeline.targets.supported))
+    : localTargets;
   const catalogs = derivePipelineCatalogs(supportedTargets);
   const capabilities = localManifest
     ? derivePipelineCapabilities(localManifest)
@@ -277,7 +289,8 @@ export function normalizeRegistryPipeline(
     featured: pipeline.featured || false,
     downloadUrl: resolvedDownloadUrl,
     tags: pipeline.tags || [],
-    isPrivate: pipeline.isPrivate === true,
+    isPrivate:
+      pipeline.isPrivate === true || sourceKind === "privateRegistry",
     licenseRequired: pipeline.licenseRequired === true,
     targets: supportedTargets.length > 0 ? { supported: supportedTargets } : null,
     catalogs,

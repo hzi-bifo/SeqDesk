@@ -16,6 +16,9 @@ FAILURE_MESSAGE=""
 SUMMARY_FILE=""
 ARTIFACT_MANIFEST=""
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/conda-environment.sh"
+seqdesk_set_conda_environment "$ENV_NAME"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --keep-temp)
@@ -177,15 +180,12 @@ if ! command -v conda >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
-  echo "Conda environment '$ENV_NAME' was not found" >&2
-  exit 1
-fi
+seqdesk_assert_conda_environment
 
 require_env_command() {
   local label="$1"
   shift
-  if ! conda run -n "$ENV_NAME" "$@" >/dev/null 2>&1; then
+  if ! seqdesk_conda_run "$@" >/dev/null 2>&1; then
     echo "Conda environment '$ENV_NAME' is missing required command: $label" >&2
     exit 1
   fi
@@ -280,7 +280,7 @@ EOF
 CURRENT_STAGE="simulate-reads"
 SIMULATE_STATUS="running"
 echo "Running simulate-reads with Conda env '$ENV_NAME'..."
-conda run -n "$ENV_NAME" nextflow run pipelines/simulate-reads/workflow/main.nf \
+seqdesk_conda_run nextflow run pipelines/simulate-reads/workflow/main.nf \
   --input "$SIM_SAMPLESHEET" \
   --outdir "$SIM_OUT" \
   --simulationMode synthetic \
@@ -342,7 +342,7 @@ TEMPLATE_SAMPLE,ORDER_X
 EOF
 
 echo "Running simulate-reads template replay with Conda env '$ENV_NAME'..."
-conda run -n "$ENV_NAME" nextflow run pipelines/simulate-reads/workflow/main.nf \
+seqdesk_conda_run nextflow run pipelines/simulate-reads/workflow/main.nf \
   --input "$TEMPLATE_SAMPLESHEET" \
   --outdir "$TEMPLATE_OUT" \
   --simulationMode template \
@@ -375,7 +375,7 @@ EOF
 CURRENT_STAGE="fastq-checksum"
 CHECKSUM_STATUS="running"
 echo "Running fastq-checksum with Conda env '$ENV_NAME'..."
-conda run -n "$ENV_NAME" nextflow run pipelines/fastq-checksum/workflow/main.nf \
+seqdesk_conda_run nextflow run pipelines/fastq-checksum/workflow/main.nf \
   --input "$CHECKSUM_SAMPLESHEET" \
   --outdir "$CHECKSUM_OUT"
 
@@ -399,7 +399,7 @@ EOF
 CURRENT_STAGE="fastqc"
 FASTQC_STATUS="running"
 echo "Running fastqc with Conda env '$ENV_NAME'..."
-conda run -n "$ENV_NAME" nextflow run pipelines/fastqc/workflow/main.nf \
+seqdesk_conda_run nextflow run pipelines/fastqc/workflow/main.nf \
   -with-conda \
   --input "$FASTQC_SAMPLESHEET" \
   --outdir "$FASTQC_OUT"

@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local agent worktrees can contain stale symlinks and are not app source.
+    ".agents/**",
+    ".claude/**",
+    ".codex/**",
+    // Locally extracted release bundles are build artifacts.
+    "seqdesk-*/**",
   ]),
 ]);
 

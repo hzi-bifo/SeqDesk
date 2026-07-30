@@ -83,6 +83,62 @@ describe("parser-runtime", () => {
     expect(result.errors).toEqual([]);
   });
 
+  it("parses a literal trigger file path without requiring a wildcard", async () => {
+    const filePath = path.join(tempDir, "summary", "nanoplot-summary.tsv");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "sample\treads\nS1\t12\n");
+    const parser = createParserConfig({
+      id: "nanostats",
+      type: "tsv",
+      filePattern: "summary/nanoplot-summary.tsv",
+      skipHeader: true,
+      columns: [
+        { name: "sample", index: 0 },
+        { name: "reads", index: 1, type: "int" },
+      ],
+    });
+    mocks.getPackage.mockReturnValue({
+      parsers: new Map([["nanostats", parser]]),
+    });
+
+    const result = await runParser("nanoplot", "nanostats", tempDir);
+
+    expect(result.errors).toEqual([]);
+    expect(result.rows.get("S1")).toEqual({
+      sample: "S1",
+      reads: 12,
+    });
+  });
+
+  it("treats regex metacharacters in glob paths as literal characters", async () => {
+    const specialDirectory = "literal.(foo)[bar]+baz";
+    const filePath = path.join(tempDir, specialDirectory, "metrics.tsv");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, "sample\treads\nS1\t12\n");
+    const parser = createParserConfig({
+      id: "literal-pattern",
+      type: "tsv",
+      filePattern: `${specialDirectory}/*.tsv`,
+      skipHeader: true,
+      columns: [
+        { name: "sample", index: 0 },
+        { name: "reads", index: 1, type: "int" },
+      ],
+    });
+    mocks.getPackage.mockReturnValue({
+      parsers: new Map([["literal-pattern", parser]]),
+    });
+
+    const result = await runParser(
+      "literal-pattern",
+      "literal-pattern",
+      tempDir
+    );
+
+    expect(result.errors).toEqual([]);
+    expect(result.rows.get("S1")?.reads).toBe(12);
+  });
+
   it("parses TSV data with typed conversions", async () => {
     const filePath = path.join(tempDir, "results", "checkm_summary.tsv");
     await fs.mkdir(path.dirname(filePath), { recursive: true });

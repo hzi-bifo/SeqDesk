@@ -3,6 +3,18 @@ import fs from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import {
+  assertExactAttributedReadSampleCoverage,
+  assertPipelineExitMarker,
+  assertSlurmAccountingRecord,
+  assertSlurmCompletionAttestation,
+  assertSlurmLaunchIdentity,
+  normalizeSlurmState,
+  parsePrimarySacctRecord,
+  slurmCompletionAttestationPath,
+} from "./lib/pipeline-e2e-proof.mjs";
+import { syncPipelineRunFailClosed } from "./lib/pipeline-e2e-sync.mjs";
+
 const execFileAsync = promisify(execFile);
 
 function fail(message, details) {
@@ -269,6 +281,10 @@ async function pollUntilDone({ client, baseUrl, runId, startPayload, timeoutSeco
   let latestQueue = null;
 
   while (Date.now() < deadline) {
+    await syncPipelineRunFailClosed(client, runId, {
+      context: "Reconcile pipeline run",
+    });
+
     const runPayload = await requestJson(
       client,
       `/api/pipelines/runs/${runId}`,
@@ -290,14 +306,24 @@ async function pollUntilDone({ client, baseUrl, runId, startPayload, timeoutSeco
       };
     }
 
-    await client.request(`/api/pipelines/runs/${runId}/sync`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
-
     if (latestRun?.status === "completed") {
-      return { run: latestRun, queue: latestQueue };
+      // A trace-derived completion used to be observable before the wrapper exit
+      // marker existed. Reconcile and read once more so a transient false
+      // completion cannot make this older SLURM-only harness green.
+      await syncPipelineRunFailClosed(client, runId, {
+        context: "Confirm pipeline completion",
+      });
+      const confirmPayload = await requestJson(
+        client,
+        `/api/pipelines/runs/${runId}`,
+        {},
+        "Confirm pipeline completion",
+      );
+      const confirmedRun = confirmPayload?.run || confirmPayload;
+      if (confirmedRun?.status === "completed") {
+        return { run: confirmedRun, queue: latestQueue };
+      }
+      latestRun = confirmedRun;
     }
     if (["failed", "cancelled", "canceled"].includes(latestRun?.status)) {
       fail(
@@ -315,25 +341,209 @@ async function pollUntilDone({ client, baseUrl, runId, startPayload, timeoutSeco
   );
 }
 
+const SLURM_TERMINAL_STATES = new Set([
+  "BOOT_FAIL",
+  "CANCELLED",
+  "CANCELED",
+  "COMPLETED",
+  "DEADLINE",
+  "FAILED",
+  "NODE_FAIL",
+  "OUT_OF_MEMORY",
+  "PREEMPTED",
+  "REVOKED",
+  "TIMEOUT",
+]);
+
+async function assertSuccessfulSlurmAccounting({ runId, jobId, runFolder }) {
+  const deadline = Date.now() + 90_000;
+  let latest = null;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    let stdout = "";
+    try {
+      ({ stdout } = await execFileAsync(
+        "sacct",
+        [
+          "-X",
+          "-P",
+          "-j",
+          String(jobId),
+          "--noheader",
+          "--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%1024,NodeList",
+        ],
+        { timeout: 10_000, maxBuffer: 1024 * 1024 },
+      ));
+      lastError = null;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      await sleep(2000);
+      continue;
+    }
+
+    latest = parsePrimarySacctRecord(stdout, jobId);
+    const state = normalizeSlurmState(latest?.state);
+    if (state === "COMPLETED") {
+      return assertSlurmAccountingRecord(latest, {
+        runId,
+        jobId: String(jobId),
+        runFolder,
+        expectedOutcome: "success",
+      });
+    }
+    if (SLURM_TERMINAL_STATES.has(state)) {
+      fail(
+        `SLURM allocation ${jobId} reached terminal state ${state}, expected COMPLETED`,
+        JSON.stringify(latest, null, 2),
+      );
+    }
+    await sleep(2000);
+  }
+  fail(
+    `SLURM accounting did not prove successful allocation ${jobId} within 90 seconds`,
+    JSON.stringify({ latest, lastError, runFolder }, null, 2),
+  );
+}
+
+async function assertSlurmRunFiles({ run, pipelineId }) {
+  const runFolder = run?.runFolder;
+  const runScriptPath = `${runFolder}/run.sh`;
+  const nextflowConfigPath = `${runFolder}/nextflow.config`;
+  const pipelineOutPath = `${runFolder}/logs/pipeline.out`;
+  if (!fs.existsSync(runScriptPath)) {
+    fail("SLURM run did not create run.sh", runScriptPath);
+  }
+  const runScript = fs.readFileSync(runScriptPath, "utf8");
+  if (!runScript.includes("#SBATCH")) {
+    fail("SLURM run.sh has no SBATCH directives", runScriptPath);
+  }
+  const nextflowConfig = fs.existsSync(nextflowConfigPath)
+    ? fs.readFileSync(nextflowConfigPath, "utf8")
+    : "";
+  const hasSlurmExecutor = nextflowConfig.includes("executor = 'slurm'");
+  const inlineExecutor = ["1", "true"].includes(
+    String(process.env.SEQDESK_SLURM_INLINE_EXECUTOR || "").toLowerCase(),
+  );
+  if (inlineExecutor ? hasSlurmExecutor : !hasSlurmExecutor) {
+    fail(
+      inlineExecutor
+        ? "SLURM inline-executor run unexpectedly configured nested process.executor='slurm'"
+        : "SLURM run did not configure process.executor='slurm'",
+      nextflowConfigPath,
+    );
+  }
+  if (!fs.existsSync(pipelineOutPath)) {
+    fail("SLURM run did not create logs/pipeline.out", pipelineOutPath);
+  }
+  const pipelineExitCode = assertPipelineExitMarker(
+    fs.readFileSync(pipelineOutPath, "utf8"),
+    {
+      expectedOutcome: "success",
+      context: `SLURM ${pipelineId} run ${run?.id ?? "<unknown>"}`,
+    },
+  );
+  return {
+    runScriptPath,
+    nextflowConfigPath,
+    pipelineOutPath,
+    pipelineExitCode,
+  };
+}
+
+async function resolveSlurmNodeHosts(nodeList, jobId) {
+  if (
+    typeof nodeList !== "string" ||
+    !nodeList.trim() ||
+    /^(?:none|unknown|n\/a|\(null\)|none assigned)$/i.test(nodeList.trim())
+  ) {
+    fail(
+      `SLURM allocation ${jobId} has no resolvable NodeList`,
+      JSON.stringify({ nodeList: nodeList ?? null }, null, 2),
+    );
+  }
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(
+      "scontrol",
+      ["show", "hostnames", nodeList.trim()],
+      { timeout: 10_000, maxBuffer: 1024 * 1024 },
+    ));
+  } catch (error) {
+    fail(
+      `Could not expand SLURM NodeList for allocation ${jobId}`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  const hosts = [
+    ...new Set(
+      String(stdout || "")
+        .split(/\r?\n/)
+        .map((host) => host.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (hosts.length === 0) {
+    fail(
+      `scontrol returned no hosts for SLURM allocation ${jobId}`,
+      JSON.stringify({ nodeList }, null, 2),
+    );
+  }
+  return hosts;
+}
+
+async function waitForRequiredRegularFiles(paths, context) {
+  let missing = [...paths];
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    missing = paths.filter((filePath) => !fs.existsSync(filePath));
+    if (missing.length === 0) break;
+    await sleep(1000);
+  }
+  missing = paths.filter((filePath) => !fs.existsSync(filePath));
+  if (missing.length > 0) {
+    fail(`${context}: required files are missing after accounting completed`, missing.join("\n"));
+  }
+  for (const filePath of paths) {
+    const stat = fs.lstatSync(filePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      fail(`${context}: required path is not a regular file`, filePath);
+    }
+  }
+  return [...paths];
+}
+
+async function assertSlurmCompletionProof({
+  runId,
+  jobId,
+  runFolder,
+  accounting,
+}) {
+  const nodeHosts = await resolveSlurmNodeHosts(accounting.nodeList, jobId);
+  const attestationPath = slurmCompletionAttestationPath(runFolder, jobId);
+  await waitForRequiredRegularFiles(
+    [attestationPath],
+    `SLURM completion attestation for run ${runId}`,
+  );
+  return {
+    path: attestationPath,
+    ...assertSlurmCompletionAttestation({
+      contents: fs.readFileSync(attestationPath, "utf8"),
+      runId,
+      jobId,
+      nodeHosts,
+      context: `SLURM completion attestation for run ${runId}`,
+    }),
+  };
+}
+
 async function assertSlurmLogs(run, jobId) {
   const logs = slurmLogPaths(run?.runFolder, jobId);
   if (logs.length === 0) {
     fail("Could not derive SLURM log paths from run folder and job id");
   }
-  // SLURM's --output/--error files are copied back from the compute node's local
-  // /tmp at the very end of the job, so on a shared filesystem they can lag a few
-  // seconds before the runner sees them. Poll briefly; they're empty by design (real
-  // output goes to logs/pipeline.out), so continued absence is a warning, not a fail.
-  let existing = [];
-  for (let attempt = 0; attempt < 15; attempt += 1) {
-    existing = logs.filter((logPath) => fs.existsSync(logPath));
-    if (existing.length > 0) break;
-    await sleep(1000);
-  }
-  if (existing.length === 0) {
-    console.warn(`WARN: SLURM capture logs not visible after wait (non-fatal): ${logs.join(", ")}`);
-  }
-  return existing;
+  return waitForRequiredRegularFiles(
+    logs,
+    `SLURM capture logs for run ${run?.id ?? "<unknown>"}`,
+  );
 }
 
 const MD5_RE = /^[0-9a-f]{32}$/;
@@ -360,28 +570,29 @@ function collectActiveOrderReads(run, orderId) {
   return reads;
 }
 
-// REPLACE-mode (simulate-reads) DB writeback assertion. On completion a NEW
-// active Read is created with file1/file2/checksum1/checksum2/readCount* and the
-// prior reads marked isActive=false. We confirm the run finalized and that at
-// least one active read is attributable to THIS run. Attribution preference:
-//   1. pipelineRunId === runId          (only if the run GET select exposes it)
-//   2. pipelineSources mentions runId   (only if exposed)
-//   3. FALLBACK: a populated md5 checksum1 on an active read.
-// The run GET select in pipeline-run-ops-service.ts currently exposes only
-// { id, file1, file2, checksum1, checksum2, dataClass, isActive } on reads, so in
-// practice the checksum fallback is what fires today. readCount1 is likewise not
-// exposed, so it is treated as an optional (warn-only) signal rather than a hard
-// requirement. A genuinely missing writeback (no attributable active read) is a
-// HARD fail; an unexposed optional field only degrades to the documented fallback.
+function parsePipelineSources(value) {
+  if (typeof value !== "string" || value.trim() === "") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+// REPLACE-mode (simulate-reads) DB writeback assertion. The run GET now exposes
+// pipelineRunId, pipelineSources and readCount fields. Require those exact
+// per-run attribution fields; accepting any pre-existing md5 checksum here made
+// a previous simulate-reads run sufficient for a false green.
 async function assertReplaceWriteback({ client, runId, orderId, pipelineId }) {
   // Dual-writer race: status + checksum/read writeback land via two async paths
   // (weblog callback + the 15s pipeline-monitor) during finalization. Do ONE more
   // sync, settle, then RE-FETCH so we never assert on the pre-writeback payload
   // that first reported 'completed'.
-  await client.request(`/api/pipelines/runs/${runId}/sync`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({}),
+  await syncPipelineRunFailClosed(client, runId, {
+    context: "Reconcile pipeline run before writeback assertion",
   });
   await sleep(3000);
 
@@ -415,6 +626,12 @@ async function assertReplaceWriteback({ client, runId, orderId, pipelineId }) {
   if (pipelineId === "fastq-checksum") {
     return assertMergeWriteback({ run, runId, orderId });
   }
+  if (pipelineId !== "simulate-reads") {
+    fail(
+      `No order-writeback proof is defined for pipeline '${pipelineId}'`,
+      "Use scripts/run-pipeline-runtime-e2e.mjs and add a pipeline-specific WRITEBACK_SPEC before treating it as a required green gate.",
+    );
+  }
 
   const reads = collectActiveOrderReads(run, orderId);
   if (reads.length === 0) {
@@ -424,31 +641,8 @@ async function assertReplaceWriteback({ client, runId, orderId, pipelineId }) {
     );
   }
 
-  // Preferred attribution: explicit pipelineRunId / pipelineSources, only used if
-  // the API actually exposes them (it does not today — see the select).
-  const exposesPipelineRunId = reads.some((read) => "pipelineRunId" in read);
-  const exposesPipelineSources = reads.some((read) => "pipelineSources" in read);
-
-  let attributionMode;
-  let attributedReads = [];
-
-  if (exposesPipelineRunId) {
-    attributionMode = "pipelineRunId";
-    attributedReads = reads.filter((read) => read.pipelineRunId === runId);
-  } else if (exposesPipelineSources) {
-    attributionMode = "pipelineSources";
-    attributedReads = reads.filter(
-      (read) =>
-        typeof read.pipelineSources === "string" && read.pipelineSources.includes(runId)
-    );
-  } else {
-    // Documented fallback: the run GET select does not expose pipelineRunId /
-    // pipelineSources, so attribute via a populated md5 checksum1 on an active read.
-    attributionMode = "checksum1-fallback";
-    attributedReads = reads.filter(
-      (read) => typeof read.checksum1 === "string" && MD5_RE.test(read.checksum1)
-    );
-  }
+  const attributionMode = "pipelineRunId+pipelineSources";
+  const attributedReads = reads.filter((read) => read.pipelineRunId === runId);
 
   if (attributedReads.length === 0) {
     fail(
@@ -470,40 +664,35 @@ async function assertReplaceWriteback({ client, runId, orderId, pipelineId }) {
       )
     );
   }
+  const expectedSampleIds = (run?.order?.samples ?? [])
+    .map((sample) => sample?.sampleId)
+    .filter((sampleId) => typeof sampleId === "string" && sampleId.length > 0);
+  const sampleCoverage = assertExactAttributedReadSampleCoverage({
+    expectedSampleIds,
+    attributedReads,
+    context: `REPLACE-mode writeback for run ${runId}`,
+  });
 
-  // For the explicit-attribution modes, still require at least one attributed read
-  // to carry a populated md5 checksum1 so the pass is not vacuous.
-  if (attributionMode !== "checksum1-fallback") {
-    const withChecksum = attributedReads.filter(
-      (read) => typeof read.checksum1 === "string" && MD5_RE.test(read.checksum1)
-    );
-    if (withChecksum.length === 0) {
+  for (const read of attributedReads) {
+    const sources = parsePipelineSources(read.pipelineSources);
+    if (sources[pipelineId] !== runId) {
       fail(
-        `Writeback assertion: run ${runId} attributed reads (mode=${attributionMode}) but none carry a valid md5 checksum1`,
-        JSON.stringify(
-          attributedReads.map((read) => ({ id: read.id, checksum1: read.checksum1 ?? null })),
-          null,
-          2
-        )
+        `Writeback assertion: read ${read.id} is not attributed to ${pipelineId} run ${runId} in pipelineSources`,
+        JSON.stringify({ readId: read.id, pipelineRunId: read.pipelineRunId, sources }, null, 2),
       );
     }
-  }
-
-  // readCount1 is not in the run GET select today, so its absence is non-fatal.
-  const readCountValues = attributedReads
-    .map((read) => read.readCount1)
-    .filter((value) => typeof value === "number");
-  if (readCountValues.length > 0 && !readCountValues.some((value) => value > 0)) {
-    fail(
-      `Writeback assertion: run ${runId} attributed reads expose readCount1 but none is > 0`,
-      JSON.stringify(readCountValues, null, 2)
-    );
-  }
-  const readCountReported = readCountValues.some((value) => value > 0);
-  if (!readCountReported) {
-    console.warn(
-      `WARN: run ${runId} writeback: readCount1 not exposed by the run GET select (non-fatal; attributed via ${attributionMode}).`
-    );
+    if (!(Number(read.readCount1) > 0)) {
+      fail(
+        `Writeback assertion: attributed read ${read.id} has no positive readCount1`,
+        JSON.stringify({ readId: read.id, readCount1: read.readCount1 ?? null }, null, 2),
+      );
+    }
+    if (typeof read.checksum1 !== "string" || !MD5_RE.test(read.checksum1)) {
+      fail(
+        `Writeback assertion: attributed read ${read.id} has no valid md5 checksum1`,
+        JSON.stringify({ readId: read.id, checksum1: read.checksum1 ?? null }, null, 2),
+      );
+    }
   }
 
   return {
@@ -512,7 +701,8 @@ async function assertReplaceWriteback({ client, runId, orderId, pipelineId }) {
     attributionMode,
     activeReadCount: reads.length,
     attributedReadCount: attributedReads.length,
-    readCountReported,
+    targetSampleCount: sampleCoverage.expectedSampleCount,
+    readCountReported: true,
   };
 }
 
@@ -532,9 +722,9 @@ function assertMergeWriteback({ run, runId, orderId }) {
   const populated = reads.filter(
     (read) => typeof read.checksum1 === "string" && MD5_RE.test(read.checksum1)
   );
-  if (populated.length === 0) {
+  if (populated.length !== reads.length) {
     fail(
-      `Writeback assertion: MERGE-mode run ${runId} left no active read with a valid md5 checksum1`,
+      `Writeback assertion: MERGE-mode run ${runId} populated ${populated.length} of ${reads.length} checksum1 values`,
       JSON.stringify(
         reads.map((read) => ({
           id: read.id,
@@ -546,10 +736,76 @@ function assertMergeWriteback({ run, runId, orderId }) {
       )
     );
   }
+  const missingPairedChecksum = reads.filter(
+    (read) =>
+      read.file2 != null &&
+      (typeof read.checksum2 !== "string" || !MD5_RE.test(read.checksum2)),
+  );
+  if (missingPairedChecksum.length > 0) {
+    fail(
+      `Writeback assertion: MERGE-mode run ${runId} left paired reads without checksum2`,
+      JSON.stringify(
+        missingPairedChecksum.map((read) => ({
+          id: read.id,
+          sampleId: read.sampleId,
+          file2: read.file2,
+          checksum2: read.checksum2 ?? null,
+        })),
+        null,
+        2,
+      ),
+    );
+  }
+  const wronglyAttributed = populated.filter(
+    (read) => parsePipelineSources(read.pipelineSources)["fastq-checksum"] !== runId,
+  );
+  if (wronglyAttributed.length > 0) {
+    fail(
+      `Writeback assertion: MERGE-mode checksums were not attributed to run ${runId}`,
+      JSON.stringify(
+        wronglyAttributed.map((read) => ({
+          id: read.id,
+          sampleId: read.sampleId,
+          pipelineSources: read.pipelineSources ?? null,
+        })),
+        null,
+        2,
+      ),
+    );
+  }
   return {
     mode: "merge",
     readsWithFile1: reads.length,
     readsWithChecksum: populated.length,
+  };
+}
+
+async function assertStudyOutputRetrievable({ client, run, runId, pipelineId }) {
+  const artifacts = Array.isArray(run?.artifacts) ? run.artifacts : [];
+  const artifact = artifacts.find((candidate) => candidate?.path);
+  if (!artifact) {
+    fail(
+      `Study-scoped ${pipelineId} run ${runId} persisted no materialized artifact`,
+      JSON.stringify({ artifactCount: artifacts.length }, null, 2),
+    );
+  }
+  const response = await client.request(
+    `/api/pipelines/runs/${runId}/file?path=${encodeURIComponent(artifact.path)}&download=1`,
+  );
+  if (!response.ok) {
+    fail(
+      `Study-scoped ${pipelineId} artifact is not retrievable (${response.status})`,
+      summarizeBody(await response.text()),
+    );
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0) {
+    fail(`Study-scoped ${pipelineId} artifact is empty`, artifact.path);
+  }
+  return {
+    artifactCount: artifacts.length,
+    checkedPath: artifact.path,
+    checkedBytes: bytes.length,
   };
 }
 
@@ -569,7 +825,7 @@ async function main() {
         : args["pipeline-id"] || process.env.SEQDESK_SLURM_E2E_PIPELINE_ID || "simulate-reads";
   const targetType = args.fullMag || args["study-id"] ? "study" : "order";
 
-  for (const command of ["sbatch", "squeue", "sacct"]) {
+  for (const command of ["sbatch", "squeue", "sacct", "scontrol"]) {
     if (!(await commandExists(command))) {
       fail(`Required SLURM command is not available on this host: ${command}`);
     }
@@ -641,6 +897,27 @@ async function main() {
     startPayload,
     timeoutSeconds,
   });
+  const launchIdentity = assertSlurmLaunchIdentity({
+    runId,
+    jobId,
+    run: result.run,
+    startPayload,
+  });
+  const files = await assertSlurmRunFiles({
+    run: result.run,
+    pipelineId,
+  });
+  const accounting = await assertSuccessfulSlurmAccounting({
+    runId,
+    jobId,
+    runFolder: launchIdentity.runFolder,
+  });
+  const slurmCompletion = await assertSlurmCompletionProof({
+    runId,
+    jobId,
+    runFolder: launchIdentity.runFolder,
+    accounting,
+  });
   const logs = await assertSlurmLogs(result.run, jobId);
 
   // DB-writeback assertion for the order-scoped reads pipelines. simulate-reads is
@@ -648,8 +925,16 @@ async function main() {
   // MERGE mode (checksums written in place). Study-scoped runs (full MAG/metax)
   // have no orderId and write no order reads, so skip the assertion there.
   let writeback;
+  let studyOutput;
   if (orderId) {
     writeback = await assertReplaceWriteback({ client, runId, orderId, pipelineId });
+  } else {
+    studyOutput = await assertStudyOutputRetrievable({
+      client,
+      run: result.run,
+      runId,
+      pipelineId,
+    });
   }
 
   return {
@@ -663,8 +948,12 @@ async function main() {
     status: result.run.status,
     queue: result.queue,
     runFolder: result.run.runFolder,
+    files,
+    accounting,
+    slurmCompletion,
     slurmLogs: logs,
     ...(writeback ? { writeback } : {}),
+    ...(studyOutput ? { studyOutput } : {}),
     debugEndpoint: `${baseUrl.replace(/\/$/, "")}/api/pipelines/runs/${runId}/debug`,
   };
 }

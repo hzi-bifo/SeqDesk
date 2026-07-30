@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -87,9 +87,40 @@ function activeRunSummary(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// An earlier run of the same sequencing order that has already been stopped:
+// different id, directory and barcode mapping so it is never confused with the
+// active one above.
+function stoppedRunSummary(overrides: Record<string, unknown> = {}) {
+  return {
+    ...activeRunSummary(),
+    id: "run-0",
+    minknowRunId: "mk-0",
+    outputDir: "/data/run-0",
+    status: "STOPPED",
+    totalBases: "900000",
+    totalReads: 700,
+    barcodeMap: { barcode02: "sample-b" },
+    startedAt: new Date(Date.now() - 7_200_000).toISOString(),
+    lastSeenAt: new Date(Date.now() - 3_600_000).toISOString(),
+    stoppedAt: new Date(Date.now() - 3_600_000).toISOString(),
+    ...overrides,
+  };
+}
+
 describe("SequencingStreamView", () => {
   const fetchMock = vi.fn();
   const onDataChanged = vi.fn();
+
+  // Count of fetches whose URL contains `fragment`. Event URLs are absolute
+  // (built through `new URL(..., window.location.origin)`), so match on a
+  // substring rather than the whole URL.
+  function callsMatching(fragment: string) {
+    return fetchMock.mock.calls.filter(([u]) => String(u).includes(fragment)).length;
+  }
+
+  function callsEqual(url: string) {
+    return fetchMock.mock.calls.filter(([u]) => String(u) === url).length;
+  }
 
   // Default: no active run, daemon not available, no events/barcodes.
   function installFetch(opts: {
@@ -511,5 +542,158 @@ describe("SequencingStreamView", () => {
 
     expect(await screen.findByText("Active")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Stop receiving/i })).toBeNull();
+  });
+
+  it("shows a stopped run's totals, files and audit trail when nothing is live", async () => {
+    installFetch({
+      runs: [stoppedRunSummary()],
+      daemonUnauthorized: true,
+      events: [
+        {
+          id: "evt-9",
+          seq: 12,
+          ts: new Date(Date.now() - 3_600_000).toISOString(),
+          kind: "FILE_INGESTED",
+          payload: {
+            filePath: "/data/run-0/fastq_pass/barcode02/z.fastq.gz",
+            barcode: "barcode02",
+            size: 2048,
+            linkedSampleId: "sample-b",
+          },
+        },
+      ],
+      eventsCursor: 12,
+      barcodes: [
+        {
+          barcode: "barcode02",
+          fileCount: 5,
+          totalSize: 8192,
+          totalReads: 700,
+          totalBases: 900_000,
+          lastFileAt: new Date(Date.now() - 3_600_000).toISOString(),
+          lastFilePath: "/data/run-0/fastq_pass/barcode02/z.fastq.gz",
+        },
+      ],
+    });
+
+    render(
+      <SequencingStreamView orderId="order-1" samples={samples} canManage onDataChanged={onDataChanged} />
+    );
+
+    // The finished run is shown instead of the never-ran empty state.
+    expect(await screen.findByText("Stopped")).toBeTruthy();
+    expect(screen.queryByText(/No active stream for this sequencing order/)).toBeNull();
+    expect(screen.getByText("/data/run-0")).toBeTruthy();
+    // Run total, and once the aggregates land the barcode row repeats it.
+    expect(screen.getAllByText("700").length).toBeGreaterThan(0);
+
+    // Visibly finished: a wall-clock duration and when it ended, not a heartbeat.
+    expect(screen.getByText("Duration")).toBeTruthy();
+    expect(screen.queryByText("Elapsed")).toBeNull();
+    expect(screen.getByText(/Stopped 1h ago on /)).toBeTruthy();
+    expect(screen.queryByText(/Monitor heartbeat/)).toBeNull();
+
+    // Its barcode mapping and final per-barcode totals are readable. The live
+    // "Rate" column is dropped — a stopped run is fetched once, so it has no delta.
+    expect(screen.getAllByText("barcode02").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("SAMPLE_B").length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(screen.getByText("5")).toBeTruthy(); // file count
+    });
+    expect(screen.getByText(/Final totals/)).toBeTruthy();
+    expect(screen.queryByText("Rate")).toBeNull();
+
+    // The ingested files and the event trail are still reachable.
+    fireEvent.click(screen.getByText("Recent files"));
+    await waitFor(() => {
+      expect(screen.getAllByText("/data/run-0/fastq_pass/barcode02/z.fastq.gz").length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getByText("Audit trail"));
+    await waitFor(() => {
+      expect(screen.getAllByText("FILE_INGESTED").length).toBeGreaterThan(0);
+    });
+
+    // Nothing is receiving, so a manager can still start the next stream.
+    expect(screen.getByRole("button", { name: "Start receiving" })).toBeTruthy();
+  });
+
+  it("lands on the live run when an earlier stopped run is also present", async () => {
+    installFetch({ runs: [activeRunSummary(), stoppedRunSummary()], daemonUnauthorized: true });
+    render(
+      <SequencingStreamView orderId="order-1" samples={samples} canManage onDataChanged={onDataChanged} />
+    );
+
+    // The live run is what the reader lands on, not the more numerous history.
+    expect(await screen.findByText("Active")).toBeTruthy();
+    expect(screen.getByText("/data/run-1")).toBeTruthy();
+    expect(screen.queryByText("/data/run-0")).toBeNull();
+
+    // Both runs are offered, with the live one marked as the current selection.
+    const runGroup = screen.getByRole("group", { name: "Stream runs" });
+    expect(within(runGroup).getAllByRole("button")).toHaveLength(2);
+    expect(within(runGroup).getByRole("button", { name: /^Live/ }).getAttribute("aria-pressed")).toBe(
+      "true"
+    );
+    expect(within(runGroup).getByRole("button", { name: /^Stopped/ }).getAttribute("aria-pressed")).toBe(
+      "false"
+    );
+
+    // Only the live run's detail panels are fetched.
+    await waitFor(() => {
+      expect(callsMatching("/api/orders/order-1/stream/run-1/by-barcode")).toBeGreaterThan(0);
+    });
+    expect(callsMatching("/api/orders/order-1/stream/run-0/")).toBe(0);
+  });
+
+  it("stops polling when the reader selects a stopped run", async () => {
+    installFetch({ runs: [activeRunSummary(), stoppedRunSummary()], daemonUnauthorized: true });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    render(
+      <SequencingStreamView orderId="order-1" samples={samples} canManage onDataChanged={onDataChanged} />
+    );
+
+    expect(await screen.findByText("Active")).toBeTruthy();
+
+    const runGroup = screen.getByRole("group", { name: "Stream runs" });
+    fireEvent.click(within(runGroup).getByRole("button", { name: /^Stopped/ }));
+
+    // The stopped run's panels are loaded exactly once…
+    expect(await screen.findByText("/data/run-0")).toBeTruthy();
+    await waitFor(() => {
+      expect(callsMatching("/api/orders/order-1/stream/run-0/by-barcode")).toBe(1);
+      expect(callsMatching("/api/orders/order-1/stream/run-0/events")).toBe(1);
+    });
+
+    const runsListPolls = callsEqual("/api/orders/order-1/stream");
+    const liveRunPolls = callsMatching("/api/orders/order-1/stream/run-1/");
+    await vi.advanceTimersByTimeAsync(12_000);
+
+    // …and never again: its totals, files and events are frozen. The runs list
+    // itself keeps ticking, which is what proves the timers really advanced.
+    expect(callsMatching("/api/orders/order-1/stream/run-0/by-barcode")).toBe(1);
+    expect(callsMatching("/api/orders/order-1/stream/run-0/events")).toBe(1);
+    expect(callsEqual("/api/orders/order-1/stream")).toBeGreaterThan(runsListPolls);
+
+    // The run left behind is not polled behind the reader's back either.
+    expect(callsMatching("/api/orders/order-1/stream/run-1/")).toBe(liveRunPolls);
+  });
+
+  it("keeps the empty state for a sequencing order that has never streamed", async () => {
+    installFetch({ runs: [], daemonUnauthorized: true });
+    render(
+      <SequencingStreamView orderId="order-1" samples={samples} canManage onDataChanged={onDataChanged} />
+    );
+
+    expect(await screen.findByText("Idle")).toBeTruthy();
+    expect(screen.getByText(/No active stream for this sequencing order/)).toBeTruthy();
+    // No run to select and no detail panels to render.
+    expect(screen.queryByRole("group", { name: "Stream runs" })).toBeNull();
+    expect(screen.queryByText("Barcode mapping")).toBeNull();
+    expect(screen.queryByText("By barcode")).toBeNull();
+    expect(screen.queryByText("Recent files")).toBeNull();
+    expect(screen.queryByText("Audit trail")).toBeNull();
+    expect(callsMatching("/by-barcode")).toBe(0);
+    expect(callsMatching("/events")).toBe(0);
   });
 });

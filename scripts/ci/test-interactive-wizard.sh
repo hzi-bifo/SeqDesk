@@ -646,6 +646,10 @@ echo "== Case 12c: the rendered install summary shows a real password and next a
 # Asserting the flag was true is not enough: the shipped v1.1.122 summary printed
 # the credential labels with empty values because it read variables that had
 # already been wiped. These assertions render the actual summary.
+summary_cli="$TEST_TMP_DIR/bin/seqdesk"
+mkdir -p "$(dirname "$summary_cli")"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$summary_cli"
+chmod 755 "$summary_cli"
 summary_out="$(
     (
         SEQDESK_LOG_ENABLED="false"
@@ -662,10 +666,12 @@ summary_out="$(
         SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL="r@lab.org"
         SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="true"
         SEQDESK_GENERATED_RESEARCHER_PASSWORD="BBBBgeneratedResearcherBBBB"
+        SEQDESK_USER_CLI_PATH="$summary_cli"
         # The wipe that runs long before the summary in a real install.
         clear_bootstrap_plaintext_passwords
         print_login_summary
         print_success_footer
+        print_next_steps
     ) 2>&1
 )"
 assert_contains "the admin password is rendered, not blank" \
@@ -678,10 +684,38 @@ assert_contains "the start command is an absolute path" \
     "/opt/seqdesk-test/start.sh" <(printf '%s\n' "$summary_out")
 assert_contains "the URL to open is shown" \
     "http://127.0.0.1:8000" <(printf '%s\n' "$summary_out")
+assert_contains "the success report hands off to next steps" \
+    "What's next" <(printf '%s\n' "$summary_out")
+assert_contains "the next steps show pipeline discovery" \
+    "$summary_cli pipelines list" <(printf '%s\n' "$summary_out")
+assert_contains "the next steps show a working first pipeline install" \
+    "$summary_cli pipelines install simulate-reads --runtime" <(printf '%s\n' "$summary_out")
+assert_contains "the next steps link the detailed pipeline guide" \
+    "https://seqdesk.org/docs/pipelines/installing-pipelines" <(printf '%s\n' "$summary_out")
 
 # Guard the general shape: any "<label> password" line must carry a value.
 empty_secret_lines="$(printf '%s\n' "$summary_out" | grep -cE '^[[:space:]]+[A-Za-z]+ password[[:space:]]*$' || true)"
 assert_eq "no password line is label-only" "0" "$empty_secret_lines"
+
+echo ""
+echo "== Case 12d: next steps do not advertise a missing local pipeline CLI =="
+missing_cli_out="$(
+    (
+        SEQDESK_LOG_ENABLED="false"
+        SEQDESK_DIR="/opt/seqdesk-test"
+        PM2_CONFIGURED="true"
+        SEQDESK_PORT="8000"
+        SEQDESK_BIND_HOST="127.0.0.1"
+        SEQDESK_USER_CLI_PATH=""
+        print_next_steps
+    ) 2>&1
+)"
+assert_contains "a missing local CLI is explained" \
+    "the local SeqDesk CLI is not available" <(printf '%s\n' "$missing_cli_out")
+assert_not_contains "a missing local CLI is not presented as runnable" \
+    "pipelines install simulate-reads" <(printf '%s\n' "$missing_cli_out")
+assert_contains "the guide remains available without a local CLI" \
+    "https://seqdesk.org/docs/pipelines/installing-pipelines" <(printf '%s\n' "$missing_cli_out")
 
 echo ""
 echo "== Case 13: installer failures expose stable troubleshooting URLs =="

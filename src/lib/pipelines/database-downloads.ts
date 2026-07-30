@@ -6,6 +6,17 @@ import pipelineDatabaseDefinitions from '../../../data/pipeline-databases.json';
 const DB_DOWNLOAD_INDEX_FILE = '.pipeline-database-downloads.json';
 const DB_DOWNLOAD_STATUS_FILE = '.pipeline-database-download-status.json';
 const DB_DOWNLOAD_LOG_DIR = '.pipeline-database-download-logs';
+const PIPELINE_STORE_E2E_FIXTURE_ID = 'seqdesk-store-e2e-fixture';
+const PIPELINE_CLI_E2E_FIXTURE_ID = 'seqdesk-cli-e2e-fixture';
+const PIPELINE_E2E_FIXTURE_IDS = new Set([
+  PIPELINE_STORE_E2E_FIXTURE_ID,
+  PIPELINE_CLI_E2E_FIXTURE_ID,
+]);
+const PIPELINE_STORE_E2E_DATABASE_ID = 'fixture-database';
+const PIPELINE_STORE_E2E_DATABASE_FILE_NAME = 'fixture-database.txt';
+const PIPELINE_STORE_E2E_DATABASE_SHA256 =
+  '475198e07d34d6288f9d3e4c332a63e77fa1b701bc034a8698a932f0a027060f';
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 
 export interface PipelineDatabaseDefinition {
   id: string;
@@ -168,6 +179,54 @@ export async function getPathSize(targetPath?: string): Promise<number | undefin
   }
 }
 
+function getPipelineStoreE2EDatabaseDefinitions(
+  pipelineId: string
+): PipelineDatabaseDefinition[] {
+  if (!PIPELINE_E2E_FIXTURE_IDS.has(pipelineId)) return [];
+
+  try {
+    const explicitFixtureUrl =
+      process.env.SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL?.trim();
+    const registryUrl = process.env.SEQDESK_PIPELINE_REGISTRY_URL?.trim();
+    if (!explicitFixtureUrl && !registryUrl) return [];
+
+    const fixtureUrl = new URL(explicitFixtureUrl || registryUrl!);
+    const expectedPath = explicitFixtureUrl ? '/' : '/registry';
+    if (
+      fixtureUrl.protocol !== 'http:' ||
+      !LOOPBACK_HOSTS.has(fixtureUrl.hostname) ||
+      !fixtureUrl.port ||
+      fixtureUrl.pathname !== expectedPath ||
+      fixtureUrl.username ||
+      fixtureUrl.password ||
+      fixtureUrl.search ||
+      fixtureUrl.hash
+    ) {
+      return [];
+    }
+    fixtureUrl.pathname = '/';
+
+    return [
+      {
+        id: PIPELINE_STORE_E2E_DATABASE_ID,
+        label: 'Fixture database',
+        description:
+          'Hermetic tiny database used only by the real Pipeline Store browser acceptance gate.',
+        version: '1',
+        fileName: PIPELINE_STORE_E2E_DATABASE_FILE_NAME,
+        downloadUrl: new URL(
+          `/resources/${PIPELINE_STORE_E2E_DATABASE_FILE_NAME}`,
+          fixtureUrl
+        ).toString(),
+        configKey: 'fixtureDatabase',
+        sha256: PIPELINE_STORE_E2E_DATABASE_SHA256,
+      },
+    ];
+  } catch {
+    return [];
+  }
+}
+
 function normalizeConfiguredPath(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -211,7 +270,10 @@ function getExpectedSizeForCandidate(
 }
 
 export function getPipelineDatabaseDefinitions(pipelineId: string): PipelineDatabaseDefinition[] {
-  return PIPELINE_DATABASES[pipelineId] || [];
+  return [
+    ...(PIPELINE_DATABASES[pipelineId] || []),
+    ...getPipelineStoreE2EDatabaseDefinitions(pipelineId),
+  ];
 }
 
 export function getPipelineDatabaseDefinition(
@@ -391,8 +453,28 @@ export async function getPipelineDatabaseStatuses(
       let detectedSizeBytes: number | undefined;
       let partialDetail: string | undefined;
       for (const candidate of candidates) {
+        if (
+          job?.targetPath === candidate &&
+          job.state !== 'success'
+        ) {
+          partialDetail =
+            job.state === 'running'
+              ? job.cancelled
+                ? 'Database download cancellation is still being finalized.'
+                : 'Database download is still in progress.'
+              : job.error
+                ? `Database download failed: ${job.error}`
+                : 'Database download failed. Re-run the download.';
+          continue;
+        }
+
         const sizeBytes = await getPathSize(candidate);
         if (typeof sizeBytes !== 'number') continue;
+        if (sizeBytes <= 0) {
+          partialDetail =
+            'Database file is empty. Re-run the download or link a valid existing file.';
+          continue;
+        }
 
         const expectedSize = getExpectedSizeForCandidate(candidate, record, job);
         if (typeof expectedSize === 'number' && sizeBytes < expectedSize) {

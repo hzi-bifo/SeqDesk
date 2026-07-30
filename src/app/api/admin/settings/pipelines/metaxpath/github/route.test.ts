@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
     stat: vi.fn(),
   },
   classifyCloneFailure: vi.fn(),
+  installGitHubPipelineSnapshot: vi.fn(),
   validateMetaxPathDescriptorDir: vi.fn(),
   clearPackageCache: vi.fn(),
   clearRegistryCache: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock("@/lib/pipelines/registry", () => ({
 vi.mock("@/lib/pipelines/metaxpath-import", () => ({
   classifyCloneFailure: mocks.classifyCloneFailure,
   DEFAULT_METAXPATH_REF: "main",
+  installGitHubPipelineSnapshot: mocks.installGitHubPipelineSnapshot,
   isValidGitRef: (ref: string) => {
     const trimmed = ref.trim();
     if (!trimmed || trimmed.startsWith("-") || trimmed.includes("..")) return false;
@@ -115,6 +117,10 @@ describe("POST /api/admin/settings/pipelines/metaxpath/github", () => {
     mocks.fsPromises.copyFile.mockResolvedValue(undefined);
     mocks.fsPromises.rename.mockResolvedValue(undefined);
     mocks.fsPromises.stat.mockResolvedValue({ isDirectory: () => true });
+    mocks.installGitHubPipelineSnapshot.mockResolvedValue({
+      action: "install",
+      syncedAt: "2026-07-29T12:00:00.000Z",
+    });
   });
 
   it("returns 403 when not authenticated", async () => {
@@ -234,8 +240,9 @@ describe("POST /api/admin/settings/pipelines/metaxpath/github", () => {
     mocks.validateMetaxPathDescriptorDir.mockResolvedValue({ valid: true, errors: [] });
     // git rev-parse HEAD
     mocks.execFileAsync.mockResolvedValueOnce({ stdout: "abc123\n", stderr: "" });
-    // readdir throws error
-    mocks.fsPromises.readdir.mockRejectedValue(new Error("EPERM: permission denied"));
+    mocks.installGitHubPipelineSnapshot.mockRejectedValueOnce(
+      new Error("EPERM: permission denied")
+    );
 
     const request = new NextRequest("http://localhost:3000/api/admin/settings/pipelines/metaxpath/github", {
       method: "POST",
@@ -247,6 +254,60 @@ describe("POST /api/admin/settings/pipelines/metaxpath/github", () => {
     expect(response.status).toBe(500);
     const json = await response.json();
     expect(json.error).toContain("Failed to import MetaxPath");
+  });
+
+  it("does not activate package files when configuration setup fails", async () => {
+    mocks.execFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
+    mocks.validateMetaxPathDescriptorDir.mockResolvedValue({
+      valid: true,
+      errors: [],
+    });
+    mocks.execFileAsync.mockResolvedValueOnce({
+      stdout: "abc123\n",
+      stderr: "",
+    });
+    mocks.db.pipelineConfig.upsert.mockRejectedValueOnce(
+      new Error("database unavailable")
+    );
+
+    const request = new NextRequest(
+      "http://localhost:3000/api/admin/settings/pipelines/metaxpath/github",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: "ghp_test123", ref: "main" }),
+      }
+    );
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(500);
+    expect(mocks.installGitHubPipelineSnapshot).not.toHaveBeenCalled();
+    expect(mocks.clearPackageCache).not.toHaveBeenCalled();
+  });
+
+  it("returns 422 when staged package validation fails", async () => {
+    mocks.execFileAsync.mockResolvedValueOnce({ stdout: "", stderr: "" });
+    mocks.validateMetaxPathDescriptorDir.mockResolvedValue({ valid: true, errors: [] });
+    mocks.execFileAsync.mockResolvedValueOnce({ stdout: "abc123\n", stderr: "" });
+    mocks.installGitHubPipelineSnapshot.mockRejectedValueOnce(
+      new Error("Invalid pipeline package: local workflow missing")
+    );
+
+    const request = new NextRequest(
+      "http://localhost:3000/api/admin/settings/pipelines/metaxpath/github",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: "ghp_test123", ref: "main" }),
+      }
+    );
+
+    const response = await POST(request);
+    expect(response.status).toBe(422);
+    const json = await response.json();
+    expect(json.error).toContain("validation failed");
+    expect(json.details).toContain("local workflow missing");
   });
 
   it("uses default ref when ref is not provided", async () => {
@@ -322,10 +383,6 @@ describe("POST /api/admin/settings/pipelines/metaxpath/github", () => {
     mocks.validateMetaxPathDescriptorDir.mockResolvedValue({ valid: true, errors: [] });
     // git rev-parse HEAD
     mocks.execFileAsync.mockResolvedValueOnce({ stdout: "abc123def456\n", stderr: "" });
-    // readdir for workflow copy
-    mocks.fsPromises.readdir.mockResolvedValue([
-      { name: "main.nf", isFile: () => true, isDirectory: () => false },
-    ]);
     // db upsert
     mocks.db.pipelineConfig.upsert.mockResolvedValue({});
 
@@ -342,5 +399,15 @@ describe("POST /api/admin/settings/pipelines/metaxpath/github", () => {
     expect(json.pipelineId).toBe("metaxpath");
     expect(json.ref).toBe("v1.0.0");
     expect(json.commit).toBe("abc123def456");
+    expect(mocks.installGitHubPipelineSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pipelineId: "metaxpath",
+        repo: "org/metaxpath",
+        ref: "v1.0.0",
+        commit: "abc123def456",
+        descriptorPath: ".seqdesk",
+        includeWorkflow: true,
+      })
+    );
   });
 });

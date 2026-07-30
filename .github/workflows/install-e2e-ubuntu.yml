@@ -135,7 +135,10 @@ jobs:
       )
     needs: build-public-release-artifact
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The real core -> managed-runtime leg below downloads a fresh Miniconda
+    # base and solves the complete Nextflow environment. Keep it bounded, but
+    # leave enough room for a cold conda-forge/bioconda solve.
+    timeout-minutes: 60
     env:
       NEXT_TELEMETRY_DISABLED: 1
     steps:
@@ -170,6 +173,13 @@ jobs:
           echo "MOCK_RELEASE_ROOT=$RUNNER_TEMP/public-release-server" >> "$GITHUB_ENV"
           echo "MOCK_RELEASE_PORT=8791" >> "$GITHUB_ENV"
           echo "MOCK_SERVER_LOG=$RUNNER_TEMP/public-release-server.log" >> "$GITHUB_ENV"
+          echo "PUBLIC_CLI_BIN_DIR=$RUNNER_TEMP/seqdesk-public-cli-bin" >> "$GITHUB_ENV"
+          echo "PUBLIC_CLI_CONFIG_HOME=$RUNNER_TEMP/seqdesk-public-cli-config" >> "$GITHUB_ENV"
+          echo "PUBLIC_CLI_NEUTRAL_CWD=$RUNNER_TEMP/seqdesk-public-cli-neutral" >> "$GITHUB_ENV"
+          echo "PUBLIC_CLI_CONDA_PREFIX=$RUNNER_TEMP/seqdesk-public-cli-miniconda" >> "$GITHUB_ENV"
+          echo "PUBLIC_CLI_INSTALL_JSON=$RUNNER_TEMP/public-pipeline-cli-install.json" >> "$GITHUB_ENV"
+          echo "PUBLIC_CLI_STATUS_JSON=$RUNNER_TEMP/public-pipeline-cli-status.json" >> "$GITHUB_ENV"
+          echo "PUBLIC_CLI_RUNTIME_LOG=$RUNNER_TEMP/public-pipeline-cli-runtime.log" >> "$GITHUB_ENV"
 
       - name: Download public release tarball
         uses: actions/download-artifact@v4
@@ -233,7 +243,10 @@ jobs:
             fi
             sleep 1
           done
-          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$INSTALL_LOG" \
+          XDG_CONFIG_HOME="$PUBLIC_CLI_CONFIG_HOME" \
+            SEQDESK_CLI_BIN_DIR="$PUBLIC_CLI_BIN_DIR" \
+            SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" \
+            SEQDESK_LOG="$INSTALL_LOG" \
             bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
             -y --without-pipelines --no-pm2 --dir "$INSTALL_DIR" --config "$INFRA_CONFIG"
 
@@ -271,7 +284,10 @@ jobs:
             fi
             sleep 1
           done
-          SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" SEQDESK_LOG="$INSTALL_LOG" \
+          XDG_CONFIG_HOME="$PUBLIC_CLI_CONFIG_HOME" \
+            SEQDESK_CLI_BIN_DIR="$PUBLIC_CLI_BIN_DIR" \
+            SEQDESK_API="http://127.0.0.1:${MOCK_RELEASE_PORT}/api" \
+            SEQDESK_LOG="$INSTALL_LOG" \
             bash "$GITHUB_WORKSPACE/scripts/install-dist.sh" \
             -y --reconfigure --without-pipelines --no-pm2 --dir "$INSTALL_DIR" --config "$RECONFIG_CONFIG"
 
@@ -283,6 +299,114 @@ jobs:
           node "$GITHUB_WORKSPACE/scripts/assert-installed-config.mjs" \
             --file "$CFG" \
             --expected-port "$RECONFIG_PORT"
+
+      - name: Bootstrap pipeline runtime through the installed user CLI
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+
+          # This directory is outside both the checkout and installation. The
+          # command therefore has to use the installer-written wrapper and
+          # default-install pointer; an implicit source-tree cwd cannot help it.
+          mkdir -p "$PUBLIC_CLI_NEUTRAL_CWD"
+          cd "$PUBLIC_CLI_NEUTRAL_CWD"
+
+          test -x "$PUBLIC_CLI_BIN_DIR/seqdesk"
+          test -f "$PUBLIC_CLI_CONFIG_HOME/seqdesk/default-install"
+          test "$(sed -n '1p' "$PUBLIC_CLI_CONFIG_HOME/seqdesk/default-install")" = "$INSTALL_DIR"
+          CFG="$INSTALL_DIR/settings.json"; [ -f "$CFG" ] || CFG="$INSTALL_DIR/seqdesk.config.json"
+          node -e '
+            const fs = require("fs");
+            const config = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (config?.pipelines?.enabled !== false) {
+              throw new Error("the CLI bootstrap must start from a core-only install");
+            }
+          ' "$CFG"
+
+          # An explicit, absent prefix forces --runtime through the managed
+          # Miniconda download path even if ubuntu-latest gains Conda later.
+          test ! -e "$PUBLIC_CLI_CONDA_PREFIX"
+          export XDG_CONFIG_HOME="$PUBLIC_CLI_CONFIG_HOME"
+          export SEQDESK_CONDA_PATH="$PUBLIC_CLI_CONDA_PREFIX"
+
+          if ! "$PUBLIC_CLI_BIN_DIR/seqdesk" pipelines install simulate-reads \
+            --runtime --yes --json \
+            >"$PUBLIC_CLI_INSTALL_JSON" 2>"$PUBLIC_CLI_RUNTIME_LOG"; then
+            cat "$PUBLIC_CLI_RUNTIME_LOG" >&2
+            test ! -s "$PUBLIC_CLI_INSTALL_JSON" || cat "$PUBLIC_CLI_INSTALL_JSON" >&2
+            exit 1
+          fi
+          cat "$PUBLIC_CLI_RUNTIME_LOG"
+
+          if ! "$PUBLIC_CLI_BIN_DIR/seqdesk" pipelines status simulate-reads --json \
+            >"$PUBLIC_CLI_STATUS_JSON" 2>>"$PUBLIC_CLI_RUNTIME_LOG"; then
+            cat "$PUBLIC_CLI_RUNTIME_LOG" >&2
+            test ! -s "$PUBLIC_CLI_STATUS_JSON" || cat "$PUBLIC_CLI_STATUS_JSON" >&2
+            exit 1
+          fi
+
+          test -x "$PUBLIC_CLI_CONDA_PREFIX/bin/conda"
+          node - "$PUBLIC_CLI_INSTALL_JSON" "$PUBLIC_CLI_STATUS_JSON" \
+            "$INSTALL_DIR" "$PUBLIC_CLI_CONDA_PREFIX" <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const [installJson, statusJson, installDir, condaPrefix] =
+            process.argv.slice(2);
+          const installResult = JSON.parse(fs.readFileSync(installJson, "utf8"));
+          const statusResult = JSON.parse(fs.readFileSync(statusJson, "utf8"));
+
+          function assertReadyEnabled(result, source) {
+            const pipeline = result?.pipeline;
+            if (result?.success !== true) {
+              throw new Error(`${source}: command did not report success`);
+            }
+            if (pipeline?.pipelineId !== "simulate-reads" || pipeline?.installed !== true) {
+              throw new Error(`${source}: simulate-reads is not installed`);
+            }
+            if (
+              pipeline?.setupState !== "ready" ||
+              pipeline?.activationState !== "enabled" ||
+              pipeline?.enabled !== true ||
+              pipeline?.readiness?.status !== "ready" ||
+              pipeline?.readiness?.canEnable !== true
+            ) {
+              throw new Error(`${source}: pipeline is not ready and enabled`);
+            }
+
+            const runtime = new Map(
+              (pipeline.readiness.items || [])
+                .filter((item) => String(item?.id || "").startsWith("runtime-"))
+                .map((item) => [item.id, item.status])
+            );
+            for (const id of ["runtime-nextflow", "runtime-java", "runtime-conda"]) {
+              if (runtime.get(id) !== "ready") {
+                throw new Error(`${source}: ${id} did not pass readiness`);
+              }
+            }
+          }
+
+          assertReadyEnabled(installResult, "install");
+          assertReadyEnabled(statusResult, "status");
+
+          const configCandidates = ["settings.json", "seqdesk.config.json"];
+          const configPath = configCandidates
+            .map((name) => path.join(installDir, name))
+            .find((candidate) => fs.existsSync(candidate));
+          if (!configPath) throw new Error("installed runtime config is missing");
+          const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+          if (config?.pipelines?.execution?.conda?.path !== condaPrefix) {
+            throw new Error("managed Conda prefix was not persisted");
+          }
+          if (config?.pipelines?.execution?.conda?.environment !== "seqdesk-pipelines") {
+            throw new Error("managed Conda environment was not persisted");
+          }
+          if (config?.pipelines?.enabled !== true) {
+            throw new Error("pipeline support was not enabled");
+          }
+          NODE
+
+          CFG="$INSTALL_DIR/settings.json"; [ -f "$CFG" ] || CFG="$INSTALL_DIR/seqdesk.config.json"
+          cp "$CFG" "$CONFIG_SNAPSHOT"
 
       - name: Verify public app startup and auth flows
         run: |
@@ -343,6 +467,9 @@ jobs:
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.MOCK_SERVER_LOG }}
+            ${{ env.PUBLIC_CLI_INSTALL_JSON }}
+            ${{ env.PUBLIC_CLI_STATUS_JSON }}
+            ${{ env.PUBLIC_CLI_RUNTIME_LOG }}
           if-no-files-found: warn
           retention-days: 5
 
@@ -385,6 +512,8 @@ jobs:
           echo "PROVIDERS_JSON=$RUNNER_TEMP/source-providers.json" >> "$GITHUB_ENV"
           echo "CONFIG_SNAPSHOT=$RUNNER_TEMP/source-seqdesk.config.json" >> "$GITHUB_ENV"
           echo "STORE_E2E_JSON=$RUNNER_TEMP/source-store-e2e.json" >> "$GITHUB_ENV"
+          echo "STORE_E2E_LOG=$RUNNER_TEMP/source-store-e2e.log" >> "$GITHUB_ENV"
+          echo "STORE_E2E_FIXTURE_PORT=$((PORT + 1))" >> "$GITHUB_ENV"
 
       - name: Create infrastructure JSON
         run: |
@@ -428,11 +557,16 @@ jobs:
             --file "$CFG" \
             --expected-port "$PORT"
 
-      - name: Verify source app startup, auth flows, and pipeline store
+      - name: Verify source app auth and blocked-readiness Store rollback
         run: |
           set -euo pipefail
           cd "$INSTALL_DIR"
 
+          # This install intentionally omits the pipeline runtime. Point Store
+          # traffic at a deterministic local fixture and require the app to
+          # reject activation while still preserving v1 after a broken update.
+          export SEQDESK_PIPELINES_DIR="$INSTALL_DIR/pipelines"
+          export SEQDESK_PIPELINE_REGISTRY_URL="http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}/registry"
           ./start.sh "$PORT" >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
 
@@ -477,8 +611,11 @@ jobs:
             --check-path "/api/admin/users"
           node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-e2e.mjs" \
             --base-url "http://127.0.0.1:${PORT}" \
-            --pipeline-ids "mag,submg" \
-            --result-file "$STORE_E2E_JSON"
+            --fixture-url "http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}" \
+            --expect-readiness blocked \
+            --expected-execution-mode local \
+            --result-file "$STORE_E2E_JSON" \
+            2>&1 | tee "$STORE_E2E_LOG"
 
       - name: Upload install e2e artifacts (source installer)
         if: always()
@@ -491,6 +628,7 @@ jobs:
             ${{ env.CONFIG_SNAPSHOT }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.STORE_E2E_JSON }}
+            ${{ env.STORE_E2E_LOG }}
           if-no-files-found: warn
           retention-days: 5
 

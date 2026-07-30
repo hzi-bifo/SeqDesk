@@ -18,6 +18,7 @@ import {
 } from '@/lib/pipelines/run-completion';
 import { findTraceFile, parseTraceFile } from '@/lib/pipelines/nextflow';
 import { getPipelineRunTargetKey } from '@/lib/pipelines/result-files';
+import { resolveCondaEnvironmentReference } from '@/lib/pipelines/conda-environment';
 import {
   isActiveQueueState,
   isCancelledQueueState,
@@ -605,6 +606,8 @@ export async function getPipelineRunDetailsForOperator(runId: string): Promise<P
                   readCount2: true,
                   avgQuality1: true,
                   avgQuality2: true,
+                  fastqcReport1: true,
+                  fastqcReport2: true,
                   dataClass: true,
                   isActive: true,
                   pipelineRunId: true,
@@ -638,6 +641,8 @@ export async function getPipelineRunDetailsForOperator(runId: string): Promise<P
                   readCount2: true,
                   avgQuality1: true,
                   avgQuality2: true,
+                  fastqcReport1: true,
+                  fastqcReport2: true,
                   dataClass: true,
                   isActive: true,
                   pipelineRunId: true,
@@ -1630,6 +1635,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   // manual cancellation while trace parsing or output resolution is in flight.
   const requiresLifecycleGuard = !runWasTerminal;
   let updateApplied = true;
+  let persistedStatus = completionPersisted ? 'completed' : nextStatus;
   if (completionPersisted) {
     // The centralized output gate already committed this terminal state.
     updateApplied = true;
@@ -1637,6 +1643,11 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     // A cancellation or another finalizer owns the row; all updateData below
     // was derived from the earlier snapshot and must be discarded.
     updateApplied = false;
+    const current = await db.pipelineRun.findUnique({
+      where: { id: runId },
+      select: { status: true },
+    });
+    persistedStatus = current?.status || run.status;
   } else if (requiresLifecycleGuard) {
     const { count } = await db.pipelineRun.updateMany({
       where: {
@@ -1650,6 +1661,13 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
       data: updateData,
     });
     updateApplied = count > 0;
+    if (!updateApplied) {
+      const current = await db.pipelineRun.findUnique({
+        where: { id: runId },
+        select: { status: true },
+      });
+      persistedStatus = current?.status || run.status;
+    }
   } else {
     await db.pipelineRun.update({
       where: { id: runId },
@@ -1675,6 +1693,8 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   return jsonResponse({
     success: true,
     synced: true,
+    status: persistedStatus,
+    updateApplied,
     progress: traceResult.overallProgress,
     processes: traceResult.processes.size,
     tasks: traceResult.tasks.length,
@@ -2129,13 +2149,15 @@ function buildCollectionCommand(input: {
   condaPath: string;
   condaEnv: string;
 }): string {
+  const condaEnvironment = resolveCondaEnvironmentReference(input.condaEnv);
   const scriptLines = [
     'set -o pipefail',
     `RUN_ID=${shellQuote(input.runId)}`,
     `RUN_FOLDER=${shellQuote(input.runFolder || '')}`,
     `QUEUE_JOB_ID=${shellQuote(input.queueJobId || '')}`,
     `CONDA_BASE=${shellQuote(input.condaPath || '')}`,
-    `CONDA_ENV=${shellQuote(input.condaEnv || 'seqdesk-pipelines')}`,
+    `CONDA_ENV=${shellQuote(condaEnvironment.value)}`,
+    `CONDA_ENV_SELECTOR=${shellQuote(condaEnvironment.selector)}`,
     'OUT="$HOME/seqdesk-sessioninfo-${RUN_ID}-$(date +%Y%m%d-%H%M%S).txt"',
     '{',
     'echo "=== SeqDesk Session Info ==="',
@@ -2168,8 +2190,8 @@ function buildCollectionCommand(input: {
     '  conda --version || true',
     '  conda env list || true',
     '  if [ -n "$CONDA_ENV" ]; then',
-    '    conda run -n "$CONDA_ENV" nextflow -version || true',
-    '    conda run -n "$CONDA_ENV" java -version || true',
+    '    conda run "$CONDA_ENV_SELECTOR" "$CONDA_ENV" nextflow -version || true',
+    '    conda run "$CONDA_ENV_SELECTOR" "$CONDA_ENV" java -version || true',
     '  fi',
     'fi',
     'if [ -n "$QUEUE_JOB_ID" ]; then',
@@ -2337,18 +2359,21 @@ export async function getPipelineDebugBundleForOperator(
     runShell('if command -v sacct >/dev/null 2>&1; then sacct --version; else echo sacct missing; fi'),
   ]);
 
+  const condaEnvironment = resolveCondaEnvironmentReference(
+    executionSettings.condaEnv
+  );
   const condaChecks = await Promise.all([
     runShell('if command -v conda >/dev/null 2>&1; then conda --version; else echo conda missing; fi', 12_000),
     runShell('if command -v conda >/dev/null 2>&1; then conda env list; else echo conda missing; fi', 20_000),
     runShell(
-      `if command -v conda >/dev/null 2>&1; then conda run -n ${shellQuote(
-        executionSettings.condaEnv || 'seqdesk-pipelines'
+      `if command -v conda >/dev/null 2>&1; then conda run ${condaEnvironment.selector} ${shellQuote(
+        condaEnvironment.value
       )} nextflow -version; else echo conda missing; fi`,
       20_000
     ),
     runShell(
-      `if command -v conda >/dev/null 2>&1; then conda run -n ${shellQuote(
-        executionSettings.condaEnv || 'seqdesk-pipelines'
+      `if command -v conda >/dev/null 2>&1; then conda run ${condaEnvironment.selector} ${shellQuote(
+        condaEnvironment.value
       )} java -version; else echo conda missing; fi`,
       20_000
     ),

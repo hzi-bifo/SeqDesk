@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
@@ -53,8 +54,19 @@ import {
 } from "lucide-react";
 import { PipelineDagViewer, DagNode, DagEdge, PipelineInfo } from "@/components/pipelines/PipelineDagViewer";
 import { PipelineIntegrationDetails } from "@/components/pipelines/PipelineIntegrationDetails";
+import {
+  fetchJson,
+  getApiErrorMessage,
+  getGuidedSetupCatalog,
+  getNextGuidedSetupItem,
+  getPostInstallCatalogView,
+  getPrivatePackageUrl,
+  isNumericPipelineConfigType,
+  parsePipelineConfigInputValue,
+  type GuidedSetupReadinessItem,
+  type PipelineReadinessAction,
+} from "./client-utils";
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
 const DEFAULT_GITHUB_REF = "main";
 
 interface PipelineInput {
@@ -130,6 +142,7 @@ interface PipelineConfig {
   download?: PipelineDownloadInfo;
   databaseDownloads?: PipelineDatabaseDownloadInfo[];
   configSchema: {
+    required?: string[];
     properties: Record<string, {
       type: string;
       title: string;
@@ -146,15 +159,10 @@ interface PipelineReadiness {
   status: "ready" | "warning" | "missing";
   summary: string;
   items: PipelineReadinessItem[];
+  canEnable?: boolean;
 }
 
-interface PipelineReadinessItem {
-  id: string;
-  label: string;
-  status: "ready" | "warning" | "missing";
-  detail?: string;
-  action?: "install" | "sync" | "download-db" | "configure" | "enable" | "review-outputs";
-}
+type PipelineReadinessItem = GuidedSetupReadinessItem;
 
 interface PipelineDatabaseDownloadInfo {
   id: string;
@@ -244,6 +252,21 @@ interface StoreCategory {
   description?: string;
 }
 
+interface PipelineSettingsResponse {
+  pipelines?: PipelineConfig[];
+}
+
+interface PipelineStoreResponse {
+  pipelines?: StorePipeline[];
+  categories?: StoreCategory[];
+  registryErrors?: Array<{
+    sourceId: string;
+    label: string;
+    registryUrl: string;
+    error: string;
+  }>;
+}
+
 interface PrivateInstallTarget {
   pipelineId: string;
   name: string;
@@ -251,6 +274,7 @@ interface PrivateInstallTarget {
   source: StorePipeline["source"];
   packageUrlDefault?: string;
   keyLabel?: string;
+  catalogs?: string[];
 }
 
 interface GitHubInstallTarget {
@@ -258,6 +282,7 @@ interface GitHubInstallTarget {
   name: string;
   source: StorePipeline["source"];
   version?: string;
+  catalogs?: string[];
 }
 
 interface SmokeArtifactInspection {
@@ -298,6 +323,37 @@ interface DescriptorLintResult {
 }
 
 type CatalogView = "installed" | "available" | "needs-setup";
+
+interface GuidedSetupTarget {
+  pipelineId: string;
+  catalogs?: string[];
+}
+
+const GUIDED_SETUP_STORAGE_KEY = "seqdesk.pipeline-guided-setup";
+
+function getGuidedSetupStage(action?: PipelineReadinessAction): {
+  label: string;
+  position: number;
+} {
+  switch (action) {
+    case "configure":
+      return { label: "Configure pipeline", position: 1 };
+    case "configure-storage":
+    case "download-db":
+      return { label: "Prepare data and databases", position: 2 };
+    case "configure-runtime":
+      return { label: "Verify runtime", position: 3 };
+    case "enable":
+      return { label: "Enable pipeline", position: 4 };
+    case "install":
+    case "sync":
+      return { label: "Repair package", position: 1 };
+    case "review-outputs":
+      return { label: "Review optional output mapping", position: 4 };
+    default:
+      return { label: "Review setup", position: 1 };
+  }
+}
 
 function getPipelineIcon(icon: string) {
   switch (icon) {
@@ -474,6 +530,10 @@ function getReadinessActionLabel(action?: PipelineReadinessItem["action"]) {
       return "Install DB";
     case "configure":
       return "Configure";
+    case "configure-storage":
+      return "Configure storage";
+    case "configure-runtime":
+      return "Configure runtime";
     case "enable":
       return "Enable";
     case "review-outputs":
@@ -484,9 +544,10 @@ function getReadinessActionLabel(action?: PipelineReadinessItem["action"]) {
 }
 
 export default function PipelineSettingsPage() {
-  const { data, error, isLoading, mutate } = useSWR(
+  const router = useRouter();
+  const { data, error, isLoading, mutate } = useSWR<PipelineSettingsResponse>(
     "/api/admin/settings/pipelines",
-    fetcher,
+    fetchJson,
     {
       refreshInterval: (latestData) =>
         latestData?.pipelines?.some((pipeline: PipelineConfig) =>
@@ -503,11 +564,14 @@ export default function PipelineSettingsPage() {
     error: storeError,
     isLoading: storeLoading,
     mutate: mutateStore,
-  } = useSWR("/api/admin/settings/pipelines/store", fetcher);
+  } = useSWR<PipelineStoreResponse>(
+    "/api/admin/settings/pipelines/store",
+    fetchJson
+  );
 
   const { data: sequencingTechData } = useSWR<SequencingTechResponse>(
     "/api/sequencing-tech",
-    fetcher
+    fetchJson
   );
 
   const [activeTab, setActiveTab] = useState("order");
@@ -587,6 +651,10 @@ export default function PipelineSettingsPage() {
   const [advancedToolsOpen, setAdvancedToolsOpen] = useState(false);
   const [showPipelineDetails, setShowPipelineDetails] = useState(false);
   const [catalogView, setCatalogView] = useState<CatalogView>("installed");
+  const [guidedSetupTarget, setGuidedSetupTarget] =
+    useState<GuidedSetupTarget | null>(null);
+  const guidedSetupPositionedPipeline = useRef<string | null>(null);
+  const guidedSetupFocusedPipeline = useRef<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -610,6 +678,143 @@ export default function PipelineSettingsPage() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      const storedTarget = window.sessionStorage.getItem(GUIDED_SETUP_STORAGE_KEY);
+      if (!storedTarget) return;
+      const parsed = JSON.parse(storedTarget) as Partial<GuidedSetupTarget>;
+      if (typeof parsed.pipelineId !== "string" || !parsed.pipelineId.trim()) {
+        window.sessionStorage.removeItem(GUIDED_SETUP_STORAGE_KEY);
+        return;
+      }
+      setGuidedSetupTarget({
+        pipelineId: parsed.pipelineId,
+        catalogs: Array.isArray(parsed.catalogs)
+          ? parsed.catalogs.filter(
+              (catalog): catalog is string => typeof catalog === "string"
+            )
+          : undefined,
+      });
+    } catch {
+      // Storage may be unavailable (for example in privacy-restricted browsers).
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!guidedSetupTarget) return;
+    const installedPipeline = data?.pipelines?.find(
+      (pipeline) => pipeline.pipelineId === guidedSetupTarget.pipelineId
+    );
+    if (!installedPipeline) return;
+    const targetView = getPostInstallCatalogView(installedPipeline);
+
+    if (
+      guidedSetupPositionedPipeline.current !== guidedSetupTarget.pipelineId
+    ) {
+      const targetCatalog = getGuidedSetupCatalog(
+        installedPipeline.catalogs || guidedSetupTarget.catalogs,
+        activeTab === "study" ? "study" : "order"
+      );
+      guidedSetupPositionedPipeline.current = guidedSetupTarget.pipelineId;
+      setActiveTab(targetCatalog);
+      setSelectedCategory("all");
+      setCatalogView(targetView);
+      setShowPipelineDetails(true);
+    } else if (targetView === "installed") {
+      // Once the final enable step succeeds, leave the now-empty Needs setup
+      // view so the guided card remains visible with its completion state.
+      // Do not resurrect an already completed guide on the next page visit.
+      setCatalogView("installed");
+      try {
+        window.sessionStorage.removeItem(GUIDED_SETUP_STORAGE_KEY);
+      } catch {
+        // Best effort only.
+      }
+    }
+
+    if (guidedSetupFocusedPipeline.current === guidedSetupTarget.pipelineId) {
+      return;
+    }
+
+    const focusTimer = window.setTimeout(() => {
+      const card = document.getElementById(
+        `pipeline-card-${guidedSetupTarget.pipelineId}`
+      );
+      if (!card) return;
+      guidedSetupFocusedPipeline.current = guidedSetupTarget.pipelineId;
+      card.focus({ preventScroll: true });
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
+
+    return () => window.clearTimeout(focusTimer);
+  }, [activeTab, data?.pipelines, guidedSetupTarget]);
+
+  const beginGuidedSetup = (
+    pipelineId: string,
+    catalogs?: string[],
+    refreshedData?: PipelineSettingsResponse
+  ) => {
+    const installedPipeline = refreshedData?.pipelines?.find(
+      (pipeline) => pipeline.pipelineId === pipelineId
+    );
+    const target: GuidedSetupTarget = {
+      pipelineId,
+      catalogs: installedPipeline?.catalogs || catalogs,
+    };
+
+    setGuidedSetupTarget(target);
+    guidedSetupPositionedPipeline.current = installedPipeline
+      ? pipelineId
+      : null;
+    guidedSetupFocusedPipeline.current = null;
+    setSelectedCategory("all");
+    setShowPipelineDetails(true);
+    setActiveTab(
+      getGuidedSetupCatalog(
+        target.catalogs,
+        activeTab === "study" ? "study" : "order"
+      )
+    );
+    setCatalogView(
+      installedPipeline
+        ? getPostInstallCatalogView(installedPipeline)
+        : "needs-setup"
+    );
+
+    try {
+      window.sessionStorage.setItem(
+        GUIDED_SETUP_STORAGE_KEY,
+        JSON.stringify(target)
+      );
+    } catch {
+      // The setup guide still works for this page load when storage is unavailable.
+    }
+  };
+
+  const dismissGuidedSetup = () => {
+    setGuidedSetupTarget(null);
+    guidedSetupPositionedPipeline.current = null;
+    guidedSetupFocusedPipeline.current = null;
+    try {
+      window.sessionStorage.removeItem(GUIDED_SETUP_STORAGE_KEY);
+    } catch {
+      // Best effort only.
+    }
+  };
+
+  const refreshPipelineDataAfterChange = async () => {
+    try {
+      const [refreshedData] = await Promise.all([mutate(), mutateStore()]);
+      return refreshedData;
+    } catch (error) {
+      console.error("Pipeline catalog refresh failed after a successful change:", error);
+      toast.warning("Pipeline change succeeded, but the catalog could not be refreshed.", {
+        description: "Use Refresh to load the latest pipeline state.",
+      });
+      return undefined;
+    }
+  };
 
   const compareVersions = (a?: string, b?: string) => {
     if (!a || !b) return 0;
@@ -685,6 +890,8 @@ export default function PipelineSettingsPage() {
   const handlePrivateInstallPipeline = async () => {
     if (!privateInstallTarget) return;
 
+    const installTarget = privateInstallTarget;
+    const installMode = privateInstallMode;
     const packageUrl = privatePackageUrl.trim();
     const accessKey = privateAccessKey.trim();
     const sha256 = privateSha256.trim();
@@ -719,7 +926,10 @@ export default function PipelineSettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        const message = data?.details || data?.error || "Private package installation failed";
+        const message = getApiErrorMessage(
+          data,
+          "Private package installation failed"
+        );
         setPrivateInstallError(message);
         setInstallError(message);
         toast.error(message);
@@ -730,8 +940,15 @@ export default function PipelineSettingsPage() {
       setPrivateInstallTarget(null);
       setPrivateAccessKey("");
       setPrivateSha256("");
-      await Promise.all([mutate(), mutateStore()]);
       toast.success(privateInstallMode === "update" ? "Pipeline updated" : "Pipeline installed");
+      const refreshedData = await refreshPipelineDataAfterChange();
+      if (installMode === "install") {
+        beginGuidedSetup(
+          installTarget.pipelineId,
+          installTarget.catalogs,
+          refreshedData
+        );
+      }
     } catch (err) {
       const message = "Private package installation failed. Check logs for details.";
       setPrivateInstallError(message);
@@ -760,12 +977,14 @@ export default function PipelineSettingsPage() {
   const handleGitHubInstall = async () => {
     if (!githubInstallTarget) return;
 
+    const installTarget = githubInstallTarget;
+    const installMode = githubInstallMode;
     const token = githubToken.trim();
     const repository = githubRepository.trim();
     const ref = githubRef.trim() || githubInstallTarget.source.refDefault || DEFAULT_GITHUB_REF;
 
-    if (!token || !repository) {
-      setGithubInstallError("Repository and GitHub token are required.");
+    if (!repository) {
+      setGithubInstallError("Repository is required.");
       return;
     }
 
@@ -795,7 +1014,10 @@ export default function PipelineSettingsPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const message = data?.details || data?.error || "Failed to install pipeline from GitHub.";
+        const message = getApiErrorMessage(
+          data,
+          "Failed to install pipeline from GitHub."
+        );
         setGithubInstallError(message);
         setInstallError(message);
         toast.error(message);
@@ -805,8 +1027,15 @@ export default function PipelineSettingsPage() {
       setGithubInstallDialogOpen(false);
       setGithubToken("");
       setGithubInstallError(null);
-      await Promise.all([mutate(), mutateStore()]);
       toast.success(githubInstallMode === "update" ? "Pipeline updated" : "Pipeline installed");
+      const refreshedData = await refreshPipelineDataAfterChange();
+      if (installMode === "install") {
+        beginGuidedSetup(
+          installTarget.pipelineId,
+          installTarget.catalogs,
+          refreshedData
+        );
+      }
     } catch (err) {
       const message = "Failed to install pipeline from GitHub. Check server logs for details.";
       setGithubInstallError(message);
@@ -815,7 +1044,6 @@ export default function PipelineSettingsPage() {
       console.error("GitHub install error:", err);
     } finally {
       setGithubSubmitting(false);
-      setGithubToken("");
       setInstallingPipeline(null);
       setInstallAction(null);
     }
@@ -883,7 +1111,8 @@ export default function PipelineSettingsPage() {
   const handleInstallPipeline = async (
     pipelineId: string,
     version: string | undefined,
-    source: StorePipeline["source"] | undefined
+    source: StorePipeline["source"] | undefined,
+    catalogs?: string[]
   ) => {
     setInstallingPipeline(pipelineId);
     setInstallAction("install");
@@ -896,13 +1125,14 @@ export default function PipelineSettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        const message = data.error || "Installation failed";
+        const message = getApiErrorMessage(data, "Installation failed");
         setInstallError(message);
         toast.error(message);
         return;
       }
-      await Promise.all([mutate(), mutateStore()]);
       toast.success("Pipeline installed");
+      const refreshedData = await refreshPipelineDataAfterChange();
+      beginGuidedSetup(pipelineId, catalogs, refreshedData);
     } catch (err) {
       const message = "Installation failed. Check console for details.";
       setInstallError(message);
@@ -930,13 +1160,13 @@ export default function PipelineSettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        const message = data.error || "Update failed";
+        const message = getApiErrorMessage(data, "Update failed");
         setInstallError(message);
         toast.error(message);
         return;
       }
-      await Promise.all([mutate(), mutateStore()]);
       toast.success("Pipeline updated");
+      await refreshPipelineDataAfterChange();
     } catch (err) {
       const message = "Update failed. Check console for details.";
       setInstallError(message);
@@ -965,7 +1195,7 @@ export default function PipelineSettingsPage() {
         toast.error(message);
         return;
       }
-      mutate();
+      await mutate();
       toast.success(action === "update" ? "Pipeline code updated" : "Pipeline code downloaded");
     } catch (err) {
       const message = "Download failed. Check console for details.";
@@ -1009,7 +1239,7 @@ export default function PipelineSettingsPage() {
         toast.error(message);
         return;
       }
-      mutate();
+      await mutate();
       toast.success("Database download started");
     } catch (err) {
       const message = "Database download failed. Check console for details.";
@@ -1057,7 +1287,7 @@ export default function PipelineSettingsPage() {
         return;
       }
       setDbDownloadDialogOpen(false);
-      mutate();
+      await mutate();
       toast.success("Existing database linked");
     } catch (err) {
       console.error("Link existing DB error:", err);
@@ -1089,7 +1319,7 @@ export default function PipelineSettingsPage() {
         toast.error(message);
         return;
       }
-      mutate();
+      await mutate();
       toast.success("Database download cancelled");
     } catch (err) {
       const message = "Cancel failed. Check console for details.";
@@ -1298,15 +1528,13 @@ export default function PipelineSettingsPage() {
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
         throw new Error(
-          (payload &&
-            typeof payload === "object" &&
-            "error" in payload &&
-            typeof payload.error === "string" &&
-            payload.error) ||
+          getApiErrorMessage(
+            payload,
             "Failed to save pipeline configuration"
+          )
         );
       }
-      mutate();
+      await mutate();
       setConfigDialogOpen(false);
       toast.success("Pipeline configuration saved");
     } catch (err) {
@@ -1319,6 +1547,14 @@ export default function PipelineSettingsPage() {
   };
 
   const handleTogglePipelineEnabled = async (pipeline: PipelineConfig) => {
+    if (!pipeline.enabled && pipeline.readiness?.canEnable !== true) {
+      const message =
+        "Finish the required configuration, database, storage, and runtime checks before enabling this pipeline.";
+      setToggleError(message);
+      toast.error(message);
+      return;
+    }
+
     setTogglingPipeline(pipeline.pipelineId);
     setToggleError(null);
     try {
@@ -1334,15 +1570,10 @@ export default function PipelineSettingsPage() {
       const payload = await res.json().catch(() => null);
       if (!res.ok) {
         throw new Error(
-          (payload &&
-            typeof payload === "object" &&
-            "error" in payload &&
-            typeof payload.error === "string" &&
-            payload.error) ||
-            "Failed to update pipeline state"
+          getApiErrorMessage(payload, "Failed to update pipeline state")
         );
       }
-      mutate();
+      await mutate();
       toast.success(`Pipeline ${pipeline.enabled ? "disabled" : "enabled"}`);
     } catch (err) {
       const message =
@@ -1398,6 +1629,11 @@ export default function PipelineSettingsPage() {
     }
   }
   const storeCategories: StoreCategory[] = storeData?.categories || [];
+  const registryErrors = storeData?.registryErrors || [];
+  const storeErrorMessage =
+    storeError instanceof Error && storeError.message.trim()
+      ? storeError.message
+      : "The pipeline registry could not be loaded.";
   const filteredInstalledPipelines = installedPipelines.filter(
     (pipeline) => selectedCategory === "all" || pipeline.category === selectedCategory
   );
@@ -1794,6 +2030,50 @@ export default function PipelineSettingsPage() {
             </div>
           )}
 
+          {storeError && (
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-start gap-3">
+              <XCircle className="h-5 w-5 shrink-0 text-destructive" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-destructive">
+                  Pipeline registry unavailable
+                </p>
+                <p className="mt-1 break-words text-sm text-destructive">
+                  {storeErrorMessage}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto shrink-0 bg-white"
+                onClick={() => void mutateStore()}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Retry
+              </Button>
+            </div>
+          )}
+
+          {!storeError && registryErrors.length > 0 && (
+            <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-700" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-amber-900">
+                  Some pipeline registry data could not be loaded
+                </p>
+                <p className="mt-1 text-sm text-amber-800">
+                  Valid pipelines from the affected registries remain available.
+                </p>
+                <ul className="mt-2 space-y-1 text-xs text-amber-800">
+                  {registryErrors.map((entry, index) => (
+                    <li key={`${entry.sourceId}:${index}`} className="break-words">
+                      {entry.label}: {entry.error}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+
           {toggleError && (
             <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 flex items-center gap-3">
               <XCircle className="h-5 w-5 text-destructive" />
@@ -1824,7 +2104,22 @@ export default function PipelineSettingsPage() {
           ) : tabVisiblePipelineCount > 0 ? (
             <div className="grid gap-4 md:grid-cols-2">
               {visibleInstalledPipelines.map((pipeline: PipelineConfig) => (
-                <GlassCard key={pipeline.pipelineId} className="relative">
+                <GlassCard
+                  key={pipeline.pipelineId}
+                  id={`pipeline-card-${pipeline.pipelineId}`}
+                  data-testid={`installed-pipeline-${pipeline.pipelineId}`}
+                  tabIndex={-1}
+                  aria-current={
+                    guidedSetupTarget?.pipelineId === pipeline.pipelineId
+                      ? "step"
+                      : undefined
+                  }
+                  className={`relative scroll-mt-28 outline-none ${
+                    guidedSetupTarget?.pipelineId === pipeline.pipelineId
+                      ? "border-primary/60 ring-2 ring-primary/20 shadow-lg"
+                      : ""
+                  }`}
+                >
                   {(() => {
                     const storeEntry = preferredStorePipelineMap.get(pipeline.pipelineId);
                     const privateStorePipeline = isPrivateStorePipeline(storeEntry);
@@ -1836,8 +2131,11 @@ export default function PipelineSettingsPage() {
                           name: pipeline.name,
                           version: storeEntry?.latestVersion || pipeline.version,
                           source: storeEntry.source,
-                          packageUrlDefault: storeEntry.source.packageUrlDefault,
+                          packageUrlDefault: getPrivatePackageUrl(
+                            storeEntry.source
+                          ),
                           keyLabel: storeEntry.source.keyLabel,
+                          catalogs: storeEntry.catalogs,
                         }
                       : null;
                     const githubInstallTarget: GitHubInstallTarget | null =
@@ -1847,6 +2145,7 @@ export default function PipelineSettingsPage() {
                             name: pipeline.name,
                             version: storeEntry.latestVersion || pipeline.version,
                             source: storeEntry.source,
+                            catalogs: storeEntry.catalogs,
                           }
                         : null;
                     const latestVersion = storeEntry?.latestVersion || storeEntry?.version;
@@ -1889,15 +2188,189 @@ export default function PipelineSettingsPage() {
                       (database) => database.status === "downloaded"
                     );
                     const readiness = pipeline.readiness;
-                    const nextReadinessItem =
-                      readiness?.items.find((item) => item.status === "missing") ||
-                      readiness?.items.find((item) => item.status === "warning");
+                    const nextReadinessItem = getNextGuidedSetupItem(readiness);
                     const nextReadinessActionLabel = getReadinessActionLabel(
                       nextReadinessItem?.action
                     );
+                    const nextSetupStage = getGuidedSetupStage(
+                      nextReadinessItem?.action
+                    );
+                    const databaseSetupInProgress =
+                      nextReadinessItem?.action === "download-db" &&
+                      databasesRunning.length > 0;
+                    const isGuidedSetupTarget =
+                      guidedSetupTarget?.pipelineId === pipeline.pipelineId;
+                    const canEnablePipeline = readiness?.canEnable === true;
+                    const handleReadinessAction = (
+                      item: PipelineReadinessItem | null
+                    ) => {
+                      if (!item?.action) return;
+                      if (item.action === "install") {
+                        if (githubInstallTarget) {
+                          openGitHubInstallDialog(githubInstallTarget, "install");
+                        } else if (privateInstallTargetData) {
+                          openPrivateInstallDialog(
+                            privateInstallTargetData,
+                            "install"
+                          );
+                        } else if (storeEntry) {
+                          void handleInstallPipeline(
+                            pipeline.pipelineId,
+                            latestVersion,
+                            storeEntry.source,
+                            storeEntry.catalogs
+                          );
+                        } else {
+                          toast.error(
+                            "This package is not currently available from the configured registries."
+                          );
+                        }
+                        return;
+                      }
+                      if (item.action === "download-db") {
+                        const database =
+                          databaseDownloads.find(
+                            (entry) => entry.status === "missing"
+                          ) || databaseDownloads[0];
+                        if (database) {
+                          openDbDownloadDialog(pipeline, database);
+                        }
+                        return;
+                      }
+                      if (item.action === "sync") {
+                        if (githubInstallTarget) {
+                          openGitHubInstallDialog(githubInstallTarget, "update");
+                        } else if (
+                          privateInstallTargetData
+                        ) {
+                          openPrivateInstallDialog(
+                            privateInstallTargetData,
+                            "update"
+                          );
+                        } else if (storeEntry) {
+                          void handleUpdatePipeline(
+                            pipeline.pipelineId,
+                            latestVersion,
+                            storeEntry.source
+                          );
+                        } else {
+                          toast.error(
+                            "This package is not currently available from the configured registries."
+                          );
+                        }
+                        return;
+                      }
+                      if (item.action === "configure") {
+                        openConfigDialog(pipeline);
+                        return;
+                      }
+                      if (item.action === "configure-storage") {
+                        router.push(
+                          item.href?.startsWith("/")
+                            ? item.href
+                            : "/admin/data-storage#required-data-storage"
+                        );
+                        return;
+                      }
+                      if (item.action === "configure-runtime") {
+                        router.push(
+                          item.href?.startsWith("/")
+                            ? item.href
+                            : "/admin/pipeline-runtime#required-runtime"
+                        );
+                        return;
+                      }
+                      if (item.action === "enable") {
+                        if (!canEnablePipeline) {
+                          toast.error(
+                            "Finish the required setup checks before enabling this pipeline."
+                          );
+                          return;
+                        }
+                        void handleTogglePipelineEnabled(pipeline);
+                        return;
+                      }
+                      if (item.action === "review-outputs") {
+                        void handleLintDescriptor(pipeline);
+                      }
+                    };
 
                     return (
                       <>
+                        {isGuidedSetupTarget && (
+                          <div
+                            data-testid="guided-pipeline-setup"
+                            data-pipeline-id={pipeline.pipelineId}
+                            data-setup-action={nextReadinessItem?.action || "complete"}
+                            role="status"
+                            className="mb-4 rounded-lg border border-primary/30 bg-primary/5 p-3"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-sm font-semibold">
+                                    {nextReadinessItem
+                                      ? `Setup step ${nextSetupStage.position} of 4`
+                                      : pipeline.enabled
+                                        ? "Pipeline setup complete"
+                                        : "Review pipeline setup"}
+                                  </p>
+                                  {nextReadinessItem && (
+                                    <Badge variant="outline" className="bg-white text-xs">
+                                      {nextSetupStage.label}
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  {nextReadinessItem
+                                    ? nextReadinessItem.detail ||
+                                      `Continue with ${nextReadinessItem.label}.`
+                                    : pipeline.enabled
+                                      ? `${pipeline.name} is ready and enabled for users.`
+                                      : readiness?.summary ||
+                                        "Review the remaining setup checks below."}
+                                </p>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                                {nextReadinessItem &&
+                                  nextReadinessActionLabel && (
+                                    <Button
+                                      data-testid={`pipeline-setup-next-${pipeline.pipelineId}`}
+                                      size="sm"
+                                      onClick={() =>
+                                        handleReadinessAction(nextReadinessItem)
+                                      }
+                                      disabled={
+                                        downloadingDatabase?.startsWith(
+                                          `${pipeline.pipelineId}:`
+                                        ) ||
+                                        databaseSetupInProgress ||
+                                        installingPipeline === pipeline.pipelineId ||
+                                        githubSubmitting ||
+                                        togglingPipeline === pipeline.pipelineId ||
+                                        (nextReadinessItem.action === "enable" &&
+                                          !canEnablePipeline)
+                                      }
+                                    >
+                                      {databaseSetupInProgress && (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      )}
+                                      {databaseSetupInProgress
+                                        ? "Downloading DB..."
+                                        : nextReadinessActionLabel}
+                                    </Button>
+                                  )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={dismissGuidedSetup}
+                                >
+                                  Dismiss
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex items-start gap-4">
                             <div className={`p-3 rounded-xl ${getCategoryColor(pipeline.category)}`}>
@@ -2204,39 +2677,27 @@ export default function PipelineSettingsPage() {
                                             variant="outline"
                                             size="sm"
                                             className="h-7 bg-white text-xs"
-                                            onClick={() => {
-                                              if (nextReadinessItem.action === "download-db") {
-                                                const database =
-                                                  databaseDownloads.find((entry) => entry.status === "missing") ||
-                                                  databaseDownloads[0];
-                                                if (database) {
-                                                  openDbDownloadDialog(pipeline, database);
-                                                }
-                                                return;
-                                              }
-                                              if (nextReadinessItem.action === "sync" && githubInstallTarget) {
-                                                openGitHubInstallDialog(githubInstallTarget, "update");
-                                                return;
-                                              }
-                                              if (nextReadinessItem.action === "configure") {
-                                                openConfigDialog(pipeline);
-                                                return;
-                                              }
-                                              if (nextReadinessItem.action === "enable") {
-                                                void handleTogglePipelineEnabled(pipeline);
-                                                return;
-                                              }
-                                              if (nextReadinessItem.action === "review-outputs") {
-                                                void handleLintDescriptor(pipeline);
-                                              }
-                                            }}
+                                            onClick={() =>
+                                              handleReadinessAction(
+                                                nextReadinessItem
+                                              )
+                                            }
                                             disabled={
                                               downloadingDatabase?.startsWith(`${pipeline.pipelineId}:`) ||
+                                              databaseSetupInProgress ||
+                                              installingPipeline === pipeline.pipelineId ||
                                               githubSubmitting ||
-                                              togglingPipeline === pipeline.pipelineId
+                                              togglingPipeline === pipeline.pipelineId ||
+                                              (nextReadinessItem.action === "enable" &&
+                                                !canEnablePipeline)
                                             }
                                           >
-                                            {nextReadinessActionLabel}
+                                            {databaseSetupInProgress && (
+                                              <Loader2 className="h-3 w-3 animate-spin" />
+                                            )}
+                                            {databaseSetupInProgress
+                                              ? "Downloading DB..."
+                                              : nextReadinessActionLabel}
                                           </Button>
                                         )}
                                       </div>
@@ -2403,7 +2864,7 @@ export default function PipelineSettingsPage() {
                                 {githubSubmitting ? "Syncing..." : "Sync from GitHub"}
                               </Button>
                             )}
-                            {!pipeline.enabled && (
+                            {!pipeline.enabled && canEnablePipeline && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -2417,6 +2878,18 @@ export default function PipelineSettingsPage() {
                                   <CheckCircle2 className="h-4 w-4 mr-1" />
                                 )}
                                 Enable
+                              </Button>
+                            )}
+                            {!pipeline.enabled && !canEnablePipeline && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8"
+                                disabled
+                                title="Complete the required setup checks before enabling this pipeline"
+                              >
+                                <CheckCircle2 className="h-4 w-4 mr-1" />
+                                Enable after setup
                               </Button>
                             )}
                             <Button
@@ -2470,7 +2943,12 @@ export default function PipelineSettingsPage() {
               ))}
 
               {visibleAvailablePipelines.map((pipeline) => (
-                <GlassCard key={`${pipeline.id}:${pipeline.source.sourceId}`} className="relative border-dashed bg-muted/20">
+                <GlassCard
+                  key={`${pipeline.id}:${pipeline.source.sourceId}`}
+                  data-testid={`available-pipeline-${pipeline.id}`}
+                  data-pipeline-id={pipeline.id}
+                  className="relative border-dashed bg-muted/20"
+                >
                   {(() => {
                     const privateStorePipeline = isPrivateStorePipeline(pipeline);
                     const gitHubStorePipeline = isGitHubStorePipeline(pipeline);
@@ -2479,14 +2957,16 @@ export default function PipelineSettingsPage() {
                       name: pipeline.name,
                       version: pipeline.latestVersion || pipeline.version,
                       source: pipeline.source,
-                      packageUrlDefault: pipeline.source.packageUrlDefault,
+                      packageUrlDefault: getPrivatePackageUrl(pipeline.source),
                       keyLabel: pipeline.source.keyLabel,
+                      catalogs: pipeline.catalogs,
                     };
                     const githubTarget: GitHubInstallTarget = {
                       pipelineId: pipeline.id,
                       name: pipeline.name,
                       version: pipeline.latestVersion || pipeline.version,
                       source: pipeline.source,
+                      catalogs: pipeline.catalogs,
                     };
                     return (
                       <>
@@ -2561,7 +3041,8 @@ export default function PipelineSettingsPage() {
                           : handleInstallPipeline(
                               pipeline.id,
                               pipeline.latestVersion || pipeline.version,
-                              pipeline.source
+                              pipeline.source,
+                              pipeline.catalogs
                             )
                       }
                       disabled={installingPipeline === pipeline.id}
@@ -2879,14 +3360,15 @@ export default function PipelineSettingsPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="github-token">
-                {githubInstallTarget?.source.keyLabel || "GitHub token"}
+                {githubInstallTarget?.source.keyLabel ||
+                  "GitHub token (optional for public repositories)"}
               </Label>
               <Input
                 id="github-token"
                 value={githubToken}
                 onChange={(event) => setGithubToken(event.target.value)}
                 type="password"
-                placeholder="Paste token with read access to the repository"
+                placeholder="Required only for a private repository"
                 className="bg-white"
               />
             </div>
@@ -3200,9 +3682,12 @@ export default function PipelineSettingsPage() {
                 id="private-package-url"
                 value={privatePackageUrl}
                 onChange={(event) => setPrivatePackageUrl(event.target.value)}
-                placeholder="https://host.example.org/private-pipeline.tar.gz"
+                placeholder="https://host.example.org/private-pipeline-package.json"
                 className="bg-white"
               />
+              <p className="text-xs text-muted-foreground">
+                URL of a SeqDesk pipeline package JSON payload.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="private-access-key">
@@ -3463,6 +3948,9 @@ export default function PipelineSettingsPage() {
                       schema.default !== undefined
                         ? schema.default
                         : selectedPipeline.defaultConfig[key];
+                    const isRequired =
+                      selectedPipeline.configSchema.required?.includes(key) ===
+                      true;
                     const changed = !isSameConfigValue(
                       localConfig[key],
                       selectedPipeline.config[key]
@@ -3495,6 +3983,17 @@ export default function PipelineSettingsPage() {
                           <div>
                             <Label htmlFor={key} className="text-sm font-medium">
                               {schema.title}
+                              {isRequired && (
+                                <>
+                                  <span
+                                    aria-hidden="true"
+                                    className="ml-1 text-destructive"
+                                  >
+                                    *
+                                  </span>
+                                  <span className="sr-only"> (required)</span>
+                                </>
+                              )}
                             </Label>
                             {schema.description && (
                               <p className="text-xs text-muted-foreground mt-1">
@@ -3612,7 +4111,13 @@ export default function PipelineSettingsPage() {
                         ) : (
                           <Input
                             id={key}
-                            type={schema.type === "number" ? "number" : "text"}
+                            aria-required={isRequired}
+                            type={
+                              isNumericPipelineConfigType(schema.type)
+                                ? "number"
+                                : "text"
+                            }
+                            step={schema.type === "integer" ? 1 : undefined}
                             value={
                               localConfig[key] === undefined || localConfig[key] === null
                                 ? ""
@@ -3620,13 +4125,18 @@ export default function PipelineSettingsPage() {
                             }
                             onChange={(e) => {
                               const value = e.target.value;
-                              if (schema.type === "number") {
+                              if (isNumericPipelineConfigType(schema.type)) {
                                 setLocalConfig((prev) => {
                                   const next = { ...prev };
-                                  if (value === "") {
+                                  const parsedValue =
+                                    parsePipelineConfigInputValue(
+                                      schema.type,
+                                      value
+                                    );
+                                  if (parsedValue === undefined) {
                                     delete next[key];
                                   } else {
-                                    next[key] = Number(value);
+                                    next[key] = parsedValue;
                                   }
                                   return next;
                                 });

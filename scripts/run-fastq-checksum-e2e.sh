@@ -5,6 +5,9 @@ set -euo pipefail
 ENV_NAME="${PIPELINE_CONDA_ENV:-seqdesk-pipelines}"
 KEEP_TEMP=0
 
+source "$(dirname "${BASH_SOURCE[0]}")/lib/conda-environment.sh"
+seqdesk_set_conda_environment "$ENV_NAME"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --keep-temp)
@@ -23,15 +26,12 @@ if ! command -v conda >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
-  echo "Conda environment '$ENV_NAME' was not found" >&2
-  exit 1
-fi
+seqdesk_assert_conda_environment
 
 require_env_command() {
   local label="$1"
   shift
-  if ! conda run -n "$ENV_NAME" "$@" >/dev/null 2>&1; then
+  if ! seqdesk_conda_run "$@" >/dev/null 2>&1; then
     echo "Conda environment '$ENV_NAME' is missing required command: $label" >&2
     exit 1
   fi
@@ -106,7 +106,7 @@ PAIRED_B,$READS_DIR/PAIRED_B_R1.fastq.gz,$READS_DIR/PAIRED_B_R2.fastq.gz
 EOF
 
 echo "Running fastq-checksum with Conda env '$ENV_NAME'..."
-conda run -n "$ENV_NAME" nextflow run pipelines/fastq-checksum/workflow/main.nf \
+seqdesk_conda_run nextflow run pipelines/fastq-checksum/workflow/main.nf \
   --input "$SAMPLESHEET" \
   --outdir "$OUTPUT_DIR"
 
@@ -121,9 +121,9 @@ for path in \
   fi
 done
 
-EXPECTED_SINGLE_A_R1="$(conda run -n "$ENV_NAME" md5sum "$READS_DIR/SINGLE_A_R1.fastq.gz" | awk '{print $1}')"
-EXPECTED_PAIRED_B_R1="$(conda run -n "$ENV_NAME" md5sum "$READS_DIR/PAIRED_B_R1.fastq.gz" | awk '{print $1}')"
-EXPECTED_PAIRED_B_R2="$(conda run -n "$ENV_NAME" md5sum "$READS_DIR/PAIRED_B_R2.fastq.gz" | awk '{print $1}')"
+EXPECTED_SINGLE_A_R1="$(seqdesk_conda_run md5sum "$READS_DIR/SINGLE_A_R1.fastq.gz" | awk '{print $1}')"
+EXPECTED_PAIRED_B_R1="$(seqdesk_conda_run md5sum "$READS_DIR/PAIRED_B_R1.fastq.gz" | awk '{print $1}')"
+EXPECTED_PAIRED_B_R2="$(seqdesk_conda_run md5sum "$READS_DIR/PAIRED_B_R2.fastq.gz" | awk '{print $1}')"
 
 grep -q "\"checksum1\":\"$EXPECTED_SINGLE_A_R1\"" "$OUTPUT_DIR/checksums/SINGLE_A.json"
 grep -q '"checksum2":""' "$OUTPUT_DIR/checksums/SINGLE_A.json"

@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { readPipelineInstallProvenance } from "./pipeline-install-provenance";
 
 export const INSTALL_PROFILE_PIPELINE_ALLOWLIST_KEY =
   "installProfilePipelineAllowlist";
@@ -43,7 +44,7 @@ export function resolvePipelineEnabled(
 }
 
 export async function getPipelineEnabled(pipelineId: string): Promise<boolean> {
-  const [dbConfig, settings] = await Promise.all([
+  const [dbConfig, settings, installProvenance] = await Promise.all([
     db.pipelineConfig.findUnique({
       where: { pipelineId },
       select: { enabled: true },
@@ -52,8 +53,15 @@ export async function getPipelineEnabled(pipelineId: string): Promise<boolean> {
       where: { id: "singleton" },
       select: { extraSettings: true },
     }),
+    readPipelineInstallProvenance(pipelineId),
   ]);
 
+  // Store/CLI-installed packages carry atomic install provenance. Until setup
+  // persists an explicit PipelineConfig row, they must never inherit the
+  // legacy default-enabled or install-profile fallback.
+  if (!dbConfig && installProvenance) {
+    return false;
+  }
   return resolvePipelineEnabled(
     pipelineId,
     dbConfig,

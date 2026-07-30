@@ -1,11 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  getServerSession: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
     },
   },
+}));
+
+vi.mock("next-auth", () => ({
+  getServerSession: mocks.getServerSession,
+}));
+
+vi.mock("@/lib/auth", () => ({
+  authOptions: {},
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -18,6 +27,41 @@ import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 describe("GET /api/modules", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "user-1", role: "RESEARCHER" },
+    });
+  });
+
+  it("returns 401 when no session", async () => {
+    mocks.getServerSession.mockResolvedValue(null);
+
+    const response = await GET();
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns the config for an authenticated researcher", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      modulesConfig: JSON.stringify({
+        modules: {
+          "funding-info": true,
+        },
+        globalDisabled: false,
+      }),
+    });
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      modules: {
+        ...DEFAULT_MODULE_STATES,
+        "funding-info": true,
+      },
+      globalDisabled: false,
+    });
   });
 
   it("returns defaults when module config is missing", async () => {

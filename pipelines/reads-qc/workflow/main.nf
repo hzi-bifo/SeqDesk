@@ -38,8 +38,26 @@ process SEQKIT_STATS {
       Q30_PCT=\$(echo "\$PARSED_STATS" | cut -f8)
       AVG_QUAL=\$(echo "\$PARSED_STATS" | cut -f9)
 
-      # Compute GC content using seqkit fx2tab
-      GC=\$(seqkit fx2tab -g -H "\$FILE" | awk 'NR>1 {sum+=\$NF; n++} END {if(n>0) printf "%.2f", sum/n; else print "0"}')
+      # Pinned SeqKit 2.8.0 divides G+C by the full read length, including
+      # ambiguous bases in the denominator. Every non-empty FASTQ read
+      # therefore contributes a finite value; an all-N read contributes 0.00.
+      GC=\$(seqkit fx2tab -g -H "\$FILE" | awk '
+        NR == 1 { next }
+        \$NF !~ /^[0-9]+([.][0-9]+)?\$/ {
+          printf "Unexpected SeqKit 2.8 GC value: %s\\n", \$NF > "/dev/stderr"
+          invalid = 1
+          exit 2
+        }
+        { sum += \$NF; reads += 1 }
+        END {
+          if (invalid) exit 2
+          if (reads == 0) {
+            print "SeqKit produced no per-read GC values" > "/dev/stderr"
+            exit 3
+          }
+          printf "%.2f", sum / reads
+        }
+      ')
 
       printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" \\
         "${sample_id}" "\$LABEL" "\$NUM_READS" "\$TOTAL_BASES" "\$MIN_LEN" "\$AVG_LEN" "\$MAX_LEN" "\$AVG_QUAL" "\$GC" "\$Q20_PCT" "\$Q30_PCT" "\$N50"

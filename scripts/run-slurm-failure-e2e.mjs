@@ -37,6 +37,18 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import {
+  assertPipelineExitMarker,
+  assertSlurmAccountingRecord,
+  assertSlurmLaunchIdentity,
+  normalizeSlurmState,
+  parsePrimarySacctRecord,
+  pathIsWithin,
+  slurmCompletionAttestationPath,
+  stageFilesMissing,
+} from "./lib/pipeline-e2e-proof.mjs";
+import { syncPipelineRunFailClosed } from "./lib/pipeline-e2e-sync.mjs";
+
 const execFileAsync = promisify(execFile);
 
 function fail(message, details) {
@@ -311,46 +323,22 @@ function collectInputReadPaths(run) {
 // Move the selected FASTQ file(s) aside so the run fails deterministically, and
 // return a restore() that puts them back. Always call restore() in a finally.
 function makeFastqMissing({ dataBasePath, reportedReadPaths }) {
-  const moved = [];
-  for (const reportedPath of reportedReadPaths) {
+  const resolvedPaths = [];
+  for (const reportedPath of new Set(reportedReadPaths)) {
     const absolute = resolveOnDiskPath(dataBasePath, reportedPath);
-    if (!absolute) continue;
-    if (!fs.existsSync(absolute)) {
-      // Already missing -- nothing to move, but it still contributes to failure.
-      continue;
+    if (!absolute || !pathIsWithin(absolute, dataBasePath)) {
+      fail(
+        "Refusing to move a pipeline input outside the configured sequencing data root",
+        JSON.stringify({ dataBasePath, reportedPath, resolvedPath: absolute }, null, 2),
+      );
     }
-    const stashed = `${absolute}.seqdesk-failure-e2e.bak`;
-    fs.renameSync(absolute, stashed);
-    moved.push({ absolute, stashed });
+    resolvedPaths.push(absolute);
   }
-  return {
-    moved,
-    restore() {
-      for (const entry of moved) {
-        try {
-          // Restore UNCONDITIONALLY: rename atomically overwrites the destination on
-          // POSIX. The previous `!existsSync(absolute)` guard could skip the restore
-          // when the absolute path appeared to exist — e.g. a stale NFS positive right
-          // after the rename-away — leaving the real read stranded as a `.bak` and
-          // breaking any later pipeline that runs on the same order. We moved it aside,
-          // so we own putting it back.
-          if (fs.existsSync(entry.stashed)) {
-            fs.renameSync(entry.stashed, entry.absolute);
-          } else if (!fs.existsSync(entry.absolute)) {
-            console.warn(
-              `WARN: cannot restore FASTQ ${entry.absolute} — neither it nor its stash exists`
-            );
-          }
-        } catch (error) {
-          console.warn(
-            `WARN: failed to restore FASTQ ${entry.absolute} (non-fatal): ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        }
-      }
-    },
-  };
+  return stageFilesMissing({
+    root: dataBasePath,
+    filePaths: resolvedPaths,
+    stashSuffix: ".seqdesk-failure-e2e.bak",
+  });
 }
 
 const TERMINAL_STATES = new Set(["completed", "failed", "cancelled", "canceled"]);
@@ -360,6 +348,9 @@ async function pollUntilTerminal({ client, runId, timeoutSeconds }) {
   let latestRun = null;
 
   while (Date.now() < deadline) {
+    await syncPipelineRunFailClosed(client, runId, {
+      context: "Reconcile failed pipeline run",
+    });
     const runPayload = await requestJson(
       client,
       `/api/pipelines/runs/${runId}`,
@@ -368,22 +359,97 @@ async function pollUntilTerminal({ client, runId, timeoutSeconds }) {
     );
     latestRun = runPayload?.run || runPayload;
 
-    // Drive the same reconciliation path the monitor uses, so a terminal queue
-    // state is reflected onto the run record before we read it again.
-    await client.request(`/api/pipelines/runs/${runId}/sync`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
-
     if (TERMINAL_STATES.has(latestRun?.status)) {
-      return { run: latestRun, timedOut: false };
+      await syncPipelineRunFailClosed(client, runId, {
+        context: "Confirm failed pipeline state",
+      });
+      const confirmPayload = await requestJson(
+        client,
+        `/api/pipelines/runs/${runId}`,
+        {},
+        "Confirm failed pipeline terminal state",
+      );
+      const confirmedRun = confirmPayload?.run || confirmPayload;
+      if (TERMINAL_STATES.has(confirmedRun?.status)) {
+        return { run: confirmedRun, timedOut: false };
+      }
+      latestRun = confirmedRun;
     }
 
     await sleep(5000);
   }
 
   return { run: latestRun, timedOut: true };
+}
+
+async function assertFailedSlurmAccounting({ runId, jobId, runFolder }) {
+  const deadline = Date.now() + 90_000;
+  let latest = null;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    let stdout = "";
+    try {
+      ({ stdout } = await execFileAsync(
+        "sacct",
+        [
+          "-X",
+          "-P",
+          "-j",
+          String(jobId),
+          "--noheader",
+          "--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%1024,NodeList",
+        ],
+        { timeout: 10_000, maxBuffer: 1024 * 1024 },
+      ));
+      lastError = null;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      await sleep(2000);
+      continue;
+    }
+    latest = parsePrimarySacctRecord(stdout, jobId);
+    const state = normalizeSlurmState(latest?.state);
+    if (state === "FAILED") {
+      return assertSlurmAccountingRecord(latest, {
+        runId,
+        jobId: String(jobId),
+        runFolder,
+        expectedOutcome: "failure",
+        requireAllocatedNode: true,
+      });
+    }
+    if (state && TERMINAL_STATES.has(state.toLowerCase())) {
+      fail(
+        `Deliberately broken SLURM allocation ended in ${state}, expected FAILED`,
+        JSON.stringify(latest, null, 2),
+      );
+    }
+    await sleep(2000);
+  }
+  fail(
+    `SLURM accounting did not prove failed allocation ${jobId} within 90 seconds`,
+    JSON.stringify({ latest, lastError, runFolder }, null, 2),
+  );
+}
+
+async function waitForRequiredRegularFiles(paths, context) {
+  let missing = [...paths];
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    missing = paths.filter((filePath) => !fs.existsSync(filePath));
+    if (missing.length === 0) break;
+    await sleep(1000);
+  }
+  missing = paths.filter((filePath) => !fs.existsSync(filePath));
+  if (missing.length > 0) {
+    fail(`${context}: required files are missing after accounting completed`, missing.join("\n"));
+  }
+  for (const filePath of paths) {
+    const stat = fs.lstatSync(filePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      fail(`${context}: required path is not a regular file`, filePath);
+    }
+  }
+  return [...paths];
 }
 
 async function main() {
@@ -454,18 +520,11 @@ async function main() {
   }
 
   const sabotage = makeFastqMissing({ dataBasePath, reportedReadPaths });
-  if (sabotage.moved.length === 0) {
-    // None of the reported FASTQ files were present to move. They are already
-    // missing on disk, which still triggers the same non-zero process exit, so we
-    // proceed -- but warn so an operator can see why nothing was staged.
-    console.warn(
-      `WARN: none of the ${reportedReadPaths.length} reported FASTQ file(s) were present on disk to move aside; relying on their pre-existing absence under ${dataBasePath}`
-    );
-  }
 
   let result;
   let startPayload;
   let jobId;
+  let restoreSummary;
   try {
     // 2. Start the run. Start-time prerequisite checks validate the data base path
     //    directory, not individual FASTQ files, so the SLURM job is submitted and
@@ -489,8 +548,9 @@ async function main() {
     // 3. Poll (POST /sync each loop) until the run reaches a terminal state.
     result = await pollUntilTerminal({ client, runId, timeoutSeconds });
   } finally {
-    // Always restore the moved FASTQ files, regardless of outcome.
-    sabotage.restore();
+    // Restoration is part of the gate. A green test must leave the seeded
+    // order exactly usable for the pipeline checks that follow.
+    restoreSummary = sabotage.restore();
   }
 
   const run = result.run;
@@ -563,7 +623,45 @@ async function main() {
     );
   }
 
-  const logs = slurmLogPaths(run?.runFolder, jobId).filter((logPath) => fs.existsSync(logPath));
+  const launchIdentity = assertSlurmLaunchIdentity({
+    runId,
+    jobId,
+    run,
+    startPayload,
+  });
+  const pipelineOutPath = `${launchIdentity.runFolder}/logs/pipeline.out`;
+  if (!fs.existsSync(pipelineOutPath)) {
+    fail(
+      `SLURM failure E2E: run ${runId} did not persist logs/pipeline.out`,
+      pipelineOutPath,
+    );
+  }
+  const pipelineExitCode = assertPipelineExitMarker(
+    fs.readFileSync(pipelineOutPath, "utf8"),
+    {
+      expectedOutcome: "failure",
+      context: `SLURM failure run ${runId}`,
+    },
+  );
+  const accounting = await assertFailedSlurmAccounting({
+    runId,
+    jobId,
+    runFolder: launchIdentity.runFolder,
+  });
+  const logs = await waitForRequiredRegularFiles(
+    slurmLogPaths(launchIdentity.runFolder, jobId),
+    `SLURM capture logs for failed run ${runId}`,
+  );
+  const successAttestationPath = slurmCompletionAttestationPath(
+    launchIdentity.runFolder,
+    jobId,
+  );
+  if (fs.existsSync(successAttestationPath)) {
+    fail(
+      `Failed SLURM run ${runId} unexpectedly wrote a success attestation`,
+      successAttestationPath,
+    );
+  }
 
   return {
     success: true,
@@ -579,8 +677,12 @@ async function main() {
     failedEventPresent: hasFailedEvent,
     sabotagedReadPaths: reportedReadPaths,
     movedFastqCount: sabotage.moved.length,
+    restoreSummary,
+    pipelineExitCode,
+    accounting,
     runFolder: run.runFolder,
     slurmLogs: logs,
+    successAttestationAbsent: true,
     debugEndpoint,
   };
 }

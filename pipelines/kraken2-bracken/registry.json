@@ -69,6 +69,9 @@
   },
   "configSchema": {
     "type": "object",
+    "required": [
+      "kraken2Db"
+    ],
     "properties": {
       "kraken2Db": {
         "type": "string",

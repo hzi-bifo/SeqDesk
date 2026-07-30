@@ -1,7 +1,10 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { getPipelinesDir } from './package-loader';
+import {
+  getPipelinesDir,
+  isLocalPipelineReference,
+} from './pipeline-paths';
 
 const DOWNLOAD_INDEX_FILE = '.pipeline-downloads.json';
 const DOWNLOAD_STATUS_FILE = '.pipeline-download-status.json';
@@ -162,7 +165,7 @@ export function resolvePipelineAssetsPath(
     return { kind: 'unsupported', reason: 'Missing pipeline reference' };
   }
 
-  if (trimmed.startsWith('/') || trimmed.startsWith('./') || trimmed.startsWith('../')) {
+  if (isLocalPipelineReference(trimmed)) {
     return { kind: 'local', reason: 'Local pipeline path' };
   }
 

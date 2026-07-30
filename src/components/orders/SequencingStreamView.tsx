@@ -97,6 +97,13 @@ function avgReadLength(reads: number, bases: number): number {
   return Math.round(bases / reads);
 }
 
+// A run keeps changing until the monitor has torn its watcher down: STOPPING
+// still has files landing, so it is treated as live. Anything else is frozen —
+// its totals, files and events can never change again, so it must not be polled.
+function isLiveStatus(status: string): boolean {
+  return status === "ACTIVE" || status === "STOPPING";
+}
+
 function formatRelative(ts: string): string {
   const date = new Date(ts);
   const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
@@ -106,8 +113,20 @@ function formatRelative(ts: string): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
-function formatElapsed(startedAt: string): string {
-  const ms = Math.max(0, Date.now() - new Date(startedAt).getTime());
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+// Wall-clock span of a run. `endedAt` is null while the run is still live, in
+// which case we count up to now.
+function formatElapsed(startedAt: string, endedAt?: string | null): string {
+  const end = endedAt ? new Date(endedAt).getTime() : Date.now();
+  const ms = Math.max(0, end - new Date(startedAt).getTime());
   const totalSeconds = Math.floor(ms / 1000);
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
@@ -167,8 +186,27 @@ export function SequencingStreamView({
   } | null>(null);
   const [showRecentFiles, setShowRecentFiles] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
+  // Run the reader picked from the history strip. null means "follow the
+  // default" — the live run, or the most recent one when nothing is live.
+  const [pinnedRunId, setPinnedRunId] = useState<string | null>(null);
 
   const activeRun = useMemo(() => runs.find((r) => r.status === "ACTIVE") ?? null, [runs]);
+
+  // The run every detail panel below renders. Without this a stopped stream's
+  // barcode totals, ingested files and event trail would be fetched by the list
+  // endpoint and then thrown away — visible nowhere once the run ends.
+  const selectedRun = useMemo(() => {
+    const pinned = pinnedRunId ? runs.find((r) => r.id === pinnedRunId) : undefined;
+    // The list arrives newest-first, so runs[0] is the most recent one.
+    return pinned ?? runs.find((r) => isLiveStatus(r.status)) ?? runs[0] ?? null;
+  }, [runs, pinnedRunId]);
+
+  // The pollers key off these primitives rather than the run object: the runs
+  // list is re-fetched every 5s and hands back a fresh object each time, which
+  // would otherwise re-arm every poller on each refresh — including for a
+  // stopped run that can never change.
+  const selectedRunId = selectedRun?.id ?? null;
+  const selectedRunLive = selectedRun != null && isLiveStatus(selectedRun.status);
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -223,18 +261,17 @@ export function SequencingStreamView({
     return () => clearInterval(handle);
   }, [enablePolling, refreshDaemon]);
 
-  // Poll per-barcode aggregates only while a run is active. Stops polling
-  // automatically when the run ends to avoid churning the DB.
+  // Per-barcode aggregates for the selected run. Polled only while that run is
+  // live; a stopped run is fetched once, since its totals are final and polling
+  // would only churn the DB.
   useEffect(() => {
-    if (!activeRun) {
-      setBarcodeStats([]);
-      prevBarcodeSnapshotRef.current = null;
-      return;
-    }
+    setBarcodeStats([]);
+    prevBarcodeSnapshotRef.current = null;
+    if (!selectedRunId) return;
     let cancelled = false;
     const fetchBarcodes = async () => {
       try {
-        const res = await fetch(`/api/orders/${orderId}/stream/${activeRun.id}/by-barcode`);
+        const res = await fetch(`/api/orders/${orderId}/stream/${selectedRunId}/by-barcode`);
         if (!res.ok) return;
         const data = (await res.json()) as {
           barcodes: Array<{
@@ -279,7 +316,7 @@ export function SequencingStreamView({
       }
     };
     void fetchBarcodes();
-    if (!enablePolling) {
+    if (!enablePolling || !selectedRunLive) {
       return () => {
         cancelled = true;
       };
@@ -289,7 +326,7 @@ export function SequencingStreamView({
       cancelled = true;
       clearInterval(handle);
     };
-  }, [activeRun, enablePolling, orderId]);
+  }, [enablePolling, selectedRunId, selectedRunLive, orderId]);
 
   const handleStartDaemon = async () => {
     setStartingDaemon(true);
@@ -320,17 +357,15 @@ export function SequencingStreamView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRun, isDev]);
 
-  // Reset event polling when active run changes
+  // Reset event polling when the selected run changes
   useEffect(() => {
-    if (!activeRun) {
-      setEvents([]);
-      lastEventSeqRef.current = null;
-      return;
-    }
+    setEvents([]);
+    lastEventSeqRef.current = null;
+    if (!selectedRunId) return;
     let cancelled = false;
     const fetchEvents = async () => {
       try {
-        const url = new URL(`/api/orders/${orderId}/stream/${activeRun.id}/events`, window.location.origin);
+        const url = new URL(`/api/orders/${orderId}/stream/${selectedRunId}/events`, window.location.origin);
         if (lastEventSeqRef.current !== null) url.searchParams.set("after", String(lastEventSeqRef.current));
         const res = await fetch(url.toString());
         if (!res.ok) return;
@@ -357,7 +392,8 @@ export function SequencingStreamView({
       }
     };
     void fetchEvents();
-    if (!enablePolling) {
+    // A stopped run cannot emit another event — load its trail once and leave it.
+    if (!enablePolling || !selectedRunLive) {
       return () => {
         cancelled = true;
       };
@@ -367,7 +403,14 @@ export function SequencingStreamView({
       cancelled = true;
       clearInterval(handle);
     };
-  }, [activeRun, enablePolling, orderId, refreshRuns, onDataChanged]);
+  }, [
+    enablePolling,
+    selectedRunId,
+    selectedRunLive,
+    orderId,
+    refreshRuns,
+    onDataChanged,
+  ]);
 
   const handleStart = async () => {
     if (!outputDir.trim()) {
@@ -391,6 +434,8 @@ export function SequencingStreamView({
       notifyPanel.success("Stream started");
       setOutputDir("");
       setBarcodeMapDraft({});
+      // Drop any pinned older run so the reader lands on the stream just started.
+      setPinnedRunId(null);
       await refreshRuns();
     } catch (error) {
       notifyPanel.error(`Failed to start stream: ${(error as Error).message}`);
@@ -480,70 +525,121 @@ export function SequencingStreamView({
               Watch a MinKNOW output directory and ingest reads into this sequencing order as they appear.
             </CardDescription>
           </div>
-          {activeRun ? (
-            <Badge variant="default" className="gap-1">
-              <Wifi className="h-3 w-3" />
-              Active
-            </Badge>
-          ) : (
+          {selectedRun == null ? (
             <Badge variant="secondary" className="gap-1">
               <WifiOff className="h-3 w-3" />
               Idle
             </Badge>
+          ) : selectedRunLive ? (
+            <Badge variant="default" className="gap-1">
+              <Wifi className="h-3 w-3" />
+              {selectedRun.status === "STOPPING" ? "Stopping" : "Active"}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="gap-1">
+              <Square className="h-3 w-3" />
+              Stopped
+            </Badge>
           )}
         </CardHeader>
-        {activeRun ? (
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-              <div>
-                <div className="text-muted-foreground text-xs">Output directory</div>
-                <div className="font-mono break-all">{activeRun.outputDir}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground text-xs">Elapsed</div>
-                <div>{formatElapsed(activeRun.startedAt)}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground text-xs" title="Total reads parsed from all ingested FASTQ files across every barcode in this run.">
-                  Reads
-                </div>
-                <div className="tabular-nums">{activeRun.totalReads.toLocaleString()}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground text-xs" title="Total bases (basecalled yield) summed across every barcode. Shown in kb / Mb / Gb (base-10).">
-                  Bases
-                </div>
-                <div className="tabular-nums">{formatBases(Number(activeRun.totalBases))}</div>
-              </div>
+        <CardContent className="space-y-3">
+          {runs.length > 1 ? (
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Stream runs">
+              {runs.map((run) => {
+                const live = isLiveStatus(run.status);
+                const isSelected = run.id === selectedRunId;
+                return (
+                  <button
+                    key={run.id}
+                    type="button"
+                    aria-pressed={isSelected}
+                    onClick={() => setPinnedRunId(run.id)}
+                    className={
+                      "inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors " +
+                      (isSelected ? "border-primary bg-muted" : "hover:bg-muted/40")
+                    }
+                  >
+                    <span
+                      aria-hidden
+                      className={
+                        "inline-block h-1.5 w-1.5 rounded-full " +
+                        (live ? "bg-[#00BD7D] animate-pulse" : "bg-muted-foreground/40")
+                      }
+                    />
+                    {live ? "Live" : "Stopped"}
+                    <span className="text-muted-foreground">{formatDateTime(run.startedAt)}</span>
+                  </button>
+                );
+              })}
             </div>
-            <div className="text-xs text-muted-foreground flex items-center gap-2">
-              <Activity className="h-3 w-3" />
-              <span title="Last time the stream-monitor daemon checked in. If this falls behind your poll interval, the monitor process may have stopped.">
-                Monitor heartbeat: {formatRelative(activeRun.lastSeenAt)}
-              </span>
-            </div>
-            {canManage ? (
-              <div className="flex flex-wrap items-center gap-3">
-                <Button variant="destructive" size="sm" disabled={stopping} onClick={() => void handleStop(activeRun.id)}>
-                  {stopping ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Square className="mr-2 h-4 w-4" />}
-                  Stop receiving
-                </Button>
-                <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
-                  <Info className="h-3 w-3" />
-                  Stopping the stream detaches the watcher but keeps every ingested Read row and event in this sequencing order.
-                </span>
+          ) : null}
+          {selectedRun ? (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                <div>
+                  <div className="text-muted-foreground text-xs">Output directory</div>
+                  <div className="font-mono break-all">{selectedRun.outputDir}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">{selectedRunLive ? "Elapsed" : "Duration"}</div>
+                  <div>
+                    {formatElapsed(
+                      selectedRun.startedAt,
+                      selectedRunLive ? null : selectedRun.stoppedAt ?? selectedRun.lastSeenAt,
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs" title="Total reads parsed from all ingested FASTQ files across every barcode in this run.">
+                    Reads
+                  </div>
+                  <div className="tabular-nums">{selectedRun.totalReads.toLocaleString()}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs" title="Total bases (basecalled yield) summed across every barcode. Shown in kb / Mb / Gb (base-10).">
+                    Bases
+                  </div>
+                  <div className="tabular-nums">{formatBases(Number(selectedRun.totalBases))}</div>
+                </div>
               </div>
-            ) : null}
-          </CardContent>
-        ) : (
-          <CardContent>
+              {selectedRunLive ? (
+                <div className="text-xs text-muted-foreground flex items-center gap-2">
+                  <Activity className="h-3 w-3" />
+                  <span title="Last time the stream-monitor daemon checked in. If this falls behind your poll interval, the monitor process may have stopped.">
+                    Monitor heartbeat: {formatRelative(selectedRun.lastSeenAt)}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground flex items-center gap-2">
+                  <Square className="h-3 w-3" />
+                  <span>
+                    Stopped {formatRelative(selectedRun.stoppedAt ?? selectedRun.lastSeenAt)} on{" "}
+                    {formatDateTime(selectedRun.stoppedAt ?? selectedRun.lastSeenAt)} &mdash; the watcher is
+                    detached, every ingested Read row and event below is kept.
+                  </span>
+                </div>
+              )}
+              {canManage && activeRun && selectedRun.id === activeRun.id ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button variant="destructive" size="sm" disabled={stopping} onClick={() => void handleStop(activeRun.id)}>
+                    {stopping ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Square className="mr-2 h-4 w-4" />}
+                    Stop receiving
+                  </Button>
+                  <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                    <Info className="h-3 w-3" />
+                    Stopping the stream detaches the watcher but keeps every ingested Read row and event in this sequencing order.
+                  </span>
+                </div>
+              ) : null}
+            </>
+          ) : (
             <p className="text-sm text-muted-foreground">
               No active stream for this sequencing order. Use the form below to point SeqDesk at a MinKNOW run directory
               (the folder MinKNOW creates when you click <em>Start sequencing</em>) and map each barcode to one
               of this sequencing order&apos;s samples. As soon as MinKNOW writes its first FASTQ, it will appear here.
             </p>
-          </CardContent>
-        )}
+          )}
+        </CardContent>
       </Card>
 
       {!activeRun && canManage ? (
@@ -652,18 +748,24 @@ export function SequencingStreamView({
         </Card>
       ) : null}
 
-      {activeRun ? (
+      {selectedRun ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Barcode mapping</CardTitle>
             <CardDescription>
-              Files landing in these barcode directories will be linked to the listed sample. To change the
-              mapping, stop this stream and start a new one &mdash; mappings are immutable once a stream is
-              receiving so the audit trail stays unambiguous.
+              {selectedRunLive ? (
+                <>
+                  Files landing in these barcode directories will be linked to the listed sample. To change the
+                  mapping, stop this stream and start a new one &mdash; mappings are immutable once a stream is
+                  receiving so the audit trail stays unambiguous.
+                </>
+              ) : (
+                <>Files that landed in these barcode directories were linked to the listed sample.</>
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {Object.keys(activeRun.barcodeMap).length === 0 ? (
+            {Object.keys(selectedRun.barcodeMap).length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No barcode mapping was configured for this stream. Files will still be recorded in the event
                 log but won&apos;t be linked to samples.
@@ -677,7 +779,7 @@ export function SequencingStreamView({
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(activeRun.barcodeMap).map(([barcode, sampleId]) => (
+                  {Object.entries(selectedRun.barcodeMap).map(([barcode, sampleId]) => (
                     <tr key={barcode} className="border-b last:border-0">
                       <td className="py-2 font-mono">{barcode}</td>
                       <td className="py-2">{sampleNameById.get(sampleId) ?? sampleId}</td>
@@ -690,12 +792,12 @@ export function SequencingStreamView({
         </Card>
       ) : null}
 
-      {activeRun ? (
+      {selectedRun ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">By barcode</CardTitle>
             <CardDescription>
-              Live totals per barcode across the whole run. Rows marked
+              {selectedRunLive ? "Live totals" : "Final totals"} per barcode across the whole run. Rows marked
               <em> unmapped</em> arrived in a barcode folder that wasn&apos;t in the mapping above &mdash;
               they&apos;re recorded for audit but not linked to any sample.
             </CardDescription>
@@ -703,8 +805,14 @@ export function SequencingStreamView({
           <CardContent>
             {barcodeStats.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No files ingested yet. The first batch typically appears 30&ndash;90 seconds after MinKNOW
-                starts writing.
+                {selectedRunLive ? (
+                  <>
+                    No files ingested yet. The first batch typically appears 30&ndash;90 seconds after MinKNOW
+                    starts writing.
+                  </>
+                ) : (
+                  <>No files were ingested during this run.</>
+                )}
               </p>
             ) : (
               <table className="w-full text-sm">
@@ -715,19 +823,22 @@ export function SequencingStreamView({
                     <th className="py-2 pr-3 text-right">Reads</th>
                     <th className="py-2 pr-3 text-right">Bases</th>
                     <th className="py-2 pr-3 text-right">Avg length</th>
-                    <th className="py-2 pr-3 text-right" title="Reads ingested per second since the last 5-second poll. Empty for the first poll.">
-                      Rate
-                    </th>
+                    {/* Rate needs two polls to have any meaning — a stopped run is fetched once. */}
+                    {selectedRunLive ? (
+                      <th className="py-2 pr-3 text-right" title="Reads ingested per second since the last 5-second poll. Empty for the first poll.">
+                        Rate
+                      </th>
+                    ) : null}
                     <th className="py-2 pr-3 text-right text-muted-foreground font-normal">Files</th>
                     <th className="py-2 pr-3">Last update</th>
                   </tr>
                 </thead>
                 <tbody>
                   {barcodeStats.map((row) => {
-                    const sampleId = activeRun.barcodeMap[row.barcode];
+                    const sampleId = selectedRun.barcodeMap[row.barcode];
                     const avg = avgReadLength(row.totalReads, row.totalBases);
                     const lastAgeMs = row.lastFileAt ? Date.now() - new Date(row.lastFileAt).getTime() : null;
-                    const isActive = lastAgeMs != null && lastAgeMs < 30_000;
+                    const isActive = selectedRunLive && lastAgeMs != null && lastAgeMs < 30_000;
                     return (
                       <tr key={row.barcode} className="border-b last:border-0">
                         <td className="py-2 pr-3 font-mono">{row.barcode}</td>
@@ -747,9 +858,11 @@ export function SequencingStreamView({
                         <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">
                           {avg > 0 ? `${avg.toLocaleString()} bp` : "—"}
                         </td>
-                        <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">
-                          {formatReadsPerSec(row.readsPerSec)}
-                        </td>
+                        {selectedRunLive ? (
+                          <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">
+                            {formatReadsPerSec(row.readsPerSec)}
+                          </td>
+                        ) : null}
                         <td className="py-2 pr-3 text-right tabular-nums text-muted-foreground">
                           {row.fileCount.toLocaleString()}
                         </td>
@@ -779,7 +892,7 @@ export function SequencingStreamView({
         </Card>
       ) : null}
 
-      {activeRun ? (
+      {selectedRun ? (
         <Card>
           <CardHeader className="pb-2">
             <button
@@ -794,7 +907,7 @@ export function SequencingStreamView({
               )}
               <CardTitle className="text-base">Recent files</CardTitle>
               <span className="text-xs text-muted-foreground">
-                Last {ingestedFiles.length} of {activeRun.totalReads > 0 ? "many" : "0"}
+                Last {ingestedFiles.length} of {selectedRun.totalReads > 0 ? "many" : "0"}
               </span>
             </button>
           </CardHeader>
@@ -835,7 +948,7 @@ export function SequencingStreamView({
         </Card>
       ) : null}
 
-      {activeRun ? (
+      {selectedRun ? (
         <Card>
           <CardHeader className="pb-2">
             <button

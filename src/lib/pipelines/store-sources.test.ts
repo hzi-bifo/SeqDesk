@@ -7,9 +7,10 @@ import {
 describe("store source helpers", () => {
   it("parses and de-duplicates configured registry URLs", () => {
     const sources = getPipelineRegistrySources({
+      ...process.env,
       SEQDESK_PIPELINE_REGISTRY_URLS:
         "https://seqdesk.org/api/registry, https://example.org/api/registry, https://seqdesk.org/api/registry",
-    } as NodeJS.ProcessEnv);
+    });
 
     expect(sources).toHaveLength(2);
     expect(sources[0]).toMatchObject({
@@ -83,6 +84,35 @@ describe("store source helpers", () => {
     expect(normalized.source.downloadUrl).toBe(
       "https://seqdesk.org/api/registry/pipelines/mag/3.0.0/download"
     );
+  });
+
+  it("treats requiresKey as a private registry source without legacy flags", () => {
+    const normalized = normalizeRegistryPipeline(
+      {
+        id: "licensed-pipeline",
+        latestVersion: "1.0.0",
+        privateInstall: {
+          requiresKey: true,
+          packageUrlDefault:
+            "https://packages.example/licensed-pipeline.json",
+          keyLabel: "Package key",
+        },
+      },
+      {
+        id: "registry:https://seqdesk.org/api/registry",
+        registryUrl: "https://seqdesk.org/api/registry",
+        browseUrl: "https://seqdesk.org/pipelines",
+        label: "SeqDesk Registry",
+      }
+    );
+
+    expect(normalized.isPrivate).toBe(true);
+    expect(normalized.source).toMatchObject({
+      kind: "privateRegistry",
+      packageUrlDefault:
+        "https://packages.example/licensed-pipeline.json",
+      keyLabel: "Package key",
+    });
   });
 
   it("normalizes partial registry capabilities to the complete response shape", () => {

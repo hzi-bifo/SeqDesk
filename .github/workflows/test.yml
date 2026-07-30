@@ -13,8 +13,24 @@ jobs:
   test:
     if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: seqdesk
+          POSTGRES_PASSWORD: seqdesk
+          POSTGRES_DB: seqdesk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seqdesk -d seqdesk_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public
+      DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public
 
     steps:
       - name: Checkout code
@@ -32,8 +48,50 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Prepare test database
+        run: npm run db:migrate:deploy
+
+      - name: Type-check production sources
+        run: npm run typecheck:production
+
+      - name: Gate pipeline Store, readiness, enable, and rollback contracts
+        env:
+          DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public
+          DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public
+          SEQDESK_TEST_TIER: fast
+        run: |
+          npx vitest run \
+            scripts/fastq-ground-truth.test.ts \
+            scripts/lib/conda-environment.test.ts \
+            scripts/pipeline-e2e-config.test.ts \
+            scripts/pipeline-e2e-proof.test.ts \
+            scripts/pipeline-e2e-sync.test.ts \
+            scripts/pipeline-cli-e2e.test.ts \
+            scripts/pipeline-store-e2e-fixture.test.ts \
+            src/app/admin/settings/pipelines/client-utils.test.ts \
+            src/app/api/admin/settings/pipelines/download-db/route.test.ts \
+            src/app/api/admin/settings/pipelines/install/route.test.ts \
+            src/app/api/admin/settings/pipelines/route.test.ts \
+            src/app/api/admin/settings/pipelines/store/route.test.ts \
+            src/lib/config/miniconda-installer-selection.test.ts \
+            src/lib/config/setup-conda-env-bootstrap.test.ts \
+            src/lib/pipelines/conda-environment.test.ts \
+            src/lib/pipelines/config-schema-validation.test.ts \
+            src/lib/pipelines/database-downloads.test.ts \
+            src/lib/pipelines/generic-executor.test.ts \
+            src/lib/pipelines/manifest-schema.test.ts \
+            src/lib/pipelines/multiqc-contract.test.ts \
+            src/lib/pipelines/package-descriptor-schema.test.ts \
+            src/lib/pipelines/package-install.test.ts \
+            src/lib/pipelines/pipeline-cli-script.test.ts \
+            src/lib/pipelines/pipeline-e2e-coverage.test.ts \
+            src/lib/pipelines/prior-run-artifact-staging.test.ts \
+            src/lib/pipelines/prerequisite-check.test.ts \
+            src/lib/pipelines/slurm-completion-attestation.test.ts \
+            src/lib/pipelines/ci-workflow-contract.test.ts
+
       - name: Run tests with coverage
-        run: npm run test:coverage
+        run: npm run test:coverage:all
 
       - name: Upload coverage to Codecov
         if: ${{ env.CODECOV_TOKEN != '' }}

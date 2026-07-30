@@ -166,8 +166,16 @@ describe("samplesheet-generator", () => {
       {
         sampleId: "S1",
         reads: [
-          { file1: "reads/S1_single.fastq.gz", file2: null },
-          { file1: "reads/S1_R1.fastq.gz", file2: "reads/S1_R2.fastq.gz" },
+          {
+            id: "read-single",
+            file1: "reads/S1_single.fastq.gz",
+            file2: null,
+          },
+          {
+            id: "read-paired",
+            file1: "reads/S1_R1.fastq.gz",
+            file2: "reads/S1_R2.fastq.gz",
+          },
         ],
         order: { id: "order-1", platform: "illumina", customFields: null },
       },
@@ -190,6 +198,72 @@ describe("samplesheet-generator", () => {
         "sample,r1,r2,platform,study,r1_full,mapped",
         "S1,reads/S1_R1.fastq.gz,reads/S1_R2.fastq.gz,ILLUMINA,Study Title,/data/base/reads/S1_R1.fastq.gz,ILMN",
       ].join("\n")
+    );
+  });
+
+  it("selects the same read regardless of database return order", async () => {
+    mocks.getPackageSamplesheet.mockReturnValue(makeConfig("csv"));
+    const readA = {
+      id: "read-a",
+      file1: "reads/S1_A_R1.fastq.gz",
+      file2: "reads/S1_A_R2.fastq.gz",
+      dataClass: "cleaned",
+      isActive: true,
+    };
+    const legacyReadB = {
+      id: "read-b",
+      file1: "reads/S1_B_R1.fastq.gz",
+      file2: "reads/S1_B_R2.fastq.gz",
+      dataClass: null,
+      isActive: true,
+    };
+    mocks.db.sample.findMany
+      .mockResolvedValueOnce([
+        {
+          sampleId: "S1",
+          reads: [legacyReadB, readA],
+          order: {
+            id: "order-1",
+            platform: "illumina",
+            customFields: null,
+          },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          sampleId: "S1",
+          reads: [readA, legacyReadB],
+          order: {
+            id: "order-1",
+            platform: "illumina",
+            customFields: null,
+          },
+        },
+      ]);
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Study Title",
+    });
+
+    const generator = new SamplesheetGenerator("mag");
+    const options = {
+      target: { type: "study" as const, studyId: "study-1" },
+      dataBasePath: "/data/base",
+    };
+    const first = await generator.generate(options);
+    const second = await generator.generate(options);
+
+    expect(first.content).toBe(second.content);
+    expect(first.content).toContain("reads/S1_A_R1.fastq.gz");
+    expect(first.content).not.toContain("reads/S1_B_R1.fastq.gz");
+    expect(mocks.db.sample.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          reads: {
+            orderBy: [{ dataClass: "asc" }, { id: "asc" }],
+          },
+        }),
+      })
     );
   });
 

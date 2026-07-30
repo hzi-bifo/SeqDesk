@@ -1,10 +1,15 @@
 #!/usr/bin/env node
+import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
+import { createInterface } from 'node:readline/promises';
 import type { DebugBundle } from '../src/lib/pipelines/pipeline-run-ops-service';
 
 type PipelineCommand =
   | 'list'
+  | 'install'
+  | 'setup'
+  | 'enable'
   | 'run'
   | 'status'
   | 'sync'
@@ -15,7 +20,9 @@ type PipelineCommand =
 
 type ParsedArgs = {
   command: PipelineCommand | 'help';
+  commandFamily: 'pipeline' | 'pipelines' | 'direct';
   dir: string;
+  dirExplicit: boolean;
   json: boolean;
   help: boolean;
   values: Record<string, string | boolean | undefined>;
@@ -23,9 +30,48 @@ type ParsedArgs = {
 };
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const PIPELINE_INSTALL_GUIDE_URL =
+  'https://seqdesk.org/docs/pipelines/installing-pipelines';
+
+type ManagedPipelineDisplay = {
+  pipelineId?: string;
+  id?: string;
+  name?: string;
+  targets?: string[] | { supported?: string[] } | null;
+  packageState?: string;
+  setupState?: string;
+  activationState?: string;
+  enabled?: boolean;
+  nextActions?: unknown[];
+  readiness?: {
+    status?: string;
+    summary?: string;
+    canEnable?: boolean;
+    items?: Array<{
+      id?: string;
+      label?: string;
+      status?: string;
+      detail?: string;
+      action?: string;
+      blocking?: boolean;
+    }>;
+  } | null;
+};
+
+type ManagedRuntimeSetupPaths = {
+  configPath: string;
+  dataPath: string;
+  runDirectory: string;
+  condaPath?: string;
+  condaEnvironment?: string;
+};
 
 const USAGE = `Usage:
-  seqdesk pipeline list --dir <install> [--catalog study|order|all] [--enabled] [--json]
+  seqdesk pipelines list [--dir <install>] [--catalog study|order|all] [--installed] [--enabled] [--json]
+  seqdesk pipelines install <pipelineId> [--dir <install>] [--source <sourceId>] [--version <version>] [--sha256 <digest>] [--runtime] [--yes] [--json]
+  seqdesk pipelines setup <pipelineId> [--dir <install>] [--config-file file|--config-json json] [--runtime] [--yes] [--json]
+  seqdesk pipelines enable <pipelineId> [--dir <install>] [--json]
+  seqdesk pipelines status <pipelineId> [--dir <install>] [--json]
   seqdesk pipeline run <pipelineId> --dir <install> (--study <id>|--order <id>) [--samples id,id] [--config-file file|--config-json json] [--execution default|local|slurm] [--watch] [--json] [--user-email email]
   seqdesk pipeline status <runId> --dir <install> [--watch] [--json]
   seqdesk pipeline sync <runId> --dir <install> [--json]
@@ -35,6 +81,7 @@ const USAGE = `Usage:
   seqdesk pipeline cancel <runId> --dir <install> [--json]
 
 Local shell access to the installed SeqDesk directory is treated as operator access.
+The singular "seqdesk pipeline" form remains an alias.
 `;
 
 function takeValue(argv: string[], index: number, token: string): string {
@@ -54,10 +101,19 @@ function setValue(
 }
 
 export function parsePipelineArgs(rawArgv: string[]): ParsedArgs {
-  const argv = rawArgv[0] === 'pipeline' ? rawArgv.slice(1) : rawArgv.slice();
+  const commandFamily =
+    rawArgv[0] === 'pipeline' || rawArgv[0] === 'pipelines'
+      ? rawArgv[0]
+      : 'direct';
+  const argv =
+    rawArgv[0] === 'pipeline' || rawArgv[0] === 'pipelines'
+      ? rawArgv.slice(1)
+      : rawArgv.slice();
   const parsed: ParsedArgs = {
     command: 'help',
+    commandFamily,
     dir: process.cwd(),
+    dirExplicit: false,
     json: false,
     help: false,
     values: {},
@@ -74,7 +130,21 @@ export function parsePipelineArgs(rawArgv: string[]): ParsedArgs {
     parsed.help = true;
     return parsed;
   }
-  if (!['list', 'run', 'status', 'sync', 'logs', 'outputs', 'debug', 'cancel'].includes(command)) {
+  if (
+    ![
+      'list',
+      'install',
+      'setup',
+      'enable',
+      'run',
+      'status',
+      'sync',
+      'logs',
+      'outputs',
+      'debug',
+      'cancel',
+    ].includes(command)
+  ) {
     throw new Error(`Unknown pipeline command: ${command}`);
   }
   parsed.command = command as PipelineCommand;
@@ -102,6 +172,21 @@ export function parsePipelineArgs(rawArgv: string[]): ParsedArgs {
       continue;
     }
 
+    if (token === '--installed') {
+      setValue(parsed, 'installed', true);
+      continue;
+    }
+
+    if (token === '--yes' || token === '-y') {
+      setValue(parsed, 'yes', true);
+      continue;
+    }
+
+    if (token === '--runtime') {
+      setValue(parsed, 'runtime', true);
+      continue;
+    }
+
     const split = token.match(/^(--[a-z0-9-]+)=(.*)$/i);
     const flag = split ? split[1] : token;
     const inlineValue = split ? split[2] : undefined;
@@ -109,12 +194,17 @@ export function parsePipelineArgs(rawArgv: string[]): ParsedArgs {
     if (flag === '--dir' || flag === '-d') {
       const value = inlineValue ?? takeValue(argv, index, token);
       parsed.dir = value;
+      parsed.dirExplicit = true;
       if (inlineValue === undefined) index += 1;
       continue;
     }
 
     const valueFlags = new Set([
       '--catalog',
+      '--command-family',
+      '--source',
+      '--version',
+      '--sha256',
       '--study',
       '--order',
       '--samples',
@@ -130,7 +220,16 @@ export function parsePipelineArgs(rawArgv: string[]): ParsedArgs {
 
     if (valueFlags.has(flag)) {
       const value = inlineValue ?? takeValue(argv, index, token);
-      setValue(parsed, flag.slice(2).replace(/-/g, '_'), value);
+      if (flag === '--command-family') {
+        if (value !== 'pipeline' && value !== 'pipelines') {
+          throw new Error(
+            '--command-family must be either pipeline or pipelines'
+          );
+        }
+        parsed.commandFamily = value;
+      } else {
+        setValue(parsed, flag.slice(2).replace(/-/g, '_'), value);
+      }
       if (inlineValue === undefined) index += 1;
       continue;
     }
@@ -190,14 +289,124 @@ function readRuntimeString(source: unknown): string {
   return typeof source === 'string' && source.trim() ? source.trim() : '';
 }
 
-async function loadRuntimeEnvironment(installDir: string): Promise<void> {
+function readRuntimeRecord(source: unknown): Record<string, unknown> {
+  return source &&
+    typeof source === 'object' &&
+    !Array.isArray(source)
+    ? (source as Record<string, unknown>)
+    : {};
+}
+
+async function readInstalledSettings(
+  installDir: string
+): Promise<{ config: Record<string, unknown>; configPath: string }> {
+  const resolvedInstallDir = path.resolve(installDir);
+  const candidates = [
+    path.join(resolvedInstallDir, 'settings.json'),
+    path.join(resolvedInstallDir, 'seqdesk.config.json'),
+    path.join(resolvedInstallDir, 'current', 'settings.json'),
+    path.join(resolvedInstallDir, 'current', 'seqdesk.config.json'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(candidate, 'utf-8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('the JSON root must be an object');
+      }
+      return {
+        config: parsed as Record<string, unknown>,
+        configPath: candidate,
+      };
+    } catch (error) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'code' in error &&
+        (error as { code?: unknown }).code === 'ENOENT'
+      ) {
+        continue;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Cannot read the installed SeqDesk settings at ${candidate}: ${message}`
+      );
+    }
+  }
+
+  return {
+    config: {},
+    configPath: path.join(resolvedInstallDir, 'settings.json'),
+  };
+}
+
+/**
+ * Resolve the storage values which the external runtime installer must keep.
+ *
+ * setup-conda-env.sh writes both values back to settings.json, so passing its
+ * old hard-coded defaults here would silently move an existing installation.
+ * Keep environment overrides and every installer-supported legacy key too.
+ */
+export async function resolveManagedRuntimeSetupPaths(
+  installDir: string
+): Promise<ManagedRuntimeSetupPaths> {
+  const resolvedInstallDir = path.resolve(installDir);
+  const { config, configPath } = await readInstalledSettings(
+    resolvedInstallDir
+  );
+  const site = readRuntimeRecord(config.site);
+  const pipelines = readRuntimeRecord(config.pipelines);
+  const execution = readRuntimeRecord(pipelines.execution);
+  const conda = readRuntimeRecord(execution.conda);
+
+  const dataPath =
+    readRuntimeString(process.env.SEQDESK_DATA_PATH) ||
+    readRuntimeString(site.dataBasePath) ||
+    readRuntimeString(config.dataBasePath) ||
+    readRuntimeString(config.sequencingDataDir) ||
+    readRuntimeString(config.sequencingDataPath) ||
+    path.join(resolvedInstallDir, 'data');
+  const runDirectory =
+    readRuntimeString(process.env.SEQDESK_PIPELINE_RUN_DIR) ||
+    readRuntimeString(execution.runDirectory) ||
+    readRuntimeString(execution.pipelineRunDir) ||
+    readRuntimeString(config.pipelineRunDir) ||
+    readRuntimeString(config.runDirectory) ||
+    path.join(resolvedInstallDir, 'pipeline_runs');
+  const condaPath =
+    readRuntimeString(process.env.SEQDESK_CONDA_PATH) ||
+    readRuntimeString(process.env.SEQDESK_EXEC_CONDA_PATH) ||
+    readRuntimeString(conda.path) ||
+    readRuntimeString(execution.condaPath);
+  const condaEnvironment =
+    readRuntimeString(process.env.SEQDESK_CONDA_ENV) ||
+    readRuntimeString(process.env.SEQDESK_EXEC_CONDA_ENV) ||
+    readRuntimeString(conda.environment) ||
+    readRuntimeString(execution.condaEnv);
+
+  return {
+    configPath,
+    dataPath,
+    runDirectory,
+    ...(condaPath ? { condaPath } : {}),
+    ...(condaEnvironment ? { condaEnvironment } : {}),
+  };
+}
+
+export async function loadRuntimeEnvironment(
+  installDir: string,
+  options: { explicitDir?: boolean } = {}
+): Promise<void> {
   let config: Record<string, unknown> = {};
+  let configPath: string | null = null;
   try {
     // A13: prefer canonical settings.json, fall back to legacy seqdesk.config.json.
     let raw = '{}';
     for (const name of ['settings.json', 'seqdesk.config.json']) {
       try {
-        raw = await fs.readFile(path.join(installDir, name), 'utf-8');
+        const candidate = path.join(installDir, name);
+        raw = await fs.readFile(candidate, 'utf-8');
+        configPath = candidate;
         break;
       } catch {
         // try the next candidate
@@ -216,16 +425,32 @@ async function loadRuntimeEnvironment(installDir: string): Promise<void> {
       ? (config.runtime as Record<string, unknown>)
       : {};
 
-  if (!process.env.DATABASE_URL) {
-    const databaseUrl = readRuntimeString(runtime.databaseUrl ?? config.databaseUrl);
-    if (databaseUrl) {
-      process.env.DATABASE_URL = databaseUrl;
-    }
-  }
+  const configuredDatabaseUrl = readRuntimeString(
+    runtime.databaseUrl ?? config.databaseUrl
+  );
+  const configuredDirectUrl = readRuntimeString(
+    runtime.directUrl ?? runtime.databaseDirectUrl ?? config.directUrl
+  );
 
-  if (!process.env.DIRECT_URL) {
-    const directUrl = readRuntimeString(runtime.directUrl ?? runtime.databaseDirectUrl ?? config.directUrl);
-    process.env.DIRECT_URL = directUrl || process.env.DATABASE_URL;
+  if (options.explicitDir) {
+    if (!configPath || !configuredDatabaseUrl) {
+      throw new Error(
+        `The selected SeqDesk install does not provide a database URL in settings.json: ${installDir}`
+      );
+    }
+    // An operator may have DATABASE_URL exported for another checkout. An
+    // explicit --dir is an unambiguous selection and must never inherit that
+    // unrelated database connection.
+    process.env.DATABASE_URL = configuredDatabaseUrl;
+    process.env.DIRECT_URL = configuredDirectUrl || configuredDatabaseUrl;
+  } else {
+    if (!process.env.DATABASE_URL && configuredDatabaseUrl) {
+      process.env.DATABASE_URL = configuredDatabaseUrl;
+    }
+    if (!process.env.DIRECT_URL) {
+      process.env.DIRECT_URL =
+        configuredDirectUrl || process.env.DATABASE_URL;
+    }
   }
 
   if (!process.env.DATABASE_URL) {
@@ -248,12 +473,419 @@ function jsonPrint(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+function managedPipelineId(pipeline: ManagedPipelineDisplay): string {
+  return String(pipeline.pipelineId || pipeline.id || '');
+}
+
+function managedPipelineTargets(pipeline: ManagedPipelineDisplay): string[] {
+  if (Array.isArray(pipeline.targets)) {
+    return pipeline.targets.map(String);
+  }
+  if (
+    pipeline.targets &&
+    typeof pipeline.targets === 'object' &&
+    Array.isArray(pipeline.targets.supported)
+  ) {
+    return pipeline.targets.supported.map(String);
+  }
+  return [];
+}
+
+function commandForManagedAction(
+  pipelineId: string,
+  action: string
+): string | null {
+  if (action === 'install' || action === 'sync') {
+    return `seqdesk pipelines install ${pipelineId}`;
+  }
+  if (action === 'enable') {
+    return `seqdesk pipelines enable ${pipelineId}`;
+  }
+  if (action === 'configure-runtime') {
+    return `seqdesk pipelines setup ${pipelineId} --runtime`;
+  }
+  if (
+    action === 'configure' ||
+    action === 'download-db' ||
+    action === 'configure-storage'
+  ) {
+    return `seqdesk pipelines setup ${pipelineId}`;
+  }
+  return null;
+}
+
+function managedNextAction(pipeline: ManagedPipelineDisplay): string {
+  const first = pipeline.nextActions?.[0];
+  if (typeof first === 'string') return first;
+  if (first && typeof first === 'object') {
+    const action = first as Record<string, unknown>;
+    if (typeof action.action === 'string') {
+      const command = commandForManagedAction(
+        managedPipelineId(pipeline),
+        action.action
+      );
+      if (command) return command;
+    }
+    for (const key of ['command', 'label', 'detail']) {
+      if (typeof action[key] === 'string' && action[key]) {
+        return action[key] as string;
+      }
+    }
+  }
+  return '-';
+}
+
+function managedPipelineForJson(
+  pipeline: ManagedPipelineDisplay
+): ManagedPipelineDisplay {
+  const pipelineId = managedPipelineId(pipeline);
+  return {
+    ...pipeline,
+    nextActions: (pipeline.nextActions || []).map((action) => {
+      if (!action || typeof action !== 'object') return action;
+      const item = action as Record<string, unknown>;
+      const command =
+        typeof item.action === 'string'
+          ? commandForManagedAction(pipelineId, item.action)
+          : null;
+      return command ? { ...item, command } : item;
+    }),
+  };
+}
+
+function managedPipelineNeedsRuntime(
+  pipeline: ManagedPipelineDisplay | null | undefined
+): boolean {
+  return Boolean(
+    pipeline?.readiness?.items?.some(
+      (item) =>
+        item.status !== 'ready' &&
+        item.blocking !== false &&
+        item.action === 'configure-runtime'
+    )
+  );
+}
+
+function formatManagedPipelineTable(
+  pipelines: ManagedPipelineDisplay[]
+): string {
+  const headers = ['PIPELINE', 'TARGETS', 'PACKAGE', 'SETUP', 'ACTIVE', 'NEXT'];
+  const rows = pipelines.map((pipeline) => [
+    managedPipelineId(pipeline),
+    managedPipelineTargets(pipeline).join(',') || '-',
+    pipeline.packageState || 'available',
+    pipeline.setupState || pipeline.readiness?.status || 'needs-setup',
+    pipeline.activationState ||
+      (pipeline.enabled ? 'enabled' : 'disabled'),
+    managedNextAction(pipeline),
+  ]);
+  const widths = headers.map((header, index) =>
+    Math.max(
+      header.length,
+      ...rows.map((row) => String(row[index] || '').length)
+    )
+  );
+  const render = (row: string[]) =>
+    row
+      .map((value, index) =>
+        index === row.length - 1 ? value : value.padEnd(widths[index])
+      )
+      .join('  ')
+      .trimEnd();
+  return `${[render(headers), ...rows.map(render)].join('\n')}\n`;
+}
+
+export function formatManagedPipelineListGuidance(
+  options: { showSimulateReadsExample?: boolean } = {}
+): string {
+  const lines = [
+    '',
+    'What to do next:',
+    '  The NEXT column shows the exact action for each pipeline.',
+    '  Install a pipeline shown above:',
+    '    seqdesk pipelines install <pipeline-id>',
+    '  Provision a missing Conda, Java, and Nextflow runtime in the same step:',
+    '    seqdesk pipelines install <pipeline-id> --runtime',
+    '  Check its package, setup, and activation state:',
+    '    seqdesk pipelines status <pipeline-id>',
+  ];
+  if (options.showSimulateReadsExample) {
+    lines.push(
+      '  Safe first order-level example:',
+      '    seqdesk pipelines install simulate-reads --runtime'
+    );
+  }
+  lines.push(`  Guide: ${PIPELINE_INSTALL_GUIDE_URL}`, '');
+  return lines.join('\n');
+}
+
+function printManagedPipelineStatus(
+  pipeline: ManagedPipelineDisplay,
+  options: { showNextActions?: boolean } = {}
+): void {
+  const id = managedPipelineId(pipeline);
+  process.stdout.write(
+    [
+      `${id}${pipeline.name && pipeline.name !== id ? ` — ${pipeline.name}` : ''}`,
+      `Package: ${pipeline.packageState || 'available'}`,
+      `Setup: ${pipeline.setupState || pipeline.readiness?.status || 'needs-setup'}`,
+      `Activation: ${
+        pipeline.activationState ||
+        (pipeline.enabled ? 'enabled' : 'disabled')
+      }`,
+      `Targets: ${managedPipelineTargets(pipeline).join(', ') || '-'}`,
+    ].join('\n') + '\n'
+  );
+
+  const missing = (pipeline.readiness?.items || []).filter(
+    (item) =>
+      item.status !== 'ready' &&
+      item.blocking !== false &&
+      item.id !== 'enabled'
+  );
+  if (missing.length > 0) {
+    process.stdout.write('Missing:\n');
+    for (const item of missing) {
+      process.stdout.write(
+        `  - ${item.label || item.id || 'Setup'}${
+          item.detail ? `: ${item.detail}` : ''
+        }\n`
+      );
+    }
+  }
+
+  if (
+    options.showNextActions !== false &&
+    (pipeline.nextActions?.length || 0) > 0
+  ) {
+    process.stdout.write('Next:\n');
+    for (const action of pipeline.nextActions || []) {
+      if (typeof action === 'string') {
+        process.stdout.write(`  ${action}\n`);
+        continue;
+      }
+      if (action && typeof action === 'object') {
+        const candidate = action as Record<string, unknown>;
+        const command =
+          typeof candidate.action === 'string'
+            ? commandForManagedAction(id, candidate.action)
+            : null;
+        const text = command || candidate.command || candidate.label;
+        if (typeof text === 'string' && text) {
+          process.stdout.write(`  ${text}\n`);
+        }
+      }
+    }
+  }
+}
+
+export function getManagedSetupGuidance(
+  pipeline: ManagedPipelineDisplay
+): string[] {
+  const pipelineId = managedPipelineId(pipeline);
+  const missing = (pipeline.readiness?.items || []).filter(
+    (item) =>
+      item.status !== 'ready' &&
+      item.blocking !== false &&
+      item.id !== 'enabled'
+  );
+  const guidance: string[] = [];
+  const actions = new Set(missing.map((item) => item.action));
+
+  if (actions.has('configure')) {
+    const requiredConfig = missing
+      .filter(
+        (item) =>
+          item.id === 'required-config' ||
+          item.id === 'pipeline-config'
+      )
+      .map((item) => item.detail)
+      .filter((detail): detail is string => Boolean(detail));
+    guidance.push(
+      `Provide the pipeline-specific values with \`seqdesk pipelines setup ${pipelineId} --config-file /path/to/pipeline-config.json\`, or configure them under Admin → Pipelines → ${pipelineId}${
+        requiredConfig.length > 0
+          ? ` (${requiredConfig.join(' ')})`
+          : ''
+      }.`
+    );
+  }
+
+  if (actions.has('download-db')) {
+    guidance.push(
+      `Database assets are not downloaded automatically. Review and install or link them under Admin → Pipelines → ${pipelineId} → Databases.`
+    );
+  }
+
+  if (actions.has('configure-storage')) {
+    guidance.push(
+      'Configure an existing readable data directory under Admin → Settings → Data storage.'
+    );
+  }
+
+  if (actions.has('configure-runtime')) {
+    guidance.push(
+      `Run \`seqdesk pipelines setup ${pipelineId} --runtime\` to install the managed runtime, or configure the existing Nextflow/Java/Conda/SLURM runtime under Admin → Pipeline Runtime.`
+    );
+  }
+
+  if (guidance.length === 0 && !pipeline.readiness?.canEnable) {
+    guidance.push(
+      `Review the remaining readiness checks under Admin → Pipelines → ${pipelineId}.`
+    );
+  }
+  return guidance;
+}
+
+function printManagedPipelineSetupResult(
+  pipeline: ManagedPipelineDisplay
+): void {
+  printManagedPipelineStatus(pipeline, { showNextActions: false });
+  const guidance = getManagedSetupGuidance(pipeline);
+  if (guidance.length > 0) {
+    process.stdout.write('To finish setup:\n');
+    for (const item of guidance) {
+      process.stdout.write(`  - ${item}\n`);
+    }
+  }
+}
+
+function resolveInstalledAppDir(installDir: string): string {
+  const currentDir = path.join(installDir, 'current');
+  return currentDir;
+}
+
+async function pathIsFile(filePath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function findManagedRuntimeSetupScript(
+  installDir: string
+): Promise<{ appDir: string; scriptPath: string }> {
+  const candidates = [resolveInstalledAppDir(installDir), installDir];
+  for (const appDir of candidates) {
+    const scriptPath = path.join(appDir, 'scripts', 'setup-conda-env.sh');
+    if (await pathIsFile(scriptPath)) {
+      return { appDir, scriptPath };
+    }
+  }
+  throw new Error(
+    `Managed pipeline runtime setup is unavailable in ${installDir}. Update SeqDesk or configure the runtime under Admin → Pipeline Runtime.`
+  );
+}
+
+async function confirmManagedRuntimeSetup(): Promise<boolean> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+  const prompt = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  try {
+    const answer = await prompt.question(
+      'Set up the managed Conda, Nextflow, and Java runtime now? [y/N] '
+    );
+    return /^(y|yes)$/i.test(answer.trim());
+  } finally {
+    prompt.close();
+  }
+}
+
+export async function invalidateManagedRuntimeSetupCaches(): Promise<void> {
+  const [configLoader, prerequisiteCheck] = await Promise.all([
+    import('../src/lib/config/loader'),
+    import('../src/lib/pipelines/prerequisite-check'),
+  ]);
+  configLoader.clearConfigCache();
+  prerequisiteCheck.clearPipelineRuntimePrerequisiteCache();
+}
+
+export async function runManagedRuntimeSetup(
+  installDir: string,
+  options: { json?: boolean } = {}
+): Promise<void> {
+  const { scriptPath } = await findManagedRuntimeSetupScript(installDir);
+  const storage = await resolveManagedRuntimeSetupPaths(installDir);
+  const args = [
+    scriptPath,
+    '--yes',
+    '--install-miniconda',
+    '--write-config',
+    '--config-path',
+    storage.configPath,
+    '--pipelines-enabled',
+    '--create-dirs',
+    '--data-path',
+    storage.dataPath,
+    '--run-dir',
+    storage.runDirectory,
+  ];
+  if (storage.condaPath) {
+    args.push('--conda-path', storage.condaPath);
+  }
+  if (storage.condaEnvironment) {
+    args.push('--env', storage.condaEnvironment);
+  }
+  const code = await new Promise<number>((resolve, reject) => {
+    const child = spawn('bash', args, {
+      // Relative paths in settings.json are relative to the installation root,
+      // not to current/releases/<version>.
+      cwd: path.resolve(installDir),
+      env: process.env,
+      stdio: options.json
+        ? ['inherit', process.stderr, process.stderr]
+        : 'inherit',
+    });
+    child.once('error', reject);
+    child.once('close', (exitCode, signal) => {
+      if (signal) {
+        reject(
+          new Error(`Managed runtime setup exited with signal ${signal}.`)
+        );
+        return;
+      }
+      resolve(exitCode ?? 1);
+    });
+  });
+  if (code !== 0) {
+    throw new Error(`Managed runtime setup failed with exit code ${code}.`);
+  }
+  await invalidateManagedRuntimeSetupCaches();
+}
+
 function printError(error: unknown, json: boolean): void {
   const message = error instanceof Error ? error.message : String(error);
+  const details =
+    error &&
+    typeof error === 'object' &&
+    'details' in error
+      ? (error as { details?: unknown }).details
+      : undefined;
+  const status =
+    error &&
+    typeof error === 'object' &&
+    'status' in error &&
+    typeof (error as { status?: unknown }).status === 'number'
+      ? (error as { status: number }).status
+      : undefined;
   if (json) {
-    jsonPrint({ success: false, error: message });
+    jsonPrint({
+      success: false,
+      error: message,
+      ...(details !== undefined && details !== '' ? { details } : {}),
+      ...(status !== undefined ? { status } : {}),
+    });
   } else {
-    process.stderr.write(`[seqdesk pipeline] ${message}\n`);
+    process.stderr.write(`[seqdesk pipelines] ${message}\n`);
+    if (Array.isArray(details)) {
+      for (const detail of details) {
+        process.stderr.write(`  - ${String(detail)}\n`);
+      }
+    } else if (details) {
+      process.stderr.write(`  ${String(details)}\n`);
+    }
   }
 }
 
@@ -321,7 +953,13 @@ async function watchRun(
 async function loadServices() {
   const runService = await import('../src/lib/pipelines/pipeline-run-service');
   const ops = await import('../src/lib/pipelines/pipeline-run-ops-service');
-  return { runService, ops };
+  const management = await import(
+    '../src/lib/pipelines/pipeline-management-service'
+  );
+  const installer = await import(
+    '../src/lib/pipelines/pipeline-install-service'
+  );
+  return { runService, ops, management, installer };
 }
 
 async function runCommand(parsed: ParsedArgs): Promise<number> {
@@ -330,7 +968,9 @@ async function runCommand(parsed: ParsedArgs): Promise<number> {
     return 0;
   }
 
-  await loadRuntimeEnvironment(parsed.dir);
+  await loadRuntimeEnvironment(parsed.dir, {
+    explicitDir: parsed.dirExplicit,
+  });
   const services = await loadServices();
 
   if (parsed.command === 'list') {
@@ -338,19 +978,266 @@ async function runCommand(parsed: ParsedArgs): Promise<number> {
     if (!['study', 'order', 'all'].includes(catalog)) {
       throw new Error('--catalog must be one of: study, order, all');
     }
-    const result = await services.ops.listPipelineCatalogForOperator({
+    const installedOnly = readBoolean(parsed.values.installed);
+    const enabledOnly = readBoolean(parsed.values.enabled);
+    const result = await services.management.listManagedPipelineCatalog({
       catalog: catalog as 'study' | 'order' | 'all',
-      enabledOnly: readBoolean(parsed.values.enabled),
+      installedOnly,
+      enabledOnly,
     });
-    if (parsed.json) return outputServiceResult(result, true);
-    if (result.status >= 400) return outputServiceResult(result, false);
-    const pipelines = result.body.pipelines as Array<Record<string, unknown>>;
-    for (const pipeline of pipelines) {
-      process.stdout.write(
-        `${pipeline.id}\t${pipeline.enabled ? 'enabled' : 'disabled'}\t${pipeline.name}\tstudy=${Boolean(
-          (pipeline.catalog as Record<string, unknown>).study
-        )}\torder=${Boolean((pipeline.catalog as Record<string, unknown>).order)}\n`
+    if (parsed.json) {
+      jsonPrint({
+        success: true,
+        ...result,
+        pipelines: result.pipelines.map((pipeline) =>
+          managedPipelineForJson(pipeline as ManagedPipelineDisplay)
+        ),
+      });
+      return 0;
+    }
+    process.stdout.write(
+      formatManagedPipelineTable(
+        result.pipelines as ManagedPipelineDisplay[]
+      )
+    );
+    process.stdout.write(
+      formatManagedPipelineListGuidance({
+        showSimulateReadsExample:
+          catalog !== 'study' &&
+          !installedOnly &&
+          !enabledOnly &&
+          result.pipelines.some(
+            (pipeline) =>
+              managedPipelineId(
+                pipeline as ManagedPipelineDisplay
+              ) === 'simulate-reads'
+          ),
+      })
+    );
+    for (const warning of result.registryErrors) {
+      process.stderr.write(
+        `[seqdesk pipelines] Registry ${warning.label || warning.sourceId}: ${warning.error}\n`
       );
+    }
+    return 0;
+  }
+
+  if (parsed.command === 'install') {
+    const pipelineId = parsed.positionals[0];
+    if (!pipelineId) throw new Error('Missing pipelineId');
+    if (parsed.positionals.length > 1) {
+      throw new Error('Install accepts exactly one pipelineId');
+    }
+
+    let result = await services.installer.installManagedPipeline({
+      pipelineId,
+      sourceId: readString(parsed.values.source),
+      version: readString(parsed.values.version),
+      credentials: {
+        accessKey:
+          readRuntimeString(process.env.SEQDESK_PIPELINE_ACCESS_KEY) ||
+          undefined,
+        token:
+          readRuntimeString(process.env.SEQDESK_PIPELINE_GITHUB_TOKEN) ||
+          readRuntimeString(process.env.GITHUB_TOKEN) ||
+          undefined,
+        sha256: readString(parsed.values.sha256),
+      },
+      autoEnable: true,
+    });
+
+    let pipeline = result.status;
+    if (managedPipelineNeedsRuntime(pipeline as ManagedPipelineDisplay)) {
+      const runtimeAccepted =
+        readBoolean(parsed.values.runtime) ||
+        readBoolean(parsed.values.yes) ||
+        (!parsed.json && (await confirmManagedRuntimeSetup()));
+      if (runtimeAccepted) {
+        await runManagedRuntimeSetup(parsed.dir, { json: parsed.json });
+        pipeline = await services.management.getManagedPipelineStatus(
+          pipelineId,
+          { includeAvailable: false }
+        );
+        if (pipeline?.readiness?.canEnable) {
+          await services.management.updateManagedPipeline({
+            pipelineId,
+            enabled: true,
+          });
+          pipeline = await services.management.getManagedPipelineStatus(
+            pipelineId,
+            { includeAvailable: false }
+          );
+        }
+        if (pipeline) {
+          result = {
+            ...result,
+            status: pipeline,
+            packageState: pipeline.packageState,
+            setupState: pipeline.setupState,
+            activationState: pipeline.activationState,
+            setupRequired: !Boolean(pipeline.readiness?.canEnable),
+            enabled: pipeline.enabled,
+            readiness: pipeline.readiness,
+            nextActions: pipeline.nextActions,
+            autoEnabled:
+              result.autoEnabled ||
+              pipeline.activationState === 'enabled',
+          };
+        }
+      }
+    }
+
+    if (parsed.json) {
+      const jsonStatus = result.status
+        ? managedPipelineForJson(
+            result.status as ManagedPipelineDisplay
+          )
+        : null;
+      jsonPrint({
+        ...result,
+        status: jsonStatus,
+        pipeline: jsonStatus,
+        nextActions: jsonStatus?.nextActions || result.nextActions,
+      });
+    } else {
+      process.stdout.write(`${result.message}\n`);
+      if (result.status) {
+        printManagedPipelineStatus(
+          result.status as ManagedPipelineDisplay
+        );
+      }
+    }
+    return 0;
+  }
+
+  if (parsed.command === 'setup') {
+    const pipelineId = parsed.positionals[0];
+    if (!pipelineId) throw new Error('Missing pipelineId');
+    if (parsed.positionals.length > 1) {
+      throw new Error('Setup accepts exactly one pipelineId');
+    }
+    const hasConfig =
+      Boolean(readString(parsed.values.config_file)) ||
+      Boolean(readString(parsed.values.config_json));
+    const config = hasConfig ? await readConfig(parsed.values) : undefined;
+    await services.management.updateManagedPipeline({
+      pipelineId,
+      config,
+      enabled: false,
+    });
+
+    let pipeline = await services.management.getManagedPipelineStatus(
+      pipelineId,
+      { includeAvailable: false }
+    );
+    if (!pipeline) {
+      throw new Error(`Pipeline "${pipelineId}" is not installed.`);
+    }
+
+    const runtimeRequested = readBoolean(parsed.values.runtime);
+    const runtimeNeeded = managedPipelineNeedsRuntime(
+      pipeline as ManagedPipelineDisplay
+    );
+    const runtimeAccepted =
+      runtimeRequested ||
+      (runtimeNeeded &&
+        (readBoolean(parsed.values.yes) ||
+          (!parsed.json && (await confirmManagedRuntimeSetup()))));
+    if (runtimeAccepted) {
+      await runManagedRuntimeSetup(parsed.dir, { json: parsed.json });
+      pipeline = await services.management.getManagedPipelineStatus(
+        pipelineId,
+        { includeAvailable: false }
+      );
+      if (!pipeline) {
+        throw new Error(`Pipeline "${pipelineId}" is not installed.`);
+      }
+    }
+
+    if (pipeline.readiness?.canEnable) {
+      await services.management.updateManagedPipeline({
+        pipelineId,
+        enabled: true,
+      });
+      pipeline = await services.management.getManagedPipelineStatus(
+        pipelineId,
+        { includeAvailable: false }
+      );
+    }
+
+    if (parsed.json) {
+      const setupGuidance = getManagedSetupGuidance(
+        pipeline as ManagedPipelineDisplay
+      );
+      jsonPrint({
+        success: true,
+        pipeline: managedPipelineForJson(
+          pipeline as ManagedPipelineDisplay
+        ),
+        setupGuidance,
+      });
+    } else {
+      printManagedPipelineSetupResult(
+        pipeline as ManagedPipelineDisplay
+      );
+    }
+    return 0;
+  }
+
+  if (parsed.command === 'enable') {
+    const pipelineId = parsed.positionals[0];
+    if (!pipelineId) throw new Error('Missing pipelineId');
+    await services.management.updateManagedPipeline({
+      pipelineId,
+      enabled: true,
+    });
+    const pipeline = await services.management.getManagedPipelineStatus(
+      pipelineId,
+      { includeAvailable: false }
+    );
+    if (!pipeline) {
+      throw new Error(`Pipeline "${pipelineId}" is not installed.`);
+    }
+    if (parsed.json) {
+      jsonPrint({
+        success: true,
+        pipeline: managedPipelineForJson(
+          pipeline as ManagedPipelineDisplay
+        ),
+      });
+    } else {
+      printManagedPipelineStatus(pipeline as ManagedPipelineDisplay);
+    }
+    return 0;
+  }
+
+  if (
+    parsed.command === 'status' &&
+    parsed.commandFamily === 'pipelines' &&
+    !readBoolean(parsed.values.watch)
+  ) {
+    const pipelineId = parsed.positionals[0];
+    if (!pipelineId) throw new Error('Missing pipelineId');
+    const pipeline = await services.management.getManagedPipelineStatus(
+      pipelineId,
+      {
+        includeAvailable: true,
+        sourceId: readString(parsed.values.source),
+        version: readString(parsed.values.version),
+      }
+    );
+    if (!pipeline) {
+      throw new Error(`Pipeline "${pipelineId}" was not found.`);
+    }
+    if (parsed.json) {
+      jsonPrint({
+        success: true,
+        pipeline: managedPipelineForJson(
+          pipeline as ManagedPipelineDisplay
+        ),
+      });
+    } else {
+      printManagedPipelineStatus(pipeline as ManagedPipelineDisplay);
     }
     return 0;
   }
@@ -412,9 +1299,51 @@ async function runCommand(parsed: ParsedArgs): Promise<number> {
     if (readBoolean(parsed.values.watch)) {
       return watchRun(runId, services, parsed.json);
     }
+    const installedPipeline =
+      await services.management.getManagedPipelineStatus(runId, {
+        includeAvailable: false,
+      });
+    if (installedPipeline) {
+      if (parsed.json) {
+        jsonPrint({
+          success: true,
+          pipeline: managedPipelineForJson(
+            installedPipeline as ManagedPipelineDisplay
+          ),
+        });
+      } else {
+        printManagedPipelineStatus(
+          installedPipeline as ManagedPipelineDisplay
+        );
+      }
+      return 0;
+    }
     const result = await services.ops.getPipelineRunDetailsForOperator(runId);
+    if (result.status >= 400) {
+      const availablePipeline =
+        await services.management.getManagedPipelineStatus(runId, {
+          includeAvailable: true,
+          sourceId: readString(parsed.values.source),
+          version: readString(parsed.values.version),
+        });
+      if (availablePipeline) {
+        if (parsed.json) {
+          jsonPrint({
+            success: true,
+            pipeline: managedPipelineForJson(
+              availablePipeline as ManagedPipelineDisplay
+            ),
+          });
+        } else {
+          printManagedPipelineStatus(
+            availablePipeline as ManagedPipelineDisplay
+          );
+        }
+        return 0;
+      }
+      return outputServiceResult(result, parsed.json);
+    }
     if (parsed.json) return outputServiceResult(result, true);
-    if (result.status >= 400) return outputServiceResult(result, false);
     process.stdout.write(`${humanStatus((result.body as { run: Record<string, unknown> }).run)}\n`);
     return 0;
   }
@@ -466,18 +1395,30 @@ async function runCommand(parsed: ParsedArgs): Promise<number> {
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
+  const jsonMode = argv.includes('--json');
+  const originalConsoleLog = console.log;
+  const originalConsoleWarn = console.warn;
+  if (jsonMode) {
+    const diagnostic = (...values: unknown[]) => {
+      process.stderr.write(
+        `[seqdesk pipelines] ${values.map(String).join(' ')}\n`
+      );
+    };
+    // Package discovery and some runtime probes predate the CLI and log to the
+    // console. Keep machine-readable stdout as one JSON document while still
+    // preserving those diagnostics on stderr.
+    console.log = diagnostic;
+    console.warn = diagnostic;
+  }
   try {
     const parsed = parsePipelineArgs(argv);
     return await runCommand(parsed);
   } catch (error) {
-    let json = false;
-    try {
-      json = argv.includes('--json');
-    } catch {
-      json = false;
-    }
-    printError(error, json);
+    printError(error, jsonMode);
     return 1;
+  } finally {
+    console.log = originalConsoleLog;
+    console.warn = originalConsoleWarn;
   }
 }
 

@@ -14,6 +14,20 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import { ManifestSchema } from './manifest-schema';
+import {
+  DefinitionRuntimeSchema,
+  ParserRuntimeSchema,
+  RegistryRuntimeSchema,
+  SamplesheetRuntimeSchema,
+} from './package-descriptor-schema';
+import {
+  getPipelinesDir,
+  hasSupportedCustomPipelineRunner,
+  isInstallWorkingDirectory,
+  isLocalPipelineReference,
+  resolvePathWithinDirectory,
+} from './pipeline-paths';
+import { readPipelinePackageGenerationSync } from './package-cache-generation';
 import { normalizePipelinePerSampleInput } from './read-mode';
 import {
   type PackageOutputResultContract,
@@ -107,6 +121,16 @@ export interface PackageExecution {
   version: string;
   profiles: string[];
   defaultParams: Record<string, unknown>;
+  /**
+   * Optional declarative staging of outputs from completed runs that share the
+   * current study. The executor copies only the listed output IDs into the new
+   * run folder and injects that directory through configKey.
+   */
+  priorRunArtifacts?: {
+    scope: 'study';
+    configKey: string;
+    sources: Record<string, string[]>;
+  };
   paramMap?: Record<string, string>;
   paramRules?: Array<{
     when: Record<string, unknown>;
@@ -188,7 +212,7 @@ export interface SamplesheetConfig {
     format: 'csv' | 'tsv';
     filename: string;
     rows: {
-      scope: PackageScope;
+      scope: 'sample';
     };
     columns: SamplesheetColumn[];
   };
@@ -357,32 +381,18 @@ export interface LoadedPackage {
 // Cache for loaded packages
 const packageCache = new Map<string, LoadedPackage>();
 let packagesScanned = false;
+let lastScannedGeneration: string | null = null;
+
+export { getPipelinesDir } from './pipeline-paths';
 
 /**
- * Get the path to the pipelines directory
+ * Return a cheap process-independent cache token. Including the resolved
+ * directory makes changing SEQDESK_PIPELINES_DIR invalidate caches even when
+ * neither directory has a generation marker yet.
  */
-export function getPipelinesDir(): string {
-  // Allow relocating the pipeline packages off the app install dir. On clusters
-  // where the SLURM compute nodes don't share the app's filesystem, the packages
-  // (and therefore the Nextflow workflow scripts) must live on shared storage the
-  // nodes can read; point this at that location.
-  const override = process.env.SEQDESK_PIPELINES_DIR?.trim();
-  if (override) {
-    return override;
-  }
-
-  const possiblePaths = [
-    path.join(process.cwd(), 'pipelines'),
-    path.join(process.cwd(), '..', 'pipelines'),
-  ];
-
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-      return p;
-    }
-  }
-
-  return possiblePaths[0];
+export function getPackageCacheGeneration(): string {
+  const pipelinesDir = path.resolve(getPipelinesDir());
+  return `${pipelinesDir}\0${readPipelinePackageGenerationSync(pipelinesDir)}`;
 }
 
 /**
@@ -426,6 +436,21 @@ interface ValidationResult {
   warnings: string[];
 }
 
+function resolveManifestPath(
+  packageDir: string,
+  relativePath: string,
+  label: string,
+  errors: string[],
+  options: { allowBase?: boolean } = {}
+): string | null {
+  try {
+    return resolvePathWithinDirectory(packageDir, relativePath, label, options);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : `Invalid ${label}`);
+    return null;
+  }
+}
+
 /**
  * Validate a package manifest and its consistency with other package files
  */
@@ -452,23 +477,43 @@ function validatePackageManifest(
 
   // 2. Validate folder name == manifest.package.id
   if (manifest.package.id !== folderName) {
-    warnings.push(
+    errors.push(
       `Package ID mismatch: manifest.package.id="${manifest.package.id}" but folder is "${folderName}"`
     );
   }
 
   // 3. Validate definition.pipeline == manifest.package.id
   if (definition && definition.pipeline !== manifest.package.id) {
-    warnings.push(
+    errors.push(
       `Definition pipeline mismatch: definition.pipeline="${definition.pipeline}" but manifest.package.id="${manifest.package.id}"`
     );
   }
 
   // 4. Validate registry.id == manifest.package.id
   if (registry && registry.id !== manifest.package.id) {
-    warnings.push(
+    errors.push(
       `Registry ID mismatch: registry.id="${registry.id}" but manifest.package.id="${manifest.package.id}"`
     );
+  }
+
+  const pipelineReference = manifest.execution.pipeline.trim();
+  if (isLocalPipelineReference(pipelineReference)) {
+    const localPipelinePath = resolveManifestPath(
+      packageDir,
+      pipelineReference,
+      'execution.pipeline',
+      errors,
+      { allowBase: true }
+    );
+    if (
+      localPipelinePath &&
+      !fs.existsSync(localPipelinePath) &&
+      !hasSupportedCustomPipelineRunner(manifest)
+    ) {
+      errors.push(
+        `Missing local execution.pipeline path: "${pipelineReference}" not found`
+      );
+    }
   }
 
   // 5. Check all files in manifest.files.* exist
@@ -481,8 +526,13 @@ function validatePackageManifest(
 
   for (const { key, file } of filesToCheck) {
     if (file) {
-      const filePath = path.join(packageDir, file);
-      if (!fs.existsSync(filePath)) {
+      const filePath = resolveManifestPath(
+        packageDir,
+        file,
+        `files.${key}`,
+        errors
+      );
+      if (filePath && !fs.existsSync(filePath)) {
         errors.push(`Missing file: files.${key}="${file}" not found`);
       }
     }
@@ -491,8 +541,13 @@ function validatePackageManifest(
   // Check parser files
   if (manifest.files.parsers) {
     for (const parserFile of manifest.files.parsers) {
-      const parserPath = path.join(packageDir, parserFile);
-      if (!fs.existsSync(parserPath)) {
+      const parserPath = resolveManifestPath(
+        packageDir,
+        parserFile,
+        "parser path",
+        errors
+      );
+      if (parserPath && !fs.existsSync(parserPath)) {
         errors.push(`Missing parser file: "${parserFile}" not found`);
       }
     }
@@ -501,30 +556,85 @@ function validatePackageManifest(
   if (manifest.files.scripts) {
     for (const [scriptKey, scriptFile] of Object.entries(manifest.files.scripts)) {
       if (!scriptFile) continue;
-      const scriptPath = path.join(packageDir, scriptFile);
-      if (!fs.existsSync(scriptPath)) {
+      const scriptPath = resolveManifestPath(
+        packageDir,
+        scriptFile,
+        `files.scripts.${scriptKey}`,
+        errors
+      );
+      if (scriptPath && !fs.existsSync(scriptPath)) {
         errors.push(`Missing script file: files.scripts.${scriptKey}="${scriptFile}" not found`);
       }
     }
   }
 
   // 6. Validate parser IDs referenced in outputs[].parsed.from exist
-  const parserIds = new Set<string>();
+  const parserColumns = new Map<string, Set<string>>();
   if (manifest.files.parsers) {
     for (const parserFile of manifest.files.parsers) {
-      const parserPath = path.join(packageDir, parserFile);
-      const parserConfig = loadYaml<ParserConfig>(parserPath);
-      if (parserConfig?.parser?.id) {
-        parserIds.add(parserConfig.parser.id);
+      const parserPath = resolveManifestPath(
+        packageDir,
+        parserFile,
+        "parser path",
+        errors
+      );
+      if (!parserPath) continue;
+      const parserRaw = loadYaml<unknown>(parserPath);
+      const parserResult = ParserRuntimeSchema.safeParse(parserRaw);
+      if (!parserResult.success) {
+        errors.push(`Invalid parser descriptor: "${parserFile}"`);
+      } else {
+        const parserId = parserResult.data.parser.id;
+        if (parserColumns.has(parserId)) {
+          errors.push(`Duplicate parser ID: "${parserId}"`);
+        } else {
+          const columnNames = new Set<string>();
+          for (const column of parserResult.data.parser.columns) {
+            if (columnNames.has(column.name)) {
+              errors.push(
+                `Parser "${parserId}" has duplicate column name "${column.name}"`
+              );
+            }
+            columnNames.add(column.name);
+          }
+          parserColumns.set(parserId, columnNames);
+        }
       }
     }
   }
 
   for (const output of manifest.outputs) {
-    if (output.parsed?.from && !parserIds.has(output.parsed.from)) {
+    if (
+      output.scope === 'sample' &&
+      output.required !== false &&
+      !output.discovery.matchSampleBy &&
+      !manifest.files.scripts?.discoverOutputs
+    ) {
       errors.push(
-        `Output "${output.id}" references unknown parser: "${output.parsed.from}"`
+        `Required sample output "${output.id}" must define discovery.matchSampleBy unless a custom discoverOutputs script supplies sample IDs`
       );
+    }
+
+    if (output.parsed) {
+      const columns = parserColumns.get(output.parsed.from);
+      if (!columns) {
+        errors.push(
+          `Output "${output.id}" references unknown parser: "${output.parsed.from}"`
+        );
+      } else {
+        if (!columns.has(output.parsed.matchBy)) {
+          errors.push(
+            `Output "${output.id}" references unknown parser match column: "${output.parsed.matchBy}"`
+          );
+        }
+        for (const sourceColumn of Object.values(output.parsed.map)) {
+          if (!columns.has(sourceColumn)) {
+            errors.push(
+              `Output "${output.id}" maps unknown parser column: "${sourceColumn}"`
+            );
+          }
+        }
+      }
     }
 
     if (output.writeback?.target === 'Read') {
@@ -805,89 +915,136 @@ function normalizeMetaxPathCompatibility(
  * Load a single pipeline package from its directory
  */
 function loadPackage(packageDir: string): LoadedPackage | null {
-  const manifestPath = path.join(packageDir, 'manifest.json');
+  try {
+    const manifestPath = path.join(packageDir, 'manifest.json');
 
-  // Load manifest (required)
-  const manifest = loadJson<PackageManifest>(manifestPath);
-  if (!manifest) {
-    console.warn(`No manifest found in ${packageDir}`);
-    return null;
-  }
-
-  const packageId = manifest.package.id;
-
-  // Load definition
-  const definitionPath = path.join(packageDir, manifest.files.definition);
-  const definition = loadJson<DefinitionConfig>(definitionPath);
-  if (!definition) {
-    console.warn(`No definition found for package ${packageId}`);
-    return null;
-  }
-
-  // Load registry
-  const registryPath = path.join(packageDir, manifest.files.registry);
-  const registry = loadJson<RegistryConfig>(registryPath);
-  if (!registry) {
-    console.warn(`No registry found for package ${packageId}`);
-    return null;
-  }
-
-  // Validate manifest and consistency
-  const validation = validatePackageManifest(packageDir, manifest, definition, registry);
-
-  // Log warnings but continue
-  for (const warning of validation.warnings) {
-    console.warn(`[Package ${packageId}] Warning: ${warning}`);
-  }
-
-  // Fail fast on validation errors
-  if (!validation.valid) {
-    for (const error of validation.errors) {
-      console.error(`[Package ${packageId}] Error: ${error}`);
+    // Parse and validate the raw shape before dereferencing package/files fields.
+    const manifestRaw = loadJson<unknown>(manifestPath);
+    if (!manifestRaw) {
+      console.warn(`No valid manifest found in ${packageDir}`);
+      return null;
     }
-    console.error(`Package ${packageId} failed validation - skipping`);
-    return null;
-  }
+    const manifestResult = ManifestSchema.safeParse({
+      manifestVersion: 1,
+      ...manifestRaw,
+    });
+    if (!manifestResult.success) {
+      for (const issue of manifestResult.error.issues) {
+        console.error(
+          `[Package ${path.basename(packageDir)}] Error: Schema: ${issue.path.join('.')} - ${issue.message}`
+        );
+      }
+      return null;
+    }
+    const manifest = manifestResult.data as PackageManifest;
+    const packageId = manifest.package.id;
 
-  normalizeMetaxPathCompatibility(manifest, registry);
+    const definitionPath = resolvePathWithinDirectory(
+      packageDir,
+      manifest.files.definition,
+      'definition path'
+    );
+    const definitionRaw = loadJson<unknown>(definitionPath);
+    const definitionResult = DefinitionRuntimeSchema.safeParse(definitionRaw);
+    if (!definitionResult.success) {
+      console.warn(`Invalid definition for package ${packageId}`);
+      return null;
+    }
+    const definition = definitionResult.data as DefinitionConfig;
 
-  // Load samplesheet (optional)
-  let samplesheet: SamplesheetConfig | null = null;
-  if (manifest.files.samplesheet) {
-    const samplesheetPath = path.join(packageDir, manifest.files.samplesheet);
-    samplesheet = loadYaml<SamplesheetConfig>(samplesheetPath);
-  }
+    const registryPath = resolvePathWithinDirectory(
+      packageDir,
+      manifest.files.registry,
+      'registry path'
+    );
+    const registryRaw = loadJson<unknown>(registryPath);
+    const registryResult = RegistryRuntimeSchema.safeParse(registryRaw);
+    if (!registryResult.success) {
+      console.warn(`Invalid registry for package ${packageId}`);
+      return null;
+    }
+    const registry = registryResult.data as RegistryConfig;
 
-  // Load parsers
-  const parsers = new Map<string, ParserConfig>();
-  if (manifest.files.parsers) {
-    for (const parserFile of manifest.files.parsers) {
-      const parserPath = path.join(packageDir, parserFile);
-      const parserConfig = loadYaml<ParserConfig>(parserPath);
-      if (parserConfig?.parser) {
-        parsers.set(parserConfig.parser.id, parserConfig);
+    const validation = validatePackageManifest(packageDir, manifest, definition, registry);
+    for (const warning of validation.warnings) {
+      console.warn(`[Package ${packageId}] Warning: ${warning}`);
+    }
+    if (!validation.valid) {
+      for (const error of validation.errors) {
+        console.error(`[Package ${packageId}] Error: ${error}`);
+      }
+      console.error(`Package ${packageId} failed validation - skipping`);
+      return null;
+    }
+
+    normalizeMetaxPathCompatibility(manifest, registry);
+
+    let samplesheet: SamplesheetConfig | null = null;
+    if (manifest.files.samplesheet) {
+      const samplesheetPath = resolvePathWithinDirectory(
+        packageDir,
+        manifest.files.samplesheet,
+        'samplesheet path'
+      );
+      const samplesheetResult = SamplesheetRuntimeSchema.safeParse(
+        loadYaml<unknown>(samplesheetPath)
+      );
+      if (!samplesheetResult.success) {
+        console.warn(`Invalid samplesheet for package ${packageId}`);
+        return null;
+      }
+      samplesheet = samplesheetResult.data as SamplesheetConfig;
+    }
+
+    const parsers = new Map<string, ParserConfig>();
+    if (manifest.files.parsers) {
+      for (const parserFile of manifest.files.parsers) {
+        const parserPath = resolvePathWithinDirectory(
+          packageDir,
+          parserFile,
+          'parser path'
+        );
+        const parserResult = ParserRuntimeSchema.safeParse(
+          loadYaml<unknown>(parserPath)
+        );
+        if (parserResult.success) {
+          const parserConfig = parserResult.data as ParserConfig;
+          parsers.set(parserConfig.parser.id, parserConfig);
+        }
       }
     }
-  }
 
-  return {
-    id: packageId,
-    basePath: packageDir,
-    manifest,
-    definition,
-    registry,
-    samplesheet,
-    parsers,
-  };
+    return {
+      id: packageId,
+      basePath: packageDir,
+      manifest,
+      definition,
+      registry,
+      samplesheet,
+      parsers,
+    };
+  } catch (error) {
+    console.error(
+      `Failed to load pipeline package from ${packageDir}:`,
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
 }
 
 /**
  * Scan the pipelines directory and load all packages
  */
 function scanPackages(): void {
-  if (packagesScanned) return;
-
   const pipelinesDir = getPipelinesDir();
+  const scanGeneration = getPackageCacheGeneration();
+  if (packagesScanned && lastScannedGeneration === scanGeneration) return;
+
+  // A generation change means another process may have installed, updated, or
+  // recovered a package. Never merge a new scan into stale cache entries.
+  packageCache.clear();
+  packagesScanned = false;
+  lastScannedGeneration = scanGeneration;
 
   try {
     if (!fs.existsSync(pipelinesDir)) {
@@ -899,14 +1056,24 @@ function scanPackages(): void {
     const dirs = fs.readdirSync(pipelinesDir, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .filter(d => !d.name.startsWith('.') && !d.name.startsWith('_'))
+      .filter(d => !isInstallWorkingDirectory(d.name))
       .map(d => d.name);
 
     for (const dir of dirs) {
       const packageDir = path.join(pipelinesDir, dir);
-      const pkg = loadPackage(packageDir);
-      if (pkg) {
-        packageCache.set(pkg.id, pkg);
-        console.log(`Loaded pipeline package: ${pkg.id} (${pkg.manifest.package.name})`);
+      try {
+        const pkg = loadPackage(packageDir);
+        if (pkg) {
+          packageCache.set(pkg.id, pkg);
+          console.log(`Loaded pipeline package: ${pkg.id} (${pkg.manifest.package.name})`);
+        }
+      } catch (error) {
+        // A malformed third-party package must not hide every package that is
+        // scanned after it.
+        console.error(
+          `Failed to scan pipeline package directory ${packageDir}:`,
+          error
+        );
       }
     }
 
@@ -923,6 +1090,7 @@ function scanPackages(): void {
 export function clearPackageCache(): void {
   packageCache.clear();
   packagesScanned = false;
+  lastScannedGeneration = null;
 }
 
 // ============================================================================

@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getAllPackages: vi.fn(),
   getAllPackageIds: vi.fn(),
+  getPackageCacheGeneration: vi.fn(),
   packageToPipelineDefinition: vi.fn(),
 }));
 
 vi.mock("./package-loader", () => ({
   getAllPackages: mocks.getAllPackages,
   getAllPackageIds: mocks.getAllPackageIds,
+  getPackageCacheGeneration: mocks.getPackageCacheGeneration,
   packageToPipelineDefinition: mocks.packageToPipelineDefinition,
 }));
 
@@ -95,6 +97,7 @@ function makeStudy(overrides?: Partial<{
 describe("registry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getPackageCacheGeneration.mockReturnValue("generation-1");
     clearRegistryCache();
   });
 
@@ -135,6 +138,22 @@ describe("registry", () => {
     expect(PIPELINE_REGISTRY.mag).toBe(oldDef);
 
     clearRegistryCache();
+    mocks.getAllPackages.mockReturnValue([{ id: "new-mag" }]);
+    mocks.packageToPipelineDefinition.mockReturnValue(newDef);
+
+    expect(PIPELINE_REGISTRY["new-mag"]).toBe(newDef);
+    expect(mocks.getAllPackages).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes the cached registry when another process advances package generation", () => {
+    const oldDef = makePipelineDefinition({ id: "mag" });
+    const newDef = makePipelineDefinition({ id: "new-mag", name: "New MAG" });
+
+    mocks.getAllPackages.mockReturnValue([{ id: "mag" }]);
+    mocks.packageToPipelineDefinition.mockReturnValue(oldDef);
+    expect(PIPELINE_REGISTRY.mag).toBe(oldDef);
+
+    mocks.getPackageCacheGeneration.mockReturnValue("generation-2");
     mocks.getAllPackages.mockReturnValue([{ id: "new-mag" }]);
     mocks.packageToPipelineDefinition.mockReturnValue(newDef);
 

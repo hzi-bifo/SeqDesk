@@ -11,6 +11,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { getPackage, type ParserConfig } from './package-loader';
+import { compilePackageGlobPattern } from './package-patterns';
 
 /**
  * Simple glob implementation for finding files matching a pattern
@@ -23,30 +24,32 @@ async function simpleGlob(pattern: string): Promise<string[]> {
   const parts = pattern.split('/');
   const baseParts: string[] = [];
   let patternStart = 0;
+  let hasWildcard = false;
 
   // Find the base directory (before any wildcards)
   for (let i = 0; i < parts.length; i++) {
     if (parts[i].includes('*') || parts[i].includes('?') || parts[i].includes('{')) {
       patternStart = i;
+      hasWildcard = true;
       break;
     }
     baseParts.push(parts[i]);
     patternStart = i + 1;
   }
 
+  if (!hasWildcard) {
+    try {
+      const stat = await fs.stat(pattern);
+      return stat.isFile() ? [pattern] : [];
+    } catch {
+      return [];
+    }
+  }
+
   const baseDir = baseParts.length > 0 ? baseParts.join('/') : '.';
   const filePattern = parts.slice(patternStart).join('/');
 
-  // Convert glob pattern to regex
-  const regexPattern = filePattern
-    .replace(/\*\*/g, '{{RECURSIVE}}')
-    .replace(/\*/g, '[^/]*')
-    .replace(/\?/g, '[^/]')
-    .replace(/{{RECURSIVE}}/g, '.*')
-    // Expand brace patterns like {A,B} to regex alternation (A|B)
-    .replace(/\{([^}]+)\}/g, (_, content) => `(${content.replace(/,/g, '|')})`);
-
-  const regex = new RegExp(`^${regexPattern}$`);
+  const regex = compilePackageGlobPattern(filePattern);
 
   // Recursively find matching files
   async function findFiles(dir: string, relativePath: string = ''): Promise<void> {

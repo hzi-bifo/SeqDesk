@@ -205,6 +205,13 @@ describe("install profile installer wiring", () => {
     expect(installDist).toContain('print_kv "Local health URL" "$(local_app_url)"');
     expect(installDist).toContain('print_kv "Bind host" "$(bind_host)"');
     expect(installDist).toContain("Use the Browser URL for login. Use the Local health URL for curl/doctor checks.");
+    expect(installDist).toContain("print_success_footer\nprint_next_steps");
+    expect(installDist).toContain(
+      "pipelines install simulate-reads --runtime"
+    );
+    expect(installDist).toContain(
+      "https://seqdesk.org/docs/pipelines/installing-pipelines"
+    );
     expect(sourceInstaller).toContain("Browser URL: ${SEQDESK_NEXTAUTH_URL:-http://127.0.0.1:${SEQDESK_PORT:-8000}}");
     expect(sourceInstaller).toContain("Local health URL: http://127.0.0.1:${SEQDESK_PORT:-8000}");
   });

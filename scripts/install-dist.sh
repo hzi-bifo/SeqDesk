@@ -104,6 +104,9 @@ SEQDESK_WITH_CONDA="${SEQDESK_WITH_CONDA:-}"
 SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
 SEQDESK_YES="${SEQDESK_YES:-}"
 SEQDESK_INTERACTIVE="${SEQDESK_INTERACTIVE:-}"
+SEQDESK_USER_CLI_PATH=""
+SEQDESK_USER_CLI_BIN_DIR=""
+SEQDESK_USER_CLI_NEEDS_PATH="false"
 # Promote diagnostic detail() narration from the install log to the terminal.
 SEQDESK_VERBOSE="${SEQDESK_VERBOSE:-}"
 # Whether the installer generated the bootstrap passwords (and therefore has to
@@ -391,24 +394,42 @@ doctor_url() {
     local_app_url
 }
 
+seqdesk_cli_command() {
+    if [ -n "${SEQDESK_USER_CLI_PATH:-}" ] && [ -x "$SEQDESK_USER_CLI_PATH" ]; then
+        printf '%s\n' "$SEQDESK_USER_CLI_PATH"
+        return 0
+    fi
+    if command_exists seqdesk; then
+        command -v seqdesk
+        return 0
+    fi
+    return 1
+}
+
 print_doctor_command() {
-    printf '  seqdesk doctor --dir %s --url %s\n' "$(shell_quote "$SEQDESK_DIR")" "$(shell_quote "$(doctor_url)")"
+    local cli
+    cli="$(seqdesk_cli_command 2>/dev/null || printf 'seqdesk')"
+    printf '  %s doctor --dir %s --url %s\n' \
+        "$(shell_quote "$cli")" \
+        "$(shell_quote "$SEQDESK_DIR")" \
+        "$(shell_quote "$(doctor_url)")"
 }
 
 run_doctor_if_requested() {
+    local cli
     if ! is_truthy "$SEQDESK_RUN_DOCTOR"; then
         return 0
     fi
 
-    if ! command_exists seqdesk; then
+    cli="$(seqdesk_cli_command 2>/dev/null || true)"
+    if [ -z "$cli" ]; then
         print_warning "seqdesk CLI not found; skipping automatic doctor run."
-        print_info "Install CLI: npm install -g seqdesk"
         return 0
     fi
 
     echo ""
     print_info "Running seqdesk doctor..."
-    if seqdesk doctor --dir "$SEQDESK_DIR" --url "$(doctor_url)"; then
+    if "$cli" doctor --dir "$SEQDESK_DIR" --url "$(doctor_url)"; then
         print_success "Doctor checks completed"
     else
         print_warning "Doctor reported issues. Installation completed; review the checks above."
@@ -5400,6 +5421,168 @@ link_root_release_metadata() {
     done
 }
 
+install_user_cli() {
+    local release_launcher="$SEQDESK_DIR/current/scripts/seqdesk-launcher.js"
+    if [ ! -f "$release_launcher" ]; then
+        release_launcher="$SEQDESK_DIR/scripts/seqdesk-launcher.js"
+    fi
+    if [ ! -f "$release_launcher" ]; then
+        print_warning "This release does not contain the user CLI launcher; skipping the local seqdesk command."
+        return 0
+    fi
+
+    if [ -z "${HOME:-}" ]; then
+        print_warning "HOME is not set; cannot create a user-level seqdesk command."
+        return 0
+    fi
+
+    local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+    local pointer_file="${SEQDESK_DEFAULT_INSTALL_FILE:-$config_home/seqdesk/default-install}"
+    local pointer_dir
+    pointer_dir="$(dirname "$pointer_file")"
+    if ! mkdir -p "$pointer_dir"; then
+        print_warning "Could not create SeqDesk CLI config directory: $pointer_dir"
+        return 0
+    fi
+
+    local pointer_tmp
+    if ! pointer_tmp="$(mktemp "${pointer_file}.tmp.XXXXXX")"; then
+        print_warning "Could not create the SeqDesk default-install pointer."
+        return 0
+    fi
+    if ! printf '%s\n' "$SEQDESK_DIR" > "$pointer_tmp" || ! chmod 600 "$pointer_tmp" || ! mv -f "$pointer_tmp" "$pointer_file"; then
+        rm -f "$pointer_tmp"
+        print_warning "Could not update the SeqDesk default-install pointer: $pointer_file"
+        return 0
+    fi
+
+    local bin_dir="${SEQDESK_CLI_BIN_DIR:-$HOME/.local/bin}"
+    local wrapper_path="$bin_dir/seqdesk"
+    if ! mkdir -p "$bin_dir"; then
+        print_warning "Could not create the user CLI directory: $bin_dir"
+        return 0
+    fi
+
+    if { [ -e "$wrapper_path" ] || [ -L "$wrapper_path" ]; } &&
+       ! { [ -f "$wrapper_path" ] && grep -q '^# SeqDesk managed user CLI$' "$wrapper_path" 2>/dev/null; }; then
+        print_warning "Kept the existing command at $wrapper_path because it is not managed by the SeqDesk installer."
+        return 0
+    fi
+
+    local wrapper_tmp
+    if ! wrapper_tmp="$(mktemp "${wrapper_path}.tmp.XXXXXX")"; then
+        print_warning "Could not create the user-level seqdesk command."
+        return 0
+    fi
+
+    if ! cat > "$wrapper_tmp" <<'SEQDESK_USER_CLI'
+#!/usr/bin/env bash
+# SeqDesk managed user CLI
+set -euo pipefail
+
+expand_user_path() {
+    local value="$1"
+    case "$value" in
+        "~") printf '%s\n' "${HOME:-}" ;;
+        "~/"*) printf '%s/%s\n' "${HOME:-}" "${value#\~/}" ;;
+        /*) printf '%s\n' "$value" ;;
+        *) printf '%s/%s\n' "$PWD" "${value#./}" ;;
+    esac
+}
+
+launcher_in() {
+    local install_dir="$1"
+    if [ -f "$install_dir/current/scripts/seqdesk-launcher.js" ]; then
+        printf '%s\n' "$install_dir/current/scripts/seqdesk-launcher.js"
+        return 0
+    fi
+    if [ -f "$install_dir/scripts/seqdesk-launcher.js" ]; then
+        printf '%s\n' "$install_dir/scripts/seqdesk-launcher.js"
+        return 0
+    fi
+    return 1
+}
+
+selected_dir=""
+expect_dir="false"
+for token in "$@"; do
+    if [ "$expect_dir" = "true" ]; then
+        selected_dir="$token"
+        break
+    fi
+    case "$token" in
+        --dir|-d) expect_dir="true" ;;
+        --dir=*) selected_dir="${token#--dir=}"; break ;;
+    esac
+done
+
+if [ -z "$selected_dir" ] && [ -n "${SEQDESK_DIR:-}" ]; then
+    selected_dir="$SEQDESK_DIR"
+fi
+
+if [ -z "$selected_dir" ]; then
+    config_home="${XDG_CONFIG_HOME:-${HOME:-}/.config}"
+    pointer_file="${SEQDESK_DEFAULT_INSTALL_FILE:-$config_home/seqdesk/default-install}"
+    if [ -r "$pointer_file" ]; then
+        IFS= read -r selected_dir < "$pointer_file" || true
+        selected_dir="${selected_dir%$'\r'}"
+    fi
+fi
+
+launcher=""
+if [ -n "$selected_dir" ]; then
+    selected_dir="$(expand_user_path "$selected_dir")"
+    launcher="$(launcher_in "$selected_dir" 2>/dev/null || true)"
+fi
+
+if [ -z "$launcher" ]; then
+    probe="$PWD"
+    while :; do
+        if launcher="$(launcher_in "$probe" 2>/dev/null)"; then
+            break
+        fi
+        parent="$(dirname "$probe")"
+        [ "$parent" != "$probe" ] || break
+        probe="$parent"
+    done
+fi
+
+if [ -z "$launcher" ] && [ -n "${HOME:-}" ]; then
+    launcher="$(launcher_in "$HOME/seqdesk" 2>/dev/null || true)"
+fi
+
+if [ -z "$launcher" ]; then
+    echo "[seqdesk] Installed CLI launcher not found. Re-run the SeqDesk installer or pass --dir /path/to/seqdesk." >&2
+    exit 1
+fi
+if ! command -v node >/dev/null 2>&1; then
+    echo "[seqdesk] Node.js is required to run the SeqDesk CLI." >&2
+    exit 1
+fi
+
+exec node "$launcher" "$@"
+SEQDESK_USER_CLI
+    then
+        rm -f "$wrapper_tmp"
+        print_warning "Could not write the user-level seqdesk command."
+        return 0
+    fi
+
+    if ! chmod 755 "$wrapper_tmp" || ! mv -f "$wrapper_tmp" "$wrapper_path"; then
+        rm -f "$wrapper_tmp"
+        print_warning "Could not activate the user-level seqdesk command at $wrapper_path"
+        return 0
+    fi
+
+    SEQDESK_USER_CLI_PATH="$wrapper_path"
+    SEQDESK_USER_CLI_BIN_DIR="$bin_dir"
+    case ":${PATH:-}:" in
+        *":$bin_dir:"*) SEQDESK_USER_CLI_NEEDS_PATH="false" ;;
+        *) SEQDESK_USER_CLI_NEEDS_PATH="true" ;;
+    esac
+    print_success "Installed user CLI: $wrapper_path"
+}
+
 run_wizard() {
     if ! command_exists node; then
         return 1
@@ -6213,6 +6396,36 @@ print_success_footer() {
         echo "  then open:"
         printf '  %b%s%b\n' "$CYAN$BOLD" "$(browser_app_url)" "$NC"
     fi
+    echo ""
+}
+
+print_next_steps() {
+    local pipeline_cli=""
+
+    print_header "What's next"
+
+    if [ "$PM2_CONFIGURED" = "true" ]; then
+        echo "  1. Open $(browser_app_url) and log in with the admin account shown above."
+    else
+        echo "  1. Start $SEQDESK_DIR/start.sh, then open $(browser_app_url) and log in as admin."
+    fi
+    echo "  2. Configure Data Storage under Admin > Data Storage."
+    if [ -n "${SEQDESK_USER_CLI_PATH:-}" ] && [ -x "$SEQDESK_USER_CLI_PATH" ]; then
+        pipeline_cli="$SEQDESK_USER_CLI_PATH"
+        echo "  3. Optional: discover supported order- and study-level pipelines:"
+        printf '       %s pipelines list\n' "$(shell_quote "$pipeline_cli")"
+        echo "     Safe first install (also provisions a missing runtime):"
+        printf '       %s pipelines install simulate-reads --runtime\n' \
+            "$(shell_quote "$pipeline_cli")"
+        echo "     SeqDesk enables a pipeline only after its readiness checks pass."
+    else
+        echo "  3. Optional pipelines: the local SeqDesk CLI is not available."
+        echo "     Review the CLI warning above and update or reinstall SeqDesk first."
+    fi
+    echo "     Guide: https://seqdesk.org/docs/pipelines/installing-pipelines"
+    echo "  4. Before production, follow https://seqdesk.org/docs"
+    echo ""
+    echo "  Use the Browser URL for login. Use the Local health URL for curl/doctor checks."
     echo ""
 }
 
@@ -7095,6 +7308,9 @@ else
     print_info "Skipping PM2 setup"
 fi
 
+print_step "Install user CLI"
+install_user_cli
+
 # Done
 INSTALL_END_TS=$(date +%s)
 INSTALL_FINISHED_AT=$(date '+%Y-%m-%d %H:%M:%S %Z')
@@ -7110,6 +7326,14 @@ if is_truthy "$SEQDESK_RECONFIGURE"; then
     print_kv "Mode" "reconfigure existing install"
 fi
 print_kv "Directory" "$SEQDESK_DIR"
+if [ -n "$SEQDESK_USER_CLI_PATH" ]; then
+    print_kv "CLI" "$SEQDESK_USER_CLI_PATH"
+    if [ "$SEQDESK_USER_CLI_NEEDS_PATH" = "true" ]; then
+        print_warning "$SEQDESK_USER_CLI_BIN_DIR is not currently on PATH. No shell startup file was changed."
+        printf '  Add it for this shell with: export PATH=%s:"$PATH"\n' \
+            "$(shell_quote "$SEQDESK_USER_CLI_BIN_DIR")"
+    fi
+fi
 print_kv "Browser URL" "$(browser_app_url)"
 print_kv "Local health URL" "$(local_app_url)"
 print_kv "Bind host" "$(bind_host)"
@@ -7231,7 +7455,7 @@ print_login_summary
 
 print_header "Diagnose"
 
-if command_exists seqdesk; then
+if seqdesk_cli_command >/dev/null 2>&1; then
     if [ "$PM2_CONFIGURED" = "true" ]; then
         print_doctor_command
     else
@@ -7243,16 +7467,10 @@ else
     if is_truthy "$SEQDESK_RUN_DOCTOR"; then
         print_warning "seqdesk CLI not found; skipping automatic doctor run."
     fi
-    print_kv "Install CLI" "npm install -g seqdesk"
-    echo "  Then run:"
+    print_warning "The user-level SeqDesk CLI could not be installed."
+    echo "  Re-run the installer after checking that \$HOME/.local/bin is writable, then run:"
     print_doctor_command
 fi
 
-print_header "Next steps"
-
-echo "  1. Log in as admin and configure Data Storage in Admin > Data Storage"
-echo "  2. Configure pipeline runtime under Admin > Pipeline Runtime (if enabled)"
-echo "  3. Use the Browser URL for login. Use the Local health URL for curl/doctor checks."
-
-
 print_success_footer
+print_next_steps

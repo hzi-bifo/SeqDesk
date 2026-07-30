@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---- hoisted mocks --------------------------------------------------------
@@ -373,8 +375,21 @@ describe('prepareMagRun', () => {
     expect(script).toContain('-c 8');
     expect(script).toContain("--mem='32GB'");
     expect(script).toContain('#SBATCH --exclusive');
+    expect(script).toContain('#SBATCH -D "/runs/');
     expect(script).not.toContain('admin-name');
     expect(script).not.toContain('other-name');
+    expect(script).toContain("SEQDESK_PIPELINE_RUN_ID='run-1'");
+    expect(script).toContain(
+      'SLURM_ATTESTATION_FILE="$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.attestation"'
+    );
+    expect(script).toContain('slurm_job_id=%s');
+    expect(script).toContain('phase=completed');
+    expect(
+      script.match(/^write_seqdesk_slurm_completion_attestation$/gm)
+    ).toHaveLength(1);
+    expect(
+      script.lastIndexOf('write_seqdesk_slurm_completion_attestation')
+    ).toBeGreaterThan(script.indexOf('"${NEXTFLOW_RUNNER[@]}" run'));
   });
 
   it('generates local script when useSlurm is false', async () => {
@@ -415,6 +430,12 @@ describe('prepareMagRun', () => {
 
     const options = baseStartRunOptions({
       config: { gtdbDb: '/db/gtdb; rm -rf /' },
+      executionSettings: {
+        ...baseExecutionSettings(),
+        pipelineRunDir: "/runs with space/O'Brien",
+        nextflowProfile: 'profile with space',
+        weblogUrl: 'https://seqdesk.example/api/pipelines/weblog',
+      },
     });
 
     await prepareMagRun(options);
@@ -425,6 +446,21 @@ describe('prepareMagRun', () => {
     const script = scriptWrite![1] as string;
     expect(script).toContain("--gtdb_db '/db/gtdb; rm -rf /'");
     expect(script).not.toContain('--gtdb_db /db/gtdb; rm -rf /');
+    expect(script).toContain(
+      `RUN_FOLDER='/runs with space/O'\\''Brien/`
+    );
+    expect(script).toContain(
+      `--input '/runs with space/O'\\''Brien/`
+    );
+    expect(script).toContain("/samplesheet.csv'");
+    expect(script).toContain("-profile 'profile with space'");
+    expect(script).toContain(
+      `-c '/runs with space/O'\\''Brien/`
+    );
+    expect(script).toContain("/nextflow.config'");
+    expect(() =>
+      execFileSync('bash', ['-n'], { input: script })
+    ).not.toThrow();
   });
 
   it('rejects malformed SLURM header values instead of injecting them', async () => {
@@ -453,6 +489,21 @@ describe('prepareMagRun', () => {
     expect(script).toContain('#SBATCH --job-name=seqdesk-run-1');
     expect(script).not.toContain('rm -rf /');
     expect(script).not.toContain('malicious line');
+
+    const blocked = await prepareMagRun(
+      baseStartRunOptions({
+        runId: 'run-owned-path',
+        executionSettings: {
+          ...baseExecutionSettings(),
+          useSlurm: true,
+          slurmOptions: '--error=/tmp/hijacked.err --exclusive',
+        },
+      })
+    );
+    expect(blocked.success).toBe(false);
+    expect(blocked.errors.join('\n')).toMatch(
+      /overrides SeqDesk-owned WorkDir or capture-log paths/
+    );
   });
 
   it('writes nextflow.config when weblogUrl is provided', async () => {
@@ -546,9 +597,35 @@ describe('prepareMagRun', () => {
       (c[0] as string).endsWith('run.sh')
     );
     const script = scriptWrite![1] as string;
-    expect(script).toContain('CONDA_BASE="/opt/conda"');
-    expect(script).toContain('CONDA_ENV="myenv"');
+    expect(script).toContain('CONDA_BASE=/opt/conda');
+    expect(script).toContain('CONDA_ENV=myenv');
+    expect(script).toContain('CONDA_ENV_SELECTOR=-n');
     expect(script).toContain('conda activate');
+  });
+
+  it('uses the prefix selector for a shared Conda environment path', async () => {
+    const adapter = makeMockAdapter();
+    mocks.adapters.getAdapter.mockReturnValue(adapter);
+
+    const options = baseStartRunOptions({
+      executionSettings: {
+        ...baseExecutionSettings(),
+        condaPath: '/opt/conda',
+        condaEnv: '/shared/conda/envs/seqdesk',
+      },
+    });
+
+    await prepareMagRun(options);
+
+    const scriptWrite = mocks.fs.writeFile.mock.calls.find((c: unknown[]) =>
+      (c[0] as string).endsWith('run.sh')
+    );
+    const script = scriptWrite![1] as string;
+    expect(script).toContain('CONDA_ENV=/shared/conda/envs/seqdesk');
+    expect(script).toContain('CONDA_ENV_SELECTOR=-p');
+    expect(script).toContain(
+      'conda run "$CONDA_ENV_SELECTOR" "$CONDA_ENV" nextflow'
+    );
   });
 
   it('includes -profile flag when nextflowProfile is set', async () => {
@@ -608,10 +685,14 @@ describe('prepareMagRun', () => {
     const script = scriptWrite![1] as string;
     expect(script).toContain('#SBATCH');
     expect(script).toContain(
-      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG";`
+      'trap finalize_seqdesk_slurm_wrapper EXIT'
     );
-    expect(script).toContain("exit $EXIT_CODE' EXIT");
+    expect(script).toContain('SEQDESK_WRAPPER_EXIT_CODE=$?');
+    expect(
+      script.indexOf('trap finalize_seqdesk_slurm_wrapper EXIT')
+    ).toBeLessThan(script.indexOf('for _ in $(seq 1 15)'));
     expect(script).not.toContain('EXIT_CODE=$?\necho');
+    expect(script).not.toContain("trap '");
     // SLURM's own logs go to node-local /tmp (root-squash safe).
     expect(script).toContain('#SBATCH --output="/tmp/seqdesk-slurm-%j.out"');
   });

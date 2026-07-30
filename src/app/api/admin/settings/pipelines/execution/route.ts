@@ -8,6 +8,7 @@ import {
   saveExecutionSettings,
   type ExecutionSettings,
 } from '@/lib/pipelines/execution-settings';
+import { clearPipelineRuntimePrerequisiteCache } from '@/lib/pipelines/prerequisite-check';
 
 function normalizeString(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback;
@@ -115,6 +116,7 @@ export async function POST(request: NextRequest) {
     };
 
     await saveExecutionSettings(newSettings);
+    clearPipelineRuntimePrerequisiteCache();
 
     return NextResponse.json({ success: true, settings: newSettings });
   } catch (error) {

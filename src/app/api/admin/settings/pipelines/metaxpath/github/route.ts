@@ -12,18 +12,18 @@ import { clearRegistryCache } from "@/lib/pipelines/registry";
 import {
   classifyCloneFailure,
   DEFAULT_METAXPATH_REF,
+  installGitHubPipelineSnapshot,
   isValidGitRef,
   METAXPATH_DESCRIPTOR_RELATIVE_PATH,
   METAXPATH_PIPELINE_ID,
   METAXPATH_REPO_HTTPS,
   METAXPATH_REPOSITORY,
-  REQUIRED_DESCRIPTOR_FILES,
   resolveMetaxPathRef,
-  shouldCopyWorkflowEntry,
   validateMetaxPathDescriptorDir,
 } from "@/lib/pipelines/metaxpath-import";
 
 const execFileAsync = promisify(execFile);
+const GITHUB_CLONE_TIMEOUT_MS = 120_000;
 
 export const runtime = "nodejs";
 
@@ -50,15 +50,6 @@ function getExecErrorDetails(error: unknown): string {
     return ((error as { stdout: string }).stdout || "").trim();
   }
   return error instanceof Error ? error.message : "Unknown error";
-}
-
-async function pathExists(targetPath: string): Promise<boolean> {
-  try {
-    await fs.access(targetPath);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function createAskPassScript(baseDir: string): Promise<string> {
@@ -94,6 +85,8 @@ async function cloneMetaxPathRepository(
         GITHUB_TOKEN: token,
       },
       maxBuffer: 10 * 1024 * 1024,
+      timeout: GITHUB_CLONE_TIMEOUT_MS,
+      killSignal: "SIGTERM",
     }
   );
 }
@@ -104,99 +97,36 @@ async function getGitCommit(cloneDir: string): Promise<string> {
 }
 
 async function installSnapshotFromClone(cloneDir: string, ref: string, commit: string) {
-  const pipelinesDir = path.join(process.cwd(), "pipelines");
-  const targetDir = path.join(pipelinesDir, METAXPATH_PIPELINE_ID);
-  const targetExists = await pathExists(targetDir);
-  const stageDir = path.join(pipelinesDir, `${METAXPATH_PIPELINE_ID}.__tmp-${Date.now()}`);
+  // Establish the disabled configuration row first. If this fails, do not
+  // activate new package files and then report the install as failed.
+  await db.pipelineConfig.upsert({
+    where: { pipelineId: METAXPATH_PIPELINE_ID },
+    create: {
+      pipelineId: METAXPATH_PIPELINE_ID,
+      enabled: false,
+      config: null,
+    },
+    update: {},
+  });
 
-  await fs.mkdir(pipelinesDir, { recursive: true });
-  await fs.mkdir(stageDir, { recursive: true });
+  const result = await installGitHubPipelineSnapshot({
+    pipelineId: METAXPATH_PIPELINE_ID,
+    cloneDir,
+    repo: METAXPATH_REPOSITORY,
+    ref,
+    commit,
+    descriptorPath: METAXPATH_DESCRIPTOR_RELATIVE_PATH,
+    includeWorkflow: true,
+  });
 
-  try {
-    const descriptorDir = path.join(cloneDir, METAXPATH_DESCRIPTOR_RELATIVE_PATH);
+  clearPackageCache();
+  clearRegistryCache();
 
-    for (const fileName of REQUIRED_DESCRIPTOR_FILES) {
-      await fs.copyFile(
-        path.join(descriptorDir, fileName),
-        path.join(stageDir, fileName)
-      );
-    }
-
-    const workflowDir = path.join(stageDir, "workflow");
-    await fs.mkdir(workflowDir, { recursive: true });
-    const rootEntries = await fs.readdir(cloneDir, { withFileTypes: true });
-    for (const entry of rootEntries) {
-      if (!shouldCopyWorkflowEntry(entry.name)) continue;
-      const sourcePath = path.join(cloneDir, entry.name);
-      const destinationPath = path.join(workflowDir, entry.name);
-      await fs.cp(sourcePath, destinationPath, { recursive: true });
-    }
-
-    const syncedAt = new Date().toISOString();
-    const sourceMetadata = {
-      repo: METAXPATH_REPOSITORY,
-      ref,
-      commit,
-      syncedAt,
-    };
-    await fs.writeFile(
-      path.join(stageDir, ".source.json"),
-      `${JSON.stringify(sourceMetadata, null, 2)}\n`,
-      "utf8"
-    );
-
-    let backupDir: string | null = null;
-    try {
-      if (targetExists) {
-        backupDir = path.join(
-          pipelinesDir,
-          `${METAXPATH_PIPELINE_ID}.__backup-${Date.now()}`
-        );
-        await fs.rename(targetDir, backupDir);
-      }
-
-      await fs.rename(stageDir, targetDir);
-
-      if (backupDir) {
-        await fs.rm(backupDir, { recursive: true, force: true });
-      }
-    } catch (error) {
-      const targetStillExists = await pathExists(targetDir);
-      if (!targetStillExists && backupDir && (await pathExists(backupDir))) {
-        await fs.rename(backupDir, targetDir);
-      }
-      throw error;
-    } finally {
-      if (await pathExists(stageDir)) {
-        await fs.rm(stageDir, { recursive: true, force: true });
-      }
-    }
-
-    const action = targetExists ? "sync" : "install";
-    await db.pipelineConfig.upsert({
-      where: { pipelineId: METAXPATH_PIPELINE_ID },
-      create: {
-        pipelineId: METAXPATH_PIPELINE_ID,
-        enabled: false,
-        config: null,
-      },
-      update: {},
-    });
-
-    clearPackageCache();
-    clearRegistryCache();
-
-    return {
-      action,
-      targetExists,
-      syncedAt,
-    };
-  } catch (error) {
-    if (await pathExists(stageDir)) {
-      await fs.rm(stageDir, { recursive: true, force: true });
-    }
-    throw error;
-  }
+  return {
+    action: result.action === "update" ? "sync" : "install",
+    targetExists: result.action === "update",
+    syncedAt: result.syncedAt,
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -274,16 +204,24 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const details = getExecErrorDetails(error);
     console.error("[MetaxPath GitHub Import] Failed:", details);
+    const invalidPackage = details.startsWith("Invalid pipeline package");
     return NextResponse.json(
-      { error: "Failed to import MetaxPath from GitHub", details },
-      { status: 500 }
+      {
+        error: invalidPackage
+          ? "MetaxPath package validation failed"
+          : "Failed to import MetaxPath from GitHub",
+        details,
+      },
+      { status: invalidPackage ? 422 : 500 }
     );
   } finally {
-    if (askPassPath && (await pathExists(askPassPath))) {
-      await fs.rm(askPassPath, { force: true });
-    }
-    if (await pathExists(tempRoot)) {
+    try {
       await fs.rm(tempRoot, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(
+        `[MetaxPath GitHub Import] Could not clean up temporary checkout ${tempRoot}:`,
+        error
+      );
     }
   }
 }

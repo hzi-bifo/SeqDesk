@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import EventEmitter from "events";
 
@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   buildPipelineDatabaseInstallDir: vi.fn(),
   calculateProgressPercent: vi.fn(),
   getPipelineDatabaseStatuses: vi.fn(),
+  getPipelinesDir: vi.fn(),
   PIPELINE_REGISTRY: {} as Record<string, unknown>,
   spawn: vi.fn(),
   exec: vi.fn(),
@@ -27,6 +28,11 @@ const mocks = vi.hoisted(() => ({
   fsAccess: vi.fn(),
   fsMkdir: vi.fn(),
   fsRm: vi.fn(),
+  createReadStream: vi.fn(),
+  logStreams: [] as Array<{
+    write: ReturnType<typeof vi.fn>;
+    end: ReturnType<typeof vi.fn>;
+  }>,
 }));
 
 vi.mock("next-auth", () => ({
@@ -61,6 +67,10 @@ vi.mock("@/lib/pipelines/database-downloads", () => ({
   getPipelineDatabaseStatuses: mocks.getPipelineDatabaseStatuses,
 }));
 
+vi.mock("@/lib/pipelines/pipeline-paths", () => ({
+  getPipelinesDir: mocks.getPipelinesDir,
+}));
+
 vi.mock("child_process", () => ({
   spawn: (...args: unknown[]) => mocks.spawn(...args),
   exec: (...args: unknown[]) => mocks.exec(...args),
@@ -81,10 +91,15 @@ vi.mock("util", () => ({
 }));
 
 vi.mock("fs", () => ({
-  createWriteStream: () => ({
-    write: vi.fn(),
-    end: vi.fn(),
-  }),
+  createWriteStream: () => {
+    const stream = {
+      write: vi.fn(),
+      end: vi.fn(),
+    };
+    mocks.logStreams.push(stream);
+    return stream;
+  },
+  createReadStream: (...args: unknown[]) => mocks.createReadStream(...args),
 }));
 
 vi.mock("fs/promises", () => ({
@@ -134,9 +149,26 @@ function makeRequest(body: Record<string, unknown> = {}) {
   );
 }
 
+function getLatestLogStream() {
+  const stream = mocks.logStreams.at(-1);
+  if (!stream) throw new Error("Expected the download route to create a log stream");
+  return stream;
+}
+
+afterEach(async () => {
+  if (mocks.logStreams.length === 0) return;
+  await vi.waitFor(() => {
+    for (const stream of mocks.logStreams) {
+      expect(stream.end).toHaveBeenCalledTimes(1);
+    }
+  });
+});
+
 describe("POST /api/admin/settings/pipelines/download-db", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.logStreams.splice(0);
+    mocks.getPipelinesDir.mockReturnValue("/shared/pipelines");
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "FACILITY_ADMIN" },
     });
@@ -172,6 +204,11 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
     mocks.fsRm.mockResolvedValue(undefined);
     mocks.fsStat.mockResolvedValue({ size: 0 });
     mocks.fsAccess.mockResolvedValue(undefined);
+    mocks.createReadStream.mockImplementation(() => ({
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from("downloaded database fixture\n", "utf8");
+      },
+    }));
 
     // Default: curl exists, no --retry-all-errors support
     mocks.exec.mockImplementation(
@@ -208,6 +245,13 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
     expect(body.success).toBe(true);
     expect(body.pipelineId).toBe("mag");
     expect(body.databaseId).toBe("gtdb");
+    expect(fetch).toHaveBeenCalledWith(
+      "https://example.com/gtdb.tar.gz",
+      expect.objectContaining({
+        method: "HEAD",
+        signal: expect.any(AbortSignal),
+      })
+    );
   });
 
   it("passes a configured database directory to target path resolution", async () => {
@@ -407,9 +451,83 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
     // Should update job status to success
     const statusCalls = mocks.updateDatabaseDownloadJobStatus.mock.calls;
     const successCall = statusCalls.find(
-      (call: { 0: string; 1: string; 2: { state?: string } }) => call[2]?.state === "success"
+      (call) => call[2]?.state === "success"
     );
     expect(successCall).toBeDefined();
+    const downloadChild = mocks.spawn.mock.results[0]?.value as ReturnType<
+      typeof makeDownloadChild
+    >;
+    const logStream = getLatestLogStream();
+    expect(downloadChild.stdout.pipe).toHaveBeenCalledWith(
+      logStream,
+      { end: false }
+    );
+    expect(downloadChild.stderr.pipe).toHaveBeenCalledWith(
+      logStream,
+      { end: false }
+    );
+    expect(logStream.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("removes a newly downloaded file when sha256 verification fails", async () => {
+    const expectedSha256 = "0".repeat(64);
+    mocks.getPipelineDatabaseDefinition.mockReturnValue({
+      id: "gtdb",
+      label: "GTDB",
+      downloadUrl: "https://example.com/gtdb.tar.gz",
+      fileName: "gtdb.tar.gz",
+      version: "r220",
+      configKey: "gtdbPath",
+      sha256: expectedSha256,
+    });
+    mocks.fsStat
+      .mockResolvedValueOnce({ size: 0 })
+      .mockResolvedValueOnce({ size: 28 });
+
+    const response = await POST(
+      makeRequest({ pipelineId: "mag", databaseId: "gtdb" })
+    );
+
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(mocks.fsRm).toHaveBeenCalledWith(
+        "/data/runs/mag/databases/gtdb.tar.gz",
+        { force: true }
+      );
+    });
+
+    const terminalErrors = mocks.updateDatabaseDownloadJobStatus.mock.calls.filter(
+      (call) => call[2]?.state === "error"
+    );
+    expect(terminalErrors).toHaveLength(1);
+    expect(terminalErrors[0]?.[2]?.error).toContain(
+      `Checksum mismatch: expected sha256 ${expectedSha256}`
+    );
+    expect(mocks.updateDatabaseDownloadRecord).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineConfig.upsert).not.toHaveBeenCalled();
+    expect(getLatestLogStream().end).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not delete an administrator-provided complete file when sha256 verification fails", async () => {
+    mocks.getPipelineDatabaseDefinition.mockReturnValue({
+      id: "gtdb",
+      label: "GTDB",
+      downloadUrl: "https://example.com/gtdb.tar.gz",
+      fileName: "gtdb.tar.gz",
+      version: "r220",
+      configKey: "gtdbPath",
+      sha256: "0".repeat(64),
+    });
+    mocks.fsStat.mockResolvedValue({ size: 1000000 });
+
+    const response = await POST(
+      makeRequest({ pipelineId: "mag", databaseId: "gtdb" })
+    );
+
+    expect(response.status).toBe(422);
+    expect((await response.json()).error).toContain("Checksum mismatch");
+    expect(mocks.fsRm).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
 
   it("runs the MetaxPath DB bundle installer and stores the generated params file", async () => {
@@ -442,7 +560,7 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(mocks.fsAccess).toHaveBeenCalledWith(
-      expect.stringContaining("pipelines/metaxpath/workflow/scripts/install_db_bundle.sh")
+      "/shared/pipelines/metaxpath/workflow/scripts/install_db_bundle.sh"
     );
     expect(mocks.spawn).toHaveBeenCalledWith(
       "bash",
@@ -499,11 +617,11 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
 
     const statusCalls = mocks.updateDatabaseDownloadJobStatus.mock.calls;
     const errorCall = statusCalls.find(
-      (call: { 0: string; 1: string; 2: { error?: string } }) =>
+      (call) =>
         call[2]?.error && String(call[2].error).includes("code 18")
     );
     expect(errorCall).toBeDefined();
-    expect(errorCall[2].error).toContain("partial transfer");
+    expect(errorCall?.[2]?.error).toContain("partial transfer");
   });
 
   it("other exit codes mark download as error", async () => {
@@ -527,16 +645,19 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
 
     const statusCalls = mocks.updateDatabaseDownloadJobStatus.mock.calls;
     const errorCall = statusCalls.find(
-      (call: { 0: string; 1: string; 2: { error?: string } }) =>
+      (call) =>
         call[2]?.error && String(call[2].error).includes("code 7")
     );
     expect(errorCall).toBeDefined();
   });
 
-  it("process error event marks download as error", async () => {
+  it("finalizes exactly once when spawn emits error and then close", async () => {
     mocks.spawn.mockImplementation(() => {
       const child = makeDownloadChild();
-      process.nextTick(() => child.emit("error", new Error("spawn ENOENT")));
+      process.nextTick(() => {
+        child.emit("error", new Error("spawn ENOENT"));
+        child.emit("close", -2);
+      });
       return child;
     });
 
@@ -546,14 +667,22 @@ describe("POST /api/admin/settings/pipelines/download-db", () => {
 
     expect(response.status).toBe(200);
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    const logStream = getLatestLogStream();
+    await vi.waitFor(() => {
+      expect(logStream.end).toHaveBeenCalledTimes(1);
+    });
 
     const statusCalls = mocks.updateDatabaseDownloadJobStatus.mock.calls;
-    const errorCall = statusCalls.find(
-      (call: { 0: string; 1: string; 2: { state?: string; error?: string } }) =>
+    const errorCalls = statusCalls.filter(
+      (call) =>
         call[2]?.state === "error" && call[2]?.error?.includes("ENOENT")
     );
-    expect(errorCall).toBeDefined();
+    expect(errorCalls).toHaveLength(1);
+    expect(
+      statusCalls.some(
+        (call) => call[2]?.error?.includes("stopped with code")
+      )
+    ).toBe(false);
   });
 
   it("returns 500 on unexpected error in outer try-catch", async () => {

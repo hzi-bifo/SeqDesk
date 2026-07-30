@@ -5,6 +5,10 @@ import {
   PIPELINE_WRITEBACK_POLICIES,
   READ_WRITEBACK_FIELDS,
 } from "./package-contracts";
+import {
+  isSafePackageRuntimePattern,
+  isSafePipelineFlagToken,
+} from "./package-patterns";
 
 export const PackageScope = z.enum(["sample", "study", "order", "run"]);
 export const PackageTargetType = z.enum(PACKAGE_TARGET_TYPES);
@@ -34,6 +38,47 @@ export const OutputType = z.enum([
 const ReadWritebackField = z.enum(READ_WRITEBACK_FIELDS);
 const PipelineResultKind = z.enum(PIPELINE_RESULT_KINDS);
 const PipelineWritebackPolicy = z.enum(PIPELINE_WRITEBACK_POLICIES);
+const RuntimePattern = z
+  .string()
+  .min(1)
+  .refine(isSafePackageRuntimePattern, {
+    message: "Pattern must stay inside the pipeline output directory",
+  });
+const PipelineFlagToken = z.string().refine(isSafePipelineFlagToken, {
+  message: "Flag must be a single safe command-line token",
+});
+const ParamMapFlag = z.string().refine(
+  (value) => value === "" || isSafePipelineFlagToken(value),
+  {
+    message: "Mapping must be empty or a single safe command-line flag",
+  }
+);
+const RuntimeEnvironmentName = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, {
+    message: "Environment variable name must be a valid shell identifier",
+  });
+const NextflowPipelineReference = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(
+    (value) => {
+      const normalized = value.replace(/\\/g, "/");
+      const explicitLocalReference =
+        normalized === "." ||
+        normalized === ".." ||
+        normalized.startsWith("./") ||
+        normalized.startsWith("../") ||
+        normalized.startsWith("/") ||
+        /^[A-Za-z]:\//.test(normalized);
+      return explicitLocalReference || !normalized.toLowerCase().endsWith(".nf");
+    },
+    {
+      message:
+        'Local Nextflow entrypoint files must use an explicit path such as "./workflow/main.nf"',
+    }
+  );
 
 const PipelineResultContractSchema = z
   .object({
@@ -66,7 +111,14 @@ export const ManifestSchema = z
     manifestVersion: z.number().int().min(1),
     package: z
       .object({
-        id: z.string().min(1),
+        id: z
+          .string()
+          .min(1)
+          .max(128)
+          .regex(
+            /^[A-Za-z0-9][A-Za-z0-9._-]*$/,
+            "Package ID must start with a letter or number and contain only letters, numbers, dots, underscores, or hyphens"
+          ),
         name: z.string().min(1),
         version: z.string().min(1),
         description: z.string().min(1),
@@ -125,19 +177,34 @@ export const ManifestSchema = z
     execution: z
       .object({
         type: z.literal("nextflow"),
-        pipeline: z.string().min(1),
+        pipeline: NextflowPipelineReference,
         version: z.string().min(1),
         profiles: z.array(z.string()),
         defaultParams: z.record(z.string(), z.unknown()),
+        priorRunArtifacts: z
+          .object({
+            scope: z.literal("study"),
+            configKey: z
+              .string()
+              .regex(/^[A-Za-z][A-Za-z0-9_]*$/),
+            sources: z
+              .record(z.string().min(1), z.array(z.string().min(1)).min(1))
+              .refine(
+                (sources) => Object.keys(sources).length > 0,
+                "At least one prior-run artifact source is required"
+              ),
+          })
+          .strict()
+          .optional(),
         runtime: z
           .object({
             allowMacOsArmConda: z.boolean().optional(),
             allowMacOsArmLocal: z.boolean().optional(),
-            env: z.record(z.string(), z.string()).optional(),
+            env: z.record(RuntimeEnvironmentName, z.string()).optional(),
           })
           .strict()
           .optional(),
-        paramMap: z.record(z.string(), z.string()).optional(),
+        paramMap: z.record(z.string(), ParamMapFlag).optional(),
         paramRules: z
           .array(
             z
@@ -145,10 +212,10 @@ export const ManifestSchema = z
                 when: z.record(z.string(), z.unknown()),
                 add: z.array(
                   z.union([
-                    z.string(),
+                    PipelineFlagToken,
                     z
                       .object({
-                        flag: z.string().min(1),
+                        flag: PipelineFlagToken,
                         value: z.unknown(),
                       })
                       .strict(),
@@ -171,8 +238,8 @@ export const ManifestSchema = z
           fromStep: z.string().min(1).optional(),
           discovery: z
             .object({
-              pattern: z.string().min(1),
-              fallbackPattern: z.string().optional(),
+              pattern: RuntimePattern,
+              fallbackPattern: RuntimePattern.optional(),
               matchSampleBy: z.enum(["filename", "parent_dir", "path"]).optional(),
               dependsOn: z.string().min(1).optional(),
             })

@@ -83,6 +83,12 @@ describe("pipeline environment setup contract", () => {
     path.join(repoRoot, "scripts/setup-conda-env.sh"),
     "utf8"
   );
+  const selectorStart = source.indexOf("select_miniconda_installer() {");
+  const selectorEnd = source.indexOf(
+    "\ncleanup_miniconda_download() {",
+    selectorStart
+  );
+  const selector = source.slice(selectorStart, selectorEnd).trim();
 
   it("offers only supported execution modes", () => {
     expect(source).toContain("Execution mode: local|slurm");
@@ -94,4 +100,33 @@ describe("pipeline environment setup contract", () => {
       "config.pipelines.execution.conda.enabled = true"
     );
   });
+
+  it("exposes an explicit managed Miniconda bootstrap used by the pipeline CLI", () => {
+    const pipelineCli = readFileSync(
+      path.join(repoRoot, "scripts/pipeline-cli.ts"),
+      "utf8"
+    );
+
+    expect(source).toContain("--install-miniconda");
+    expect(pipelineCli).toContain("'--install-miniconda'");
+    expect(source).toContain(
+      'SEQDESK_MINICONDA_BASE_URL="${SEQDESK_MINICONDA_BASE_URL:-https://repo.anaconda.com/miniconda}"'
+    );
+  });
+
+  it.each([
+    ["Linux", "x86_64", "Miniconda3-latest-Linux-x86_64.sh"],
+    ["Linux", "aarch64", "Miniconda3-latest-Linux-aarch64.sh"],
+    ["Darwin", "x86_64", "Miniconda3-latest-MacOSX-x86_64.sh"],
+    ["Darwin", "arm64", "Miniconda3-latest-MacOSX-arm64.sh"],
+  ])(
+    "maps runtime bootstrap %s/%s to %s",
+    (osName, archName, expected) => {
+      const result = selectInstaller(selector, osName, archName);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe(expected);
+      expect(result.stderr).toBe("");
+    }
+  );
 });

@@ -193,7 +193,7 @@ describe('pipeline run operator services', () => {
     expect(result.body.error).toContain('No FACILITY_ADMIN user exists');
   });
 
-  it('exposes per-run read attribution for both order and study targets', async () => {
+  it('selects attribution and FastQC report paths for order and study Reads', async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue(null);
 
     await getPipelineRunDetailsForOperator('run-1');
@@ -204,10 +204,14 @@ describe('pipeline run operator services', () => {
     const orderReadSelect =
       query.include.order.select.samples.select.reads.select;
     expect(studyReadSelect).toMatchObject({
+      fastqcReport1: true,
+      fastqcReport2: true,
       pipelineRunId: true,
       pipelineSources: true,
     });
     expect(orderReadSelect).toMatchObject({
+      fastqcReport1: true,
+      fastqcReport2: true,
       pipelineRunId: true,
       pipelineSources: true,
     });
@@ -1565,6 +1569,36 @@ describe('syncPipelineRunForOperator (with trace file)', () => {
     expect(mocks.db.pipelineRunStep.upsert).toHaveBeenCalled();
   });
 
+  it('reports the persisted terminal status when a guarded trace update loses a cancellation race', async () => {
+    mocks.db.pipelineRun.findUnique
+      .mockResolvedValueOnce({ ...traceRun, status: 'queued' })
+      .mockResolvedValueOnce({ status: 'cancelled' });
+    mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 0 });
+    mocks.parseTraceFile.mockResolvedValue(
+      trace({
+        tasks: [
+          {
+            process: 'ALIGN',
+            status: 'RUNNING',
+            start: new Date('2026-03-03T10:00:00Z'),
+          },
+        ],
+        overallProgress: 50,
+        startedAt: new Date('2026-03-03T10:00:00Z'),
+      })
+    );
+
+    const result = await syncPipelineRunForOperator('run-1');
+
+    expect(result.body).toMatchObject({
+      success: true,
+      synced: true,
+      status: 'cancelled',
+      updateApplied: false,
+    });
+    expect(mocks.notifyPipelineRunTerminalInApp).not.toHaveBeenCalled();
+  });
+
   it('does not resurrect a terminal run when a stale trace task still reads running', async () => {
     // Regression: a completed run re-synced against a trace whose task still reads
     // RUNNING (or a momentarily-active queue) must stay completed — not flip back to
@@ -1702,10 +1736,12 @@ describe('syncPipelineRunForOperator (with trace file)', () => {
   });
 
   it('does not apply stale trace data when centralized finalization loses its claim', async () => {
-    mocks.db.pipelineRun.findUnique.mockResolvedValue({
-      ...traceRun,
-      status: 'running',
-    });
+    mocks.db.pipelineRun.findUnique
+      .mockResolvedValueOnce({
+        ...traceRun,
+        status: 'running',
+      })
+      .mockResolvedValueOnce({ status: 'cancelled' });
     mocks.inferPipelineExitCode.mockResolvedValue(0);
     mocks.finalizeCompletedPipelineRun.mockResolvedValue('claim-unavailable');
     mocks.parseTraceFile.mockResolvedValue(
@@ -1725,6 +1761,8 @@ describe('syncPipelineRunForOperator (with trace file)', () => {
     const result = await syncPipelineRunForOperator('run-1');
 
     expect(result.body.synced).toBe(true);
+    expect(result.body.status).toBe('cancelled');
+    expect(result.body.updateApplied).toBe(false);
     expect(mocks.finalizeCompletedPipelineRun).toHaveBeenCalledWith(
       'run-1',
       'order-pipe',

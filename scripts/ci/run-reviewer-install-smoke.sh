@@ -41,6 +41,7 @@ finalize() {
   fi
 
   local result="failed"
+  local report_exit=0
   if [ "$exit_code" -eq 0 ]; then
     result="passed"
     CURRENT_STAGE="complete"
@@ -57,8 +58,11 @@ finalize() {
   DB_USER="$DB_USER" \
   DB_PASSWORD="$DB_PASSWORD" \
   DB_NAME="$DB_NAME" \
-    node "$WORKSPACE/scripts/ci/write-reviewer-compatibility-report.mjs" || true
+    node "$WORKSPACE/scripts/ci/write-reviewer-compatibility-report.mjs" || report_exit=$?
 
+  if [ "$exit_code" -eq 0 ] && [ "$report_exit" -ne 0 ]; then
+    exit_code="$report_exit"
+  fi
   exit "$exit_code"
 }
 trap finalize EXIT INT TERM

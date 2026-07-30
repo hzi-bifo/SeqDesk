@@ -1,7 +1,7 @@
 import chokidar, { type FSWatcher } from 'chokidar';
 import path from 'path';
 import { promises as fs } from 'fs';
-import { createWriteStream } from 'fs';
+import { createWriteStream, type Stats } from 'fs';
 import os from 'os';
 import { randomUUID } from 'crypto';
 import { parseBarcodeFromPath } from '../src/lib/sequencing/minion-paths';
@@ -311,7 +311,7 @@ async function ingestFile(opts: {
   });
 }
 
-async function attachWatcher(run: {
+export async function attachWatcher(run: {
   id: string;
   orderId: string;
   outputDir: string;
@@ -346,6 +346,12 @@ async function attachWatcher(run: {
     // 1s polling interval is a sane default — only kicks in when usePolling=true.
     interval: 1000,
     binaryInterval: 1000,
+    // Containment (validateOutputDirUnderRoot) is checked ONCE, against outputDir,
+    // when the run is created. chokidar's default would follow a symlink dropped
+    // into fastq_pass/ afterwards and walk its target — files that never passed
+    // that check. Don't follow: the watcher only sees what is really under the
+    // validated directory. (Symlinks are still *reported*; handle() drops them.)
+    followSymlinks: false,
     awaitWriteFinish: {
       stabilityThreshold,
       pollInterval: Math.min(500, Math.floor(stabilityThreshold / 4)),
@@ -361,7 +367,7 @@ async function attachWatcher(run: {
   };
   watchers.set(run.id, tracker);
 
-  const handle = async (filePath: string, stats?: { size: number }) => {
+  const handle = async (filePath: string, stats?: Stats) => {
     if (!filePath.endsWith('.fastq.gz') && !filePath.endsWith('.fastq') && !filePath.endsWith('.fq.gz') && !filePath.endsWith('.fq')) {
       return;
     }
@@ -375,6 +381,21 @@ async function attachWatcher(run: {
       return; // dedupe
     }
     tracker.seen.set(filePath, size);
+
+    // followSymlinks:false stops chokidar *walking* a link, but it still reports
+    // the link itself as an add — and the stat/read in ingestFile would resolve
+    // it, so a symlinked FASTQ still pulls in a file from outside the validated
+    // output directory. Refuse it, and say so in the event log: an unexpected
+    // link in fastq_pass is something the operator should see, not something we
+    // silently swallow.
+    if (stats?.isSymbolicLink()) {
+      logError(`skipping symlink in ${run.outputDir}: ${filePath}`);
+      await recordEvent(run.id, 'ERROR', {
+        message: 'skipped symlink — only real files under the output directory are ingested',
+        filePath,
+      }).catch(() => undefined);
+      return;
+    }
 
     try {
       // Gate every ingest through the global semaphore so a burst of new files
@@ -617,7 +638,11 @@ async function main() {
   process.on('SIGTERM', () => void shutdown());
 }
 
-main().catch((error) => {
-  logError('fatal', error);
-  process.exit(1);
-});
+// Auto-run when executed as the monitor daemon, but not when imported by a unit
+// test (vitest sets VITEST), so attachWatcher can be tested in isolation.
+if (!process.env.VITEST) {
+  main().catch((error) => {
+    logError('fatal', error);
+    process.exit(1);
+  });
+}

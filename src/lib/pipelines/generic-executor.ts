@@ -20,9 +20,23 @@ import { createGenericAdapter } from './generic-adapter';
 import { getAdapter, registerAdapter, type PipelineAdapter } from './adapters/types';
 import { SEQDESK_TRACE_FIELDS } from './nextflow';
 import {
+  isLocalPipelineReference,
+  resolvePathWithinDirectory,
+} from './pipeline-paths';
+import {
   buildSeqDeskSlurmJobName,
   preparePipelineRunDirectory,
 } from './run-directory';
+import {
+  assertNoReservedSlurmPathOptions,
+  assertSafeSlurmRunFolder,
+  buildSlurmCompletionAttestationBlock,
+  buildSlurmWrapperFinalizerBlock,
+  renderSlurmChdirDirective,
+  WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND,
+} from './slurm-completion-attestation';
+import { resolveCondaEnvironmentReference } from './conda-environment';
+import { stagePriorRunArtifacts } from './prior-run-artifact-staging';
 import type { PipelineTarget } from './types';
 
 // Extended execution type with paramMap and paramRules
@@ -138,11 +152,7 @@ function buildNextflowRunName(runNumber: string, runId: string): string {
 function resolvePipelineLaunchTarget(pkg: LoadedPackage): PipelineLaunchTarget {
   const pipelineRef = pkg.manifest.execution.pipeline.trim();
 
-  if (
-    pipelineRef.startsWith('/') ||
-    pipelineRef.startsWith('./') ||
-    pipelineRef.startsWith('../')
-  ) {
+  if (isLocalPipelineReference(pipelineRef)) {
     return {
       target: path.isAbsolute(pipelineRef)
         ? pipelineRef
@@ -394,21 +404,6 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-// The run folder is interpolated literally into the generated script (including
-// the #SBATCH -D directive, which is parsed by SLURM rather than the shell and so
-// cannot be shell-quoted). Characters that would break out of a double-quoted
-// context, run a command substitution, or inject extra #SBATCH lines must never
-// appear in it. pipelineRunDir is validated on save, but it can also come from a
-// config file or env var, so guard at launch as a final backstop.
-const SHELL_UNSAFE_RUN_FOLDER = /[\x00-\x1f\x7f"`$\\]/;
-function assertSafeRunFolder(runFolder: string): void {
-  if (SHELL_UNSAFE_RUN_FOLDER.test(runFolder)) {
-    throw new Error(
-      'Refusing to launch pipeline: run directory contains unsafe characters'
-    );
-  }
-}
-
 function isSafeFlagKey(key: string): boolean {
   return /^[A-Za-z][A-Za-z0-9_-]*$/.test(key);
 }
@@ -438,6 +433,7 @@ function sanitizeSlurmTimeLimit(value: number | undefined, fallback: number): nu
 // for SeqDesk's cleanup identity, and shell-quote each whitespace-separated
 // token so it cannot break out of the directive.
 function sanitizeSlurmOptions(value: string | undefined): string {
+  assertNoReservedSlurmPathOptions(value);
   const trimmed = value?.trim();
   if (!trimmed) return '';
   if (/[\r\n]/.test(trimmed)) return '';
@@ -508,6 +504,7 @@ export function mergeProfiles(
 
 function buildRuntimeBootstrap(settings: ExecutionSettings): string {
   const condaEnv = settings.condaEnv?.trim() || 'seqdesk-pipelines';
+  const condaEnvironment = resolveCondaEnvironmentReference(condaEnv);
   const condaBase = settings.condaPath?.trim();
   const lines: string[] = [];
 
@@ -515,6 +512,7 @@ function buildRuntimeBootstrap(settings: ExecutionSettings): string {
   // shell-quote them rather than interpolating into a bare double-quoted
   // assignment (a value like x"; rm -rf ~; :" would otherwise break out).
   lines.push(`CONDA_ENV=${shellQuote(condaEnv)}`);
+  lines.push(`CONDA_ENV_SELECTOR=${shellQuote(condaEnvironment.selector)}`);
   lines.push('NEXTFLOW_RUNNER=(nextflow)');
   lines.push('');
 
@@ -540,8 +538,8 @@ function buildRuntimeBootstrap(settings: ExecutionSettings): string {
   lines.push('if command -v nextflow >/dev/null 2>&1; then');
   lines.push('  NEXTFLOW_RUNNER=(nextflow)');
   lines.push('  echo "Using nextflow: $(command -v nextflow)" >> "$STDOUT_LOG"');
-  lines.push('elif command -v conda >/dev/null 2>&1 && conda run -n "$CONDA_ENV" nextflow -version >/dev/null 2>&1; then');
-  lines.push('  NEXTFLOW_RUNNER=(conda run -n "$CONDA_ENV" nextflow)');
+  lines.push('elif command -v conda >/dev/null 2>&1 && conda run "$CONDA_ENV_SELECTOR" "$CONDA_ENV" nextflow -version >/dev/null 2>&1; then');
+  lines.push('  NEXTFLOW_RUNNER=(conda run "$CONDA_ENV_SELECTOR" "$CONDA_ENV" nextflow)');
   lines.push('  echo "Using nextflow via conda run in env $CONDA_ENV" >> "$STDOUT_LOG"');
   lines.push('else');
   lines.push('  echo "ERROR: nextflow not found after conda activation" >> "$STDERR_LOG"');
@@ -738,7 +736,7 @@ function generateSlurmScript(
   runNumber: string,
   runId: string
 ): string {
-  assertSafeRunFolder(runFolder);
+  assertSafeSlurmRunFolder(runFolder);
   const execution = pkg.manifest.execution;
   const traceFile = `${runFolder}/trace.txt`;
   const dagFile = `${runFolder}/dag.dot`;
@@ -787,12 +785,14 @@ function generateSlurmScript(
 #SBATCH -c ${slurmCores}
 #SBATCH --mem='${slurmMemory}'
 #SBATCH -t ${slurmTimeLimit}:0:0
-#SBATCH -D "${runFolder}"
+${renderSlurmChdirDirective(runFolder)}
 #SBATCH --output="/tmp/seqdesk-slurm-%j.out"
 #SBATCH --error="/tmp/seqdesk-slurm-%j.err"
 ${slurmOptions ? `#SBATCH ${slurmOptions}` : ''}
 
 set -euo pipefail
+
+${buildSlurmWrapperFinalizerBlock(runFolder)}
 
 # SLURM opens its own --output/--error as the slurm daemon user (often root),
 # which silently fails on a root-squashed NFS run dir, so they point at
@@ -811,14 +811,7 @@ for _ in $(seq 1 15); do
   sleep 2
 done
 
-# Log file paths (read by pipeline monitor)
-STDOUT_LOG="${runFolder}/logs/pipeline.out"
-STDERR_LOG="${runFolder}/logs/pipeline.err"
-
-# Always record the real exit code for the pipeline monitor, even when a
-# command fails under "set -e" (which would otherwise abort before the marker
-# below is reached). Also copy SLURM's node-local logs into the run dir.
-trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; cp -f "/tmp/seqdesk-slurm-$SLURM_JOB_ID.out" "${runFolder}/logs/slurm-$SLURM_JOB_ID.out" 2>/dev/null || true; cp -f "/tmp/seqdesk-slurm-$SLURM_JOB_ID.err" "${runFolder}/logs/slurm-$SLURM_JOB_ID.err" 2>/dev/null || true; exit $EXIT_CODE' EXIT
+${buildSlurmCompletionAttestationBlock({ runId, runFolder })}
 
 echo "Starting ${pipelineLabel} pipeline at $(date)" > "$STDOUT_LOG"
 echo "" > "$STDERR_LOG"
@@ -829,6 +822,8 @@ ${runtimeBootstrap}
 "\${NEXTFLOW_RUNNER[@]}" run ${shellQuote(pipelineTarget.target)} \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
+
+${WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND}
 `;
 }
 
@@ -847,7 +842,7 @@ function generateLocalScript(
   runNumber: string,
   runId: string
 ): string {
-  assertSafeRunFolder(runFolder);
+  assertSafeSlurmRunFolder(runFolder);
   const execution = pkg.manifest.execution;
   const traceFile = `${runFolder}/trace.txt`;
   const dagFile = `${runFolder}/dag.dot`;
@@ -988,7 +983,6 @@ export async function prepareGenericRun(
       config,
       executionSettings
     );
-    const flags = buildPipelineFlags(execution, runtimeConfig);
 
     const weblogUrl = buildWeblogUrl(
       executionSettings.weblogUrl,
@@ -1012,12 +1006,42 @@ export async function prepareGenericRun(
       ownedRunFolder = runFolder;
 
       // Write samplesheet
-      const samplesheetPath = path.join(runFolder, 'samplesheet.csv');
+      const samplesheetFilename =
+        pkg.samplesheet?.samplesheet.filename || 'samplesheet.csv';
+      const samplesheetPath = resolvePathWithinDirectory(
+        runFolder,
+        samplesheetFilename,
+        'samplesheet filename'
+      );
+      await fs.mkdir(path.dirname(samplesheetPath), { recursive: true });
       await fs.writeFile(samplesheetPath, samplesheet.content);
 
       // Output directory
       const outputDir = path.join(runFolder, 'output');
       await fs.mkdir(outputDir, { recursive: true });
+
+      let preparedRuntimeConfig = runtimeConfig;
+      if (execution.priorRunArtifacts) {
+        if (
+          execution.priorRunArtifacts.scope !== 'study' ||
+          target.type !== 'study'
+        ) {
+          throw new Error(
+            `Pipeline ${pipelineId} requires a study target for prior-run artifact staging`
+          );
+        }
+        const staged = await stagePriorRunArtifacts({
+          currentRunId: runId,
+          studyId: target.studyId,
+          runFolder,
+          spec: execution.priorRunArtifacts,
+        });
+        preparedRuntimeConfig = {
+          ...runtimeConfig,
+          [execution.priorRunArtifacts.configKey]: staged.inputDirectory,
+        };
+      }
+      const flags = buildPipelineFlags(execution, preparedRuntimeConfig);
 
       // Create run-specific Nextflow config (weblog, etc.)
       const runConfig = buildRunConfig(weblogUrl, executionSettings, pipelineId);

@@ -5,6 +5,12 @@ const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   getExecutionSettings: vi.fn(),
   saveExecutionSettings: vi.fn(),
+  clearPipelineRuntimePrerequisiteCache: vi.fn(),
+		}));
+
+vi.mock("@/lib/pipelines/prerequisite-check", () => ({
+  clearPipelineRuntimePrerequisiteCache:
+    mocks.clearPipelineRuntimePrerequisiteCache,
 }));
 
 vi.mock("next-auth", () => ({
@@ -100,8 +106,11 @@ describe("POST /api/admin/settings/pipelines/execution", () => {
     expect(response.status).toBe(200);
     expect(body.success).toBe(true);
     expect(body.settings.useSlurm).toBe(true);
-    expect(body.settings.slurmQueue).toBe("gpu");
+	    expect(body.settings.slurmQueue).toBe("gpu");
 	    expect(mocks.saveExecutionSettings).toHaveBeenCalledTimes(1);
+	    expect(
+	      mocks.clearPipelineRuntimePrerequisiteCache
+	    ).toHaveBeenCalledTimes(1);
 	  });
 
 	  it("saves per-pipeline execution overrides", async () => {
@@ -178,5 +187,8 @@ describe("POST /api/admin/settings/pipelines/execution", () => {
 
     const response = await POST(request);
     expect(response.status).toBe(500);
+    expect(
+      mocks.clearPipelineRuntimePrerequisiteCache
+    ).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,7 @@
 {
   "id": "multiqc",
   "name": "Study MultiQC",
-  "description": "Aggregate the QC outputs of prior study runs (FastQC, seqkit, read-cleaning MultiQC data) into a single study-level MultiQC report",
+  "description": "Aggregate recognized FastQC and NanoPlot outputs from prior study runs into a single study-level MultiQC report",
   "category": "qc",
   "version": "0.1.0",
   "sortOrder": 3,

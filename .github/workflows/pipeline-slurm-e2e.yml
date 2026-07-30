@@ -6,6 +6,12 @@
 # executionMode='slurm' so the SBATCH wrapper generation (#SBATCH directives) and a
 # real allocation on the cluster get coverage. This runner uses the inline mode:
 # Nextflow itself runs with its local executor inside one outer SLURM allocation.
+# The required gate also installs a deterministic pipeline through the real Store
+# API, proves configuration/readiness/activation and atomic rollback, then executes
+# that Store-installed package locally and through real SLURM on both the built
+# source app and a freshly installed release artifact. The installed-release leg
+# additionally drives the installer-created `seqdesk pipelines` user command from
+# a neutral directory, including idempotence and cross-process install locking.
 #
 # REQUIREMENTS: the self-hosted runner MUST provide `sbatch`, `squeue`, `sacct`,
 # `scancel`, and `scontrol` on PATH. The runtime/SLURM smoke scripts guard on those
@@ -137,6 +143,11 @@ jobs:
           echo "FAILURE_E2E_LOG=$RUNNER_TEMP/slurm-failure-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "CANCEL_E2E_LOG=$RUNNER_TEMP/slurm-cancel-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
           echo "APPCHECK_E2E_LOG=$RUNNER_TEMP/appcheck-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "STORE_E2E_LOG=$RUNNER_TEMP/store-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "STORE_E2E_JSON=$RUNNER_TEMP/store-e2e-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "STORE_RUNTIME_E2E_LOG=$RUNNER_TEMP/store-runtime-e2e-$RUN_SUFFIX.log" >> "$GITHUB_ENV"
+          echo "STORE_RUNTIME_E2E_STATE=$RUNNER_TEMP/store-runtime-e2e-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
+          echo "STORE_E2E_FIXTURE_PORT=$((PORT + 3))" >> "$GITHUB_ENV"
           echo "PROVIDERS_JSON=$RUNNER_TEMP/providers-slurm-$RUN_SUFFIX.json" >> "$GITHUB_ENV"
           # The SLURM compute node must see the pipeline's inputs (data), its run dir
           # (outputs/logs) AND any reference DBs, so place all three on the shared FS
@@ -1048,6 +1059,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify core-only pipeline runtime bootstrap
+        run: |
+          npx vitest run \
+            src/lib/config/miniconda-installer-selection.test.ts \
+            src/lib/config/setup-conda-env-bootstrap.test.ts
+
+      - name: Install Chromium for the required guided Store browser gate
+        run: npx playwright install chromium
+
       - name: Set database connection environment
         run: |
           set -euo pipefail
@@ -1078,7 +1098,7 @@ jobs:
           export NEXTAUTH_SECRET="pipeline-slurm-e2e-secret"
           export SEQDESK_PIPELINES_ENABLED=true
           export SEQDESK_DATA_PATH="$SEQDESK_DATA_DIR"
-          export SEQDESK_PIPELINE_RUN_DIR="$SEQDESK_RUN_DIR"
+          unset SEQDESK_PIPELINE_RUN_DIR
           export SEQDESK_PIPELINE_DATABASE_DIR="$SEQDESK_DB_DIR"
           export SEQDESK_CONDA_ENABLED=true
           export SEQDESK_CONDA_PATH="$SEQDESK_CONDA_PATH"
@@ -1086,15 +1106,15 @@ jobs:
           export SEQDESK_CONDA_ENV="${SLURM_SHARED_CONDA_ENV:-$PIPELINE_CONDA_ENV}"
           export SEQDESK_SLURM_ENABLED=true
           # SEQDESK_SLURM_INLINE_EXECUTOR is set at job level (inherited here).
-          # SLURM compute nodes can't see the app's _work tree, so the pipeline
-          # packages (Nextflow workflow scripts) must live on the shared FS. Stage
-          # them in this workflow run's own package tree and point the app there.
+          # Always stage packages into this run's isolated writable tree. This
+          # proves Store installs do not mutate the checkout and gives the real
+          # SLURM compute nodes a shared package tree when a shared root is set.
+          SHARED_PIPELINES_DIR="$SEQDESK_STAGED_PIPELINES_DIR"
+          rm -rf "$SHARED_PIPELINES_DIR"
+          mkdir -p "$SHARED_PIPELINES_DIR"
+          cp -R pipelines/. "$SHARED_PIPELINES_DIR/"
+          export SEQDESK_PIPELINES_DIR="$SHARED_PIPELINES_DIR"
           if [ -n "${SLURM_SHARED_RUN_ROOT:-}" ]; then
-            SHARED_PIPELINES_DIR="$SEQDESK_STAGED_PIPELINES_DIR"
-            rm -rf "$SHARED_PIPELINES_DIR"
-            mkdir -p "$SHARED_PIPELINES_DIR"
-            cp -R pipelines/. "$SHARED_PIPELINES_DIR/"
-            export SEQDESK_PIPELINES_DIR="$SHARED_PIPELINES_DIR"
             # Shared, PERSISTENT Nextflow conda cacheDir (outside the per-run dir, so
             # cleanup never removes it). A pipeline's LOCAL run (on the runner, which has
             # network) builds the per-process env here; the later SLURM run on the
@@ -1103,7 +1123,12 @@ jobs:
             mkdir -p "$SHARED_CONDA_CACHE"
             export SEQDESK_CONDA_CACHE_DIR="$SHARED_CONDA_CACHE"
           fi
-          echo "[boot] SEQDESK_CONDA_PATH=$SEQDESK_CONDA_PATH SEQDESK_CONDA_ENV=$SEQDESK_CONDA_ENV SEQDESK_PIPELINE_RUN_DIR=$SEQDESK_PIPELINE_RUN_DIR SEQDESK_PIPELINES_DIR=${SEQDESK_PIPELINES_DIR:-<app default>} SEQDESK_CONDA_CACHE_DIR=${SEQDESK_CONDA_CACHE_DIR:-<app default>}"
+          # The Store acceptance harness binds this fixture port only while it
+          # drives the app. The app must inherit the registry URL at boot.
+          export SEQDESK_PIPELINE_REGISTRY_URL="http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}/registry"
+          export SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL="http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}"
+          export SEQDESK_PIPELINE_STORE_E2E_FAULTS=1
+          echo "[boot] SEQDESK_CONDA_PATH=$SEQDESK_CONDA_PATH SEQDESK_CONDA_ENV=$SEQDESK_CONDA_ENV SEQDESK_RUN_DIR=$SEQDESK_RUN_DIR SEQDESK_PIPELINES_DIR=$SEQDESK_PIPELINES_DIR SEQDESK_CONDA_CACHE_DIR=${SEQDESK_CONDA_CACHE_DIR:-<app default>} SEQDESK_PIPELINE_REGISTRY_URL=$SEQDESK_PIPELINE_REGISTRY_URL"
           PORT="$PORT" npm run start >"$SERVER_LOG" 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
@@ -1148,7 +1173,72 @@ jobs:
           '
           echo "SeqDesk app is ready on port $PORT and serves the checked-out version."
 
-      - name: Run runtime pipeline E2E (local + SLURM through the app)
+      - name: Gate source app guided Store setup in a real browser
+        env:
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_PIPELINES_DIR: ${{ env.SEQDESK_STAGED_PIPELINES_DIR }}
+          SEQDESK_PLAYWRIGHT_STORE_PIPELINES_ROOT: ${{ env.SEQDESK_STAGED_PIPELINES_DIR }}
+          SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL: http://127.0.0.1:${{ env.STORE_E2E_FIXTURE_PORT }}
+          SEQDESK_PLAYWRIGHT_RUNTIME_READY_DIR: ${{ env.SEQDESK_RUN_DIR }}
+          SEQDESK_PLAYWRIGHT_HANDOFF_RUN_DIR: ${{ env.SEQDESK_RUN_DIR }}
+          SEQDESK_PLAYWRIGHT_HANDOFF_DATABASE_DIR: ${{ env.SEQDESK_DB_DIR }}
+        run: |
+          set -euo pipefail
+          npx playwright test \
+            --config=playwright.pipeline-store.config.ts \
+            --project=chromium-real-store \
+            --repeat-each=2 \
+            playwright/tests/pipeline-store-real.admin.spec.ts
+
+      - name: Gate source app pipeline Store, readiness, enable, and rollback
+        run: |
+          set -euo pipefail
+          node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-e2e.mjs" \
+            --base-url "http://127.0.0.1:${PORT}" \
+            --fixture-url "http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}" \
+            --fixture-resource-root "$SEQDESK_DB_DIR/source-store-e2e" \
+            --expect-readiness ready \
+            --expected-execution-mode slurm \
+            --result-file "$STORE_E2E_JSON" \
+            2>&1 | tee "$STORE_E2E_LOG"
+
+      - name: Run the Store-installed pipeline locally and through SLURM
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          FIXTURE_PIPELINE_ID="$(node -e '
+            const fs = require("node:fs");
+            const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (typeof result?.fixture?.pipelineId !== "string" || !result.fixture.pipelineId) {
+              throw new Error("Store E2E result is missing fixture.pipelineId");
+            }
+            process.stdout.write(result.fixture.pipelineId);
+          ' "$STORE_E2E_JSON")"
+          FIXTURE_LABEL="$(node -e '
+            const fs = require("node:fs");
+            const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (typeof result?.configuration?.value !== "string" || !result.configuration.value) {
+              throw new Error("Store E2E result is missing configuration.value");
+            }
+            process.stdout.write(result.configuration.value);
+          ' "$STORE_E2E_JSON")"
+          npm run pipeline:e2e:runtime -- \
+            --ensure-dummy-data \
+            --expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR" \
+            --pipeline-id "$FIXTURE_PIPELINE_ID" \
+            --saved-config-only \
+            --required-relative-output output/results/fixture-report.txt \
+            --required-output-contains "$FIXTURE_LABEL" \
+            --required-artifact-output-id fixture_report \
+            --run-state-file "$STORE_RUNTIME_E2E_STATE" \
+            2>&1 | tee "$STORE_RUNTIME_E2E_LOG"
+
+          echo "Runtime harness verified the saved Store configuration in every local and SLURM run."
+
+      - name: Run required fastq-checksum E2E (local + SLURM through the app)
         env:
           SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
           SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
@@ -1157,7 +1247,8 @@ jobs:
           set -euo pipefail
           npm run pipeline:e2e:runtime -- \
             --ensure-dummy-data \
-            --pipeline-id "$RUNTIME_PIPELINE_ID" \
+            --expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR" \
+            --pipeline-id fastq-checksum \
             2>&1 | tee "$RUNTIME_E2E_LOG"
 
       # Runs EARLY on purpose: fastqc reads the order's FASTQs, and the fastq-checksum
@@ -1178,8 +1269,43 @@ jobs:
           set -euo pipefail
           npm run pipeline:e2e:runtime -- \
             --ensure-dummy-data \
+            --expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR" \
             --pipeline-id fastqc \
+            --dummy-order-index 4 \
             2>&1 | tee "$RUNNER_TEMP/fastqc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+
+      - name: Run nanoplot E2E (local + SLURM, long-read order)
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # Dummy order 3 is the dedicated single-end ONT fixture. The harness
+          # proves report/stat artifacts, summary metrics and exact Read writeback.
+          npm run pipeline:e2e:runtime -- \
+            --ensure-dummy-data \
+            --expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR" \
+            --pipeline-id nanoplot \
+            --dummy-order-index 3 \
+            2>&1 | tee "$RUNNER_TEMP/nanoplot-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+
+      - name: Run fastqc E2E (local + SLURM, long-read aggregation input)
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # Dummy order 3 belongs to the same pipeline-CI study as order 4.
+          # Running FastQC for both makes MultiQC prove all selected study
+          # samples while NanoPlot contributes real long-read NanoStats.
+          npm run pipeline:e2e:runtime -- \
+            --ensure-dummy-data \
+            --expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR" \
+            --pipeline-id fastqc \
+            --dummy-order-index 3 \
+            2>&1 | tee "$RUNNER_TEMP/fastqc-long-read-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
       - name: Run study-demo-report E2E (local + SLURM, study target)
         env:
@@ -1192,6 +1318,7 @@ jobs:
           # conda env), so it exercises the study-target path in both local and SLURM.
           npm run pipeline:e2e:runtime -- \
             --ensure-dummy-data \
+            --expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR" \
             --pipeline-id study-demo-report \
             2>&1 | tee "$RUNNER_TEMP/study-demo-report-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
@@ -1206,6 +1333,7 @@ jobs:
           # Read per sample). The SLURM-only smoke also runs it; this adds local coverage.
           npm run pipeline:e2e:runtime -- \
             --ensure-dummy-data \
+            --expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR" \
             --pipeline-id simulate-reads \
             2>&1 | tee "$RUNNER_TEMP/simulate-reads-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
@@ -1224,8 +1352,41 @@ jobs:
           set -euo pipefail
           npm run pipeline:e2e:runtime -- \
             --ensure-dummy-data \
+            --expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR" \
             --pipeline-id reads-qc \
             2>&1 | tee "$RUNNER_TEMP/reads-qc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+
+      - name: Run multiqc E2E (local + SLURM, prior-run aggregation)
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # FastQC targets both study-linked orders 3 and 4, while NanoPlot
+          # targets long-read order 3. MultiQC must copy both artifact types,
+          # prove their exact source/staged identity, and match parsed values
+          # to raw FASTQ + NanoStats ground truth.
+          npm run pipeline:e2e:runtime -- \
+            --ensure-dummy-data \
+            --expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR" \
+            --pipeline-id multiqc \
+            2>&1 | tee "$RUNNER_TEMP/multiqc-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
+
+      - name: Run additionally requested runtime pipeline (manual dispatch)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_pipeline_id != 'fastq-checksum' }}
+        env:
+          SEQDESK_RUNTIME_E2E_BASE_URL: http://127.0.0.1:${{ env.PORT }}
+          SEQDESK_RUNTIME_E2E_EMAIL: admin@example.com
+          SEQDESK_RUNTIME_E2E_PASSWORD: admin
+        run: |
+          set -euo pipefail
+          # This is additional coverage only; the fixed required matrix above
+          # always ran first, so a custom dispatch cannot replace its proof.
+          npm run pipeline:e2e:runtime -- \
+            --ensure-dummy-data \
+            --pipeline-id "$RUNTIME_PIPELINE_ID" \
+            2>&1 | tee "$RUNNER_TEMP/requested-runtime-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.log"
 
       # --- Opt-in: run the PUBLIC pipelines on the REAL ENA mouse-gut dataset (PRJDB6165) ---
       # Gated to an explicit workflow_dispatch with run_mouse_real_data=true, so mirrored pushes
@@ -1824,6 +1985,9 @@ jobs:
           # shared FS, which isn't auto-reclaimed between jobs like $RUNNER_TEMP is).
           WORK="${SLURM_SHARED_RUN_ROOT:-$RUNNER_TEMP}/install-slurm-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           APP_DIR="$WORK/app"; MOCK_ROOT="$WORK/mock"; NPM_PREFIX="$WORK/npm-prefix"
+          USER_CLI_BIN="$WORK/user-bin"; USER_CLI_CONFIG_HOME="$WORK/user-config"
+          USER_CLI_COMMAND="$USER_CLI_BIN/seqdesk"
+          USER_CLI_POINTER="$USER_CLI_CONFIG_HOME/seqdesk/default-install"
           INSTALLED_CONDA_CACHE="$WORK/conda-cache"
           INSTALLED_PORT=$((PORT + 1)); MOCK_PORT=$((PORT + 2))
           INSTALLED_DATA="$SEQDESK_DATA_DIR-installed"; INSTALLED_RUNS="$SEQDESK_RUN_DIR-installed"
@@ -1841,7 +2005,7 @@ jobs:
           fi
           source "$SEQDESK_CI_CLEANUP_HELPER"
           rm -rf "$WORK"
-          mkdir -p "$MOCK_ROOT/api" "$MOCK_ROOT/downloads" "$INSTALLED_DATA" "$INSTALLED_RUNS" "$NPM_PREFIX" "$INSTALLED_CONDA_CACHE" "$DIAG_OUT"
+          mkdir -p "$MOCK_ROOT/api" "$MOCK_ROOT/downloads" "$INSTALLED_DATA" "$INSTALLED_RUNS" "$NPM_PREFIX" "$INSTALLED_CONDA_CACHE" "$USER_CLI_BIN" "$USER_CLI_CONFIG_HOME" "$DIAG_OUT"
           cleanup_install_slurm() {
             local original_rc=$?
             local cleanup_rc=0
@@ -1955,6 +2119,8 @@ jobs:
 
           echo "=== install with SLURM execution configured ==="
           PATH="$NPM_PREFIX/bin:$PATH" \
+          XDG_CONFIG_HOME="$USER_CLI_CONFIG_HOME" \
+          SEQDESK_CLI_BIN_DIR="$USER_CLI_BIN" \
           SEQDESK_API="http://127.0.0.1:$MOCK_PORT/api" \
           SEQDESK_INSTALL_URL="http://127.0.0.1:$MOCK_PORT/install.sh" \
           SEQDESK_LOG="$WORK/install.log" \
@@ -2008,6 +2174,30 @@ jobs:
           if [ ! -f "$INSTALLED_RELEASE_DIR/scripts/apply-install-profile.mjs" ]; then
             echo "Installed versioned release is missing scripts/apply-install-profile.mjs." >&2
             ls -la "$INSTALLED_RELEASE_DIR" 2>/dev/null || true
+            exit 1
+          fi
+          if [ ! -x "$USER_CLI_COMMAND" ]; then
+            echo "Fresh install is missing its user-level CLI wrapper: $USER_CLI_COMMAND" >&2
+            exit 1
+          fi
+          if [ ! -r "$USER_CLI_POINTER" ]; then
+            echo "Fresh install is missing its default-install pointer: $USER_CLI_POINTER" >&2
+            exit 1
+          fi
+          IFS= read -r USER_CLI_POINTER_VALUE < "$USER_CLI_POINTER" || true
+          if [ "$USER_CLI_POINTER_VALUE" != "$APP_DIR" ]; then
+            echo "Default-install pointer mismatch: expected $APP_DIR, found ${USER_CLI_POINTER_VALUE:-<empty>}." >&2
+            exit 1
+          fi
+          if [ ! -L "$INSTALLED_RELEASE_DIR/pipelines" ]; then
+            echo "Fresh install did not link the versioned release to the shared pipeline tree." >&2
+            ls -ld "$APP_DIR/pipelines" "$INSTALLED_RELEASE_DIR/pipelines" 2>/dev/null || true
+            exit 1
+          fi
+          ROOT_PIPELINES_REAL="$(cd "$APP_DIR/pipelines" && pwd -P)"
+          RELEASE_PIPELINES_REAL="$(cd "$INSTALLED_RELEASE_DIR/pipelines" && pwd -P)"
+          if [ "$ROOT_PIPELINES_REAL" != "$RELEASE_PIPELINES_REAL" ]; then
+            echo "Installed app and user CLI resolve different pipeline trees: $RELEASE_PIPELINES_REAL != $ROOT_PIPELINES_REAL" >&2
             exit 1
           fi
           test -f "$INSTALLED_RELEASE_DIR/package.json"
@@ -2100,7 +2290,8 @@ jobs:
                   // every pipeline we run on the installed app must be enabled here
                   // (a disabled pipeline 400s with "not enabled in SeqDesk settings")
                   enable: ["fastq-checksum", "simulate-reads", "fastqc",
-                           "study-demo-report", "reads-qc", "read-cleaning"],
+                           "study-demo-report", "reads-qc", "nanoplot",
+                           "multiqc", "read-cleaning"],
                   configs: { "read-cleaning": rc } } }, null, 2));
           '
           if [ -n "$KRAKEN2_DB" ]; then
@@ -2136,6 +2327,8 @@ jobs:
             unset SEQDESK_PIPELINE_RUN_DIR SEQDESK_DATA_PATH
             unset SEQDESK_PIPELINES_DIR
             export SEQDESK_SLURM_INLINE_EXECUTOR=1
+            export SEQDESK_PIPELINE_REGISTRY_URL="http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}/registry"
+            export SEQDESK_PIPELINE_STORE_E2E_FAULTS=1
             # Use a new shared cache for this installation. Installed local runs
             # populate it before their SLURM counterparts, proving a fresh
             # facility can provision pipeline process environments.
@@ -2186,6 +2379,111 @@ jobs:
           ' "$WORK/providers.json"
           echo "Installed SeqDesk is ready and exposes authentication."
 
+          PACKAGED_PIPELINES_ROOT="$INSTALLED_RELEASE_DIR/pipelines"
+
+          echo "::group::installed user CLI -> list -> install -> setup -> idempotence -> concurrency -> rollback"
+          INSTALLED_CLI_E2E_JSON="$DIAG_OUT/installed-cli-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          INSTALLED_CLI_NEUTRAL_CWD="$WORK/neutral-cli-cwd"
+          mkdir -p "$INSTALLED_CLI_NEUTRAL_CWD"
+          env -u SEQDESK_DIR \
+            XDG_CONFIG_HOME="$USER_CLI_CONFIG_HOME" \
+            node "$GITHUB_WORKSPACE/scripts/run-pipeline-cli-e2e.mjs" \
+              --install-dir "$APP_DIR" \
+              --seqdesk-command "$USER_CLI_COMMAND" \
+              --neutral-cwd "$INSTALLED_CLI_NEUTRAL_CWD" \
+              --base-url "http://127.0.0.1:$INSTALLED_PORT" \
+              --fixture-url "http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}" \
+              --fixture-resource-root "$SEQDESK_DB_DIR/installed-cli-e2e" \
+              --result-file "$INSTALLED_CLI_E2E_JSON" \
+              2>&1 | tee "$WORK/install-cli-e2e.log"
+          echo "::endgroup::"
+
+          echo "::group::CLI-installed pipeline -> local + real SLURM execution"
+          INSTALLED_CLI_FIXTURE_PIPELINE_ID="$(node -e '
+            const fs = require("node:fs");
+            const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (typeof result?.primary?.pipelineId !== "string" || !result.primary.pipelineId) {
+              throw new Error("Installed CLI E2E result is missing primary.pipelineId");
+            }
+            process.stdout.write(result.primary.pipelineId);
+          ' "$INSTALLED_CLI_E2E_JSON")"
+          INSTALLED_CLI_FIXTURE_LABEL="$(node -e '
+            const fs = require("node:fs");
+            const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (typeof result?.primary?.marker !== "string" || !result.primary.marker) {
+              throw new Error("Installed CLI E2E result is missing primary.marker");
+            }
+            process.stdout.write(result.primary.marker);
+          ' "$INSTALLED_CLI_E2E_JSON")"
+          INSTALLED_CLI_RUNTIME_STATE="$DIAG_OUT/installed-cli-runtime-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          SEQDESK_RUNTIME_E2E_BASE_URL="http://127.0.0.1:$INSTALLED_PORT" \
+          SEQDESK_RUNTIME_E2E_EMAIL=admin@example.com \
+          SEQDESK_RUNTIME_E2E_PASSWORD=admin \
+          SEQDESK_RUNTIME_E2E_SLURM_CORES=1 \
+          SEQDESK_RUNTIME_E2E_SLURM_MEMORY=1G \
+          SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=1 \
+            npm run pipeline:e2e:runtime -- \
+              --ensure-dummy-data \
+              --expected-pipeline-root "$PACKAGED_PIPELINES_ROOT" \
+              --pipeline-id "$INSTALLED_CLI_FIXTURE_PIPELINE_ID" \
+              --saved-config-only \
+              --required-relative-output output/results/fixture-report.txt \
+              --required-output-contains "$INSTALLED_CLI_FIXTURE_LABEL" \
+              --required-artifact-output-id fixture_report \
+              --run-state-file "$INSTALLED_CLI_RUNTIME_STATE" \
+              2>&1 | tee "$WORK/install-cli-runtime.log"
+          echo "Runtime harness verified the CLI-installed package and saved setup in local and real SLURM runs."
+          echo "::endgroup::"
+
+          echo "::group::installed app Store -> configure -> readiness -> enable -> failed update -> rollback"
+          INSTALLED_STORE_E2E_JSON="$DIAG_OUT/installed-store-e2e-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          node "$GITHUB_WORKSPACE/scripts/run-pipeline-store-e2e.mjs" \
+            --base-url "http://127.0.0.1:$INSTALLED_PORT" \
+            --fixture-url "http://127.0.0.1:${STORE_E2E_FIXTURE_PORT}" \
+            --fixture-resource-root "$SEQDESK_DB_DIR/installed-store-e2e" \
+            --expect-readiness ready \
+            --expected-execution-mode slurm \
+            --result-file "$INSTALLED_STORE_E2E_JSON" \
+            2>&1 | tee "$WORK/installed-store-e2e.log"
+          echo "::endgroup::"
+
+          echo "::group::installed Store pipeline -> local + real SLURM execution"
+          INSTALLED_FIXTURE_PIPELINE_ID="$(node -e '
+            const fs = require("node:fs");
+            const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (typeof result?.fixture?.pipelineId !== "string" || !result.fixture.pipelineId) {
+              throw new Error("Installed Store E2E result is missing fixture.pipelineId");
+            }
+            process.stdout.write(result.fixture.pipelineId);
+          ' "$INSTALLED_STORE_E2E_JSON")"
+          INSTALLED_FIXTURE_LABEL="$(node -e '
+            const fs = require("node:fs");
+            const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (typeof result?.configuration?.value !== "string" || !result.configuration.value) {
+              throw new Error("Installed Store E2E result is missing configuration.value");
+            }
+            process.stdout.write(result.configuration.value);
+          ' "$INSTALLED_STORE_E2E_JSON")"
+          INSTALLED_STORE_RUNTIME_STATE="$DIAG_OUT/installed-store-runtime-state-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          SEQDESK_RUNTIME_E2E_BASE_URL="http://127.0.0.1:$INSTALLED_PORT" \
+          SEQDESK_RUNTIME_E2E_EMAIL=admin@example.com \
+          SEQDESK_RUNTIME_E2E_PASSWORD=admin \
+          SEQDESK_RUNTIME_E2E_SLURM_CORES=1 \
+          SEQDESK_RUNTIME_E2E_SLURM_MEMORY=1G \
+          SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=1 \
+            npm run pipeline:e2e:runtime -- \
+              --ensure-dummy-data \
+              --expected-pipeline-root "$PACKAGED_PIPELINES_ROOT" \
+              --pipeline-id "$INSTALLED_FIXTURE_PIPELINE_ID" \
+              --saved-config-only \
+              --required-relative-output output/results/fixture-report.txt \
+              --required-output-contains "$INSTALLED_FIXTURE_LABEL" \
+              --required-artifact-output-id fixture_report \
+              --run-state-file "$INSTALLED_STORE_RUNTIME_STATE" \
+              2>&1 | tee "$WORK/installed-store-runtime.log"
+          echo "Runtime harness verified the installed app's saved Store configuration in every local and real SLURM run."
+          echo "::endgroup::"
+
           echo "=== run pipelines through the INSTALLED app (managed config from the install) ==="
           # Install once, exercise many — NO --config-json; managed config + execution come from
           # the install/profile, the realistic facility flow. Grow this list per the
@@ -2201,31 +2499,40 @@ jobs:
             SEQDESK_RUNTIME_E2E_SLURM_CORES=1 \
             SEQDESK_RUNTIME_E2E_SLURM_MEMORY=1G \
             SEQDESK_RUNTIME_E2E_SLURM_TIME_LIMIT=1 \
-              npm run pipeline:e2e:runtime -- --ensure-dummy-data "$@" \
+              npm run pipeline:e2e:runtime -- \
+                --ensure-dummy-data \
+                --expected-pipeline-root "$PACKAGED_PIPELINES_ROOT" \
+                "$@" \
                 2>&1 | tee "$WORK/install-$label.log" || prc=$?
             echo "::endgroup::"
             echo "installed-app [$label] exit: $prc"
             [ "$prc" = 0 ] || rc=1
           }
-          # Phase-1 matrix on the installed app. First prove that the installer's
-          # persisted default policy selects SLURM without the client forcing an
-          # execution mode; then explicitly prove local mode. Conda-backed
-          # pipelines run local before SLURM so this fresh installation builds
+          # Phase-1 matrix on the installed app. Every canonical invocation runs
+          # local and then SLURM. The additional fastq-checksum policy invocation
+          # proves that the installer's persisted default selects SLURM without
+          # the client forcing an execution mode. Conda-backed pipelines run
+          # local before SLURM so this fresh installation builds
           # each process env into its own empty shared cache before the offline
           # compute node reuses it. Study-scoped pipelines auto-find the dummy
           # study. read-cleaning/metaxpath/mag/submg stay in extended diagnostics.
+          # The canonical required invocation must itself prove both explicit
+          # modes. Keep the configured-default proof as an additional run so
+          # skip flags can never silently weaken the required matrix.
+          run_installed fastq-checksum          --pipeline-id fastq-checksum
           run_installed fastq-checksum-default  --pipeline-id fastq-checksum \
             --skip-local --skip-slurm --include-default-policy --expect-default-mode slurm
-          run_installed fastq-checksum-local    --pipeline-id fastq-checksum    --skip-slurm
           # No --skip means local then SLURM as separate runs/run folders.
           run_installed simulate-reads          --pipeline-id simulate-reads
           run_installed study-demo-report       --pipeline-id study-demo-report
-          run_installed fastqc                  --pipeline-id fastqc
+          run_installed fastqc                  --pipeline-id fastqc --dummy-order-index 4
+          run_installed nanoplot                --pipeline-id nanoplot --dummy-order-index 3
+          run_installed fastqc-long-read        --pipeline-id fastqc --dummy-order-index 3
           run_installed reads-qc                --pipeline-id reads-qc
+          run_installed multiqc                 --pipeline-id multiqc
 
           echo "=== prove installed runs used the packaged pipeline tree ==="
-          PACKAGED_PIPELINES_ROOT="$INSTALLED_RELEASE_DIR/pipelines"
-          for pipeline_id in fastq-checksum simulate-reads study-demo-report fastqc reads-qc; do
+          for pipeline_id in fastq-checksum simulate-reads study-demo-report fastqc nanoplot reads-qc multiqc; do
             expected_target="$PACKAGED_PIPELINES_ROOT/$pipeline_id/workflow"
             if grep -R -F -l --include='run.sh' -- "$expected_target" "$INSTALLED_RUNS" >/dev/null 2>&1; then
               echo "OK: $pipeline_id run.sh targets $expected_target"
@@ -2319,7 +2626,7 @@ jobs:
             : > "$SACCT_FILTERED"
             : > "$CI_SLURM_IDS"
             if sacct -u "$USER" --starttime=now-4hours --noheader --parsable2 \
-              --format=JobIDRaw,JobName%128,State,ExitCode,Reason%128,WorkDir%220,NodeList \
+              --format=JobIDRaw,JobName%128,State,ExitCode,Reason%128,WorkDir%1024,NodeList \
               >"$SACCT_RAW" 2>/dev/null; then
               {
                 echo "JobIDRaw|JobName|State|ExitCode|Reason|WorkDir|NodeList"
@@ -2387,9 +2694,15 @@ jobs:
             ${{ env.FAILURE_E2E_LOG }}
             ${{ env.CANCEL_E2E_LOG }}
             ${{ env.APPCHECK_E2E_LOG }}
+            ${{ env.STORE_E2E_LOG }}
+            ${{ env.STORE_E2E_JSON }}
+            ${{ env.STORE_RUNTIME_E2E_LOG }}
+            ${{ env.STORE_RUNTIME_E2E_STATE }}
             ${{ env.PROVIDERS_JSON }}
             ${{ env.PG_LOG }}
             ${{ env.SEQDESK_RUN_DIR }}
+            ${{ github.workspace }}/playwright-report
+            ${{ github.workspace }}/test-results
             ${{ runner.temp }}/slurm-diag
             # Real mouse-gut (PRJDB6165) pipeline reports — only present when the opt-in step ran
             # (workflow_dispatch + run_mouse_real_data=true). Collected for the demo viewer.

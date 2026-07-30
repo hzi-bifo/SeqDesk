@@ -22,6 +22,19 @@ import { normalizeReadDataClass } from '@/lib/sequencing/constants';
 
 type PackageSamplesheet = PackageSamplesheetConfig['samplesheet'];
 type PackageColumn = PackageSamplesheet['columns'][number];
+type SamplesheetRead = {
+  id: string;
+  file1: string | null;
+  file2: string | null;
+  dataClass?: string | null;
+  isActive?: boolean | null;
+};
+
+const READ_DATA_CLASS_RANK = {
+  cleaned: 0,
+  raw: 1,
+  unknown: 2,
+} as const;
 
 export interface GenerateOptions {
   target: PipelineTarget;
@@ -39,7 +52,7 @@ export interface GenerateResult {
  * Resolve a source path like "read.file1" or "sample.reads[paired].file1" to actual data
  */
 function selectRead(
-  reads: Array<{ file1: string | null; file2: string | null; dataClass?: string | null; isActive?: boolean | null }>,
+  reads: SamplesheetRead[],
   filters?: Record<string, unknown>
 ): { file1: string | null; file2: string | null } | null {
   const paired = typeof filters?.paired === 'boolean' ? filters.paired : undefined;
@@ -57,11 +70,11 @@ function selectRead(
   const sortedReads = [...candidates].sort((a, b) => {
     const aClass = normalizeReadDataClass(a.dataClass);
     const bClass = normalizeReadDataClass(b.dataClass);
-    if (aClass === bClass) return 0;
-    if (aClass === 'cleaned') return -1;
-    if (bClass === 'cleaned') return 1;
-    if (aClass === 'raw') return -1;
-    if (bClass === 'raw') return 1;
+    const classDifference =
+      READ_DATA_CLASS_RANK[aClass] - READ_DATA_CLASS_RANK[bClass];
+    if (classDifference !== 0) return classDifference;
+    if (a.id < b.id) return -1;
+    if (a.id > b.id) return 1;
     return 0;
   });
 
@@ -81,7 +94,7 @@ function resolveSource(
   context: {
     sample: {
       sampleId: string;
-      reads: Array<{ file1: string | null; file2: string | null; dataClass?: string | null; isActive?: boolean | null }>;
+      reads: SamplesheetRead[];
     };
     study: { id: string; title: string | null } | null;
     order: { id?: string | null; platform?: string | null; customFields?: string | null } | null;
@@ -241,7 +254,9 @@ export class SamplesheetGenerator {
     const samples = await db.sample.findMany({
       where: getPipelineSampleWhere(target),
       include: {
-        reads: true,
+        reads: {
+          orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
+        },
         order: {
           select: {
             id: true,
@@ -285,6 +300,7 @@ export class SamplesheetGenerator {
         sample: {
           sampleId: sample.sampleId,
           reads: sample.reads.map(r => ({
+            id: r.id,
             file1: r.file1,
             file2: r.file2,
             dataClass: r.dataClass,

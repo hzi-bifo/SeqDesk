@@ -14,6 +14,11 @@ For each sample's FASTQ files (R1 and optionally R2), computes:
 
 Results are collected into a summary TSV and rendered as a self-contained HTML report with color-coded quality indicators.
 
+The pipeline pins SeqKit 2.8.0. That version calculates each read's GC
+percentage as `(G+C) / read length`, so ambiguous bases remain in the
+denominator. Every non-empty read contributes to the file mean; an all-`N`
+read contributes `0.00`.
+
 ## Dependencies
 
 - `seqkit` (installed via conda from bioconda)

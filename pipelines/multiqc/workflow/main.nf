@@ -3,10 +3,8 @@ nextflow.enable.dsl=2
 params.input = null
 params.outdir = 'output'
 params.report_title = 'Study MultiQC report'
-// Directory holding the gathered QC outputs of prior study runs.
-// Defaults to a `qc_inputs` directory alongside the samplesheet; SeqDesk
-// stages prior-run output dirs there before launch (see README "Gathering
-// sibling runs"). If absent or empty, MultiQC still produces a report shell.
+// Directory holding copies of the declared QC artifacts from completed runs
+// in the same study. SeqDesk creates this directory during run preparation.
 params.qc_dir = null
 
 process MULTIQC {
@@ -22,21 +20,29 @@ process MULTIQC {
 
   output:
     path "multiqc/study-multiqc.html", emit: report
-    path "multiqc/multiqc_data/**", emit: data, optional: true
+    path "multiqc/multiqc_data/**", emit: data
 
   script:
     """
     mkdir -p multiqc
 
-    # MultiQC scans the gathered QC directory recursively. `--force` overwrites
-    # any stale report, `--no-ansi` keeps logs clean for SeqDesk log capture.
+    # Never turn a missing/empty gather into a green but content-free report.
+    find "${qc_dir}" -type f -print -quit | grep -q . || {
+      echo "No staged QC artifact files were found in ${qc_dir}" >&2
+      exit 2
+    }
+
     multiqc \\
       --force \\
       --no-ansi \\
+      --strict \\
       --title "${report_title}" \\
       --filename study-multiqc.html \\
       --outdir multiqc \\
       "${qc_dir}"
+
+    test -s multiqc/multiqc_data/multiqc_data.json
+    python -c 'import json,sys; data=json.load(open(sys.argv[1])); stats=data.get("report_general_stats_data") or []; assert any(isinstance(row,dict) and row for row in stats), "MultiQC parsed no samples/modules from the staged inputs"' multiqc/multiqc_data/multiqc_data.json
     """
 }
 
@@ -45,19 +51,13 @@ workflow {
     error "Missing --input samplesheet"
   }
 
-  // Resolve the gathered QC inputs directory. When SeqDesk has staged prior-run
-  // outputs it sets params.qc_dir; otherwise fall back to a sibling `qc_inputs`
-  // directory next to the samplesheet.
-  def samplesheet = file(params.input)
-  def qcDirPath = params.qc_dir ? file(params.qc_dir) : file("${samplesheet.parent}/qc_inputs")
+  if (!params.qc_dir) {
+    error "Missing --qc_dir. SeqDesk must stage prior QC artifacts before launch."
+  }
 
-  // MultiQC requires the scan target to exist. Materialize an empty directory
-  // (with a placeholder) so the run still completes and yields a report shell
-  // rather than failing when no prior QC outputs were gathered.
+  def qcDirPath = file(params.qc_dir)
   if (!qcDirPath.exists()) {
-    qcDirPath.mkdirs()
-    file("${qcDirPath}/README.txt").text =
-      "No prior QC outputs were gathered for this study run.\\n"
+    error "Staged QC input directory does not exist: ${qcDirPath}"
   }
 
   MULTIQC(Channel.fromPath(qcDirPath, type: 'dir'), params.report_title)

@@ -15,6 +15,7 @@ import {
   updateDatabaseDownloadJobStatus,
   updateDatabaseDownloadRecord,
 } from '@/lib/pipelines/database-downloads';
+import { getPipelinesDir } from '@/lib/pipelines/pipeline-paths';
 import { createWriteStream, createReadStream } from 'fs';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
@@ -23,6 +24,7 @@ import type { WriteStream } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
+const REMOTE_CONTENT_LENGTH_TIMEOUT_MS = 10_000;
 const LIMIT_RATE_REGEX = /^\d+[KMG]?$/i;
 
 function normalizeLimitRate(raw: unknown): string | undefined {
@@ -140,8 +142,17 @@ async function resolveDownloader(): Promise<{
 }
 
 async function getRemoteContentLength(sourceUrl: string): Promise<number | undefined> {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    REMOTE_CONTENT_LENGTH_TIMEOUT_MS
+  );
   try {
-    const response = await fetch(sourceUrl, { method: 'HEAD', cache: 'no-store' });
+    const response = await fetch(sourceUrl, {
+      method: 'HEAD',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
     if (!response.ok) return undefined;
     const header = response.headers.get('content-length');
     if (!header) return undefined;
@@ -150,6 +161,8 @@ async function getRemoteContentLength(sourceUrl: string): Promise<number | undef
     return parsed;
   } catch {
     return undefined;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -216,8 +229,7 @@ async function getFileSizeOrUndefined(targetPath: string): Promise<number | unde
 
 function getMetaxPathInstallerPath(): string {
   return path.join(
-    process.cwd(),
-    'pipelines',
+    getPipelinesDir(),
     'metaxpath',
     'workflow',
     'scripts',
@@ -526,6 +538,39 @@ export async function POST(req: NextRequest) {
       pid: undefined,
     });
 
+    let progressTimer: ReturnType<typeof setInterval> | null = null;
+    let terminalFinalizationStarted = false;
+    const finalizeOnce = async (handler: () => Promise<void>): Promise<void> => {
+      if (terminalFinalizationStarted) return;
+      terminalFinalizationStarted = true;
+      if (progressTimer) {
+        clearInterval(progressTimer);
+        progressTimer = null;
+      }
+
+      try {
+        await handler();
+      } catch (handlerError) {
+        try {
+          await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
+            state: 'error',
+            finishedAt: new Date().toISOString(),
+            error:
+              handlerError instanceof Error
+                ? handlerError.message
+                : 'Failed to finalize database download',
+          });
+        } catch (statusError) {
+          console.error(
+            `[Pipeline DB Download] Failed to persist terminal state for ${pipelineId}/${databaseId}:`,
+            statusError
+          );
+        }
+      } finally {
+        logStream.end();
+      }
+    };
+
     try {
       const child = spawn(
         downloader.command,
@@ -540,10 +585,13 @@ export async function POST(req: NextRequest) {
         await updateDatabaseDownloadJobStatus(pipelineId, databaseId, { pid: child.pid });
       }
 
-      if (child.stdout) child.stdout.pipe(logStream);
-      if (child.stderr) child.stderr.pipe(logStream);
+      // Both streams finish before the child emits `close`. Keep the shared
+      // destination open so the terminal handler can append checksum/install
+      // diagnostics and close it exactly once.
+      if (child.stdout) child.stdout.pipe(logStream, { end: false });
+      if (child.stderr) child.stderr.pipe(logStream, { end: false });
 
-      const progressTimer = setInterval(() => {
+      progressTimer = setInterval(() => {
         void (async () => {
           const bytesDownloaded = await getFileSize(targetPath);
           await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
@@ -556,25 +604,20 @@ export async function POST(req: NextRequest) {
         });
       }, 5000);
 
-      child.on('error', async (error) => {
-        clearInterval(progressTimer);
+      child.on('error', (error) => {
         const message = `Failed to run ${downloader.command} for ${database.label || databaseId}: ${error.message}. Log: ${logPath}`;
-        logStream.write(`[${new Date().toISOString()}] ${message}\n`);
-        try {
+        void finalizeOnce(async () => {
+          logStream.write(`[${new Date().toISOString()}] ${message}\n`);
           await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
             state: 'error',
             finishedAt: new Date().toISOString(),
             error: message,
           });
-        } catch {
-          // If persisting status fails, we still close the log stream.
-        }
-        logStream.end();
+        });
       });
 
-      child.on('close', async (code) => {
-        clearInterval(progressTimer);
-        try {
+      child.on('close', (code) => {
+        void finalizeOnce(async () => {
           const finishedAt = new Date().toISOString();
           const currentJob = await getDatabaseDownloadJobStatus(pipelineId, databaseId);
           if (currentJob?.cancelled) {
@@ -588,7 +631,6 @@ export async function POST(req: NextRequest) {
             logStream.write(
               `[${new Date().toISOString()}] Download cancelled by user (exit code ${code}). Removed partial file ${targetPath}.\n`
             );
-            logStream.end();
             return;
           }
           if (code === 0) {
@@ -607,6 +649,24 @@ export async function POST(req: NextRequest) {
               if (actualHash.toLowerCase() !== database.sha256.toLowerCase()) {
                 const message = `Checksum mismatch: expected sha256 ${database.sha256}, got ${actualHash}. The downloaded file may be corrupt; re-run with "Replace existing" to download again.`;
                 logStream.write(`[${new Date().toISOString()}] ${message}\n`);
+                // This branch owns a file written by the child we just
+                // started. Remove it so an invalid full-size artifact can
+                // never be rediscovered as an installed database. The
+                // synchronous "already present" verification branch above
+                // intentionally leaves an administrator-provided file alone.
+                let cleanupError: string | undefined;
+                try {
+                  await fs.rm(targetPath, { force: true });
+                  logStream.write(
+                    `[${new Date().toISOString()}] Removed checksum-mismatched download ${targetPath}.\n`
+                  );
+                } catch (error) {
+                  cleanupError =
+                    error instanceof Error ? error.message : 'Unknown cleanup error';
+                  logStream.write(
+                    `[${new Date().toISOString()}] Failed to remove checksum-mismatched download ${targetPath}: ${cleanupError}\n`
+                  );
+                }
                 await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
                   state: 'error',
                   phase: undefined,
@@ -614,9 +674,10 @@ export async function POST(req: NextRequest) {
                   bytesDownloaded,
                   totalBytes,
                   progressPercent: 100,
-                  error: message,
+                  error: cleanupError
+                    ? `${message} Failed to remove the invalid file: ${cleanupError}`
+                    : message,
                 });
-                logStream.end();
                 return;
               }
               logStream.write(
@@ -680,24 +741,17 @@ export async function POST(req: NextRequest) {
               error,
             });
           }
-        } catch (handlerError) {
-          await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
-            state: 'error',
-            finishedAt: new Date().toISOString(),
-            error:
-              handlerError instanceof Error
-                ? handlerError.message
-                : 'Failed to finalize database download',
-          });
-        }
-        logStream.end();
+        });
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to start database download';
-      await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
-        state: 'error',
-        finishedAt: new Date().toISOString(),
-        error: message,
+      await finalizeOnce(async () => {
+        logStream.write(`[${new Date().toISOString()}] ${message}\n`);
+        await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {
+          state: 'error',
+          finishedAt: new Date().toISOString(),
+          error: message,
+        });
       });
       return NextResponse.json(
         { error: 'Failed to start database download', details: message },

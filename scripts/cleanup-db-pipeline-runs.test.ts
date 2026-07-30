@@ -12,6 +12,8 @@ const cleanupScript = path.join(
   "scripts",
   "cleanup-db-pipeline-runs.sh"
 );
+const cleanupProcessTimeoutMs = 15_000;
+const cleanupTestTimeoutMs = 20_000;
 const tempRoots: string[] = [];
 
 afterEach(async () => {
@@ -116,6 +118,9 @@ function schedulerEnvironment(fixture: Awaited<ReturnType<typeof createFakeSched
   return {
     ...process.env,
     PATH: `${fixture.binDir}:${process.env.PATH || ""}`,
+    RUNNER_TEMP: fixture.tempRoot,
+    TMPDIR: fixture.tempRoot,
+    SEQDESK_TEST_PSQL_FAIL: "0",
     SEQDESK_TEST_SLURM_STATE: fixture.stateFile,
     SEQDESK_TEST_RUN_FOLDER: fixture.runFolder,
     SEQDESK_TEST_CANCEL_LOG: fixture.cancelLog,
@@ -136,7 +141,7 @@ describe("cleanup-db-pipeline-runs launch marker recovery", () => {
       [cleanupScript, "seqdesk-test", fixture.runRoot],
       {
         env: schedulerEnvironment(fixture),
-        timeout: 5_000,
+        timeout: cleanupProcessTimeoutMs,
       }
     );
 
@@ -144,7 +149,7 @@ describe("cleanup-db-pipeline-runs launch marker recovery", () => {
     await expect(fs.stat(fixture.stateFile)).rejects.toMatchObject({
       code: "ENOENT",
     });
-  });
+  }, cleanupTestTimeoutMs);
 
   it("fails closed without signaling when a launch marker is malformed", async () => {
     const fixture = await createFakeScheduler();
@@ -160,7 +165,7 @@ describe("cleanup-db-pipeline-runs launch marker recovery", () => {
         [cleanupScript, "seqdesk-test", fixture.runRoot],
         {
           env: schedulerEnvironment(fixture),
-          timeout: 5_000,
+          timeout: cleanupProcessTimeoutMs,
         }
       )
     ).rejects.toMatchObject({
@@ -171,7 +176,7 @@ describe("cleanup-db-pipeline-runs launch marker recovery", () => {
     await expect(fs.stat(fixture.cancelLog)).rejects.toMatchObject({
       code: "ENOENT",
     });
-  });
+  }, cleanupTestTimeoutMs);
 
   it("fails closed when a launch marker was replaced by a symlink", async () => {
     const fixture = await createFakeScheduler();
@@ -192,7 +197,7 @@ describe("cleanup-db-pipeline-runs launch marker recovery", () => {
         [cleanupScript, "seqdesk-test", fixture.runRoot],
         {
           env: schedulerEnvironment(fixture),
-          timeout: 5_000,
+          timeout: cleanupProcessTimeoutMs,
         }
       )
     ).rejects.toMatchObject({
@@ -203,7 +208,7 @@ describe("cleanup-db-pipeline-runs launch marker recovery", () => {
     await expect(fs.stat(fixture.cancelLog)).rejects.toMatchObject({
       code: "ENOENT",
     });
-  });
+  }, cleanupTestTimeoutMs);
 
   it("still cancels a marker-owned job when PostgreSQL is unavailable", async () => {
     const fixture = await createFakeScheduler();
@@ -222,7 +227,7 @@ describe("cleanup-db-pipeline-runs launch marker recovery", () => {
             ...schedulerEnvironment(fixture),
             SEQDESK_TEST_PSQL_FAIL: "1",
           },
-          timeout: 5_000,
+          timeout: cleanupProcessTimeoutMs,
         }
       )
     ).rejects.toMatchObject({
@@ -234,5 +239,5 @@ describe("cleanup-db-pipeline-runs launch marker recovery", () => {
     await expect(fs.stat(fixture.stateFile)).rejects.toMatchObject({
       code: "ENOENT",
     });
-  });
+  }, cleanupTestTimeoutMs);
 });

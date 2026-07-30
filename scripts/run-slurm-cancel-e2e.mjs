@@ -21,6 +21,14 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import {
+  assertSlurmAccountingIdentity,
+  assertSlurmAccountingRecord,
+  assertSlurmLaunchIdentity,
+  parsePrimarySacctRecord,
+  parsePrimarySqueueRecord,
+} from "./lib/pipeline-e2e-proof.mjs";
+
 const execFileAsync = promisify(execFile);
 
 function fail(message, details) {
@@ -154,6 +162,28 @@ async function requestJson(client, pathname, init, context) {
   return parseJson(response, context);
 }
 
+function assertSuccessfulSyncPayload(payload, context) {
+  const validBase =
+    payload &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    payload.success === true &&
+    typeof payload.synced === "boolean";
+  const validShape = payload?.synced
+    ? [payload.progress, payload.processes, payload.tasks].every(
+        (value) => typeof value === "number" && Number.isFinite(value),
+      )
+    : typeof payload?.status === "string" &&
+      payload.status.trim().length > 0 &&
+      typeof payload?.message === "string" &&
+      payload.message.trim().length > 0;
+
+  if (!validBase || !validShape) {
+    fail(`${context} returned an invalid success payload`, JSON.stringify(payload, null, 2));
+  }
+  return payload;
+}
+
 async function loginAdmin({ client, baseUrl, email, password }) {
   const csrfResponse = await client.request("/api/auth/csrf");
   if (!csrfResponse.ok) fail(`Failed to fetch CSRF token (${csrfResponse.status})`);
@@ -230,7 +260,7 @@ const CANCELLABLE_STATES = new Set(["pending", "queued", "running"]);
 
 // sacct reports a cancelled job's state starting with "CANCELLED" (optionally
 // "CANCELLED by <uid>"). Confirms the SLURM job itself was actually scancel'd.
-async function sacctShowsCancelled(jobId) {
+async function sacctShowsCancelled({ runId, jobId, runFolder }) {
   try {
     const { stdout } = await execFileAsync(
       "sacct",
@@ -240,26 +270,72 @@ async function sacctShowsCancelled(jobId) {
         "-j",
         String(jobId),
         "--noheader",
-        "--format=JobIDRaw,State",
+        "--format=JobIDRaw,JobName%128,State,ExitCode,WorkDir%1024,NodeList",
       ],
       { timeout: 15000 }
     );
-    const rows = stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => line.split("|"));
-    const primary = rows.find(([rowJobId]) => rowJobId === String(jobId));
-    const rawState = primary?.[1]?.trim() || "";
-    const state = rawState.split(/\s+/)[0].replace(/\+$/, "").toUpperCase();
+    const record = parsePrimarySacctRecord(stdout, jobId);
+    if (!record) return { ok: false, reason: "primary sacct row not visible yet" };
+    if (record.state !== "CANCELLED" && record.state !== "CANCELED") {
+      return {
+        ok: false,
+        state: record.state || null,
+        rawState: record.rawState || null,
+        record,
+      };
+    }
+    assertSlurmAccountingRecord(record, {
+      runId,
+      jobId: String(jobId),
+      runFolder,
+      expectedOutcome: "cancelled",
+      requireAllocatedNode: false,
+    });
     return {
-      ok: state === "CANCELLED" || state === "CANCELED",
-      state: state || null,
-      rawState: rawState || null,
+      ok: true,
+      state: record.state,
+      rawState: record.rawState,
+      record,
     };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+async function proveLiveJobIdentity({ runId, jobId, runFolder }) {
+  let latest = null;
+  let lastError = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      const { stdout } = await execFileAsync(
+        "squeue",
+        [
+          "-h",
+          "-j",
+          String(jobId),
+          "-o",
+          "%A|%.128j|%T|%.1024Z|%N",
+        ],
+        { timeout: 15000 },
+      );
+      latest = parsePrimarySqueueRecord(stdout, jobId);
+      lastError = null;
+      if (latest) {
+        return assertSlurmAccountingIdentity(latest, {
+          runId,
+          jobId: String(jobId),
+          runFolder,
+        });
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await sleep(1000);
+  }
+  fail(
+    `Could not prove held SLURM job ${jobId} belongs to PipelineRun ${runId} before DELETE`,
+    JSON.stringify({ latest, lastError, runFolder }, null, 2),
+  );
 }
 
 async function main() {
@@ -319,7 +395,19 @@ async function main() {
   //    synchronous: cancelPipelineRunForOperator scancels the job and sets the run to
   //    'cancelled' before responding.
   const runBeforeCancel = await requestJson(client, `/api/pipelines/runs/${runId}`, {}, "Fetch run before cancel");
-  const stateBefore = (runBeforeCancel?.run || runBeforeCancel)?.status;
+  const beforeRun = runBeforeCancel?.run || runBeforeCancel;
+  const stateBefore = beforeRun?.status;
+  const launchIdentity = assertSlurmLaunchIdentity({
+    runId,
+    jobId,
+    run: beforeRun,
+    startPayload,
+  });
+  const liveIdentity = await proveLiveJobIdentity({
+    runId,
+    jobId,
+    runFolder: launchIdentity.runFolder,
+  });
   if (!CANCELLABLE_STATES.has(stateBefore)) {
     fail(
       `Run ${runId} was not in a cancellable state (was '${stateBefore}') — it finished before the cancel could be issued. Re-run; if persistent, the smoke pipeline is too fast to cancel reliably.`,
@@ -339,11 +427,26 @@ async function main() {
 
   // 3. Assert the DB reconciled to cancelled. Status is set synchronously, but a
   //    /sync + short settle makes the assertion robust to read timing.
-  await client.request(`/api/pipelines/runs/${runId}/sync`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({}),
-  });
+  const syncPayload = assertSuccessfulSyncPayload(
+    await requestJson(
+      client,
+      `/api/pipelines/runs/${runId}/sync`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      },
+      "Sync cancelled run",
+    ),
+    "Sync cancelled run",
+  );
+  const statusAfterSync = String(syncPayload.status || "").trim().toLowerCase() || null;
+  if (statusAfterSync && !CANCELLED_STATES.has(statusAfterSync)) {
+    fail(
+      `Sync did not confirm the cancelled state for run ${runId}`,
+      JSON.stringify(syncPayload, null, 2),
+    );
+  }
   await sleep(2000);
   const runAfter = await requestJson(client, `/api/pipelines/runs/${runId}`, {}, "Fetch run after cancel");
   const run = runAfter?.run || runAfter;
@@ -363,7 +466,11 @@ async function main() {
   //    cancellation is a hard E2E failure.
   let sacct = { ok: false };
   for (let attempt = 0; attempt < 10; attempt += 1) {
-    sacct = await sacctShowsCancelled(jobId);
+    sacct = await sacctShowsCancelled({
+      runId,
+      jobId,
+      runFolder: launchIdentity.runFolder,
+    });
     if (sacct.ok) break;
     await sleep(2000);
   }
@@ -381,10 +488,13 @@ async function main() {
     runId,
     jobId: String(jobId),
     stateBeforeCancel: stateBefore,
+    statusAfterSync,
     statusAfterCancel,
     currentStep: run?.currentStep || null,
     statusSource: run?.statusSource || null,
+    liveIdentity,
     sacctCancelled: sacct.ok,
+    accounting: sacct.record,
   };
   console.log(JSON.stringify(summary, null, 2));
 }

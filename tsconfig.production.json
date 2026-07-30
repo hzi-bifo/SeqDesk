@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "seqdesk-*",
+    "seqdesk-*/**",
+    ".next/dev/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test.mts",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.spec.mts",
+    "playwright/**"
+  ]
+}

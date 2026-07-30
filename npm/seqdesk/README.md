@@ -91,10 +91,31 @@ seqdesk assets apply --dir "$HOME/seqdesk" \
 This reuses the installed app and applies profile-declared pipeline database
 assets and seed fixtures without reinstalling SeqDesk.
 
-Run installed pipelines from the server shell:
+Discover, install, and finish setting up pipelines from the server shell:
 
 ```bash
-seqdesk pipeline list --dir "$HOME/seqdesk" --catalog all --enabled
+seqdesk pipelines list
+seqdesk pipelines list --catalog order
+seqdesk pipelines list --catalog study
+seqdesk pipelines install simulate-reads --runtime
+seqdesk pipelines status simulate-reads
+```
+
+The plural `seqdesk pipelines` form is the primary management interface. It
+shows whether a package is available, bundled, or installed; whether setup is
+ready; whether it is active; and the next required action. Installation is
+idempotent. A ready pipeline is enabled automatically, while a pipeline with
+missing runtime tools, configuration, database assets, or storage paths remains
+disabled with concrete setup guidance. Database assets are never downloaded
+without an operator choosing or linking them in the Admin interface.
+
+The installer writes a user-level wrapper to `~/.local/bin/seqdesk` and records
+the default installation, so `--dir` is normally optional. It prints a `PATH`
+command when `~/.local/bin` is not already available in the current shell.
+
+Run an installed pipeline and inspect its runs:
+
+```bash
 seqdesk pipeline run metaxpath --dir "$HOME/seqdesk" --study <study-id> --watch
 seqdesk pipeline run fastq-checksum --dir "$HOME/seqdesk" --order <order-id> --samples id1,id2 --json
 seqdesk pipeline status <run-id> --dir "$HOME/seqdesk" --watch
@@ -109,6 +130,12 @@ same SeqDesk run records and launcher services as the web UI. They do not
 require browser login; shell access to `--dir` is treated as operator access.
 By default the first `FACILITY_ADMIN` user is used for attribution, or pass
 `--user-email admin@example.org` when starting a run.
+
+`simulate-reads` is an order-scoped test utility, not scientific data. Its
+default configuration replaces existing linked reads, so use it only with a
+dedicated demo order. See the
+[pipeline installation guide](https://seqdesk.org/docs/pipelines/installing-pipelines)
+for the safe walkthrough and all management options.
 
 For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 

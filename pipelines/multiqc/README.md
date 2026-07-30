@@ -1,9 +1,9 @@
 # Study MultiQC
 
 Study-scoped aggregate QC. Runs a single [MultiQC](https://multiqc.info) pass
-over the QC outputs produced by earlier runs in the same study (FastQC zips,
-seqkit TSVs, read-cleaning `multiqc_data`) and produces one consolidated,
-previewable HTML report.
+over declared QC artifacts produced by completed runs in the same study
+(FastQC zips and NanoPlot `NanoStats.txt` files) and produces one
+consolidated, previewable HTML report.
 
 ## Inputs
 
@@ -32,23 +32,16 @@ emitted by the MAG pipeline in the same study/demo.
 
 `workflow/main.nf` defines a single `MULTIQC` process (conda
 `bioconda::multiqc=1.21`) that scans `params.qc_dir` recursively and publishes
-under `params.outdir` (`--input` / `--outdir` are injected by SeqDesk). If no
-prior QC outputs are gathered, an empty scan directory is materialized so the
-run still completes with a report shell rather than failing.
+under `params.outdir` (`--input` / `--outdir` are injected by SeqDesk).
 
-## Gathering sibling runs (open item)
+During preparation the generic executor reads the manifest's
+`priorRunArtifacts` contract, selects only completed study runs and
+sample-scoped order-run artifacts that belong to the same study, validates
+every selected artifact against its owning run folder, and copies it beneath
+`<runFolder>/prior-run-inputs/`. Symlinks, missing files, empty files and path
+escapes are rejected. The exact source/staged-file mapping is recorded in
+`<runFolder>/prior-run-inputs.json`.
 
-The SeqDesk generic executor injects only `--input` (the samplesheet) and
-`--outdir`. It does **not** currently stage the output directories of prior
-study runs. The declarative samplesheet generator likewise has no source that
-resolves prior-run `PipelineArtifact` paths.
-
-To make sibling-run gathering work, a small code hook is needed (smallest
-viable change): in the generic executor's run preparation, when the package id
-is `multiqc` (or more generally when an input declares a
-`prior_run_qc_outputs` source), query the study's completed
-`PipelineRun.runFolder`/`PipelineArtifact` paths, copy or symlink each prior
-run's `output/` directory under `<runFolder>/qc_inputs/<runId>/`, and export
-`--qc_dir <runFolder>/qc_inputs`. The workflow already reads `params.qc_dir`
-(falling back to `<samplesheet.parent>/qc_inputs`), so once that directory is
-populated no workflow change is required.
+The run fails if no supported prior artifact is available or if MultiQC parses
+no sample/module statistics. A content-free report shell is therefore never
+accepted as a successful SeqDesk run.
