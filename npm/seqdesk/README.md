@@ -91,6 +91,21 @@ seqdesk assets apply --dir "$HOME/seqdesk" \
 This reuses the installed app and applies profile-declared pipeline database
 assets and seed fixtures without reinstalling SeqDesk.
 
+Configure and verify the sequencing-data directory from the server shell:
+
+```bash
+seqdesk storage configure "$HOME/seqdesk/data"
+seqdesk storage status
+```
+
+Pass an existing absolute directory. Add `--create` only when the chosen
+directory is intentionally new; SeqDesk will not silently create a missing
+network mount or mistyped path. The command synchronizes the active
+`settings.json` value with `SiteSettings.dataBasePath`. Use `--yes --json` for
+automation; `storage status` exits non-zero until the directory is ready. A
+service-level `SEQDESK_DATA_PATH` override must be changed in the service
+environment instead.
+
 Discover, install, and finish setting up pipelines from the server shell:
 
 ```bash
@@ -181,7 +196,8 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 - Editing `runtime.*` in `<dir>/settings.json` applies at the next process
   start. The app only fills environment variables that are not already set, and
   PM2 reuses the environment it captured when the process was first started, so
-  restart with `DATABASE_URL= DIRECT_URL= pm2 restart seqdesk --update-env`,
+  restart with
+  `DATABASE_URL= DIRECT_URL= SEQDESK_DATA_PATH= pm2 restart seqdesk --update-env`,
   which is what the installer prints. The empty values matter: `--update-env`
   merges the current environment into the copy PM2 stored and cannot delete
   anything from it, so a `DATABASE_URL` captured at first start survives a plain

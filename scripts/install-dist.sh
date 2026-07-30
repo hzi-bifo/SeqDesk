@@ -107,6 +107,7 @@ SEQDESK_INTERACTIVE="${SEQDESK_INTERACTIVE:-}"
 SEQDESK_USER_CLI_PATH=""
 SEQDESK_USER_CLI_BIN_DIR=""
 SEQDESK_USER_CLI_NEEDS_PATH="false"
+SEQDESK_USER_CLI_PREVIOUS_PATH=""
 # Promote diagnostic detail() narration from the install log to the terminal.
 SEQDESK_VERBOSE="${SEQDESK_VERBOSE:-}"
 # Whether the installer generated the bootstrap passwords (and therefore has to
@@ -3349,15 +3350,16 @@ pm2_exec() {
 # A deliberate override still works exactly as before: export DATABASE_URL in
 # your own shell and run `pm2 restart --update-env` yourself, or run start.sh
 # directly with it set -- an env-set value still wins inside start.sh.
-# SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED goes the same way and for the same
-# reason: it is exported for the seed, settings.json carries the same decision,
-# empty reads as unset (envFlagFalse, src/lib/auto-seed.ts), and a copy frozen
-# into the process manager would outlive every later edit.
+# SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED and SEQDESK_DATA_PATH go the same way
+# and for the same reason: the installer writes both decisions to durable
+# settings, while a copy frozen into the process manager would outlive every
+# later edit (including `seqdesk storage configure`).
 pm2_exec_runtime() {
     if [ -z "$PM2_BIN" ] && ! resolve_pm2_bin; then
         return 127
     fi
     env DATABASE_URL= DIRECT_URL= SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED= \
+        SEQDESK_DATA_PATH= \
         "$PM2_BIN" "$@"
 }
 
@@ -3423,6 +3425,28 @@ prompt_yes_no() {
             ;;
         *)
             printf -v "$var_name" '%s' "false"
+            ;;
+    esac
+}
+
+prompt_app_port() {
+    if [ -n "$SEQDESK_PORT" ]; then
+        return 0
+    fi
+
+    if is_truthy "$SEQDESK_YES"; then
+        SEQDESK_PORT="8000"
+        return 0
+    fi
+
+    local reply
+    reply=$(read_input "Use recommended app port 8000? [Y/n]: ")
+    case "$reply" in
+        ""|y|Y|yes|YES)
+            SEQDESK_PORT="8000"
+            ;;
+        *)
+            prompt_value SEQDESK_PORT "Custom app port" "8000"
             ;;
     esac
 }
@@ -5124,7 +5148,7 @@ print_config_summary() {
 
     print_header "Configuration summary"
     print_kv "Pipelines" "$pipeline_label"
-    print_kv "Data path" "${SEQDESK_DATA_PATH:-configure later in Admin > Data Storage}"
+    print_kv "Data path" "${SEQDESK_DATA_PATH:-configure after install with seqdesk storage configure}"
     if [ "$PIPELINES_ENABLED" = "true" ]; then
         print_kv "Run directory" "${SEQDESK_RUN_DIR:-configure later in Admin > Pipeline Runtime}"
         if [ -n "${SEQDESK_PIPELINE_DATABASE_DIR:-}" ]; then
@@ -5423,6 +5447,8 @@ link_root_release_metadata() {
 
 install_user_cli() {
     local release_launcher="$SEQDESK_DIR/current/scripts/seqdesk-launcher.js"
+    local previous_command=""
+    previous_command="$(command -v seqdesk 2>/dev/null || true)"
     if [ ! -f "$release_launcher" ]; then
         release_launcher="$SEQDESK_DIR/scripts/seqdesk-launcher.js"
     fi
@@ -5581,6 +5607,14 @@ SEQDESK_USER_CLI
         *) SEQDESK_USER_CLI_NEEDS_PATH="true" ;;
     esac
     print_success "Installed user CLI: $wrapper_path"
+    if [ -n "$previous_command" ] && [ "$previous_command" != "$wrapper_path" ]; then
+        SEQDESK_USER_CLI_PREVIOUS_PATH="$previous_command"
+        print_warning "This shell may still cache the previous seqdesk command at $previous_command."
+        echo "  Refresh command lookup before using the new CLI:"
+        echo "    Zsh:  rehash"
+        echo "    Bash: hash -r"
+        printf '  Until then, use the exact path: %s\n' "$(shell_quote "$wrapper_path")"
+    fi
 }
 
 run_wizard() {
@@ -6401,6 +6435,7 @@ print_success_footer() {
 
 print_next_steps() {
     local pipeline_cli=""
+    local storage_example="$SEQDESK_DIR/data"
 
     print_header "What's next"
 
@@ -6409,9 +6444,21 @@ print_next_steps() {
     else
         echo "  1. Start $SEQDESK_DIR/start.sh, then open $(browser_app_url) and log in as admin."
     fi
-    echo "  2. Configure Data Storage under Admin > Data Storage."
     if [ -n "${SEQDESK_USER_CLI_PATH:-}" ] && [ -x "$SEQDESK_USER_CLI_PATH" ]; then
         pipeline_cli="$SEQDESK_USER_CLI_PATH"
+        if [ -n "${SEQDESK_DATA_PATH:-}" ]; then
+            echo "  2. Data Storage is configured. Verify it from the server shell:"
+            printf '       %s storage status\n' "$(shell_quote "$pipeline_cli")"
+        else
+            echo "  2. Configure Data Storage from the server shell:"
+            printf '       %s storage configure %s\n' \
+                "$(shell_quote "$pipeline_cli")" \
+                "$(shell_quote "$storage_example")"
+            printf '       %s storage status\n' "$(shell_quote "$pipeline_cli")"
+            echo "     Use your existing sequencing directory instead, if applicable."
+            echo "     Alternative: Admin > Data Storage."
+        fi
+        echo "     Guide: https://seqdesk.org/docs/administration/data-storage"
         echo "  3. Optional: discover supported order- and study-level pipelines:"
         printf '       %s pipelines list\n' "$(shell_quote "$pipeline_cli")"
         echo "     Safe first install (also provisions a missing runtime):"
@@ -6419,6 +6466,8 @@ print_next_steps() {
             "$(shell_quote "$pipeline_cli")"
         echo "     SeqDesk enables a pipeline only after its readiness checks pass."
     else
+        echo "  2. Configure Data Storage under Admin > Data Storage."
+        echo "     Guide: https://seqdesk.org/docs/administration/data-storage"
         echo "  3. Optional pipelines: the local SeqDesk CLI is not available."
         echo "     Review the CLI warning above and update or reinstall SeqDesk first."
     fi
@@ -7026,7 +7075,7 @@ if [ $wizard_status -eq 2 ]; then
     print_error "Installation cancelled"
     exit 1
 elif [ $wizard_status -ne 0 ]; then
-    prompt_value SEQDESK_PORT "App port" "8000"
+    prompt_app_port
 fi
 
 if [ -z "$SEQDESK_PORT" ]; then
@@ -7417,7 +7466,7 @@ if [ "$PM2_CONFIGURED" = "true" ]; then
     # values are what overwrite it -- start.sh treats an empty DATABASE_URL as
     # unset and reads settings.json.
     echo "  After editing $INSTALLED_CONFIG_PATH:"
-    echo "  DATABASE_URL= DIRECT_URL= $PM2_DISPLAY_CMD restart seqdesk --update-env"
+    echo "  DATABASE_URL= DIRECT_URL= SEQDESK_DATA_PATH= $PM2_DISPLAY_CMD restart seqdesk --update-env"
     echo "  $PM2_DISPLAY_CMD save"
     echo "  (a plain restart replays the environment PM2 captured at first start;"
     echo "   --update-env merges into it and cannot drop a variable, so the empty"

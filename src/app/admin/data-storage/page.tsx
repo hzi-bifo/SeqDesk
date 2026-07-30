@@ -35,6 +35,7 @@ interface PathTestResult {
   valid: boolean;
   error?: string;
   resolvedPath?: string;
+  writable?: boolean;
   totalFiles?: number;
   matchingFiles?: number;
   message?: string;
@@ -58,6 +59,10 @@ export default function DataStoragePage() {
   });
   const [testingPath, setTestingPath] = useState(false);
   const [pathTestResult, setPathTestResult] = useState<PathTestResult | null>(null);
+  const dataBasePathManagedByFile = dataBasePathSource === "file";
+  const dataBasePathManagedByEnvironment = dataBasePathSource === "env";
+  const dataBasePathIsOperatorManaged =
+    dataBasePathManagedByFile || dataBasePathManagedByEnvironment;
 
   useEffect(() => {
     void fetchSettings();
@@ -136,7 +141,7 @@ export default function DataStoragePage() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          dataBasePath,
+          ...(dataBasePathIsOperatorManaged ? {} : { dataBasePath }),
           config: configToSave,
         }),
       });
@@ -255,7 +260,7 @@ export default function DataStoragePage() {
                       }}
                       placeholder="/data/sequencing"
                       className="pl-10"
-                      disabled={saving}
+                      disabled={saving || dataBasePathIsOperatorManaged}
                     />
                   </div>
                   <Button
@@ -279,6 +284,26 @@ export default function DataStoragePage() {
                   </div>
                 )}
 
+                {dataBasePathIsOperatorManaged && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    {dataBasePathManagedByEnvironment ? (
+                      <>
+                        This path is managed by <span className="font-mono">SEQDESK_DATA_PATH</span>.
+                        Update that variable in the SeqDesk service environment and restart the service.
+                      </>
+                    ) : (
+                      <>
+                        This path is managed by the installed settings file. Change it on the
+                        SeqDesk host with{" "}
+                        <span className="font-mono">
+                          seqdesk storage configure /absolute/path/to/sequencing-data
+                        </span>
+                        .
+                      </>
+                    )}
+                  </div>
+                )}
+
                 {pathTestResult && (
                   <div
                     className={`mt-2 p-3 rounded-lg text-sm flex items-start gap-2 border ${
@@ -299,6 +324,12 @@ export default function DataStoragePage() {
                           {pathTestResult.resolvedPath && (
                             <p className="text-xs mt-1 opacity-70">
                               Resolved path: {pathTestResult.resolvedPath}
+                            </p>
+                          )}
+                          {pathTestResult.writable === false && (
+                            <p className="text-xs mt-1">
+                              Read access works, but this directory is not writable. File
+                              discovery can work; uploads and pipeline write-back will not.
                             </p>
                           )}
                         </>

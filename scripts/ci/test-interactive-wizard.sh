@@ -686,6 +686,12 @@ assert_contains "the URL to open is shown" \
     "http://127.0.0.1:8000" <(printf '%s\n' "$summary_out")
 assert_contains "the success report hands off to next steps" \
     "What's next" <(printf '%s\n' "$summary_out")
+assert_contains "the next steps show the Data Storage CLI command" \
+    "$summary_cli storage configure /opt/seqdesk-test/data" <(printf '%s\n' "$summary_out")
+assert_contains "the next steps show Data Storage verification" \
+    "$summary_cli storage status" <(printf '%s\n' "$summary_out")
+assert_contains "the next steps link the Data Storage guide" \
+    "https://seqdesk.org/docs/administration/data-storage" <(printf '%s\n' "$summary_out")
 assert_contains "the next steps show pipeline discovery" \
     "$summary_cli pipelines list" <(printf '%s\n' "$summary_out")
 assert_contains "the next steps show a working first pipeline install" \
@@ -716,6 +722,25 @@ assert_not_contains "a missing local CLI is not presented as runnable" \
     "pipelines install simulate-reads" <(printf '%s\n' "$missing_cli_out")
 assert_contains "the guide remains available without a local CLI" \
     "https://seqdesk.org/docs/pipelines/installing-pipelines" <(printf '%s\n' "$missing_cli_out")
+
+echo ""
+echo "== Case 12e: configured Data Storage is verified instead of replaced =="
+configured_storage_out="$(
+    (
+        SEQDESK_LOG_ENABLED="false"
+        SEQDESK_DIR="/opt/seqdesk-test"
+        SEQDESK_DATA_PATH="/srv/facility-sequencing"
+        PM2_CONFIGURED="true"
+        SEQDESK_PORT="8000"
+        SEQDESK_BIND_HOST="127.0.0.1"
+        SEQDESK_USER_CLI_PATH="$summary_cli"
+        print_next_steps
+    ) 2>&1
+)"
+assert_contains "configured storage is checked with status" \
+    "$summary_cli storage status" <(printf '%s\n' "$configured_storage_out")
+assert_not_contains "configured storage is not replaced with the install default" \
+    "storage configure /opt/seqdesk-test/data" <(printf '%s\n' "$configured_storage_out")
 
 echo ""
 echo "== Case 13: installer failures expose stable troubleshooting URLs =="

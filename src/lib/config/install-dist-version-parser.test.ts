@@ -181,7 +181,7 @@ describe("install-dist PM2 runtime environment", () => {
       stubPath,
       `#!/usr/bin/env bash
 printf 'ARGS:%s\\n' "$*"
-env | grep -E '^(DATABASE_URL|DIRECT_URL|SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED)=' | sort
+env | grep -E '^(DATABASE_URL|DIRECT_URL|SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED|SEQDESK_DATA_PATH)=' | sort
 `
     );
     chmodSync(stubPath, 0o755);
@@ -203,6 +203,7 @@ pm2_exec_runtime "$@"`,
           DATABASE_URL: env.DATABASE_URL,
           DIRECT_URL: env.DIRECT_URL,
           SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED: env.SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED,
+          SEQDESK_DATA_PATH: env.SEQDESK_DATA_PATH,
         },
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
@@ -214,6 +215,7 @@ pm2_exec_runtime "$@"`,
     DATABASE_URL: "postgresql://installer@localhost:5432/seqdesk_installer",
     DIRECT_URL: "postgresql://installer@localhost:5432/seqdesk_installer_direct",
     SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED: "0",
+    SEQDESK_DATA_PATH: "/installer/data",
   };
 
   it("hands PM2 empty database variables instead of the installer's own", () => {
@@ -225,6 +227,7 @@ pm2_exec_runtime "$@"`,
     expect(lines).toContain("DATABASE_URL=");
     expect(lines).toContain("DIRECT_URL=");
     expect(lines).toContain("SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED=");
+    expect(lines).toContain("SEQDESK_DATA_PATH=");
     expect(result.stdout).not.toContain("seqdesk_installer");
   });
 
@@ -236,6 +239,7 @@ pm2_exec_runtime "$@"`,
     expect(lines).toContain("ARGS:restart seqdesk --update-env");
     expect(lines).toContain("DATABASE_URL=");
     expect(lines).toContain("DIRECT_URL=");
+    expect(lines).toContain("SEQDESK_DATA_PATH=");
     expect(result.stdout).not.toContain("seqdesk_installer");
   });
 
@@ -254,7 +258,7 @@ pm2_exec_runtime "$@"`,
     // older install froze into the process, which is exactly the installation
     // that needs this instruction.
     expect(installDistSource).toContain(
-      'echo "  DATABASE_URL= DIRECT_URL= $PM2_DISPLAY_CMD restart seqdesk --update-env"'
+      'echo "  DATABASE_URL= DIRECT_URL= SEQDESK_DATA_PATH= $PM2_DISPLAY_CMD restart seqdesk --update-env"'
     );
   });
 });

@@ -2208,6 +2208,62 @@ jobs:
           fi
           echo "Installed SeqDesk $INSTALLED_VERSION at $APP_DIR"
 
+          echo "=== verify installed data storage CLI ==="
+          INSTALLED_STORAGE_CONFIGURE_JSON="$DIAG_OUT/installed-storage-configure-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          INSTALLED_STORAGE_STATUS_JSON="$DIAG_OUT/installed-storage-status-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          env -u SEQDESK_DIR -u SEQDESK_DATA_PATH \
+            XDG_CONFIG_HOME="$USER_CLI_CONFIG_HOME" \
+            "$USER_CLI_COMMAND" storage configure "$INSTALLED_DATA" \
+              --dir "$APP_DIR" --yes --json >"$INSTALLED_STORAGE_CONFIGURE_JSON"
+          env -u SEQDESK_DIR -u SEQDESK_DATA_PATH \
+            XDG_CONFIG_HOME="$USER_CLI_CONFIG_HOME" \
+            "$USER_CLI_COMMAND" storage status \
+              --dir "$APP_DIR" --json >"$INSTALLED_STORAGE_STATUS_JSON"
+          node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const [configureFile, statusFile, expectedStorage, expectedInstall] =
+              process.argv.slice(1);
+            const configure = JSON.parse(fs.readFileSync(configureFile, "utf8"));
+            const status = JSON.parse(fs.readFileSync(statusFile, "utf8"));
+            const storagePath = path.normalize(expectedStorage);
+            const installPath = path.normalize(expectedInstall);
+            if (
+              configure?.ok !== true ||
+              configure?.action !== "configure" ||
+              configure?.command !== "configure" ||
+              configure?.path !== storagePath ||
+              configure?.installDir !== installPath ||
+              configure?.databaseUpdated !== true ||
+              configure?.readable !== true ||
+              configure?.searchable !== true
+            ) {
+              throw new Error(
+                `Installed storage configure failed: ${JSON.stringify(configure)}`
+              );
+            }
+            if (
+              status?.ok !== true ||
+              status?.action !== "status" ||
+              status?.command !== "status" ||
+              status?.path !== storagePath ||
+              status?.installDir !== installPath ||
+              status?.ready !== true ||
+              status?.sources?.file !== storagePath ||
+              status?.sources?.database !== storagePath ||
+              status?.inspection?.readable !== true ||
+              status?.inspection?.searchable !== true
+            ) {
+              throw new Error(
+                `Installed storage status failed: ${JSON.stringify(status)}`
+              );
+            }
+          ' \
+            "$INSTALLED_STORAGE_CONFIGURE_JSON" \
+            "$INSTALLED_STORAGE_STATUS_JSON" \
+            "$INSTALLED_DATA" \
+            "$APP_DIR"
+
           echo "=== assert installer persisted runtime + pipeline execution settings ==="
           ( cd "$APP_DIR" && \
             EXPECTED_DATA_PATH="$INSTALLED_DATA" \

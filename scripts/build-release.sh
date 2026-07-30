@@ -182,6 +182,8 @@ NODE
 echo "Copying installed SeqDesk CLI launcher..."
 cp "${ROOT_DIR}/npm/seqdesk/bin/seqdesk.js" "${RELEASE_DIR}/scripts/seqdesk-launcher.js"
 chmod 755 "${RELEASE_DIR}/scripts/seqdesk-launcher.js"
+cp "${ROOT_DIR}/scripts/configure-data-storage.mjs" "${RELEASE_DIR}/scripts/"
+chmod 755 "${RELEASE_DIR}/scripts/configure-data-storage.mjs"
 
 echo "Copying Next.js static assets..."
 mkdir -p "${RELEASE_DIR}/.next"

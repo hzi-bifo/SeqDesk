@@ -753,6 +753,15 @@ describe("self-hosted pipeline CI contract", () => {
       'USER_CLI_POINTER="$USER_CLI_CONFIG_HOME/seqdesk/default-install"'
     );
     expect(installedGate).toContain(
+      '"$USER_CLI_COMMAND" storage configure "$INSTALLED_DATA"'
+    );
+    expect(installedGate).toContain(
+      '"$USER_CLI_COMMAND" storage status'
+    );
+    expect(installedGate).toContain(
+      'status?.sources?.database !== storagePath'
+    );
+    expect(installedGate).toContain(
       'XDG_CONFIG_HOME="$USER_CLI_CONFIG_HOME"'
     );
     expect(installedGate).toContain(

@@ -60,20 +60,31 @@ async function runClackWizard(clack) {
 
   intro("SeqDesk Setup Wizard");
   note(
-    "Minimal setup mode: configure data and pipeline paths later in Admin settings.",
+    "Minimal setup mode: configure data storage later with `seqdesk storage configure` or in Admin settings.",
     "Configuration"
   );
 
-  const portValue = await text({
-    message: "App port",
-    placeholder: defaults.port,
-    defaultValue: defaults.port,
+  const useRecommendedPort = await confirm({
+    message: `Use recommended app port ${defaults.port}?`,
+    initialValue: true,
   });
-  if (isCancel(portValue)) {
+  if (isCancel(useRecommendedPort)) {
     cancel("Installation cancelled");
     process.exit(2);
   }
-  const port = String(portValue || defaults.port);
+  let port = defaults.port;
+  if (!useRecommendedPort) {
+    const portValue = await text({
+      message: "Custom app port",
+      placeholder: "1-65535",
+      validate: validatePort,
+    });
+    if (isCancel(portValue)) {
+      cancel("Installation cancelled");
+      process.exit(2);
+    }
+    port = String(portValue).trim();
+  }
   const nextAuthUrl = defaults.nextAuthUrl || `http://localhost:${port}`;
   const databaseUrl = defaults.databaseUrl || "";
 
@@ -81,7 +92,7 @@ async function runClackWizard(clack) {
     [
       `Port:      ${port || defaults.port}`,
       `NEXTAUTH_URL: ${nextAuthUrl}`,
-      `Data path: ${defaults.dataPath || "configure later in Admin > Data Storage"}`,
+      `Data path: ${defaults.dataPath || "configure later with seqdesk storage configure"}`,
       `Run dir:   ${
         pipelinesEnabled
           ? defaults.runDir || "configure later in Admin > Pipeline Runtime"
@@ -122,18 +133,23 @@ async function runReadlineWizard() {
     clearScreen();
     printHeader("SeqDesk Setup Wizard");
     printLine(
-      "Minimal setup mode. Configure data and pipeline paths later in Admin settings."
+      "Minimal setup mode. Configure data storage later with seqdesk storage configure or in Admin settings."
     );
     printLine("");
 
-    const port = await ask(rl, "App port", defaults.port);
+    const useRecommendedPort = await confirmText(
+      rl,
+      `Use recommended app port ${defaults.port}?`,
+      true
+    );
+    const port = useRecommendedPort ? defaults.port : await askCustomPort(rl);
     const nextAuthUrl = defaults.nextAuthUrl || `http://localhost:${port}`;
     const databaseUrl = defaults.databaseUrl || "";
 
     const summary = {
       port,
       nextAuthUrl,
-      dataPath: defaults.dataPath || "configure later in Admin > Data Storage",
+      dataPath: defaults.dataPath || "configure later with seqdesk storage configure",
       runDir: pipelinesEnabled
         ? defaults.runDir || "configure later in Admin > Pipeline Runtime"
         : "(pipelines disabled)",
@@ -171,8 +187,13 @@ async function runReadlineWizard() {
   }
 }
 
-function ask(rl, label, defaultValue) {
-  return prompt(rl, `${label} [${defaultValue}]: `, defaultValue);
+async function askCustomPort(rl) {
+  while (true) {
+    const port = await prompt(rl, "Custom app port (1-65535): ", "");
+    const error = validatePort(port);
+    if (!error) return port;
+    printLine(colors.yellow + error + colors.reset);
+  }
 }
 
 async function prompt(rl, question, defaultValue) {
@@ -189,6 +210,17 @@ async function confirmText(rl, question, defaultYes) {
   const normalized = answer.trim().toLowerCase();
   if (!normalized) return defaultYes;
   return normalized === "y" || normalized === "yes";
+}
+
+function validatePort(value) {
+  const port = String(value ?? "").trim();
+  if (!/^\d{1,5}$/.test(port)) {
+    return "Enter a port number between 1 and 65535.";
+  }
+  const number = Number(port);
+  if (number < 1 || number > 65535) {
+    return "Enter a port number between 1 and 65535.";
+  }
 }
 
 function writeOutput(values, pipelinesEnabled) {

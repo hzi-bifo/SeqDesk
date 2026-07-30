@@ -85,12 +85,24 @@ describe("installed pipeline CLI E2E harness", () => {
     expect(primaryFlow).toContain(
       'runHumanCli(context, ["pipelines", "list"])'
     );
-    expect(primaryFlow).toContain('"What to do next:"');
+    expect(primaryFlow).toContain('"SeqDesk pipelines"');
+    expect(primaryFlow).toContain('"USE WITH"');
+    expect(primaryFlow).toContain('"STATE"');
+    expect(primaryFlow).toContain('"Start here"');
     expect(primaryFlow).toContain(
       '"seqdesk pipelines install <pipeline-id>"'
     );
     expect(primaryFlow).toContain(
       '"https://seqdesk.org/docs/pipelines/installing-pipelines"'
+    );
+    expect(primaryFlow).toContain(
+      '!humanList.stdout.includes("Loaded pipeline package")'
+    );
+    expect(primaryFlow).toContain(
+      '!humanList.stderr.includes("Loaded pipeline package")'
+    );
+    expect(primaryFlow).toContain(
+      '!humanList.stdout.includes("\\u001b[")'
     );
   });
 

@@ -1065,7 +1065,6 @@ function scanPackages(): void {
         const pkg = loadPackage(packageDir);
         if (pkg) {
           packageCache.set(pkg.id, pkg);
-          console.log(`Loaded pipeline package: ${pkg.id} (${pkg.manifest.package.name})`);
         }
       } catch (error) {
         // A malformed third-party package must not hide every package that is

@@ -504,7 +504,9 @@ jobs:
 
       - name: Configure paths
         run: |
-          echo "PORT=8788" >> "$GITHUB_ENV"
+          set -euo pipefail
+          PORT=8788
+          echo "PORT=$PORT" >> "$GITHUB_ENV"
           echo "INSTALL_DIR=$RUNNER_TEMP/seqdesk-source" >> "$GITHUB_ENV"
           echo "INFRA_CONFIG=$RUNNER_TEMP/infrastructure-source.json" >> "$GITHUB_ENV"
           echo "INSTALL_LOG=$RUNNER_TEMP/source-install.log" >> "$GITHUB_ENV"

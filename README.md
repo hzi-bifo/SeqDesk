@@ -126,6 +126,27 @@ curl -fsSLo /tmp/seqdesk-install.sh https://seqdesk.org/install.sh &&
 bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"
 ```
 
+### Configure Data Storage after installation
+
+Choose the existing absolute directory that SeqDesk should scan for sequencing
+files. The installer creates a writable starting directory under the install:
+
+```bash
+seqdesk storage configure "$HOME/seqdesk/data"
+seqdesk storage status
+```
+
+Use `--create` only when a deliberately chosen directory does not exist. SeqDesk
+does not create missing storage paths silently because that could hide a typo or
+an unavailable network mount. The command validates the path and keeps
+`settings.json` and the stored site setting synchronized. For automation, add
+`--yes --json`; `storage status` exits non-zero until the configured directory
+is ready. If `SEQDESK_DATA_PATH` manages the running service, update that
+environment variable instead.
+
+See the [Data Storage guide](https://seqdesk.org/docs/administration/data-storage)
+for path ownership, automation, service overrides, and discovery behavior.
+
 ### Add pipelines after installation
 
 A normal installation starts with the core SeqDesk application. It does not
@@ -159,6 +180,8 @@ seqdesk pipelines status simulate-reads
 SeqDesk enables the pipeline automatically only when all readiness checks pass.
 Otherwise the package remains installed but disabled, and the status lists the
 missing runtime, configuration, reference database, storage path, or run path.
+When storage is missing, the printed next action is the same
+`seqdesk storage configure` command shown above.
 Database assets are never downloaded silently: install or link them under
 **Admin → Pipelines → _pipeline_ → Databases**, then check the status again.
 
@@ -430,7 +453,7 @@ started, so a restart has to refresh it. This is the command the installer
 prints in its closing summary:
 
 ```bash
-DATABASE_URL= DIRECT_URL= pm2 restart seqdesk --update-env
+DATABASE_URL= DIRECT_URL= SEQDESK_DATA_PATH= pm2 restart seqdesk --update-env
 pm2 save
 ```
 
@@ -439,7 +462,7 @@ current environment into the copy PM2 stored; it cannot delete anything from
 that copy, so a `DATABASE_URL` an earlier install froze into the process
 survives a plain `pm2 restart seqdesk --update-env` even from a shell that
 exports nothing. Assigning an empty value overwrites it, and `start.sh` treats
-an empty `DATABASE_URL`/`DIRECT_URL` as unset and reads `settings.json`. Confirm
+empty database and data-path variables as unset and reads `settings.json`. Confirm
 with `pm2 env <id>`, using the id from `pm2 status`.
 
 Recreating the process clears it just as well, and leaves nothing stored at all:

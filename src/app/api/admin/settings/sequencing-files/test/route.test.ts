@@ -3,8 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
-  stat: vi.fn(),
-  access: vi.fn(),
+  inspectDataStoragePath: vi.fn(),
   readdir: vi.fn(),
 }));
 
@@ -16,11 +15,12 @@ vi.mock("@/lib/auth", () => ({
   authOptions: {},
 }));
 
-vi.mock("fs/promises", () => ({
-  stat: mocks.stat,
-  access: mocks.access,
+vi.mock("node:fs/promises", () => ({
   readdir: mocks.readdir,
-  constants: { R_OK: 4 },
+}));
+
+vi.mock("@/lib/files/data-storage-path-validation", () => ({
+  inspectDataStoragePath: mocks.inspectDataStoragePath,
 }));
 
 import { POST } from "./route";
@@ -42,6 +42,13 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
+    mocks.inspectDataStoragePath.mockResolvedValue({
+      valid: true,
+      configuredPath: "/data",
+      resolvedPath: "/data",
+      readable: true,
+      writable: true,
+    });
   });
 
   it("returns 401 when not admin", async () => {
@@ -62,7 +69,12 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
   });
 
   it("returns invalid when path is not a directory", async () => {
-    mocks.stat.mockResolvedValue({ isDirectory: () => false });
+    mocks.inspectDataStoragePath.mockResolvedValue({
+      valid: false,
+      readable: false,
+      writable: false,
+      error: "Path exists but is not a directory",
+    });
 
     const response = await POST(makeRequest({ basePath: "/data/file.txt" }));
     expect(response.status).toBe(200);
@@ -72,7 +84,12 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
   });
 
   it("returns invalid when path does not exist", async () => {
-    mocks.stat.mockRejectedValue(new Error("ENOENT"));
+    mocks.inspectDataStoragePath.mockResolvedValue({
+      valid: false,
+      readable: false,
+      writable: false,
+      error: "Directory does not exist or is not accessible",
+    });
 
     const response = await POST(makeRequest({ basePath: "/nonexistent" }));
     expect(response.status).toBe(200);
@@ -82,8 +99,12 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
   });
 
   it("returns invalid when path is not readable", async () => {
-    mocks.stat.mockResolvedValue({ isDirectory: () => true });
-    mocks.access.mockRejectedValue(new Error("EACCES"));
+    mocks.inspectDataStoragePath.mockResolvedValue({
+      valid: false,
+      readable: false,
+      writable: false,
+      error: "Directory is not readable or searchable (permission denied)",
+    });
 
     const response = await POST(makeRequest({ basePath: "/data" }));
     expect(response.status).toBe(200);
@@ -93,8 +114,6 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
   });
 
   it("returns valid with empty directory message", async () => {
-    mocks.stat.mockResolvedValue({ isDirectory: () => true });
-    mocks.access.mockResolvedValue(undefined);
     mocks.readdir.mockResolvedValue([]);
 
     const response = await POST(makeRequest({ basePath: "/data" }));
@@ -107,8 +126,6 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
   });
 
   it("returns valid with matching files count", async () => {
-    mocks.stat.mockResolvedValue({ isDirectory: () => true });
-    mocks.access.mockResolvedValue(undefined);
     mocks.readdir.mockResolvedValue([
       { name: "sample_R1.fastq.gz", isFile: () => true },
       { name: "sample_R2.fastq.gz", isFile: () => true },
@@ -126,8 +143,6 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
   });
 
   it("returns valid with no matching files", async () => {
-    mocks.stat.mockResolvedValue({ isDirectory: () => true });
-    mocks.access.mockResolvedValue(undefined);
     mocks.readdir.mockResolvedValue([
       { name: "readme.txt", isFile: () => true },
       { name: "data.csv", isFile: () => true },
@@ -143,8 +158,6 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
   });
 
   it("returns invalid when readdir fails", async () => {
-    mocks.stat.mockResolvedValue({ isDirectory: () => true });
-    mocks.access.mockResolvedValue(undefined);
     mocks.readdir.mockRejectedValue(new Error("I/O error"));
 
     const response = await POST(makeRequest({ basePath: "/data" }));
@@ -159,9 +172,6 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
-    // Make stat throw something that doesn't get caught by inner try-catch
-    mocks.stat.mockResolvedValue({ isDirectory: () => true });
-    mocks.access.mockResolvedValue(undefined);
     mocks.readdir.mockResolvedValue([]);
 
     // Trigger the outer catch by passing a request that fails on json()

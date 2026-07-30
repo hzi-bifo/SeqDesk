@@ -265,6 +265,90 @@ if [ "$INSTALLED_VERSION" != "$CANDIDATE_VERSION" ]; then
   exit 1
 fi
 
+CURRENT_STAGE="configure-data-storage-cli"
+STORAGE_DIR="$INSTALL_DIR/reviewer-sequencing-data"
+test ! -e "$STORAGE_DIR"
+
+# Exercise the launcher against the packaged worker and the real review
+# database before the application starts. The second configure call proves
+# that rerunning the documented command is safe, while status verifies that
+# the root config and database agree on the effective path.
+SEQDESK_DATA_PATH="" seqdesk storage configure "$STORAGE_DIR" \
+  --dir "$INSTALL_DIR" \
+  --create \
+  --yes \
+  --json >"$OUTPUT_DIR/storage-configure.json"
+SEQDESK_DATA_PATH="" seqdesk storage configure "$STORAGE_DIR" \
+  --dir "$INSTALL_DIR" \
+  --yes \
+  --json >"$OUTPUT_DIR/storage-configure-idempotent.json"
+SEQDESK_DATA_PATH="" seqdesk storage status \
+  --dir "$INSTALL_DIR" \
+  --json >"$OUTPUT_DIR/storage-status.json"
+
+node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const [firstFile, secondFile, statusFile, expectedStorage, expectedInstall] =
+    process.argv.slice(1);
+  const readResult = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+  const first = readResult(firstFile);
+  const second = readResult(secondFile);
+  const status = readResult(statusFile);
+  const expectedPath = path.normalize(expectedStorage);
+  const expectedInstallDir = path.normalize(expectedInstall);
+
+  function assertConfigure(result, expectedCreated, label) {
+    if (
+      result?.ok !== true ||
+      result?.action !== "configure" ||
+      result?.command !== "configure" ||
+      result?.path !== expectedPath ||
+      result?.installDir !== expectedInstallDir ||
+      result?.databaseUpdated !== true ||
+      result?.readable !== true ||
+      result?.searchable !== true ||
+      result?.writable !== true ||
+      result?.created !== expectedCreated
+    ) {
+      throw new Error(
+        `${label} returned an unexpected result: ${JSON.stringify(result)}`
+      );
+    }
+  }
+
+  assertConfigure(first, true, "Initial storage configure");
+  assertConfigure(second, false, "Repeated storage configure");
+
+  if (
+    status?.ok !== true ||
+    status?.action !== "status" ||
+    status?.command !== "status" ||
+    status?.source !== "file" ||
+    status?.path !== expectedPath ||
+    status?.installDir !== expectedInstallDir ||
+    status?.ready !== true ||
+    status?.sources?.env !== null ||
+    status?.sources?.file !== expectedPath ||
+    status?.sources?.database !== expectedPath ||
+    status?.inspection?.requestedPath !== expectedPath ||
+    status?.inspection?.ready !== true ||
+    status?.inspection?.readable !== true ||
+    status?.inspection?.searchable !== true ||
+    status?.inspection?.writable !== true
+  ) {
+    throw new Error(
+      `Storage status did not confirm synchronized, ready storage: ${JSON.stringify(status)}`
+    );
+  }
+' \
+  "$OUTPUT_DIR/storage-configure.json" \
+  "$OUTPUT_DIR/storage-configure-idempotent.json" \
+  "$OUTPUT_DIR/storage-status.json" \
+  "$STORAGE_DIR" \
+  "$INSTALL_DIR"
+touch "$OUTPUT_DIR/storage-cli.ok"
+
 CURRENT_STAGE="boot-installed-application"
 (
   cd "$INSTALL_DIR"

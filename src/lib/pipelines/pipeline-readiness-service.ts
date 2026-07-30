@@ -765,6 +765,7 @@ export function getManagedNextActions(
     if (
       item.status === "ready" ||
       !item.action ||
+      (item.action === "enable" && !readiness.canEnable) ||
       item.action === "review-outputs"
     ) {
       continue;

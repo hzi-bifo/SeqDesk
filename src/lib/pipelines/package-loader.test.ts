@@ -230,6 +230,7 @@ describe("package-loader", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     clearPackageCache();
     process.chdir(cwd);
     await fs.rm(tempDir, { recursive: true, force: true });
@@ -253,6 +254,14 @@ describe("package-loader", () => {
     expect(definitionFromCompatibility?.id).toBe(PIPELINE_ID);
     expect(definitionFromCompatibility?.requires.reads).toBe(false);
     expect(definitionFromCompatibility?.input.supportedScopes).toEqual(["study"]);
+  });
+
+  it("keeps successful package discovery silent", async () => {
+    await createManifestPackage({ id: PIPELINE_ID });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(getAllPackageIds()).toEqual([PIPELINE_ID]);
+    expect(logSpy).not.toHaveBeenCalled();
   });
 
   it("reloads a long-lived package cache after another process advances generation", async () => {

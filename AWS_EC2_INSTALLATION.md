@@ -229,10 +229,12 @@ Answer the prompts as follows:
    /home/ubuntu/seqdesk`, `Writable`, `Disk available`, `Node.js`, `npm`,
    `Conda`, `Nextflow`, `Pipelines`) and then downloads and extracts the
    release.
-6. A short setup wizard runs next. It asks for the **App port** — press Enter to
-   keep the `8000` that `--port 8000` already selected — prints its own
-   **Review** block (port, `NEXTAUTH_URL`, data path, run directory,
-   `DATABASE_URL`) and asks `Continue with these settings?` itself.
+6. A short setup wizard runs next. It asks
+   **Use recommended app port 8000?** with **Yes** selected by default. Press
+   Enter to accept it; choose **No** only when you need to enter a custom port.
+   The wizard then prints its own **Review** block (port, `NEXTAUTH_URL`, data
+   path, run directory, `DATABASE_URL`) and asks
+   `Continue with these settings?` itself.
 7. The installer then prints its own **Configuration summary** (`Pipelines:
    enabled`, `Port: 8000`, `NEXTAUTH_URL: http://PUBLIC_IP:8000`,
    `DATABASE_URL`, the admin and researcher accounts, and `settings.json`),
@@ -356,8 +358,17 @@ the environment PM2 captured at the first start; to apply an edited
    that earlier password is gone.
 3. A browser may label this HTTP page not secure. This is why access is limited
    to your IP and this setup is only for testing.
-4. Choose **Settings → Infrastructure → Open Data Storage** and test that the
-   sequencing directory is writable.
+4. On the EC2 host, configure and verify the sequencing directory. Substitute
+   an existing absolute facility path when appropriate:
+
+   ```bash
+   seqdesk storage configure /home/ubuntu/seqdesk/data \
+     --dir /home/ubuntu/seqdesk
+   seqdesk storage status --dir /home/ubuntu/seqdesk
+   ```
+
+   Then choose **Settings → Infrastructure → Open Data Storage** and confirm
+   the same effective path.
 5. Return to **Settings → Infrastructure → Open Pipeline Runtime**. Conda and
    run-directory checks should pass. Leave **Use SLURM** off for now.
 6. Choose **Settings → Info**. Under **Demo data**, turn **Load dummy data** on
@@ -563,7 +574,7 @@ already set in its environment, and PM2 reuses the environment it captured when
 the process was first started, so refresh that environment on restart:
 
 ```bash
-DATABASE_URL= DIRECT_URL= pm2 restart seqdesk --update-env
+DATABASE_URL= DIRECT_URL= SEQDESK_DATA_PATH= pm2 restart seqdesk --update-env
 pm2 save
 ```
 
@@ -594,7 +605,7 @@ seqdesk -y \
   --reconfigure \
   --dir /home/ubuntu/seqdesk \
   --nextauth-url "http://${SEQDESK_PUBLIC_IP}:8000"
-DATABASE_URL= DIRECT_URL= pm2 restart seqdesk --update-env
+DATABASE_URL= DIRECT_URL= SEQDESK_DATA_PATH= pm2 restart seqdesk --update-env
 pm2 save
 ```
 

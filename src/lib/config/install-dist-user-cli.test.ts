@@ -38,7 +38,20 @@ function makeFixture() {
   return { root, home, installDir, binDir, configHome, capturePath };
 }
 
-function installUserCli(fixture: ReturnType<typeof makeFixture>) {
+function installUserCli(
+  fixture: ReturnType<typeof makeFixture>,
+  options: { previousCommand?: boolean } = {}
+) {
+  const previousBinDir = path.join(fixture.root, "previous-bin");
+  const previousCommandPath = path.join(previousBinDir, "seqdesk");
+  if (options.previousCommand) {
+    fs.mkdirSync(previousBinDir, { recursive: true });
+    fs.writeFileSync(
+      previousCommandPath,
+      "#!/usr/bin/env bash\necho old installer\n",
+      { mode: 0o755 }
+    );
+  }
   return spawnSync(
     "bash",
     [
@@ -49,6 +62,7 @@ function installUserCli(fixture: ReturnType<typeof makeFixture>) {
         'SEQDESK_CLI_BIN_DIR="$TEST_BIN_DIR"',
         "install_user_cli",
         'printf "CLI=%s\\n" "$SEQDESK_USER_CLI_PATH"',
+        'printf "PREVIOUS=%s\\n" "$SEQDESK_USER_CLI_PREVIOUS_PATH"',
       ].join("\n"),
     ],
     {
@@ -60,6 +74,9 @@ function installUserCli(fixture: ReturnType<typeof makeFixture>) {
         INSTALLER_PATH: installerPath,
         TEST_INSTALL_DIR: fixture.installDir,
         TEST_BIN_DIR: fixture.binDir,
+        PATH: options.previousCommand
+          ? `${previousBinDir}:${process.env.PATH || ""}`
+          : process.env.PATH,
       },
     }
   );
@@ -135,6 +152,21 @@ describe("distribution installer user CLI", () => {
     ).toBe(`${fixture.installDir}\n`);
   });
 
+  it("warns when the parent shell may still cache an older global command", () => {
+    const fixture = makeFixture();
+    const result = installUserCli(fixture, { previousCommand: true });
+    const output = result.stdout + result.stderr;
+
+    expect(result.status).toBe(0);
+    expect(output).toContain("may still cache the previous seqdesk command");
+    expect(output).toContain("Zsh:  rehash");
+    expect(output).toContain("Bash: hash -r");
+    expect(output).toContain(
+      `PREVIOUS=${path.join(fixture.root, "previous-bin", "seqdesk")}`
+    );
+    expect(output).toContain(path.join(fixture.binDir, "seqdesk"));
+  });
+
   it("ships the launcher, pipeline worker, and managed-runtime helpers together", () => {
     const buildRelease = fs.readFileSync(buildReleasePath, "utf8");
     expect(buildRelease).toContain(
@@ -145,6 +177,12 @@ describe("distribution installer user CLI", () => {
     );
     expect(buildRelease).toContain(
       'chmod 755 "${RELEASE_DIR}/scripts/seqdesk-launcher.js"'
+    );
+    expect(buildRelease).toContain(
+      'cp "${ROOT_DIR}/scripts/configure-data-storage.mjs" "${RELEASE_DIR}/scripts/"'
+    );
+    expect(buildRelease).toContain(
+      'chmod 755 "${RELEASE_DIR}/scripts/configure-data-storage.mjs"'
     );
     expect(buildRelease).toContain(
       'cp "${ROOT_DIR}/scripts/setup-conda-env.sh" "${RELEASE_DIR}/scripts/"'

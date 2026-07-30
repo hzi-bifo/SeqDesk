@@ -35,6 +35,7 @@ RUN_DIR=""
 SITE_NAME=""
 CONTACT_EMAIL=""
 MINICONDA_TEMP_FILE=""
+MINICONDA_TEMP_DIR=""
 RUNTIME_SETUP_LOCK_DIR=""
 RUNTIME_SETUP_LOCK_TOKEN=""
 RUNTIME_SETUP_LOCK_ACQUIRED=0
@@ -179,6 +180,10 @@ cleanup_miniconda_download() {
   if [[ -n "${MINICONDA_TEMP_FILE}" ]]; then
     rm -f "${MINICONDA_TEMP_FILE}" 2>/dev/null || true
     MINICONDA_TEMP_FILE=""
+  fi
+  if [[ -n "${MINICONDA_TEMP_DIR}" ]]; then
+    rmdir "${MINICONDA_TEMP_DIR}" 2>/dev/null || true
+    MINICONDA_TEMP_DIR=""
   fi
 }
 
@@ -329,7 +334,10 @@ install_managed_miniconda() {
 
   temp_root="${TMPDIR:-/tmp}"
   temp_root="${temp_root%/}"
-  MINICONDA_TEMP_FILE="$(mktemp "${temp_root}/seqdesk-miniconda.XXXXXX")"
+  MINICONDA_TEMP_DIR="$(mktemp -d "${temp_root}/seqdesk-miniconda.XXXXXX")"
+  # Constructor installers reject filenames without a .sh suffix as if they
+  # had been sourced. Keep the download private while retaining that suffix.
+  MINICONDA_TEMP_FILE="${MINICONDA_TEMP_DIR}/Miniconda-installer.sh"
   installer_url="${SEQDESK_MINICONDA_BASE_URL%/}/${installer_name}"
 
   log "Downloading Miniconda: ${installer_url}"

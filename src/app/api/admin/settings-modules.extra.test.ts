@@ -419,7 +419,11 @@ describe("admin settings and modules coverage quick wins", () => {
       })
     );
     expect(saved.status).toBe(200);
-    expect(await saved.json()).toEqual({ success: true });
+    expect(await saved.json()).toEqual({
+      success: true,
+      dataBasePath: null,
+      writable: false,
+    });
     expect(lastUpsertCall().update.dataBasePath).toBeNull();
     expect(JSON.parse(lastUpsertCall().update.extraSettings)).toEqual({
       sequencingFiles: {

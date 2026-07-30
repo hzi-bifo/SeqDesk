@@ -171,7 +171,7 @@ describe("reviewer installation matrix contract", () => {
     expect(macJob).toContain("x64");
   });
 
-  it("proves install, migration, boot, version, both login roles, and dependency boundaries", () => {
+  it("proves install, migration, storage configuration, boot, version, both login roles, and dependency boundaries", () => {
     expect(smokeSource).toContain('test ! -e "$INSTALL_DIR"');
     expect(smokeSource).toContain('CHECKSUMS_FILE="$CANDIDATE_DIR/SHA256SUMS"');
     expect(smokeSource).toContain('touch "$OUTPUT_DIR/candidate-checksums.ok"');
@@ -180,6 +180,12 @@ describe("reviewer installation matrix contract", () => {
     expect(smokeSource).toContain("REVIEWER_NODE_VERSION");
     expect(smokeSource).toContain("REVIEWER_POSTGRES_VERSION");
     expect(smokeSource).toContain('INSTALLED_VERSION="$(');
+    expect(smokeSource).toContain('seqdesk storage configure "$STORAGE_DIR"');
+    expect(smokeSource).toContain("seqdesk storage status");
+    expect(smokeSource).toContain(
+      'status?.sources?.database !== expectedPath'
+    );
+    expect(smokeSource).toContain('touch "$OUTPUT_DIR/storage-cli.ok"');
     expect(smokeSource).toContain("/api/auth/providers");
     expect(smokeSource).toContain("/api/setup/status");
     expect(smokeSource).toContain('touch "$OUTPUT_DIR/auth-admin.ok"');

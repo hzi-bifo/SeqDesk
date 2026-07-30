@@ -33,10 +33,11 @@ const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const PIPELINE_INSTALL_GUIDE_URL =
   'https://seqdesk.org/docs/pipelines/installing-pipelines';
 
-type ManagedPipelineDisplay = {
+export type ManagedPipelineDisplay = {
   pipelineId?: string;
   id?: string;
   name?: string;
+  installed?: boolean;
   targets?: string[] | { supported?: string[] } | null;
   packageState?: string;
   setupState?: string;
@@ -504,10 +505,12 @@ function commandForManagedAction(
   if (action === 'configure-runtime') {
     return `seqdesk pipelines setup ${pipelineId} --runtime`;
   }
+  if (action === 'configure-storage') {
+    return 'seqdesk storage configure /absolute/path/to/sequencing-data';
+  }
   if (
     action === 'configure' ||
-    action === 'download-db' ||
-    action === 'configure-storage'
+    action === 'download-db'
   ) {
     return `seqdesk pipelines setup ${pipelineId}`;
   }
@@ -553,6 +556,14 @@ function managedPipelineForJson(
   };
 }
 
+export function reconcileManagedInstallMessage(
+  message: string,
+  setupRequired: boolean
+): string {
+  if (setupRequired) return message;
+  return message.replace(/; setup is still required$/, '');
+}
+
 function managedPipelineNeedsRuntime(
   pipeline: ManagedPipelineDisplay | null | undefined
 ): boolean {
@@ -566,90 +577,560 @@ function managedPipelineNeedsRuntime(
   );
 }
 
-function formatManagedPipelineTable(
-  pipelines: ManagedPipelineDisplay[]
+type PipelineListTone =
+  | 'accent'
+  | 'muted'
+  | 'success'
+  | 'warning'
+  | 'danger';
+
+type PipelineListRenderOptions = {
+  color?: boolean;
+  width?: number;
+};
+
+const PIPELINE_LIST_ANSI: Record<PipelineListTone, string> = {
+  accent: '1;36',
+  muted: '2',
+  success: '1;32',
+  warning: '1;33',
+  danger: '1;31',
+};
+
+function stylePipelineListText(
+  value: string,
+  tone: PipelineListTone,
+  color: boolean
 ): string {
-  const headers = ['PIPELINE', 'TARGETS', 'PACKAGE', 'SETUP', 'ACTIVE', 'NEXT'];
-  const rows = pipelines.map((pipeline) => [
-    managedPipelineId(pipeline),
-    managedPipelineTargets(pipeline).join(',') || '-',
-    pipeline.packageState || 'available',
-    pipeline.setupState || pipeline.readiness?.status || 'needs-setup',
-    pipeline.activationState ||
-      (pipeline.enabled ? 'enabled' : 'disabled'),
-    managedNextAction(pipeline),
-  ]);
-  const widths = headers.map((header, index) =>
-    Math.max(
-      header.length,
-      ...rows.map((row) => String(row[index] || '').length)
-    )
-  );
-  const render = (row: string[]) =>
-    row
-      .map((value, index) =>
-        index === row.length - 1 ? value : value.padEnd(widths[index])
-      )
-      .join('  ')
-      .trimEnd();
-  return `${[render(headers), ...rows.map(render)].join('\n')}\n`;
+  if (!color) return value;
+  return `\u001b[${PIPELINE_LIST_ANSI[tone]}m${value}\u001b[0m`;
 }
 
-export function formatManagedPipelineListGuidance(
-  options: { showSimulateReadsExample?: boolean } = {}
-): string {
-  const lines = [
-    '',
-    'What to do next:',
-    '  The NEXT column shows the exact action for each pipeline.',
-    '  Install a pipeline shown above:',
-    '    seqdesk pipelines install <pipeline-id>',
-    '  Provision a missing Conda, Java, and Nextflow runtime in the same step:',
-    '    seqdesk pipelines install <pipeline-id> --runtime',
-    '  Check its package, setup, and activation state:',
-    '    seqdesk pipelines status <pipeline-id>',
-  ];
-  if (options.showSimulateReadsExample) {
-    lines.push(
-      '  Safe first order-level example:',
-      '    seqdesk pipelines install simulate-reads --runtime'
-    );
+function humanizePipelineValue(value: string): string {
+  return value
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+}
+
+function managedPipelineTargetLabel(pipeline: ManagedPipelineDisplay): string {
+  const targets = new Set(managedPipelineTargets(pipeline));
+  if (targets.has('study') && targets.has('order')) return 'Study + Order';
+  if (targets.has('study')) return 'Study';
+  if (targets.has('order')) return 'Order';
+  const values = Array.from(targets).map(humanizePipelineValue);
+  return values.join(' + ') || '—';
+}
+
+function managedPipelinePackageLabel(pipeline: ManagedPipelineDisplay): string {
+  if (pipeline.packageState === 'bundled') return 'Built in';
+  if (pipeline.packageState === 'installed') return 'Installed';
+  if (!pipeline.packageState || pipeline.packageState === 'available') {
+    return 'Available';
   }
-  lines.push(`  Guide: ${PIPELINE_INSTALL_GUIDE_URL}`, '');
+  return humanizePipelineValue(pipeline.packageState);
+}
+
+function managedPipelineActivationState(
+  pipeline: ManagedPipelineDisplay
+): 'enabled' | 'disabled' {
+  if (pipeline.activationState === 'enabled') return 'enabled';
+  if (pipeline.activationState === 'disabled') return 'disabled';
+  return pipeline.enabled ? 'enabled' : 'disabled';
+}
+
+function managedPipelineSetupState(pipeline: ManagedPipelineDisplay): string {
+  return (
+    pipeline.setupState ||
+    pipeline.readiness?.status ||
+    (pipeline.packageState === 'available' ? 'not-installed' : 'needs-setup')
+  );
+}
+
+function managedPipelineIsInstalled(
+  pipeline: ManagedPipelineDisplay
+): boolean {
+  if (typeof pipeline.installed === 'boolean') return pipeline.installed;
+  return (
+    (pipeline.packageState || 'available') !== 'available' &&
+    managedPipelineSetupState(pipeline) !== 'not-installed'
+  );
+}
+
+function managedPipelineStatusTargetLabel(
+  pipeline: ManagedPipelineDisplay
+): string {
+  const targets = new Set(managedPipelineTargets(pipeline));
+  if (targets.has('study') && targets.has('order')) {
+    return 'Studies and sequencing orders';
+  }
+  if (targets.has('study')) return 'Studies';
+  if (targets.has('order')) return 'Sequencing orders';
+  return managedPipelineTargetLabel(pipeline);
+}
+
+function managedPipelineInstalledLabel(
+  pipeline: ManagedPipelineDisplay,
+  installed: boolean
+): string {
+  if (!installed) return 'No · available from Pipeline Store';
+  if (pipeline.packageState === 'bundled') {
+    return 'Yes · built in';
+  }
+  if (pipeline.packageState === 'installed') {
+    return 'Yes · Pipeline Store';
+  }
+  return 'Yes';
+}
+
+function managedPipelineSetupLabel(setupState: string): string {
+  if (setupState === 'ready') return 'Complete';
+  if (setupState === 'not-installed') return 'Not started';
+  const labels: Record<string, string> = {
+    'needs-package': 'Package required',
+    'needs-config': 'Configuration required',
+    'needs-db': 'Database required',
+    'needs-runtime': 'Runtime required',
+    'needs-storage': 'Data storage required',
+    'needs-attention': 'Attention required',
+    'needs-setup': 'Setup required',
+  };
+  if (labels[setupState]) return labels[setupState];
+  return humanizePipelineValue(setupState);
+}
+
+function managedPipelineOverallStatus(
+  pipeline: ManagedPipelineDisplay
+): {
+  label: string;
+  tone: PipelineListTone;
+  installed: boolean;
+  setupState: string;
+  setupReady: boolean;
+  enabled: boolean;
+  usable: boolean;
+  summary: string;
+} {
+  const installed = managedPipelineIsInstalled(pipeline);
+  const setupState = managedPipelineSetupState(pipeline);
+  const setupReady =
+    typeof pipeline.readiness?.canEnable === 'boolean'
+      ? pipeline.readiness.canEnable
+      : setupState === 'ready';
+  const enabled = managedPipelineActivationState(pipeline) === 'enabled';
+  const usable = installed && setupReady && enabled;
+
+  if (!installed) {
+    return {
+      label: '✗ NOT USABLE NOW · NOT INSTALLED',
+      tone: 'danger',
+      installed,
+      setupState,
+      setupReady,
+      enabled,
+      usable,
+      summary:
+        'This pipeline is available, but users cannot run it until it is installed.',
+    };
+  }
+  if (!setupReady) {
+    return {
+      label: '✗ NOT USABLE NOW · SETUP REQUIRED',
+      tone: 'danger',
+      installed,
+      setupState,
+      setupReady,
+      enabled,
+      usable,
+      summary:
+        'This pipeline is installed, but users cannot run it until setup is complete.',
+    };
+  }
+  if (!enabled) {
+    return {
+      label: '✗ NOT USABLE NOW · DISABLED',
+      tone: 'danger',
+      installed,
+      setupState,
+      setupReady,
+      enabled,
+      usable,
+      summary:
+        'This pipeline is installed and configured, but users cannot run it until it is enabled.',
+    };
+  }
+  return {
+    label: '✓ USABLE NOW',
+    tone: 'success',
+    installed,
+    setupState,
+    setupReady,
+    enabled,
+    usable,
+    summary: 'Users can run this pipeline now.',
+  };
+}
+
+function managedPipelineStateLabel(pipeline: ManagedPipelineDisplay): {
+  label: string;
+  tone: PipelineListTone;
+} {
+  const packageState = pipeline.packageState || 'available';
+  const setupState = managedPipelineSetupState(pipeline);
+  const activationState = managedPipelineActivationState(pipeline);
+
+  if (packageState === 'available' || setupState === 'not-installed') {
+    return { label: '○ Not installed', tone: 'muted' };
+  }
+  if (setupState === 'ready') {
+    return activationState === 'enabled'
+      ? { label: '✓ Ready', tone: 'success' }
+      : { label: '○ Ready · disabled', tone: 'accent' };
+  }
+
+  const setupLabels: Record<string, string> = {
+    'needs-package': 'needs package',
+    'needs-config': 'needs configuration',
+    'needs-db': 'needs database',
+    'needs-runtime': 'needs runtime',
+    'needs-storage': 'needs data storage',
+    'needs-attention': 'needs attention',
+    'needs-setup': 'needs setup',
+  };
+  const reason =
+    setupLabels[setupState] || humanizePipelineValue(setupState).toLowerCase();
+  const activation =
+    activationState === 'enabled' ? 'Enabled' : 'Disabled';
+  return {
+    label: `! ${activation} · ${reason}`,
+    tone: 'warning',
+  };
+}
+
+function truncatePipelineListCell(value: string, width: number): string {
+  if (value.length <= width) return value;
+  if (width <= 1) return '…';
+  return `${value.slice(0, width - 1)}…`;
+}
+
+function formatPipelineListCell(
+  value: string,
+  width: number,
+  options: {
+    color: boolean;
+    tone?: PipelineListTone;
+  }
+): string {
+  const truncated = truncatePipelineListCell(value, width);
+  const styled = options.tone
+    ? stylePipelineListText(truncated, options.tone, options.color)
+    : truncated;
+  return `${styled}${' '.repeat(Math.max(0, width - truncated.length))}`;
+}
+
+export function pipelineListColorEnabled(
+  options: {
+    isTTY?: boolean;
+    env?: Record<string, string | undefined>;
+  } = {}
+): boolean {
+  const env = options.env || process.env;
+  const isTTY = options.isTTY ?? Boolean(process.stdout.isTTY);
+  return (
+    isTTY &&
+    !Object.prototype.hasOwnProperty.call(env, 'NO_COLOR') &&
+    env.TERM !== 'dumb'
+  );
+}
+
+function formatManagedPipelineCards(
+  pipelines: ManagedPipelineDisplay[],
+  color: boolean
+): string[] {
+  const lines: string[] = [];
+  for (const pipeline of pipelines) {
+    const state = managedPipelineStateLabel(pipeline);
+    lines.push(
+      stylePipelineListText(
+        managedPipelineId(pipeline),
+        'accent',
+        color
+      ),
+      `  Use with  ${managedPipelineTargetLabel(pipeline)}`,
+      `  Package   ${managedPipelinePackageLabel(pipeline)}`,
+      `  State     ${stylePipelineListText(state.label, state.tone, color)}`
+    );
+    const next = managedNextAction(pipeline);
+    if (next !== '-') {
+      lines.push(
+        `  ${stylePipelineListText('→', 'accent', color)} ${stylePipelineListText(
+          next,
+          'accent',
+          color
+        )}`
+      );
+    }
+    lines.push('');
+  }
+  return lines;
+}
+
+export function formatManagedPipelineList(
+  pipelines: ManagedPipelineDisplay[],
+  options: PipelineListRenderOptions = {}
+): string {
+  const color = options.color === true;
+  const width = Math.max(40, Math.floor(options.width || 100));
+  const installed = pipelines.filter(
+    (pipeline) => (pipeline.packageState || 'available') !== 'available'
+  ).length;
+  const enabled = pipelines.filter(
+    (pipeline) => managedPipelineActivationState(pipeline) === 'enabled'
+  ).length;
+  const pipelineCountLabel =
+    pipelines.length === 1 ? '1 pipeline' : `${pipelines.length} pipelines`;
+  const lines = [
+    stylePipelineListText('SeqDesk pipelines', 'accent', color),
+    stylePipelineListText(
+      `${pipelineCountLabel} · ${installed} installed · ${enabled} enabled`,
+      'muted',
+      color
+    ),
+    '',
+  ];
+
+  if (pipelines.length === 0) {
+    lines.push('No pipelines match these filters.', '');
+    return lines.join('\n');
+  }
+
+  const longestPipelineId = Math.max(
+    'PIPELINE'.length,
+    ...pipelines.map((pipeline) => managedPipelineId(pipeline).length)
+  );
+  const useCards = width < 86 || longestPipelineId > 26;
+  if (useCards) {
+    lines.push(...formatManagedPipelineCards(pipelines, color));
+    return lines.join('\n');
+  }
+
+  const targetWidth = 13;
+  const packageWidth = 10;
+  const gapWidth = 6;
+  const pipelineWidth = Math.min(longestPipelineId, 26);
+  const stateWidth =
+    width - pipelineWidth - targetWidth - packageWidth - gapWidth;
+  const header = [
+    'PIPELINE'.padEnd(pipelineWidth),
+    'USE WITH'.padEnd(targetWidth),
+    'PACKAGE'.padEnd(packageWidth),
+    'STATE',
+  ].join('  ');
+  lines.push(
+    stylePipelineListText(header, 'muted', color),
+    stylePipelineListText('─'.repeat(width), 'muted', color)
+  );
+
+  for (const pipeline of pipelines) {
+    const state = managedPipelineStateLabel(pipeline);
+    const pipelineCell = formatPipelineListCell(
+      managedPipelineId(pipeline),
+      pipelineWidth,
+      { color, tone: 'accent' }
+    );
+    const targetCell = formatPipelineListCell(
+      managedPipelineTargetLabel(pipeline),
+      targetWidth,
+      { color }
+    );
+    const packageCell = formatPipelineListCell(
+      managedPipelinePackageLabel(pipeline),
+      packageWidth,
+      { color }
+    );
+    const stateCell = truncatePipelineListCell(state.label, stateWidth);
+    lines.push(
+      [
+        pipelineCell,
+        targetCell,
+        packageCell,
+        stylePipelineListText(stateCell, state.tone, color),
+      ]
+        .join('  ')
+    );
+    const next = managedNextAction(pipeline);
+    if (next !== '-') {
+      lines.push(
+        `  ${stylePipelineListText('→', 'accent', color)} ${stylePipelineListText(
+          next,
+          'accent',
+          color
+        )}`
+      );
+    }
+  }
+  lines.push('');
   return lines.join('\n');
 }
 
-function printManagedPipelineStatus(
-  pipeline: ManagedPipelineDisplay,
-  options: { showNextActions?: boolean } = {}
-): void {
-  const id = managedPipelineId(pipeline);
-  process.stdout.write(
-    [
-      `${id}${pipeline.name && pipeline.name !== id ? ` — ${pipeline.name}` : ''}`,
-      `Package: ${pipeline.packageState || 'available'}`,
-      `Setup: ${pipeline.setupState || pipeline.readiness?.status || 'needs-setup'}`,
-      `Activation: ${
-        pipeline.activationState ||
-        (pipeline.enabled ? 'enabled' : 'disabled')
-      }`,
-      `Targets: ${managedPipelineTargets(pipeline).join(', ') || '-'}`,
-    ].join('\n') + '\n'
-  );
+export function formatManagedPipelineListGuidance(
+  options: {
+    showSimulateReadsExample?: boolean;
+    color?: boolean;
+  } = {}
+): string {
+  const color = options.color === true;
+  const row = (label: string, value: string) =>
+    `  ${label.padEnd(20)} ${stylePipelineListText(value, 'accent', color)}`;
+  const lines = [
+    '',
+    stylePipelineListText('Start here', 'accent', color),
+    row('Install a pipeline', 'seqdesk pipelines install <pipeline-id>'),
+    row('Inspect details', 'seqdesk pipelines status <pipeline-id>'),
+  ];
+  if (options.showSimulateReadsExample) {
+    lines.push(
+      row(
+        'Safe order example',
+        'seqdesk pipelines install simulate-reads --runtime'
+      )
+    );
+  }
+  lines.push(row('Guide', PIPELINE_INSTALL_GUIDE_URL), '');
+  return lines.join('\n');
+}
 
+export function formatManagedPipelineStatus(
+  pipeline: ManagedPipelineDisplay,
+  options: { showNextActions?: boolean; color?: boolean } = {}
+): string {
+  const id = managedPipelineId(pipeline);
+  const overall = managedPipelineOverallStatus(pipeline);
+  const color = options.color === true;
   const missing = (pipeline.readiness?.items || []).filter(
     (item) =>
       item.status !== 'ready' &&
       item.blocking !== false &&
       item.id !== 'enabled'
   );
+  const warnings = (pipeline.readiness?.items || []).filter(
+    (item) =>
+      item.status !== 'ready' &&
+      item.blocking === false &&
+      item.id !== 'enabled'
+  );
+  const checkRow = (
+    symbol: '✓' | '✗' | '–',
+    label: string,
+    value: string,
+    tone: PipelineListTone
+  ) =>
+    `  ${stylePipelineListText(symbol, tone, color)} ${label.padEnd(
+      19
+    )} ${stylePipelineListText(value, tone, color)}`;
+  const warningSummary =
+    overall.usable && warnings.length > 0
+      ? ` · ${stylePipelineListText(
+          `! ${warnings.length} ${
+            warnings.length === 1 ? 'WARNING' : 'WARNINGS'
+          }`,
+          'warning',
+          color
+        )}`
+      : '';
+  const lines = [
+    stylePipelineListText(
+      `${id}${pipeline.name && pipeline.name !== id ? ` — ${pipeline.name}` : ''}`,
+      'accent',
+      color
+    ),
+    `${stylePipelineListText(
+      overall.label,
+      overall.tone,
+      color
+    )}${warningSummary}`,
+    stylePipelineListText(overall.summary, 'muted', color),
+    '',
+    'Checks',
+    checkRow(
+      overall.installed ? '✓' : '✗',
+      'Installed',
+      managedPipelineInstalledLabel(pipeline, overall.installed),
+      overall.installed ? 'success' : 'danger'
+    ),
+    checkRow(
+      overall.setupReady ? '✓' : overall.installed ? '✗' : '–',
+      'Setup ready',
+      overall.setupReady
+        ? 'Yes'
+        : overall.installed
+          ? `No · ${managedPipelineSetupLabel(overall.setupState)}`
+          : 'Not started',
+      overall.setupReady
+        ? 'success'
+        : overall.installed
+          ? 'danger'
+          : 'muted'
+    ),
+    checkRow(
+      overall.enabled ? '✓' : overall.installed ? '✗' : '–',
+      'Enabled',
+      overall.enabled
+        ? 'Yes'
+        : overall.installed
+          ? 'No'
+          : 'Available after installation',
+      overall.enabled
+        ? 'success'
+        : overall.installed
+          ? 'danger'
+          : 'muted'
+    ),
+    checkRow(
+      '–',
+      'Applies to',
+      managedPipelineStatusTargetLabel(pipeline),
+      'muted'
+    ),
+  ];
+
   if (missing.length > 0) {
-    process.stdout.write('Missing:\n');
+    lines.push(
+      '',
+      stylePipelineListText('Blocked by', 'danger', color)
+    );
     for (const item of missing) {
-      process.stdout.write(
-        `  - ${item.label || item.id || 'Setup'}${
-          item.detail ? `: ${item.detail}` : ''
-        }\n`
+      lines.push(
+        `  ${stylePipelineListText('✗', 'danger', color)} ${stylePipelineListText(
+          `${item.label || item.id || 'Setup'}${
+            item.detail ? `: ${item.detail}` : ''
+          }`,
+          'danger',
+          color
+        )}`
+      );
+    }
+  }
+
+  if (warnings.length > 0) {
+    lines.push(
+      '',
+      stylePipelineListText(
+        'Warnings · does not block use',
+        'warning',
+        color
+      )
+    );
+    for (const item of warnings) {
+      lines.push(
+        `  ${stylePipelineListText('!', 'warning', color)} ${stylePipelineListText(
+          `${item.label || item.id || 'Warning'}${
+            item.detail ? `: ${item.detail}` : ''
+          }`,
+          'warning',
+          color
+        )}`
       );
     }
   }
@@ -658,25 +1139,63 @@ function printManagedPipelineStatus(
     options.showNextActions !== false &&
     (pipeline.nextActions?.length || 0) > 0
   ) {
-    process.stdout.write('Next:\n');
+    const commands: string[] = [];
+    const seenCommands = new Set<string>();
     for (const action of pipeline.nextActions || []) {
+      let text: string | undefined;
       if (typeof action === 'string') {
-        process.stdout.write(`  ${action}\n`);
-        continue;
-      }
-      if (action && typeof action === 'object') {
+        text = action;
+      } else if (action && typeof action === 'object') {
         const candidate = action as Record<string, unknown>;
         const command =
           typeof candidate.action === 'string'
             ? commandForManagedAction(id, candidate.action)
             : null;
-        const text = command || candidate.command || candidate.label;
-        if (typeof text === 'string' && text) {
-          process.stdout.write(`  ${text}\n`);
-        }
+        const candidateText =
+          command || candidate.command || candidate.label;
+        text =
+          typeof candidateText === 'string' && candidateText
+            ? candidateText
+            : undefined;
+      }
+      if (text && !seenCommands.has(text)) {
+        seenCommands.add(text);
+        commands.push(text);
       }
     }
+    if (commands.length > 0) {
+      lines.push(
+        '',
+        stylePipelineListText(
+          commands.length === 1 ? 'Next step:' : 'Next steps:',
+          'accent',
+          color
+        ),
+        ...commands.map(
+          (command) =>
+            `  ${stylePipelineListText('→', 'accent', color)} ${stylePipelineListText(
+              command,
+              'accent',
+              color
+            )}`
+        )
+      );
+    }
   }
+
+  return `${lines.join('\n')}\n`;
+}
+
+function printManagedPipelineStatus(
+  pipeline: ManagedPipelineDisplay,
+  options: { showNextActions?: boolean } = {}
+): void {
+  process.stdout.write(
+    formatManagedPipelineStatus(pipeline, {
+      ...options,
+      color: pipelineListColorEnabled(),
+    })
+  );
 }
 
 export function getManagedSetupGuidance(
@@ -718,7 +1237,7 @@ export function getManagedSetupGuidance(
 
   if (actions.has('configure-storage')) {
     guidance.push(
-      'Configure an existing readable data directory under Admin → Settings → Data storage.'
+      'Run `seqdesk storage configure /absolute/path/to/sequencing-data` on the SeqDesk host, or configure an existing readable data directory under Admin → Data Storage.'
     );
   }
 
@@ -995,13 +1514,19 @@ async function runCommand(parsed: ParsedArgs): Promise<number> {
       });
       return 0;
     }
+    const color = pipelineListColorEnabled();
     process.stdout.write(
-      formatManagedPipelineTable(
-        result.pipelines as ManagedPipelineDisplay[]
+      formatManagedPipelineList(
+        result.pipelines as ManagedPipelineDisplay[],
+        {
+          color,
+          width: process.stdout.columns,
+        }
       )
     );
     process.stdout.write(
       formatManagedPipelineListGuidance({
+        color,
         showSimulateReadsExample:
           catalog !== 'study' &&
           !installedOnly &&
@@ -1069,13 +1594,18 @@ async function runCommand(parsed: ParsedArgs): Promise<number> {
           );
         }
         if (pipeline) {
+          const setupRequired = !Boolean(pipeline.readiness?.canEnable);
           result = {
             ...result,
+            message: reconcileManagedInstallMessage(
+              result.message,
+              setupRequired
+            ),
             status: pipeline,
             packageState: pipeline.packageState,
             setupState: pipeline.setupState,
             activationState: pipeline.activationState,
-            setupRequired: !Boolean(pipeline.readiness?.canEnable),
+            setupRequired,
             enabled: pipeline.enabled,
             readiness: pipeline.readiness,
             nextActions: pipeline.nextActions,

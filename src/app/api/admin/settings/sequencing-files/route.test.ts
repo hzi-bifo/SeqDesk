@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     },
   },
   resolveDataBasePathFromStoredValue: vi.fn(),
+  inspectDataStoragePath: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -26,6 +27,10 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/files/data-base-path", () => ({
   resolveDataBasePathFromStoredValue: mocks.resolveDataBasePathFromStoredValue,
+}));
+
+vi.mock("@/lib/files/data-storage-path-validation", () => ({
+  inspectDataStoragePath: mocks.inspectDataStoragePath,
 }));
 
 import { GET, PUT } from "./route";
@@ -126,6 +131,18 @@ describe("PUT /api/admin/settings/sequencing-files", () => {
     });
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.db.siteSettings.upsert.mockResolvedValue({});
+    mocks.resolveDataBasePathFromStoredValue.mockReturnValue({
+      dataBasePath: "",
+      source: "none",
+      isImplicit: false,
+    });
+    mocks.inspectDataStoragePath.mockImplementation(async (value: string) => ({
+      valid: true,
+      configuredPath: value.trim(),
+      resolvedPath: value.trim(),
+      readable: true,
+      writable: true,
+    }));
   });
 
   it("returns 401 for non-admin users", async () => {
@@ -181,6 +198,96 @@ describe("PUT /api/admin/settings/sequencing-files", () => {
     expect(response.status).toBe(200);
     const upsertArgs = mocks.db.siteSettings.upsert.mock.calls[0][0];
     expect(upsertArgs.update.dataBasePath).toBeNull();
+  });
+
+  it("rejects an invalid data storage path before writing settings", async () => {
+    mocks.inspectDataStoragePath.mockResolvedValue({
+      valid: false,
+      readable: false,
+      writable: false,
+      error: "Data storage must use an absolute path",
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost/api/admin/settings/sequencing-files", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dataBasePath: "relative/data" }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-string data storage path before inspecting or writing it", async () => {
+    const response = await PUT(
+      new NextRequest("http://localhost/api/admin/settings/sequencing-files", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dataBasePath: { path: "/data" } }),
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(mocks.inspectDataStoragePath).not.toHaveBeenCalled();
+    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("does not claim to replace a file-managed path with a shadowed database value", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      dataBasePath: "/old/database/path",
+      extraSettings: null,
+    });
+    mocks.resolveDataBasePathFromStoredValue.mockReturnValue({
+      dataBasePath: "/managed/from-settings",
+      source: "file",
+      isImplicit: false,
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost/api/admin/settings/sequencing-files", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dataBasePath: "/new/storage" }),
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe("data-storage-path-overridden");
+    expect(body.error).toContain("seqdesk storage configure");
+    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("allows saving the normalized active file-managed path", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      dataBasePath: "/old/database/path",
+      extraSettings: null,
+    });
+    mocks.resolveDataBasePathFromStoredValue.mockReturnValue({
+      dataBasePath: "/managed/from-settings/",
+      source: "file",
+      isImplicit: false,
+    });
+    mocks.inspectDataStoragePath.mockResolvedValue({
+      valid: true,
+      configuredPath: "/managed/from-settings",
+      resolvedPath: "/managed/from-settings",
+      readable: true,
+      writable: true,
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost/api/admin/settings/sequencing-files", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ dataBasePath: "/managed/from-settings/" }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.siteSettings.upsert).toHaveBeenCalled();
   });
 
   it("returns 500 when database upsert fails", async () => {

@@ -553,6 +553,28 @@ prompt_yes_no() {
     esac
 }
 
+prompt_app_port() {
+    if [ -n "$SEQDESK_PORT" ]; then
+        return 0
+    fi
+
+    if is_truthy "$SEQDESK_YES"; then
+        SEQDESK_PORT="8000"
+        return 0
+    fi
+
+    local reply
+    reply=$(read_input "Use recommended app port 8000? [Y/n]: ")
+    case "$reply" in
+        ""|y|Y|yes|YES)
+            SEQDESK_PORT="8000"
+            ;;
+        *)
+            prompt_value SEQDESK_PORT "Custom app port" "8000"
+            ;;
+    esac
+}
+
 print_usage() {
     cat <<'EOF'
 Usage:
@@ -2706,7 +2728,7 @@ if [ $wizard_status -eq 2 ]; then
     print_error "Installation cancelled"
     exit 1
 elif [ $wizard_status -ne 0 ]; then
-    prompt_value SEQDESK_PORT "App port" "8000"
+    prompt_app_port
 fi
 
 if [ -z "$SEQDESK_PORT" ]; then
@@ -2981,9 +3003,20 @@ elif [ -z "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}${SEQDESK_BOOTSTRAP_ADMIN_PASSWO
 fi
 echo ""
 echo "Next steps:"
-echo "  1. Log in as admin and configure Data Storage in Admin > Data Storage"
-echo "  2. Configure pipeline runtime under Admin > Pipeline Runtime (if enabled)"
-echo "  3. See https://seqdesk.org/docs for production deployment"
+echo "  1. Log in as admin."
+if [ -n "${SEQDESK_DATA_PATH:-}" ]; then
+    echo "  2. Data Storage is configured. Verify it from the server shell:"
+    echo "       npx -y seqdesk@latest storage status --dir $(shell_quote "$SEQDESK_DIR")"
+else
+    echo "  2. Configure Data Storage from the server shell:"
+    echo "       npx -y seqdesk@latest storage configure $(shell_quote "$SEQDESK_DIR/data") --dir $(shell_quote "$SEQDESK_DIR")"
+    echo "       npx -y seqdesk@latest storage status --dir $(shell_quote "$SEQDESK_DIR")"
+    echo "     Use your existing sequencing directory instead, if applicable."
+    echo "     Alternative: Admin > Data Storage."
+fi
+echo "     Guide: https://seqdesk.org/docs/administration/data-storage"
+echo "  3. Configure pipeline runtime under Admin > Pipeline Runtime (if enabled)"
+echo "  4. See https://seqdesk.org/docs for production deployment"
 echo ""
 echo -e "Documentation: ${BLUE}https://seqdesk.org/docs${NC}"
 echo -e "Website:       ${BLUE}https://seqdesk.org${NC}"

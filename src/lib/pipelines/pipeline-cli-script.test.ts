@@ -4,10 +4,14 @@ import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  formatManagedPipelineList,
   formatManagedPipelineListGuidance,
+  formatManagedPipelineStatus,
   getManagedSetupGuidance,
   loadRuntimeEnvironment,
   parsePipelineArgs,
+  pipelineListColorEnabled,
+  reconcileManagedInstallMessage,
   resolveManagedRuntimeSetupPaths,
   runManagedRuntimeSetup,
 } from '../../../scripts/pipeline-cli';
@@ -358,18 +362,417 @@ describe('managed runtime setup', () => {
   });
 });
 
+describe('managed pipeline list output', () => {
+  const pipelines = [
+    {
+      pipelineId: 'read-cleaning',
+      targets: ['order'],
+      packageState: 'bundled',
+      setupState: 'needs-db',
+      activationState: 'enabled',
+      nextActions: [{ action: 'download-db' }],
+    },
+    {
+      pipelineId: 'simulate-reads',
+      targets: ['order'],
+      packageState: 'bundled',
+      setupState: 'needs-runtime',
+      activationState: 'disabled',
+      nextActions: [{ action: 'configure-runtime' }],
+    },
+    {
+      pipelineId: 'fastq-checksum',
+      targets: ['study', 'order'],
+      packageState: 'installed',
+      setupState: 'ready',
+      activationState: 'enabled',
+      nextActions: [],
+    },
+    {
+      pipelineId: 'metaxpath',
+      targets: ['study'],
+      packageState: 'available',
+      setupState: 'not-installed',
+      activationState: 'disabled',
+      nextActions: [{ action: 'install' }],
+    },
+  ];
+
+  it('renders a compact table with readable state and exact next commands', () => {
+    const output = formatManagedPipelineList(pipelines, {
+      color: false,
+      width: 100,
+    });
+
+    expect(output).toContain('SeqDesk pipelines');
+    expect(output).toContain('4 pipelines · 3 installed · 2 enabled');
+    expect(output).toContain('PIPELINE');
+    expect(output).toContain('USE WITH');
+    expect(output).toContain('PACKAGE');
+    expect(output).toContain('STATE');
+    expect(output).toContain('Built in');
+    expect(output).toContain('Study + Order');
+    expect(output).toContain('! Enabled · needs database');
+    expect(output).toContain('! Disabled · needs runtime');
+    expect(output).toContain('✓ Ready');
+    expect(output).toContain('○ Not installed');
+    expect(output).toContain('→ seqdesk pipelines setup read-cleaning');
+    expect(output).toContain(
+      '→ seqdesk pipelines setup simulate-reads --runtime'
+    );
+    expect(output).toContain('→ seqdesk pipelines install metaxpath');
+    expect(output).not.toContain('\u001B[');
+    expect(output).not.toContain('Loaded pipeline package');
+  });
+
+  it('uses a readable card layout on narrow terminals without shortening commands', () => {
+    const output = formatManagedPipelineList(pipelines, {
+      color: false,
+      width: 60,
+    });
+
+    expect(output).not.toContain('USE WITH');
+    expect(output).toContain('  Use with  Order');
+    expect(output).toContain('  Package   Built in');
+    expect(output).toContain('  State     ! Disabled · needs runtime');
+    expect(output).toContain(
+      'seqdesk pipelines setup simulate-reads --runtime'
+    );
+  });
+
+  it('adds colors only when requested without changing the text', () => {
+    const plain = formatManagedPipelineList(pipelines, {
+      color: false,
+      width: 100,
+    });
+    const colored = formatManagedPipelineList(pipelines, {
+      color: true,
+      width: 100,
+    });
+
+    expect(colored).toContain('\u001B[');
+    expect(
+      colored.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '')
+    ).toBe(plain);
+  });
+
+  it('respects terminal capability, NO_COLOR, and dumb terminals', () => {
+    expect(
+      pipelineListColorEnabled({ isTTY: true, env: { TERM: 'xterm-256color' } })
+    ).toBe(true);
+    expect(
+      pipelineListColorEnabled({
+        isTTY: false,
+        env: { TERM: 'xterm-256color' },
+      })
+    ).toBe(false);
+    expect(
+      pipelineListColorEnabled({
+        isTTY: true,
+        env: { TERM: 'xterm-256color', NO_COLOR: '' },
+      })
+    ).toBe(false);
+    expect(
+      pipelineListColorEnabled({ isTTY: true, env: { TERM: 'dumb' } })
+    ).toBe(false);
+  });
+
+  it('handles an empty filtered catalog', () => {
+    expect(
+      formatManagedPipelineList([], { color: false, width: 100 })
+    ).toContain('No pipelines match these filters.');
+  });
+});
+
+describe('managed pipeline status output', () => {
+  it('says explicitly when a bundled pipeline is installed and usable now', () => {
+    const output = formatManagedPipelineStatus(
+      {
+        pipelineId: 'simulate-reads',
+        name: 'Simulate Reads',
+        installed: true,
+        targets: ['order'],
+        packageState: 'bundled',
+        setupState: 'ready',
+        activationState: 'enabled',
+        nextActions: [],
+      },
+      { color: false }
+    );
+
+    expect(output).toContain('✓ USABLE NOW');
+    expect(output).toContain('Users can run this pipeline now.');
+    expect(output).toContain('✓ Installed');
+    expect(output).toContain('Yes · built in');
+    expect(output).toContain('✓ Setup ready');
+    expect(output).toContain('✓ Enabled');
+    expect(output).toContain('– Applies to');
+    expect(output).toContain('Sequencing orders');
+  });
+
+  it('distinguishes an installed pipeline that still needs setup', () => {
+    const output = formatManagedPipelineStatus(
+      {
+        pipelineId: 'mag',
+        installed: true,
+        targets: ['study'],
+        packageState: 'bundled',
+        setupState: 'needs-db',
+        activationState: 'enabled',
+        readiness: {
+          canEnable: false,
+          items: [
+            {
+              id: 'databases',
+              label: 'Pipeline databases',
+              status: 'missing',
+              detail: 'Database assets are missing.',
+              action: 'download-db',
+              blocking: true,
+            },
+          ],
+        },
+        nextActions: [{ action: 'download-db' }],
+      },
+      { color: false }
+    );
+
+    expect(output).toContain('✗ NOT USABLE NOW · SETUP REQUIRED');
+    expect(output).toContain('✓ Installed');
+    expect(output).toContain('✗ Setup ready');
+    expect(output).toContain('No · Database required');
+    expect(output).toContain('✓ Enabled');
+    expect(output).toContain('Blocked by');
+    expect(output).toContain(
+      'Pipeline databases: Database assets are missing.'
+    );
+    expect(output).toContain('seqdesk pipelines setup mag');
+  });
+
+  it('distinguishes a configured pipeline that is disabled', () => {
+    const output = formatManagedPipelineStatus(
+      {
+        pipelineId: 'fastqc',
+        installed: true,
+        targets: ['order'],
+        packageState: 'installed',
+        setupState: 'ready',
+        activationState: 'disabled',
+        nextActions: [{ action: 'enable' }],
+      },
+      { color: false }
+    );
+
+    expect(output).toContain('✗ NOT USABLE NOW · DISABLED');
+    expect(output).toContain('✓ Installed');
+    expect(output).toContain('Yes · Pipeline Store');
+    expect(output).toContain('✓ Setup ready');
+    expect(output).toContain('✗ Enabled');
+    expect(output).toContain('seqdesk pipelines enable fastqc');
+  });
+
+  it('distinguishes a store pipeline that has not been installed', () => {
+    const output = formatManagedPipelineStatus(
+      {
+        pipelineId: 'metaxpath',
+        installed: false,
+        targets: ['study', 'order'],
+        packageState: 'available',
+        setupState: 'not-installed',
+        activationState: 'disabled',
+        nextActions: [{ action: 'install' }],
+      },
+      { color: false }
+    );
+
+    expect(output).toContain('✗ NOT USABLE NOW · NOT INSTALLED');
+    expect(output).toContain('✗ Installed');
+    expect(output).toContain('No · available from Pipeline Store');
+    expect(output).toContain('– Setup ready');
+    expect(output).toContain('Not started');
+    expect(output).toContain('– Enabled');
+    expect(output).toContain('Available after installation');
+    expect(output).toContain('Studies and sequencing orders');
+    expect(output).toContain('seqdesk pipelines install metaxpath');
+  });
+
+  it('stays usable when readiness contains only nonblocking warnings', () => {
+    const output = formatManagedPipelineStatus(
+      {
+        pipelineId: 'fastqc',
+        installed: true,
+        targets: ['order'],
+        packageState: 'bundled',
+        activationState: 'enabled',
+        readiness: {
+          status: 'warning',
+          canEnable: true,
+          items: [
+            {
+              id: 'outputs',
+              label: 'Output browsing',
+              status: 'warning',
+              blocking: false,
+            },
+          ],
+        },
+        nextActions: [],
+      },
+      { color: false }
+    );
+
+    expect(output).toContain('✓ USABLE NOW · ! 1 WARNING');
+    expect(output).toContain('Warnings · does not block use');
+    expect(output).toContain('! Output browsing');
+    expect(output).not.toContain('Blocked by');
+  });
+
+  it('deduplicates next commands that represent multiple setup issues', () => {
+    const output = formatManagedPipelineStatus(
+      {
+        pipelineId: 'mag',
+        installed: true,
+        packageState: 'bundled',
+        setupState: 'needs-db',
+        activationState: 'disabled',
+        nextActions: [
+          { action: 'configure' },
+          { action: 'download-db' },
+        ],
+      },
+      { color: false }
+    );
+
+    expect(
+      output.match(/seqdesk pipelines setup mag/g)
+    ).toHaveLength(1);
+  });
+
+  it('adds semantic colors without changing the plain text', () => {
+    const pipeline = {
+      pipelineId: 'simulate-reads',
+      installed: true,
+      targets: ['order'],
+      packageState: 'bundled',
+      setupState: 'ready',
+      activationState: 'enabled',
+      nextActions: [],
+    };
+    const plain = formatManagedPipelineStatus(pipeline, {
+      color: false,
+    });
+    const colored = formatManagedPipelineStatus(pipeline, {
+      color: true,
+    });
+
+    expect(colored).toContain('\u001B[1;32m');
+    expect(colored).toContain('\u001B[1;36m');
+    expect(
+      colored.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '')
+    ).toBe(plain);
+  });
+
+  it('uses red for blockers and yellow only for nonblocking warnings', () => {
+    const blocked = formatManagedPipelineStatus(
+      {
+        pipelineId: 'mag',
+        installed: true,
+        packageState: 'bundled',
+        setupState: 'needs-db',
+        activationState: 'disabled',
+        readiness: {
+          canEnable: false,
+          items: [
+            {
+              id: 'databases',
+              label: 'Pipeline databases',
+              status: 'missing',
+              action: 'download-db',
+              blocking: true,
+            },
+          ],
+        },
+      },
+      { color: true }
+    );
+    const warning = formatManagedPipelineStatus(
+      {
+        pipelineId: 'fastqc',
+        installed: true,
+        packageState: 'bundled',
+        activationState: 'enabled',
+        readiness: {
+          canEnable: true,
+          items: [
+            {
+              id: 'outputs',
+              label: 'Output browsing',
+              status: 'warning',
+              blocking: false,
+            },
+          ],
+        },
+      },
+      { color: true }
+    );
+
+    expect(blocked).toContain(
+      '\u001B[1;31m✗ NOT USABLE NOW · SETUP REQUIRED\u001B[0m'
+    );
+    expect(warning).toContain('\u001B[1;32m✓ USABLE NOW\u001B[0m');
+    expect(warning).toContain('\u001B[1;33m! 1 WARNING\u001B[0m');
+  });
+
+  it('honors NO_COLOR for status output', () => {
+    const pipeline = {
+      pipelineId: 'simulate-reads',
+      installed: true,
+      packageState: 'bundled',
+      setupState: 'ready',
+      activationState: 'enabled',
+    };
+    const color = pipelineListColorEnabled({
+      isTTY: true,
+      env: { TERM: 'xterm-256color' },
+    });
+    const noColor = pipelineListColorEnabled({
+      isTTY: true,
+      env: { TERM: 'xterm-256color', NO_COLOR: '1' },
+    });
+
+    expect(
+      formatManagedPipelineStatus(pipeline, { color })
+    ).toContain('\u001B[');
+    expect(
+      formatManagedPipelineStatus(pipeline, { color: noColor })
+    ).not.toContain('\u001B[');
+  });
+});
+
+describe('managed pipeline installation output', () => {
+  it('removes stale setup guidance after runtime setup makes the pipeline ready', () => {
+    expect(
+      reconcileManagedInstallMessage(
+        'Pipeline simulate-reads is already installed successfully; setup is still required',
+        false
+      )
+    ).toBe('Pipeline simulate-reads is already installed successfully');
+  });
+
+  it('keeps setup guidance when another readiness requirement remains', () => {
+    const message =
+      'Pipeline mag installed successfully; setup is still required';
+    expect(reconcileManagedInstallMessage(message, true)).toBe(message);
+  });
+});
+
 describe('guided setup output', () => {
   it('turns the pipeline catalog into an actionable installation handoff', () => {
     const guidance = formatManagedPipelineListGuidance();
 
-    expect(guidance).toContain(
-      'The NEXT column shows the exact action for each pipeline'
-    );
+    expect(guidance).toContain('Start here');
     expect(guidance).toContain(
       'seqdesk pipelines install <pipeline-id>'
-    );
-    expect(guidance).toContain(
-      'seqdesk pipelines install <pipeline-id> --runtime'
     );
     expect(guidance).toContain(
       'seqdesk pipelines status <pipeline-id>'
@@ -440,7 +843,9 @@ describe('guided setup output', () => {
         expect.stringContaining(
           'Database assets are not downloaded automatically'
         ),
-        expect.stringContaining('Admin → Settings → Data storage'),
+        expect.stringContaining(
+          'seqdesk storage configure /absolute/path/to/sequencing-data'
+        ),
         expect.stringContaining(
           'seqdesk pipelines setup mag --runtime'
         ),

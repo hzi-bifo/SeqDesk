@@ -70,4 +70,27 @@ describe("managed pipeline readiness state", () => {
       expect.objectContaining({ action: "enable" }),
     ]);
   });
+
+  it("does not offer enable while blocking setup is incomplete", () => {
+    const value = readiness([
+      {
+        id: "databases",
+        label: "Pipeline databases",
+        status: "missing",
+        action: "download-db",
+        blocking: true,
+      },
+      {
+        id: "enabled",
+        label: "Enabled for users",
+        status: "warning",
+        action: "enable",
+        blocking: false,
+      },
+    ]);
+
+    expect(getManagedNextActions(value)).toEqual([
+      expect.objectContaining({ action: "download-db" }),
+    ]);
+  });
 });

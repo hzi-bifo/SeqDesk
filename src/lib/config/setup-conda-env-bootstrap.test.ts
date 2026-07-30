@@ -59,6 +59,7 @@ esac
     fakeInstaller,
     `#!/usr/bin/env bash
 set -euo pipefail
+[[ "\$0" == *.sh ]]
 prefix=''
 while [[ \$# -gt 0 ]]; do
   case "\$1" in
@@ -212,6 +213,7 @@ esac
       fakeInstaller,
       `#!/usr/bin/env bash
 set -euo pipefail
+[[ "\$0" == *.sh ]]
 prefix=''
 while [[ \$# -gt 0 ]]; do
   case "\$1" in

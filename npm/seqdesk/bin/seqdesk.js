@@ -67,6 +67,23 @@ SeqDesk keeps only its bcrypt hash, and this command writes it to no file.
 // of failing with a bare ENOENT.
 const RESET_PASSWORD_MIN_APP_VERSION = "1.1.125";
 
+const STORAGE_USAGE = `Usage:
+  seqdesk storage configure <absolute-path> [--dir /path/to/seqdesk] [--create] [--yes] [--json]
+  seqdesk storage status [--dir /path/to/seqdesk] [--json]
+
+Options:
+  <absolute-path>    Existing sequencing data directory to configure.
+  --dir, -d          Installed SeqDesk directory. Otherwise uses the configured/default install.
+  --create           Allow the installed worker to create the data directory when it is missing.
+  --yes, -y          Skip the confirmation prompt. Required with --json for configure.
+  --json             Print one machine-readable JSON document.
+  --help, -h         Show this help.
+
+The older "seqdesk data-storage" spelling remains an alias.
+Status exits non-zero until the configured directory is ready.
+Local shell access to the installed directory is treated as operator access.
+`;
+
 const ASSETS_USAGE = `Usage:
   seqdesk assets apply [--dir /path/to/seqdesk] (--profile <id> --profile-code <code> | --profile-config <file>)
 
@@ -359,6 +376,111 @@ function parseResetPasswordArgs(argv) {
   // script change a password without ever asking.
   if (options.json && !options.yes) {
     throw new Error("--json requires --yes, because the confirmation prompt cannot be answered in JSON mode");
+  }
+
+  return options;
+}
+
+function parseStorageArgs(argv) {
+  const options = {
+    command: "",
+    dir: resolveDefaultInstallDir(),
+    dataPath: "",
+    create: false,
+    yes: false,
+    json: false,
+    help: false,
+  };
+
+  const command = argv[0];
+  if (!command || command === "--help" || command === "-h" || command === "help") {
+    options.help = true;
+    return options;
+  }
+  if (command !== "configure" && command !== "status") {
+    throw new Error(`Unknown storage command: ${command}`);
+  }
+  options.command = command;
+
+  for (let index = 1; index < argv.length; index += 1) {
+    const token = argv[index];
+
+    if (token === "--help" || token === "-h") {
+      options.help = true;
+      continue;
+    }
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+    if (token === "--create") {
+      if (command !== "configure") {
+        throw new Error("--create is only valid with storage configure");
+      }
+      options.create = true;
+      continue;
+    }
+    if (token === "--yes" || token === "-y") {
+      if (command !== "configure") {
+        throw new Error(`${token} is only valid with storage configure`);
+      }
+      options.yes = true;
+      continue;
+    }
+    if (token === "--dir" || token === "-d") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error(`${token} requires a directory path`);
+      }
+      options.dir = value;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--dir=")) {
+      const dirValue = token.slice("--dir=".length);
+      if (!dirValue) {
+        throw new Error("--dir requires a directory path");
+      }
+      options.dir = dirValue;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      throw new Error(`Unknown storage option: ${token}`);
+    }
+    if (command === "status") {
+      throw new Error(`Unexpected storage status argument: ${token}`);
+    }
+    if (options.dataPath) {
+      throw new Error(
+        `Unexpected storage configure argument: ${token} (the path ${options.dataPath} was already given)`
+      );
+    }
+    options.dataPath = token;
+  }
+
+  options.dir = path.resolve(options.dir);
+  if (options.help) {
+    return options;
+  }
+
+  if (command === "configure") {
+    if (!options.dataPath.trim()) {
+      throw new Error(
+        "An absolute data storage path is required, for example: seqdesk storage configure /srv/seqdesk-data"
+      );
+    }
+    if (!path.isAbsolute(options.dataPath)) {
+      throw new Error(`Data storage path must be absolute: ${options.dataPath}`);
+    }
+    options.dataPath = path.normalize(options.dataPath);
+    if (options.dataPath === path.parse(options.dataPath).root) {
+      throw new Error("The filesystem root cannot be used as the SeqDesk data storage path");
+    }
+    if (options.json && !options.yes) {
+      throw new Error(
+        "--json requires --yes for storage configure, because the confirmation prompt cannot be answered in JSON mode"
+      );
+    }
   }
 
   return options;
@@ -1675,6 +1797,366 @@ async function runResetPassword(argv) {
   return 0;
 }
 
+function runInstalledStorageWorker({
+  appDir,
+  workerPath,
+  command,
+  dataPath,
+  configPath,
+  create,
+  databaseUrl,
+  directUrl,
+}) {
+  return new Promise((resolve, reject) => {
+    const childArgs = [workerPath, command];
+    if (command === "configure") {
+      childArgs.push("--path", dataPath);
+    }
+    childArgs.push("--config", configPath);
+    if (command === "configure" && create) {
+      childArgs.push("--create");
+    }
+    childArgs.push("--json");
+
+    const child = spawn(process.execPath, childArgs, {
+      cwd: appDir,
+      env: { ...env, DATABASE_URL: databaseUrl, DIRECT_URL: directUrl },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on("error", (error) => {
+      reject(new Error(`Failed to start the installed data-storage worker: ${error.message}`));
+    });
+
+    child.on("close", (code, signal) => {
+      if (signal) {
+        reject(new Error(`The installed data-storage worker exited with signal ${signal}`));
+        return;
+      }
+      resolve({ code: code ?? 1, stdout, stderr, argv: childArgs.slice(1) });
+    });
+  });
+}
+
+function storagePayloadPath(payload, fallback = "") {
+  return firstString(
+    payload.dataBasePath,
+    payload.path,
+    payload.resolvedPath,
+    fallback
+  );
+}
+
+function printStorageError(message, remediation) {
+  console.error(`[seqdesk] ${message}`);
+  if (remediation) {
+    console.error(`  -> ${remediation}`);
+  }
+}
+
+function printStoragePlan({ dataPath, installDir, configPath, database, create }) {
+  console.log(`${style.bold}SeqDesk storage configure${style.reset}`);
+  printKv("Data path", dataPath);
+  printKv("Directory", installDir);
+  printKv("Config", configPath);
+  printKv("Database", database);
+  console.log("");
+  console.log(
+    create
+      ? "This validates the path, creates it when missing, and saves it as SeqDesk data storage."
+      : "This validates the existing path and saves it as SeqDesk data storage."
+  );
+}
+
+function printStorageResult(result, options) {
+  console.log(`${style.bold}SeqDesk storage ${options.command}${style.reset}`);
+  const configuredPath = storagePayloadPath(result, options.dataPath);
+  const inspection = isPlainObject(result.inspection) ? result.inspection : {};
+  const ready =
+    typeof result.ready === "boolean" ? result.ready : inspection.ready;
+  const readable =
+    typeof result.readable === "boolean"
+      ? result.readable
+      : inspection.readable;
+  const writable =
+    typeof result.writable === "boolean"
+      ? result.writable
+      : inspection.writable;
+  if (configuredPath) {
+    printKv("Data path", configuredPath);
+  }
+  printKv("Directory", options.dir);
+  if (firstString(result.source)) {
+    printKv("Source", firstString(result.source));
+  }
+  if (typeof ready === "boolean") {
+    printKv("Ready", ready ? "yes" : "no");
+  }
+  if (typeof readable === "boolean") {
+    printKv("Readable", readable ? "yes" : "no");
+  }
+  if (typeof writable === "boolean") {
+    printKv("Writable", writable ? "yes" : "no");
+  }
+  if (result.created === true) {
+    printKv("Created", "yes");
+  }
+  const message = firstString(result.message, result.detail);
+  if (message) {
+    console.log("");
+    console.log(message);
+  }
+  if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+    console.log("");
+    console.log("Warnings:");
+    for (const warning of result.warnings) {
+      if (typeof warning === "string" && warning.trim()) {
+        console.log(`  - ${warning.trim()}`);
+      }
+    }
+  }
+
+  if (options.command === "status" && !configuredPath) {
+    console.log("");
+    console.log("No data storage path is configured.");
+    console.log(
+      `  -> Configure one with: seqdesk storage configure /absolute/path --dir ${shellQuote(options.dir)}`
+    );
+  } else if (options.command === "status" && ready === false) {
+    console.log("");
+    if (inspection.absolute === false) {
+      console.log(
+        `  -> Configure an absolute directory with: seqdesk storage configure /absolute/path --dir ${shellQuote(options.dir)}`
+      );
+    } else if (inspection.exists === false) {
+      console.log(
+        `  -> Mount or create it explicitly with: seqdesk storage configure ${shellQuote(configuredPath)} --dir ${shellQuote(options.dir)} --create`
+      );
+    } else if (inspection.directory === false) {
+      console.log(
+        `  -> Choose an existing directory with: seqdesk storage configure /absolute/path --dir ${shellQuote(options.dir)}`
+      );
+    } else if (/filesystem root/i.test(firstString(inspection.error))) {
+      console.log(
+        `  -> Choose a dedicated directory instead of the filesystem root.`
+      );
+    } else if (readable === false || inspection.searchable === false) {
+      console.log(
+        "  -> Make the directory readable and searchable by the SeqDesk service account, then run this command again."
+      );
+    } else {
+      console.log("  -> Fix the reported path problem, then run this command again.");
+    }
+  }
+}
+
+async function runStorage(argv) {
+  const wantsJson = argv.includes("--json");
+  let options;
+  try {
+    options = parseStorageArgs(argv);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (wantsJson) {
+      process.stdout.write(`${JSON.stringify({ ok: false, error: message })}\n`);
+    } else {
+      console.error(`[seqdesk] ${message}`);
+      console.error("");
+      console.error(STORAGE_USAGE.trim());
+    }
+    return 2;
+  }
+
+  if (options.help) {
+    console.log(STORAGE_USAGE.trim());
+    return 0;
+  }
+
+  const installDir = options.dir;
+  const doctorHint = `npx -y seqdesk@latest doctor --dir ${shellQuote(installDir)}`;
+  const reconfigureHint = `npx -y seqdesk@latest -y --reconfigure --dir ${shellQuote(installDir)}`;
+  const updateHint = `curl -fsSL ${INSTALL_URL} | bash -s -- --dir ${shellQuote(installDir)}`;
+  const fail = (message, remediation, exitCode = 1, details = {}) => {
+    if (options.json) {
+      process.stdout.write(
+        `${JSON.stringify({
+          ok: false,
+          command: options.command,
+          installDir,
+          error: message,
+          ...details,
+          ...(remediation ? { remediation } : {}),
+        })}\n`
+      );
+    } else {
+      printStorageError(message, remediation);
+    }
+    return exitCode;
+  };
+
+  if (!dirExists(installDir)) {
+    return fail(
+      `Install directory does not exist: ${installDir}`,
+      `Pass --dir with the directory the installer reported, or install SeqDesk first.`
+    );
+  }
+
+  const configPath = resolveConfigPath(installDir);
+  const configName = path.basename(configPath);
+  if (!fileExists(configPath)) {
+    return fail(
+      `${installDir} has no ${configName}, so the database to update is unknown.`,
+      `Point --dir at the directory the installer reported, or recreate the runtime config with: ${reconfigureHint}`
+    );
+  }
+
+  let config;
+  try {
+    config = readJsonFile(configPath);
+  } catch (error) {
+    return fail(
+      `${configPath} is not valid JSON: ${error.message}`,
+      `Fix the JSON syntax in ${configPath}, or rewrite it with: ${reconfigureHint}`
+    );
+  }
+
+  const runtime = isPlainObject(config?.runtime) ? config.runtime : {};
+  const databaseUrl = firstString(runtime.databaseUrl, config?.databaseUrl);
+  const configuredDirectUrl = firstString(
+    runtime.directUrl,
+    runtime.databaseDirectUrl,
+    config?.directUrl
+  );
+  const databaseValidation = validatePostgresUrl(databaseUrl);
+  if (!databaseValidation.ok) {
+    return fail(
+      `runtime.databaseUrl in ${configName} is ${databaseValidation.detail}.`,
+      `Set a valid PostgreSQL runtime.databaseUrl in ${configName}, or rewrite it with: ${reconfigureHint}`
+    );
+  }
+  if (configuredDirectUrl) {
+    const directValidation = validatePostgresUrl(configuredDirectUrl);
+    if (!directValidation.ok) {
+      return fail(
+        `runtime.directUrl in ${configName} is ${directValidation.detail}.`,
+        `Set runtime.directUrl to a valid PostgreSQL URL, or remove it to use runtime.databaseUrl.`
+      );
+    }
+  }
+  const directUrl = configuredDirectUrl || databaseUrl;
+  const database = databaseValidation.detail;
+
+  const appDir = resolveAppDir(installDir);
+  const workerPath = path.join(appDir, "scripts", "configure-data-storage.mjs");
+  if (!fileExists(workerPath)) {
+    return fail(
+      `The installed release has no data-storage worker at ${workerPath}.`,
+      `Update this SeqDesk install before using storage commands: ${updateHint}`
+    );
+  }
+
+  if (options.command === "configure" && !options.yes) {
+    printStoragePlan({
+      dataPath: options.dataPath,
+      installDir,
+      configPath,
+      database,
+      create: options.create,
+    });
+    const answer = await promptLine("Configure this data storage path? (y/N) ");
+    if (answer === null) {
+      return fail(
+        "Cancelled: no confirmation was read from stdin, so nothing was changed.",
+        "Answer the prompt on a terminal, or pass --yes to confirm up front."
+      );
+    }
+    if (!/^(y|yes)$/i.test(answer.trim())) {
+      return fail("Cancelled. No data storage setting was changed.");
+    }
+    console.log("");
+  }
+
+  let worker;
+  try {
+    worker = await runInstalledStorageWorker({
+      appDir,
+      workerPath,
+      command: options.command,
+      dataPath: options.dataPath,
+      configPath,
+      create: options.create,
+      databaseUrl,
+      directUrl,
+    });
+  } catch (error) {
+    return fail(error.message, `Check the install first: ${doctorHint}`);
+  }
+
+  const payload = parseWorkerPayload(worker.stdout);
+  if (!payload) {
+    const stderrSummary = summarizeWorkerStderr(worker.stderr);
+    return fail(
+      `The installed data-storage worker exited with code ${worker.code} without reporting a JSON result${stderrSummary ? `: ${stderrSummary}` : "."}`,
+      `Update the install or run ${shellQuote(workerPath)} directly with --help.`
+    );
+  }
+
+  const payloadAction = firstString(payload.action);
+  const workerErrorCode = firstString(payload.code);
+  if (
+    worker.code !== 0 ||
+    payload.ok !== true ||
+    payloadAction !== options.command ||
+    firstString(payload.error)
+  ) {
+    let detail = firstString(payload.error, payload.message);
+    if (!detail && payload.ok !== true) {
+      detail = "The installed data-storage worker returned an incompatible result without ok: true.";
+    } else if (!detail && payloadAction !== options.command) {
+      detail = `The installed data-storage worker reported action ${payloadAction || "(missing)"} instead of ${options.command}.`;
+    } else if (!detail) {
+      detail = `The installed data-storage worker exited with code ${worker.code}.`;
+    }
+    return fail(
+      detail,
+      firstString(payload.remediation) || `Check the install first: ${doctorHint}`,
+      1,
+      workerErrorCode ? { code: workerErrorCode } : {}
+    );
+  }
+
+  const result = {
+    ...payload,
+    ok: true,
+    command: options.command,
+    installDir,
+    configPath,
+  };
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    printStorageResult(result, options);
+  }
+  const ready =
+    typeof result.ready === "boolean"
+      ? result.ready
+      : isPlainObject(result.inspection)
+        ? result.inspection.ready
+        : undefined;
+  return options.command === "status" && ready !== true ? 1 : 0;
+}
+
 function resolveProfileCode(profileId, explicitCode) {
   return firstString(
     explicitCode,
@@ -2053,6 +2535,7 @@ async function main() {
     console.log("  seqdesk [installer options]");
     console.log("  seqdesk doctor [options]");
     console.log("  seqdesk reset-password --email <address> [options]");
+    console.log("  seqdesk storage <configure|status> [options]");
     console.log("  seqdesk assets apply [options]");
     console.log("  seqdesk pipelines <command> [options]");
     console.log("  seqdesk --version");
@@ -2082,6 +2565,11 @@ async function main() {
 
   if (args[0] === "reset-password") {
     const exitCode = await runResetPassword(args.slice(1));
+    process.exit(exitCode);
+  }
+
+  if (args[0] === "storage" || args[0] === "data-storage") {
+    const exitCode = await runStorage(args.slice(1));
     process.exit(exitCode);
   }
 

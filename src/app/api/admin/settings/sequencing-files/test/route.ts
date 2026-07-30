@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import * as fs from "fs/promises";
-import * as path from "path";
+import * as fs from "node:fs/promises";
+import { inspectDataStoragePath } from "@/lib/files/data-storage-path-validation";
 
 // POST - test if a path is accessible and list file counts
 export async function POST(request: NextRequest) {
@@ -23,34 +23,14 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Resolve to absolute path
-    const resolvedPath = path.resolve(basePath);
-
-    // Check if path exists
-    try {
-      const stats = await fs.stat(resolvedPath);
-      if (!stats.isDirectory()) {
-        return NextResponse.json({
-          valid: false,
-          error: "Path exists but is not a directory",
-        });
-      }
-    } catch {
+    const inspection = await inspectDataStoragePath(basePath);
+    if (!inspection.valid || !inspection.resolvedPath) {
       return NextResponse.json({
         valid: false,
-        error: "Directory does not exist or is not accessible",
+        error: inspection.error || "Invalid data storage path",
       });
     }
-
-    // Check if path is readable
-    try {
-      await fs.access(resolvedPath, fs.constants.R_OK);
-    } catch {
-      return NextResponse.json({
-        valid: false,
-        error: "Directory is not readable (permission denied)",
-      });
-    }
+    const resolvedPath = inspection.resolvedPath;
 
     // Count files with matching extensions (non-recursive for quick test)
     let totalFiles = 0;
@@ -62,7 +42,6 @@ export async function POST(request: NextRequest) {
       for (const entry of entries) {
         if (entry.isFile()) {
           totalFiles++;
-          const ext = path.extname(entry.name).toLowerCase();
           // Handle .fastq.gz (double extension)
           const fullName = entry.name.toLowerCase();
           const isMatch = allowedExtensions.some((allowedExt: string) =>
@@ -82,7 +61,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       valid: true,
+      configuredPath: inspection.configuredPath,
       resolvedPath,
+      readable: inspection.readable,
+      writable: inspection.writable,
       totalFiles,
       matchingFiles,
       message: matchingFiles > 0

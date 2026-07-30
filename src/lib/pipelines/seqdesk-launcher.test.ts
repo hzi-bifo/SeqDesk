@@ -128,6 +128,86 @@ function makeResetPasswordInstall(
   return { dir, workerPath, capturePath, socketUrl };
 }
 
+function makeStorageInstall(
+  options: {
+    prefix?: string;
+    layout?: 'current' | 'flat';
+    worker?: string | null;
+    runtime?: Record<string, unknown> | null;
+    payload?: Record<string, unknown>;
+    exitCode?: number;
+  } = {}
+): {
+  dir: string;
+  workerPath: string;
+  capturePath: string;
+  configPath: string;
+  socketUrl: string;
+} {
+  const dir = fs.mkdtempSync(
+    path.join(os.tmpdir(), options.prefix || 'seqdesk-storage-')
+  );
+  tempDirs.push(dir);
+  const appDir = options.layout === 'flat' ? dir : path.join(dir, 'current');
+  const capturePath = path.join(dir, 'storage-worker-capture.json');
+  const configPath = path.join(dir, 'settings.json');
+  const workerPath = path.join(
+    appDir,
+    'scripts',
+    'configure-data-storage.mjs'
+  );
+  const socketDir = path.join(dir, 'postgres socket');
+  const socketUrl =
+    'postgresql://seqdesk:secret@localhost:5432/seqdesk' +
+    `?schema=public&host=${encodeURIComponent(socketDir)}`;
+  const runtime =
+    options.runtime === undefined
+      ? { databaseUrl: socketUrl }
+      : options.runtime;
+
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    JSON.stringify({ name: 'seqdesk', version: '1.2.3' })
+  );
+  if (runtime) {
+    fs.writeFileSync(configPath, JSON.stringify({ runtime }));
+  }
+
+  if (options.worker !== null) {
+    fs.mkdirSync(path.dirname(workerPath), { recursive: true });
+    const payload = options.payload ?? {
+      ok: true,
+      action: 'configure',
+      dataBasePath: '/srv/seqdesk data',
+      source: 'database',
+      readable: true,
+      writable: true,
+      message: 'Data storage is ready.',
+    };
+    fs.writeFileSync(
+      workerPath,
+      options.worker ??
+        [
+          "import fs from 'node:fs';",
+          `fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({`,
+          '  argv: process.argv.slice(2),',
+          '  databaseUrl: process.env.DATABASE_URL ?? null,',
+          '  directUrl: process.env.DIRECT_URL ?? null,',
+          '  cwd: process.cwd(),',
+          '}));',
+          `process.stdout.write(${JSON.stringify(
+            `${JSON.stringify(payload)}\n`
+          )});`,
+          `process.exit(${options.exitCode ?? (payload.ok === false ? 1 : 0)});`,
+          '',
+        ].join('\n')
+    );
+  }
+
+  return { dir, workerPath, capturePath, configPath, socketUrl };
+}
+
 function readCapture(capturePath: string): {
   argv: string[];
   databaseUrl: string | null;
@@ -538,6 +618,436 @@ describe('seqdesk npm launcher pipeline dispatch', () => {
     expect(JSON.parse(result.stdout)).toEqual({
       success: false,
       error: '--dir requires a directory path',
+    });
+  });
+});
+
+describe('seqdesk npm launcher storage dispatch', () => {
+  it('lists storage in top-level help and provides command and alias help', () => {
+    const topLevel = spawnSync(process.execPath, [launcherPath, '--help'], {
+      encoding: 'utf-8',
+    });
+    const group = spawnSync(process.execPath, [launcherPath, 'storage', '--help'], {
+      encoding: 'utf-8',
+    });
+    const configure = spawnSync(
+      process.execPath,
+      [launcherPath, 'storage', 'configure', '--help'],
+      { encoding: 'utf-8' }
+    );
+    const alias = spawnSync(
+      process.execPath,
+      [launcherPath, 'data-storage', 'status', '--help'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(topLevel.status).toBe(0);
+    expect(topLevel.stdout).toContain(
+      'seqdesk storage <configure|status> [options]'
+    );
+    for (const result of [group, configure, alias]) {
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        'seqdesk storage configure <absolute-path>'
+      );
+      expect(result.stdout).toContain('seqdesk storage status');
+      expect(result.stdout).toContain('seqdesk data-storage');
+    }
+  });
+
+  it('dispatches configure with spaces intact and the selected database environment', () => {
+    const dataPath = '/srv/seqdesk data/incoming reads';
+    const directUrl =
+      'postgresql://seqdesk:secret@127.0.0.1:5433/seqdesk-direct';
+    const fixture = makeStorageInstall({
+      runtime: {
+        databaseUrl:
+          'postgresql://seqdesk:secret@127.0.0.1:5432/seqdesk',
+        directUrl,
+      },
+      payload: {
+        ok: true,
+        action: 'configure',
+        dataBasePath: dataPath,
+        source: 'file',
+        readable: true,
+        writable: true,
+        created: true,
+      },
+    });
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'storage',
+        'configure',
+        dataPath,
+        '--dir',
+        fixture.dir,
+        '--create',
+        '--yes',
+      ],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(dataPath);
+    const captured = readCapture(fixture.capturePath);
+    expect(captured.argv).toEqual([
+      'configure',
+      '--path',
+      dataPath,
+      '--config',
+      fixture.configPath,
+      '--create',
+      '--json',
+    ]);
+    expect(captured.databaseUrl).toBe(
+      'postgresql://seqdesk:secret@127.0.0.1:5432/seqdesk'
+    );
+    expect(captured.directUrl).toBe(directUrl);
+    expect(fs.realpathSync(captured.cwd)).toBe(
+      fs.realpathSync(path.join(fixture.dir, 'current'))
+    );
+  });
+
+  it('resolves the default install for the data-storage status alias', () => {
+    const dataPath = '/srv/seqdesk-data';
+    const fixture = makeStorageInstall({
+      payload: {
+        ok: true,
+        action: 'status',
+        path: dataPath,
+        source: 'database',
+        inspection: {
+          readable: true,
+          writable: false,
+          ready: true,
+        },
+        warnings: ['The directory is readable but not writable.'],
+      },
+    });
+    const neutralDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'seqdesk-storage-neutral-')
+    );
+    const homeDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'seqdesk-storage-home-')
+    );
+    tempDirs.push(neutralDir, homeDir);
+    const configHome = path.join(homeDir, '.config');
+    const pointerPath = path.join(
+      configHome,
+      'seqdesk',
+      'default-install'
+    );
+    fs.mkdirSync(path.dirname(pointerPath), { recursive: true });
+    fs.writeFileSync(pointerPath, `${fixture.dir}\n`);
+
+    const result = spawnSync(
+      process.execPath,
+      [launcherPath, 'data-storage', 'status', '--json'],
+      {
+        cwd: neutralDir,
+        encoding: 'utf-8',
+        env: discoveryEnv({ HOME: homeDir, XDG_CONFIG_HOME: configHome }),
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      command: 'status',
+      installDir: fixture.dir,
+      configPath: fixture.configPath,
+      path: dataPath,
+      inspection: {
+        readable: true,
+        writable: false,
+        ready: true,
+      },
+    });
+    expect(readCapture(fixture.capturePath).argv).toEqual([
+      'status',
+      '--config',
+      fixture.configPath,
+      '--json',
+    ]);
+
+    const readable = spawnSync(
+      process.execPath,
+      [launcherPath, 'storage', 'status', '--dir', fixture.dir],
+      { encoding: 'utf-8' }
+    );
+    expect(readable.status).toBe(0);
+    expect(readable.stdout).toContain('Readable');
+    expect(readable.stdout).toContain('Writable');
+    expect(readable.stdout).toContain(
+      'The directory is readable but not writable.'
+    );
+  });
+
+  it('requires confirmation before configure and does not start the worker when declined', () => {
+    const dataPath = '/srv/seqdesk-data';
+    const fixture = makeStorageInstall();
+
+    const declined = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'storage',
+        'configure',
+        dataPath,
+        '--dir',
+        fixture.dir,
+      ],
+      { encoding: 'utf-8', input: 'n\n' }
+    );
+
+    expect(declined.status).toBe(1);
+    expect(declined.stdout).toContain(
+      'Configure this data storage path? (y/N)'
+    );
+    expect(declined.stderr).toContain(
+      'No data storage setting was changed'
+    );
+    expect(fs.existsSync(fixture.capturePath)).toBe(false);
+
+    const accepted = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'storage',
+        'configure',
+        dataPath,
+        '--dir',
+        fixture.dir,
+      ],
+      { encoding: 'utf-8', input: 'yes\n' }
+    );
+
+    expect(accepted.status).toBe(0);
+    expect(fs.existsSync(fixture.capturePath)).toBe(true);
+  });
+
+  it('rejects missing, relative, empty, and filesystem-root paths before dispatch', () => {
+    const fixture = makeStorageInstall();
+    const argumentSets = [
+      ['storage', 'configure'],
+      ['storage', 'configure', 'relative/data'],
+      ['storage', 'configure', ''],
+      ['storage', 'configure', path.parse(process.cwd()).root],
+    ];
+
+    for (const commandArgs of argumentSets) {
+      const result = spawnSync(
+        process.execPath,
+        [
+          launcherPath,
+          ...commandArgs,
+          '--dir',
+          fixture.dir,
+          '--yes',
+        ],
+        { encoding: 'utf-8' }
+      );
+      expect(result.status).toBe(2);
+    }
+    expect(fs.existsSync(fixture.capturePath)).toBe(false);
+  });
+
+  it('requires --yes for JSON configure and emits only the final worker JSON object', () => {
+    const dataPath = '/srv/seqdesk-data';
+    const fixture = makeStorageInstall({
+      worker: [
+        'console.log("worker diagnostic that must not leak to launcher stdout");',
+        `console.log(JSON.stringify(${JSON.stringify({
+          ok: true,
+          action: 'configure',
+          dataBasePath: dataPath,
+          readable: true,
+        })}));`,
+        '',
+      ].join('\n'),
+    });
+
+    const unconfirmed = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'storage',
+        'configure',
+        dataPath,
+        '--dir',
+        fixture.dir,
+        '--json',
+      ],
+      { encoding: 'utf-8' }
+    );
+    expect(unconfirmed.status).toBe(2);
+    expect(unconfirmed.stderr).toBe('');
+    expect(JSON.parse(unconfirmed.stdout)).toEqual({
+      ok: false,
+      error: expect.stringContaining('--json requires --yes'),
+    });
+
+    const confirmed = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'storage',
+        'configure',
+        dataPath,
+        '--dir',
+        fixture.dir,
+        '--yes',
+        '--json',
+      ],
+      { encoding: 'utf-8' }
+    );
+    expect(confirmed.status).toBe(0);
+    expect(confirmed.stderr).toBe('');
+    expect(confirmed.stdout.trim().split('\n')).toHaveLength(1);
+    expect(JSON.parse(confirmed.stdout)).toMatchObject({
+      ok: true,
+      command: 'configure',
+      installDir: fixture.dir,
+      configPath: fixture.configPath,
+      dataBasePath: dataPath,
+      readable: true,
+    });
+  });
+
+  it('reports a missing installed worker with an actionable update command', () => {
+    const fixture = makeStorageInstall({ worker: null });
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'storage',
+        'status',
+        '--dir',
+        fixture.dir,
+        '--json',
+      ],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: false,
+      command: 'status',
+      installDir: fixture.dir,
+      error: expect.stringContaining('no data-storage worker'),
+      remediation: expect.stringContaining('Update this SeqDesk install'),
+    });
+  });
+
+  it('returns a failing status with guidance for a configured path that is missing', () => {
+    const dataPath = '/srv/missing-seqdesk-data';
+    const fixture = makeStorageInstall({
+      payload: {
+        ok: true,
+        action: 'status',
+        source: 'file',
+        path: dataPath,
+        ready: false,
+        inspection: {
+          configured: true,
+          requestedPath: dataPath,
+          absolute: true,
+          exists: false,
+          directory: false,
+          readable: false,
+          searchable: false,
+          writable: false,
+          ready: false,
+          error: 'The data storage directory does not exist.',
+        },
+        warnings: ['The data storage directory does not exist.'],
+      },
+    });
+
+    const human = spawnSync(
+      process.execPath,
+      [launcherPath, 'storage', 'status', '--dir', fixture.dir],
+      { encoding: 'utf-8' }
+    );
+    expect(human.status).toBe(1);
+    expect(human.stdout).toContain('Ready');
+    expect(human.stdout).toContain('does not exist');
+    expect(human.stdout).toContain('--create');
+    expect(human.stdout).not.toContain('Make the directory readable by');
+
+    const json = spawnSync(
+      process.execPath,
+      [launcherPath, 'storage', 'status', '--dir', fixture.dir, '--json'],
+      { encoding: 'utf-8' }
+    );
+    expect(json.status).toBe(1);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      ok: true,
+      command: 'status',
+      path: dataPath,
+      ready: false,
+    });
+  });
+
+  it('rejects incompatible worker success objects and preserves worker error codes', () => {
+    const incompatible = makeStorageInstall({
+      payload: {},
+      exitCode: 0,
+    });
+    const incompatibleResult = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'storage',
+        'configure',
+        '/srv/seqdesk-data',
+        '--dir',
+        incompatible.dir,
+        '--yes',
+        '--json',
+      ],
+      { encoding: 'utf-8' }
+    );
+    expect(incompatibleResult.status).toBe(1);
+    expect(JSON.parse(incompatibleResult.stdout)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('incompatible result'),
+    });
+
+    const workerFailure = makeStorageInstall({
+      payload: {
+        ok: false,
+        action: 'configure',
+        code: 'PATH_NOT_FOUND',
+        error: 'The data storage directory does not exist.',
+      },
+    });
+    const failureResult = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'storage',
+        'configure',
+        '/srv/seqdesk-data',
+        '--dir',
+        workerFailure.dir,
+        '--yes',
+        '--json',
+      ],
+      { encoding: 'utf-8' }
+    );
+    expect(failureResult.status).toBe(1);
+    expect(JSON.parse(failureResult.stdout)).toMatchObject({
+      ok: false,
+      code: 'PATH_NOT_FOUND',
+      error: 'The data storage directory does not exist.',
     });
   });
 });

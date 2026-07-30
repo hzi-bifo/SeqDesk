@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import * as path from "node:path";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { resolveDataBasePathFromStoredValue } from "@/lib/files/data-base-path";
+import { inspectDataStoragePath } from "@/lib/files/data-storage-path-validation";
 
 export interface SequencingFilesConfig {
   allowedExtensions: string[];
@@ -85,6 +87,15 @@ export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
     const { dataBasePath, config } = body;
+    if (dataBasePath !== undefined && typeof dataBasePath !== "string") {
+      return NextResponse.json(
+        {
+          error: "Data storage path must be a string",
+          code: "invalid-data-storage-path",
+        },
+        { status: 400 }
+      );
+    }
 
     // Get current settings
     const settings = await db.siteSettings.findUnique({
@@ -97,6 +108,58 @@ export async function PUT(request: NextRequest) {
         extraSettings = JSON.parse(settings.extraSettings);
       } catch {
         extraSettings = {};
+      }
+    }
+
+    let inspectedPath:
+      | Awaited<ReturnType<typeof inspectDataStoragePath>>
+      | undefined;
+    const requestedDataBasePath =
+      dataBasePath === undefined ? undefined : String(dataBasePath).trim();
+    if (requestedDataBasePath) {
+      inspectedPath = await inspectDataStoragePath(requestedDataBasePath);
+      if (!inspectedPath.valid || !inspectedPath.configuredPath) {
+        return NextResponse.json(
+          {
+            error: inspectedPath.error || "Invalid data storage path",
+            code: "invalid-data-storage-path",
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (dataBasePath !== undefined) {
+      const resolved = resolveDataBasePathFromStoredValue(
+        settings?.dataBasePath
+      );
+      const effectivePath = resolved.dataBasePath?.trim() || "";
+      const nextPath = inspectedPath?.configuredPath || "";
+      const comparableEffectivePath = effectivePath
+        ? path.resolve(effectivePath)
+        : "";
+      const comparableNextPath = nextPath ? path.resolve(nextPath) : "";
+      if (
+        (resolved.source === "env" || resolved.source === "file") &&
+        comparableNextPath !== comparableEffectivePath
+      ) {
+        const sourceLabel =
+          resolved.source === "env"
+            ? "SEQDESK_DATA_PATH"
+            : "the installed settings file";
+        const remediation =
+          resolved.source === "env"
+            ? "Update SEQDESK_DATA_PATH in the SeqDesk service environment and restart the service."
+            : `Run \`seqdesk storage configure ${nextPath || "/absolute/path/to/sequencing-data"}\` on the SeqDesk host.`;
+        return NextResponse.json(
+          {
+            error: `Data Storage is managed by ${sourceLabel}; saving a database-only value would not change the active path. ${remediation}`,
+            code: "data-storage-path-overridden",
+            source: resolved.source,
+            effectivePath,
+          },
+          { status: 409 }
+        );
       }
     }
 
@@ -120,7 +183,7 @@ export async function PUT(request: NextRequest) {
       extraSettings: JSON.stringify(extraSettings),
     };
     if (dataBasePath !== undefined) {
-      updateData.dataBasePath = dataBasePath.trim() || null;
+      updateData.dataBasePath = inspectedPath?.configuredPath || null;
     }
 
     // Upsert the settings
@@ -133,7 +196,15 @@ export async function PUT(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({
+      success: true,
+      ...(dataBasePath !== undefined
+        ? {
+            dataBasePath: updateData.dataBasePath,
+            writable: inspectedPath?.writable ?? false,
+          }
+        : {}),
+    });
   } catch (error) {
     console.error("[Sequencing Files Settings] Error saving:", error);
     return NextResponse.json({ error: "Failed to save settings" }, { status: 500 });

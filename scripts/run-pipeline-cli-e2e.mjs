@@ -324,13 +324,13 @@ async function runPrimaryCliFlow(context, client, fixture) {
 
   const humanList = await runHumanCli(context, ["pipelines", "list"]);
   for (const expectedText of [
+    "SeqDesk pipelines",
     "PIPELINE",
-    "TARGETS",
+    "USE WITH",
     "PACKAGE",
-    "SETUP",
-    "ACTIVE",
-    "NEXT",
-    "What to do next:",
+    "STATE",
+    "Start here",
+    `seqdesk pipelines install ${pipelineId}`,
     "seqdesk pipelines install <pipeline-id>",
     "seqdesk pipelines status <pipeline-id>",
     "https://seqdesk.org/docs/pipelines/installing-pipelines",
@@ -341,6 +341,17 @@ async function runPrimaryCliFlow(context, client, fixture) {
       humanList.stdout
     );
   }
+  assert(
+    !humanList.stdout.includes("Loaded pipeline package") &&
+      !humanList.stderr.includes("Loaded pipeline package"),
+    "Human pipeline list included package-discovery diagnostics",
+    JSON.stringify(humanList, null, 2)
+  );
+  assert(
+    !humanList.stdout.includes("\u001b["),
+    "Piped human pipeline list unexpectedly included terminal colors",
+    humanList.stdout
+  );
 
   const orderList = await runCli(context, [
     "pipelines",

@@ -212,7 +212,10 @@ describe("settings and misc route quick wins", () => {
     );
     expect(await valid.json()).toEqual({
       valid: true,
-      resolvedPath: readsDir,
+      configuredPath: readsDir,
+      resolvedPath: await fsPromises.realpath(readsDir),
+      readable: true,
+      writable: true,
       totalFiles: 3,
       matchingFiles: 2,
       message: "Found 2 sequencing files (3 total files in root)",
@@ -228,7 +231,10 @@ describe("settings and misc route quick wins", () => {
     );
     expect(await emptyResult.json()).toEqual({
       valid: true,
-      resolvedPath: emptyDir,
+      configuredPath: emptyDir,
+      resolvedPath: await fsPromises.realpath(emptyDir),
+      readable: true,
+      writable: true,
       totalFiles: 0,
       matchingFiles: 0,
       message: "Directory is empty",
