@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   PIPELINE_STORE_FIXTURE_V1,
   PIPELINE_STORE_FIXTURE_V2,
+  PIPELINE_STORE_FIXTURE_FAULT_PHASE,
   PIPELINE_STORE_FIXTURE_RESOURCE_CONFIG_KEY,
   pipelineStoreFixtureResourceMarker,
   provisionPipelineStoreFixtureResource,
@@ -782,12 +783,14 @@ async function runDeterministicFixtureE2E() {
     );
 
     const update = await installStorePipeline(brokenUpdate, true);
+    const updateFailureDetail = [update.payload?.error, update.payload?.details]
+      .filter((value) => typeof value === "string")
+      .join("\n");
     assert(
       update.response.status === 422 &&
-        update.payload?.error === "Failed to install pipeline" &&
-        typeof update.payload?.details === "string" &&
-        update.payload.details.includes("definition.pipeline"),
-      `Invalid v2 update was not rejected by descriptor validation (${update.response.status})`,
+        updateFailureDetail.includes("definition.pipeline") &&
+        updateFailureDetail.includes(PIPELINE_STORE_FIXTURE_FAULT_PHASE),
+      `Faulting v2 update was not rejected after the backup swap (${update.response.status})`,
       JSON.stringify(update.payload, null, 2)
     );
 
