@@ -38,6 +38,18 @@ describe("GET /api/tickets/unread", () => {
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
+  it("returns zero for demo users without querying tickets", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "demo-1", role: "FACILITY_ADMIN", isDemo: true },
+    });
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ count: 0 });
+    expect(mocks.db.ticket.findMany).not.toHaveBeenCalled();
+  });
+
   it("returns unread count for admin based on lastUserMessageAt vs adminReadAt", async () => {
     mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.db.ticket.findMany.mockResolvedValue([

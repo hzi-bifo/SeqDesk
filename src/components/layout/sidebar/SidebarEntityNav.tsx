@@ -99,11 +99,13 @@ export function SidebarEntityNav({
   } = useStudyFormSteps(showAdminControls, entityType === "study" ? entityId : null);
   const orderPipelines = useOrderPipelines(
     showAdminControls,
-    entityType === "order" ? entityId : null
+    entityType === "order" ? entityId : null,
+    !isDemoUser
   );
   const studyPipelines = useStudyPipelines(
     showAdminControls,
-    entityType === "study" ? entityId : null
+    entityType === "study" ? entityId : null,
+    !isDemoUser
   );
   const facilityStep = orderFormSteps.find((step) => step.id === "_facility");
   const detailOrderSteps = orderFormSteps.filter((step) => step.id !== "_facility");

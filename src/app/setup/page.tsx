@@ -351,9 +351,13 @@ export default function SetupPage() {
 
   useEffect(() => {
     void loadStatus();
+  }, [loadStatus]);
+
+  useEffect(() => {
+    if (status?.phase === "ready") return;
     const interval = setInterval(() => void loadStatus(), 2500);
     return () => clearInterval(interval);
-  }, [loadStatus]);
+  }, [loadStatus, status?.phase]);
 
   const phaseCopy = status ? PHASE_COPY[status.phase] : PHASE_COPY.seeding;
   const statusBadge = useMemo(() => {

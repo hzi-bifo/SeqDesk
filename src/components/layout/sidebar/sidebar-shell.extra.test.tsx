@@ -106,6 +106,7 @@ describe("sidebar shell quick wins", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     delete process.env.SEQDESK_APP_SURFACE;
     delete process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE;
     delete process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY;
@@ -179,6 +180,26 @@ describe("sidebar shell quick wins", () => {
     expect(screen.getByRole("link", { name: "Account Settings" }).getAttribute("href")).toBe(
       "/settings"
     );
+  });
+
+  it("does not fetch unread ticket counts for demo users", () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <SidebarContext.Provider value={sidebarValue(false)}>
+        <Sidebar
+          user={{
+            name: "Demo User",
+            role: "FACILITY_ADMIN",
+            isDemo: true,
+            demoExperience: "facility",
+          }}
+        />
+      </SidebarContext.Provider>
+    );
+
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/tickets/unread");
   });
 
   it("renders footer layout, toggles help text, and reflects collapsed width", () => {

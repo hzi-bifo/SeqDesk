@@ -110,6 +110,23 @@ describe("GET /api/admin/workers", () => {
     });
   });
 
+  it("returns no workers for demo admins without querying worker state", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "demo-1", role: "FACILITY_ADMIN", isDemo: true },
+    });
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      workers: [],
+      pipelineLoad: null,
+    });
+    expect(mocks.visibleWorkers).not.toHaveBeenCalled();
+    expect(mocks.listPausedWorkers).not.toHaveBeenCalled();
+    expect(mocks.getPipelineLoadSummary).not.toHaveBeenCalled();
+  });
+
   it("returns pipeline load when worker reconciliation fails", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "admin-1", role: "FACILITY_ADMIN" },

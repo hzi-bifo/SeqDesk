@@ -14,6 +14,9 @@ export async function GET() {
   if (!session || session.user.role !== "FACILITY_ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (session.user.isDemo) {
+    return NextResponse.json({ workers: [], pipelineLoad: null });
+  }
 
   let workersError: string | undefined;
   let pipelineLoadError: string | undefined;

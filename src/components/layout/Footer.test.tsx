@@ -155,19 +155,13 @@ describe("Footer admin activity", () => {
     expect(screen.getByText(/ETA 1m/)).toBeTruthy();
   });
 
-  it("skips the facility-admin polling for demo users", async () => {
+  it("skips all background polling for demo users", () => {
     render(<Footer isDemo />);
-
-    await waitFor(() => {
-      expect(
-        (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
-      ).toBeGreaterThan(0);
-    });
 
     const requested = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map(
       (call) => String(call[0])
     );
-    expect(requested.some((url) => url.startsWith("/api/notifications"))).toBe(true);
+    expect(requested.some((url) => url.startsWith("/api/notifications"))).toBe(false);
     expect(requested).not.toContain("/api/admin/activity");
     expect(requested).not.toContain("/api/admin/workers");
   });

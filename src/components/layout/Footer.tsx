@@ -867,6 +867,14 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
   }, [isDemo, loadWorkerStatus, reconcileWorkerActionErrors]);
 
   useEffect(() => {
+    if (isDemo) {
+      setNotificationsEnabled(false);
+      setNotificationsOpen(false);
+      setNotifications([]);
+      setUnreadNotificationCount(0);
+      return;
+    }
+
     let cancelled = false;
 
     async function loadNotifications() {
@@ -880,15 +888,19 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
       cancelled = true;
       stopPolling();
     };
-  }, [refreshNotifications]);
+  }, [isDemo, refreshNotifications]);
 
   useEffect(() => {
+    if (isDemo) {
+      return;
+    }
+
     const handleNotificationRefresh = () => void refreshNotifications();
     window.addEventListener(PANEL_NOTIFICATIONS_REFRESH_EVENT, handleNotificationRefresh);
     return () => {
       window.removeEventListener(PANEL_NOTIFICATIONS_REFRESH_EVENT, handleNotificationRefresh);
     };
-  }, [refreshNotifications]);
+  }, [isDemo, refreshNotifications]);
 
   const visibleJobs = useMemo(
     () =>

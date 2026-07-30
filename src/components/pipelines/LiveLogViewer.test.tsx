@@ -128,6 +128,25 @@ describe("LiveLogViewer", () => {
     expect(screen.getByText("No log output available yet")).toBeTruthy();
   });
 
+  it("disables SWR polling and focus refreshes when polling is disabled", () => {
+    render(
+      <LiveLogViewer
+        runId="run-1"
+        isRunning
+        enablePolling={false}
+      />
+    );
+
+    expect(mocks.useSWR).toHaveBeenCalledTimes(2);
+    for (const call of mocks.useSWR.mock.calls) {
+      expect(call[2]).toMatchObject({
+        refreshInterval: 0,
+        revalidateOnFocus: false,
+        revalidateOnReconnect: false,
+      });
+    }
+  });
+
   it("shows steps, notifies the parent, and refreshes both log streams", async () => {
     const onStepsUpdate = vi.fn();
     const { container } = render(

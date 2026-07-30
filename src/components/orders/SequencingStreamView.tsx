@@ -62,6 +62,7 @@ interface SequencingStreamViewProps {
   orderId: string;
   samples: SequencingSampleRow[];
   canManage: boolean;
+  enablePolling?: boolean;
   onDataChanged: () => void;
 }
 
@@ -122,6 +123,7 @@ export function SequencingStreamView({
   orderId,
   samples,
   canManage,
+  enablePolling = true,
   onDataChanged,
 }: SequencingStreamViewProps) {
   const [runs, setRuns] = useState<StreamRunSummary[]>([]);
@@ -183,9 +185,10 @@ export function SequencingStreamView({
 
   useEffect(() => {
     void refreshRuns();
+    if (!enablePolling) return;
     const handle = setInterval(() => void refreshRuns(), 5000);
     return () => clearInterval(handle);
-  }, [refreshRuns]);
+  }, [enablePolling, refreshRuns]);
 
   const refreshDaemon = useCallback(async () => {
     try {
@@ -215,9 +218,10 @@ export function SequencingStreamView({
 
   useEffect(() => {
     void refreshDaemon();
+    if (!enablePolling) return;
     const handle = setInterval(() => void refreshDaemon(), 5000);
     return () => clearInterval(handle);
-  }, [refreshDaemon]);
+  }, [enablePolling, refreshDaemon]);
 
   // Poll per-barcode aggregates only while a run is active. Stops polling
   // automatically when the run ends to avoid churning the DB.
@@ -275,12 +279,17 @@ export function SequencingStreamView({
       }
     };
     void fetchBarcodes();
+    if (!enablePolling) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const handle = setInterval(() => void fetchBarcodes(), 5000);
     return () => {
       cancelled = true;
       clearInterval(handle);
     };
-  }, [activeRun, orderId]);
+  }, [activeRun, enablePolling, orderId]);
 
   const handleStartDaemon = async () => {
     setStartingDaemon(true);
@@ -348,12 +357,17 @@ export function SequencingStreamView({
       }
     };
     void fetchEvents();
+    if (!enablePolling) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const handle = setInterval(() => void fetchEvents(), 3000);
     return () => {
       cancelled = true;
       clearInterval(handle);
     };
-  }, [activeRun, orderId, refreshRuns, onDataChanged]);
+  }, [activeRun, enablePolling, orderId, refreshRuns, onDataChanged]);
 
   const handleStart = async () => {
     if (!outputDir.trim()) {

@@ -66,7 +66,8 @@ async function fetchStudyPipelineDefinitions(): Promise<StudyPipelineDefinition[
 
 export function useStudyPipelines(
   showAdminControls: boolean,
-  studyId: string | null
+  studyId: string | null,
+  enablePolling = true
 ): StudyPipelineNavItem[] {
   const [fetchedPipelines, setFetchedPipelines] = useState<StudyPipelineNavItem[]>([]);
 
@@ -117,13 +118,15 @@ export function useStudyPipelines(
     };
 
     void refresh();
-    const stopPolling = startVisiblePolling(() => void refresh(), 15000);
+    const stopPolling = enablePolling
+      ? startVisiblePolling(() => void refresh(), 15000)
+      : () => undefined;
 
     return () => {
       cancelled = true;
       stopPolling();
     };
-  }, [showAdminControls, studyId]);
+  }, [enablePolling, showAdminControls, studyId]);
 
   return showAdminControls && studyId ? fetchedPipelines : [];
 }

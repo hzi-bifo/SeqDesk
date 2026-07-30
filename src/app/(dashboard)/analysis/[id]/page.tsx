@@ -360,15 +360,19 @@ export default function AnalysisRunDetailPage({
   const searchParamString = searchParams.toString();
   const { data: session } = useSession();
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const isDemoUser = session?.user?.isDemo === true;
 
   const { data, error, isLoading, mutate } = useSWR(
     `/api/pipelines/runs/${id}`,
     fetcher,
     {
       refreshInterval: (latestData) => {
+        if (isDemoUser) return 0;
         const s = latestData?.run?.status;
         return s === "running" || s === "queued" || s === "pending" ? 15000 : 0;
       },
+      revalidateOnFocus: !isDemoUser,
+      revalidateOnReconnect: !isDemoUser,
     }
   );
 
@@ -426,7 +430,9 @@ export default function AnalysisRunDetailPage({
     slurmAvailability,
     slurmAvailabilityLoading,
     slurmAvailabilityError,
-  } = useSlurmAvailability(Boolean(isFacilityAdmin && run?.status === "failed"));
+  } = useSlurmAvailability(
+    Boolean(isFacilityAdmin && !isDemoUser && run?.status === "failed")
+  );
   const retryPipeline = useMemo(
     () =>
       (pipelineSettingsData?.pipelines ?? []).find(
@@ -761,7 +767,7 @@ export default function AnalysisRunDetailPage({
   };
 
   useEffect(() => {
-    if (!runIsActive || syncForbidden) return;
+    if (isDemoUser || !runIsActive || syncForbidden) return;
     let active = true;
 
     const tick = async () => {
@@ -777,7 +783,7 @@ export default function AnalysisRunDetailPage({
       active = false;
       clearInterval(interval);
     };
-  }, [runIsActive, mutate, syncForbidden, syncRun]);
+  }, [isDemoUser, runIsActive, mutate, syncForbidden, syncRun]);
 
   const handleRetry = async () => {
     if (!run) return;
@@ -943,10 +949,10 @@ export default function AnalysisRunDetailPage({
     if (!run?.queueJobId) return;
 
     void fetchQueueStatus();
-    if (!runIsActive) return;
+    if (isDemoUser || !runIsActive) return;
     const interval = setInterval(fetchQueueStatus, 20000);
     return () => clearInterval(interval);
-  }, [run?.queueJobId, fetchQueueStatus, runIsActive]);
+  }, [run?.queueJobId, fetchQueueStatus, isDemoUser, runIsActive]);
 
   useEffect(() => {
     setShowPipelineProgress(run?.status !== "failed");
@@ -1486,6 +1492,7 @@ export default function AnalysisRunDetailPage({
             <LiveLogViewer
               runId={run.id}
               isRunning={effectiveRunStatus === "running"}
+              enablePolling={!isDemoUser}
               initialOutputTail={run.outputTail}
               initialErrorTail={run.errorTail}
             />

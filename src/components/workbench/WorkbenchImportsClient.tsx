@@ -135,7 +135,11 @@ function storeStatusLabel(item: StoreItem | undefined): string {
   return "Not installed";
 }
 
-export function WorkbenchImportsClient() {
+export function WorkbenchImportsClient({
+  enablePolling = true,
+}: {
+  enablePolling?: boolean;
+} = {}) {
   const [importers, setImporters] = useState<ImporterSummary[]>([]);
   const [jobs, setJobs] = useState<ImportJob[]>([]);
   const [storeItems, setStoreItems] = useState<StoreItem[]>([]);
@@ -200,6 +204,11 @@ export function WorkbenchImportsClient() {
       await Promise.all([refreshImporters(), refreshStore(), refreshJobs()]);
       if (cancelled) return;
     })();
+    if (!enablePolling) {
+      return () => {
+        cancelled = true;
+      };
+    }
     const interval = setInterval(
       () => void Promise.all([refreshImporters(), refreshStore(), refreshJobs()]),
       5000
@@ -208,7 +217,7 @@ export function WorkbenchImportsClient() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [enablePolling]);
 
   const startStoreInstall = async (itemId: string) => {
     setStoreOpen(true);

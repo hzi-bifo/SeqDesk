@@ -544,6 +544,11 @@ export default function OrderSequencingPage({
     }
   }, [isFacilityAdmin, orderId]);
 
+  const handleSequencingDataChanged = useCallback(() => {
+    void refreshSummary({ silent: true });
+    void refreshDelivery();
+  }, [refreshDelivery, refreshSummary]);
+
   const getSampleForReadPath = useCallback(
     (filePath: string) =>
       data?.samples.find(
@@ -1584,10 +1589,7 @@ export default function OrderSequencingPage({
           samples={data.samples}
           canManage={canManage}
           dataBasePathConfigured={data.dataBasePathConfigured}
-          onDataChanged={() => {
-            void refreshSummary({ silent: true });
-            void refreshDelivery();
-          }}
+          onDataChanged={handleSequencingDataChanged}
         />
       </PageContainer>
     );
@@ -1600,10 +1602,8 @@ export default function OrderSequencingPage({
           orderId={orderId}
           samples={data.samples}
           canManage={canManage}
-          onDataChanged={() => {
-            void refreshSummary({ silent: true });
-            void refreshDelivery();
-          }}
+          enablePolling={!isDemo}
+          onDataChanged={handleSequencingDataChanged}
         />
       </PageContainer>
     );

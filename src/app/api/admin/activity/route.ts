@@ -11,6 +11,9 @@ export async function GET() {
   if (!session || session.user.role !== "FACILITY_ADMIN") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
+  if (session.user.isDemo) {
+    return NextResponse.json({ jobs: [] });
+  }
 
   return NextResponse.json({ jobs: await listAdminActivityJobs() });
 }

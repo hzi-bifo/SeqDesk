@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -133,6 +133,7 @@ describe("SetupPage", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("shows ready state and default credentials for plain self-hosted installs", async () => {
@@ -145,6 +146,25 @@ describe("SetupPage", () => {
     expect(screen.getByText("Continue to login")).toBeTruthy();
     expect(screen.getByText("Default Login Credentials")).toBeTruthy();
     expect(screen.getByText("admin@example.com")).toBeTruthy();
+  });
+
+  it("stops checking the database after setup reports ready", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValue(jsonResponse(makeStatus()));
+
+    render(<SetupPage />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("SeqDesk is ready")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("shows managed profile context and hides default credentials", async () => {

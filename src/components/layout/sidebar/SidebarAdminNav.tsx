@@ -17,9 +17,14 @@ import { useModuleEnabled } from "@/lib/modules";
 interface SidebarAdminNavProps {
   collapsed: boolean;
   unreadMessages: number;
+  isDemoUser?: boolean;
 }
 
-export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavProps) {
+export function SidebarAdminNav({
+  collapsed,
+  unreadMessages,
+  isDemoUser = false,
+}: SidebarAdminNavProps) {
   const pathname = usePathname();
   const router = useRouter();
   const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
@@ -68,6 +73,18 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
 
   // Fetch infrastructure readiness
   useEffect(() => {
+    if (isDemoUser) {
+      setInfrastructureReadiness((current) => ({
+        ...current,
+        loading: false,
+        ready: true,
+        requiredMissingCount: 0,
+        recommendedMissingCount: 0,
+        missingItems: [],
+      }));
+      return;
+    }
+
     let mounted = true;
 
     const fetchInfrastructureReadiness = async () => {
@@ -110,7 +127,7 @@ export function SidebarAdminNav({ collapsed, unreadMessages }: SidebarAdminNavPr
       mounted = false;
       stopPolling();
     };
-  }, []);
+  }, [isDemoUser]);
 
   const isActive = (path: string) => {
     if (path === "/admin" && pathname === "/admin") return true;

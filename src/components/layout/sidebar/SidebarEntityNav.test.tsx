@@ -198,6 +198,7 @@ describe("SidebarEntityNav", () => {
     // Publishing is shown to demo users too, as a view-only showcase — the
     // registration view is reachable but the submit actions are disabled.
     expect(screen.getByText("Publishing")).toBeTruthy();
+    expect(mocks.useStudyPipelines).toHaveBeenCalledWith(true, "study-1", false);
   });
 
   it("renders study sequencing subitems under a single parent", () => {

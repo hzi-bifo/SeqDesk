@@ -209,7 +209,9 @@ export default function AnalysisDashboardPage() {
     isLoading,
     mutate,
   } = useSWR(runsEndpoint, fetcher, {
-    refreshInterval: 10000, // Refresh every 10 seconds for running jobs
+    refreshInterval: isDemoUser ? 0 : 10000,
+    revalidateOnFocus: !isDemoUser,
+    revalidateOnReconnect: !isDemoUser,
   });
 
   const syncRun = useCallback(async (runId: string) => {
@@ -292,7 +294,7 @@ export default function AnalysisDashboardPage() {
   });
 
   useEffect(() => {
-    if (syncDisabled || !activeKey) return;
+    if (isDemoUser || syncDisabled || !activeKey) return;
     const ids = activeKey.split(",");
     let active = true;
 
@@ -310,7 +312,7 @@ export default function AnalysisDashboardPage() {
       active = false;
       clearInterval(interval);
     };
-  }, [activeKey, mutate, syncDisabled, syncRun]);
+  }, [activeKey, isDemoUser, mutate, syncDisabled, syncRun]);
 
   return (
     <PageContainer>

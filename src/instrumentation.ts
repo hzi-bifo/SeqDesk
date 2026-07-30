@@ -18,14 +18,28 @@
  * file, so `rm -rf` fails with "Directory not empty"), and after an update the
  * stale monitor keeps running old code from a release dir that should be removed.
  *
- * Set SEQDESK_DISABLE_WORKER_AUTOSTART=1 to opt out (e.g. when running the
- * monitor as an external/PM2 process or on a non-pipeline deployment).
+ * Public demos and Vercel deployments never run local/SLURM pipelines, and a
+ * polling daemon there would only keep the remote database awake. Set
+ * SEQDESK_DISABLE_WORKER_AUTOSTART=1 to opt out explicitly elsewhere (e.g. when
+ * running the monitor as an external/PM2 process).
  */
+export function shouldAutostartPipelineMonitor(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  if (env.NEXT_RUNTIME !== "nodejs") return false;
+  if (env.SEQDESK_DISABLE_WORKER_AUTOSTART === "1") return false;
+  if (
+    env.SEQDESK_ENABLE_PUBLIC_DEMO === "true" ||
+    env.NEXT_PUBLIC_SEQDESK_ENABLE_PUBLIC_DEMO === "true"
+  ) {
+    return false;
+  }
+  if (env.VERCEL === "1") return false;
+  return true;
+}
+
 export async function register() {
-  // Only the Node.js server runtime can spawn child processes; skip the Edge
-  // runtime and any build-time invocation.
-  if (process.env.NEXT_RUNTIME !== "nodejs") return;
-  if (process.env.SEQDESK_DISABLE_WORKER_AUTOSTART === "1") return;
+  if (!shouldAutostartPipelineMonitor()) return;
 
   try {
     const { ensureWorkerStarted, wireMonitorLifecycle } = await import(

@@ -74,7 +74,8 @@ async function fetchOrderPipelineDefinitions(): Promise<OrderPipelineDefinition[
  */
 export function useOrderPipelines(
   showAdminControls: boolean,
-  orderId: string | null
+  orderId: string | null,
+  enablePolling = true
 ): OrderPipelineNavItem[] {
   const [fetchedPipelines, setFetchedPipelines] = useState<OrderPipelineNavItem[]>([]);
 
@@ -148,13 +149,15 @@ export function useOrderPipelines(
     };
 
     void refresh();
-    const stopPolling = startVisiblePolling(() => void refresh(), 15000);
+    const stopPolling = enablePolling
+      ? startVisiblePolling(() => void refresh(), 15000)
+      : () => undefined;
 
     return () => {
       cancelled = true;
       stopPolling();
     };
-  }, [showAdminControls, orderId]);
+  }, [enablePolling, showAdminControls, orderId]);
 
   return showAdminControls && orderId ? fetchedPipelines : [];
 }

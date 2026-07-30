@@ -46,6 +46,15 @@ export async function GET() {
     if (!session || session.user.role !== "FACILITY_ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    if (session.user.isDemo) {
+      return NextResponse.json({
+        ready: true,
+        requiredMissing: [],
+        recommendedMissing: [],
+        missingItems: [],
+        firstMissingHref: "/admin/data-compute",
+      } satisfies ReadinessResponse);
+    }
 
     const [resolvedDataBasePath, executionSettings] = await Promise.all([
       getResolvedDataBasePath(),

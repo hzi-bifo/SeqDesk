@@ -28,6 +28,13 @@ export async function GET(request: NextRequest) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (session.user.isDemo) {
+    return NextResponse.json({
+      enabled: false,
+      notifications: [],
+      unreadCount: 0,
+    });
+  }
 
   const { searchParams } = new URL(request.url);
   const limit = Number.parseInt(searchParams.get("limit") || "20", 10);
@@ -50,6 +57,9 @@ export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (session.user.isDemo) {
+    return NextResponse.json({ success: false, disabled: true });
   }
 
   const settings = await getInAppNotificationSettings();

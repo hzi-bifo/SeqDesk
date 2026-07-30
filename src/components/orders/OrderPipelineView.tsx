@@ -975,7 +975,11 @@ export function OrderPipelineView({
   const runsResponse = useSWR<{ runs: PipelineRun[]; total: number }>(
     `/api/pipelines/runs?orderId=${orderId}&pipelineId=${pipelineId}&limit=50`,
     fetcher,
-    { refreshInterval: 10000 }
+    {
+      refreshInterval: isDemo ? 0 : 10000,
+      revalidateOnFocus: !isDemo,
+      revalidateOnReconnect: !isDemo,
+    }
   );
 
   const pipeline = useMemo(
@@ -1464,14 +1468,14 @@ export function OrderPipelineView({
   }, []);
 
   useEffect(() => {
-    if (!hasActiveRuns) return;
+    if (isDemo || !hasActiveRuns) return;
 
     const interval = window.setInterval(() => {
       void runsResponse.mutate();
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [hasActiveRuns, runsResponse]);
+  }, [hasActiveRuns, isDemo, runsResponse]);
 
   const handleRunSingle = useCallback(
     async (sampleId: string) => {

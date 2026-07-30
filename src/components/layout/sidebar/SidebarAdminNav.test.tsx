@@ -77,6 +77,18 @@ describe("SidebarAdminNav", () => {
     expect(screen.queryByRole("link", { name: "Define Studies" })).toBeNull();
   });
 
+  it("does not fetch infrastructure readiness for demo users", () => {
+    render(
+      <SidebarAdminNav
+        collapsed={false}
+        unreadMessages={0}
+        isDemoUser
+      />
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("links to Define Studies when the dynamic-studies module is enabled", async () => {
     // ModuleProvider fetches /api/modules; the nav also fetches readiness.
     fetchMock.mockImplementation((url: string | URL) =>

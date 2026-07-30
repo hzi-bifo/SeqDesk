@@ -1,9 +1,13 @@
+import { getServerSession } from "next-auth";
 import { Download } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { WorkbenchPageHeader } from "@/components/workbench/WorkbenchPageShell";
 import { WorkbenchImportsClient } from "@/components/workbench/WorkbenchImportsClient";
+import { authOptions } from "@/lib/auth";
 
-export default function WorkbenchImportsPage() {
+export default async function WorkbenchImportsPage() {
+  const session = await getServerSession(authOptions);
+
   return (
     <PageContainer>
       <WorkbenchPageHeader
@@ -12,7 +16,7 @@ export default function WorkbenchImportsPage() {
         icon={Download}
       />
 
-      <WorkbenchImportsClient />
+      <WorkbenchImportsClient enablePolling={session?.user?.isDemo !== true} />
     </PageContainer>
   );
 }

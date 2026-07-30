@@ -77,6 +77,10 @@ export function Sidebar({ user, version }: SidebarProps) {
 
   // Fetch unread message count
   useEffect(() => {
+    if (isDemoUser) {
+      return;
+    }
+
     const fetchUnreadCount = async () => {
       try {
         const res = await fetch("/api/tickets/unread");
@@ -91,7 +95,7 @@ export function Sidebar({ user, version }: SidebarProps) {
 
     fetchUnreadCount();
     return startVisiblePolling(() => void fetchUnreadCount(), 30000);
-  }, []);
+  }, [isDemoUser]);
 
   // Close mobile sidebar on navigation
   useEffect(() => {
@@ -209,7 +213,11 @@ export function Sidebar({ user, version }: SidebarProps) {
 
           {/* Admin navigation */}
           <nav className={cn("flex-1 p-3 space-y-1 overflow-y-auto", collapsed && "px-2")}>
-            <SidebarAdminNav collapsed={collapsed} unreadMessages={unreadMessages} />
+            <SidebarAdminNav
+              collapsed={collapsed}
+              unreadMessages={isDemoUser ? 0 : unreadMessages}
+              isDemoUser={isDemoUser}
+            />
           </nav>
         </>
       ) : (
@@ -242,7 +250,10 @@ export function Sidebar({ user, version }: SidebarProps) {
 
               {/* Support section - Researchers only */}
               {!isFacilityAdmin && !isDemoUser && (
-                <SidebarSupportNav collapsed={collapsed} unreadMessages={unreadMessages} />
+                <SidebarSupportNav
+                  collapsed={collapsed}
+                  unreadMessages={isDemoUser ? 0 : unreadMessages}
+                />
               )}
             </>
           )}

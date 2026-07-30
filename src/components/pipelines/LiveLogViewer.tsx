@@ -23,6 +23,7 @@ interface StepInfo {
 interface LiveLogViewerProps {
   runId: string;
   isRunning: boolean;
+  enablePolling?: boolean;
   initialOutputTail?: string | null;
   initialErrorTail?: string | null;
   onStepsUpdate?: (steps: StepInfo[]) => void;
@@ -31,6 +32,7 @@ interface LiveLogViewerProps {
 export function LiveLogViewer({
   runId,
   isRunning,
+  enablePolling = true,
   initialOutputTail,
   initialErrorTail,
   onStepsUpdate,
@@ -48,7 +50,9 @@ export function LiveLogViewer({
     outputUrl,
     fetcher,
     {
-      refreshInterval: isRunning ? 3000 : 0,
+      refreshInterval: enablePolling && isRunning ? 3000 : 0,
+      revalidateOnFocus: enablePolling,
+      revalidateOnReconnect: enablePolling,
       fallbackData: { content: initialOutputTail || "", steps: [] },
     }
   );
@@ -58,7 +62,9 @@ export function LiveLogViewer({
     errorUrl,
     fetcher,
     {
-      refreshInterval: isRunning ? 3000 : 0,
+      refreshInterval: enablePolling && isRunning ? 3000 : 0,
+      revalidateOnFocus: enablePolling,
+      revalidateOnReconnect: enablePolling,
       fallbackData: { content: initialErrorTail || "" },
     }
   );

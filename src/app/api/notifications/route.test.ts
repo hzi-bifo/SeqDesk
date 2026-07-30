@@ -72,6 +72,23 @@ describe("GET /api/notifications", () => {
     });
   });
 
+  it("returns an empty payload for demo users without loading settings", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "demo-1", role: "FACILITY_ADMIN", isDemo: true },
+    });
+
+    const response = await GET(new NextRequest("http://localhost:3000/api/notifications"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.getInAppNotificationSettings).not.toHaveBeenCalled();
+    expect(mocks.listInAppNotifications).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({
+      enabled: false,
+      notifications: [],
+      unreadCount: 0,
+    });
+  });
+
   it("rejects unauthenticated users", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
@@ -144,6 +161,27 @@ describe("POST /api/notifications", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(mocks.createUserInAppNotification).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({
+      success: false,
+      disabled: true,
+    });
+  });
+
+  it("skips demo notification creation without loading settings", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "demo-1", role: "FACILITY_ADMIN", isDemo: true },
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/notifications", {
+        method: "POST",
+        body: JSON.stringify({ severity: "info", title: "Hello" }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.getInAppNotificationSettings).not.toHaveBeenCalled();
     expect(mocks.createUserInAppNotification).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toEqual({
       success: false,

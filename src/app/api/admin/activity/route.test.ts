@@ -63,4 +63,16 @@ describe("GET /api/admin/activity", () => {
 
     expect(response.status).toBe(403);
   });
+
+  it("returns no jobs for demo admins without loading activity", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "demo-1", role: "FACILITY_ADMIN", isDemo: true },
+    });
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ jobs: [] });
+    expect(mocks.listAdminActivityJobs).not.toHaveBeenCalled();
+  });
 });

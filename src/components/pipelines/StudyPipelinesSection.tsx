@@ -919,7 +919,7 @@ export function StudyPipelinesSection({
     slurmAvailability,
     slurmAvailabilityLoading,
     slurmAvailabilityError,
-  } = useSlurmAvailability(Boolean(isFacilityAdmin));
+  } = useSlurmAvailability(Boolean(isFacilityAdmin && !isDemoUser));
 
   // --- Derived data ---
   const enabledPipelines: Pipeline[] = useMemo(() => {
@@ -1184,16 +1184,16 @@ export function StudyPipelinesSection({
 
     void load();
     return () => { cancelled = true; };
-  }, [eligibleSampleIds, selectedPipeline, studyId]);
+  }, [eligibleSampleIds, isDemoUser, selectedPipeline, studyId]);
 
   // Poll when active runs exist
   useEffect(() => {
-    if (!hasActiveRuns) return;
+    if (isDemoUser || !hasActiveRuns) return;
     const interval = window.setInterval(() => {
       void mutateRuns();
     }, 5000);
     return () => window.clearInterval(interval);
-  }, [hasActiveRuns, mutateRuns]);
+  }, [hasActiveRuns, isDemoUser, mutateRuns]);
 
   // --- Handlers ---
 

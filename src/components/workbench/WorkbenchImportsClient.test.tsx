@@ -41,7 +41,25 @@ function storeItem(status = "installed", extra: Record<string, unknown> = {}) {
 describe("WorkbenchImportsClient", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     cleanup();
+  });
+
+  it("loads imports once without arming the refresh timer when polling is disabled", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "/api/workbench/importers") return jsonResponse({ importers: [] });
+      if (url === "/api/workbench/imports") return jsonResponse({ jobs: [] });
+      if (url === "/api/workbench/store") return jsonResponse({ items: [] });
+      return jsonResponse({}, { status: 404 });
+    });
+    const intervalSpy = vi.spyOn(globalThis, "setInterval");
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<WorkbenchImportsClient enablePolling={false} />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(intervalSpy.mock.calls.filter(([, delay]) => delay === 5000)).toHaveLength(0);
   });
 
   it("keeps imports empty by default, then opens installed Reference genomes from the Store", async () => {

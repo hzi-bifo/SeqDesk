@@ -59,6 +59,25 @@ describe("GET /api/admin/infrastructure/readiness", () => {
     expect(response.status).toBe(401);
   });
 
+  it("returns static readiness for demo admins without querying settings", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "demo-1", role: "FACILITY_ADMIN", isDemo: true },
+    });
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ready: true,
+      requiredMissing: [],
+      recommendedMissing: [],
+      missingItems: [],
+      firstMissingHref: "/admin/data-compute",
+    });
+    expect(mocks.getResolvedDataBasePath).not.toHaveBeenCalled();
+    expect(mocks.getExecutionSettings).not.toHaveBeenCalled();
+  });
+
   it("reports missing required settings when dataBasePath is empty", async () => {
     mocks.getResolvedDataBasePath.mockResolvedValue({
       dataBasePath: "",

@@ -11,6 +11,9 @@ export async function GET() {
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  if (session.user.isDemo) {
+    return NextResponse.json({ count: 0 });
+  }
 
   const isAdmin = session.user.role === "FACILITY_ADMIN";
   const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);

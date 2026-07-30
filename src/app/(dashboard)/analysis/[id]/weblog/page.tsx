@@ -3,6 +3,7 @@
 import { use, useMemo } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import useSWR from "swr";
 import {
   ArrowLeft,
@@ -354,12 +355,18 @@ export default function ProcessedWeblogPage({
 }) {
   const { id } = use(params);
   const searchParams = useSearchParams();
+  const { data: session } = useSession();
+  const isDemoUser = session?.user?.isDemo === true;
   const runContextQuery = searchParams.toString();
   const runHref = runContextQuery ? `/analysis/${id}?${runContextQuery}` : `/analysis/${id}`;
   const { data, error, isLoading, isValidating, mutate } = useSWR<WeblogData>(
     `/api/pipelines/runs/${id}/weblog?limit=500`,
     fetcher,
-    { refreshInterval: 15000 }
+    {
+      refreshInterval: isDemoUser ? 0 : 15000,
+      revalidateOnFocus: !isDemoUser,
+      revalidateOnReconnect: !isDemoUser,
+    }
   );
 
   const events = useMemo(() => data?.events ?? [], [data?.events]);

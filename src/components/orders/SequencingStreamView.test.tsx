@@ -172,6 +172,7 @@ describe("SequencingStreamView", () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
@@ -201,6 +202,44 @@ describe("SequencingStreamView", () => {
     expect(
       screen.getByText(/Make sure the stream-monitor daemon is running/i)
     ).toBeTruthy();
+  });
+
+  it("loads demo stream data once without arming background intervals", async () => {
+    installFetch({
+      runs: [activeRunSummary()],
+      daemonStatus: "RUNNING",
+    });
+    const intervalSpy = vi.spyOn(globalThis, "setInterval");
+
+    render(
+      <SequencingStreamView
+        orderId="order-1"
+        samples={samples}
+        canManage
+        enablePolling={false}
+        onDataChanged={onDataChanged}
+      />
+    );
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url]) => String(url) === "/api/orders/order-1/stream"
+        )
+      ).toHaveLength(1);
+      expect(
+        fetchMock.mock.calls.filter(([url]) => String(url) === "/api/admin/workers")
+      ).toHaveLength(1);
+      expect(
+        fetchMock.mock.calls.filter(([url]) => String(url).includes("/by-barcode"))
+      ).toHaveLength(1);
+      expect(
+        fetchMock.mock.calls.filter(([url]) => String(url).includes("/events"))
+      ).toHaveLength(1);
+    });
+    expect(
+      intervalSpy.mock.calls.filter(([, delay]) => delay === 3000 || delay === 5000)
+    ).toHaveLength(0);
   });
 
   it("validates the output directory before starting a stream", async () => {
