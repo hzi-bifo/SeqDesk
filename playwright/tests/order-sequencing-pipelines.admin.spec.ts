@@ -263,6 +263,18 @@ async function createSubmittedOrder(
   };
 }
 
+async function openSimulateReadsPipeline(page: Page, orderPath: string) {
+  await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`, {
+    waitUntil: "domcontentloaded",
+  });
+  await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible({
+    timeout: 30000,
+  });
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible({
+    timeout: 30000,
+  });
+}
+
 test("admin can run simulate reads with default settings", async ({ page }) => {
   await withAllowDeleteSubmittedOrdersLock(async () => {
     const orderName = `Playwright Simulate Reads ${Date.now()}`;
@@ -278,15 +290,9 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
       const orderId = created.orderId;
       expect(created.sampleIds).toHaveLength(1);
 
-      await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`, {
-        waitUntil: "domcontentloaded",
-      });
-      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible({
-        timeout: 30000,
-      });
+      await openSimulateReadsPipeline(page, orderPath);
 
       // Verify settings section exists with all controls
-      await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
       await expect(page.getByLabel("Read Count")).toBeVisible();
       await expect(page.getByLabel("Read Length")).toBeVisible();
       // Switch checkbox is sr-only; verify it's attached instead of visible
@@ -397,11 +403,7 @@ test("simulate reads settings: switch, mode, readCount, readLength all persist",
       expect(orderId).toBeTruthy();
 
       // ---- Run 1: paired-end, custom counts, replaceExisting OFF ----
-      await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
-      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible({
-        timeout: 15000,
-      });
-      await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+      await openSimulateReadsPipeline(page, orderPath);
 
       // Verify default values
       const readCountInput = page.getByLabel("Read Count");
@@ -461,8 +463,7 @@ test("simulate reads settings: switch, mode, readCount, readLength all persist",
       });
 
       // ---- Run 2: long-read mode, replaceExisting ON, different counts ----
-      await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
-      await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+      await openSimulateReadsPipeline(page, orderPath);
 
       // Settings should reset to defaults on page reload
       await expect(readCountInput).toHaveValue("1000");
@@ -550,10 +551,7 @@ test("simulate reads template mode replays facility templates and writes back re
       orderPath = created.orderPath;
       const orderId = created.orderId;
 
-      await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
-      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible({
-        timeout: 15000,
-      });
+      await openSimulateReadsPipeline(page, orderPath);
 
       await page.getByLabel("Simulation Source").click();
       await page.getByRole("option", { name: "Template replay" }).click();
@@ -658,12 +656,7 @@ test("simulate reads shows a clear error when template mode has no usable templa
         templateDir: templateRoot,
       });
 
-      await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`, {
-        waitUntil: "domcontentloaded",
-      });
-      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible({
-        timeout: 30000,
-      });
+      await openSimulateReadsPipeline(page, orderPath);
 
       const runRow = page.locator(
         `tr[aria-label="View details for ${run.runNumber}"]`,
@@ -677,21 +670,21 @@ test("simulate reads shows a clear error when template mode has no usable templa
       ).toBeVisible({ timeout: 30000 });
     } finally {
       if (runId) {
-        void deletePipelineRun(page, runId).catch(() => {});
+        await deletePipelineRun(page, runId).catch(() => {});
       }
 
       if (orderId) {
-        void page.request.delete(`/api/orders/${orderId}`).catch(() => {});
+        await page.request.delete(`/api/orders/${orderId}`).catch(() => {});
       }
 
-      void setPipelineConfig(
+      await setPipelineConfig(
         page,
         "simulate-reads",
         originalPipelineConfig.config,
         originalPipelineConfig.enabled,
       ).catch(() => {});
-      void fs.rm(templateRoot, { recursive: true, force: true }).catch(() => {});
-      void setAllowDeleteSubmittedOrders(page, originalAllowDeleteSetting).catch(() => {});
+      await fs.rm(templateRoot, { recursive: true, force: true }).catch(() => {});
+      await setAllowDeleteSubmittedOrders(page, originalAllowDeleteSetting).catch(() => {});
     }
   });
 });
@@ -712,10 +705,7 @@ test("replaceExisting=false preserves original reads and source run", async ({ p
       expect(orderId).toBeTruthy();
 
       // ---- Run 1: replaceExisting ON (default) — creates initial reads ----
-      await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
-      await expect(page.getByRole("heading", { name: "Simulate Reads" })).toBeVisible({
-        timeout: 15000,
-      });
+      await openSimulateReadsPipeline(page, orderPath);
 
       const readCountInput = page.getByLabel("Read Count");
       await readCountInput.fill("100");
@@ -737,8 +727,7 @@ test("replaceExisting=false preserves original reads and source run", async ({ p
       const originalFile1 = samplesAfterRun1[0].read!.file1;
 
       // ---- Run 2: replaceExisting OFF — should NOT change reads or source ----
-      await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
-      await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+      await openSimulateReadsPipeline(page, orderPath);
 
       const replaceSwitch = page.locator("#config-replaceExisting");
       await expect(replaceSwitch).toBeChecked();
@@ -767,8 +756,7 @@ test("replaceExisting=false preserves original reads and source run", async ({ p
       expect(samplesAfterRun2[0].read!.pipelineRunNumber).toBe(run1.runNumber);
 
       // ---- Run 3: replaceExisting ON — should update reads and source ----
-      await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
-      await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+      await openSimulateReadsPipeline(page, orderPath);
 
       await expect(replaceSwitch).toBeChecked();
       await readCountInput.fill("300");
@@ -792,7 +780,7 @@ test("replaceExisting=false preserves original reads and source run", async ({ p
       expect(samplesAfterRun3[0].read!.pipelineRunNumber).toBe(run3.runNumber);
 
       // Verify the Source column shows the correct run number in the UI
-      await page.goto(`${orderPath}/sequencing?pipeline=simulate-reads`);
+      await openSimulateReadsPipeline(page, orderPath);
       await expect(page.getByText(run3.runNumber, { exact: true }).first()).toBeVisible({
         timeout: 15000,
       });

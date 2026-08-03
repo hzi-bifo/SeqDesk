@@ -177,7 +177,8 @@ describe("demo workspace server helpers", () => {
         ],
       })
       .mockResolvedValueOnce({ id: "order-mouse" })
-      .mockResolvedValueOnce({ id: "order-human" })
+      .mockResolvedValueOnce({ id: "order-human-miseq", samples: [] })
+      .mockResolvedValueOnce({ id: "order-human-nextseq", samples: [] })
       .mockResolvedValueOnce({ id: "order-crc", samples: [] });
     mocks.db.statusNote.create.mockResolvedValue({});
     mocks.db.pipelineRun.create.mockResolvedValue({ id: "run-1" });
@@ -223,7 +224,7 @@ describe("demo workspace server helpers", () => {
     expect(mocks.db.user.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.study.create).toHaveBeenCalledTimes(5);
     expect(mocks.db.studyFormConfig.create).toHaveBeenCalledTimes(2);
-    expect(mocks.db.order.create).toHaveBeenCalledTimes(6);
+    expect(mocks.db.order.create).toHaveBeenCalledTimes(7);
     const draftOrder = mocks.db.order.create.mock.calls[0][0].data;
     const submittedOrder = mocks.db.order.create.mock.calls[1][0].data;
     expect(draftOrder.platform).toBeNull();
@@ -244,6 +245,63 @@ describe("demo workspace server helpers", () => {
         supportedReadLayouts: ["single", "paired"],
       },
     });
+    const mouseOrder = mocks.db.order.create.mock.calls[3][0].data;
+    expect(mouseOrder).toMatchObject({
+      instrumentModel: "Illumina MiSeq",
+      librarySelection: "PCR",
+      libraryStrategy: "AMPLICON",
+      numberOfSamples: 8,
+    });
+    expect(mouseOrder.samples.create[0].reads.create).toMatchObject({
+      runAccessionNumber: "DRR099973",
+      experimentAccessionNumber: "DRX093417",
+      readCount1: 91795,
+    });
+    expect(JSON.parse(mouseOrder.samples.create[0].customFields)).toMatchObject({
+      source_bioproject: "PRJDB6165",
+      source_biosample_accession: "SAMD00089915",
+      source_library_strategy: "WGS",
+      scientific_assay: "16S rRNA V3-V4 amplicon",
+    });
+    const humanMiseqOrder = mocks.db.order.create.mock.calls[4][0].data;
+    const humanNextseqOrder = mocks.db.order.create.mock.calls[5][0].data;
+    expect(humanMiseqOrder).toMatchObject({
+      instrumentModel: "Illumina MiSeq",
+      librarySelection: "other",
+      libraryStrategy: "WGS",
+      numberOfSamples: 7,
+    });
+    expect(humanNextseqOrder).toMatchObject({
+      instrumentModel: "NextSeq 550",
+      librarySelection: "other",
+      libraryStrategy: "WGS",
+      numberOfSamples: 5,
+    });
+    expect(humanMiseqOrder.samples.create[0].reads.create).toMatchObject({
+      runAccessionNumber: "ERR10009592",
+      experimentAccessionNumber: "ERX9550551",
+      readCount1: 466252,
+    });
+    expect(JSON.parse(humanMiseqOrder.samples.create[0].customFields)).toMatchObject({
+      source_bioproject: "PRJEB54724",
+      source_biosample_accession: "SAMEA110434724",
+      source_instrument_model: "Illumina MiSeq",
+    });
+    expect(humanNextseqOrder.samples.create[0].reads.create).toMatchObject({
+      runAccessionNumber: "ERR10009610",
+      experimentAccessionNumber: "ERX9550569",
+      readCount1: 659122,
+    });
+    expect(
+      humanMiseqOrder.samples.create.map(
+        (sample: { sampleAlias: string }) => sample.sampleAlias
+      )
+    ).toEqual(["HGM-01", "HGM-02", "HGM-03", "HGM-05", "HGM-08", "HGM-09", "HGM-10"]);
+    expect(
+      humanNextseqOrder.samples.create.map(
+        (sample: { sampleAlias: string }) => sample.sampleAlias
+      )
+    ).toEqual(["HGM-04", "HGM-06", "HGM-07", "HGM-11", "HGM-12"]);
     expect(mocks.db.statusNote.create).toHaveBeenCalledTimes(3);
     expect(mocks.db.pipelineRun.create).toHaveBeenCalledTimes(15);
     expect(mocks.db.pipelineResultSelection.create).toHaveBeenCalledTimes(12);

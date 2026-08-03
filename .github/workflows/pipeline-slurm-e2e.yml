@@ -1066,7 +1066,33 @@ jobs:
             src/lib/config/setup-conda-env-bootstrap.test.ts
 
       - name: Install Chromium for the required guided Store browser gate
-        run: npx playwright install chromium
+        run: |
+          set -euo pipefail
+          npx playwright install chromium
+
+          # Playwright does not install RPM dependencies on AlmaLinux. Prefer
+          # the system copy of libatk-bridge; when the runner image does not
+          # provide it, install the library into an isolated user-space Conda
+          # prefix and expose that prefix only to the browser gate.
+          BROWSER_BIN="$(node -e 'const { chromium } = require("playwright"); process.stdout.write(chromium.executablePath())')"
+          PLAYWRIGHT_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
+          if LD_LIBRARY_PATH="$PLAYWRIGHT_LD_LIBRARY_PATH" ldd "$BROWSER_BIN" 2>/dev/null \
+            | grep -F -q 'libatk-bridge-2.0.so.0 => not found'; then
+            PLAYWRIGHT_DEPS_PREFIX="$RUNNER_TEMP/playwright-alma-deps-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+            conda create --yes --prefix "$PLAYWRIGHT_DEPS_PREFIX" \
+              --override-channels --channel conda-forge \
+              at-spi2-atk=2.38.0
+            PLAYWRIGHT_LD_LIBRARY_PATH="$PLAYWRIGHT_DEPS_PREFIX/lib${PLAYWRIGHT_LD_LIBRARY_PATH:+:$PLAYWRIGHT_LD_LIBRARY_PATH}"
+          fi
+
+          MISSING_LIBRARIES="$(LD_LIBRARY_PATH="$PLAYWRIGHT_LD_LIBRARY_PATH" \
+            ldd "$BROWSER_BIN" | sed -n 's/^[[:space:]]*\([^[:space:]]*\) => not found$/\1/p')"
+          if [ -n "$MISSING_LIBRARIES" ]; then
+            echo "Chromium still has unresolved runtime libraries:" >&2
+            printf '%s\n' "$MISSING_LIBRARIES" >&2
+            exit 1
+          fi
+          echo "SEQDESK_PLAYWRIGHT_LD_LIBRARY_PATH=$PLAYWRIGHT_LD_LIBRARY_PATH" >> "$GITHUB_ENV"
 
       - name: Set database connection environment
         run: |
@@ -1175,6 +1201,7 @@ jobs:
 
       - name: Gate source app guided Store setup in a real browser
         env:
+          LD_LIBRARY_PATH: ${{ env.SEQDESK_PLAYWRIGHT_LD_LIBRARY_PATH }}
           PLAYWRIGHT_BASE_URL: http://127.0.0.1:${{ env.PORT }}
           SEQDESK_PIPELINES_DIR: ${{ env.SEQDESK_STAGED_PIPELINES_DIR }}
           SEQDESK_PLAYWRIGHT_STORE_PIPELINES_ROOT: ${{ env.SEQDESK_STAGED_PIPELINES_DIR }}
@@ -1497,21 +1524,33 @@ jobs:
           OUT="$RUNNER_TEMP/kraken-output"; mkdir -p "$OUT"
           echo "kraken2 DB: $KRAKEN2_DB"
           ls -la "$KRAKEN2_DB"/*.k2d "$KRAKEN2_DB"/database150mers.kmer_distrib 2>/dev/null | head
-          # Seed the real human-gut reads (idempotent download) + run kraken2-bracken LOCAL on the
-          # human-gut CI order (the harness treats kraken2-bracken as order-scoped). kraken2Db +
-          # bracken read length come via --config-json (the read-cleaning pattern).
-          if npm run pipeline:e2e:runtime -- \
-              --set-data-base-path "$SEQDESK_DATA_DIR" \
-              --seed-example-dataset human-gut-prjeb54724 \
-              --pipeline-id kraken2-bracken \
-              --order-number DEV-HUMAN-PRJEB54724-001 \
-              --config-json "{\"kraken2Db\":\"$KRAKEN2_DB\",\"brackenReadLength\":150,\"brackenLevel\":\"S\",\"krona\":true}" \
-              --skip-slurm \
-              2>&1 | tee "$RUNNER_TEMP/kraken-e2e.log"; then
-            echo "kraken2-bracken: OK"
-          else
-            echo "kraken2-bracken: FAILED (see log)"
-          fi
+          # Seed the real human-gut reads once, then profile both instrument-specific orders.
+          # kraken2-bracken is order-scoped, so a single order id would silently omit either the
+          # seven MiSeq runs or the five NextSeq 550 runs. kraken2Db + Bracken read length come via
+          # --config-json (the read-cleaning pattern).
+          HUMAN_ORDERS=(DEV-HUMAN-PRJEB54724-001 DEV-HUMAN-PRJEB54724-002)
+          FIRST_ORDER=1
+          KRAKEN_FAILS=""
+          for ORDER in "${HUMAN_ORDERS[@]}"; do
+            SEED_ARGS=()
+            if [ "$FIRST_ORDER" = 1 ]; then
+              SEED_ARGS=(--seed-example-dataset human-gut-prjeb54724)
+              FIRST_ORDER=0
+            fi
+            if npm run pipeline:e2e:runtime -- \
+                --set-data-base-path "$SEQDESK_DATA_DIR" \
+                "${SEED_ARGS[@]}" \
+                --pipeline-id kraken2-bracken \
+                --order-number "$ORDER" \
+                --config-json "{\"kraken2Db\":\"$KRAKEN2_DB\",\"brackenReadLength\":150,\"brackenLevel\":\"S\",\"krona\":true}" \
+                --skip-slurm \
+                2>&1 | tee "$RUNNER_TEMP/kraken-e2e-$ORDER.log"; then
+              echo "kraken2-bracken $ORDER: OK"
+            else
+              echo "kraken2-bracken $ORDER: FAILED (see log)"
+              KRAKEN_FAILS="$KRAKEN_FAILS $ORDER"
+            fi
+          done
           # Collect the taxonomy outputs (skip nextflow work/ intermediates).
           find "$SEQDESK_RUN_DIR" -type d -path '*/work' -prune -o \
             -type f \( -iname '*.kraken2.report.txt' -o -iname '*.bracken.tsv' -o -iname '*.bracken.report.txt' \
@@ -1524,12 +1563,13 @@ jobs:
           echo "collected $NFILES kraken/bracken/krona file(s):"
           find "$OUT" -type f -printf '  %f\n' 2>/dev/null | sort | head -60
           if [ "$NFILES" -gt 0 ]; then
-            printf 'Human-gut (PRJEB54724) kraken2-bracken taxonomy output\nrun=%s attempt=%s\n' \
-              "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$OUT/RUN_INFO.txt"
+            printf 'Human-gut (PRJEB54724) kraken2-bracken taxonomy output\nrun=%s attempt=%s\nfailed_orders=%s\n' \
+              "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "${KRAKEN_FAILS:-none}" > "$OUT/RUN_INFO.txt"
             echo "kraken/bracken reports staged for the workflow artifact"
           else
             echo "WARN: no kraken output collected"
           fi
+          echo "kraken2-bracken orders that failed:${KRAKEN_FAILS:- none}"
           exit 0
 
       # read-cleaning UNDER SLURM (source-boot, local + SLURM). The LOCAL run builds detaxizer's
@@ -2824,3 +2864,49 @@ jobs:
             conda env remove -n "$PIPELINE_CONDA_ENV" || true
           fi
           exit "$cleanup_fail"
+
+  publish_private_result:
+    name: Publish private acceptance result
+    if: ${{ always() && github.event_name == 'push' && github.repository == 'hzi-bifo/SeqDesk-ci' }}
+    needs: slurm_app_e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # Keep the large pipeline/runtime job read-only. Only this minimal job can
+      # publish the commit-specific tag consumed by the public mirror.
+      contents: write
+    steps:
+      - name: Check out the exact tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Publish result tag for the public mirror
+        env:
+          PRIVATE_GATE_STATUS: ${{ needs.slurm_app_e2e.result }}
+        run: |
+          set -euo pipefail
+          if [ "$PRIVATE_GATE_STATUS" = success ]; then
+            RESULT=success
+            OPPOSITE=failure
+          else
+            # Any non-success conclusion (failure, cancelled, skipped, timed out)
+            # is failure evidence for the required push gate.
+            RESULT=failure
+            OPPOSITE=success
+          fi
+
+          RESULT_TAG="seqdesk-private-ci/${GITHUB_SHA}/${RESULT}"
+          OPPOSITE_TAG="seqdesk-private-ci/${GITHUB_SHA}/${OPPOSITE}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force "$RESULT_TAG" "$GITHUB_SHA"
+          # A private rerun of the same immutable commit replaces, rather than
+          # contradicts, its previous result. Check before deleting because Git
+          # servers may reject deletion of a nonexistent remote ref.
+          if git ls-remote --exit-code origin "refs/tags/$OPPOSITE_TAG" >/dev/null 2>&1; then
+            git push origin ":refs/tags/$OPPOSITE_TAG"
+          fi
+          git push --force origin "refs/tags/$RESULT_TAG"
+          echo "Published private acceptance result: $RESULT_TAG"

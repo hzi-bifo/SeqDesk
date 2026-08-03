@@ -1275,17 +1275,72 @@ async function upsertDownloadedFastqSample({
 
   const existingRead =
     sampleRecord.reads.find((read) => read.file1 === relativeReadPath1) || sampleRecord.reads[0];
+  const runAccessionNumber =
+    toOptionalString(sample.runAccessionNumber) || existingRead?.runAccessionNumber || null;
+  const experimentAccessionNumber =
+    toOptionalString(sample.experimentAccessionNumber) ||
+    existingRead?.experimentAccessionNumber ||
+    null;
+  const sequencingRunManifest = toRecord(sample.sequencingRun);
+  const sequencingRunId =
+    toOptionalString(sequencingRunManifest.runId) || runAccessionNumber;
+  let sequencingRunRecord = null;
+
+  // A fixture manifest can carry archive run provenance in addition to Read-level accessions.
+  // Keep this conditional so lightweight callers/mocks that predate SequencingRun remain valid.
+  if (sequencingRunId && prisma.sequencingRun?.upsert) {
+    const runParameters = toJsonObject(sequencingRunManifest.runParameters);
+    const sequencingRunData = {
+      runName: toOptionalString(sequencingRunManifest.runName) || sequencingRunId,
+      platform: toOptionalString(sequencingRunManifest.platform) || null,
+      instrument:
+        toOptionalString(sequencingRunManifest.instrument) || order.instrumentModel || null,
+      totalReads:
+        toOptionalNonNegativeInt(sequencingRunManifest.totalReads) ??
+        toOptionalNonNegativeInt(sample.readCount1) ??
+        null,
+      runParameters:
+        Object.keys(runParameters).length > 0 ? JSON.stringify(runParameters) : null,
+    };
+    sequencingRunRecord = await prisma.sequencingRun.upsert({
+      where: { orderId_runId: { orderId: order.id, runId: sequencingRunId } },
+      update: sequencingRunData,
+      create: {
+        orderId: order.id,
+        runId: sequencingRunId,
+        ...sequencingRunData,
+      },
+    });
+    if (sequencingRunRecord?.id && prisma.sequencingRunSample?.upsert) {
+      await prisma.sequencingRunSample.upsert({
+        where: {
+          sequencingRunId_sampleId: {
+            sequencingRunId: sequencingRunRecord.id,
+            sampleId: sampleRecord.id,
+          },
+        },
+        update: {},
+        create: {
+          sequencingRunId: sequencingRunRecord.id,
+          sampleId: sampleRecord.id,
+        },
+      });
+    }
+  }
   const readData = {
     file1: relativeReadPath1,
     file2: relativeReadPath2,
     checksum1: toOptionalString(sample.checksum1) || existingRead?.checksum1 || null,
     checksum2: toOptionalString(sample.checksum2) || existingRead?.checksum2 || null,
+    runAccessionNumber,
+    experimentAccessionNumber,
     readCount1: toOptionalNonNegativeInt(sample.readCount1) ?? null,
     readCount2: toOptionalNonNegativeInt(sample.readCount2) ?? null,
     avgQuality1: toOptionalNumber(sample.avgQuality1) ?? null,
     avgQuality2: toOptionalNumber(sample.avgQuality2) ?? null,
     pipelineRunId: existingRead?.pipelineRunId ?? null,
     pipelineSources: existingRead?.pipelineSources ?? null,
+    sequencingRunId: sequencingRunRecord?.id || existingRead?.sequencingRunId || null,
     dataClass: toOptionalString(sample.dataClass) || "cleaned",
     dataClassSource: toOptionalString(sample.dataClassSource) || "profile_fixture_manifest",
     classificationNote:

@@ -6464,6 +6464,7 @@ print_next_steps() {
         printf '       %s demo-data install\n' "$(shell_quote "$pipeline_cli")"
         echo "     Creates example orders, studies, samples, metadata, and synthetic FASTQ files."
         echo "     Alternative: Admin > Settings > Demo data."
+        echo "     Guide: https://seqdesk.org/docs/getting-started/example-data"
         echo "  4. Optional: discover supported order- and study-level pipelines:"
         printf '       %s pipelines list\n' "$(shell_quote "$pipeline_cli")"
         echo "     Safe first install (also provisions a missing runtime):"
@@ -6476,6 +6477,7 @@ print_next_steps() {
         echo "  3. Optional for evaluation/testing: after Data Storage is configured and writable,"
         echo "     load the example dataset under"
         echo "     Admin > Settings > Demo data. It includes synthetic FASTQ files."
+        echo "     Guide: https://seqdesk.org/docs/getting-started/example-data"
         echo "  4. Optional pipelines: the local SeqDesk CLI is not available."
         echo "     Review the CLI warning above and update or reinstall SeqDesk first."
     fi

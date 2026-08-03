@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 import { spawnSync } from "child_process";
 
 import { db } from "@/lib/db";
+import { downloadEnaFile } from "@/lib/seed/ena-download";
 import { MOUSE_GUT_READS, MOUSE_GUT_BASE } from "@/lib/seed/templates";
 
 // A real, public, paired-end example dataset sourced from ENA BioProject PRJDB6165 (mouse gut
@@ -41,6 +42,10 @@ export const MOUSE_GUT_RUNS = Object.entries(MOUSE_GUT_READS).map(([sampleAlias,
   sampleAlias,
   run: info.run,
   experiment: info.experiment,
+  biosample: info.biosample,
+  secondarySample: info.secondarySample,
+  checksum1: info.checksum1,
+  checksum2: info.checksum2,
   readCount: info.readCount,
   ...enaFastqUrls(info.run),
 }));
@@ -74,18 +79,6 @@ export interface MouseGutExampleStatus {
   sourceUrls: string[];
 }
 
-async function downloadTo(url: string, dest: string): Promise<void> {
-  const res = await fetch(url, { redirect: "follow" });
-  if (!res.ok) {
-    throw new Error(`Failed to download ${url}: HTTP ${res.status}`);
-  }
-  const bytes = Buffer.from(await res.arrayBuffer());
-  if (bytes.length === 0) {
-    throw new Error(`Downloaded 0 bytes from ${url}`);
-  }
-  await fsp.writeFile(dest, bytes);
-}
-
 function sha256OfFile(filePath: string): string {
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
 }
@@ -104,7 +97,7 @@ function r2Name(sampleAlias: string): string {
 export function buildMouseGutManifest() {
   return {
     dataset: {
-      name: `Mouse gut 16S metagenome (ENA ${MOUSE_GUT_BIOPROJECT})`,
+      name: `Mouse gut 16S amplicon dataset (ENA ${MOUSE_GUT_BIOPROJECT})`,
       description:
         "Real public mouse-gut paired-end Illumina MiSeq reads from ENA BioProject PRJDB6165, " +
         "for running the public SeqDesk pipelines on genuine data on the CI runner.",
@@ -114,8 +107,12 @@ export function buildMouseGutManifest() {
       name: `Mouse gut 16S (${MOUSE_GUT_BIOPROJECT}, real ENA)`,
       status: "SUBMITTED",
       instrumentModel: "Illumina MiSeq",
-      libraryStrategy: "WGS",
+      // The source archive labels these records WGS, but the primary study methods describe
+      // a PCR-amplified 16S V3-V4 library. SeqDesk records the scientific assay here and keeps
+      // the archive-declared value in sourceProvenance below.
+      libraryStrategy: "AMPLICON",
       librarySource: "METAGENOMIC",
+      librarySelection: "PCR",
       // Override the bundle seeder's ONT default: these are short paired-end Illumina reads.
       sequencingTech: {
         technologyId: "illumina-miseq",
@@ -126,11 +123,24 @@ export function buildMouseGutManifest() {
         deviceId: "illumina-miseq",
         deviceName: "Illumina MiSeq",
       },
-      customFields: { run_type: "metagenomics", platform: "illumina", bioproject: MOUSE_GUT_BIOPROJECT },
+      customFields: {
+        run_type: "amplicon_metagenomics",
+        platform: "illumina",
+        bioproject: MOUSE_GUT_BIOPROJECT,
+        sourceProvenance: {
+          archive: "ENA",
+          bioproject: MOUSE_GUT_BIOPROJECT,
+          archiveLibraryStrategy: "WGS",
+          scientificAssay: "16S rRNA V3-V4 amplicon",
+          librarySource: "METAGENOMIC",
+          librarySelection: "PCR",
+          instrumentModel: "Illumina MiSeq",
+        },
+      },
     },
     study: {
       alias: MOUSE_GUT_STUDY_ALIAS,
-      title: `Mouse Gut Metagenome (${MOUSE_GUT_BIOPROJECT}) — CI`,
+      title: `Mouse Gut 16S Amplicons (${MOUSE_GUT_BIOPROJECT}) — CI`,
       description:
         "Real mouse-gut paired-end example dataset (ENA PRJDB6165) for running the public " +
         "pipelines on the hosted runner.",
@@ -154,7 +164,44 @@ export function buildMouseGutManifest() {
       file2: `reads/${r2Name(r.sampleAlias)}`,
       dataClass: "raw",
       dataClassSource: "example_dataset",
-      classificationNote: `Demo mouse-gut sample ${r.sampleAlias}.`,
+      classificationNote:
+        `Real ENA ${MOUSE_GUT_BIOPROJECT} 16S V3-V4 run ${r.run}; ` +
+        "the ENA record declares WGS while the primary study methods identify the assay as PCR amplicon.",
+      checksum1: r.checksum1,
+      checksum2: r.checksum2,
+      readCount1: r.readCount,
+      readCount2: r.readCount,
+      runAccessionNumber: r.run,
+      experimentAccessionNumber: r.experiment,
+      customFields: {
+        source_archive: "ENA",
+        source_bioproject: MOUSE_GUT_BIOPROJECT,
+        source_biosample_accession: r.biosample,
+        source_secondary_sample_accession: r.secondarySample,
+        source_run_accession: r.run,
+        source_experiment_accession: r.experiment,
+        source_instrument_model: "Illumina MiSeq",
+        source_library_strategy: "WGS",
+        source_library_source: "METAGENOMIC",
+        source_library_selection: "PCR",
+        scientific_assay: "16S rRNA V3-V4 amplicon",
+      },
+      sequencingRun: {
+        runId: r.run,
+        runName: `${r.run} (${r.sampleAlias})`,
+        platform: "ILLUMINA",
+        instrument: "Illumina MiSeq",
+        totalReads: r.readCount,
+        runParameters: {
+          sourceArchive: "ENA",
+          sourceBioproject: MOUSE_GUT_BIOPROJECT,
+          sourceExperimentAccession: r.experiment,
+          sourceBiosampleAccession: r.biosample,
+          sourceLibraryStrategy: "WGS",
+          scientificAssay: "16S rRNA V3-V4 amplicon",
+          librarySelection: "PCR",
+        },
+      },
     })),
   };
 }
@@ -231,8 +278,16 @@ export async function seedMouseGutExampleDataset({
     `[mouse-gut] Downloading ${MOUSE_GUT_RUNS.length} ENA ${MOUSE_GUT_BIOPROJECT} read pairs to ${stageReadsDir}`,
   );
   for (const r of MOUSE_GUT_RUNS) {
-    await downloadTo(r.r1, path.join(stageReadsDir, r1Name(r.sampleAlias)));
-    await downloadTo(r.r2, path.join(stageReadsDir, r2Name(r.sampleAlias)));
+    await downloadEnaFile({
+      url: r.r1,
+      destination: path.join(stageReadsDir, r1Name(r.sampleAlias)),
+      expectedMd5: r.checksum1,
+    });
+    await downloadEnaFile({
+      url: r.r2,
+      destination: path.join(stageReadsDir, r2Name(r.sampleAlias)),
+      expectedMd5: r.checksum2,
+    });
     logger.log?.(`[mouse-gut] fetched ${r.run} (${r.sampleAlias})`);
   }
 

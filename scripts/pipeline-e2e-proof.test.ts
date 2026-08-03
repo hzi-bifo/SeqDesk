@@ -2795,6 +2795,14 @@ describe("pipeline E2E proof helpers", () => {
       }
       expect(nanoplotWorkflow).toContain("--tsv_stats");
       expect(nanoplotWorkflow).toContain("build_nanoplot_summary.py");
+      expect(nanoplotWorkflow).toContain("conda-forge::python=3.12");
+      expect(nanoplotWorkflow).toContain("bioconda::nanoplot=1.42.0");
+      expect(nanoplotWorkflow).toContain(
+        "conda-forge::python-kaleido=0.2.1",
+      );
+      expect(nanoplotWorkflow).not.toContain(
+        'conda "bioconda::nanoplot=1.42.0"',
+      );
       expect(nanoplotWorkflow).not.toContain(':=0');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

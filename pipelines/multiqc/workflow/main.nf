@@ -27,7 +27,10 @@ process MULTIQC {
     mkdir -p multiqc
 
     # Never turn a missing/empty gather into a green but content-free report.
-    find "${qc_dir}" -type f -print -quit | grep -q . || {
+    # Nextflow stages a directory input as a symlink in the task work dir.
+    # -H follows that command-line symlink without following any nested symlink
+    # (the executor already rejects symlink artifacts while staging them).
+    find -H "${qc_dir}" -type f -print -quit | grep -q . || {
       echo "No staged QC artifact files were found in ${qc_dir}" >&2
       exit 2
     }

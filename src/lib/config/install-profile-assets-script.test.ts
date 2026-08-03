@@ -887,6 +887,19 @@ describe("install profile asset script helpers", () => {
               materialBodySite: "human-decontaminated control",
               file1: "reads/GEMMA_ONT_MINION_MK1D_20260429_FLO-MIN106_barcode10.fastq",
               readCount1: 51644,
+              runAccessionNumber: "ERR123456",
+              experimentAccessionNumber: "ERX123456",
+              sequencingRun: {
+                runId: "ERR123456",
+                runName: "Public provenance run",
+                platform: "OXFORD_NANOPORE",
+                instrument: "MinION Mk1D",
+                totalReads: 51644,
+                runParameters: {
+                  sourceArchive: "ENA",
+                  sourceBiosampleAccession: "SAMEA123456",
+                },
+              },
               dataClass: "cleaned",
               dataClassSource: "provider_human_decontaminated",
             },
@@ -911,7 +924,10 @@ describe("install profile asset script helpers", () => {
     const orderCreate = vi.fn().mockResolvedValue({
       id: "order-1",
       orderNumber: "DEV-GEMMA-ONT-001",
+      instrumentModel: "ONT MinION Mk1D",
     });
+    const sequencingRunUpsert = vi.fn().mockResolvedValue({ id: "run-1" });
+    const sequencingRunSampleUpsert = vi.fn().mockResolvedValue({ id: "run-sample-1" });
     const prisma = {
       siteSettings: {
         findUnique: vi.fn().mockResolvedValue({
@@ -947,6 +963,12 @@ describe("install profile asset script helpers", () => {
       read: {
         create: readCreate,
         update: vi.fn(),
+      },
+      sequencingRun: {
+        upsert: sequencingRunUpsert,
+      },
+      sequencingRunSample: {
+        upsert: sequencingRunSampleUpsert,
       },
     };
 
@@ -1004,8 +1026,43 @@ describe("install profile asset script helpers", () => {
       file1:
         "fixtures/dev/gemma-nanopore-metaxpath-5sample/reads/GEMMA_ONT_MINION_MK1D_20260429_FLO-MIN106_barcode10.fastq",
       readCount1: 51644,
+      runAccessionNumber: "ERR123456",
+      experimentAccessionNumber: "ERX123456",
+      sequencingRunId: "run-1",
       dataClass: "cleaned",
       dataClassSource: "provider_human_decontaminated",
+    });
+    expect(sequencingRunUpsert).toHaveBeenCalledWith({
+      where: {
+        orderId_runId: { orderId: "order-1", runId: "ERR123456" },
+      },
+      update: expect.objectContaining({
+        runName: "Public provenance run",
+        platform: "OXFORD_NANOPORE",
+        instrument: "MinION Mk1D",
+        totalReads: 51644,
+        runParameters: JSON.stringify({
+          sourceArchive: "ENA",
+          sourceBiosampleAccession: "SAMEA123456",
+        }),
+      }),
+      create: expect.objectContaining({
+        orderId: "order-1",
+        runId: "ERR123456",
+      }),
+    });
+    expect(sequencingRunSampleUpsert).toHaveBeenCalledWith({
+      where: {
+        sequencingRunId_sampleId: {
+          sequencingRunId: "run-1",
+          sampleId: "sample-1",
+        },
+      },
+      update: {},
+      create: {
+        sequencingRunId: "run-1",
+        sampleId: "sample-1",
+      },
     });
   });
 

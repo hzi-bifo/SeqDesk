@@ -73,7 +73,7 @@ job proves, its limitations, and how to download reviewer-facing evidence.
 </tr>
 <tr>
   <td><em>private CI</em></td>
-  <td>SLURM pipeline execution as a real Slurm job (<code>sbatch</code>/<code>squeue</code>/<code>sacct</code>), on small synthetic reads</td>
+  <td>For each mirrored <code>main</code> SHA, lightweight pipelines execute as real Slurm jobs (<code>sbatch</code>/<code>squeue</code>/<code>sacct</code>) on small synthetic reads; the public mirror check waits for the matching private result</td>
 </tr>
 <tr>
   <td><em>private CI</em></td>
@@ -85,7 +85,11 @@ job proves, its limitations, and how to download reviewer-facing evidence.
 </tr>
 </table>
 
-_The SLURM and AlmaLinux rows run on a private self-hosted mirror (a real SLURM cluster and a production-like AlmaLinux box); the update/rollback release gate runs before each release through the in-app updater. These are exercised on demand rather than on every push, so they are not badged here._
+_The Slurm row runs automatically for mirrored `main` commits on a private
+self-hosted runner. The AlmaLinux extended diagnostics are manual. A Slurm claim
+applies only when the private run for the same commit is green; the public
+mirror workflow propagates that result. The update/rollback release gate runs
+before each release through the in-app updater._
 
 ## Features
 
@@ -164,6 +168,12 @@ It is useful for demonstrations, screenshots, and automated tests, but it is
 not scientific data. Re-running `install` is idempotent and does not create
 duplicates. On an installation with more than one facility administrator, use
 `--user-email admin@example.org` to select the owner.
+
+The hosted demo and the local deterministic fixture are deliberately separate:
+the hosted workspace is already populated for browsing, while `demo-data`
+creates removable records and real synthetic files in your own storage path.
+See [Example datasets and CI provenance](./EXAMPLE_DATASETS.md) for their
+contents, limitations, public accession mappings, and continuous-test use.
 
 Use `--yes` with `install` or `remove` to skip confirmation in automation.
 Those mutations require `--yes` when combined with `--json`; `status --json`

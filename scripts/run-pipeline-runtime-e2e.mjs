@@ -4330,8 +4330,13 @@ async function main() {
     // a disabled pipeline is a SKIP (clean exit), not a failure — so a canary can run the
     // read-consuming pipelines that ARE enabled without reding the suite on the others.
     if (Boolean(args["skip-if-disabled"]) || envFlag(process.env.SEQDESK_RUNTIME_E2E_SKIP_IF_DISABLED)) {
-      console.log(JSON.stringify({ skipped: true, reason: "pipeline-not-enabled", pipelineId }, null, 2));
-      return;
+      const skipSummary = {
+        skipped: true,
+        reason: "pipeline-not-enabled",
+        pipelineId,
+      };
+      writeRunState(runStateFile, skipSummary);
+      return skipSummary;
     }
     fail(`Pipeline ${pipelineId} is not enabled in SeqDesk settings`);
   }
@@ -4522,7 +4527,9 @@ async function main() {
 
 main()
   .then((summary) => {
-    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    if (summary !== undefined) {
+      process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    }
   })
   .catch((error) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

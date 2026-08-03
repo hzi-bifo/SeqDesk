@@ -16,6 +16,10 @@ name: Mirror to private CI
 #        Actions -> New repository secret named MIRROR_SSH_KEY = contents of mirror_key.
 # A missing secret is a configuration failure: this mirror is the only automatic
 # path to the required private self-hosted acceptance gate.
+#
+# The private workflow publishes a commit-specific success/failure tag back to
+# SeqDesk-ci. This job reads that tag with the same deploy key, so the public
+# check does not go green until the matching private acceptance run is green.
 
 on:
   push:
@@ -27,13 +31,19 @@ permissions:
 
 concurrency:
   group: mirror-to-private
-  cancel-in-progress: false
+  # A newer main commit supersedes an older public-side waiter. The private
+  # workflow has its own non-cancelling concurrency policy for live SLURM jobs.
+  cancel-in-progress: true
 
 jobs:
   mirror:
     if: ${{ github.repository == 'hzi-bifo/SeqDesk' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Fail closed within GitHub's hosted-job limit. A prior non-cancellable
+    # private Slurm run may still occupy the runner; this window covers most of
+    # that queue plus the matching 180-minute gate, but never converts a missing
+    # result into success.
+    timeout-minutes: 355
     steps:
       - name: Check out full history
         uses: actions/checkout@v4
@@ -58,3 +68,46 @@ jobs:
           git -c core.sshCommand="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes" \
             push --force git@github.com:hzi-bifo/SeqDesk-ci.git HEAD:refs/heads/main
           echo "Mirrored $(git rev-parse --short HEAD) to hzi-bifo/SeqDesk-ci (main)."
+
+      - name: Wait for the matching private acceptance result
+        run: |
+          set -euo pipefail
+          PRIVATE_REPOSITORY="git@github.com:hzi-bifo/SeqDesk-ci.git"
+          PRIVATE_SHA="$(git rev-parse HEAD)"
+          SUCCESS_REF="refs/tags/seqdesk-private-ci/${PRIVATE_SHA}/success"
+          FAILURE_REF="refs/tags/seqdesk-private-ci/${PRIVATE_SHA}/failure"
+          SSH_COMMAND="ssh -i $HOME/.ssh/id_ed25519 -o IdentitiesOnly=yes"
+
+          # Result evidence is scoped to the immutable commit SHA. Re-running
+          # this public workflow for the same SHA intentionally reuses that
+          # evidence; re-run the private workflow when a fresh infrastructure
+          # execution is required, and its publisher will replace the marker.
+          # Poll for at most 350 minutes. A missing marker (runner loss,
+          # cancellation, or result-publication failure) is a failed gate, not
+          # an implicit success.
+          for _ in $(seq 1 700); do
+            success=0
+            failure=0
+            git -c core.sshCommand="$SSH_COMMAND" ls-remote --exit-code \
+              "$PRIVATE_REPOSITORY" "$SUCCESS_REF" >/dev/null 2>&1 && success=1
+            git -c core.sshCommand="$SSH_COMMAND" ls-remote --exit-code \
+              "$PRIVATE_REPOSITORY" "$FAILURE_REF" >/dev/null 2>&1 && failure=1
+
+            if [ "$success" = 1 ] && [ "$failure" = 1 ]; then
+              echo "ERROR: private CI published conflicting results for $PRIVATE_SHA." >&2
+              exit 1
+            fi
+            if [ "$success" = 1 ]; then
+              echo "Private acceptance gate passed for $PRIVATE_SHA."
+              exit 0
+            fi
+            if [ "$failure" = 1 ]; then
+              echo "ERROR: private acceptance gate failed for $PRIVATE_SHA." >&2
+              echo "Inspect https://github.com/hzi-bifo/SeqDesk-ci/actions/workflows/pipeline-slurm-e2e.yml" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+          echo "ERROR: timed out waiting for the private acceptance result for $PRIVATE_SHA." >&2
+          exit 1

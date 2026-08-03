@@ -17,8 +17,7 @@ const orderPipeline = readWorkflow("order-pipeline-e2e.yml");
 const studyPipeline = readWorkflow("study-pipeline-e2e.yml");
 const twincoreInstall = readWorkflow("install-twincore-alma.yml");
 const krakenProbe = readWorkflow("kraken-db-probe.yml");
-const selfHostedWorkflows = [
-  ["canonical SLURM", canonical],
+const readOnlySelfHostedWorkflows = [
   ["extended Alma install", almaExtended],
   ["order pipeline", orderPipeline],
   ["study pipeline", studyPipeline],
@@ -129,7 +128,7 @@ describe("self-hosted pipeline CI contract", () => {
     }
   );
 
-  it.each(selfHostedWorkflows)(
+  it.each(readOnlySelfHostedWorkflows)(
     "keeps the %s workflow read-only and free of scheduled triggers",
     (_name, workflow) => {
       expect(workflow).toContain("permissions:\n  contents: read");
@@ -149,6 +148,50 @@ describe("self-hosted pipeline CI contract", () => {
     expect(canonical).toContain(
       "github.repository == 'hzi-bifo/SeqDesk-ci'"
     );
+  });
+
+  it("publishes the commit-specific result from a separate least-privilege job", () => {
+    const publisherJobStart = canonical.indexOf("\n  publish_private_result:");
+    const pipelineJob = canonical.slice(
+      canonical.indexOf("\n  slurm_app_e2e:"),
+      publisherJobStart
+    );
+    const publisherJob = canonical.slice(publisherJobStart);
+
+    expect(publisherJobStart).toBeGreaterThanOrEqual(0);
+    expect(canonical).toContain("permissions:\n  contents: read");
+    expect(pipelineJob).not.toContain("contents: write");
+    expect(pipelineJob).not.toMatch(/^\s*git push\b/m);
+    expect(publisherJob).toContain("needs: slurm_app_e2e");
+    expect(publisherJob).toContain("runs-on: ubuntu-latest");
+    expect(publisherJob).toContain("permissions:");
+    expect(publisherJob).toContain("contents: write");
+    expect(publisherJob).toContain(
+      "if: ${{ always() && github.event_name == 'push' && github.repository == 'hzi-bifo/SeqDesk-ci' }}"
+    );
+    expect(publisherJob).toContain("ref: ${{ github.sha }}");
+    expect(publisherJob).toContain(
+      "PRIVATE_GATE_STATUS: ${{ needs.slurm_app_e2e.result }}"
+    );
+    expect(publisherJob).toContain(
+      'RESULT_TAG="seqdesk-private-ci/${GITHUB_SHA}/${RESULT}"'
+    );
+    expect(publisherJob).toContain(
+      'OPPOSITE_TAG="seqdesk-private-ci/${GITHUB_SHA}/${OPPOSITE}"'
+    );
+    expect(publisherJob).toContain(
+      'if git ls-remote --exit-code origin "refs/tags/$OPPOSITE_TAG"'
+    );
+    expect(publisherJob).toContain(
+      'git push origin ":refs/tags/$OPPOSITE_TAG"'
+    );
+    expect(publisherJob).toContain(
+      'git push --force origin "refs/tags/$RESULT_TAG"'
+    );
+    expect(publisherJob).toContain(
+      "Any non-success conclusion (failure, cancelled, skipped, timed out)"
+    );
+    expect(publisherJob).not.toContain("refs/heads/");
   });
 
   it("gates production types without treating test-only typing debt as a release failure", () => {
@@ -429,6 +472,12 @@ describe("self-hosted pipeline CI contract", () => {
   });
 
   it("runs the full real-browser guided setup as a required self-hosted gate", () => {
+    const chromiumInstall = canonical.slice(
+      canonical.indexOf(
+        "- name: Install Chromium for the required guided Store browser gate"
+      ),
+      canonical.indexOf("- name: Set database connection environment")
+    );
     const sourceBoot = canonical.slice(
       canonical.indexOf("- name: Boot SeqDesk app and verify readiness"),
       canonical.indexOf(
@@ -447,6 +496,15 @@ describe("self-hosted pipeline CI contract", () => {
     expect(canonical).toContain(
       "- name: Install Chromium for the required guided Store browser gate"
     );
+    expect(chromiumInstall).toContain("at-spi2-atk=2.38.0");
+    expect(chromiumInstall).toContain('ldd "$BROWSER_BIN"');
+    expect(chromiumInstall).toContain(
+      "libatk-bridge-2.0.so.0 => not found"
+    );
+    expect(chromiumInstall).toContain("Chromium still has unresolved runtime libraries");
+    expect(chromiumInstall).toContain(
+      "SEQDESK_PLAYWRIGHT_LD_LIBRARY_PATH=$PLAYWRIGHT_LD_LIBRARY_PATH"
+    );
     expect(sourceBoot).not.toContain(
       'export SEQDESK_PIPELINE_RUN_DIR="$SEQDESK_RUN_DIR"'
     );
@@ -458,6 +516,9 @@ describe("self-hosted pipeline CI contract", () => {
       "export SEQDESK_PIPELINE_STORE_E2E_FAULTS=1"
     );
     expect(browserGate).not.toContain("continue-on-error:");
+    expect(browserGate).toContain(
+      "LD_LIBRARY_PATH: ${{ env.SEQDESK_PLAYWRIGHT_LD_LIBRARY_PATH }}"
+    );
     expect(browserGate).toContain(
       "playwright/tests/pipeline-store-real.admin.spec.ts"
     );
@@ -1125,7 +1186,7 @@ describe("self-hosted pipeline CI contract", () => {
     );
   });
 
-  it("mirrors public main changes only and fails closed when the private gate cannot be triggered", () => {
+  it("mirrors public main changes and propagates the matching private result", () => {
     expect(mirror).toContain("push:\n    branches: [main]");
     expect(mirror).toContain("workflow_dispatch:");
     expect(mirror).not.toContain("schedule:");
@@ -1143,6 +1204,47 @@ describe("self-hosted pipeline CI contract", () => {
     expect(missingSecretGuard).toContain(
       "the required private CI gate cannot run"
     );
+
+    const resultWaiter = mirror.slice(
+      mirror.indexOf("- name: Wait for the matching private acceptance result")
+    );
+    expect(mirror).toContain("cancel-in-progress: true");
+    expect(mirror).toContain("timeout-minutes: 355");
+    expect(resultWaiter).toContain(
+      'SUCCESS_REF="refs/tags/seqdesk-private-ci/${PRIVATE_SHA}/success"'
+    );
+    expect(resultWaiter).toContain(
+      'FAILURE_REF="refs/tags/seqdesk-private-ci/${PRIVATE_SHA}/failure"'
+    );
+    expect(resultWaiter).toContain("ls-remote --exit-code");
+    expect(resultWaiter).toContain(
+      "this public workflow for the same SHA intentionally reuses that"
+    );
+    expect(resultWaiter).toContain(
+      'echo "ERROR: private acceptance gate failed for $PRIVATE_SHA."'
+    );
+    expect(resultWaiter).toContain(
+      'echo "ERROR: timed out waiting for the private acceptance result for $PRIVATE_SHA."'
+    );
+    expect(resultWaiter).not.toContain("exit 0\n          done");
+  });
+
+  it("profiles both instrument-specific human-gut orders in the opt-in Kraken leg", () => {
+    const humanGutKraken = canonical.slice(
+      canonical.indexOf(
+        "- name: Run kraken2-bracken on the REAL human-gut shotgun study"
+      ),
+      canonical.indexOf("- name: Run read-cleaning E2E")
+    );
+
+    expect(humanGutKraken).toContain(
+      "HUMAN_ORDERS=(DEV-HUMAN-PRJEB54724-001 DEV-HUMAN-PRJEB54724-002)"
+    );
+    expect(humanGutKraken).toContain(
+      "SEED_ARGS=(--seed-example-dataset human-gut-prjeb54724)"
+    );
+    expect(humanGutKraken).toContain('--order-number "$ORDER"');
+    expect(humanGutKraken).toContain("failed_orders=%s");
   });
 
   it("pins supported Node 24 without adding the pipeline environment to the global PATH", () => {
@@ -1740,6 +1842,14 @@ describe("self-hosted pipeline CI contract", () => {
     "cancels only the exact captured %s PipelineRun allocation",
     (_name, script) => {
       expect(script).toContain('--run-state-file "$CURRENT_STATE_FILE"');
+      expect(script).toContain("is_disabled_pipeline_state()");
+      expect(script).toContain("is_proven_slurm_run_state()");
+      expect(script).toContain('state?.pipelineId === expectedPipelineId');
+      expect(script).toContain('/^[0-9]+$/.test(String(state?.jobId ?? ""))');
+      expect(script).toContain('state?.resolvedExecutionMode === "slurm"');
+      expect(script).toContain(
+        "runtime harness exited successfully without a proven SLURM PipelineRun state"
+      );
       expect(script).toContain("cancel_captured_run()");
       expect(script).toContain('expected_job_name="seqdesk-$safe_run_id"');
       expect(script).toContain("slurm_job_state()");
@@ -1764,6 +1874,16 @@ describe("self-hosted pipeline CI contract", () => {
       expect(script).not.toContain('before="$(squeue');
     }
   );
+
+  it("records disabled runtime skips without printing an undefined summary", () => {
+    expect(runtimeHarness).toContain("const skipSummary = {");
+    expect(runtimeHarness).toContain("writeRunState(runStateFile, skipSummary);");
+    expect(runtimeHarness).toContain("return skipSummary;");
+    expect(runtimeHarness).toContain("if (summary !== undefined) {");
+    expect(runtimeHarness).not.toContain(
+      'console.log(JSON.stringify({ skipped: true, reason: "pipeline-not-enabled"'
+    );
+  });
 
   it("DB-scopes every Alma queue id and preserves trees on cleanup uncertainty", () => {
     expect(almaExtended).toContain(

@@ -5,7 +5,10 @@ params.outdir = 'output'
 
 process NANOPLOT {
   tag "${sample_id}"
-  conda "bioconda::nanoplot=1.42.0"
+  // NanoPlot 1.42 imports kaleido.scopes, which was removed in python-kaleido
+  // 1.x. Pin both the supported Python line and the compatible Kaleido API so
+  // a fresh Conda solve cannot silently select Python 3.13 + Kaleido 1.x.
+  conda "conda-forge::python=3.12 bioconda::nanoplot=1.42.0 conda-forge::python-kaleido=0.2.1"
 
   publishDir "${params.outdir}", mode: 'copy', pattern: "nanoplot/*"
   publishDir "${params.outdir}", mode: 'copy', pattern: "per_sample/*.tsv"

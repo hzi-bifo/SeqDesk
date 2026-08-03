@@ -3019,6 +3019,7 @@ echo "  3. Optional for evaluation/testing: after Data Storage is configured and
 echo "     load the deterministic example dataset."
 echo "     Creates example orders, studies, samples, metadata, and synthetic FASTQ files."
 echo "     Open Admin > Settings > Demo data."
+echo "     Guide: https://seqdesk.org/docs/getting-started/example-data"
 echo "  4. Configure pipeline runtime under Admin > Pipeline Runtime (if enabled)"
 echo "  5. See https://seqdesk.org/docs for production deployment"
 echo ""

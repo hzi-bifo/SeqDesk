@@ -69,6 +69,50 @@ mark_cleanup_unsafe() {
   fi
 }
 
+is_disabled_pipeline_state() {
+  local state_file="${1:-}"
+  local expected_pipeline_id="${2:-}"
+  [ -s "$state_file" ] || return 1
+  node -e '
+    const fs = require("node:fs");
+    try {
+      const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const expectedPipelineId = process.argv[2];
+      const valid = state?.skipped === true &&
+        state?.reason === "pipeline-not-enabled" &&
+        state?.pipelineId === expectedPipelineId &&
+        !state?.runId && !state?.jobId && !state?.runFolder;
+      process.exit(valid ? 0 : 1);
+    } catch {
+      process.exit(1);
+    }
+  ' "$state_file" "$expected_pipeline_id" 2>/dev/null
+}
+
+is_proven_slurm_run_state() {
+  local state_file="${1:-}"
+  local expected_pipeline_id="${2:-}"
+  [ -s "$state_file" ] || return 1
+  node -e '
+    const fs = require("node:fs");
+    try {
+      const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      const expectedPipelineId = process.argv[2];
+      const valid = state?.pipelineId === expectedPipelineId &&
+        typeof state?.runId === "string" &&
+        /^[A-Za-z0-9_-]+$/.test(state.runId) &&
+        /^[0-9]+$/.test(String(state?.jobId ?? "")) &&
+        typeof state?.runFolder === "string" &&
+        state.runFolder.trim().length > 0 &&
+        state?.resolvedExecutionMode === "slurm" &&
+        state?.skipped !== true;
+      process.exit(valid ? 0 : 1);
+    } catch {
+      process.exit(1);
+    }
+  ' "$state_file" "$expected_pipeline_id" 2>/dev/null
+}
+
 cancel_captured_run() {
   local state_file="${1:-}"
   local run_id job_id run_folder profile_root resolved_run safe_run_id
@@ -76,8 +120,10 @@ cancel_captured_run() {
   local db_row db_job_id db_run_folder db_pipeline_id db_mode
   local -a identity=()
 
-  # A disabled pipeline or an HTTP failure before run creation submits no job.
+  # A disabled pipeline has a structured skip state; a pre-create HTTP failure has no state.
+  # Neither path submits a job, so cleanup is already complete.
   [ -s "$state_file" ] || return 0
+  is_disabled_pipeline_state "$state_file" metaxpath && return 0
   if ! identity_text="$(node -e '
     const fs = require("node:fs");
     const state = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -86,7 +132,7 @@ cancel_captured_run() {
     echo "ERROR: could not parse metaxpath run-state file $state_file" >&2
     return 1
   fi
-  mapfile -t identity <<< "$identity_text"
+  while IFS= read -r value; do identity+=("$value"); done <<< "$identity_text"
   run_id="${identity[0]:-}"
   job_id="${identity[1]:-}"
   run_folder="${identity[2]:-}"
@@ -247,6 +293,7 @@ dump_forensics() {
 }
 
 ok=0
+skipped=0
 for attempt in 1 2; do
   echo "metaxpath SLURM attempt ${attempt}/2"
   CURRENT_STATE_FILE="${RUNNER_TEMP:-/tmp}/metaxpath-slurm-state-${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}-${attempt}.json"
@@ -261,7 +308,13 @@ for attempt in 1 2; do
        --config-json '{"metaxProfileMemory":"48 GB","predVfsAmrsMemory":"48 GB","threads":4}' \
        --skip-local --skip-if-disabled --timeout 5400 \
        --run-state-file "$CURRENT_STATE_FILE"; then
-    ok=1
+    if is_disabled_pipeline_state "$CURRENT_STATE_FILE" metaxpath; then
+      skipped=1
+    elif is_proven_slurm_run_state "$CURRENT_STATE_FILE" metaxpath; then
+      ok=1
+    else
+      echo "WARN: metaxpath runtime harness exited successfully without a proven SLURM PipelineRun state."
+    fi
   fi
   if ! cancel_captured_run "$CURRENT_STATE_FILE"; then
     mark_cleanup_unsafe "metaxpath cleanup failed for state $CURRENT_STATE_FILE"
@@ -269,11 +322,17 @@ for attempt in 1 2; do
     exit 1
   fi
   CURRENT_STATE_FILE=""
+  if [ "$skipped" = 1 ]; then
+    echo "metaxpath SLURM leg SKIPPED (pipeline is disabled; no PipelineRun was created)"
+    break
+  fi
   if [ "$ok" = 1 ]; then echo "metaxpath SLURM leg OK"; break; fi
   echo "attempt ${attempt} did not pass"
   dump_forensics
 done
-[ "$ok" = 1 ] || echo "WARN (warn-only): metaxpath SLURM leg did not pass after 2 attempts — not failing the suite"
+if [ "$ok" != 1 ] && [ "$skipped" != 1 ]; then
+  echo "WARN (warn-only): metaxpath SLURM leg did not pass after 2 attempts — not failing the suite"
+fi
 
 echo "::endgroup::"
 exit 0

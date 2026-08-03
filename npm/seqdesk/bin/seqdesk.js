@@ -2071,6 +2071,9 @@ function printStorageResult(result, options) {
       `  -> seqdesk demo-data install --dir ${shellQuote(options.dir)}`
     );
     console.log("     Alternative: Admin > Settings > Demo data.");
+    console.log(
+      "     Guide: https://seqdesk.org/docs/getting-started/example-data"
+    );
   } else if (options.command === "configure" && writable === false) {
     console.log("");
     console.log(

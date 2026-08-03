@@ -192,20 +192,21 @@ jobs:
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
           SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
+          SEQDESK_SUBMG_E2E_ASSEMBLY_SOURCE: synthetic
           SEQDESK_SUBMG_E2E_SUBMIT_READS: ${{ github.event.inputs.submit_reads || 'false' }}
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: ${{ github.event.inputs.submit_assembly || 'false' }}
         run: |
           set -euo pipefail
           npm run pipeline:e2e:submg 2>&1 | tee "$SUBMG_E2E_LOG"
 
-      # Samples + READS + ASSEMBLY: the full "mag → submg" handoff. submg submits the
-      # reads (→ ENA run accessions), then the mag-produced assembly referencing those
+      # Samples + READS + ASSEMBLY contract: submg submits the reads (→ ENA run
+      # accessions), then an explicitly synthetic assembly fixture referencing those
       # runs (submg requires ASSEMBLY|RUN_ACCESSIONS, which it derives from the read
       # submission), and SeqDesk takes up the read + assembly accessions (ERR/ERZ).
       # Warn-only (continue-on-error) while the heavier webin uploads from a hosted
       # runner + ENA validation are proven out; the samples legs above/below remain the
       # hard gates. Runs on the still-up source-boot app, on a second seeded study.
-      - name: Run submg WITH reads + assembly submission (mag-style → ENA, warn-only)
+      - name: Run submg WITH reads + assembly submission (synthetic fixture → ENA, warn-only)
         if: ${{ env.ENA_USERNAME != '' }}
         continue-on-error: true
         env:
@@ -214,6 +215,7 @@ jobs:
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
           SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
+          SEQDESK_SUBMG_E2E_ASSEMBLY_SOURCE: synthetic
           SEQDESK_SUBMG_E2E_SUBMIT_READS: "true"
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: "true"
         run: |
@@ -236,6 +238,7 @@ jobs:
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
           SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
+          SEQDESK_SUBMG_E2E_ASSEMBLY_SOURCE: megahit
           SEQDESK_SUBMG_E2E_EXAMPLE_DATASET: human-gut-prjeb54724
           SEQDESK_SUBMG_E2E_STUDY_ALIAS: human-gut-shotgun-prjeb54724-ci
           SEQDESK_SUBMG_E2E_SUBMIT_READS: "true"
@@ -247,7 +250,8 @@ jobs:
           set -euo pipefail
           npm run pipeline:e2e:submg 2>&1 | tee "$RUNNER_TEMP/submg-human-gut.log"
           echo "=== human-gut submission summary ==="
-          grep -iE "Built REAL mag MEGAHIT assembly|wrote read accession|wrote assembly accession" "$RUNNER_TEMP/submg-human-gut.log" || true
+          grep -F '"assemblySource": "megahit"' "$RUNNER_TEMP/submg-human-gut.log"
+          grep -iE "Built REAL mag MEGAHIT assembly|wrote read accession|wrote assembly accession" "$RUNNER_TEMP/submg-human-gut.log"
 
       # Proof on the *installed* app (the realistic facility flow): install a
       # source-built release via the npm launcher + a mock release server, then run
@@ -261,6 +265,7 @@ jobs:
           SEQDESK_SUBMG_E2E_PASSWORD: admin
           SEQDESK_SUBMG_E2E_CONDA_ENV: submg
           SEQDESK_SUBMG_E2E_MEGAHIT_BIN: ${{ env.SEQDESK_CONDA_PATH }}/envs/submg/bin/megahit
+          SEQDESK_SUBMG_E2E_ASSEMBLY_SOURCE: synthetic
           SEQDESK_SUBMG_E2E_SUBMIT_READS: ${{ github.event.inputs.submit_reads || 'false' }}
           SEQDESK_SUBMG_E2E_SUBMIT_ASSEMBLY: ${{ github.event.inputs.submit_assembly || 'false' }}
         run: |

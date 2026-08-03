@@ -38,6 +38,7 @@ export interface PlatformProfile {
   deviceId?: string;
   deviceName?: string;
   instrumentModel: string;
+  librarySelection?: string;
   libraryStrategy: string;
   librarySource: string;
   /** True for paired-end (Illumina); false for long-read single-end (ONT / PacBio). */
@@ -86,8 +87,37 @@ export const PLATFORM_ILLUMINA_MISEQ_AMPLICON: PlatformProfile = {
   platformFamily: "illumina",
   readLengthClass: "short",
   supportedReadLayouts: ["single", "paired"],
-  instrumentModel: "MiSeq",
+  instrumentModel: "Illumina MiSeq",
+  librarySelection: "PCR",
   libraryStrategy: "AMPLICON",
+  librarySource: "METAGENOMIC",
+  pairedEnd: true,
+};
+
+export const PLATFORM_ILLUMINA_MISEQ_WGS: PlatformProfile = {
+  platform: "ILLUMINA",
+  technologyId: "illumina-miseq",
+  technologyName: "MiSeq",
+  platformFamily: "illumina",
+  readLengthClass: "short",
+  supportedReadLayouts: ["single", "paired"],
+  instrumentModel: "Illumina MiSeq",
+  librarySelection: "other",
+  libraryStrategy: "WGS",
+  librarySource: "METAGENOMIC",
+  pairedEnd: true,
+};
+
+export const PLATFORM_ILLUMINA_NEXTSEQ_550_WGS: PlatformProfile = {
+  platform: "ILLUMINA",
+  technologyId: "illumina-nextseq-550",
+  technologyName: "NextSeq 550",
+  platformFamily: "illumina",
+  readLengthClass: "short",
+  supportedReadLayouts: ["single", "paired"],
+  instrumentModel: "NextSeq 550",
+  librarySelection: "other",
+  libraryStrategy: "WGS",
   librarySource: "METAGENOMIC",
   pairedEnd: true,
 };
@@ -738,13 +768,10 @@ export const SAMPLE_IBD_CD_02_LR: SampleTemplate = {
 };
 
 // ── Mouse gut microbiome DEMO study ──────────────────────────────────────────
-// Presented in the demo as illustrative/made-up data: sample IDs (MGB-0x), subject
-// codes (Subject-0x), study title/PI and accession fields are genericized demo
-// values, NOT real database identifiers. Provenance (maintainers only): the
-// underlying FASTQs and pipeline reports are representative REAL sequencing — the
-// per-read md5 checksums and read counts in MOUSE_GUT_READS are the real values
-// needed for the CI download/verification of those reads. checklistType is the
-// host-associated checklist.
+// Presented with illustrative sample IDs (MGB-0x), subject codes, title and PI. The
+// underlying FASTQs and reports are real public sequencing; MOUSE_GUT_READS retains
+// the ENA project/run/experiment/BioSample provenance, md5 checksums and read counts.
+// checklistType is the host-associated checklist.
 export const STUDY_MOUSE_GUT_PRJDB6165: StudyTemplate = {
   titleBase: "Mouse Gut Microbiome (Demo)",
   aliasSlug: "mouse-gut-microbiome",
@@ -953,23 +980,21 @@ export const SAMPLE_MOUSE_08: SampleTemplate = {
 
 // Real run-level data per sample (accessions, md5 checksums, read counts) for
 // wiring Read rows in the demo seed.
-export const MOUSE_GUT_READS: Record<string, { run: string; experiment: string; checksum1: string; checksum2: string; readCount: number }> = {
-  "MGB-01": { run: "DRR099973", experiment: "DRX093417", checksum1: "ad0c526823c70b5ad1c7c0dc150cbce4", checksum2: "4a280d9f9bd29622055cdf778f6aad67", readCount: 91795 },
-  "MGB-02": { run: "DRR099974", experiment: "DRX093418", checksum1: "7bd36e4429524093b980c90ea7f3fc26", checksum2: "d93de56b3da3d0afba44c639bc2e25d6", readCount: 90723 },
-  "MGB-03": { run: "DRR099975", experiment: "DRX093419", checksum1: "213e4d5e0fe792008acaa1372ecff93a", checksum2: "570d628b2704ef2b61165d5bf4de0cec", readCount: 107329 },
-  "MGB-04": { run: "DRR099976", experiment: "DRX093420", checksum1: "cca1086517bd206e8b2f2cd93cabf997", checksum2: "ed69bf76113a90c3a30a7eb4c6ec18b0", readCount: 82174 },
-  "MGB-05": { run: "DRR099977", experiment: "DRX093421", checksum1: "a6db63ae65c8e28619acbe98d94eacc6", checksum2: "c4f7f96e033d70f2fcadde83daec7f5a", readCount: 99093 },
-  "MGB-06": { run: "DRR099978", experiment: "DRX093422", checksum1: "b2e00d8d2526545765966bdfccca64af", checksum2: "20a05817e94e2a2f96bfd184796c2d04", readCount: 117186 },
-  "MGB-07": { run: "DRR099979", experiment: "DRX093423", checksum1: "589fe5ca3a652e576767bfb23c719c7e", checksum2: "6a6de694afc521f28cec2cd1421b90f2", readCount: 99911 },
-  "MGB-08": { run: "DRR099980", experiment: "DRX093424", checksum1: "91527786815d17d5486b2289aac63389", checksum2: "b4e0fa748c8befdfc9dca2322c73495c", readCount: 90527 },
+export const MOUSE_GUT_READS: Record<string, { run: string; experiment: string; biosample: string; secondarySample: string; checksum1: string; checksum2: string; readCount: number }> = {
+  "MGB-01": { run: "DRR099973", experiment: "DRX093417", biosample: "SAMD00089915", secondarySample: "DRS105324", checksum1: "ad0c526823c70b5ad1c7c0dc150cbce4", checksum2: "4a280d9f9bd29622055cdf778f6aad67", readCount: 91795 },
+  "MGB-02": { run: "DRR099974", experiment: "DRX093418", biosample: "SAMD00089916", secondarySample: "DRS105325", checksum1: "7bd36e4429524093b980c90ea7f3fc26", checksum2: "d93de56b3da3d0afba44c639bc2e25d6", readCount: 90723 },
+  "MGB-03": { run: "DRR099975", experiment: "DRX093419", biosample: "SAMD00089917", secondarySample: "DRS105326", checksum1: "213e4d5e0fe792008acaa1372ecff93a", checksum2: "570d628b2704ef2b61165d5bf4de0cec", readCount: 107329 },
+  "MGB-04": { run: "DRR099976", experiment: "DRX093420", biosample: "SAMD00089918", secondarySample: "DRS105327", checksum1: "cca1086517bd206e8b2f2cd93cabf997", checksum2: "ed69bf76113a90c3a30a7eb4c6ec18b0", readCount: 82174 },
+  "MGB-05": { run: "DRR099977", experiment: "DRX093421", biosample: "SAMD00089919", secondarySample: "DRS105328", checksum1: "a6db63ae65c8e28619acbe98d94eacc6", checksum2: "c4f7f96e033d70f2fcadde83daec7f5a", readCount: 99093 },
+  "MGB-06": { run: "DRR099978", experiment: "DRX093422", biosample: "SAMD00089920", secondarySample: "DRS105329", checksum1: "b2e00d8d2526545765966bdfccca64af", checksum2: "20a05817e94e2a2f96bfd184796c2d04", readCount: 117186 },
+  "MGB-07": { run: "DRR099979", experiment: "DRX093423", biosample: "SAMD00089921", secondarySample: "DRS105330", checksum1: "589fe5ca3a652e576767bfb23c719c7e", checksum2: "6a6de694afc521f28cec2cd1421b90f2", readCount: 99911 },
+  "MGB-08": { run: "DRR099980", experiment: "DRX093424", biosample: "SAMD00089922", secondarySample: "DRS105331", checksum1: "91527786815d17d5486b2289aac63389", checksum2: "b4e0fa748c8befdfc9dca2322c73495c", readCount: 90527 },
 };
 // ── Human gut shotgun metagenome DEMO study ──────────────────────────────────
-// Presented in the demo as illustrative data: the study title/PI/description and
-// the project accession are genericized demo values, NOT real database identifiers.
-// Provenance (maintainers only): the underlying FASTQs are representative REAL
-// public human faecal shotgun-metagenome libraries (Illumina paired-end WGS); the
-// per-run md5 checksums and read counts in HUMAN_GUT_READS are the real values
-// needed for the CI download/verification of those reads. A shotgun metagenome so
+// Presented with illustrative study/sample labels and lab metadata. The underlying
+// FASTQs are real public human faecal shotgun-metagenome libraries (Illumina paired-end
+// WGS); HUMAN_GUT_READS retains the ENA project/run/experiment/BioSample provenance,
+// exact instrument, md5 checksums and read counts needed for CI verification. A shotgun metagenome so
 // the MAG pipeline (assembly + binning) is meaningful; submission-ready (taxId +
 // collection date + geographic location present on every sample).
 export const STUDY_HUMAN_GUT_PRJEB54724: StudyTemplate = {
@@ -1273,17 +1298,17 @@ export const SAMPLE_HGUT_12: SampleTemplate = {
   },
 };
 
-export const HUMAN_GUT_READS: Record<string, { run: string; biosample: string; checksum1: string; checksum2: string; readCount: number }> = {
-  "HGM-01": { run: "ERR10009592", biosample: "SAMEA110434724", checksum1: "7ec2d63183160ab6ae024dc799629c46", checksum2: "207f0b084d11939df17296b8769a4d75", readCount: 466252 },
-  "HGM-02": { run: "ERR10009593", biosample: "SAMEA110434725", checksum1: "686552e04ff6a76d85d0e60848e9a569", checksum2: "c0b9d743afc092df927b03e592bb2000", readCount: 672698 },
-  "HGM-03": { run: "ERR10009594", biosample: "SAMEA110434726", checksum1: "7dd01c174d33e1be849cd37f57062867", checksum2: "3a7928536c630d0acb84b0e41842fba5", readCount: 707104 },
-  "HGM-04": { run: "ERR10009610", biosample: "SAMEA110434742", checksum1: "7554c89b7ef075fdd99597a0a06c001a", checksum2: "e0479b1afbf0f09830f7f1d60900d025", readCount: 659122 },
-  "HGM-05": { run: "ERR10009595", biosample: "SAMEA110434727", checksum1: "d195fff6eeda52b5208a10bebb8b8b9e", checksum2: "c12354b303b08c7857013f78fcf1dfb1", readCount: 492946 },
-  "HGM-06": { run: "ERR10009623", biosample: "SAMEA110434755", checksum1: "e73f25f74dcbb9149df2793b18493f85", checksum2: "e26a79b3ebd648389aa7ad9b4b1ca1b4", readCount: 608262 },
-  "HGM-07": { run: "ERR10009639", biosample: "SAMEA110434771", checksum1: "854b9aebc90bcb16af7f6e47fb1299b0", checksum2: "74560f8054f53ee1b1a2cfe482c13aca", readCount: 806454 },
-  "HGM-08": { run: "ERR10009590", biosample: "SAMEA110434722", checksum1: "09739d13f5a0d0a2d0e1e3ce3ff2ab44", checksum2: "263cc89ea4be05837f903977481afe1d", readCount: 662668 },
-  "HGM-09": { run: "ERR10009591", biosample: "SAMEA110434723", checksum1: "75b6595cd53941a5343450a10d689edb", checksum2: "18dcf6341bbcf9ee2037b465804c5dae", readCount: 739040 },
-  "HGM-10": { run: "ERR10009596", biosample: "SAMEA110434728", checksum1: "d9063a14cb7f82236add03767bae88ac", checksum2: "45fc752249628d69ca161e17e92e8e7f", readCount: 749034 },
-  "HGM-11": { run: "ERR10009608", biosample: "SAMEA110434740", checksum1: "3a7a2ea17c939b278c1db877cc671b18", checksum2: "aa74381314e272adfe041a161ab51054", readCount: 559950 },
-  "HGM-12": { run: "ERR10009632", biosample: "SAMEA110434764", checksum1: "59813bc3514e35e7855225225d2cbb74", checksum2: "43babbddd2f836e30ce00681058e6635", readCount: 464714 },
+export const HUMAN_GUT_READS: Record<string, { run: string; experiment: string; biosample: string; instrumentModel: "Illumina MiSeq" | "NextSeq 550"; checksum1: string; checksum2: string; readCount: number }> = {
+  "HGM-01": { run: "ERR10009592", experiment: "ERX9550551", biosample: "SAMEA110434724", instrumentModel: "Illumina MiSeq", checksum1: "7ec2d63183160ab6ae024dc799629c46", checksum2: "207f0b084d11939df17296b8769a4d75", readCount: 466252 },
+  "HGM-02": { run: "ERR10009593", experiment: "ERX9550552", biosample: "SAMEA110434725", instrumentModel: "Illumina MiSeq", checksum1: "686552e04ff6a76d85d0e60848e9a569", checksum2: "c0b9d743afc092df927b03e592bb2000", readCount: 672698 },
+  "HGM-03": { run: "ERR10009594", experiment: "ERX9550553", biosample: "SAMEA110434726", instrumentModel: "Illumina MiSeq", checksum1: "7dd01c174d33e1be849cd37f57062867", checksum2: "3a7928536c630d0acb84b0e41842fba5", readCount: 707104 },
+  "HGM-04": { run: "ERR10009610", experiment: "ERX9550569", biosample: "SAMEA110434742", instrumentModel: "NextSeq 550", checksum1: "7554c89b7ef075fdd99597a0a06c001a", checksum2: "e0479b1afbf0f09830f7f1d60900d025", readCount: 659122 },
+  "HGM-05": { run: "ERR10009595", experiment: "ERX9550554", biosample: "SAMEA110434727", instrumentModel: "Illumina MiSeq", checksum1: "d195fff6eeda52b5208a10bebb8b8b9e", checksum2: "c12354b303b08c7857013f78fcf1dfb1", readCount: 492946 },
+  "HGM-06": { run: "ERR10009623", experiment: "ERX9550582", biosample: "SAMEA110434755", instrumentModel: "NextSeq 550", checksum1: "e73f25f74dcbb9149df2793b18493f85", checksum2: "e26a79b3ebd648389aa7ad9b4b1ca1b4", readCount: 608262 },
+  "HGM-07": { run: "ERR10009639", experiment: "ERX9550598", biosample: "SAMEA110434771", instrumentModel: "NextSeq 550", checksum1: "854b9aebc90bcb16af7f6e47fb1299b0", checksum2: "74560f8054f53ee1b1a2cfe482c13aca", readCount: 806454 },
+  "HGM-08": { run: "ERR10009590", experiment: "ERX9550549", biosample: "SAMEA110434722", instrumentModel: "Illumina MiSeq", checksum1: "09739d13f5a0d0a2d0e1e3ce3ff2ab44", checksum2: "263cc89ea4be05837f903977481afe1d", readCount: 662668 },
+  "HGM-09": { run: "ERR10009591", experiment: "ERX9550550", biosample: "SAMEA110434723", instrumentModel: "Illumina MiSeq", checksum1: "75b6595cd53941a5343450a10d689edb", checksum2: "18dcf6341bbcf9ee2037b465804c5dae", readCount: 739040 },
+  "HGM-10": { run: "ERR10009596", experiment: "ERX9550555", biosample: "SAMEA110434728", instrumentModel: "Illumina MiSeq", checksum1: "d9063a14cb7f82236add03767bae88ac", checksum2: "45fc752249628d69ca161e17e92e8e7f", readCount: 749034 },
+  "HGM-11": { run: "ERR10009608", experiment: "ERX9550567", biosample: "SAMEA110434740", instrumentModel: "NextSeq 550", checksum1: "3a7a2ea17c939b278c1db877cc671b18", checksum2: "aa74381314e272adfe041a161ab51054", readCount: 559950 },
+  "HGM-12": { run: "ERR10009632", experiment: "ERX9550591", biosample: "SAMEA110434764", instrumentModel: "NextSeq 550", checksum1: "59813bc3514e35e7855225225d2cbb74", checksum2: "43babbddd2f836e30ce00681058e6635", readCount: 464714 },
 };

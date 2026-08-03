@@ -22,6 +22,8 @@ import {
 import {
   buildSequencingTechSelection,
   PLATFORM_ILLUMINA_MISEQ_AMPLICON,
+  PLATFORM_ILLUMINA_MISEQ_WGS,
+  PLATFORM_ILLUMINA_NEXTSEQ_550_WGS,
   PLATFORM_ILLUMINA_NEXTSEQ_WGS,
   PLATFORM_ILLUMINA_NOVASEQ_WGS,
   SAMPLE_GR_01,
@@ -76,6 +78,7 @@ function orderPlatformFields(profile: PlatformProfile) {
   return {
     platform: null,
     instrumentModel: profile.instrumentModel,
+    librarySelection: profile.librarySelection ?? null,
     libraryStrategy: profile.libraryStrategy,
     librarySource: profile.librarySource,
   };
@@ -325,6 +328,7 @@ async function createDemoWorkspaceInternal(
         // Extra per-sample answers (e.g. dynamic per-study form fields) merged into
         // Sample.checklistData alongside the template's MIxS keys, keyed by field name.
         extraChecklistData?: Record<string, string>;
+        extraCustomFields?: Record<string, string>;
         reads?: {
           file1: string;
           file2?: string;
@@ -354,7 +358,10 @@ async function createDemoWorkspaceInternal(
       ...(Object.keys(checklistData).length > 0
         ? { checklistData: JSON.stringify(checklistData) }
         : {}),
-      customFields: JSON.stringify(template.customFields),
+      customFields: JSON.stringify({
+        ...template.customFields,
+        ...(extras?.extraCustomFields ?? {}),
+      }),
       ...(extras?.facilityStatus
         ? { facilityStatus: extras.facilityStatus }
         : {}),
@@ -797,7 +804,9 @@ async function createDemoWorkspaceInternal(
     }
 
     // ── REAL data: ENA mouse gut metagenome study PRJDB6165 ──────────
-    // A real public ENA dataset (8 mouse faecal shotgun-metagenome libraries),
+    // A real public dataset (8 mouse faecal 16S V3-V4 amplicon libraries). ENA declares
+    // library_strategy=WGS, while the primary study methods identify PCR amplicon sequencing;
+    // the demo records the scientific assay and retains the source declaration as provenance.
     // seeded with the real accessions, md5 checksums, read counts, sample names,
     // geography and collection year. Pipeline reports for this study are produced
     // separately on the self-hosted runner and wired in afterwards.
@@ -836,8 +845,7 @@ async function createDemoWorkspaceInternal(
       },
     });
 
-    // Demo reads: identifiers are illustrative (RUN-/EXP-<alias>), but the md5
-    // checksums and read counts are the real values for the representative reads.
+    // The Read rows retain the real ENA accessions, md5 checksums and read counts.
     // File + FastQC basenames are keyed by the (genericized) sample alias and
     // resolve to the bundled demo reports under public/demo/pipeline/.
     const mouseRead = (template: SampleTemplate) => {
@@ -850,17 +858,33 @@ async function createDemoWorkspaceInternal(
         checksum2: r.checksum2,
         readCount1: r.readCount,
         readCount2: r.readCount,
-        runAccessionNumber: `RUN-${a}`,
-        experimentAccessionNumber: `EXP-${a}`,
+        runAccessionNumber: r.run,
+        experimentAccessionNumber: r.experiment,
         fastqcReport1: `${demoRoot}/mouse-gut-microbiome/fastqc/${a}_R1_fastqc.html`,
         fastqcReport2: `${demoRoot}/mouse-gut-microbiome/fastqc/${a}_R2_fastqc.html`,
+      };
+    };
+    const mouseProvenance = (template: SampleTemplate) => {
+      const source = MOUSE_GUT_READS[template.sampleAlias];
+      return {
+        source_archive: "ENA",
+        source_bioproject: "PRJDB6165",
+        source_biosample_accession: source.biosample,
+        source_secondary_sample_accession: source.secondarySample,
+        source_run_accession: source.run,
+        source_experiment_accession: source.experiment,
+        source_instrument_model: "Illumina MiSeq",
+        source_library_strategy: "WGS",
+        source_library_source: "METAGENOMIC",
+        source_library_selection: "PCR",
+        scientific_assay: "16S rRNA V3-V4 amplicon",
       };
     };
 
     const mouseOrder = await tx.order.create({
       data: {
         orderNumber: createOrderNumber(prefix, 8),
-        name: "Mouse gut metagenomes (demo)",
+        name: "Mouse gut 16S amplicons (demo)",
         status: "COMPLETED",
         statusUpdatedAt: new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000),
         numberOfSamples: 8,
@@ -874,14 +898,14 @@ async function createDemoWorkspaceInternal(
         userId: researcher.id,
         samples: {
           create: [
-            buildSampleCreate(SAMPLE_MOUSE_01, 8, 1, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_01) }),
-            buildSampleCreate(SAMPLE_MOUSE_02, 8, 2, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_02) }),
-            buildSampleCreate(SAMPLE_MOUSE_03, 8, 3, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_03) }),
-            buildSampleCreate(SAMPLE_MOUSE_04, 8, 4, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_04) }),
-            buildSampleCreate(SAMPLE_MOUSE_05, 8, 5, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_05) }),
-            buildSampleCreate(SAMPLE_MOUSE_06, 8, 6, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_06) }),
-            buildSampleCreate(SAMPLE_MOUSE_07, 8, 7, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_07) }),
-            buildSampleCreate(SAMPLE_MOUSE_08, 8, 8, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", reads: mouseRead(SAMPLE_MOUSE_08) }),
+            buildSampleCreate(SAMPLE_MOUSE_01, 8, 1, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", extraCustomFields: mouseProvenance(SAMPLE_MOUSE_01), reads: mouseRead(SAMPLE_MOUSE_01) }),
+            buildSampleCreate(SAMPLE_MOUSE_02, 8, 2, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", extraCustomFields: mouseProvenance(SAMPLE_MOUSE_02), reads: mouseRead(SAMPLE_MOUSE_02) }),
+            buildSampleCreate(SAMPLE_MOUSE_03, 8, 3, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", extraCustomFields: mouseProvenance(SAMPLE_MOUSE_03), reads: mouseRead(SAMPLE_MOUSE_03) }),
+            buildSampleCreate(SAMPLE_MOUSE_04, 8, 4, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", extraCustomFields: mouseProvenance(SAMPLE_MOUSE_04), reads: mouseRead(SAMPLE_MOUSE_04) }),
+            buildSampleCreate(SAMPLE_MOUSE_05, 8, 5, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", extraCustomFields: mouseProvenance(SAMPLE_MOUSE_05), reads: mouseRead(SAMPLE_MOUSE_05) }),
+            buildSampleCreate(SAMPLE_MOUSE_06, 8, 6, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", extraCustomFields: mouseProvenance(SAMPLE_MOUSE_06), reads: mouseRead(SAMPLE_MOUSE_06) }),
+            buildSampleCreate(SAMPLE_MOUSE_07, 8, 7, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", extraCustomFields: mouseProvenance(SAMPLE_MOUSE_07), reads: mouseRead(SAMPLE_MOUSE_07) }),
+            buildSampleCreate(SAMPLE_MOUSE_08, 8, 8, { studyId: mouseStudy.id, facilityStatus: "SEQUENCED", extraCustomFields: mouseProvenance(SAMPLE_MOUSE_08), reads: mouseRead(SAMPLE_MOUSE_08) }),
           ],
         },
       },
@@ -1027,13 +1051,14 @@ async function createDemoWorkspaceInternal(
     await seedMouseShowcaseRun("fastq-checksum", "Checksum summary (real ENA mouse-gut data)", "mouse-checksum-summary.tsv", "report");
 
     // ── Human gut shotgun metagenome DEMO study ─────────────────────────
-    // Genericized demo (see STUDY_HUMAN_GUT_PRJEB54724). Provenance is maintainers-only.
+    // Genericized presentation metadata (see STUDY_HUMAN_GUT_PRJEB54724), with the public ENA
+    // project/run/experiment/BioSample provenance retained in the underlying records.
     // A second real-data demo study: 12 public human faecal shotgun-metagenome
     // libraries (Illumina paired WGS) where the MAG pipeline is meaningful and
     // reads + assembly are submitted to the ENA test server on the runner.
     const HUMAN_STUDY_FORM_ANSWERS: Record<string, string> = {
       library_prep_kit: "Illumina DNA Prep",
-      sequencing_platform: "Illumina NextSeq 550",
+      sequencing_platform: "Illumina MiSeq (7 runs) and NextSeq 550 (5 runs)",
       target_sequencing_depth: "~0.5-0.8M read pairs per sample",
       qc_pipeline_version: "MAG (MEGAHIT assembly + binning) -> ENA submission",
       demultiplexing_strategy: "Dual-index barcodes, demultiplexed on-instrument (bcl2fastq)",
@@ -1078,51 +1103,96 @@ async function createDemoWorkspaceInternal(
         checksum2: r.checksum2,
         readCount1: r.readCount,
         readCount2: r.readCount,
-        runAccessionNumber: `RUN-${a}`,
-        experimentAccessionNumber: `EXP-${a}`,
+        runAccessionNumber: r.run,
+        experimentAccessionNumber: r.experiment,
       };
     };
-    const humanOrder = await tx.order.create({
-      data: {
-        orderNumber: createOrderNumber(prefix, 9),
-        name: "Human gut shotgun metagenomes (demo)",
-        status: "COMPLETED",
-        statusUpdatedAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
-        numberOfSamples: 12,
-        contactName: "Demo Researcher",
-        contactEmail: researcherEmail,
-        billingAddress: "SeqDesk Demo Workspace",
-        ...orderPlatformFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS),
-        customFields: orderCustomFields(PLATFORM_ILLUMINA_NEXTSEQ_WGS, {
-          _projects: "Human gut shotgun (demo)",
-        }),
-        userId: researcher.id,
-        samples: {
-          create: [
-            buildSampleCreate(SAMPLE_HGUT_01, 9, 1, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_01) }),
-            buildSampleCreate(SAMPLE_HGUT_02, 9, 2, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_02) }),
-            buildSampleCreate(SAMPLE_HGUT_03, 9, 3, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_03) }),
-            buildSampleCreate(SAMPLE_HGUT_04, 9, 4, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_04) }),
-            buildSampleCreate(SAMPLE_HGUT_05, 9, 5, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_05) }),
-            buildSampleCreate(SAMPLE_HGUT_06, 9, 6, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_06) }),
-            buildSampleCreate(SAMPLE_HGUT_07, 9, 7, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_07) }),
-            buildSampleCreate(SAMPLE_HGUT_08, 9, 8, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_08) }),
-            buildSampleCreate(SAMPLE_HGUT_09, 9, 9, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_09) }),
-            buildSampleCreate(SAMPLE_HGUT_10, 9, 10, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_10) }),
-            buildSampleCreate(SAMPLE_HGUT_11, 9, 11, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_11) }),
-            buildSampleCreate(SAMPLE_HGUT_12, 9, 12, { studyId: humanStudy.id, facilityStatus: "SEQUENCED", reads: humanRead(SAMPLE_HGUT_12) }),
-          ],
-        },
-      },
-      include: {
-        samples: {
-          select: {
-            id: true,
-            sampleAlias: true,
+    const humanProvenance = (template: SampleTemplate) => {
+      const source = HUMAN_GUT_READS[template.sampleAlias];
+      return {
+        source_archive: "ENA",
+        source_bioproject: "PRJEB54724",
+        source_biosample_accession: source.biosample,
+        source_run_accession: source.run,
+        source_experiment_accession: source.experiment,
+        source_instrument_model: source.instrumentModel,
+        source_library_strategy: "WGS",
+        source_library_source: "METAGENOMIC",
+        source_library_selection: "other",
+      };
+    };
+    const humanMiseqTemplates = [
+      SAMPLE_HGUT_01,
+      SAMPLE_HGUT_02,
+      SAMPLE_HGUT_03,
+      SAMPLE_HGUT_05,
+      SAMPLE_HGUT_08,
+      SAMPLE_HGUT_09,
+      SAMPLE_HGUT_10,
+    ];
+    const humanNextseqTemplates = [
+      SAMPLE_HGUT_04,
+      SAMPLE_HGUT_06,
+      SAMPLE_HGUT_07,
+      SAMPLE_HGUT_11,
+      SAMPLE_HGUT_12,
+    ];
+    const createHumanOrder = (
+      orderIndex: number,
+      profile: PlatformProfile,
+      templates: SampleTemplate[],
+    ) =>
+      tx.order.create({
+        data: {
+          orderNumber: createOrderNumber(prefix, orderIndex),
+          name: `Human gut shotgun metagenomes — ${profile.instrumentModel} (demo)`,
+          status: "COMPLETED",
+          statusUpdatedAt: new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000),
+          numberOfSamples: templates.length,
+          contactName: "Demo Researcher",
+          contactEmail: researcherEmail,
+          billingAddress: "SeqDesk Demo Workspace",
+          ...orderPlatformFields(profile),
+          customFields: orderCustomFields(profile, {
+            _projects: "Human gut shotgun (demo)",
+            source_bioproject: "PRJEB54724",
+          }),
+          userId: researcher.id,
+          samples: {
+            create: templates.map((template, sampleIndex) =>
+              buildSampleCreate(template, orderIndex, sampleIndex + 1, {
+                studyId: humanStudy.id,
+                facilityStatus: "SEQUENCED",
+                extraCustomFields: humanProvenance(template),
+                reads: humanRead(template),
+              }),
+            ),
           },
         },
-      },
-    });
+        include: {
+          samples: {
+            select: {
+              id: true,
+              sampleAlias: true,
+            },
+          },
+        },
+      });
+    const humanMiseqOrder = await createHumanOrder(
+      9,
+      PLATFORM_ILLUMINA_MISEQ_WGS,
+      humanMiseqTemplates,
+    );
+    // Order 10 is already used by the large cohort below; 11 keeps demo order numbers unique.
+    const humanNextseqOrder = await createHumanOrder(
+      11,
+      PLATFORM_ILLUMINA_NEXTSEQ_550_WGS,
+      humanNextseqTemplates,
+    );
+    const humanSamples = [
+      ...(humanMiseqOrder.samples ?? []),
+      ...(humanNextseqOrder.samples ?? []),
+    ];
 
     // ── MAG run on the human-gut study — native pipeline output ───────
     // Represented exactly like a real MAG run in SeqDesk (PipelineRun + steps + events +
@@ -1131,7 +1201,7 @@ async function createDemoWorkspaceInternal(
     // demo values. Provenance (maintainers only): a real MEGAHIT assembly of the underlying
     // WGS reads on the self-hosted runner, submitted to the ENA test server. runNumber
     // index 3 avoids colliding with the pilot MAG run.
-    const humanSample = humanOrder.samples?.[0];
+    const humanSample = humanSamples[0];
     const humanMagRun = await tx.pipelineRun.create({
       data: {
         runNumber: createRunNumber(prefix, "MAG", 3),
@@ -1142,7 +1212,7 @@ async function createDemoWorkspaceInternal(
         studyId: humanStudy.id,
         userId: researcher.id,
         inputSampleIds: JSON.stringify(
-          (humanOrder.samples ?? []).map((sample) => sample.id)
+          humanSamples.map((sample) => sample.id)
         ),
         config: JSON.stringify({ preset: "demo", assembler: "megahit" }),
         runFolder: `${demoRoot}/runs/human-mag-demo`,
@@ -1296,7 +1366,7 @@ async function createDemoWorkspaceInternal(
         studyId: humanStudy.id,
         userId: researcher.id,
         inputSampleIds: JSON.stringify(
-          (humanOrder.samples ?? []).map((sample) => sample.id)
+          humanSamples.map((sample) => sample.id)
         ),
         config: JSON.stringify({ preset: "demo", kraken2Db: "Standard", brackenLevel: "S" }),
         runFolder: `${demoRoot}/runs/human-kraken2-bracken-demo`,
@@ -1370,7 +1440,7 @@ async function createDemoWorkspaceInternal(
         metadata: JSON.stringify({ seeded: true, demo: true }),
       },
     });
-    for (const sample of humanOrder.samples ?? []) {
+    for (const sample of humanSamples) {
       const top = KRAKEN_TOP_TAXON[sample.sampleAlias ?? ""];
       if (!top) continue;
       await tx.pipelineArtifact.create({

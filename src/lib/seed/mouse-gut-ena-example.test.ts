@@ -43,6 +43,18 @@ describe("mouse-gut PRJDB6165 example dataset", () => {
     expect(manifest.order.orderNumber).toBe(MOUSE_GUT_ORDER_NUMBER);
     expect(manifest.study.alias).toBe(MOUSE_GUT_STUDY_ALIAS);
     expect(manifest.samples).toHaveLength(8);
+    expect(manifest.order).toMatchObject({
+      instrumentModel: "Illumina MiSeq",
+      libraryStrategy: "AMPLICON",
+      librarySource: "METAGENOMIC",
+      librarySelection: "PCR",
+    });
+    expect(manifest.order.customFields.sourceProvenance).toMatchObject({
+      archive: "ENA",
+      bioproject: "PRJDB6165",
+      archiveLibraryStrategy: "WGS",
+      scientificAssay: "16S rRNA V3-V4 amplicon",
+    });
     for (const sample of manifest.samples) {
       expect(sample.file1).toMatch(/^reads\/MGB-\d+_R1\.fastq\.gz$/);
       expect(sample.file2).toMatch(/^reads\/MGB-\d+_R2\.fastq\.gz$/);
@@ -51,6 +63,27 @@ describe("mouse-gut PRJDB6165 example dataset", () => {
       expect(sample.taxId).toBe(MOUSE_GUT_BASE.taxId);
       // sampleId is the genericized alias so pipeline outputs name files by it
       expect(sample.sampleId).toMatch(/^MGB-\d+$/);
+      const source = MOUSE_GUT_READS[sample.sampleAlias];
+      expect(sample).toMatchObject({
+        checksum1: source.checksum1,
+        checksum2: source.checksum2,
+        readCount1: source.readCount,
+        readCount2: source.readCount,
+        runAccessionNumber: source.run,
+        experimentAccessionNumber: source.experiment,
+      });
+      expect(sample.customFields).toMatchObject({
+        source_bioproject: "PRJDB6165",
+        source_biosample_accession: source.biosample,
+        source_secondary_sample_accession: source.secondarySample,
+        source_library_strategy: "WGS",
+        scientific_assay: "16S rRNA V3-V4 amplicon",
+      });
+      expect(sample.sequencingRun).toMatchObject({
+        runId: source.run,
+        instrument: "Illumina MiSeq",
+        totalReads: source.readCount,
+      });
     }
     // sample ids are unique
     const ids = manifest.samples.map((s) => s.sampleId);

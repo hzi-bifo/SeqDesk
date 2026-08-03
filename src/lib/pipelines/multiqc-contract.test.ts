@@ -63,7 +63,12 @@ describe("MultiQC package contract", () => {
     expect(workflow).toContain(
       'error "Staged QC input directory does not exist: ${qcDirPath}"'
     );
-    expect(workflow).toMatch(/find "\$\{qc_dir\}" -type f -print -quit/);
+    expect(workflow).toMatch(
+      /find -H "\$\{qc_dir\}" -type f -print -quit/
+    );
+    expect(workflow).not.toMatch(
+      /find "\$\{qc_dir\}" -type f -print -quit/
+    );
     expect(workflow).toContain("--strict");
     expect(workflow).toContain(
       "test -s multiqc/multiqc_data/multiqc_data.json"

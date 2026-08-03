@@ -45,6 +45,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import zlib from "node:zlib";
 
 import { PrismaClient } from "@prisma/client";
@@ -220,7 +221,7 @@ function resolveOnDisk(dataBasePath, file) {
 // would produce — so ENA's genome-assembly validation accepts it on an opt-in
 // --submit-assembly run (a handful of 2.5–4.6 kb contigs of valid IUPAC bases,
 // 70-col wrapped). Deterministic (seeded LCG, no Math.random) for reproducibility.
-function buildAssemblyFasta() {
+export function buildAssemblyFasta() {
   const bases = "ACGT";
   let seed = 0x2545f491;
   const nextBase = () => {
@@ -240,39 +241,102 @@ function buildAssemblyFasta() {
 
 const MEGAHIT_MIN_CONTIG_LEN = 1000; // mag-style; comfortably above ENA's 200 bp floor
 
-// Produce a REAL mag-style assembly: run MEGAHIT (nf-core/mag's assembler) on the
-// seeded paired reads, deterministically (--num-cpu-threads 1). Returns gzip bytes
-// of final.contigs.fa when it yields >=1 contig >= MEGAHIT_MIN_CONTIG_LEN, else null
-// (caller falls back to the synthetic FASTA so the warn-only leg never regresses).
-// The megahit binary comes from the submg conda env via SEQDESK_SUBMG_E2E_MEGAHIT_BIN;
-// when unset/missing (local/dev), this returns null and the synthetic FASTA is used.
-function buildMegahitAssemblyGz(r1Abs, r2Abs) {
-  const bin = process.env.SEQDESK_SUBMG_E2E_MEGAHIT_BIN || "megahit";
-  if (spawnSync(bin, ["--version"], { stdio: "ignore" }).status !== 0) return null;
+function hasUsableMegahitContig(text) {
+  const records = String(text)
+    .split(/^>/m)
+    .slice(1);
+  return records.some((record) => {
+    const newline = record.indexOf("\n");
+    if (newline < 1) return false;
+    const sequence = record
+      .slice(newline + 1)
+      .replace(/\s+/g, "");
+    return sequence.length >= MEGAHIT_MIN_CONTIG_LEN && /^[ACGTN]+$/i.test(sequence);
+  });
+}
+
+// Produce a REAL mag-style assembly: run MEGAHIT (nf-core/mag's assembler) on
+// paired reads and return gzip bytes of final.contigs.fa. This function fails
+// closed: callers that select MEGAHIT never receive a synthetic substitute.
+export function buildMegahitAssemblyGz(
+  r1Abs,
+  r2Abs,
+  {
+    bin = process.env.SEQDESK_SUBMG_E2E_MEGAHIT_BIN || "megahit",
+    threads = String(process.env.SEQDESK_SUBMG_E2E_MEGAHIT_THREADS || "1"),
+    timeoutSec = Number(process.env.SEQDESK_SUBMG_E2E_MEGAHIT_TIMEOUT_SEC || "300"),
+    tempRoot = os.tmpdir(),
+  } = {},
+) {
+  const version = spawnSync(bin, ["--version"], { stdio: "ignore" });
+  if (version.error) {
+    fail(`MEGAHIT binary is unavailable: ${bin}`, version.error.message);
+  }
+  if (version.status !== 0) {
+    fail(`MEGAHIT binary check failed: ${bin}`, `exit status ${version.status}`);
+  }
   // Threads + timeout are env-tunable: the default (1 thread / 5 min) suits the tiny
   // dummy reads, while a real shotgun sample needs more (e.g. 4 threads / 20 min) to
   // assemble contigs within the window.
-  const threads = String(process.env.SEQDESK_SUBMG_E2E_MEGAHIT_THREADS || "1");
-  const timeoutSec = Number(process.env.SEQDESK_SUBMG_E2E_MEGAHIT_TIMEOUT_SEC || "300");
-  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "submg-megahit-"));
+  const outDir = fs.mkdtempSync(path.join(tempRoot, "submg-megahit-"));
   const runOut = path.join(outDir, "asm"); // MEGAHIT requires its -o dir NOT pre-exist
-  const res = spawnSync(
-    bin,
-    [
-      "-1", r1Abs,
-      "-2", r2Abs,
-      "--num-cpu-threads", threads,
-      "--min-contig-len", String(MEGAHIT_MIN_CONTIG_LEN),
-      "-o", runOut,
-    ],
-    { stdio: "inherit", timeout: timeoutSec * 1000 },
-  );
-  const contigs = path.join(runOut, "final.contigs.fa");
-  if (res.status !== 0 || !fs.existsSync(contigs)) return null;
-  // Guard ENA validation: require a real header + IUPAC sequence (>=1 contig).
-  const text = fs.readFileSync(contigs, "utf8");
-  if (!/^>.+\n[ACGTNacgtn]/m.test(text)) return null;
-  return zlib.gzipSync(Buffer.from(text));
+  try {
+    const result = spawnSync(
+      bin,
+      [
+        "-1", r1Abs,
+        "-2", r2Abs,
+        "--num-cpu-threads", threads,
+        "--min-contig-len", String(MEGAHIT_MIN_CONTIG_LEN),
+        "-o", runOut,
+      ],
+      { stdio: "inherit", timeout: timeoutSec * 1000 },
+    );
+    if (result.error) {
+      fail("MEGAHIT execution failed", result.error.message);
+    }
+    if (result.status !== 0) {
+      fail("MEGAHIT execution failed", `exit status ${result.status}`);
+    }
+    const contigs = path.join(runOut, "final.contigs.fa");
+    if (!fs.existsSync(contigs)) {
+      fail("MEGAHIT did not produce final.contigs.fa");
+    }
+    const text = fs.readFileSync(contigs, "utf8");
+    if (!hasUsableMegahitContig(text)) {
+      fail(
+        `MEGAHIT produced no usable contig of at least ${MEGAHIT_MIN_CONTIG_LEN} bp`,
+      );
+    }
+    return zlib.gzipSync(Buffer.from(text));
+  } finally {
+    fs.rmSync(outDir, { recursive: true, force: true });
+  }
+}
+
+export function selectAssemblySource({ requestedSource } = {}) {
+  const source = String(
+    requestedSource || "megahit",
+  )
+    .trim()
+    .toLowerCase();
+  if (!new Set(["megahit", "synthetic"]).has(source)) {
+    fail(
+      `Invalid assembly source '${source}'. Expected 'megahit' or 'synthetic'.`,
+    );
+  }
+  return source;
+}
+
+export function resolveFixtureAssemblySource({
+  requestedSource,
+  submitAssembly = false,
+} = {}) {
+  const selectedSource = selectAssemblySource({ requestedSource });
+  // SubMG validates an assembly input even for sample-only/read-only runs. Keep
+  // those lightweight contract legs independent of MEGAHIT, while requiring
+  // the selected provenance whenever assembly submission is actually enabled.
+  return submitAssembly ? selectedSource : "synthetic";
 }
 
 const ACCESSION_RE = /^(ERS|SAMEA|SAMN|ERR|ERX|ERZ|GCA)/i;
@@ -337,6 +401,17 @@ async function main() {
   // configured data dir, so submg submits REAL reads + a REAL MEGAHIT assembly to ENA TEST
   // instead of dummy data. Env-gated: default behaviour (dummy data) is unchanged.
   const exampleDataset = process.env.SEQDESK_SUBMG_E2E_EXAMPLE_DATASET || null;
+  const assemblySource = resolveFixtureAssemblySource({
+    requestedSource:
+      args["assembly-source"] || process.env.SEQDESK_SUBMG_E2E_ASSEMBLY_SOURCE,
+    submitAssembly,
+  });
+  if (exampleDataset && submitAssembly && assemblySource !== "megahit") {
+    fail(
+      "Real example-data assembly submission requires assemblySource=megahit; synthetic assembly is not permitted.",
+    );
+  }
+  console.log(`assemblySource=${assemblySource}`);
   if (exampleDataset) {
     // The example-dataset extractor reads the RAW stored SiteSettings.dataBasePath (not the
     // env-resolved value the GET above returns), so persist it explicitly first — otherwise
@@ -437,38 +512,42 @@ async function main() {
       console.log(`Set checksums on read ${pairedRead.id}: ${Object.keys(checksumUpdate).join(", ")}.`);
     }
 
-    // (b) A mag-produced assembly: write a realistic FASTA on disk and create the
-    //     Assembly row linked to a COMPLETED `mag` PipelineRun — i.e. exactly what
-    //     the MAG pipeline leaves behind (there is no assembly-upload API). This is
-    //     the input submg consumes for assembly submission; `createdByPipelineRunId`
-    //     makes resolveAssemblySelection treat it as pipeline output (preferred).
-    const hasAssemblyOnDisk = targetSample.assemblies.some(
-      (assembly) => assembly.assemblyFile && resolveOnDisk(dataBasePath, assembly.assemblyFile),
-    );
-    if (!hasAssemblyOnDisk) {
+    // (b) Prepare the assembly input that SubMG validates even for sample-only runs.
+    //     MEGAHIT mode fails closed and is the only valid mode for real example-data
+    //     assembly submission. Synthetic mode is a deterministic contract fixture and
+    //     is never represented as the output of a completed MAG PipelineRun.
+    {
       const relDir = path.join("submg-e2e-assemblies", study.id);
-      // Try a REAL MEGAHIT assembly (nf-core/mag's assembler) of the seeded paired
-      // reads, exactly what a mag run leaves behind. Fall back to the synthetic FASTA
-      // when MEGAHIT is unavailable or yields no usable contig — keeps the leg green.
       const r1Abs = resolveOnDisk(dataBasePath, pairedRead.file1);
       const r2Abs = resolveOnDisk(dataBasePath, pairedRead.file2);
-      const megahitGz = r1Abs && r2Abs ? buildMegahitAssemblyGz(r1Abs, r2Abs) : null;
-      const useReal = Boolean(megahitGz);
+      let assemblyContents;
+      if (assemblySource === "megahit") {
+        if (!r1Abs || !r2Abs) {
+          fail(
+            "MEGAHIT assembly requires both paired read files on disk",
+            JSON.stringify({ file1: pairedRead.file1, file2: pairedRead.file2 }),
+          );
+        }
+        assemblyContents = buildMegahitAssemblyGz(r1Abs, r2Abs);
+      } else {
+        assemblyContents = buildAssemblyFasta();
+      }
       const relPath = path.join(
         relDir,
-        useReal ? `${targetSample.id}.contigs.fa.gz` : `${targetSample.id}.fasta`,
+        assemblySource === "megahit"
+          ? `${targetSample.id}.contigs.fa.gz`
+          : `${targetSample.id}.synthetic.fasta`,
       );
       const absPath = path.resolve(dataBasePath, relPath);
       fs.mkdirSync(path.dirname(absPath), { recursive: true });
-      fs.writeFileSync(absPath, useReal ? megahitGz : buildAssemblyFasta());
+      fs.writeFileSync(absPath, assemblyContents);
       console.log(
-        useReal
+        assemblySource === "megahit"
           ? `Built REAL mag MEGAHIT assembly: ${relPath}`
-          : `MEGAHIT unavailable/empty — using synthetic assembly fallback: ${relPath}`,
+          : `Built explicit synthetic assembly fixture: ${relPath}`,
       );
-      // Simulate the upstream mag run that generated this assembly.
       let magRunId = null;
-      if (adminUserId) {
+      if (assemblySource === "megahit" && adminUserId) {
         const magRun = await prisma.pipelineRun.create({
           data: {
             runNumber: `MAG-SUBMGE2E-${Date.now()}`,
@@ -485,13 +564,13 @@ async function main() {
       await prisma.assembly.create({
         data: {
           sampleId: targetSample.id,
-          assemblyName: `${targetSample.sampleId}_mag_assembly`,
+          assemblyName: `${targetSample.sampleId}_${assemblySource}_assembly`,
           assemblyFile: relPath,
           ...(magRunId ? { createdByPipelineRunId: magRunId } : {}),
         },
       });
       console.log(
-        `Created mag-style assembly fixture at ${relPath}${magRunId ? ` (mag run ${magRunId})` : ""}.`,
+        `Created ${assemblySource} assembly fixture at ${relPath}${magRunId ? ` (mag run ${magRunId})` : ""}.`,
       );
     }
 
@@ -764,9 +843,9 @@ async function main() {
       );
     }
 
-    // HARD (when requested) — the mag-style assembly was submitted and SeqDesk took
+    // HARD (when requested) — the selected assembly fixture was submitted and SeqDesk took
     // up the assembly accession (ERZ/GCA). This is the "samples + reads + assembly"
-    // integration: SeqDesk fed submg the mag-produced assembly and ingested ENA's
+    // integration: SeqDesk fed submg the selected assembly and ingested ENA's
     // analysis accession back onto the Assembly row.
     if (submitAssembly) {
       if (Number(processing.assembliesUpdated) < 1) {
@@ -796,22 +875,29 @@ async function main() {
       sampleAccession,
       submitReads,
       submitAssembly,
+      assemblySource,
     };
   } finally {
     await prisma.$disconnect();
   }
 }
 
-main()
-  .then((summary) => {
-    // Exit explicitly once the assertions have passed (flush stdout first). The
-    // app's keep-alive HTTP sockets / DB handles can otherwise keep the event loop
-    // alive and a late, post-success teardown rejection has surfaced as a spurious
-    // non-zero exit (seen only on the installed-app leg). The integration is already
-    // proven by the time we get here.
-    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`, () => process.exit(0));
-  })
-  .catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(1);
-  });
+const isDirectExecution =
+  Boolean(process.argv[1]) &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+
+if (isDirectExecution) {
+  main()
+    .then((summary) => {
+      // Exit explicitly once the assertions have passed (flush stdout first). The
+      // app's keep-alive HTTP sockets / DB handles can otherwise keep the event loop
+      // alive and a late, post-success teardown rejection has surfaced as a spurious
+      // non-zero exit (seen only on the installed-app leg). The integration is already
+      // proven by the time we get here.
+      process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`, () => process.exit(0));
+    })
+    .catch((error) => {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(1);
+    });
+}

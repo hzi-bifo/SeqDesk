@@ -27,7 +27,9 @@ A run-level summary TSV combines the per-sample metrics.
 
 ## Dependencies
 
-- `NanoPlot` (installed via conda from bioconda, `nanoplot=1.42.0`)
+- `NanoPlot` (installed via Conda from Bioconda, `nanoplot=1.42.0`), with
+  Python 3.12 and `python-kaleido=0.2.1` pinned because NanoPlot 1.42 uses the
+  pre-1.0 `kaleido.scopes` API
 
 ## Inputs
 
