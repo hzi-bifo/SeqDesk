@@ -692,6 +692,14 @@ assert_contains "the next steps show Data Storage verification" \
     "$summary_cli storage status" <(printf '%s\n' "$summary_out")
 assert_contains "the next steps link the Data Storage guide" \
     "https://seqdesk.org/docs/administration/data-storage" <(printf '%s\n' "$summary_out")
+assert_contains "the next steps show the optional demo-data command" \
+    "$summary_cli demo-data install" <(printf '%s\n' "$summary_out")
+assert_contains "the next steps require writable Data Storage for demo data" \
+    "Data Storage is configured and writable" <(printf '%s\n' "$summary_out")
+assert_contains "the next steps describe the demo-data contents" \
+    "example orders, studies, samples, metadata, and synthetic FASTQ files" <(printf '%s\n' "$summary_out")
+assert_contains "the next steps show the in-app demo-data alternative" \
+    "Admin > Settings > Demo data" <(printf '%s\n' "$summary_out")
 assert_contains "the next steps show pipeline discovery" \
     "$summary_cli pipelines list" <(printf '%s\n' "$summary_out")
 assert_contains "the next steps show a working first pipeline install" \
@@ -720,6 +728,10 @@ assert_contains "a missing local CLI is explained" \
     "the local SeqDesk CLI is not available" <(printf '%s\n' "$missing_cli_out")
 assert_not_contains "a missing local CLI is not presented as runnable" \
     "pipelines install simulate-reads" <(printf '%s\n' "$missing_cli_out")
+assert_not_contains "a missing local CLI does not advertise a missing demo-data command" \
+    "demo-data install" <(printf '%s\n' "$missing_cli_out")
+assert_contains "a missing local CLI keeps the in-app demo-data path" \
+    "Admin > Settings > Demo data" <(printf '%s\n' "$missing_cli_out")
 assert_contains "the guide remains available without a local CLI" \
     "https://seqdesk.org/docs/pipelines/installing-pipelines" <(printf '%s\n' "$missing_cli_out")
 
@@ -741,6 +753,8 @@ assert_contains "configured storage is checked with status" \
     "$summary_cli storage status" <(printf '%s\n' "$configured_storage_out")
 assert_not_contains "configured storage is not replaced with the install default" \
     "storage configure /opt/seqdesk-test/data" <(printf '%s\n' "$configured_storage_out")
+assert_contains "configured storage still offers the optional demo dataset" \
+    "$summary_cli demo-data install" <(printf '%s\n' "$configured_storage_out")
 
 echo ""
 echo "== Case 13: installer failures expose stable troubleshooting URLs =="

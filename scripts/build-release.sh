@@ -163,6 +163,7 @@ const entries = [
   "${ROOT_DIR}/scripts/stream-monitor.ts",
   "${ROOT_DIR}/scripts/pipeline-monitor.ts",
   "${ROOT_DIR}/scripts/pipeline-cli.ts",
+  "${ROOT_DIR}/scripts/demo-data.ts",
 ];
 for (const entry of entries) {
   const outfile = entry.replace("${ROOT_DIR}", "${RELEASE_DIR}").replace(/\.ts\$/, ".js");

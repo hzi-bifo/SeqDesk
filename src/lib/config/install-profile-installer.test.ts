@@ -212,6 +212,19 @@ describe("install profile installer wiring", () => {
     expect(installDist).toContain(
       "https://seqdesk.org/docs/pipelines/installing-pipelines"
     );
+    expect(installDist).toContain("demo-data install");
+    expect(installDist).toContain("Admin > Settings > Demo data");
+    expect(installDist).toContain("Data Storage is configured and writable");
+    expect(sourceInstaller).toContain("Admin > Settings > Demo data");
+    expect(sourceInstaller).toContain(
+      "Data Storage is configured and writable"
+    );
+    expect(sourceInstaller).toContain(
+      "example orders, studies, samples, metadata, and synthetic FASTQ files"
+    );
+    expect(sourceInstaller).not.toContain(
+      "seqdesk@latest demo-data install --dir"
+    );
     expect(sourceInstaller).toContain("Browser URL: ${SEQDESK_NEXTAUTH_URL:-http://127.0.0.1:${SEQDESK_PORT:-8000}}");
     expect(sourceInstaller).toContain("Local health URL: http://127.0.0.1:${SEQDESK_PORT:-8000}");
   });

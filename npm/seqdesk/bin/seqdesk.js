@@ -81,6 +81,29 @@ Options:
 
 The older "seqdesk data-storage" spelling remains an alias.
 Status exits non-zero until the configured directory is ready.
+After configuration succeeds and the directory is writable, load the optional example dataset with
+"seqdesk demo-data install" or use Admin > Settings > Demo data.
+Local shell access to the installed directory is treated as operator access.
+`;
+
+const DEMO_DATA_USAGE = `Usage:
+  seqdesk demo-data install [--dir /path/to/seqdesk] [--user-email <address>] [--yes] [--json]
+  seqdesk demo-data status [--dir /path/to/seqdesk] [--user-email <address>] [--json]
+  seqdesk demo-data remove [--dir /path/to/seqdesk] [--user-email <address>] [--yes] [--json]
+
+Options:
+  --dir, -d          Installed SeqDesk directory. Otherwise uses the configured/default install.
+  --user-email       FACILITY_ADMIN account that owns the demo dataset.
+  --yes, -y          Skip the confirmation prompt for install or remove.
+  --json             Print one machine-readable JSON document.
+  --help, -h         Show this help.
+
+The older "seqdesk dummy-data ..." spelling remains an alias.
+"seqdesk install dummy-data" and "seqdesk install dummy_data" are install aliases.
+JSON install/remove commands require --yes.
+Installation requires configured, writable SeqDesk data storage. The dataset
+contains example orders, studies, samples, metadata, and synthetic FASTQ files;
+it is intended for evaluation and testing, not scientific analysis.
 Local shell access to the installed directory is treated as operator access.
 `;
 
@@ -483,6 +506,89 @@ function parseStorageArgs(argv) {
     }
   }
 
+  return options;
+}
+
+function parseDemoDataArgs(argv) {
+  const options = {
+    action: "",
+    dir: resolveDefaultInstallDir(),
+    userEmail: "",
+    yes: false,
+    json: false,
+    help: false,
+  };
+
+  const action = argv[0];
+  if (!action || action === "--help" || action === "-h" || action === "help") {
+    options.help = true;
+    return options;
+  }
+  if (action !== "install" && action !== "status" && action !== "remove") {
+    throw new Error(`Unknown demo-data command: ${action}`);
+  }
+  options.action = action;
+
+  for (let index = 1; index < argv.length; index += 1) {
+    const token = argv[index];
+
+    if (token === "--help" || token === "-h") {
+      options.help = true;
+      continue;
+    }
+    if (token === "--yes" || token === "-y") {
+      options.yes = true;
+      continue;
+    }
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+    if (token === "--dir" || token === "-d") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error(`${token} requires a directory path`);
+      }
+      options.dir = value;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--dir=")) {
+      const value = token.slice("--dir=".length);
+      if (!value) {
+        throw new Error("--dir requires a directory path");
+      }
+      options.dir = value;
+      continue;
+    }
+    if (token === "--user-email") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("-")) {
+        throw new Error("--user-email requires an address");
+      }
+      options.userEmail = value;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("--user-email=")) {
+      const value = token.slice("--user-email=".length);
+      if (!value) {
+        throw new Error("--user-email requires an address");
+      }
+      options.userEmail = value;
+      continue;
+    }
+
+    throw new Error(`Unknown demo-data option: ${token}`);
+  }
+
+  options.dir = path.resolve(options.dir);
+  options.userEmail = options.userEmail.trim();
+  if (!options.help && options.json && options.action !== "status" && !options.yes) {
+    throw new Error(
+      `--json requires --yes for demo-data ${options.action}, because the confirmation prompt cannot be answered in JSON mode`
+    );
+  }
   return options;
 }
 
@@ -1958,6 +2064,18 @@ function printStorageResult(result, options) {
     } else {
       console.log("  -> Fix the reported path problem, then run this command again.");
     }
+  } else if (options.command === "configure" && writable === true) {
+    console.log("");
+    console.log("Optional next step: load the deterministic example dataset:");
+    console.log(
+      `  -> seqdesk demo-data install --dir ${shellQuote(options.dir)}`
+    );
+    console.log("     Alternative: Admin > Settings > Demo data.");
+  } else if (options.command === "configure" && writable === false) {
+    console.log("");
+    console.log(
+      "Demo data remains unavailable until the configured directory is writable by the SeqDesk service account."
+    );
   }
 }
 
@@ -2155,6 +2273,399 @@ async function runStorage(argv) {
         ? result.inspection.ready
         : undefined;
   return options.command === "status" && ready !== true ? 1 : 0;
+}
+
+function runInstalledDemoDataWorker({
+  installDir,
+  workerPath,
+  action,
+  configPath,
+  userEmail,
+  databaseUrl,
+  directUrl,
+}) {
+  return new Promise((resolve, reject) => {
+    const childArgs = [workerPath, action, "--config", configPath];
+    if (userEmail) {
+      childArgs.push("--user-email", userEmail);
+    }
+    childArgs.push("--json");
+
+    const child = spawn(process.execPath, childArgs, {
+      cwd: installDir,
+      env: { ...env, DATABASE_URL: databaseUrl, DIRECT_URL: directUrl },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+
+    child.on("error", (error) => {
+      reject(new Error(`Failed to start the installed demo-data worker: ${error.message}`));
+    });
+
+    child.on("close", (code, signal) => {
+      if (signal) {
+        reject(new Error(`The installed demo-data worker exited with signal ${signal}`));
+        return;
+      }
+      resolve({ code: code ?? 1, stdout, stderr, argv: childArgs.slice(1) });
+    });
+  });
+}
+
+function demoDataOwner(payload, fallback = "") {
+  const owner = isPlainObject(payload.owner) ? payload.owner : {};
+  const user = isPlainObject(payload.user) ? payload.user : {};
+  return firstString(
+    payload.userEmail,
+    payload.ownerEmail,
+    payload.email,
+    owner.email,
+    user.email,
+    fallback
+  );
+}
+
+function demoDataRemediation(code, { installDir, userEmail, doctorHint }) {
+  const normalized = firstString(code).toLowerCase().replace(/_/g, "-");
+  if (normalized.includes("cleanup-pending")) {
+    return `Remove the leftover fixture first: seqdesk demo-data remove --yes --dir ${shellQuote(installDir)}${userEmail ? ` --user-email ${shellQuote(userEmail)}` : ""}`;
+  }
+  if (
+    normalized.includes("storage-path-mismatch") ||
+    normalized.includes("storage-path-conflict")
+  ) {
+    return `Refresh demo-data status for the selected owner, verify the reported fixture path, and retry: seqdesk demo-data status --dir ${shellQuote(installDir)}`;
+  }
+  if (normalized.includes("pipeline-runs")) {
+    return "Delete the fixture's linked runs through SeqDesk Pipeline Runs, then retry demo-data removal.";
+  }
+  if (normalized.includes("submission")) {
+    return "Delete test submission history through Admin → Submissions, then retry. Production-submitted studies cannot be wiped.";
+  }
+  if (normalized.includes("references")) {
+    return "Reassign samples from other orders that reference a seeded study, then retry.";
+  }
+  if (
+    normalized.includes("data-path") ||
+    normalized.includes("storage") ||
+    normalized.includes("writable")
+  ) {
+    return `Configure and verify data storage first: seqdesk storage status --dir ${shellQuote(installDir)} (or seqdesk storage configure /absolute/path --dir ${shellQuote(installDir)}).`;
+  }
+  if (
+    normalized.includes("user") ||
+    normalized.includes("admin") ||
+    normalized.includes("owner")
+  ) {
+    return userEmail
+      ? `Confirm ${userEmail} is a FACILITY_ADMIN in this install, or choose another account with --user-email.`
+      : "Create a FACILITY_ADMIN account, or select one explicitly with --user-email.";
+  }
+  if (normalized.includes("database") || normalized.includes("db-")) {
+    return `Check the installed database connection first: ${doctorHint}`;
+  }
+  if (normalized.includes("already")) {
+    return `Inspect the existing dataset with: seqdesk demo-data status --dir ${shellQuote(installDir)}`;
+  }
+  return `Check the install first: ${doctorHint}`;
+}
+
+function printDemoDataPlan({ action, installDir, configPath, database, userEmail }) {
+  console.log(`${style.bold}SeqDesk demo-data ${action}${style.reset}`);
+  printKv("Directory", installDir);
+  printKv("Config", configPath);
+  printKv("Database", database);
+  printKv("Owner", userEmail || "configured/default FACILITY_ADMIN account");
+  console.log("");
+  console.log(
+    action === "remove"
+      ? "This removes the selected admin's SeqDesk demo records and generated demo FASTQ files."
+      : "This creates linked demo studies, orders, samples, reads, and generated FASTQ files."
+  );
+}
+
+function printDemoDataResult(result, options) {
+  console.log(`${style.bold}SeqDesk demo-data ${options.action}${style.reset}`);
+  printKv("Directory", options.dir);
+  const owner = demoDataOwner(result, options.userEmail);
+  if (owner) {
+    printKv("Owner", owner);
+  }
+
+  const installed =
+    typeof result.installed === "boolean"
+      ? result.installed
+      : typeof result.seeded === "boolean"
+        ? result.seeded
+        : undefined;
+  if (typeof installed === "boolean") {
+    printKv("Installed", installed ? "yes" : "no");
+  }
+  if (result.alreadyInstalled === true) {
+    printKv("Already installed", "yes");
+  }
+
+  const countFields = [
+    ["Orders created", result.ordersCreated],
+    ["Samples created", result.samplesCreated],
+    ["Reads created", result.readsCreated],
+    ["Files created", result.filesCreated],
+    ["Orders removed", firstNumber(result.ordersRemoved, result.ordersDeleted)],
+    ["Studies removed", firstNumber(result.studiesRemoved, result.studiesDeleted)],
+    ["Ticket links cleared", result.ticketLinksCleared],
+  ];
+  for (const [label, value] of countFields) {
+    const count = firstNumber(value);
+    if (count !== undefined) {
+      printKv(label, String(count));
+    }
+  }
+  if (typeof result.filesRemoved === "boolean") {
+    printKv("Files removed", result.filesRemoved ? "yes" : "no");
+  } else {
+    const filesRemoved = firstNumber(result.filesRemoved);
+    if (filesRemoved !== undefined) {
+      printKv("Files removed", String(filesRemoved));
+    }
+  }
+  if (typeof result.filesPresent === "boolean") {
+    printKv("Demo files present", result.filesPresent ? "yes" : "no");
+  }
+  if (result.cleanupPending === true) {
+    printKv("Cleanup pending", "yes");
+  }
+
+  const dataPath = firstString(
+    result.dataBasePath,
+    result.dataPath,
+    result.path,
+    result.resolvedPath
+  );
+  if (dataPath) {
+    printKv("Data path", dataPath);
+  }
+  const message = firstString(result.message, result.detail);
+  if (message) {
+    console.log("");
+    console.log(message);
+  } else if (options.action === "install" && result.alreadyInstalled === true) {
+    console.log("");
+    console.log("Demo data is already installed; nothing was changed.");
+  }
+}
+
+async function runDemoData(argv) {
+  const wantsJson = argv.includes("--json");
+  let options;
+  try {
+    options = parseDemoDataArgs(argv);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (wantsJson) {
+      process.stdout.write(
+        `${JSON.stringify({ ok: false, code: "bad-usage", error: message })}\n`
+      );
+    } else {
+      console.error(`[seqdesk] ${message}`);
+      console.error("");
+      console.error(DEMO_DATA_USAGE.trim());
+    }
+    return 2;
+  }
+
+  if (options.help) {
+    console.log(DEMO_DATA_USAGE.trim());
+    return 0;
+  }
+
+  const installDir = options.dir;
+  const doctorHint = `npx -y seqdesk@latest doctor --dir ${shellQuote(installDir)}`;
+  const reconfigureHint = `npx -y seqdesk@latest -y --reconfigure --dir ${shellQuote(installDir)}`;
+  const updateHint = `curl -fsSL ${INSTALL_URL} | bash -s -- --dir ${shellQuote(installDir)}`;
+  const fail = (message, remediation, code = "demo-data-failed", exitCode = 1) => {
+    if (options.json) {
+      process.stdout.write(
+        `${JSON.stringify({
+          ok: false,
+          action: options.action,
+          installDir,
+          code,
+          error: message,
+          ...(remediation ? { remediation } : {}),
+        })}\n`
+      );
+    } else {
+      console.error(`[seqdesk] ${message}`);
+      if (remediation) {
+        console.error(`  -> ${remediation}`);
+      }
+    }
+    return exitCode;
+  };
+
+  if (!dirExists(installDir)) {
+    return fail(
+      `Install directory does not exist: ${installDir}`,
+      "Pass --dir with the directory the installer reported, or install SeqDesk first.",
+      "install-not-found"
+    );
+  }
+
+  const configPath = resolveConfigPath(installDir);
+  const configName = path.basename(configPath);
+  if (!fileExists(configPath)) {
+    return fail(
+      `${installDir} has no ${configName}, so the database to update is unknown.`,
+      `Point --dir at the directory the installer reported, or recreate the runtime config with: ${reconfigureHint}`,
+      "config-not-found"
+    );
+  }
+
+  let config;
+  try {
+    config = readJsonFile(configPath);
+  } catch (error) {
+    return fail(
+      `${configPath} is not valid JSON: ${error.message}`,
+      `Fix the JSON syntax in ${configPath}, or rewrite it with: ${reconfigureHint}`,
+      "config-invalid"
+    );
+  }
+
+  const runtime = isPlainObject(config?.runtime) ? config.runtime : {};
+  const databaseUrl = firstString(runtime.databaseUrl, config?.databaseUrl);
+  const configuredDirectUrl = firstString(
+    runtime.directUrl,
+    runtime.databaseDirectUrl,
+    config?.directUrl
+  );
+  const databaseValidation = validatePostgresUrl(databaseUrl);
+  if (!databaseValidation.ok) {
+    return fail(
+      `runtime.databaseUrl in ${configName} is ${databaseValidation.detail}.`,
+      `Set a valid PostgreSQL runtime.databaseUrl in ${configName}, or rewrite it with: ${reconfigureHint}`,
+      "database-config-invalid"
+    );
+  }
+  if (configuredDirectUrl) {
+    const directValidation = validatePostgresUrl(configuredDirectUrl);
+    if (!directValidation.ok) {
+      return fail(
+        `runtime.directUrl in ${configName} is ${directValidation.detail}.`,
+        "Set runtime.directUrl to a valid PostgreSQL URL, or remove it to use runtime.databaseUrl.",
+        "database-config-invalid"
+      );
+    }
+  }
+  const directUrl = configuredDirectUrl || databaseUrl;
+
+  const appDir = resolveAppDir(installDir);
+  const workerPath = path.join(appDir, "scripts", "demo-data.js");
+  if (!fileExists(workerPath)) {
+    return fail(
+      `The installed release has no demo-data worker at ${workerPath}.`,
+      `Update this SeqDesk install before using demo-data commands: ${updateHint}`,
+      "worker-not-found"
+    );
+  }
+
+  if (options.action !== "status" && !options.yes) {
+    printDemoDataPlan({
+      action: options.action,
+      installDir,
+      configPath,
+      database: databaseValidation.detail,
+      userEmail: options.userEmail,
+    });
+    const verb = options.action === "remove" ? "Remove" : "Install";
+    const answer = await promptLine(`${verb} this demo dataset? (y/N) `);
+    if (answer === null) {
+      return fail(
+        "Cancelled: no confirmation was read from stdin, so nothing was changed.",
+        "Answer the prompt on a terminal, or pass --yes to confirm up front.",
+        "cancelled"
+      );
+    }
+    if (!/^(y|yes)$/i.test(answer.trim())) {
+      return fail("Cancelled. No demo data was changed.", "", "cancelled");
+    }
+    console.log("");
+  }
+
+  let worker;
+  try {
+    worker = await runInstalledDemoDataWorker({
+      installDir,
+      workerPath,
+      action: options.action,
+      configPath,
+      userEmail: options.userEmail,
+      databaseUrl,
+      directUrl,
+    });
+  } catch (error) {
+    return fail(error.message, `Check the install first: ${doctorHint}`, "worker-failed");
+  }
+
+  const payload = parseWorkerPayload(worker.stdout);
+  if (!payload) {
+    const stderrSummary = summarizeWorkerStderr(worker.stderr);
+    return fail(
+      `The installed demo-data worker exited with code ${worker.code} without reporting a JSON result${stderrSummary ? `: ${stderrSummary}` : "."}`,
+      `Update the install or run ${shellQuote(workerPath)} directly with --help.`,
+      "worker-invalid-output"
+    );
+  }
+
+  const payloadAction = firstString(payload.action);
+  const workerErrorCode = firstString(payload.code);
+  if (
+    worker.code !== 0 ||
+    payload.ok !== true ||
+    payloadAction !== options.action ||
+    firstString(payload.error)
+  ) {
+    let detail = firstString(payload.error, payload.message);
+    if (!detail && payload.ok !== true) {
+      detail = "The installed demo-data worker returned an incompatible result without ok: true.";
+    } else if (!detail && payloadAction !== options.action) {
+      detail = `The installed demo-data worker reported action ${payloadAction || "(missing)"} instead of ${options.action}.`;
+    } else if (!detail) {
+      detail = `The installed demo-data worker exited with code ${worker.code}.`;
+    }
+    const remediation =
+      firstString(payload.remediation) ||
+      demoDataRemediation(workerErrorCode, {
+        installDir,
+        userEmail: options.userEmail,
+        doctorHint,
+      });
+    return fail(detail, remediation, workerErrorCode || "worker-failed");
+  }
+
+  const result = {
+    ...payload,
+    ok: true,
+    action: options.action,
+    installDir,
+    configPath,
+  };
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    printDemoDataResult(result, options);
+  }
+  return 0;
 }
 
 function resolveProfileCode(profileId, explicitCode) {
@@ -2536,6 +3047,7 @@ async function main() {
     console.log("  seqdesk doctor [options]");
     console.log("  seqdesk reset-password --email <address> [options]");
     console.log("  seqdesk storage <configure|status> [options]");
+    console.log("  seqdesk demo-data <install|status|remove> [options]");
     console.log("  seqdesk assets apply [options]");
     console.log("  seqdesk pipelines <command> [options]");
     console.log("  seqdesk --version");
@@ -2570,6 +3082,19 @@ async function main() {
 
   if (args[0] === "storage" || args[0] === "data-storage") {
     const exitCode = await runStorage(args.slice(1));
+    process.exit(exitCode);
+  }
+
+  if (args[0] === "demo-data" || args[0] === "dummy-data") {
+    const exitCode = await runDemoData(args.slice(1));
+    process.exit(exitCode);
+  }
+
+  if (
+    args[0] === "install" &&
+    (args[1] === "dummy-data" || args[1] === "dummy_data")
+  ) {
+    const exitCode = await runDemoData(["install", ...args.slice(2)]);
     process.exit(exitCode);
   }
 

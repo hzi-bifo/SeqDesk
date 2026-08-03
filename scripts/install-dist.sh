@@ -6459,7 +6459,12 @@ print_next_steps() {
             echo "     Alternative: Admin > Data Storage."
         fi
         echo "     Guide: https://seqdesk.org/docs/administration/data-storage"
-        echo "  3. Optional: discover supported order- and study-level pipelines:"
+        echo "  3. Optional for evaluation/testing: after Data Storage is configured and writable,"
+        echo "     load the deterministic example dataset:"
+        printf '       %s demo-data install\n' "$(shell_quote "$pipeline_cli")"
+        echo "     Creates example orders, studies, samples, metadata, and synthetic FASTQ files."
+        echo "     Alternative: Admin > Settings > Demo data."
+        echo "  4. Optional: discover supported order- and study-level pipelines:"
         printf '       %s pipelines list\n' "$(shell_quote "$pipeline_cli")"
         echo "     Safe first install (also provisions a missing runtime):"
         printf '       %s pipelines install simulate-reads --runtime\n' \
@@ -6468,11 +6473,14 @@ print_next_steps() {
     else
         echo "  2. Configure Data Storage under Admin > Data Storage."
         echo "     Guide: https://seqdesk.org/docs/administration/data-storage"
-        echo "  3. Optional pipelines: the local SeqDesk CLI is not available."
+        echo "  3. Optional for evaluation/testing: after Data Storage is configured and writable,"
+        echo "     load the example dataset under"
+        echo "     Admin > Settings > Demo data. It includes synthetic FASTQ files."
+        echo "  4. Optional pipelines: the local SeqDesk CLI is not available."
         echo "     Review the CLI warning above and update or reinstall SeqDesk first."
     fi
     echo "     Guide: https://seqdesk.org/docs/pipelines/installing-pipelines"
-    echo "  4. Before production, follow https://seqdesk.org/docs"
+    echo "  5. Before production, follow https://seqdesk.org/docs"
     echo ""
     echo "  Use the Browser URL for login. Use the Local health URL for curl/doctor checks."
     echo ""

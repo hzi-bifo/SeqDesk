@@ -167,10 +167,13 @@ describe("distribution installer user CLI", () => {
     expect(output).toContain(path.join(fixture.binDir, "seqdesk"));
   });
 
-  it("ships the launcher, pipeline worker, and managed-runtime helpers together", () => {
+  it("ships the launcher, CLI workers, and managed-runtime helpers together", () => {
     const buildRelease = fs.readFileSync(buildReleasePath, "utf8");
     expect(buildRelease).toContain(
       '"${ROOT_DIR}/scripts/pipeline-cli.ts",'
+    );
+    expect(buildRelease).toContain(
+      '"${ROOT_DIR}/scripts/demo-data.ts",'
     );
     expect(buildRelease).toContain(
       'cp "${ROOT_DIR}/npm/seqdesk/bin/seqdesk.js" "${RELEASE_DIR}/scripts/seqdesk-launcher.js"'

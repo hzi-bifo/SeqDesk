@@ -227,7 +227,43 @@ Warnings are acceptable when the app is intentionally stopped and no `--url`
 is passed. Failures should be fixed before using the install for real data —
 except that one known socket false positive on launcher 1.1.122.
 
-## 6. Hosted Profile Checks
+## 6. Demo Data Check
+
+With writable data storage configured, verify the example dataset lifecycle:
+
+```bash
+seqdesk demo-data status --dir "$SEQDESK_CI_INSTALL_DIR"
+seqdesk demo-data install --dir "$SEQDESK_CI_INSTALL_DIR" --yes
+seqdesk demo-data status --dir "$SEQDESK_CI_INSTALL_DIR"
+```
+
+The install should report two studies, four orders, linked samples/read rows,
+and deterministic synthetic gzipped FASTQ files under the configured storage
+path. These files are runnable fixtures for demos and smoke tests, not
+scientific data. A second `demo-data install` is idempotent and reports the
+existing fixture instead of adding duplicates.
+
+On a database with multiple facility administrators, add
+`--user-email admin@example.org`. To finish the lifecycle check, remove only
+that owner's fixture:
+
+```bash
+seqdesk demo-data remove --dir "$SEQDESK_CI_INSTALL_DIR" \
+  --user-email admin@example.org --yes
+```
+
+Delete linked pipeline runs through **Pipeline Runs** before this cleanup
+check. SeqDesk remembers the fixture's original storage path; that path must be
+available and writable before removal. If it is unavailable before cleanup
+starts, database rows stay intact. If folder deletion fails after row cleanup,
+SeqDesk retains the original path as pending cleanup and retries it on the next
+`remove`, so the generated folder does not become undiscoverable. Support
+tickets are preserved, but fixture links on those tickets are cleared and
+reported.
+
+`seqdesk install dummy_data` remains an install alias.
+
+## 7. Hosted Profile Checks
 
 For a `ci-runner` install, inspect
 `$SEQDESK_CI_INSTALL_DIR/settings.json`
@@ -245,7 +281,7 @@ The current dummy profile telemetry interval is one hour. For a faster manual
 test, temporarily use the CI forced-heartbeat script from a repo checkout or
 wait for the interval.
 
-## 7. Apply Hosted Profile Assets To An Existing Install
+## 8. Apply Hosted Profile Assets To An Existing Install
 
 Use this when SeqDesk is already installed and you only need to apply hosted
 profile assets such as pipeline reference databases or example datasets.
@@ -286,7 +322,7 @@ space before running the asset command.
 df -h /net/broker/devphil /net/broker/devphil/pipeline /net/broker/devphil/seqdesk_data
 ```
 
-## 8. Existing Installs, Migration, And Troubleshooting
+## 9. Existing Installs, Migration, And Troubleshooting
 
 Update an installed SeqDesk application through **Admin → Settings → Software
 Updates**. Updating the global npm package updates only the launcher.
@@ -445,7 +481,7 @@ See the maintained
 [Linux installation guide](https://seqdesk.org/docs/installation/linux) for
 distribution-specific setup, migration, PM2 startup, and common failures.
 
-## 9. Cleanup
+## 10. Cleanup
 
 Stop the app process first. Cleanup destroys the selected test install and
 database, so print and verify the exact targets before removing either one:

@@ -37,6 +37,7 @@ function createOutputDir() {
 
 function writeRequiredApplicationEvidence(directory: string) {
   fs.writeFileSync(path.join(directory, "candidate-checksums.ok"), "");
+  fs.writeFileSync(path.join(directory, "demo-data-cli.ok"), "");
   fs.writeFileSync(
     path.join(directory, "providers.json"),
     `${JSON.stringify({ credentials: { type: "credentials" } })}\n`
@@ -106,9 +107,13 @@ describe("reviewer compatibility report", () => {
     expect(report.evidence.requiredAssertions).not.toContain(
       "packagedFastqChecksum"
     );
+    expect(report.evidence.requiredAssertions).toContain(
+      "demoDataCliLifecycle"
+    );
+    expect(report.assertions.demoDataCliLifecycle).toBe(true);
     expect(
       fs.readFileSync(path.join(directory, "compatibility.md"), "utf8")
-    ).toContain("compatibility: PASS");
+    ).toContain("Packaged demo-data CLI lifecycle | PASS");
   });
 
   it("turns a requested PASS into FAIL and exits non-zero when evidence is missing", () => {

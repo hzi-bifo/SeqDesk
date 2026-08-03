@@ -106,6 +106,44 @@ automation; `storage status` exits non-zero until the directory is ready. A
 service-level `SEQDESK_DATA_PATH` override must be changed in the service
 environment instead.
 
+Load, inspect, or remove the example dataset from the server shell:
+
+```bash
+seqdesk demo-data status
+seqdesk demo-data install
+seqdesk demo-data remove
+```
+
+The same controls are available in **Admin → Settings → Demo data**. SeqDesk
+must first have a configured storage directory that is writable by the running
+service. Installation creates two studies, four orders, their samples and read
+rows, plus deterministic synthetic gzipped FASTQ files under that storage
+directory. The dataset is intended for demos and tests, not scientific use.
+
+`demo-data install` is idempotent: running it again reports the existing
+dataset instead of creating duplicates. When the database contains multiple
+facility administrators, pass `--user-email admin@example.org` to choose the
+owner. Mutating commands prompt before making changes; pass `--yes` for
+unattended use. Mutations require `--yes` when combined with `--json`, while
+`status --json` can be used on its own:
+
+```bash
+seqdesk demo-data install --user-email admin@example.org --yes --json
+seqdesk demo-data remove --user-email admin@example.org --yes --json
+```
+
+Removal is scoped to the selected administrator's seeded records and generated
+files and does not delete unrelated data. Support tickets are preserved, but
+their links to removed seeded orders/studies are cleared and reported. Delete
+any linked pipeline runs through **Pipeline Runs** first so their normal
+cancellation and output cleanup is not bypassed. SeqDesk remembers the
+fixture's original storage path when the configured data path changes. Restore
+that original path as writable before removal. SeqDesk leaves database rows
+intact when the path is unavailable before cleanup starts. If folder deletion
+fails after row cleanup, it retains the original path as pending cleanup so a
+later `remove` retries the same folder. The older `seqdesk install dummy_data`
+spelling remains a compatibility alias for `seqdesk demo-data install`.
+
 Discover, install, and finish setting up pipelines from the server shell:
 
 ```bash
@@ -259,6 +297,9 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
   hosted install profiles into a temporary file, calls the installed
   `scripts/apply-install-profile-assets.mjs` script, and removes the temporary
   profile file after the command exits.
+- `seqdesk demo-data ...` dispatches to the installed release and operates on
+  the selected facility administrator's seeded dataset. It requires configured,
+  writable storage; `install` is idempotent and `remove` is owner-scoped.
 - `seqdesk pipeline ...` dispatches to the installed
   `scripts/pipeline-cli.js` script so CLI-started runs follow the same local
   server configuration, pipeline packages, execution policy, and compatibility

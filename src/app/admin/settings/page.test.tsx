@@ -112,6 +112,51 @@ function createSettingsFetchMock(
   });
 }
 
+function createDummyDataFetchMock(initiallySeeded: boolean) {
+  let seeded = initiallySeeded;
+  const fallbackFetch = createSettingsFetchMock(missingGemmaStatus);
+
+  return vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      if (url === "/api/admin/seed/dummy-data") {
+        const method = init?.method || "GET";
+        if (method === "POST") {
+          seeded = true;
+          return jsonResponse({
+            success: true,
+            ordersCreated: 4,
+            samplesCreated: 10,
+            readsCreated: 12,
+            filesCreated: 22,
+            dataPath: "seed-dummy/admin-1",
+            platform: {
+              instrumentModel: "NovaSeq 6000/X",
+              pairedEnd: true,
+              fromConfiguredDevice: false,
+            },
+          });
+        }
+        if (method === "DELETE") {
+          seeded = false;
+          return jsonResponse({
+            success: true,
+            ordersDeleted: 4,
+            filesRemoved: true,
+          });
+        }
+        return jsonResponse({
+          seeded,
+          ordersCount: seeded ? 4 : 0,
+          dummyDataEnabled: seeded,
+        });
+      }
+
+      return fallbackFetch(input);
+    }
+  );
+}
+
 describe("admin settings seed status", () => {
   const confirmMock = vi.fn();
 
@@ -199,6 +244,267 @@ describe("admin settings seed status", () => {
     });
     expect(screen.queryByText("Checking current state…")).toBeNull();
     expect(screen.queryByText("Checking current state...")).toBeNull();
+  });
+
+  it("describes the runnable two-study, four-order FASTQ dataset", async () => {
+    vi.stubGlobal("fetch", createDummyDataFetchMock(false));
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/two realistic seeded studies and four sequencing orders/)
+      ).toBeTruthy();
+    });
+    expect(
+      screen.getByText(
+        /Every seeded sample is linked to actual gzipped FASTQ files on disk containing synthetic reads/
+      )
+    ).toBeTruthy();
+  });
+
+  it("keeps status visible but disables installation when storage is unavailable", async () => {
+    const fallbackFetch = createSettingsFetchMock(missingGemmaStatus);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (
+          String(input) === "/api/admin/seed/dummy-data" &&
+          (init?.method || "GET") === "GET"
+        ) {
+          return jsonResponse({
+            seeded: false,
+            ordersCount: 0,
+            dummyDataEnabled: false,
+            storageReady: false,
+            storageError: "Data base path not configured",
+          });
+        }
+        return fallbackFetch(input);
+      })
+    );
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Data base path not configured")).toBeTruthy();
+    });
+    expect(
+      (screen.getByLabelText("Load dummy data") as HTMLInputElement).disabled
+    ).toBe(true);
+    expect(
+      screen.getByText(
+        "Configure a writable sequencing data path before loading dummy data."
+      )
+    ).toBeTruthy();
+  });
+
+  it("loads dummy data from the switch and refreshes the seeded state", async () => {
+    const fetchMock = createDummyDataFetchMock(false);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SettingsPage />);
+
+    const toggle = await waitFor(() => {
+      const input = screen.getByLabelText("Load dummy data") as HTMLInputElement;
+      expect(input.disabled).toBe(false);
+      expect(input.checked).toBe(false);
+      return input;
+    });
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/seed/dummy-data",
+        { method: "POST" }
+      );
+      expect(
+        (screen.getByLabelText("Load dummy data") as HTMLInputElement).checked
+      ).toBe(true);
+    });
+    expect(screen.getByText("4 seeded orders currently loaded for your profile.")).toBeTruthy();
+  });
+
+  it("confirms before wiping dummy data and refreshes the empty state", async () => {
+    const fetchMock = createDummyDataFetchMock(true);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SettingsPage />);
+
+    const toggle = await waitFor(() => {
+      const input = screen.getByLabelText("Load dummy data") as HTMLInputElement;
+      expect(input.disabled).toBe(false);
+      expect(input.checked).toBe(true);
+      return input;
+    });
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(screen.getByText("Wipe seeded dummy data?")).toBeTruthy();
+    });
+    expect(
+      screen.getByText(/the two seeded studies, all linked samples and reads/)
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Wipe seeded data" })
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/seed/dummy-data",
+        { method: "DELETE" }
+      );
+      expect(
+        (screen.getByLabelText("Load dummy data") as HTMLInputElement).checked
+      ).toBe(false);
+    });
+    expect(
+      screen.getByText("No seeded data present. Toggle on to create the example dataset.")
+    ).toBeTruthy();
+  });
+
+  it("keeps orphaned FASTQs visible and lets the admin retry cleanup", async () => {
+    let cleanupPending = true;
+    const fallbackFetch = createSettingsFetchMock(missingGemmaStatus);
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === "/api/admin/seed/dummy-data") {
+          if ((init?.method || "GET") === "DELETE") {
+            cleanupPending = false;
+            return jsonResponse({
+              success: true,
+              ordersDeleted: 0,
+              filesRemoved: true,
+            });
+          }
+          return jsonResponse({
+            seeded: false,
+            ordersCount: 0,
+            filesPresent: cleanupPending,
+            cleanupPending,
+            storageReady: true,
+          });
+        }
+        return fallbackFetch(input);
+      }
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SettingsPage />);
+
+    const toggle = await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Database rows are gone, but generated-file cleanup is still pending at the original storage path."
+        )
+      ).toBeTruthy();
+      const input = screen.getByLabelText(
+        "Load dummy data"
+      ) as HTMLInputElement;
+      expect(input.checked).toBe(true);
+      return input;
+    });
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/database fixture is already gone/i)
+      ).toBeTruthy();
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Wipe seeded data" })
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/admin/seed/dummy-data",
+        { method: "DELETE" }
+      );
+      expect(
+        (screen.getByLabelText("Load dummy data") as HTMLInputElement).checked
+      ).toBe(false);
+    });
+  });
+
+  it("blocks a pending cleanup retry while the original storage path is unavailable", async () => {
+    const fallbackFetch = createSettingsFetchMock(missingGemmaStatus);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/admin/seed/dummy-data") {
+          return jsonResponse({
+            seeded: false,
+            databasePresent: false,
+            ordersCount: 0,
+            filesPresent: false,
+            cleanupPending: true,
+            storageReady: true,
+            fixtureStorageReady: false,
+            fixtureStorageError:
+              "The original demo-data storage path is unavailable.",
+          });
+        }
+        return fallbackFetch(input);
+      })
+    );
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      const toggle = screen.getByLabelText(
+        "Load dummy data"
+      ) as HTMLInputElement;
+      expect(toggle.checked).toBe(true);
+      expect(toggle.disabled).toBe(true);
+    });
+    expect(
+      screen.getByText(
+        "The original demo-data storage path is unavailable."
+      )
+    ).toBeTruthy();
+  });
+
+  it("shows a storage-path conflict and disables the demo-data switch", async () => {
+    const fallbackFetch = createSettingsFetchMock(missingGemmaStatus);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === "/api/admin/seed/dummy-data") {
+          return jsonResponse({
+            seeded: true,
+            databasePresent: true,
+            ordersCount: 4,
+            studiesCount: 2,
+            filesPresent: false,
+            cleanupPending: true,
+            storagePathConflict: true,
+            storageReady: true,
+            fixtureStorageReady: true,
+          });
+        }
+        return fallbackFetch(input);
+      })
+    );
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "Demo-data records disagree about where the generated files are stored."
+        )
+      ).toBeTruthy();
+    });
+    expect(
+      screen.getByText(
+        "Resolve the conflicting original storage paths before loading or removing demo data."
+      )
+    ).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Load dummy data") as HTMLInputElement).disabled
+    ).toBe(true);
   });
 
   it("shows the Gemma dataset as applied with green status styling", async () => {

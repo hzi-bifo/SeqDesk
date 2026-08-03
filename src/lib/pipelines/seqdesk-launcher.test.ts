@@ -208,6 +208,94 @@ function makeStorageInstall(
   return { dir, workerPath, capturePath, configPath, socketUrl };
 }
 
+function makeDemoDataInstall(
+  options: {
+    prefix?: string;
+    layout?: 'current' | 'flat';
+    worker?: string | null;
+    runtime?: Record<string, unknown> | null;
+    payload?: Record<string, unknown>;
+    exitCode?: number;
+  } = {}
+): {
+  dir: string;
+  workerPath: string;
+  capturePath: string;
+  configPath: string;
+  databaseUrl: string;
+  directUrl: string;
+} {
+  const dir = fs.mkdtempSync(
+    path.join(os.tmpdir(), options.prefix || 'seqdesk-demo-data-')
+  );
+  tempDirs.push(dir);
+  const appDir = options.layout === 'flat' ? dir : path.join(dir, 'current');
+  const workerPath = path.join(appDir, 'scripts', 'demo-data.js');
+  const capturePath = path.join(dir, 'demo-data-worker-capture.json');
+  const configPath = path.join(dir, 'settings.json');
+  const socketDir = path.join(dir, 'postgres socket');
+  const databaseUrl =
+    'postgresql://seqdesk:secret@localhost:5432/seqdesk' +
+    `?schema=public&host=${encodeURIComponent(socketDir)}`;
+  const directUrl =
+    'postgresql://seqdesk:secret@localhost:5432/seqdesk_direct' +
+    `?schema=public&host=${encodeURIComponent(socketDir)}`;
+  const runtime =
+    options.runtime === undefined ? { databaseUrl, directUrl } : options.runtime;
+
+  fs.mkdirSync(appDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    JSON.stringify({ name: 'seqdesk', version: '1.2.3' })
+  );
+  if (runtime) {
+    fs.writeFileSync(configPath, JSON.stringify({ runtime }));
+  }
+
+  if (options.worker !== null) {
+    const payload = options.payload ?? {
+      ok: true,
+      owner: {
+        id: 'admin-1',
+        email: 'admin@example.org',
+        displayName: 'Admin User',
+      },
+      dataBasePath: '/srv/seqdesk-data',
+      seeded: true,
+      ordersCount: 4,
+      ordersCreated: 4,
+    };
+    fs.mkdirSync(path.dirname(workerPath), { recursive: true });
+    fs.writeFileSync(
+      workerPath,
+      options.worker ??
+        [
+          "const fs = require('node:fs');",
+          `fs.writeFileSync(${JSON.stringify(capturePath)}, JSON.stringify({`,
+          '  argv: process.argv.slice(2),',
+          '  databaseUrl: process.env.DATABASE_URL ?? null,',
+          '  directUrl: process.env.DIRECT_URL ?? null,',
+          '  cwd: process.cwd(),',
+          '}));',
+          `const payload = ${JSON.stringify(payload)};`,
+          'if (!payload.action) payload.action = process.argv[2];',
+          'process.stdout.write(JSON.stringify(payload) + "\\n");',
+          `process.exit(${options.exitCode ?? (payload.ok === false ? 1 : 0)});`,
+          '',
+        ].join('\n')
+    );
+  }
+
+  return {
+    dir,
+    workerPath,
+    capturePath,
+    configPath,
+    databaseUrl,
+    directUrl,
+  };
+}
+
 function readCapture(capturePath: string): {
   argv: string[];
   databaseUrl: string | null;
@@ -652,6 +740,7 @@ describe('seqdesk npm launcher storage dispatch', () => {
       );
       expect(result.stdout).toContain('seqdesk storage status');
       expect(result.stdout).toContain('seqdesk data-storage');
+      expect(result.stdout).toContain('seqdesk demo-data install');
     }
   });
 
@@ -693,6 +782,11 @@ describe('seqdesk npm launcher storage dispatch', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(dataPath);
+    expect(result.stdout).toContain(
+      'Optional next step: load the deterministic example dataset'
+    );
+    expect(result.stdout).toContain('seqdesk demo-data install --dir');
+    expect(result.stdout).toContain('Admin > Settings > Demo data');
     const captured = readCapture(fixture.capturePath);
     expect(captured.argv).toEqual([
       'configure',
@@ -786,6 +880,41 @@ describe('seqdesk npm launcher storage dispatch', () => {
     expect(readable.stdout).toContain(
       'The directory is readable but not writable.'
     );
+  });
+
+  it('does not advertise a runnable demo-data command for read-only storage', () => {
+    const dataPath = '/srv/seqdesk-read-only';
+    const fixture = makeStorageInstall({
+      payload: {
+        ok: true,
+        action: 'configure',
+        dataBasePath: dataPath,
+        source: 'file',
+        readable: true,
+        writable: false,
+        ready: true,
+      },
+    });
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'storage',
+        'configure',
+        dataPath,
+        '--dir',
+        fixture.dir,
+        '--yes',
+      ],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      'Demo data remains unavailable until the configured directory is writable'
+    );
+    expect(result.stdout).not.toContain('seqdesk demo-data install --dir');
   });
 
   it('requires confirmation before configure and does not start the worker when declined', () => {
@@ -1049,6 +1178,255 @@ describe('seqdesk npm launcher storage dispatch', () => {
       code: 'PATH_NOT_FOUND',
       error: 'The data storage directory does not exist.',
     });
+  });
+});
+
+describe('seqdesk npm launcher demo-data dispatch', () => {
+  it('documents the canonical command and both command-family spellings', () => {
+    const topLevel = spawnSync(process.execPath, [launcherPath, '--help'], {
+      encoding: 'utf-8',
+    });
+    const canonical = spawnSync(
+      process.execPath,
+      [launcherPath, 'demo-data', '--help'],
+      { encoding: 'utf-8' }
+    );
+    const alias = spawnSync(
+      process.execPath,
+      [launcherPath, 'dummy-data', '--help'],
+      { encoding: 'utf-8' }
+    );
+
+    expect(topLevel.status).toBe(0);
+    expect(topLevel.stdout).toContain(
+      'seqdesk demo-data <install|status|remove> [options]'
+    );
+    for (const result of [canonical, alias]) {
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('seqdesk demo-data install');
+      expect(result.stdout).toContain('seqdesk demo-data status');
+      expect(result.stdout).toContain('seqdesk demo-data remove');
+      expect(result.stdout).toContain('seqdesk install dummy_data');
+      expect(result.stdout).toContain(
+        'example orders, studies, samples, metadata, and synthetic FASTQ files'
+      );
+      expect(result.stdout).toContain('not scientific analysis');
+    }
+  });
+
+  it('dispatches a confirmed install to the versioned worker from the install root', () => {
+    const fixture = makeDemoDataInstall({ layout: 'current' });
+    const result = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'demo-data',
+        'install',
+        '--dir',
+        fixture.dir,
+        '--user-email',
+        'admin@example.org',
+        '--yes',
+        '--json',
+      ],
+      { encoding: 'utf-8' }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      action: 'install',
+      installDir: fixture.dir,
+      configPath: fixture.configPath,
+      ordersCreated: 4,
+    });
+    const captured = readCapture(fixture.capturePath);
+    expect(fs.realpathSync(captured.cwd)).toBe(fs.realpathSync(fixture.dir));
+    expect(captured.databaseUrl).toBe(fixture.databaseUrl);
+    expect(captured.directUrl).toBe(fixture.directUrl);
+    expect(captured.argv).toEqual([
+      'install',
+      '--config',
+      fixture.configPath,
+      '--user-email',
+      'admin@example.org',
+      '--json',
+    ]);
+  });
+
+  it('accepts both requested install aliases while preserving other installer fallthrough', () => {
+    for (const target of ['dummy-data', 'dummy_data']) {
+      const fixture = makeDemoDataInstall({ layout: 'current' });
+      const result = spawnSync(
+        process.execPath,
+        [
+          launcherPath,
+          'install',
+          target,
+          '--dir',
+          fixture.dir,
+          '--yes',
+          '--json',
+        ],
+        { encoding: 'utf-8' }
+      );
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        ok: true,
+        action: 'install',
+      });
+      expect(readCapture(fixture.capturePath).argv).toEqual([
+        'install',
+        '--config',
+        fixture.configPath,
+        '--json',
+      ]);
+    }
+
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'seqdesk-demo-data-installer-fallback-')
+    );
+    tempDirs.push(tempDir);
+    const capturePath = path.join(tempDir, 'installer-args.txt');
+    const installer = [
+      '#!/usr/bin/env bash',
+      `printf '%s\\n' "$@" > ${shellQuote(capturePath)}`,
+      '',
+    ].join('\n');
+    const fallback = spawnSync(
+      process.execPath,
+      [launcherPath, 'install', 'something-else'],
+      {
+        encoding: 'utf-8',
+        env: {
+          ...process.env,
+          SEQDESK_INSTALL_URL: `data:text/plain,${encodeURIComponent(installer)}`,
+        },
+      }
+    );
+
+    expect(fallback.status).toBe(0);
+    expect(fs.readFileSync(capturePath, 'utf-8')).toBe(
+      'install\nsomething-else\n'
+    );
+  });
+
+  it('runs status without a confirmation and prints a readable result', () => {
+    const fixture = makeDemoDataInstall({
+      payload: {
+        ok: true,
+        action: 'status',
+        owner: {
+          id: 'admin-2',
+          email: 'reviewer@example.org',
+          displayName: 'Review Admin',
+        },
+        dataBasePath: '/srv/seqdesk-data',
+        seeded: false,
+        ordersCount: 0,
+        message: 'No demo dataset is installed.',
+      },
+    });
+    const result = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'dummy-data',
+        'status',
+        '-d',
+        fixture.dir,
+        '--user-email=reviewer@example.org',
+      ],
+      { encoding: 'utf-8', input: '' }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('SeqDesk demo-data status');
+    expect(result.stdout).toContain('Installed                no');
+    expect(result.stdout).toContain('No demo dataset is installed.');
+    expect(readCapture(fixture.capturePath).argv).toEqual([
+      'status',
+      '--config',
+      fixture.configPath,
+      '--user-email',
+      'reviewer@example.org',
+      '--json',
+    ]);
+  });
+
+  it('requires confirmation for mutations and --yes for JSON mutations', () => {
+    for (const action of ['install', 'remove']) {
+      const fixture = makeDemoDataInstall();
+      const declined = spawnSync(
+        process.execPath,
+        [launcherPath, 'demo-data', action, '--dir', fixture.dir],
+        { encoding: 'utf-8', input: 'n\n' }
+      );
+
+      expect(declined.status).toBe(1);
+      expect(declined.stdout).toContain(`${action === 'remove' ? 'Remove' : 'Install'} this demo dataset?`);
+      expect(declined.stderr).toContain('No demo data was changed');
+      expect(fs.existsSync(fixture.capturePath)).toBe(false);
+
+      const jsonFixture = makeDemoDataInstall();
+      const rejectedJson = spawnSync(
+        process.execPath,
+        [
+          launcherPath,
+          'demo-data',
+          action,
+          '--dir',
+          jsonFixture.dir,
+          '--json',
+        ],
+        { encoding: 'utf-8' }
+      );
+      expect(rejectedJson.status).toBe(2);
+      expect(JSON.parse(rejectedJson.stdout)).toMatchObject({
+        ok: false,
+        code: 'bad-usage',
+        error: expect.stringContaining('--json requires --yes'),
+      });
+      expect(rejectedJson.stderr).toBe('');
+      expect(fs.existsSync(jsonFixture.capturePath)).toBe(false);
+    }
+  });
+
+  it('turns worker and release failures into actionable errors', () => {
+    const storageFailure = makeDemoDataInstall({
+      payload: {
+        ok: false,
+        code: 'DATA_PATH_NOT_CONFIGURED',
+        error: 'No writable SeqDesk data path is configured.',
+      },
+    });
+    const failed = spawnSync(
+      process.execPath,
+      [
+        launcherPath,
+        'demo-data',
+        'status',
+        '--dir',
+        storageFailure.dir,
+      ],
+      { encoding: 'utf-8' }
+    );
+
+    expect(failed.status).toBe(1);
+    expect(failed.stderr).toContain('No writable SeqDesk data path is configured');
+    expect(failed.stderr).toContain('seqdesk storage status --dir');
+
+    const missingWorker = makeDemoDataInstall({ worker: null });
+    const missing = spawnSync(
+      process.execPath,
+      [launcherPath, 'demo-data', 'status', '--dir', missingWorker.dir],
+      { encoding: 'utf-8' }
+    );
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain('has no demo-data worker');
+    expect(missing.stderr).toContain('Update this SeqDesk install');
   });
 });
 

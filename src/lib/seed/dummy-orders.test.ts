@@ -10,6 +10,8 @@ import {
   buildDummySeedDataset,
   DEFAULT_SYNTHETIC_READ_COUNT,
   DEFAULT_SYNTHETIC_READ_LENGTH,
+  MAX_SYNTHETIC_READ_LENGTH,
+  MIN_SYNTHETIC_READ_LENGTH,
   resolveSyntheticReadSize,
   type DummyOrderSpecWithLink,
 } from "./dummy-orders";
@@ -274,6 +276,20 @@ describe("resolveSyntheticReadSize", () => {
       env: {},
     });
     expect(result).toEqual({ readCount: 1000, readLength: 150 });
+  });
+
+  it("clamps read lengths so generated FASTQ sequence and quality lengths stay valid", () => {
+    expect(
+      resolveSyntheticReadSize({
+        syntheticReadLength: 1,
+        env: {},
+      }).readLength
+    ).toBe(MIN_SYNTHETIC_READ_LENGTH);
+    expect(
+      resolveSyntheticReadSize({
+        env: { SEQDESK_SEED_READ_LENGTH: "100000" },
+      }).readLength
+    ).toBe(MAX_SYNTHETIC_READ_LENGTH);
   });
 });
 

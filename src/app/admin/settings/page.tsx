@@ -293,8 +293,19 @@ export default function SettingsPage() {
 
   const [seedStatus, setSeedStatus] = useState<{
     seeded: boolean;
+    databasePresent: boolean;
+    incomplete: boolean;
     ordersCount: number;
+    studiesCount: number;
     dummyDataEnabled: boolean | null;
+    storageReady: boolean;
+    storageError: string | null;
+    filesPresent: boolean;
+    cleanupPending: boolean;
+    storagePathConflict: boolean;
+    fixtureDataBasePath: string | null;
+    fixtureStorageReady: boolean;
+    fixtureStorageError: string | null;
   } | null>(null);
   const [gemmaSeedStatus, setGemmaSeedStatus] =
     useState<GemmaMetaxPathSeedStatus | null>(null);
@@ -824,14 +835,37 @@ export default function SettingsPage() {
       }
       const data = (await res.json()) as {
         seeded: boolean;
+        databasePresent?: boolean;
+        incomplete?: boolean;
         ordersCount: number;
+        studiesCount?: number;
         dummyDataEnabled?: boolean | null;
+        storageReady?: boolean;
+        storageError?: string | null;
+        filesPresent?: boolean;
+        cleanupPending?: boolean;
+        storagePathConflict?: boolean;
+        fixtureDataBasePath?: string | null;
+        fixtureStorageReady?: boolean;
+        fixtureStorageError?: string | null;
       };
       setSeedStatusError(null);
       setSeedStatus({
         seeded: data.seeded,
+        databasePresent: data.databasePresent ?? data.seeded,
+        incomplete: data.incomplete ?? false,
         ordersCount: data.ordersCount,
+        studiesCount: data.studiesCount ?? 0,
         dummyDataEnabled: data.dummyDataEnabled ?? null,
+        storageReady: data.storageReady ?? true,
+        storageError: data.storageError ?? null,
+        filesPresent: data.filesPresent ?? false,
+        cleanupPending: data.cleanupPending ?? false,
+        storagePathConflict: data.storagePathConflict ?? false,
+        fixtureDataBasePath: data.fixtureDataBasePath ?? null,
+        fixtureStorageReady:
+          data.fixtureStorageReady ?? data.storageReady ?? true,
+        fixtureStorageError: data.fixtureStorageError ?? null,
       });
     } catch (error) {
       setSeedStatusError(
@@ -945,16 +979,42 @@ export default function SettingsPage() {
     try {
       const res = await fetch("/api/admin/seed/dummy-data", { method: "DELETE" });
       const payload = (await res.json().catch(() => null)) as
-        | { success?: boolean; ordersDeleted?: number; error?: string }
+        | {
+            success?: boolean;
+            ordersDeleted?: number;
+            ticketLinksCleared?: number;
+            filesRemoved?: boolean;
+            error?: string;
+          }
         | null;
       if (!res.ok) {
         throw new Error(payload?.error || "Failed to wipe seeded data");
       }
-      toast.success(
-        `Removed ${payload?.ordersDeleted ?? 0} seeded order${
-          payload?.ordersDeleted === 1 ? "" : "s"
-        } and the seeded study + files`
-      );
+      const ordersDeleted = payload?.ordersDeleted ?? 0;
+      const ticketLinksCleared = payload?.ticketLinksCleared ?? 0;
+      const ticketNote =
+        ticketLinksCleared > 0
+          ? ` ${ticketLinksCleared} support-ticket link${
+              ticketLinksCleared === 1 ? " was" : "s were"
+            } cleared; the tickets were preserved.`
+          : "";
+      if (payload?.filesRemoved) {
+        toast.success(
+          ordersDeleted > 0
+            ? `Removed ${ordersDeleted} seeded order${
+                ordersDeleted === 1 ? "" : "s"
+              }, the seeded studies, and generated FASTQ files.${ticketNote}`
+            : `Removed leftover demo-data FASTQ files.${ticketNote}`
+        );
+      } else {
+        toast.warning(
+          ordersDeleted > 0
+            ? `Removed ${ordersDeleted} seeded order${
+                ordersDeleted === 1 ? "" : "s"
+              } and the seeded studies.${ticketNote} Generated files could not be removed; restore writable storage and toggle off again.`
+            : `Generated demo-data files could not be removed.${ticketNote} Restore writable storage and toggle off again.`
+        );
+      }
       setWipeDialogOpen(false);
       await fetchSeedStatus();
     } catch (error) {
@@ -1823,11 +1883,12 @@ export default function SettingsPage() {
           <div className="px-4 py-3 border-b border-border">
             <h2 className="text-base font-semibold">Demo data</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
-              Populate this installation with one realistic seeded study and two
-              sequencing orders (one submitted with synthetic FASTQ files on disk, one draft)
-              owned by your admin profile. Useful for demos, screenshots, and
-              smoke tests. The platform/instrument is picked from your configured
-              sequencer devices.
+              Populate this installation with two realistic seeded studies and four
+              sequencing orders (three submitted and one draft), owned by your admin
+              profile. Every seeded sample is linked to actual gzipped FASTQ files on
+              disk containing synthetic reads, so the data works for demos, screenshots,
+              and pipeline smoke tests. The primary platform/instrument is picked from
+              your configured sequencer devices.
             </p>
           </div>
 
@@ -1848,35 +1909,74 @@ export default function SettingsPage() {
                     ? seedStatusError
                     : seedStatus === null
                     ? "Checking current state…"
+                    : seedStatus.storagePathConflict
+                      ? "Demo-data records disagree about where the generated files are stored."
+                    : seedStatus.cleanupPending
+                      ? seedStatus.databasePresent
+                        ? "A partial demo dataset remains. Toggle off to clean it up before reinstalling."
+                        : "Database rows are gone, but generated-file cleanup is still pending at the original storage path."
                     : seedStatus.seeded
                       ? `${seedStatus.ordersCount} seeded order${
                           seedStatus.ordersCount === 1 ? "" : "s"
                         } currently loaded for your profile.`
+                      : !seedStatus.storageReady
+                        ? seedStatus.storageError ||
+                          "Configure writable sequencing data storage before loading demo data."
                       : "No seeded data present. Toggle on to create the example dataset."}
                 </p>
-                {seedStatusError && (
+                {(seedStatusError ||
+                  (seedStatus !== null &&
+                    (seedStatus.storagePathConflict ||
+                      !seedStatus.storageReady ||
+                      ((seedStatus.databasePresent ||
+                        seedStatus.cleanupPending) &&
+                        !seedStatus.fixtureStorageReady)))) && (
                   <p className="mt-1 text-xs text-destructive">
-                    Configure a writable sequencing data path before loading dummy data.
+                    {seedStatus?.storagePathConflict
+                      ? "Resolve the conflicting original storage paths before loading or removing demo data."
+                      : (seedStatus?.databasePresent ||
+                            seedStatus?.cleanupPending) &&
+                          !seedStatus.fixtureStorageReady
+                        ? seedStatus.fixtureStorageError ||
+                          "The original demo-data storage path is unavailable. Restore it before removal so generated files are not orphaned."
+                        : seedStatus?.cleanupPending
+                          ? "Restore writable sequencing storage, then toggle off again to retry file cleanup."
+                          : "Configure a writable sequencing data path before loading dummy data."}
                   </p>
                 )}
               </div>
 
               <div className="flex shrink-0 items-center gap-3">
                 <span className="text-xs text-muted-foreground">
-                  {seedStatus?.seeded ? "On" : "Off"}
+                  {seedStatus?.seeded || seedStatus?.cleanupPending ? "On" : "Off"}
                 </span>
                 <Switch
-                  checked={seedStatus?.seeded === true}
+                  checked={
+                    seedStatus?.seeded === true ||
+                    seedStatus?.cleanupPending === true
+                  }
                   onCheckedChange={(checked) => {
                     if (seedStatus === null) return;
-                    if (checked && !seedStatus.seeded) {
+                    const active =
+                      seedStatus.seeded || seedStatus.cleanupPending;
+                    if (checked && !active) {
                       void seedDummyData();
-                    } else if (!checked && seedStatus.seeded) {
+                    } else if (!checked && active) {
                       setWipeDialogOpen(true);
                     }
                   }}
                   disabled={
-                    seedingDummy || wipingDummy || seedStatus === null || Boolean(seedStatusError)
+                    seedingDummy ||
+                    wipingDummy ||
+                    seedStatus === null ||
+                    Boolean(seedStatusError) ||
+                    seedStatus.storagePathConflict ||
+                    ((seedStatus.databasePresent ||
+                      seedStatus.cleanupPending) &&
+                      !seedStatus.fixtureStorageReady) ||
+                    (!seedStatus.seeded &&
+                      !seedStatus.cleanupPending &&
+                      !seedStatus.storageReady)
                   }
                   aria-label="Load dummy data"
                 />
@@ -2757,11 +2857,17 @@ export default function SettingsPage() {
           <DialogHeader>
             <DialogTitle>Wipe seeded dummy data?</DialogTitle>
             <DialogDescription>
-              This permanently removes the {seedStatus?.ordersCount ?? 0} seeded
-              sequencing order{seedStatus?.ordersCount === 1 ? "" : "s"}, the seeded study,
-              all linked samples and reads, and the on-disk FASTQ folder created
-              for your admin profile. Other sequencing orders, studies, and files are not
-              touched.
+              {seedStatus?.cleanupPending && !seedStatus.databasePresent
+                ? "The database fixture is already gone. This retries removal of the generated FASTQ folder for your admin profile."
+                : seedStatus?.cleanupPending
+                  ? "A partial database fixture remains. This removes its seeded studies/orders and retries cleanup of the generated FASTQ folder."
+                : `This permanently removes the ${seedStatus?.ordersCount ?? 0} seeded sequencing order${
+                    seedStatus?.ordersCount === 1 ? "" : "s"
+                  }, the two seeded studies, all linked samples and reads, and the generated FASTQ folder for your admin profile.`}{" "}
+              Other sequencing orders, studies, and files are not touched. If a
+              pipeline run is linked to the fixture, delete that run from Pipeline
+              Runs first. Support tickets are preserved, but links to removed seeded
+              orders or studies are cleared.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

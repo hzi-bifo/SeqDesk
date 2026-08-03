@@ -24,6 +24,8 @@ export const SEED_DUMMY_ORDER_PREFIX = "SEED-DUMMY";
 export const SEED_DUMMY_FOLDER_ROOT = "seed-dummy";
 /** SiteSettings.extraSettings JSON key for the persisted "dummy data enabled" flag. */
 export const SEED_DUMMY_ENABLED_KEY = "dummyDataEnabled";
+/** Per-owner storage paths retained until demo-data filesystem cleanup succeeds. */
+export const SEED_DUMMY_CLEANUP_PATHS_KEY = "dummyDataCleanupPaths";
 
 /** A single Read row to create for a seeded sample. */
 export interface DummyReadSpec {
@@ -152,6 +154,8 @@ export interface BuildDummySeedOptions {
 export const DEFAULT_SYNTHETIC_READ_COUNT = 1000;
 /** Default synthetic read length (matches the historical hard-coded value). */
 export const DEFAULT_SYNTHETIC_READ_LENGTH = 150;
+export const MIN_SYNTHETIC_READ_LENGTH = 25;
+export const MAX_SYNTHETIC_READ_LENGTH = 10_000;
 
 /**
  * Resolves the synthetic read count/length, honouring (in order) explicit options,
@@ -167,15 +171,17 @@ export function resolveSyntheticReadSize(options?: {
   const pick = (
     explicit: number | undefined,
     envValue: string | undefined,
-    fallback: number
+    fallback: number,
+    min = 1,
+    max = Number.MAX_SAFE_INTEGER
   ): number => {
     if (typeof explicit === "number" && Number.isFinite(explicit) && explicit > 0) {
-      return Math.floor(explicit);
+      return Math.min(max, Math.max(min, Math.floor(explicit)));
     }
     if (envValue !== undefined) {
       const parsed = Number(envValue);
       if (Number.isFinite(parsed) && parsed > 0) {
-        return Math.floor(parsed);
+        return Math.min(max, Math.max(min, Math.floor(parsed)));
       }
     }
     return fallback;
@@ -190,13 +196,31 @@ export function resolveSyntheticReadSize(options?: {
     readLength: pick(
       options?.syntheticReadLength,
       env.SEQDESK_SEED_READ_LENGTH,
-      DEFAULT_SYNTHETIC_READ_LENGTH
+      DEFAULT_SYNTHETIC_READ_LENGTH,
+      MIN_SYNTHETIC_READ_LENGTH,
+      MAX_SYNTHETIC_READ_LENGTH
     ),
   };
 }
 
 function userPrefix(userId: string): string {
-  return userId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8).toUpperCase() || "USER";
+  const normalized = userId.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  if (!normalized) return "USER";
+
+  // Order numbers are globally unique. A plain first-eight-character prefix
+  // can collide for different admins (especially imported or prefixed IDs), so
+  // mix the complete owner id into two independent 32-bit hashes while keeping
+  // the result readable in the UI.
+  let fnv = 0x811c9dc5;
+  let djb = 5381;
+  for (let index = 0; index < userId.length; index += 1) {
+    const code = userId.charCodeAt(index);
+    fnv = Math.imul(fnv ^ code, 0x01000193);
+    djb = Math.imul(djb, 33) ^ code;
+  }
+  const hashPart = (value: number) =>
+    (value >>> 0).toString(36).toUpperCase().padStart(7, "0");
+  return `${normalized.slice(0, 4)}${hashPart(fnv)}${hashPart(djb)}`;
 }
 
 function orderNumber(prefix: string, index: number): string {

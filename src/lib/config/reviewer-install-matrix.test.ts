@@ -171,7 +171,7 @@ describe("reviewer installation matrix contract", () => {
     expect(macJob).toContain("x64");
   });
 
-  it("proves install, migration, storage configuration, boot, version, both login roles, and dependency boundaries", () => {
+  it("proves install, migration, storage and demo-data CLIs, boot, version, both login roles, and dependency boundaries", () => {
     expect(smokeSource).toContain('test ! -e "$INSTALL_DIR"');
     expect(smokeSource).toContain('CHECKSUMS_FILE="$CANDIDATE_DIR/SHA256SUMS"');
     expect(smokeSource).toContain('touch "$OUTPUT_DIR/candidate-checksums.ok"');
@@ -186,6 +186,13 @@ describe("reviewer installation matrix contract", () => {
       'status?.sources?.database !== expectedPath'
     );
     expect(smokeSource).toContain('touch "$OUTPUT_DIR/storage-cli.ok"');
+    expect(smokeSource).toContain("seqdesk demo-data install");
+    expect(smokeSource).toContain("seqdesk demo-data status");
+    expect(smokeSource).toContain("seqdesk demo-data remove");
+    expect(smokeSource).toContain("installed?.samplesCreated !== 10");
+    expect(smokeSource).toContain("installed?.readsCreated !== 12");
+    expect(smokeSource).toContain("zlib.gunzipSync");
+    expect(smokeSource).toContain('touch "$OUTPUT_DIR/demo-data-cli.ok"');
     expect(smokeSource).toContain("/api/auth/providers");
     expect(smokeSource).toContain("/api/setup/status");
     expect(smokeSource).toContain('touch "$OUTPUT_DIR/auth-admin.ok"');
@@ -264,5 +271,6 @@ describe("reviewer installation matrix contract", () => {
     expect(reportSource).toContain("auth-admin.ok");
     expect(reportSource).toContain("auth-researcher.ok");
     expect(reportSource).toContain("candidate-checksums.ok");
+    expect(reportSource).toContain("demo-data-cli.ok");
   });
 });

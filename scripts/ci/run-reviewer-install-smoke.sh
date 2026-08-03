@@ -349,6 +349,156 @@ node -e '
   "$INSTALL_DIR"
 touch "$OUTPUT_DIR/storage-cli.ok"
 
+CURRENT_STAGE="demo-data-cli-lifecycle"
+
+# Exercise the exact launcher + bundled worker + generated Prisma client from
+# the clean-installed candidate. Keep the synthetic files tiny here; this gate
+# verifies the product boundary, not pipeline throughput.
+seqdesk demo-data status \
+  --dir "$INSTALL_DIR" \
+  --json >"$OUTPUT_DIR/demo-data-status-empty.json"
+SEQDESK_SEED_READ_COUNT=3 SEQDESK_SEED_READ_LENGTH=25 \
+  seqdesk demo-data install \
+    --dir "$INSTALL_DIR" \
+    --yes \
+    --json >"$OUTPUT_DIR/demo-data-install.json"
+seqdesk demo-data status \
+  --dir "$INSTALL_DIR" \
+  --json >"$OUTPUT_DIR/demo-data-status-installed.json"
+seqdesk demo-data install \
+  --dir "$INSTALL_DIR" \
+  --yes \
+  --json >"$OUTPUT_DIR/demo-data-install-idempotent.json"
+
+node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const zlib = require("node:zlib");
+  const [emptyFile, installFile, statusFile, repeatedFile, storageRoot] =
+    process.argv.slice(1);
+  const readResult = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+  const empty = readResult(emptyFile);
+  const installed = readResult(installFile);
+  const status = readResult(statusFile);
+  const repeated = readResult(repeatedFile);
+
+  if (
+    empty?.ok !== true ||
+    empty?.action !== "status" ||
+    empty?.seeded !== false ||
+    empty?.ordersCount !== 0 ||
+    empty?.studiesCount !== 0
+  ) {
+    throw new Error(`Unexpected empty demo-data status: ${JSON.stringify(empty)}`);
+  }
+  if (
+    installed?.ok !== true ||
+    installed?.action !== "install" ||
+    installed?.ordersCreated !== 4 ||
+    installed?.samplesCreated !== 10 ||
+    installed?.readsCreated !== 12 ||
+    installed?.ordersCount !== 4 ||
+    installed?.studiesCount !== 2 ||
+    installed?.filesCreated <= 0 ||
+    installed?.filesPresent !== true ||
+    installed?.cleanupPending !== false
+  ) {
+    throw new Error(`Unexpected demo-data install result: ${JSON.stringify(installed)}`);
+  }
+  if (
+    status?.ok !== true ||
+    status?.action !== "status" ||
+    status?.seeded !== true ||
+    status?.ordersCount !== 4 ||
+    status?.studiesCount !== 2 ||
+    status?.filesPresent !== true ||
+    status?.cleanupPending !== false
+  ) {
+    throw new Error(`Unexpected installed demo-data status: ${JSON.stringify(status)}`);
+  }
+  if (
+    repeated?.ok !== true ||
+    repeated?.action !== "install" ||
+    repeated?.alreadyInstalled !== true ||
+    repeated?.ordersCount !== 4 ||
+    repeated?.studiesCount !== 2
+  ) {
+    throw new Error(`Repeated demo-data install was not idempotent: ${JSON.stringify(repeated)}`);
+  }
+
+  const fixtureDir = path.join(storageRoot, "seed-dummy", installed.owner.id);
+  const files = fs.readdirSync(fixtureDir).sort();
+  if (files.length !== installed.filesCreated) {
+    throw new Error(
+      `Demo-data worker reported ${installed.filesCreated} files, but ${files.length} exist`
+    );
+  }
+  for (const file of files) {
+    if (!file.endsWith(".fastq.gz")) {
+      throw new Error(`Unexpected demo-data file: ${file}`);
+    }
+    const contents = zlib.gunzipSync(fs.readFileSync(path.join(fixtureDir, file)))
+      .toString("utf8")
+      .trimEnd()
+      .split("\n");
+    if (contents.length !== 12) {
+      throw new Error(`${file} does not contain the expected three FASTQ records`);
+    }
+    for (let index = 0; index < contents.length; index += 4) {
+      if (
+        !contents[index].startsWith("@SIM:") ||
+        contents[index + 2] !== "+" ||
+        contents[index + 1].length !== 25 ||
+        contents[index + 3].length !== 25
+      ) {
+        throw new Error(`${file} contains an invalid deterministic FASTQ record`);
+      }
+    }
+  }
+' \
+  "$OUTPUT_DIR/demo-data-status-empty.json" \
+  "$OUTPUT_DIR/demo-data-install.json" \
+  "$OUTPUT_DIR/demo-data-status-installed.json" \
+  "$OUTPUT_DIR/demo-data-install-idempotent.json" \
+  "$STORAGE_DIR"
+
+seqdesk demo-data remove \
+  --dir "$INSTALL_DIR" \
+  --yes \
+  --json >"$OUTPUT_DIR/demo-data-remove.json"
+seqdesk demo-data status \
+  --dir "$INSTALL_DIR" \
+  --json >"$OUTPUT_DIR/demo-data-status-removed.json"
+
+node -e '
+  const fs = require("node:fs");
+  const [removeFile, statusFile] = process.argv.slice(1);
+  const removed = JSON.parse(fs.readFileSync(removeFile, "utf8"));
+  const status = JSON.parse(fs.readFileSync(statusFile, "utf8"));
+  if (
+    removed?.ok !== true ||
+    removed?.action !== "remove" ||
+    removed?.ordersDeleted !== 4 ||
+    removed?.filesRemoved !== true
+  ) {
+    throw new Error(`Unexpected demo-data removal result: ${JSON.stringify(removed)}`);
+  }
+  if (
+    status?.ok !== true ||
+    status?.action !== "status" ||
+    status?.seeded !== false ||
+    status?.ordersCount !== 0 ||
+    status?.studiesCount !== 0 ||
+    status?.filesPresent !== false ||
+    status?.cleanupPending !== false
+  ) {
+    throw new Error(`Unexpected removed demo-data status: ${JSON.stringify(status)}`);
+  }
+' \
+  "$OUTPUT_DIR/demo-data-remove.json" \
+  "$OUTPUT_DIR/demo-data-status-removed.json"
+touch "$OUTPUT_DIR/demo-data-cli.ok"
+
 CURRENT_STAGE="boot-installed-application"
 (
   cd "$INSTALL_DIR"

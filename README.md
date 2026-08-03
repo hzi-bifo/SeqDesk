@@ -147,6 +147,46 @@ environment variable instead.
 See the [Data Storage guide](https://seqdesk.org/docs/administration/data-storage)
 for path ownership, automation, service overrides, and discovery behavior.
 
+### Load demo data
+
+After storage is configured and writable by the SeqDesk service, a facility
+administrator can create the example dataset from **Admin → Settings → Demo
+data** or from the server shell:
+
+```bash
+seqdesk demo-data status
+seqdesk demo-data install
+```
+
+The install creates two studies, four orders, their samples and read rows, and
+deterministic synthetic gzipped FASTQ files below the configured storage path.
+It is useful for demonstrations, screenshots, and automated tests, but it is
+not scientific data. Re-running `install` is idempotent and does not create
+duplicates. On an installation with more than one facility administrator, use
+`--user-email admin@example.org` to select the owner.
+
+Use `--yes` with `install` or `remove` to skip confirmation in automation.
+Those mutations require `--yes` when combined with `--json`; `status --json`
+can be used on its own:
+
+```bash
+seqdesk demo-data install --user-email admin@example.org --yes --json
+seqdesk demo-data remove --user-email admin@example.org --yes --json
+```
+
+Removal is scoped to the selected administrator's seeded records and generated
+files; it does not wipe unrelated SeqDesk data. Support tickets are preserved,
+but links from those tickets to removed seeded orders/studies are cleared and
+reported. Linked pipeline runs must be deleted through **Pipeline Runs** first
+so their normal cancellation and output cleanup can complete. SeqDesk remembers
+the fixture's original storage path even if the configured data path later
+changes. That original path must be available and writable for removal. If it
+is unavailable before cleanup starts, SeqDesk leaves the database rows intact.
+If folder deletion fails after row cleanup, SeqDesk retains the original path
+as pending cleanup so a later `remove` retries the same folder. Restore the path
+and run `remove` again. `seqdesk install dummy_data` remains available as a
+compatibility alias for `seqdesk demo-data install`.
+
 ### Add pipelines after installation
 
 A normal installation starts with the core SeqDesk application. It does not

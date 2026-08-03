@@ -93,6 +93,9 @@ const assertions = {
   candidateChecksums: isRegularFile(
     path.join(outputDir, "candidate-checksums.ok")
   ),
+  demoDataCliLifecycle: isRegularFile(
+    path.join(outputDir, "demo-data-cli.ok")
+  ),
   credentialsProvider:
     providers?.credentials !== null &&
     typeof providers?.credentials === "object" &&
@@ -118,6 +121,7 @@ const assertions = {
 };
 const requiredAssertions = [
   "candidateChecksums",
+  "demoDataCliLifecycle",
   "credentialsProvider",
   "setupDatabaseExists",
   "setupConfigured",
@@ -226,6 +230,7 @@ const lines = [
   "| Assertion | Result |",
   "|---|---|",
   `| Build-recorded candidate checksums | ${assertion(report.assertions.candidateChecksums)} |`,
+  `| Packaged demo-data CLI lifecycle | ${assertion(report.assertions.demoDataCliLifecycle)} |`,
   `| Credentials provider available | ${assertion(report.assertions.credentialsProvider)} |`,
   `| Database exists | ${assertion(report.assertions.setupDatabaseExists)} |`,
   `| Database configured | ${assertion(report.assertions.setupConfigured)} |`,
