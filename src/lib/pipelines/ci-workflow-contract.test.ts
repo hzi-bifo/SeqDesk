@@ -1551,7 +1551,7 @@ describe("self-hosted pipeline CI contract", () => {
       "parseNanoplotNanoStatsTsv({"
     );
     expect(runtimeHarness).toContain(
-      "multiqcNanostatData: parsedData?.multiqc_nanostat"
+      "multiqcNanostatData: multiqcNanostat"
     );
     const readsQcProof = runtimeHarness.slice(
       runtimeHarness.indexOf("async function assertReadsQcSummaryMetrics"),
@@ -2022,11 +2022,33 @@ describe("self-hosted pipeline CI contract", () => {
       "slurmCompletionAttestationPath(runFolder, jobId)"
     );
     expect(runtimeHarness).toContain(
-      "required files are missing after accounting completed"
+      "visibility timeout after accounting completed"
     );
     expect(runtimeHarness).not.toContain(
       "SLURM capture logs not visible after wait (non-fatal)"
     );
+    expect(pipelineProofHarness).toContain(
+      "export const SLURM_PROOF_VISIBILITY_TIMEOUT_MS = 90_000"
+    );
+    for (const [name, harness] of commandProbeHarnesses) {
+      if (
+        ![
+          "run-pipeline-runtime-e2e.mjs",
+          "run-slurm-failure-e2e.mjs",
+          "run-slurm-pipeline-e2e.mjs",
+        ].includes(name)
+      ) {
+        continue;
+      }
+      expect(harness, name).toContain("SLURM_PROOF_VISIBILITY_TIMEOUT_MS");
+      expect(harness, name).toContain(
+        "SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS"
+      );
+      expect(harness, name).toContain(
+        "visibility timeout after accounting completed"
+      );
+      expect(harness, name).not.toContain("attempt < 30");
+    }
     expect(pipelineProofHarness).toContain(
       'attestation.phase !== "completed"'
     );

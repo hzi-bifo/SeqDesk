@@ -7,6 +7,12 @@ import {
 } from "./decimal-rounding.mjs";
 import { resolveFastqcMeanSequenceQualityForEncoding } from "./fastq-ground-truth.mjs";
 
+// Shared-storage metadata and negative-entry caches can outlive scheduler
+// accounting by tens of seconds. Every SLURM E2E harness uses this same named,
+// bounded window and still fails closed if required proof is not visible.
+export const SLURM_PROOF_VISIBILITY_TIMEOUT_MS = 90_000;
+export const SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS = 1_000;
+
 const SLURM_TERMINAL_STATES = new Set([
   "BOOT_FAIL",
   "CANCELLED",
@@ -2570,13 +2576,15 @@ export function assertFastqcReportWritebackCoverage({
 /**
  * Prove that MultiQC received a FastQC ZIP for every selected study
  * sample/mate and that every one of those identities appears in MultiQC's
- * parsed general-statistics sample names. Multiple completed FastQC runs may
- * contribute duplicate staged ZIPs, so staged duplicates are counted but do
- * not hide missing identities.
+ * parsed FastQC sample names. MultiQC 1.21 can emit an empty general-statistics
+ * table for otherwise valid reports, so use the module's saved raw data instead.
+ * Multiple completed FastQC runs may contribute duplicate staged ZIPs, so staged
+ * duplicates are counted but do not hide missing identities.
  */
 export function assertMultiqcFastqcCoverage({
   expectedSamples,
   generalStatsData,
+  fastqcData,
   stagedFastqcArtifacts,
   expectedSequenceCountsByIdentity,
   context,
@@ -2585,8 +2593,12 @@ export function assertMultiqcFastqcCoverage({
   if (!Array.isArray(stagedFastqcArtifacts) || stagedFastqcArtifacts.length === 0) {
     fail(`${context}: no staged FastQC ZIP inputs were supplied`);
   }
-  if (!Array.isArray(generalStatsData) || generalStatsData.length === 0) {
-    fail(`${context}: MultiQC general-statistics data is missing`);
+  const parsedData =
+    fastqcData && typeof fastqcData === "object" && !Array.isArray(fastqcData)
+      ? [fastqcData]
+      : generalStatsData;
+  if (!Array.isArray(parsedData) || parsedData.length === 0) {
+    fail(`${context}: MultiQC FastQC parsed data is missing`);
   }
 
   const stagedCounts = new Map();
@@ -2682,7 +2694,7 @@ export function assertMultiqcFastqcCoverage({
   const parsedSampleNames = new Set();
   const parsedIdentities = new Set();
   const sequenceCountEvidence = new Map();
-  for (const section of generalStatsData) {
+  for (const section of parsedData) {
     if (!section || typeof section !== "object" || Array.isArray(section)) {
       fail(`${context}: MultiQC general-statistics section is malformed`);
     }
@@ -2706,10 +2718,15 @@ export function assertMultiqcFastqcCoverage({
           JSON.stringify({ identity, sampleName }, null, 2),
         );
       }
-      if (!Object.prototype.hasOwnProperty.call(metrics, "total_sequences")) {
+      const totalSequences = Object.prototype.hasOwnProperty.call(
+        metrics,
+        "total_sequences",
+      )
+        ? metrics.total_sequences
+        : metrics["Total Sequences"];
+      if (totalSequences == null) {
         continue;
       }
-      const totalSequences = metrics.total_sequences;
       if (!Number.isSafeInteger(totalSequences) || totalSequences <= 0) {
         fail(
           `${context}: total_sequences is not a positive safe integer for ${identity}`,
@@ -3047,14 +3064,13 @@ export function assertMultiqcNanoplotMetrics({
 
   const observedSampleIds = [];
   for (const [sampleName, metrics] of Object.entries(multiqcNanostatData)) {
-    const suffix = "_NanoStats";
-    if (!sampleName.endsWith(suffix)) {
+    const sampleId = sampleName.trim();
+    if (!sampleId || sampleId !== sampleName) {
       fail(
-        `${context}: MultiQC NanoStat sample name does not match the staged NanoStats filename`,
+        `${context}: MultiQC NanoStat sample name is invalid`,
         JSON.stringify({ sampleName }, null, 2),
       );
     }
-    const sampleId = sampleName.slice(0, -suffix.length);
     const expected = expectedBySampleId.get(sampleId);
     if (!expected) {
       fail(

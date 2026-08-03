@@ -3,7 +3,7 @@
   "package": {
     "id": "multiqc",
     "name": "Study MultiQC",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Aggregate verified FastQC and NanoPlot artifacts from prior runs into a single study-level MultiQC report",
     "provider": "SeqDesk"
   },
@@ -38,7 +38,7 @@
   "execution": {
     "type": "nextflow",
     "pipeline": "./workflow",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "profiles": [
       "conda"
     ],

@@ -50,6 +50,8 @@ import {
   pathIsWithin,
   pathsReferToSameLocation,
   resolveLocalManifestPipelineTarget,
+  SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS,
+  SLURM_PROOF_VISIBILITY_TIMEOUT_MS,
   slurmCompletionAttestationPath,
 } from "./lib/pipeline-e2e-proof.mjs";
 import {
@@ -1001,14 +1003,22 @@ async function resolveSlurmNodeHosts(nodeList, jobId) {
 
 async function waitForRequiredRegularFiles(paths, context) {
   let missing = [...paths];
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  const deadline = Date.now() + SLURM_PROOF_VISIBILITY_TIMEOUT_MS;
+  while (Date.now() <= deadline) {
     missing = paths.filter((filePath) => !fs.existsSync(filePath));
     if (missing.length === 0) break;
-    await sleep(1000);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await sleep(
+      Math.min(SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS, remainingMs),
+    );
   }
   missing = paths.filter((filePath) => !fs.existsSync(filePath));
   if (missing.length > 0) {
-    fail(`${context}: required files are missing after accounting completed`, missing.join("\n"));
+    fail(
+      `${context}: required files are missing after ${SLURM_PROOF_VISIBILITY_TIMEOUT_MS / 1000}s visibility timeout after accounting completed`,
+      missing.join("\n"),
+    );
   }
   for (const filePath of paths) {
     const stat = fs.lstatSync(filePath);
@@ -3555,15 +3565,21 @@ async function assertMultiqcAggregation({ client, run, runId }) {
       error instanceof Error ? error.message : String(error),
     );
   }
-  const generalStats = Array.isArray(parsedData?.report_general_stats_data)
-    ? parsedData.report_general_stats_data
-    : [];
-  const populatedStats = generalStats.filter(
-    (row) => row && typeof row === "object" && Object.keys(row).length > 0,
-  );
-  if (populatedStats.length === 0) {
+  const rawData = parsedData?.report_saved_raw_data;
+  const multiqcFastqc = rawData?.multiqc_fastqc;
+  const multiqcNanostat = rawData?.multiqc_nanostat;
+  if (
+    !multiqcFastqc ||
+    typeof multiqcFastqc !== "object" ||
+    Array.isArray(multiqcFastqc) ||
+    Object.keys(multiqcFastqc).length === 0 ||
+    !multiqcNanostat ||
+    typeof multiqcNanostat !== "object" ||
+    Array.isArray(multiqcNanostat) ||
+    Object.keys(multiqcNanostat).length === 0
+  ) {
     fail(
-      `multiqc aggregation: run ${runId} parsed no sample/module statistics`,
+      `multiqc aggregation: run ${runId} parsed no FastQC or NanoStat data`,
       JSON.stringify({ runId, dataPath: dataArtifact.path }, null, 2),
     );
   }
@@ -3669,7 +3685,7 @@ async function assertMultiqcAggregation({ client, run, runId }) {
   const expectedSamples = fastqcGroundTruth.expectedSamples;
   const sampleMateCoverage = assertMultiqcFastqcCoverage({
     expectedSamples,
-    generalStatsData: generalStats,
+    fastqcData: multiqcFastqc,
     stagedFastqcArtifacts: fastqcInputs,
     expectedSequenceCountsByIdentity:
       fastqcGroundTruth.sequenceCountsByIdentity,
@@ -3683,13 +3699,13 @@ async function assertMultiqcAggregation({ client, run, runId }) {
   });
   const nanoplotCoverage = assertMultiqcNanoplotMetrics({
     expectedStats: nanoplotGroundTruth.expectedStats,
-    multiqcNanostatData: parsedData?.multiqc_nanostat,
+    multiqcNanostatData: multiqcNanostat,
     context: `multiqc aggregation for run ${runId}`,
   });
 
   return {
     dataPath: dataArtifact.path,
-    generalStatsSections: populatedStats.length,
+    fastqcParsedSamples: Object.keys(multiqcFastqc).length,
     stagedArtifactCount: stagedArtifacts.length,
     stagedFastqcInputs: fastqcInputs.length,
     fastqcProvenanceChecked: fastqcGroundTruth.provenanceChecked,

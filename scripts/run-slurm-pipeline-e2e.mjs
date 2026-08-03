@@ -11,6 +11,8 @@ import {
   assertSlurmLaunchIdentity,
   normalizeSlurmState,
   parsePrimarySacctRecord,
+  SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS,
+  SLURM_PROOF_VISIBILITY_TIMEOUT_MS,
   slurmCompletionAttestationPath,
 } from "./lib/pipeline-e2e-proof.mjs";
 import { syncPipelineRunFailClosed } from "./lib/pipeline-e2e-sync.mjs";
@@ -493,14 +495,22 @@ async function resolveSlurmNodeHosts(nodeList, jobId) {
 
 async function waitForRequiredRegularFiles(paths, context) {
   let missing = [...paths];
-  for (let attempt = 0; attempt < 30; attempt += 1) {
+  const deadline = Date.now() + SLURM_PROOF_VISIBILITY_TIMEOUT_MS;
+  while (Date.now() <= deadline) {
     missing = paths.filter((filePath) => !fs.existsSync(filePath));
     if (missing.length === 0) break;
-    await sleep(1000);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await sleep(
+      Math.min(SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS, remainingMs),
+    );
   }
   missing = paths.filter((filePath) => !fs.existsSync(filePath));
   if (missing.length > 0) {
-    fail(`${context}: required files are missing after accounting completed`, missing.join("\n"));
+    fail(
+      `${context}: required files are missing after ${SLURM_PROOF_VISIBILITY_TIMEOUT_MS / 1000}s visibility timeout after accounting completed`,
+      missing.join("\n"),
+    );
   }
   for (const filePath of paths) {
     const stat = fs.lstatSync(filePath);

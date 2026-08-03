@@ -384,12 +384,23 @@ describe('prepareMagRun', () => {
     );
     expect(script).toContain('slurm_job_id=%s');
     expect(script).toContain('phase=completed');
+    const finalizer = script.slice(
+      script.indexOf('finalize_seqdesk_slurm_wrapper()'),
+      script.indexOf('trap finalize_seqdesk_slurm_wrapper EXIT')
+    );
+    expect(finalizer).toContain(
+      'elif ! write_seqdesk_slurm_completion_attestation; then'
+    );
     expect(
-      script.match(/^write_seqdesk_slurm_completion_attestation$/gm)
-    ).toHaveLength(1);
+      finalizer.indexOf('cp -f "/tmp/seqdesk-slurm-$SLURM_JOB_ID.err"')
+    ).toBeLessThan(
+      finalizer.indexOf(
+        'elif ! write_seqdesk_slurm_completion_attestation; then'
+      )
+    );
     expect(
-      script.lastIndexOf('write_seqdesk_slurm_completion_attestation')
-    ).toBeGreaterThan(script.indexOf('"${NEXTFLOW_RUNNER[@]}" run'));
+      script.slice(script.indexOf('"${NEXTFLOW_RUNNER[@]}" run'))
+    ).not.toContain('write_seqdesk_slurm_completion_attestation');
   });
 
   it('generates local script when useSlurm is false', async () => {
@@ -688,6 +699,9 @@ describe('prepareMagRun', () => {
       'trap finalize_seqdesk_slurm_wrapper EXIT'
     );
     expect(script).toContain('SEQDESK_WRAPPER_EXIT_CODE=$?');
+    expect(script).toContain(
+      'Failed to persist SLURM capture logs; refusing success attestation'
+    );
     expect(
       script.indexOf('trap finalize_seqdesk_slurm_wrapper EXIT')
     ).toBeLessThan(script.indexOf('for _ in $(seq 1 15)'));

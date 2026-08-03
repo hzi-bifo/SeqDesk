@@ -33,7 +33,6 @@ import {
   buildSlurmCompletionAttestationBlock,
   buildSlurmWrapperFinalizerBlock,
   renderSlurmChdirDirective,
-  WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND,
 } from './slurm-completion-attestation';
 import { resolveCondaEnvironmentReference } from './conda-environment';
 import { stagePriorRunArtifacts } from './prior-run-artifact-staging';
@@ -822,8 +821,6 @@ ${runtimeBootstrap}
 "\${NEXTFLOW_RUNNER[@]}" run ${shellQuote(pipelineTarget.target)} \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
-
-${WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND}
 `;
 }
 

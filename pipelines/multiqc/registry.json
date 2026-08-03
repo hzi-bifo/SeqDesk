@@ -3,7 +3,7 @@
   "name": "Study MultiQC",
   "description": "Aggregate recognized FastQC and NanoPlot outputs from prior study runs into a single study-level MultiQC report",
   "category": "qc",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "sortOrder": 3,
   "website": "https://multiqc.info",
   "requires": {

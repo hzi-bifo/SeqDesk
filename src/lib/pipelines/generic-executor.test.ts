@@ -886,12 +886,23 @@ describe("generic-executor", () => {
     );
     expect(script).toContain("slurm_job_id=%s");
     expect(script).toContain("phase=completed");
+    const finalizer = script.slice(
+      script.indexOf("finalize_seqdesk_slurm_wrapper()"),
+      script.indexOf("trap finalize_seqdesk_slurm_wrapper EXIT"),
+    );
+    expect(finalizer).toContain(
+      "elif ! write_seqdesk_slurm_completion_attestation; then",
+    );
     expect(
-      script.match(/^write_seqdesk_slurm_completion_attestation$/gm),
-    ).toHaveLength(1);
+      finalizer.indexOf('cp -f "/tmp/seqdesk-slurm-$SLURM_JOB_ID.err"'),
+    ).toBeLessThan(
+      finalizer.indexOf(
+        "elif ! write_seqdesk_slurm_completion_attestation; then",
+      ),
+    );
     expect(
-      script.lastIndexOf("write_seqdesk_slurm_completion_attestation"),
-    ).toBeGreaterThan(script.indexOf('"${NEXTFLOW_RUNNER[@]}" run'));
+      script.slice(script.indexOf('"${NEXTFLOW_RUNNER[@]}" run')),
+    ).not.toContain("write_seqdesk_slurm_completion_attestation");
     expect(() => execFileSync("bash", ["-n"], { input: script })).not.toThrow();
 
     const config = await fs.readFile(path.join(result.runFolder!, "nextflow.config"), "utf8");
@@ -1348,6 +1359,9 @@ describe("generic-executor", () => {
       "trap finalize_seqdesk_slurm_wrapper EXIT"
     );
     expect(slurmScript).toContain("SEQDESK_WRAPPER_EXIT_CODE=$?");
+    expect(slurmScript).toContain(
+      "Failed to persist SLURM capture logs; refusing success attestation"
+    );
     expect(slurmScript.indexOf("trap finalize_seqdesk_slurm_wrapper EXIT")).toBeLessThan(
       slurmScript.indexOf('for _ in $(seq 1 15)')
     );

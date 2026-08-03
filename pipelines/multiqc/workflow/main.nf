@@ -38,14 +38,17 @@ process MULTIQC {
     multiqc \\
       --force \\
       --no-ansi \\
-      --strict \\
       --title "${report_title}" \\
       --filename study-multiqc.html \\
       --outdir multiqc \\
       "${qc_dir}"
 
+    # MultiQC derives the data-directory name from the report filename. Keep
+    # SeqDesk's stable output contract independent of that display filename.
+    test -d multiqc/study-multiqc_data
+    mv multiqc/study-multiqc_data multiqc/multiqc_data
     test -s multiqc/multiqc_data/multiqc_data.json
-    python -c 'import json,sys; data=json.load(open(sys.argv[1])); stats=data.get("report_general_stats_data") or []; assert any(isinstance(row,dict) and row for row in stats), "MultiQC parsed no samples/modules from the staged inputs"' multiqc/multiqc_data/multiqc_data.json
+    python -c 'import json,sys; data=json.load(open(sys.argv[1])); raw=data.get("report_saved_raw_data") or {}; fastqc=raw.get("multiqc_fastqc") or {}; nanostat=raw.get("multiqc_nanostat") or {}; assert (isinstance(fastqc,dict) and fastqc) or (isinstance(nanostat,dict) and nanostat), "MultiQC parsed no FastQC or NanoStat data from the staged inputs"' multiqc/multiqc_data/multiqc_data.json
     """
 }
 

@@ -82,12 +82,27 @@ ${SLURM_WRAPPER_FINALIZER_FUNCTION}() {
     fi
     sleep 2
   done
-  printf 'Pipeline completed with exit code: %s at %s\\n' "$SEQDESK_WRAPPER_EXIT_CODE" "$(date)" >> "$STDOUT_LOG"
   : >> "$STDERR_LOG"
+  SEQDESK_CAPTURE_LOGS_COPIED=0
   if [ -n "\${SLURM_JOB_ID:-}" ]; then
-    cp -f "/tmp/seqdesk-slurm-$SLURM_JOB_ID.out" "$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.out" 2>/dev/null
-    cp -f "/tmp/seqdesk-slurm-$SLURM_JOB_ID.err" "$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.err" 2>/dev/null
+    if cp -f "/tmp/seqdesk-slurm-$SLURM_JOB_ID.out" "$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.out" 2>/dev/null && \
+       cp -f "/tmp/seqdesk-slurm-$SLURM_JOB_ID.err" "$RUN_FOLDER/logs/slurm-$SLURM_JOB_ID.err" 2>/dev/null; then
+      SEQDESK_CAPTURE_LOGS_COPIED=1
+    fi
   fi
+  if [ "$SEQDESK_WRAPPER_EXIT_CODE" -eq 0 ]; then
+    if [ "$SEQDESK_CAPTURE_LOGS_COPIED" -ne 1 ]; then
+      printf 'Failed to persist SLURM capture logs; refusing success attestation\\n' >> "$STDERR_LOG"
+      SEQDESK_WRAPPER_EXIT_CODE=1
+    elif ! declare -F ${WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND} >/dev/null 2>&1; then
+      printf 'SLURM success-attestation function is unavailable\\n' >> "$STDERR_LOG"
+      SEQDESK_WRAPPER_EXIT_CODE=1
+    elif ! ${WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND}; then
+      printf 'Failed to persist SLURM success attestation\\n' >> "$STDERR_LOG"
+      SEQDESK_WRAPPER_EXIT_CODE=1
+    fi
+  fi
+  printf 'Pipeline completed with exit code: %s at %s\\n' "$SEQDESK_WRAPPER_EXIT_CODE" "$(date)" >> "$STDOUT_LOG"
   exit "$SEQDESK_WRAPPER_EXIT_CODE"
 }
 trap ${SLURM_WRAPPER_FINALIZER_FUNCTION} EXIT`;
@@ -95,9 +110,12 @@ trap ${SLURM_WRAPPER_FINALIZER_FUNCTION} EXIT`;
 
 /**
  * Emit one shared success-attestation implementation for every outer SLURM
- * wrapper. The file is written in the run folder and atomically renamed only
- * after the wrapped workload returns zero. SLURM_JOB_ID and the executing node
- * therefore come from the allocation that actually ran this script.
+ * wrapper. The EXIT finalizer invokes it only after the wrapped workload
+ * returns zero and both node-local SLURM capture files have been copied to the
+ * shared run folder. The file is then atomically renamed, so observing it is
+ * causal evidence that capture-log persistence completed first. SLURM_JOB_ID
+ * and the executing node come from the allocation that actually ran this
+ * script.
  */
 export function buildSlurmCompletionAttestationBlock({
   runId,
@@ -120,6 +138,10 @@ rm -f "$SLURM_ATTESTATION_FILE"
 ${WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND}() {
   local attestation_tmp
   local attestation_host
+  if [ "\${SEQDESK_CAPTURE_LOGS_COPIED:-0}" -ne 1 ]; then
+    echo "Refusing SLURM success attestation before capture logs are persisted" >&2
+    return 1
+  fi
   attestation_tmp="$SLURM_ATTESTATION_FILE.tmp.$$"
   attestation_host="\${SLURMD_NODENAME:-$(hostname)}"
   if [ -z "$attestation_host" ]; then

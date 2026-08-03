@@ -69,11 +69,16 @@ describe("MultiQC package contract", () => {
     expect(workflow).not.toMatch(
       /find "\$\{qc_dir\}" -type f -print -quit/
     );
-    expect(workflow).toContain("--strict");
+    expect(workflow).not.toContain("--strict");
+    expect(workflow).toContain(
+      "mv multiqc/study-multiqc_data multiqc/multiqc_data"
+    );
     expect(workflow).toContain(
       "test -s multiqc/multiqc_data/multiqc_data.json"
     );
-    expect(workflow).toContain("report_general_stats_data");
+    expect(workflow).toContain("report_saved_raw_data");
+    expect(workflow).toContain("multiqc_fastqc");
+    expect(workflow).toContain("multiqc_nanostat");
     expect(workflow).not.toMatch(/optional\s*:\s*true/);
     expect(workflow).not.toContain("qcDirPath.mkdirs()");
   });

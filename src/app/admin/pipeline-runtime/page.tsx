@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { notifyPanel } from "@/lib/notifications/client";
 import { toast } from "@/components/ui/toast";
@@ -93,6 +93,7 @@ function isInstalledPipeline(pipeline: PipelineSummary): boolean {
 }
 
 export default function PipelineRuntimePage() {
+  const hasStartedSettingsLoad = useRef(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -219,6 +220,8 @@ export default function PipelineRuntimePage() {
   }, []);
 
   useEffect(() => {
+    if (hasStartedSettingsLoad.current) return;
+    hasStartedSettingsLoad.current = true;
     void fetchSettings();
   }, [fetchSettings]);
 

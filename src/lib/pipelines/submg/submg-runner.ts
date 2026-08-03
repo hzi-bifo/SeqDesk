@@ -15,7 +15,6 @@ import {
   buildSlurmCompletionAttestationBlock,
   buildSlurmWrapperFinalizerBlock,
   renderSlurmChdirDirective,
-  WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND,
 } from "@/lib/pipelines/slurm-completion-attestation";
 
 interface PrepareSubmgRunOptions {
@@ -947,8 +946,6 @@ function buildSubmgScript(params: {
     lines.push('if [ -d "$READS_PREP_DIR" ]; then rm -rf "$READS_PREP_DIR"; fi');
     lines.push("");
   }
-
-  lines.push(WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND);
 
   return `${lines.join("\n")}\n`;
 }

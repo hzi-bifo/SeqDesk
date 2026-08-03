@@ -45,6 +45,8 @@ import {
   pathsReferToSameLocation,
   readCanonicalPipelineExit,
   resolveLocalManifestPipelineTarget,
+  SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS,
+  SLURM_PROOF_VISIBILITY_TIMEOUT_MS,
   slurmCompletionAttestationPath,
   stageFilesMissing,
 } from "./lib/pipeline-e2e-proof.mjs";
@@ -459,13 +461,24 @@ describe("pipeline E2E proof helpers", () => {
   });
 
   it("requires causal attestation and capture evidence after SLURM accounting", () => {
+    expect(SLURM_PROOF_VISIBILITY_TIMEOUT_MS).toBe(90_000);
+    expect(SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS).toBe(1_000);
+    for (const harness of [
+      runtimeHarness,
+      legacySlurmHarness,
+      failureSlurmHarness,
+    ]) {
+      expect(harness).toContain("SLURM_PROOF_VISIBILITY_TIMEOUT_MS");
+      expect(harness).toContain("SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS");
+      expect(harness).toContain(
+        "visibility timeout after accounting completed",
+      );
+      expect(harness).not.toContain("attempt < 30");
+    }
     for (const harness of [runtimeHarness, legacySlurmHarness]) {
       expect(harness).toContain('["show", "hostnames", nodeList.trim()]');
       expect(harness).toContain("assertSlurmCompletionAttestation({");
       expect(harness).toContain("slurmCompletionAttestationPath(");
-      expect(harness).toContain(
-        "required files are missing after accounting completed",
-      );
       expect(harness).not.toContain(
         "SLURM capture logs not visible after wait (non-fatal)",
       );
@@ -509,7 +522,7 @@ describe("pipeline E2E proof helpers", () => {
     expect(failureCaptureLogs).toBeGreaterThan(failureAccounting);
     expect(negativeAttestation).toBeGreaterThan(failureCaptureLogs);
     expect(failureSlurmHarness).toContain(
-      "required files are missing after accounting completed",
+      "visibility timeout after accounting completed",
     );
     expect(failureSlurmHarness).toContain("successAttestationAbsent: true");
   });
@@ -1784,6 +1797,36 @@ describe("pipeline E2E proof helpers", () => {
       unmatchedParsedSampleNames: [],
     });
 
+    // MultiQC 1.21 can leave report_general_stats_data empty even though its
+    // FastQC module parsed the staged reports. Its saved raw module output is
+    // the stable source of the exact per-sample sequence counts.
+    expect(
+      assertMultiqcFastqcCoverage({
+        expectedSamples,
+        fastqcData: {
+          S1_R1: { "Total Sequences": 10 },
+          "lane-a-two": { "Total Sequences": 10 },
+          "explicit-real-name": { "Total Sequences": 10 },
+        },
+        stagedFastqcArtifacts: staged,
+        expectedSequenceCountsByIdentity: new Map([
+          ["S1/R1", 10],
+          ["S1/R2", 10],
+          ["S2/R1", 10],
+        ]),
+        context: "MultiQC raw-data fixture",
+      }),
+    ).toMatchObject({
+      expectedSampleMates: 3,
+      parsedSampleNames: 3,
+      sequenceCountsByIdentity: {
+        "S1/R1": 10,
+        "S1/R2": 10,
+        "S2/R1": 10,
+      },
+      sequenceCountsGroundTruthChecked: true,
+    });
+
     expect(() =>
       assertMultiqcFastqcCoverage({
         expectedSamples,
@@ -1971,7 +2014,7 @@ describe("pipeline E2E proof helpers", () => {
     const s1 = parse("S1", 10);
     const s2 = parse("S2", 10);
     const multiqcNanostatData = {
-      S1_NanoStats: {
+      S1: {
         "Number of reads_fastq": 10,
         "Total bases_fastq": 800,
         "Median read length_fastq": 80,
@@ -1979,7 +2022,7 @@ describe("pipeline E2E proof helpers", () => {
         "Read length N50_fastq": 80,
         "Mean read quality_fastq": 20,
       },
-      S2_NanoStats: {
+      S2: {
         "Number of reads_fastq": 10,
         "Total bases_fastq": 800,
         "Median read length_fastq": 80,
@@ -2006,9 +2049,19 @@ describe("pipeline E2E proof helpers", () => {
 
     expect(() =>
       assertMultiqcNanoplotMetrics({
+        expectedStats: [s1],
+        multiqcNanostatData: {
+          S1_NanoStats: multiqcNanostatData.S1,
+        },
+        context: "MultiQC 1.21 sample-name fixture",
+      }),
+    ).toThrow(/without staged ground truth/);
+
+    expect(() =>
+      assertMultiqcNanoplotMetrics({
         expectedStats: [s1, s2],
         multiqcNanostatData: {
-          S1_NanoStats: multiqcNanostatData.S1_NanoStats,
+          S1: multiqcNanostatData.S1,
         },
         context: "MultiQC NanoPlot fixture",
       }),
@@ -2018,8 +2071,8 @@ describe("pipeline E2E proof helpers", () => {
         expectedStats: [s1, s2],
         multiqcNanostatData: {
           ...multiqcNanostatData,
-          S2_NanoStats: {
-            ...multiqcNanostatData.S2_NanoStats,
+          S2: {
+            ...multiqcNanostatData.S2,
             "Mean read quality_fastq": 19.9,
           },
         },
@@ -2030,8 +2083,8 @@ describe("pipeline E2E proof helpers", () => {
       assertMultiqcNanoplotMetrics({
         expectedStats: [s1],
         multiqcNanostatData: {
-          S1_NanoStats: {
-            ...multiqcNanostatData.S1_NanoStats,
+          S1: {
+            ...multiqcNanostatData.S1,
             "Read length N50_fastq": undefined,
           },
         },

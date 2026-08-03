@@ -17,7 +17,6 @@ import {
   buildSlurmCompletionAttestationBlock,
   buildSlurmWrapperFinalizerBlock,
   renderSlurmChdirDirective,
-  WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND,
 } from '@/lib/pipelines/slurm-completion-attestation';
 import { resolveCondaEnvironmentReference } from '@/lib/pipelines/conda-environment';
 import path from 'path';
@@ -439,8 +438,6 @@ ${runtimeBootstrap}
 "\${NEXTFLOW_RUNNER[@]}" run nf-core/mag \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
-
-${WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND}
 `;
 }
 

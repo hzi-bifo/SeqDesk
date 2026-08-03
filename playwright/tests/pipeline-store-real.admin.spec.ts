@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Response } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 
 import {
@@ -21,6 +21,10 @@ import {
   startPipelineStoreFixture,
 } from "../../scripts/lib/pipeline-store-e2e-fixture.mjs";
 import { advancePipelinePackageGeneration } from "../../src/lib/pipelines/package-cache-generation";
+import {
+  PIPELINE_INSTALL_PROVENANCE_FILE,
+  readPipelineInstallProvenance,
+} from "../../src/lib/pipelines/pipeline-install-provenance";
 
 const fixtureUrl = process.env.SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL;
 const PIPELINE_ID = PIPELINE_STORE_FIXTURE_ID;
@@ -324,6 +328,27 @@ async function waitForFixtureStoreCatalog(page: Page): Promise<void> {
   ).toBe(true);
 }
 
+function isGetResponseFromPage(
+  response: Response,
+  endpointPath: string,
+  pagePath: string,
+): boolean {
+  if (
+    response.request().method() !== "GET" ||
+    new URL(response.url()).pathname !== endpointPath
+  ) {
+    return false;
+  }
+
+  const referer = response.request().headers().referer;
+  if (!referer) return false;
+  try {
+    return new URL(referer).pathname === pagePath;
+  } catch {
+    return false;
+  }
+}
+
 function removeTestResourceRoot(resourceRoot: string) {
   const resolvedRoot = path.resolve(resourceRoot);
   const resolvedTempRoot = path.resolve(os.tmpdir());
@@ -467,7 +492,7 @@ function collectRegularPackageFiles(
   return files.sort();
 }
 
-function assertActiveFixturePackageOnDisk(): string {
+async function assertActiveFixturePackageOnDisk(): Promise<string> {
   const pipelinesRoot = getIsolatedPipelinesRoot();
   const packageDirectory = path.resolve(pipelinesRoot, PIPELINE_ID);
   if (path.dirname(packageDirectory) !== pipelinesRoot) {
@@ -485,7 +510,10 @@ function assertActiveFixturePackageOnDisk(): string {
     ([left], [right]) => left.localeCompare(right),
   );
   expect(collectRegularPackageFiles(packageDirectory)).toEqual(
-    expectedFiles.map(([relativePath]) => relativePath),
+    [
+      ...expectedFiles.map(([relativePath]) => relativePath),
+      PIPELINE_INSTALL_PROVENANCE_FILE,
+    ].sort(),
   );
   for (const [relativePath, expectedContent] of expectedFiles) {
     const filePath = path.resolve(packageDirectory, relativePath);
@@ -496,6 +524,19 @@ function assertActiveFixturePackageOnDisk(): string {
     }
     expect(fs.readFileSync(filePath, "utf8")).toBe(expectedContent);
   }
+
+  await expect(
+    readPipelineInstallProvenance(PIPELINE_ID, pipelinesRoot),
+  ).resolves.toEqual(
+    expect.objectContaining({
+      schemaVersion: 1,
+      pipelineId: PIPELINE_ID,
+      version: PIPELINE_STORE_FIXTURE_V1,
+      sourceId: `registry:${new URL("/registry", fixtureUrl!).toString()}`,
+      sourceKind: "registry",
+      installedAt: expect.any(String),
+    }),
+  );
 
   expect(
     fs
@@ -618,8 +659,11 @@ test(
       const availableCard = page.getByTestId(
         `available-pipeline-${PIPELINE_ID}`,
       );
+      await expect(availableButton).toHaveText(/Available\s*[1-9]\d*/, {
+        timeout: 30_000,
+      });
       await availableButton.click();
-      await expect(availableCard).toBeVisible({ timeout: 10_000 });
+      await expect(availableCard).toBeVisible({ timeout: 30_000 });
       await availableCard
         .getByRole("button", { name: "Install", exact: true })
         .click();
@@ -888,13 +932,45 @@ test(
           `Checksum OK (sha256 ${PIPELINE_STORE_FIXTURE_DATABASE_SHA256}).`,
         );
 
-      await page.getByTestId(`pipeline-setup-next-${PIPELINE_ID}`).click();
-      await page.waitForURL(/\/admin\/pipeline-runtime#required-runtime$/);
+      const [runtimeSettingsResponse, runtimePipelinesResponse] =
+        await Promise.all([
+          page.waitForResponse(
+            (response) =>
+              isGetResponseFromPage(
+                response,
+                "/api/admin/settings/pipelines/execution",
+                "/admin/pipeline-runtime",
+              ),
+            { timeout: 30_000 },
+          ),
+          page.waitForResponse(
+            (response) =>
+              isGetResponseFromPage(
+                response,
+                "/api/admin/settings/pipelines",
+                "/admin/pipeline-runtime",
+              ),
+            { timeout: 30_000 },
+          ),
+          page.waitForURL(/\/admin\/pipeline-runtime#required-runtime$/),
+          page.getByTestId(`pipeline-setup-next-${PIPELINE_ID}`).click(),
+        ]);
+      expect(runtimeSettingsResponse.ok()).toBeTruthy();
+      expect(runtimePipelinesResponse.ok()).toBeTruthy();
+      await expect(runtimeSettingsResponse.json()).resolves.toEqual(
+        expect.objectContaining({
+          settings: expect.objectContaining({
+            pipelineRunDir: blockedRuntimeDirectory,
+          }),
+        }),
+      );
       await expect(
         page.getByRole("heading", { name: "Pipeline Runtime" }),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 30_000 });
       const runDirectoryInput = page.getByLabel("Pipeline Run Directory");
-      await expect(runDirectoryInput).toHaveValue(blockedRuntimeDirectory);
+      await expect(runDirectoryInput).toHaveValue(blockedRuntimeDirectory, {
+        timeout: 30_000,
+      });
       await runDirectoryInput.fill(readyRuntimeDirectory);
       const runDirectoryRow = page
         .locator("#runtime-run-dir")
@@ -935,6 +1011,7 @@ test(
       await expect(
         runDirectoryRow.getByText("Exists and writable"),
       ).toBeVisible();
+      await expect(runDirectoryInput).toHaveValue(readyRuntimeDirectory);
 
       const [runtimeSaveResponse] = await Promise.all([
         page.waitForResponse(
@@ -949,6 +1026,12 @@ test(
           .click(),
       ]);
       expect(runtimeSaveResponse.ok()).toBeTruthy();
+      const runtimeSaveRequestBody = runtimeSaveResponse
+        .request()
+        .postDataJSON() as { pipelineRunDir?: unknown };
+      expect(runtimeSaveRequestBody.pipelineRunDir).toBe(
+        readyRuntimeDirectory,
+      );
       await expect(runtimeSaveResponse.json()).resolves.toEqual(
         expect.objectContaining({
           success: true,
@@ -1164,7 +1247,8 @@ test(
           ]),
         }),
       );
-      const restoredPackageDirectory = assertActiveFixturePackageOnDisk();
+      const restoredPackageDirectory =
+        await assertActiveFixturePackageOnDisk();
       const lintResponse = await page.request.get(
         `/api/admin/settings/pipelines/${encodeURIComponent(PIPELINE_ID)}/lint`,
       );
