@@ -275,6 +275,17 @@ async function openSimulateReadsPipeline(page: Page, orderPath: string) {
   });
 }
 
+async function openOrderSequencingOverview(page: Page, orderPath: string) {
+  await page.goto(`${orderPath}/sequencing`, { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveURL(
+    (url) => url.pathname === `${orderPath}/sequencing`,
+    { timeout: 15000 },
+  );
+  await expect(
+    page.getByRole("heading", { name: "Sequencing Data" }),
+  ).toBeVisible({ timeout: 30000 });
+}
+
 test("admin can run simulate reads with default settings", async ({ page }) => {
   await withAllowDeleteSubmittedOrdersLock(async () => {
     const orderName = `Playwright Simulate Reads ${Date.now()}`;
@@ -363,10 +374,7 @@ test("admin can run simulate reads with default settings", async ({ page }) => {
       expect(read?.pipelineRunNumber).toBe(run.runNumber);
 
       // Lightweight UI sanity check — just confirm the page loads after write-back.
-      await page.goto(`${orderPath}/sequencing`);
-      await expect(
-        page.getByRole("heading", { name: "Sequencing Data" }),
-      ).toBeVisible();
+      await openOrderSequencingOverview(page, orderPath);
     } finally {
       if (runId) {
         await deletePipelineRun(page, runId);

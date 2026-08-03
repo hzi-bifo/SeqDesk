@@ -61,6 +61,7 @@ import {
   resolveRuntimeRunConfig,
 } from "./lib/pipeline-e2e-config.mjs";
 import { syncPipelineRunFailClosed } from "./lib/pipeline-e2e-sync.mjs";
+import { buildDummyOrderOwnerPrefix } from "./lib/dummy-order-prefix.mjs";
 
 const execFileAsync = promisify(execFile);
 const DUMMY_ORDER_PREFIX = "SEED-DUMMY-";
@@ -469,7 +470,7 @@ function isDummyOrder(order) {
 }
 
 function userPrefix(userId) {
-  return String(userId || "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 8).toUpperCase() || "USER";
+  return buildDummyOrderOwnerPrefix(userId);
 }
 
 function dummyOrderPrefixForSession(session) {

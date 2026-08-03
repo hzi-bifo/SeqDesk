@@ -1,4 +1,5 @@
 import * as path from "path";
+import { buildDummyOrderOwnerPrefix } from "../../../scripts/lib/dummy-order-prefix.mjs";
 import {
   buildSequencingTechSelection,
   PLATFORM_ILLUMINA_MISEQ_AMPLICON,
@@ -204,23 +205,7 @@ export function resolveSyntheticReadSize(options?: {
 }
 
 function userPrefix(userId: string): string {
-  const normalized = userId.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-  if (!normalized) return "USER";
-
-  // Order numbers are globally unique. A plain first-eight-character prefix
-  // can collide for different admins (especially imported or prefixed IDs), so
-  // mix the complete owner id into two independent 32-bit hashes while keeping
-  // the result readable in the UI.
-  let fnv = 0x811c9dc5;
-  let djb = 5381;
-  for (let index = 0; index < userId.length; index += 1) {
-    const code = userId.charCodeAt(index);
-    fnv = Math.imul(fnv ^ code, 0x01000193);
-    djb = Math.imul(djb, 33) ^ code;
-  }
-  const hashPart = (value: number) =>
-    (value >>> 0).toString(36).toUpperCase().padStart(7, "0");
-  return `${normalized.slice(0, 4)}${hashPart(fnv)}${hashPart(djb)}`;
+  return buildDummyOrderOwnerPrefix(userId);
 }
 
 function orderNumber(prefix: string, index: number): string {

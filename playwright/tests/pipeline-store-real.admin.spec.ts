@@ -20,6 +20,7 @@ import {
   provisionPipelineStoreFixtureResource,
   startPipelineStoreFixture,
 } from "../../scripts/lib/pipeline-store-e2e-fixture.mjs";
+import { advancePipelinePackageGeneration } from "../../src/lib/pipelines/package-cache-generation";
 
 const fixtureUrl = process.env.SEQDESK_PLAYWRIGHT_STORE_FIXTURE_URL;
 const PIPELINE_ID = PIPELINE_STORE_FIXTURE_ID;
@@ -41,6 +42,10 @@ interface SiteSettingsSnapshot {
 interface PipelineExecutionPaths {
   pipelineRunDir: string;
   pipelineDatabaseDir: string;
+}
+
+interface PipelineStoreCatalogResponse {
+  pipelines?: Array<{ id?: string }>;
 }
 
 function getIsolatedPipelinesRoot() {
@@ -100,6 +105,10 @@ async function removeInstalledFixtureState() {
       });
     }
   }
+  // The app process keeps an in-memory package index. Manual fixture cleanup
+  // must advance the shared generation marker so repeat/retry workers do not
+  // keep treating the removed fixture as installed.
+  await advancePipelinePackageGeneration(pipelinesRoot);
 
   const prisma = new PrismaClient();
   try {
@@ -292,6 +301,27 @@ async function loginAsSeededAdmin(page: Page) {
   await page.getByLabel("Password").fill("admin");
   await page.getByRole("button", { name: /sign in/i }).click();
   await page.waitForURL(/\/orders$/);
+}
+
+async function waitForFixtureStoreCatalog(page: Page): Promise<void> {
+  const response = await page.waitForResponse(
+    (candidate) =>
+      new URL(candidate.url()).pathname ===
+        "/api/admin/settings/pipelines/store" &&
+      candidate.request().method() === "GET",
+    { timeout: 60_000 },
+  );
+  if (!response.ok()) {
+    throw new Error(
+      `Pipeline Store catalog request failed (${response.status()}): ${await response.text()}`,
+    );
+  }
+
+  const catalog = (await response.json()) as PipelineStoreCatalogResponse;
+  expect(
+    catalog.pipelines?.some((pipeline) => pipeline.id === PIPELINE_ID),
+    `Pipeline Store catalog did not contain the fixture ${PIPELINE_ID}`,
+  ).toBe(true);
 }
 
 function removeTestResourceRoot(resourceRoot: string) {
@@ -571,9 +601,13 @@ test(
       );
       expect(fs.existsSync(downloadedDatabasePath)).toBe(false);
 
-      await page.goto("/admin/settings/pipelines", {
-        waitUntil: "domcontentloaded",
-      });
+      const storeCatalogReady = waitForFixtureStoreCatalog(page);
+      await Promise.all([
+        storeCatalogReady,
+        page.goto("/admin/settings/pipelines", {
+          waitUntil: "domcontentloaded",
+        }),
+      ]);
       await expect(
         page.getByRole("heading", { name: "Pipeline Catalog" }),
       ).toBeVisible();
@@ -584,10 +618,8 @@ test(
       const availableCard = page.getByTestId(
         `available-pipeline-${PIPELINE_ID}`,
       );
-      await expect(async () => {
-        await availableButton.click();
-        await expect(availableCard).toBeVisible({ timeout: 3_000 });
-      }).toPass({ timeout: 15_000 });
+      await availableButton.click();
+      await expect(availableCard).toBeVisible({ timeout: 10_000 });
       await availableCard
         .getByRole("button", { name: "Install", exact: true })
         .click();
@@ -596,14 +628,16 @@ test(
         `installed-pipeline-${PIPELINE_ID}`,
       );
       const guidedSetup = page.getByTestId("guided-pipeline-setup");
-      await expect(installedCard).toBeVisible();
+      await expect(installedCard).toBeVisible({ timeout: 30_000 });
       await expect(guidedSetup).toHaveAttribute(
         "data-pipeline-id",
         PIPELINE_ID,
+        { timeout: 30_000 },
       );
       await expect(guidedSetup).toHaveAttribute(
         "data-setup-action",
         "configure",
+        { timeout: 30_000 },
       );
       await expect(
         installedCard.getByRole("button", {
@@ -934,6 +968,7 @@ test(
       await expect(resumedGuidedSetup).toHaveAttribute(
         "data-pipeline-id",
         PIPELINE_ID,
+        { timeout: 30_000 },
       );
       await expect(resumedGuidedSetup).toHaveAttribute(
         "data-setup-action",

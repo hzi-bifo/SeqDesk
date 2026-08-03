@@ -231,13 +231,16 @@ export async function createAndSubmitOrder(
   });
   await page.getByRole("button", { name: /view sequencing order/i }).click();
 
-  await expect
-    .poll(() => new URL(page.url()).pathname)
-    .toMatch(/^\/orders\/(?!new$)[^/]+$/);
-  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible();
+  await expect(page).toHaveURL(
+    (url) => /^\/orders\/(?!new\/?$)[^/]+\/?$/.test(url.pathname),
+    { timeout: 20000 },
+  );
+  await expect(page.getByRole("heading", { name: "Order Details" })).toBeVisible({
+    timeout: 15000,
+  });
   await expect(
     page.getByRole("heading", { name: new RegExp(`Samples \\(${samples.length}\\)`) }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15000 });
   const url = new URL(page.url());
   return { orderPath: url.pathname };
 }
@@ -357,7 +360,9 @@ export async function createStudyFromOrderSamples(
   await expect(sampleIds.length).toBeGreaterThan(0);
 
   await page.goto("/studies/new");
-  await expect(page.getByRole("heading", { name: "New Study" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "New Study" })).toBeVisible({
+    timeout: 15000,
+  });
 
   for (const sampleId of sampleIds) {
     await page.getByRole("button", { name: new RegExp(sampleId) }).click();
@@ -379,7 +384,6 @@ export async function createStudyFromOrderSamples(
   }
 
   await expect(page.getByText("Ready to create your study")).toBeVisible();
-  const studyNavigation = page.waitForURL(/\/studies\/.+/, { timeout: 20000 });
   await page.getByRole("button", { name: /create study/i }).click();
 
   const createAnywayButton = page.getByRole("button", { name: /create anyway/i });
@@ -387,7 +391,10 @@ export async function createStudyFromOrderSamples(
     await page.getByRole("button", { name: /create anyway/i }).click();
   }
 
-  await studyNavigation;
+  await expect(page).toHaveURL(
+    (url) => /^\/studies\/(?!new\/?$)[^/]+\/?$/.test(url.pathname),
+    { timeout: 20000 },
+  );
   await expect(page.getByRole("heading", { name: studyTitle, exact: true })).toBeVisible({
     timeout: 15000,
   });

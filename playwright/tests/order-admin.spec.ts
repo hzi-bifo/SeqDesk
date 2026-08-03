@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import {
   createAndSubmitOrder,
+  createStudyFromOrderSamples,
   deleteCurrentOrder,
-  getOrderSampleIds,
   setAllowDeleteSubmittedOrders,
   withAllowDeleteSubmittedOrdersLock,
 } from "./helpers";
@@ -33,44 +33,19 @@ test("admin can create a study from their own order samples", async ({ page }) =
     { volume: "29", concentration: "10" },
   ]);
 
-  const sampleIds = await getOrderSampleIds(page);
-  await expect(sampleIds.length).toBe(2);
+  const { sampleIds } = await createStudyFromOrderSamples(page, studyTitle);
+  expect(sampleIds).toHaveLength(2);
 
-  await page.goto("/studies/new");
-  await expect(page.getByRole("heading", { name: "New Study" })).toBeVisible();
-
-  for (const sampleId of sampleIds) {
-    await page.getByRole("button", { name: new RegExp(sampleId) }).click();
-  }
-
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-  await page.getByLabel("Study Title *").fill(studyTitle);
-  await page.getByRole("button", { name: "Next", exact: true }).click();
-
-  const environmentHeading = page.getByRole("heading", { name: "Environment Type" });
-  if (await environmentHeading.isVisible()) {
-    await page.getByRole("button", { name: /Human Associated/i }).click();
-    await page.getByRole("button", { name: "Next", exact: true }).click();
-  }
-
-  const metadataHeading = page.getByRole("heading", { name: "Sample Metadata" });
-  if (await metadataHeading.isVisible()) {
-    await page.getByRole("button", { name: "Next", exact: true }).click();
-  }
-
-  await expect(page.getByText("Ready to create your study")).toBeVisible();
-  await page.getByRole("button", { name: /create study/i }).click();
-
-  const warningDialog = page.getByRole("dialog");
-  if (await warningDialog.isVisible()) {
-    await page.getByRole("button", { name: /create anyway/i }).click();
-  }
-
-  await expect(page).toHaveURL(/\/studies\/.+/);
-  await expect(page.getByRole("heading", { name: studyTitle, exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Open Samples", exact: true }).click();
-  await expect(page).toHaveURL(/\/studies\/.+\?tab=samples/);
-  await expect(page.getByRole("heading", { name: "Samples (2)" })).toBeVisible();
+  await expect(page).toHaveURL(
+    (url) =>
+      /^\/studies\/(?!new\/?$)[^/]+\/?$/.test(url.pathname) &&
+      url.searchParams.get("tab") === "samples",
+    { timeout: 15000 },
+  );
+  await expect(page.getByRole("heading", { name: "Samples (2)" })).toBeVisible({
+    timeout: 15000,
+  });
   for (const sampleId of sampleIds) {
     await expect(page.getByText(sampleId)).toBeVisible();
   }

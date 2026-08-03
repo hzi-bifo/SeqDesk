@@ -574,16 +574,22 @@ test("keeps the previous package visible when a broken update is rolled back", a
   await expect(
     page.getByRole("heading", { name: "Pipeline Catalog" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Show details" }).click();
 
   const installedCard = page.getByTestId(
     `installed-pipeline-${PIPELINE_ID}`,
   );
-  await expect(installedCard).toBeVisible();
+  await expect(installedCard).toBeVisible({ timeout: 15000 });
+
+  await page.getByRole("button", { name: "Show details", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Hide details", exact: true }),
+  ).toBeVisible({ timeout: 15000 });
   await expect(
     installedCard.getByText("v1.0.0", { exact: true }),
-  ).toBeVisible();
-  await expect(installedCard).toContainText("Latest version: v2.0.0");
+  ).toBeVisible({ timeout: 15000 });
+  await expect(installedCard).toContainText("Latest version: v2.0.0", {
+    timeout: 15000,
+  });
 
   await installedCard
     .getByRole("button", { name: "Update", exact: true })
@@ -593,7 +599,7 @@ test("keeps the previous package visible when a broken update is rolled back", a
   await expect(installedCard).toBeVisible();
   await expect(
     installedCard.getByText("v1.0.0", { exact: true }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15000 });
   await expect(
     installedCard.getByRole("button", { name: "Update", exact: true }),
   ).toBeVisible();

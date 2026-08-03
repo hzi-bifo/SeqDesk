@@ -34,6 +34,14 @@ const findOrder = (
 ) => orders.find((o) => o.status === status && o.orderNumber.endsWith(suffix));
 
 describe("dummy order seed dataset", () => {
+  it("uses the collision-resistant owner prefix in every dummy order number", () => {
+    const dataset = build();
+
+    for (const order of dataset.orders) {
+      expect(order.orderNumber).toMatch(/^SEED-DUMMY-USER1W2HRW40T6WNXK-\d{3}$/);
+    }
+  });
+
   it("stores sequencing technology selections instead of legacy order platform values", () => {
     const dataset = build();
 
