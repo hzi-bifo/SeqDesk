@@ -149,7 +149,8 @@ function extractAdditionalSettingsScript(installer: string): string {
 }
 
 function applyAdditionalSettings(
-  overrides: Record<string, unknown> | string
+  overrides: Record<string, unknown> | string,
+  initialConfig: Record<string, unknown> = {}
 ): {
   result: ReturnType<typeof spawnSync>;
   config?: Record<string, unknown>;
@@ -159,7 +160,7 @@ function applyAdditionalSettings(
   );
   const configPath = path.join(tempDir, "profile.json");
   const overridesPath = path.join(tempDir, "overrides.json");
-  fs.writeFileSync(configPath, "{}");
+  fs.writeFileSync(configPath, JSON.stringify(initialConfig));
   fs.writeFileSync(
     overridesPath,
     typeof overrides === "string" ? overrides : JSON.stringify(overrides)
@@ -439,6 +440,26 @@ describe("install profile installer wiring", () => {
     expect(prototypePath.result.stderr).toContain(
       'Forbidden additional setting key "__proto__"'
     );
+  });
+
+  it("accepts explicit nulls that disable inherited hosted-profile sections", () => {
+    const merged = applyAdditionalSettings(hostedProfileSmokeOverrides, {
+      privatePipelines: {
+        metaxpath: {
+          packageUrl: "https://packages.example.test/metaxpath.tar.gz",
+          key: "sensitive-private-package-key",
+          sha256: "a".repeat(64),
+        },
+      },
+    });
+
+    expect(merged.result.status).toBe(0);
+    expect(merged.config?.privatePipelines).toBeNull();
+
+    const parsed = parseInstallProfileConfig(merged.config ?? {});
+    expect(parsed.status).toBe(0);
+    expect(parsed.stdout).not.toContain("SEQDESK_CFG_METAXPATH_");
+    expect(parsed.stdout).not.toContain("sensitive-private-package-key");
   });
 
   it("rejects mismatched, malformed, and unsafe hosted profile values", () => {

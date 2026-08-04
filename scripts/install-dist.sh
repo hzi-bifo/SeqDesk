@@ -4546,6 +4546,7 @@ for (const section of structuredSections) {
   if (
     Object.prototype.hasOwnProperty.call(root, section) &&
     root[section] !== undefined &&
+    root[section] !== null &&
     !isRecord(root[section])
   ) {
     throw new Error(`${section} must be a JSON object.`);
@@ -4555,6 +4556,7 @@ for (const section of ["capabilities", "requiredSecrets", "studies"]) {
   if (
     Object.prototype.hasOwnProperty.call(root, section) &&
     root[section] !== undefined &&
+    root[section] !== null &&
     !Array.isArray(root[section])
   ) {
     throw new Error(`${section} must be a JSON array.`);
