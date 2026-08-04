@@ -23,6 +23,7 @@ import {
   assertChecksumVerificationCoverage,
   assertExactSampleCoverage,
   assertFastqChecksumSummaryRows,
+  assertFastqcInputEvidenceSnapshot,
   assertFastqcArtifactCoverage,
   assertFastqcHtmlInputFilename,
   assertFastqcReportWritebackCoverage,
@@ -44,16 +45,18 @@ import {
   assertSlurmLaunchIdentity,
   createUniqueProofRecord,
   deriveMultiqcExpectedSamplesFromSourceInputs,
+  FASTQC_INPUT_EVIDENCE_BASENAME,
+  FASTQC_INPUT_EVIDENCE_MAX_BYTES,
   normalizeSlurmState,
   parseNanoplotNanoStatsTsv,
   parsePrimarySacctRecord,
   pathIsWithin,
   pathsReferToSameLocation,
-  resolveHistoricalSequencingInputPath,
   resolveLocalManifestPipelineTarget,
   SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS,
   SLURM_PROOF_VISIBILITY_TIMEOUT_MS,
   slurmCompletionAttestationPath,
+  writeFastqcInputEvidenceSnapshotFile,
 } from "./lib/pipeline-e2e-proof.mjs";
 import {
   computeFastqGroundTruth,
@@ -1222,6 +1225,37 @@ function sha256OfFile(filePath) {
   });
 }
 
+async function sha256OfStableGroundTruthInput(filePath, groundTruth, context) {
+  const assertUnchanged = (stat, phase) => {
+    if (
+      !stat.isFile() ||
+      stat.size !== groundTruth?.size ||
+      stat.mtimeMs !== groundTruth?.mtimeMs
+    ) {
+      fail(
+        `${context}: FASTQ changed ${phase} evidence hashing`,
+        JSON.stringify(
+          {
+            path: filePath,
+            expectedSize: groundTruth?.size ?? null,
+            observedSize: stat.size,
+            expectedMtimeMs: groundTruth?.mtimeMs ?? null,
+            observedMtimeMs: stat.mtimeMs,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+  };
+  const before = await fs.promises.stat(filePath);
+  assertUnchanged(before, "before");
+  const sha256 = await sha256OfFile(filePath);
+  const after = await fs.promises.stat(filePath);
+  assertUnchanged(after, "during");
+  return sha256;
+}
+
 const fastqGroundTruthCache = new Map();
 
 async function computeCachedFastqGroundTruth(filePath, context) {
@@ -1364,7 +1398,11 @@ async function fetchRunSamplesheet({ client, run, runId, context }) {
     filePath: samplesheetPath,
     context,
   });
-  return { path: samplesheetPath, ...parseStrictCsv(fetched.text, context) };
+  return {
+    path: samplesheetPath,
+    sha256: fetched.sha256,
+    ...parseStrictCsv(fetched.text, context),
+  };
 }
 
 async function bindExpectedSamplesToRunInputs({
@@ -1416,6 +1454,19 @@ async function bindExpectedSamplesToRunInputs({
       : null;
   if (!dataBasePath) {
     fail(`${context}: sequencing data base path is unavailable or not absolute`);
+  }
+  let canonicalDataBasePath;
+  try {
+    canonicalDataBasePath = await fs.promises.realpath(dataBasePath);
+    const storageStat = await fs.promises.stat(canonicalDataBasePath);
+    if (!storageStat.isDirectory()) {
+      fail(`${context}: sequencing data base path is not a directory`);
+    }
+  } catch (error) {
+    fail(
+      `${context}: sequencing data base path is inaccessible`,
+      error instanceof Error ? error.message : String(error),
+    );
   }
   const resolveStoredReadPath = (storedPath, identity) => {
     if (typeof storedPath !== "string" || !storedPath) return null;
@@ -1527,6 +1578,9 @@ async function bindExpectedSamplesToRunInputs({
     expectedSamples: boundSamples,
     groundTruthByIdentity,
     samplesheetPath: samplesheet.path,
+    samplesheetSha256: samplesheet.sha256,
+    dataBasePath,
+    canonicalDataBasePath,
   };
 }
 
@@ -1677,10 +1731,143 @@ async function addFastqcZipGroundTruth({
       enriched.set(identity, {
         ...enriched.get(identity),
         fastqcData,
+        fastqcArtifact: {
+          id: matches[0].id,
+          path: fastqcData.zipPath,
+          size: fastqcData.zipSize,
+          sha256: await sha256OfFile(fastqcData.zipPath),
+        },
       });
     }
   }
   return enriched;
+}
+
+async function captureFastqcInputEvidence({
+  run,
+  runId,
+  inputEvidence,
+  expectedSamples,
+  groundTruthByIdentity,
+}) {
+  const context = `FastQC input evidence for run ${runId}`;
+  if (
+    run?.id !== runId ||
+    run?.pipelineId !== "fastqc" ||
+    run?.targetType !== "order" ||
+    typeof run?.orderId !== "string" ||
+    !run.orderId ||
+    typeof run?.runFolder !== "string" ||
+    !path.isAbsolute(run.runFolder) ||
+    typeof inputEvidence?.samplesheetSha256 !== "string" ||
+    !inputEvidence.samplesheetSha256
+  ) {
+    fail(`${context}: source run metadata is incomplete`);
+  }
+
+  const expectedInputs = [];
+  const inputs = [];
+  for (const sample of expectedSamples) {
+    for (const mate of sample.pairedEnd ? ["R1", "R2"] : ["R1"]) {
+      const identity = `${sample.sampleId}/${mate}`;
+      const inputPath = mate === "R1" ? sample.file1 : sample.file2;
+      const groundTruth = groundTruthByIdentity.get(identity);
+      const storageRelativePath = path.relative(
+        inputEvidence.canonicalDataBasePath,
+        groundTruth?.canonicalPath || "",
+      );
+      if (
+        typeof inputPath !== "string" ||
+        !path.isAbsolute(inputPath) ||
+        !groundTruth ||
+        !path.isAbsolute(groundTruth.canonicalPath || "") ||
+        !storageRelativePath ||
+        path.isAbsolute(storageRelativePath) ||
+        storageRelativePath === ".." ||
+        storageRelativePath.startsWith(`..${path.sep}`)
+      ) {
+        fail(`${context}: raw input binding is invalid for ${identity}`);
+      }
+      const fastqc = groundTruth.fastqcData;
+      const artifact = groundTruth.fastqcArtifact;
+      const inputSha256 = await sha256OfStableGroundTruthInput(
+        groundTruth.canonicalPath,
+        groundTruth,
+        `${context} ${identity}`,
+      );
+      expectedInputs.push({
+        identity,
+        sampleId: sample.sampleId,
+        sampleRecordId: sample.sampleRecordId,
+        mate,
+        inputPath,
+      });
+      inputs.push({
+        identity,
+        sampleId: sample.sampleId,
+        sampleRecordId: sample.sampleRecordId,
+        readRecordId: sample.readRecordId,
+        mate,
+        inputPath,
+        inputCanonicalPath: groundTruth.canonicalPath,
+        storageRelativePath,
+        inputBasename: path.basename(inputPath),
+        inputSize: groundTruth.size,
+        inputSha256,
+        readCount: groundTruth.readCount,
+        fastqc: {
+          artifactId: artifact?.id,
+          artifactPath: artifact?.path,
+          artifactBasename: path.basename(String(artifact?.path || "")),
+          artifactSize: artifact?.size,
+          artifactSha256: artifact?.sha256,
+          filename: fastqc?.filename,
+          totalSequences: fastqc?.totalSequences,
+          meanSequenceQualityNumerator:
+            fastqc?.meanSequenceQualityNumerator,
+          meanSequenceQualityDenominator:
+            fastqc?.meanSequenceQualityDenominator,
+        },
+      });
+    }
+  }
+  expectedInputs.sort((left, right) =>
+    left.identity.localeCompare(right.identity),
+  );
+  inputs.sort((left, right) => left.identity.localeCompare(right.identity));
+
+  const snapshot = {
+    schema: "seqdesk-fastqc-input-evidence",
+    version: 1,
+    runId,
+    orderId: run.orderId,
+    samplesheet: {
+      path: inputEvidence.samplesheetPath,
+      sha256: inputEvidence.samplesheetSha256,
+    },
+    inputs,
+  };
+  const validated = assertFastqcInputEvidenceSnapshot({
+    snapshot,
+    expectedRunId: runId,
+    expectedOrderId: run.orderId,
+    expectedRunFolder: run.runFolder,
+    expectedSamplesheetPath: inputEvidence.samplesheetPath,
+    expectedSamplesheetSha256: inputEvidence.samplesheetSha256,
+    expectedInputs,
+    dataBasePath: inputEvidence.dataBasePath,
+    requireExistingInputs: true,
+    context,
+  });
+  const persisted = writeFastqcInputEvidenceSnapshotFile({
+    filePath: path.join(run.runFolder, FASTQC_INPUT_EVIDENCE_BASENAME),
+    snapshot,
+    context,
+  });
+  return {
+    ...persisted,
+    inputCount: validated.inputCount,
+  };
 }
 
 // fastq-checksum runs in MERGE mode: on completion it writes checksum1 = md5(file1)
@@ -2378,7 +2565,11 @@ async function fetchRunFileText({ client, runId, filePath, context }) {
     );
   }
   const bytes = Buffer.from(await fileResponse.arrayBuffer());
-  return { text: bytes.toString("utf8"), bytes: bytes.length };
+  return {
+    text: bytes.toString("utf8"),
+    bytes: bytes.length,
+    sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+  };
 }
 
 // Non-failing variant: returns null when the file can't be served (used for run-scoped
@@ -2863,6 +3054,13 @@ async function assertFastqcSummaryMetrics({ client, run, runId }) {
       });
     }
   }
+  const persistedInputEvidence = await captureFastqcInputEvidence({
+    run,
+    runId,
+    inputEvidence,
+    expectedSamples,
+    groundTruthByIdentity,
+  });
 
   return {
     path: summaryPath,
@@ -2872,6 +3070,7 @@ async function assertFastqcSummaryMetrics({ client, run, runId }) {
     artifactCoverage,
     reportWriteback,
     htmlInputBindings,
+    persistedInputEvidence,
   };
 }
 
@@ -3101,12 +3300,6 @@ async function buildMultiqcFastqcGroundTruth({
       "MultiQC: sequencing data base path is unavailable or not absolute",
     );
   }
-  const resolveHistoricalInputPath = (storedPath, identity) =>
-    resolveHistoricalSequencingInputPath({
-      storedPath,
-      dataBasePath,
-      context: `MultiQC historical FastQC source ${identity}`,
-    });
 
   const sourceRunCache = new Map();
   const loadSourceRun = async (sourceRunId) => {
@@ -3166,10 +3359,118 @@ async function buildMultiqcFastqcGroundTruth({
           }
           columns.set(name, matches[0]);
         }
+
+        const selectedSourceSamples = selectedTargetSamplesForRun({
+          run: sourceRun,
+          context: `MultiQC source FastQC run ${sourceRunId}`,
+        });
+        const sourceSamplesBySampleId = new Map();
+        for (const sample of selectedSourceSamples) {
+          const sampleId =
+            typeof sample?.sampleId === "string" ? sample.sampleId.trim() : "";
+          const sampleRecordId =
+            typeof sample?.id === "string" ? sample.id.trim() : "";
+          if (!sampleId || !sampleRecordId || sourceSamplesBySampleId.has(sampleId)) {
+            fail(
+              `MultiQC: source FastQC run ${sourceRunId} has invalid or duplicate sample identities`,
+            );
+          }
+          sourceSamplesBySampleId.set(sampleId, { sampleId, sampleRecordId });
+        }
+        assertExactSampleCoverage({
+          expectedSampleIds: Array.from(sourceSamplesBySampleId.keys()),
+          observedSampleIds: samplesheet.rows.map(
+            (row) => row[columns.get("sample_id")],
+          ),
+          context: `MultiQC source FastQC run ${sourceRunId} samplesheet`,
+        });
+
+        const expectedEvidenceInputs = [];
+        const sourceInputsBySampleId = new Map();
+        for (const row of samplesheet.rows) {
+          const sampleId = row[columns.get("sample_id")];
+          const sourceSample = sourceSamplesBySampleId.get(sampleId);
+          const file1 = row[columns.get("fastq_1")];
+          const file2 = row[columns.get("fastq_2")];
+          if (
+            !sourceSample ||
+            typeof file1 !== "string" ||
+            !path.isAbsolute(file1) ||
+            (file2 && !path.isAbsolute(file2))
+          ) {
+            fail(
+              `MultiQC: source FastQC samplesheet has an invalid historical input for ${sampleId || "<unknown>"}`,
+            );
+          }
+          sourceInputsBySampleId.set(sampleId, {
+            ...sourceSample,
+            file1,
+            file2: file2 || null,
+          });
+          expectedEvidenceInputs.push({
+            identity: `${sampleId}/R1`,
+            ...sourceSample,
+            mate: "R1",
+            inputPath: file1,
+          });
+          if (file2) {
+            expectedEvidenceInputs.push({
+              identity: `${sampleId}/R2`,
+              ...sourceSample,
+              mate: "R2",
+              inputPath: file2,
+            });
+          }
+        }
+
+        const evidenceFile = await resolveRegularNonSymlinkFile({
+          storedPath: path.join(
+            sourceRun.runFolder,
+            FASTQC_INPUT_EVIDENCE_BASENAME,
+          ),
+          root: sourceRun.runFolder,
+          context: `MultiQC source FastQC evidence ${sourceRunId}`,
+        });
+        if (evidenceFile.size > FASTQC_INPUT_EVIDENCE_MAX_BYTES) {
+          fail(
+            `MultiQC: source FastQC evidence ${sourceRunId} exceeds the allowed size`,
+          );
+        }
+        const fetchedEvidence = await fetchRunFileText({
+          client,
+          runId: sourceRunId,
+          filePath: evidenceFile.path,
+          context: `MultiQC source FastQC evidence ${sourceRunId}`,
+        });
+        if (fetchedEvidence.bytes !== evidenceFile.size) {
+          fail(
+            `MultiQC: source FastQC evidence ${sourceRunId} changed while it was fetched`,
+          );
+        }
+        let evidenceSnapshot;
+        try {
+          evidenceSnapshot = JSON.parse(fetchedEvidence.text);
+        } catch (error) {
+          fail(
+            `MultiQC: source FastQC evidence ${sourceRunId} is invalid JSON`,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        const evidence = assertFastqcInputEvidenceSnapshot({
+          snapshot: evidenceSnapshot,
+          expectedRunId: sourceRunId,
+          expectedOrderId: sourceRun.orderId,
+          expectedRunFolder: sourceRun.runFolder,
+          expectedSamplesheetPath: samplesheet.path,
+          expectedSamplesheetSha256: samplesheet.sha256,
+          expectedInputs: expectedEvidenceInputs,
+          dataBasePath,
+          context: `MultiQC source FastQC evidence ${sourceRunId}`,
+        });
         return {
           sourceRun,
-          samplesheet,
-          columns,
+          evidence,
+          sourceInputsBySampleId,
         };
       })();
       sourceRunCache.set(sourceRunId, pending);
@@ -3179,6 +3480,7 @@ async function buildMultiqcFastqcGroundTruth({
   };
 
   const sequenceCountsByIdentity = new Map();
+  const rawEvidenceByIdentity = new Map();
   const sourceInputSamples = [];
   let provenanceChecked = 0;
   for (const inventoryArtifact of fastqcInputs) {
@@ -3190,9 +3492,15 @@ async function buildMultiqcFastqcGroundTruth({
     const sourceRunId = String(inventoryArtifact?.pipelineRunId || "");
     const {
       sourceRun,
-      samplesheet,
-      columns,
+      evidence,
+      sourceInputsBySampleId,
     } = await loadSourceRun(sourceRunId);
+    const evidenceEntry = evidence.entriesByIdentity.get(expected.identity);
+    if (!evidenceEntry) {
+      fail(
+        `MultiQC: source FastQC evidence is missing ${expected.identity}`,
+      );
+    }
     const sourceArtifacts = (sourceRun.artifacts ?? []).filter(
       (artifact) => artifact?.id === inventoryArtifact?.artifactId,
     );
@@ -3243,9 +3551,19 @@ async function buildMultiqcFastqcGroundTruth({
       context: `MultiQC staged artifact ${sourceArtifact.id}`,
     });
     if (
+      sourceArtifact.id !== evidenceEntry.fastqc.artifactId ||
+      !pathsReferToSameLocation(
+        sourceArtifact.path,
+        evidenceEntry.fastqc.artifactPath,
+      ) ||
       !pathsReferToSameLocation(sourceFile.path, inventoryArtifact.sourcePath) ||
+      !pathsReferToSameLocation(
+        sourceFile.path,
+        evidenceEntry.fastqc.artifactPath,
+      ) ||
       path.basename(sourceFile.path) !== basename ||
       sourceFile.size !== inventoryArtifact.size ||
+      sourceFile.size !== evidenceEntry.fastqc.artifactSize ||
       stagedFile.size !== inventoryArtifact.size ||
       (sourceArtifact.size != null &&
         Number(sourceArtifact.size) !== inventoryArtifact.size)
@@ -3255,11 +3573,14 @@ async function buildMultiqcFastqcGroundTruth({
         JSON.stringify(
           {
             sourceArtifactPath: sourceArtifact.path,
+            evidenceArtifactId: evidenceEntry.fastqc.artifactId,
+            evidenceArtifactPath: evidenceEntry.fastqc.artifactPath,
             inventorySourcePath: inventoryArtifact.sourcePath,
             stagedPath: inventoryArtifact.stagedPath,
             sourceSize: sourceFile.size,
             stagedSize: stagedFile.size,
             inventorySize: inventoryArtifact.size,
+            evidenceSize: evidenceEntry.fastqc.artifactSize,
             artifactSize: sourceArtifact.size ?? null,
           },
           null,
@@ -3271,57 +3592,54 @@ async function buildMultiqcFastqcGroundTruth({
       sha256OfFile(sourceFile.path),
       sha256OfFile(stagedFile.path),
     ]);
-    if (sourceSha256 !== stagedSha256) {
+    if (
+      sourceSha256 !== stagedSha256 ||
+      sourceSha256 !== evidenceEntry.fastqc.artifactSha256
+    ) {
       fail(
-        `MultiQC: staged FastQC ZIP content differs from its source artifact for ${expected.identity}`,
-        JSON.stringify({ sourceSha256, stagedSha256 }, null, 2),
+        `MultiQC: staged FastQC ZIP content differs from its captured source evidence for ${expected.identity}`,
+        JSON.stringify(
+          {
+            sourceSha256,
+            stagedSha256,
+            evidenceSha256: evidenceEntry.fastqc.artifactSha256,
+          },
+          null,
+          2,
+        ),
       );
     }
 
-    const sourceRows = samplesheet.rows.filter(
-      (row) => row[columns.get("sample_id")] === expected.sample.sampleId,
+    const sourceInputLayout = sourceInputsBySampleId.get(
+      expected.sample.sampleId,
     );
-    if (sourceRows.length !== 1) {
+    if (!sourceInputLayout) {
       fail(
-        `MultiQC: source FastQC samplesheet does not contain exactly one row for ${expected.sample.sampleId}`,
+        `MultiQC: source FastQC evidence has no input layout for ${expected.sample.sampleId}`,
       );
-    }
-    const sourceFile1 = resolveHistoricalInputPath(
-      sourceRows[0][columns.get("fastq_1")],
-      `${expected.sample.sampleId}/R1`,
-    );
-    const storedFile2 = sourceRows[0][columns.get("fastq_2")];
-    const sourceFile2 = storedFile2
-      ? resolveHistoricalInputPath(
-          storedFile2,
-          `${expected.sample.sampleId}/R2`,
-        )
-      : null;
-    const sourceInput = expected.mate === "R1" ? sourceFile1 : sourceFile2;
-    if (!sourceInput) {
-      fail(`MultiQC: source FastQC samplesheet has no ${expected.mate} input`);
     }
     sourceInputSamples.push({
       sampleId: expected.sample.sampleId,
       sampleRecordId: expected.sample.sampleRecordId,
-      file1: sourceFile1,
-      file2: sourceFile2,
+      file1: sourceInputLayout.file1,
+      file2: sourceInputLayout.file2,
     });
-    const rawGroundTruth = await computeCachedFastqGroundTruth(
-      sourceInput,
-      `MultiQC historical FastQC source ${expected.identity}`,
-    );
     const fastqcData = await extractFastqcDataFromZip({
       zipPath: stagedFile.path,
       root: run.runFolder,
       context: `MultiQC staged FastQC ZIP ${expected.identity}`,
     });
-    if (fastqcData.filename !== path.basename(sourceInput)) {
+    if (
+      fastqcData.filename !== evidenceEntry.inputBasename ||
+      fastqcData.filename !== evidenceEntry.fastqc.filename
+    ) {
       fail(
-        `MultiQC: FastQC ZIP Filename does not match the source-run input for ${expected.identity}`,
+        `MultiQC: FastQC ZIP Filename does not match captured raw-input evidence for ${expected.identity}`,
         JSON.stringify(
           {
-            sourceInput,
+            capturedInputPath: evidenceEntry.inputPath,
+            capturedInputSha256: evidenceEntry.inputSha256,
+            capturedFilename: evidenceEntry.fastqc.filename,
             fastqcFilename: fastqcData.filename,
           },
           null,
@@ -3329,14 +3647,18 @@ async function buildMultiqcFastqcGroundTruth({
         ),
       );
     }
-    if (fastqcData.totalSequences !== rawGroundTruth.readCount) {
+    if (
+      fastqcData.totalSequences !== evidenceEntry.readCount ||
+      fastqcData.totalSequences !== evidenceEntry.fastqc.totalSequences
+    ) {
       fail(
-        `MultiQC: source FastQC Total Sequences does not match raw FASTQ ground truth for ${expected.identity}`,
+        `MultiQC: source FastQC Total Sequences does not match captured raw FASTQ ground truth for ${expected.identity}`,
         JSON.stringify(
           {
-            sourceInput,
+            capturedInputPath: evidenceEntry.inputPath,
+            capturedInputSha256: evidenceEntry.inputSha256,
             fastqcTotalSequences: fastqcData.totalSequences,
-            rawReadCount: rawGroundTruth.readCount,
+            capturedRawReadCount: evidenceEntry.readCount,
           },
           null,
           2,
@@ -3344,23 +3666,35 @@ async function buildMultiqcFastqcGroundTruth({
       );
     }
     const previousCount = sequenceCountsByIdentity.get(expected.identity);
+    const currentRawEvidence = {
+      inputPath: evidenceEntry.inputPath,
+      inputCanonicalPath: evidenceEntry.inputCanonicalPath,
+      inputSize: evidenceEntry.inputSize,
+      inputSha256: evidenceEntry.inputSha256,
+      readCount: evidenceEntry.readCount,
+    };
+    const previousRawEvidence = rawEvidenceByIdentity.get(expected.identity);
     if (
-      previousCount !== undefined &&
-      previousCount !== rawGroundTruth.readCount
+      (previousCount !== undefined &&
+        previousCount !== evidenceEntry.readCount) ||
+      (previousRawEvidence !== undefined &&
+        JSON.stringify(previousRawEvidence) !==
+          JSON.stringify(currentRawEvidence))
     ) {
       fail(
-        `MultiQC: duplicate FastQC ZIPs have conflicting independently extracted sequence counts for ${expected.identity}`,
+        `MultiQC: duplicate FastQC ZIPs have conflicting captured raw evidence for ${expected.identity}`,
         JSON.stringify(
-          { previousCount, currentCount: rawGroundTruth.readCount },
+          {
+            previousRawEvidence,
+            currentRawEvidence,
+          },
           null,
           2,
         ),
       );
     }
-    sequenceCountsByIdentity.set(
-      expected.identity,
-      rawGroundTruth.readCount,
-    );
+    sequenceCountsByIdentity.set(expected.identity, evidenceEntry.readCount);
+    rawEvidenceByIdentity.set(expected.identity, currentRawEvidence);
     provenanceChecked += 1;
   }
   const expectedSamples = deriveMultiqcExpectedSamplesFromSourceInputs({

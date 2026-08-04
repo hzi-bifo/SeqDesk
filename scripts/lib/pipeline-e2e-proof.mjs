@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 
 import {
   formatHalfEvenBinary64,
@@ -12,6 +13,12 @@ import { resolveFastqcMeanSequenceQualityForEncoding } from "./fastq-ground-trut
 // bounded window and still fails closed if required proof is not visible.
 export const SLURM_PROOF_VISIBILITY_TIMEOUT_MS = 90_000;
 export const SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS = 1_000;
+export const FASTQC_INPUT_EVIDENCE_BASENAME =
+  ".seqdesk-e2e-fastqc-input-evidence-v1.json";
+export const FASTQC_INPUT_EVIDENCE_MAX_BYTES = 4 * 1024 * 1024;
+
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+const FASTQC_INPUT_EVIDENCE_SCHEMA = "seqdesk-fastqc-input-evidence";
 
 const SLURM_TERMINAL_STATES = new Set([
   "BOOT_FAIL",
@@ -220,59 +227,286 @@ export function pathIsWithin(candidate, expectedRoot) {
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`));
 }
 
-export function resolveHistoricalSequencingInputPath({
-  storedPath,
+/**
+ * Validate the write-once evidence captured while a FastQC run's raw inputs
+ * still exist. Later pipeline steps may legitimately replace and remove those
+ * FASTQs, so MultiQC must prove its historical inputs from this record plus
+ * the preserved FastQC ZIP rather than silently binding to a newer active Read.
+ */
+export function assertFastqcInputEvidenceSnapshot({
+  snapshot,
+  expectedRunId,
+  expectedOrderId,
+  expectedRunFolder,
+  expectedSamplesheetPath,
+  expectedSamplesheetSha256,
+  expectedInputs,
   dataBasePath,
+  requireExistingInputs = false,
   context,
 }) {
   const label =
-    typeof context === "string" && context.trim() ? context.trim() : "input";
+    typeof context === "string" && context.trim()
+      ? context.trim()
+      : "FastQC input evidence";
   if (
-    typeof storedPath !== "string" ||
-    !path.isAbsolute(storedPath) ||
+    !snapshot ||
+    typeof snapshot !== "object" ||
+    Array.isArray(snapshot) ||
+    snapshot.schema !== FASTQC_INPUT_EVIDENCE_SCHEMA ||
+    snapshot.version !== 1 ||
+    typeof expectedRunId !== "string" ||
+    !expectedRunId ||
+    typeof expectedOrderId !== "string" ||
+    !expectedOrderId ||
+    typeof expectedRunFolder !== "string" ||
+    !path.isAbsolute(expectedRunFolder) ||
+    typeof expectedSamplesheetPath !== "string" ||
+    !path.isAbsolute(expectedSamplesheetPath) ||
+    !SHA256_HEX.test(String(expectedSamplesheetSha256 || "")) ||
+    !Array.isArray(expectedInputs) ||
+    expectedInputs.length === 0 ||
     typeof dataBasePath !== "string" ||
     !path.isAbsolute(dataBasePath)
   ) {
-    fail(`${label}: historical sequencing input and storage root must be absolute`);
+    fail(`${label}: snapshot contract is invalid`);
   }
-
-  let canonicalRoot;
+  let canonicalDataBasePath;
   try {
-    canonicalRoot = fs.realpathSync.native(path.resolve(dataBasePath));
-    if (!fs.statSync(canonicalRoot).isDirectory()) {
+    canonicalDataBasePath = fs.realpathSync.native(path.resolve(dataBasePath));
+    if (!fs.statSync(canonicalDataBasePath).isDirectory()) {
       fail(`${label}: sequencing storage root is not a directory`);
     }
   } catch (error) {
     fail(
-      `${label}: could not resolve sequencing storage root`,
+      `${label}: sequencing storage root is inaccessible`,
       error instanceof Error ? error.message : String(error),
     );
   }
-
-  const candidate = path.resolve(storedPath);
-  if (!pathIsWithin(candidate, canonicalRoot)) {
-    fail(`${label}: historical sequencing input escapes sequencing storage`);
+  if (
+    snapshot.runId !== expectedRunId ||
+    snapshot.orderId !== expectedOrderId ||
+    snapshot?.samplesheet?.path !== expectedSamplesheetPath ||
+    snapshot?.samplesheet?.sha256 !== expectedSamplesheetSha256
+  ) {
+    fail(
+      `${label}: snapshot run, order, or samplesheet binding does not match`,
+      JSON.stringify(
+        {
+          expectedRunId,
+          snapshotRunId: snapshot.runId ?? null,
+          expectedOrderId,
+          snapshotOrderId: snapshot.orderId ?? null,
+          expectedSamplesheetPath,
+          snapshotSamplesheetPath: snapshot?.samplesheet?.path ?? null,
+          expectedSamplesheetSha256,
+          snapshotSamplesheetSha256: snapshot?.samplesheet?.sha256 ?? null,
+        },
+        null,
+        2,
+      ),
+    );
   }
 
-  let canonical;
-  try {
-    canonical = fs.realpathSync.native(candidate);
-    const stat = fs.statSync(canonical);
-    if (!stat.isFile() || stat.size <= 0) {
-      fail(`${label}: historical sequencing input is not a non-empty regular file`);
+  const expectedByIdentity = new Map();
+  for (const expected of expectedInputs) {
+    const identity =
+      typeof expected?.identity === "string" ? expected.identity.trim() : "";
+    const sampleId =
+      typeof expected?.sampleId === "string" ? expected.sampleId.trim() : "";
+    const sampleRecordId =
+      typeof expected?.sampleRecordId === "string"
+        ? expected.sampleRecordId.trim()
+        : "";
+    const mate = expected?.mate;
+    const inputPath =
+      typeof expected?.inputPath === "string" ? expected.inputPath : "";
+    if (
+      !identity ||
+      identity !== `${sampleId}/${mate}` ||
+      !sampleRecordId ||
+      !["R1", "R2"].includes(mate) ||
+      !path.isAbsolute(inputPath) ||
+      expectedByIdentity.has(identity)
+    ) {
+      fail(`${label}: expected input declarations are invalid or duplicated`);
     }
+    expectedByIdentity.set(identity, {
+      identity,
+      sampleId,
+      sampleRecordId,
+      mate,
+      inputPath,
+    });
+  }
+
+  if (!Array.isArray(snapshot.inputs)) {
+    fail(`${label}: snapshot inputs must be an array`);
+  }
+  assertExactSampleCoverage({
+    expectedSampleIds: Array.from(expectedByIdentity.keys()),
+    observedSampleIds: snapshot.inputs.map((entry) => entry?.identity),
+    context: `${label} input coverage`,
+    unit: "sample/mate input",
+  });
+
+  const entriesByIdentity = new Map();
+  for (const entry of snapshot.inputs) {
+    const expected = expectedByIdentity.get(entry?.identity);
+    const storageRelativePath =
+      typeof entry?.storageRelativePath === "string"
+        ? entry.storageRelativePath
+        : "";
+    const reconstructedCanonicalInputPath = storageRelativePath
+      ? path.resolve(canonicalDataBasePath, storageRelativePath)
+      : "";
+    const fastqc = entry?.fastqc;
+    if (
+      !expected ||
+      entry.sampleId !== expected.sampleId ||
+      entry.sampleRecordId !== expected.sampleRecordId ||
+      entry.mate !== expected.mate ||
+      typeof entry.readRecordId !== "string" ||
+      !entry.readRecordId ||
+      entry.inputPath !== expected.inputPath ||
+      typeof entry.inputCanonicalPath !== "string" ||
+      !path.isAbsolute(entry.inputCanonicalPath) ||
+      entry.inputBasename !== path.basename(expected.inputPath) ||
+      !storageRelativePath ||
+      path.isAbsolute(storageRelativePath) ||
+      storageRelativePath === ".." ||
+      storageRelativePath.startsWith(`..${path.sep}`) ||
+      path.normalize(entry.inputCanonicalPath) !==
+        reconstructedCanonicalInputPath ||
+      (requireExistingInputs &&
+        (!pathsReferToSameLocation(
+          entry.inputPath,
+          entry.inputCanonicalPath,
+        ) ||
+          !pathIsWithin(entry.inputCanonicalPath, dataBasePath))) ||
+      !Number.isSafeInteger(entry.inputSize) ||
+      entry.inputSize <= 0 ||
+      !SHA256_HEX.test(String(entry.inputSha256 || "")) ||
+      !Number.isSafeInteger(entry.readCount) ||
+      entry.readCount <= 0 ||
+      !fastqc ||
+      typeof fastqc !== "object" ||
+      Array.isArray(fastqc) ||
+      typeof fastqc.artifactId !== "string" ||
+      !fastqc.artifactId ||
+      typeof fastqc.artifactPath !== "string" ||
+      !path.isAbsolute(fastqc.artifactPath) ||
+      !pathIsWithin(fastqc.artifactPath, expectedRunFolder) ||
+      fastqc.artifactBasename !== path.basename(fastqc.artifactPath) ||
+      !Number.isSafeInteger(fastqc.artifactSize) ||
+      fastqc.artifactSize <= 0 ||
+      !SHA256_HEX.test(String(fastqc.artifactSha256 || "")) ||
+      fastqc.filename !== entry.inputBasename ||
+      !Number.isSafeInteger(fastqc.totalSequences) ||
+      fastqc.totalSequences !== entry.readCount ||
+      !Number.isSafeInteger(fastqc.meanSequenceQualityNumerator) ||
+      fastqc.meanSequenceQualityNumerator < 0 ||
+      !Number.isSafeInteger(fastqc.meanSequenceQualityDenominator) ||
+      fastqc.meanSequenceQualityDenominator !== fastqc.totalSequences
+    ) {
+      fail(
+        `${label}: snapshot entry is malformed or does not match ${entry?.identity ?? "<unknown>"}`,
+        JSON.stringify(entry ?? null, null, 2),
+      );
+    }
+    entriesByIdentity.set(entry.identity, entry);
+  }
+
+  if (entriesByIdentity.size !== expectedByIdentity.size) {
+    fail(
+      `${label}: snapshot input identities are not unique`,
+    );
+  }
+  return {
+    entriesByIdentity,
+    inputCount: entriesByIdentity.size,
+  };
+}
+
+export function writeFastqcInputEvidenceSnapshotFile({
+  filePath,
+  snapshot,
+  context,
+}) {
+  const label =
+    typeof context === "string" && context.trim()
+      ? context.trim()
+      : "FastQC input evidence";
+  if (
+    typeof filePath !== "string" ||
+    !path.isAbsolute(filePath) ||
+    path.basename(filePath) !== FASTQC_INPUT_EVIDENCE_BASENAME
+  ) {
+    fail(`${label}: evidence path is invalid`);
+  }
+  const body = `${JSON.stringify(snapshot, null, 2)}\n`;
+  const bytes = Buffer.byteLength(body);
+  if (bytes <= 0 || bytes > FASTQC_INPUT_EVIDENCE_MAX_BYTES) {
+    fail(`${label}: evidence exceeds the allowed size`);
+  }
+
+  const assertExistingMatches = () => {
+    let existing;
+    try {
+      const stat = fs.lstatSync(filePath);
+      if (
+        stat.isSymbolicLink() ||
+        !stat.isFile() ||
+        stat.size <= 0 ||
+        stat.size > FASTQC_INPUT_EVIDENCE_MAX_BYTES
+      ) {
+        fail(`${label}: existing evidence is not a safe regular file`);
+      }
+      existing = fs.readFileSync(filePath, "utf8");
+    } catch (readError) {
+      fail(
+        `${label}: could not validate existing evidence`,
+        readError instanceof Error ? readError.message : String(readError),
+      );
+    }
+    if (existing !== body) {
+      fail(`${label}: refusing to overwrite different existing evidence`);
+    }
+  };
+
+  let handle;
+  let created = false;
+  try {
+    // O_EXCL is supported on the shared run filesystem and guarantees that a
+    // second proof process cannot replace evidence from the first one. MultiQC
+    // runs only after this FastQC process exits, so fsync-before-close also
+    // keeps a partially written file from being accepted by a consumer.
+    handle = fs.openSync(filePath, "wx", 0o400);
+    fs.writeFileSync(handle, body, { encoding: "utf8" });
+    fs.fsyncSync(handle);
+    created = true;
   } catch (error) {
-    fail(
-      `${label}: could not resolve historical sequencing input`,
-      error instanceof Error ? error.message : String(error),
-    );
+    if (error?.code === "EEXIST") {
+      assertExistingMatches();
+    } else {
+      fail(
+        `${label}: could not create write-once evidence`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  } finally {
+    if (handle !== undefined) fs.closeSync(handle);
   }
-  if (!pathIsWithin(canonical, canonicalRoot)) {
-    fail(
-      `${label}: canonical historical sequencing input escapes sequencing storage`,
-    );
+  if (created) {
+    fs.chmodSync(filePath, 0o444);
   }
-  return canonical;
+  assertExistingMatches();
+
+  return {
+    path: filePath,
+    bytes,
+    sha256: crypto.createHash("sha256").update(body).digest("hex"),
+  };
 }
 
 export function assertExactSampleCoverage({

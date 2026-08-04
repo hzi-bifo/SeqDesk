@@ -1393,7 +1393,9 @@ jobs:
           # FastQC targets both study-linked orders 3 and 4, while NanoPlot
           # targets long-read order 3. MultiQC must copy both artifact types,
           # prove their exact source/staged identity, and match parsed values
-          # to raw FASTQ + NanoStats ground truth.
+          # to write-once raw FASTQ evidence + NanoStats ground truth. The
+          # evidence is captured while FastQC inputs exist, before simulate-reads
+          # replaces and may remove those pipeline-generated historical files.
           npm run pipeline:e2e:runtime -- \
             --ensure-dummy-data \
             --expected-pipeline-root "$SEQDESK_STAGED_PIPELINES_DIR" \

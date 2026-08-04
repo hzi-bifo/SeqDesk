@@ -13,6 +13,7 @@ import {
   assertExactSampleCoverage,
   assertFastqcArtifactCoverage,
   assertFastqcHtmlInputFilename,
+  assertFastqcInputEvidenceSnapshot,
   assertFastqChecksumSummaryRows,
   assertFastqcReportWritebackCoverage,
   assertFastqcSummaryRows,
@@ -36,6 +37,7 @@ import {
   createUniqueProofRecord,
   deriveMultiqcExpectedSamplesFromSourceInputs,
   expectedSeqDeskJobName,
+  FASTQC_INPUT_EVIDENCE_BASENAME,
   parseNanoplotNanoStatsTsv,
   parsePrimarySacctRecord,
   parsePrimarySqueueRecord,
@@ -44,12 +46,12 @@ import {
   pathIsWithin,
   pathsReferToSameLocation,
   readCanonicalPipelineExit,
-  resolveHistoricalSequencingInputPath,
   resolveLocalManifestPipelineTarget,
   SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS,
   SLURM_PROOF_VISIBILITY_TIMEOUT_MS,
   slurmCompletionAttestationPath,
   stageFilesMissing,
+  writeFastqcInputEvidenceSnapshotFile,
 } from "./lib/pipeline-e2e-proof.mjs";
 
 const runId = "cm-run_123";
@@ -1740,37 +1742,309 @@ describe("pipeline E2E proof helpers", () => {
     });
   });
 
-  it("keeps historical MultiQC inputs inside canonical sequencing storage", () => {
+  it("keeps write-once FastQC evidence valid after historical inputs are deleted", () => {
     const root = fs.mkdtempSync(
       path.join(os.tmpdir(), "seqdesk-multiqc-history-"),
     );
+    const canonicalStorage = path.join(root, "canonical-storage");
     const storage = path.join(root, "storage");
-    const inside = path.join(storage, "historical.fastq.gz");
-    const outside = path.join(root, "outside.fastq.gz");
-    const escaped = path.join(storage, "escaped.fastq.gz");
+    const runFolder = path.join(root, "runs", "fastqc-run-1");
+    const r1Canonical = path.join(canonicalStorage, "historical_R1.fastq.gz");
+    const r2Canonical = path.join(canonicalStorage, "historical_R2.fastq.gz");
+    const artifactR1 = path.join(runFolder, "S1_R1_fastqc.zip");
+    const artifactR2 = path.join(runFolder, "S1_R2_fastqc.zip");
+    const samplesheetPath = path.join(runFolder, "samplesheet.csv");
+    const samplesheetSha256 = "c".repeat(64);
     try {
-      fs.mkdirSync(storage);
-      fs.writeFileSync(inside, "historical-fastq");
-      fs.writeFileSync(outside, "outside-fastq");
-      fs.symlinkSync(outside, escaped);
+      fs.mkdirSync(canonicalStorage, { recursive: true });
+      fs.mkdirSync(runFolder, { recursive: true });
+      fs.symlinkSync(canonicalStorage, storage);
+      fs.writeFileSync(r1Canonical, "historical-r1");
+      fs.writeFileSync(r2Canonical, "historical-r2");
+      fs.writeFileSync(artifactR1, "fastqc-r1");
+      fs.writeFileSync(artifactR2, "fastqc-r2");
 
-      expect(
-        resolveHistoricalSequencingInputPath({
-          storedPath: inside,
+      const r1 = path.join(storage, "historical_R1.fastq.gz");
+      const r2 = path.join(storage, "historical_R2.fastq.gz");
+      const expectedInputs = [
+        {
+          identity: "S1/R1",
+          sampleId: "S1",
+          sampleRecordId: "sample-1",
+          mate: "R1",
+          inputPath: r1,
+        },
+        {
+          identity: "S1/R2",
+          sampleId: "S1",
+          sampleRecordId: "sample-1",
+          mate: "R2",
+          inputPath: r2,
+        },
+      ];
+      const buildInput = ({
+        identity,
+        mate,
+        inputPath,
+        canonicalPath,
+        artifactPath,
+        digest,
+      }: {
+        identity: string;
+        mate: string;
+        inputPath: string;
+        canonicalPath: string;
+        artifactPath: string;
+        digest: string;
+      }) => ({
+        identity,
+        sampleId: "S1",
+        sampleRecordId: "sample-1",
+        readRecordId: "historical-read-1",
+        mate,
+        inputPath,
+        inputCanonicalPath: canonicalPath,
+        storageRelativePath: path.basename(canonicalPath),
+        inputBasename: path.basename(inputPath),
+        inputSize: fs.statSync(canonicalPath).size,
+        inputSha256: digest,
+        readCount: 20,
+        fastqc: {
+          artifactId: `artifact-${mate.toLowerCase()}`,
+          artifactPath,
+          artifactBasename: path.basename(artifactPath),
+          artifactSize: fs.statSync(artifactPath).size,
+          artifactSha256: mate === "R1" ? "d".repeat(64) : "e".repeat(64),
+          filename: path.basename(inputPath),
+          totalSequences: 20,
+          meanSequenceQualityNumerator: 800,
+          meanSequenceQualityDenominator: 20,
+        },
+      });
+      const snapshot = {
+        schema: "seqdesk-fastqc-input-evidence",
+        version: 1,
+        runId: "fastqc-run-1",
+        orderId: "order-1",
+        samplesheet: {
+          path: samplesheetPath,
+          sha256: samplesheetSha256,
+        },
+        inputs: [
+          buildInput({
+            ...expectedInputs[0],
+            canonicalPath: fs.realpathSync.native(r1Canonical),
+            artifactPath: artifactR1,
+            digest: "a".repeat(64),
+          }),
+          buildInput({
+            ...expectedInputs[1],
+            canonicalPath: fs.realpathSync.native(r2Canonical),
+            artifactPath: artifactR2,
+            digest: "b".repeat(64),
+          }),
+        ],
+      };
+      const validate = (requireExistingInputs = false) =>
+        assertFastqcInputEvidenceSnapshot({
+          snapshot,
+          expectedRunId: "fastqc-run-1",
+          expectedOrderId: "order-1",
+          expectedRunFolder: runFolder,
+          expectedSamplesheetPath: samplesheetPath,
+          expectedSamplesheetSha256: samplesheetSha256,
+          expectedInputs,
           dataBasePath: storage,
+          requireExistingInputs,
           context: "MultiQC historical fixture",
+        });
+
+      expect(validate(true)).toMatchObject({ inputCount: 2 });
+      const evidencePath = path.join(
+        runFolder,
+        FASTQC_INPUT_EVIDENCE_BASENAME,
+      );
+      const written = writeFastqcInputEvidenceSnapshotFile({
+        filePath: evidencePath,
+        snapshot,
+        context: "FastQC historical fixture",
+      });
+      expect(written).toMatchObject({
+        path: evidencePath,
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(
+        writeFastqcInputEvidenceSnapshotFile({
+          filePath: evidencePath,
+          snapshot,
+          context: "FastQC historical fixture",
         }),
-      ).toBe(fs.realpathSync.native(inside));
+      ).toEqual(written);
+
+      fs.rmSync(r1Canonical);
+      fs.rmSync(r2Canonical);
+      expect(fs.existsSync(r1)).toBe(false);
+      expect(fs.existsSync(r2)).toBe(false);
+      const historicalEvidence = validate();
+      expect(historicalEvidence.entriesByIdentity.get("S1/R2")).toMatchObject({
+        inputSha256: "b".repeat(64),
+        readCount: 20,
+      });
+      const [historicalSample] =
+        deriveMultiqcExpectedSamplesFromSourceInputs({
+          candidateSamples: [
+            { sampleId: "S1", sampleRecordId: "sample-1" },
+          ],
+          sourceInputSamples: [
+            {
+              sampleId: "S1",
+              sampleRecordId: "sample-1",
+              file1: r1,
+              file2: r2,
+            },
+          ],
+          context: "MultiQC deleted historical fixture",
+        });
+      expect(
+        assertMultiqcFastqcCoverage({
+          expectedSamples: [historicalSample],
+          generalStatsData: undefined,
+          fastqcData: {
+            S1_R1: { "Total Sequences": 20 },
+            S1_R2: { "Total Sequences": 20 },
+          },
+          stagedFastqcArtifacts: ["R1", "R2"].map((mate) => ({
+            pipelineRunId: "fastqc-run-1",
+            pipelineId: "fastqc",
+            artifactId: `artifact-${mate.toLowerCase()}`,
+            outputId: "sample_qc_data",
+            sourcePath: path.join(runFolder, `S1_${mate}_fastqc.zip`),
+            stagedPath: path.join(
+              root,
+              "multiqc-run",
+              `S1_${mate}_fastqc.zip`,
+            ),
+            size: 9,
+          })),
+          expectedSequenceCountsByIdentity: new Map([
+            ["S1/R1", 20],
+            ["S1/R2", 20],
+          ]),
+          context: "MultiQC deleted historical fixture",
+        }),
+      ).toMatchObject({
+        expectedSampleMates: 2,
+        sequenceCountsGroundTruthChecked: true,
+      });
+
       expect(() =>
-        resolveHistoricalSequencingInputPath({
-          storedPath: escaped,
-          dataBasePath: storage,
-          context: "MultiQC symlink escape fixture",
+        writeFastqcInputEvidenceSnapshotFile({
+          filePath: evidencePath,
+          snapshot: { ...snapshot, orderId: "different-order" },
+          context: "FastQC historical fixture",
         }),
-      ).toThrow(/escapes sequencing storage/);
+      ).toThrow(/refusing to overwrite different existing evidence/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("rejects corrupt or cross-run FastQC evidence", () => {
+    const storage = fs.realpathSync.native(os.tmpdir());
+    const runFolder = path.join(storage, "seqdesk-runs", "fastqc-run-1");
+    const inputPath = `${storage}/S1_R1.fastq.gz`;
+    const expectedInputs = [
+      {
+        identity: "S1/R1",
+        sampleId: "S1",
+        sampleRecordId: "sample-1",
+        mate: "R1",
+        inputPath,
+      },
+    ];
+    const snapshot = {
+      schema: "seqdesk-fastqc-input-evidence",
+      version: 1,
+      runId: "fastqc-run-1",
+      orderId: "order-1",
+      samplesheet: {
+        path: `${runFolder}/samplesheet.csv`,
+        sha256: "a".repeat(64),
+      },
+      inputs: [
+        {
+          ...expectedInputs[0],
+          readRecordId: "read-1",
+          inputCanonicalPath: inputPath,
+          storageRelativePath: "S1_R1.fastq.gz",
+          inputBasename: "S1_R1.fastq.gz",
+          inputSize: 100,
+          inputSha256: "b".repeat(64),
+          readCount: 20,
+          fastqc: {
+            artifactId: "artifact-1",
+            artifactPath: `${runFolder}/S1_R1_fastqc.zip`,
+            artifactBasename: "S1_R1_fastqc.zip",
+            artifactSize: 200,
+            artifactSha256: "c".repeat(64),
+            filename: "S1_R1.fastq.gz",
+            totalSequences: 20,
+            meanSequenceQualityNumerator: 800,
+            meanSequenceQualityDenominator: 20,
+          },
+        },
+      ],
+    };
+    const validate = (candidate: typeof snapshot) =>
+      assertFastqcInputEvidenceSnapshot({
+        snapshot: candidate,
+        expectedRunId: "fastqc-run-1",
+        expectedOrderId: "order-1",
+        expectedRunFolder: runFolder,
+        expectedSamplesheetPath: `${runFolder}/samplesheet.csv`,
+        expectedSamplesheetSha256: "a".repeat(64),
+        expectedInputs,
+        dataBasePath: storage,
+        context: "FastQC corrupt evidence fixture",
+      });
+
+    expect(() => validate({ ...snapshot, version: 2 })).toThrow(
+      /snapshot contract is invalid/,
+    );
+    expect(() => validate({ ...snapshot, schema: "unknown-schema" })).toThrow(
+      /snapshot contract is invalid/,
+    );
+    expect(() => validate({ ...snapshot, runId: "other-run" })).toThrow(
+      /binding does not match/,
+    );
+    expect(() =>
+      validate({
+        ...snapshot,
+        inputs: [
+          {
+            ...snapshot.inputs[0],
+            inputSha256: "not-a-digest",
+          },
+        ],
+      }),
+    ).toThrow(/snapshot entry is malformed/);
+    expect(() =>
+      validate({
+        ...snapshot,
+        inputs: [
+          {
+            ...snapshot.inputs[0],
+            storageRelativePath: "../outside.fastq.gz",
+          },
+        ],
+      }),
+    ).toThrow(/snapshot entry is malformed/);
+    expect(() =>
+      validate({
+        ...snapshot,
+        inputs: [snapshot.inputs[0], snapshot.inputs[0]],
+      }),
+    ).toThrow(/exactly once/);
   });
 
   it("requires complete staged and parsed MultiQC sample/mate coverage", () => {
@@ -3584,7 +3858,7 @@ describe("pipeline E2E proof helpers", () => {
     }
   });
 
-  it("checks every matching content artifact and derives MultiQC counts from raw FASTQ", () => {
+  it("checks every matching content artifact and derives MultiQC counts from captured raw evidence", () => {
     const artifactStart = runtimeHarness.indexOf(
       "async function assertArtifactContent",
     );
@@ -3622,13 +3896,18 @@ describe("pipeline E2E proof helpers", () => {
     expect(multiqcProof).toContain("sourceRun?.status !== \"completed\"");
     expect(multiqcProof).toContain("sha256OfFile(sourceFile.path)");
     expect(multiqcProof).toContain(
-      "resolveHistoricalSequencingInputPath({",
+      "assertFastqcInputEvidenceSnapshot({",
     );
-    expect(multiqcProof).toContain("computeCachedFastqGroundTruth(");
+    expect(multiqcProof).toContain("evidenceEntry.inputSha256");
+    expect(multiqcProof).toContain("evidenceEntry.readCount");
+    expect(multiqcProof).not.toContain("computeCachedFastqGroundTruth(");
+    expect(multiqcProof).not.toContain(
+      "resolveHistoricalSequencingInputPath(",
+    );
     expect(multiqcProof).not.toContain("bindExpectedSamplesToRunInputs({");
     expect(multiqcProof).not.toContain("exactly one active DB Read");
     expect(multiqcProof).toContain(
-      "fastqcData.totalSequences !== rawGroundTruth.readCount",
+      "fastqcData.totalSequences !== evidenceEntry.readCount",
     );
     expect(multiqcProof).toContain(
       "sequenceCountsByIdentity.set(",
