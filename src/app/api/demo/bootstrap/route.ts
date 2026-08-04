@@ -1,5 +1,10 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import {
+  DEMO_DATABASE_WAKING_CODE,
+  DEMO_DATABASE_WAKING_MESSAGE,
+  isRetryableDemoDatabaseError,
+} from "@/lib/demo/bootstrap-errors";
 import { normalizeDemoExperience } from "@/lib/demo/types";
 
 export const dynamic = "force-dynamic";
@@ -50,10 +55,26 @@ export async function POST(request: Request) {
 
     return response;
   } catch (error) {
+    console.error("[Demo Bootstrap] Failed:", error);
+
+    if (isRetryableDemoDatabaseError(error)) {
+      const response = NextResponse.json(
+        {
+          code: DEMO_DATABASE_WAKING_CODE,
+          error: DEMO_DATABASE_WAKING_MESSAGE,
+          retryable: true,
+        },
+        { status: 503 }
+      );
+      response.headers.set("Cache-Control", "no-store, max-age=0");
+      response.headers.set("Retry-After", "2");
+      return response;
+    }
+
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : "Failed to bootstrap demo",
+        code: "demo_bootstrap_failed",
+        error: "Unable to start the demo right now. Please try again.",
       },
       { status: 500 }
     );

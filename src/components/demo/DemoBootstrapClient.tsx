@@ -12,6 +12,10 @@ import {
   getDemoEntryPath,
   postDemoFrameMessage,
 } from "@/lib/demo/client";
+import {
+  DEMO_DATABASE_WAKING_CODE,
+  DEMO_DATABASE_WAKING_MESSAGE,
+} from "@/lib/demo/bootstrap-errors";
 import type { DemoExperience } from "@/lib/demo/types";
 
 interface DemoBootstrapClientProps {
@@ -19,16 +23,40 @@ interface DemoBootstrapClientProps {
   demoExperience?: DemoExperience;
 }
 
-function extractErrorMessage(rawBody: string, fallback: string): string {
+type DemoBootstrapFailure = {
+  code?: string;
+  message: string;
+  retryable: boolean;
+};
+
+// Each delay stays below the landing page's 10-second stale-load timeout. The
+// loading frame message sent before each wait restarts that timeout.
+const DATABASE_RETRY_DELAYS_MS = [2_000, 3_000, 5_000, 7_000, 8_000, 8_000];
+
+function extractBootstrapFailure(
+  rawBody: string,
+  fallback: string
+): DemoBootstrapFailure {
   if (!rawBody) {
-    return fallback;
+    return { message: fallback, retryable: false };
   }
 
   try {
-    const parsed = JSON.parse(rawBody) as { error?: unknown };
-    if (typeof parsed.error === "string" && parsed.error.trim()) {
-      return parsed.error.trim();
-    }
+    const parsed = JSON.parse(rawBody) as {
+      code?: unknown;
+      error?: unknown;
+      retryable?: unknown;
+    };
+    const code = typeof parsed.code === "string" ? parsed.code : undefined;
+    const message =
+      typeof parsed.error === "string" && parsed.error.trim()
+        ? parsed.error.trim()
+        : fallback;
+    return {
+      ...(code ? { code } : {}),
+      message,
+      retryable: parsed.retryable === true,
+    };
   } catch {
     // Fall through to a text fallback for non-JSON error pages.
   }
@@ -38,7 +66,20 @@ function extractErrorMessage(rawBody: string, fallback: string): string {
     .replace(/\s+/g, " ")
     .trim();
 
-  return stripped.slice(0, 240) || fallback;
+  return {
+    message: stripped.slice(0, 240) || fallback,
+    retryable: false,
+  };
+}
+
+function readRetryAfterMs(response: Response): number {
+  const rawValue = response.headers.get("Retry-After")?.trim();
+  if (!rawValue) {
+    return 0;
+  }
+
+  const seconds = Number(rawValue);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1_000 : 0;
 }
 
 export function DemoBootstrapClient({
@@ -49,6 +90,7 @@ export function DemoBootstrapClient({
   const searchParams = useSearchParams();
   const bootstrappedRef = useRef(false);
   const [error, setError] = useState("");
+  const [databaseWaking, setDatabaseWaking] = useState(false);
   const workspace = searchParams.get("workspace")?.trim() || "";
   const demoLabel =
     demoExperience === "facility" ? "facility workspace" : "researcher workspace";
@@ -71,6 +113,16 @@ export function DemoBootstrapClient({
     }
 
     bootstrappedRef.current = true;
+    const abortController = new AbortController();
+    let cancelled = false;
+    let retryTimeoutId: number | undefined;
+    let finishRetryWait: (() => void) | undefined;
+
+    const waitForRetry = (delayMs: number) =>
+      new Promise<void>((resolve) => {
+        finishRetryWait = resolve;
+        retryTimeoutId = window.setTimeout(resolve, delayMs);
+      });
 
     const bootstrap = async () => {
       try {
@@ -89,28 +141,67 @@ export function DemoBootstrapClient({
           return;
         }
 
-        const response = await fetch("/api/demo/bootstrap", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            demoExperience,
-            workspace: workspace || undefined,
-          }),
-        });
+        for (let attempt = 0; ; attempt += 1) {
+          const response = await fetch("/api/demo/bootstrap", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              demoExperience,
+              workspace: workspace || undefined,
+            }),
+            signal: abortController.signal,
+          });
 
-        if (!response.ok) {
+          if (response.ok) {
+            window.location.replace("/orders");
+            return;
+          }
+
           const responseText = await response.text().catch(() => "");
-          throw new Error(
-            extractErrorMessage(
-              responseText,
-              `Failed to start demo (HTTP ${response.status})`
-            )
+          const failure = extractBootstrapFailure(
+            responseText,
+            `Failed to start demo (HTTP ${response.status})`
           );
+          const shouldRetry =
+            response.status === 503 &&
+            failure.retryable &&
+            failure.code === DEMO_DATABASE_WAKING_CODE &&
+            attempt < DATABASE_RETRY_DELAYS_MS.length;
+
+          if (!shouldRetry) {
+            throw new Error(
+              failure.code === DEMO_DATABASE_WAKING_CODE
+                ? "The demo database is taking longer than expected. Please try again."
+                : failure.message
+            );
+          }
+
+          setDatabaseWaking(true);
+          if (embedded) {
+            postDemoFrameMessage(DEMO_LOADING_MESSAGE, {
+              demoExperience,
+              message: DEMO_DATABASE_WAKING_MESSAGE,
+              phase: "database",
+            });
+          }
+
+          const delayMs = Math.max(
+            DATABASE_RETRY_DELAYS_MS[attempt],
+            readRetryAfterMs(response)
+          );
+          await waitForRetry(delayMs);
+          finishRetryWait = undefined;
+          retryTimeoutId = undefined;
+          if (cancelled) {
+            return;
+          }
         }
-        window.location.replace("/orders");
       } catch (err) {
+        if (cancelled || (err instanceof Error && err.name === "AbortError")) {
+          return;
+        }
         const message =
           err instanceof Error ? err.message : "Failed to start demo";
         setError(message);
@@ -125,6 +216,15 @@ export function DemoBootstrapClient({
     };
 
     void bootstrap();
+
+    return () => {
+      cancelled = true;
+      abortController.abort();
+      if (retryTimeoutId !== undefined) {
+        window.clearTimeout(retryTimeoutId);
+      }
+      finishRetryWait?.();
+    };
   }, [
     demoExperience,
     embedded,
@@ -185,15 +285,23 @@ export function DemoBootstrapClient({
             </div>
           </div>
         ) : (
-          <div className="rounded-2xl border border-border bg-background p-5">
+          <div
+            className="rounded-2xl border border-border bg-background p-5"
+            role="status"
+            aria-live="polite"
+          >
             <div className="flex items-center gap-3">
               <Loader2 className="h-5 w-5 animate-spin text-foreground" />
               <div>
                 <p className="text-sm font-medium text-foreground">
-                  Creating or resuming your private demo data
+                  {databaseWaking
+                    ? "Waking the demo database"
+                    : "Creating or resuming your private demo data"}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Orders, studies, and changes remain isolated to this demo workspace.
+                  {databaseWaking
+                    ? "The demo pauses when idle to conserve resources. This can take a few seconds."
+                    : "Orders, studies, and changes remain isolated to this demo workspace."}
                 </p>
               </div>
             </div>

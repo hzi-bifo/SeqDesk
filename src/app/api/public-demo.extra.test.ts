@@ -224,7 +224,8 @@ describe("public and demo route quick wins", () => {
     );
     expect(failedSession.status).toBe(500);
     expect(await failedSession.json()).toEqual({
-      error: "Failed to create demo session",
+      code: "demo_bootstrap_failed",
+      error: "Unable to start the demo right now. Please try again.",
     });
 
     mocks.bootstrapDemoWorkspace.mockRejectedValueOnce(new Error("bootstrap failed"));
@@ -236,7 +237,32 @@ describe("public and demo route quick wins", () => {
     );
     expect(failed.status).toBe(500);
     expect(await failed.json()).toEqual({
-      error: "bootstrap failed",
+      code: "demo_bootstrap_failed",
+      error: "Unable to start the demo right now. Please try again.",
+    });
+  });
+
+  it("marks transient database failures as retryable without exposing Prisma details", async () => {
+    mocks.bootstrapDemoWorkspace.mockRejectedValueOnce(
+      new Error(
+        "Invalid prisma.demoWorkspace.findUnique() invocation: Can't reach database server at private-db.example.test:5432"
+      )
+    );
+
+    const response = await postDemoBootstrap(
+      new Request("http://localhost/api/demo/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({}),
+      })
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).toBe("2");
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    expect(await response.json()).toEqual({
+      code: "demo_database_waking",
+      error: "The demo database is waking up. Please wait.",
+      retryable: true,
     });
   });
 
