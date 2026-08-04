@@ -36,9 +36,17 @@ does not silently rewrite or discard the source value.
 
 ## What runs continuously
 
+The change-driven gates have distinct scopes. Pull requests and `main` pushes
+run the unit/coverage suite, Playwright browser flows, and required clean
+application installs. The public order/study pipeline workflows are triggered by
+`main` pushes or manual dispatch, not by pull requests. Real Slurm acceptance is
+private and follows mirrored `main` commits; external ENA submission remains a
+separate credential-gated scheduled/manual workflow.
+
 | Input | Pipelines/path | Trigger and acceptance meaning |
 | --- | --- | --- |
-| Small deterministic synthetic reads | Required public order/study workflows: Simulate Reads, checksum, FastQC, Study Demo Report, and a reduced nf-core/mag wiring smoke | Pull requests and `main` changes. The reduced MAG smoke proves packaging and application integration; it is not a full biological MAG analysis. |
+| Small deterministic synthetic reads | Public order/study workflows: Simulate Reads, checksum, FastQC, Study Demo Report, and a reduced nf-core/mag wiring smoke | `main` pushes and manual dispatch. These workflows are not pull-request gates. The reduced MAG smoke proves packaging and application integration; it is not a full biological MAG analysis. |
+| Tiny deterministic synthetic reads | Packaged `fastq-checksum` workflow in the reviewer installation matrix | Scheduled/manual extended matrix only. The required pull-request and `main` matrix rows prove clean application installation, migration, boot, and authentication; they do not claim pipeline execution. |
 | Small deterministic synthetic reads | Private core matrix: `fastq-checksum`, `fastqc`, `multiqc`, `nanoplot`, `reads-qc`, `simulate-reads`, and `study-demo-report`, locally and through real outer Slurm, plus an installed-app matrix | Mirrored `main` commits and manual dispatch. The public mirror result must wait for the matching private commit; only a green pair is evidence of this acceptance gate. |
 | Mouse PRJDB6165 selection above | `fastq-checksum`, FastQC, `reads-qc`, and Study Demo Report | Manual opt-in in the private Slurm workflow. The runs are additional, continue-on-error diagnostics and are not part of the required `main` gate. |
 | Human PRJEB54724 selections above | Kraken2/Bracken on both instrument-specific orders; explicitly requested SubMG/MEGAHIT read-and-assembly submission for the shared study | Manual opt-in. Kraken2/Bracken needs the runner database; the SubMG path also needs ENA test credentials and fails closed if MEGAHIT does not produce a valid assembly. |

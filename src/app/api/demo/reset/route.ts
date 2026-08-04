@@ -9,6 +9,7 @@ export async function POST(request: Request) {
   try {
     const {
       authorizeDemoWorkspaceToken,
+      bootstrapDemoWorkspace,
       createDemoSessionToken,
       getAuthSessionCookieName,
       getAuthSessionCookieOptions,
@@ -23,8 +24,18 @@ export async function POST(request: Request) {
     const demoExperience = normalizeDemoExperience(body.demoExperience);
     const existingToken =
       explicitToken || cookieStore.get(getDemoWorkspaceCookieName())?.value;
-    const result = await resetDemoWorkspace(existingToken, demoExperience);
-    const user = await authorizeDemoWorkspaceToken(result.token, demoExperience);
+    let result = await resetDemoWorkspace(existingToken, demoExperience);
+    let user = await authorizeDemoWorkspaceToken(result.token, demoExperience);
+    if (!user) {
+      // Another reset may have removed our result before session creation.
+      // Bootstrap once to create or follow the shared-token winner.
+      const recovered = await bootstrapDemoWorkspace(
+        result.token,
+        demoExperience
+      );
+      result = { ...recovered, created: true };
+      user = await authorizeDemoWorkspaceToken(result.token, demoExperience);
+    }
     if (!user) {
       throw new Error("Failed to create demo session");
     }

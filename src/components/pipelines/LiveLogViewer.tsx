@@ -72,6 +72,17 @@ export function LiveLogViewer({
   const outputContent = stripAnsi(outputData?.content || initialOutputTail || "");
   const errorContent = stripAnsi(errorData?.content || initialErrorTail || "");
   const steps: StepInfo[] = useMemo(() => outputData?.steps || [], [outputData?.steps]);
+  const hasSteps = steps.length > 0;
+  const [stepsWereAvailable, setStepsWereAvailable] = useState(hasSteps);
+
+  // Reconcile a data-driven tab removal before rendering. This preserves the
+  // fallback selection if a later poll makes the Steps tab available again.
+  if (stepsWereAvailable !== hasSteps) {
+    setStepsWereAvailable(hasSteps);
+    if (!hasSteps && activeTab === "steps") {
+      setActiveTab("output");
+    }
+  }
 
   // Notify parent of step updates
   useEffect(() => {
@@ -79,15 +90,6 @@ export function LiveLogViewer({
       onStepsUpdate(steps);
     }
   }, [steps, onStepsUpdate]);
-
-  // The "steps" tab trigger only renders while steps exist. If a later poll
-  // empties the steps, fall back to a valid tab so the view is not stranded on
-  // a tab whose trigger has unmounted.
-  useEffect(() => {
-    if (activeTab === "steps" && steps.length === 0) {
-      setActiveTab("output");
-    }
-  }, [activeTab, steps.length]);
 
   // Auto-scroll to bottom when new content arrives
   useEffect(() => {

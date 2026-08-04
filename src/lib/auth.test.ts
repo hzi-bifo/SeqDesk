@@ -63,7 +63,7 @@ describe("authOptions", () => {
     });
     mocks.compare.mockResolvedValue(true);
 
-    const credentialsProvider = authOptions.providers[0] as {
+    const credentialsProvider = authOptions.providers[0] as unknown as {
       authorize: (credentials?: Record<string, string>) => Promise<unknown>;
     };
 
@@ -84,7 +84,7 @@ describe("authOptions", () => {
   });
 
   it("rejects missing or invalid credentials", async () => {
-    const credentialsProvider = authOptions.providers[0] as {
+    const credentialsProvider = authOptions.providers[0] as unknown as {
       authorize: (credentials?: Record<string, string>) => Promise<unknown>;
     };
 
@@ -125,7 +125,7 @@ describe("authOptions", () => {
       demoExperience: "facility",
     });
 
-    const demoProvider = authOptions.providers[1] as {
+    const demoProvider = authOptions.providers[1] as unknown as {
       authorize: (credentials?: Record<string, string>) => Promise<unknown>;
     };
 
@@ -152,7 +152,7 @@ describe("authOptions", () => {
   it("returns null when demo authorization fails", async () => {
     mocks.authorizeDemoWorkspaceToken.mockResolvedValue(null);
 
-    const demoProvider = authOptions.providers[1] as {
+    const demoProvider = authOptions.providers[1] as unknown as {
       authorize: (credentials?: Record<string, string>) => Promise<unknown>;
     };
 
@@ -166,7 +166,7 @@ describe("authOptions", () => {
   it("stores auth metadata in jwt and session callbacks", async () => {
     await expect(
       authOptions.callbacks?.jwt?.({
-        token: {},
+        token: {} as never,
         user: {
           id: "user-1",
           role: "FACILITY_ADMIN",
@@ -195,10 +195,7 @@ describe("authOptions", () => {
           isDemo: true,
           demoExperience: "facility",
         } as never,
-        user: undefined,
-        newSession: undefined,
-        trigger: undefined,
-      })
+      } as never)
     ).resolves.toEqual({
       user: {
         id: "user-1",
@@ -217,10 +214,7 @@ describe("authOptions", () => {
           isDemo: true,
           demoExperience: "researcher",
         } as never,
-        user: undefined,
-        newSession: undefined,
-        trigger: undefined,
-      })
+      } as never)
     ).resolves.toEqual({
       user: {
         id: "user-2",

@@ -1,7 +1,9 @@
-import { execFileSync } from "child_process";
+import { execFileSync, spawnSync } from "child_process";
+import { createHash } from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { pathToFileURL } from "url";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = process.cwd();
@@ -11,6 +13,10 @@ const installDist = fs.readFileSync(
 );
 const sourceInstaller = fs.readFileSync(
   path.join(repoRoot, "scripts/install.sh"),
+  "utf8"
+);
+const privateMetaxPathInstaller = fs.readFileSync(
+  path.join(repoRoot, "scripts/install-private-metaxpath.sh"),
   "utf8"
 );
 const buildRelease = fs.readFileSync(
@@ -59,11 +65,20 @@ const hostedProfileSmokeOverrides = JSON.parse(
   )
 ) as Record<string, unknown>;
 
+function processEnvironment(
+  values: Record<string, string | undefined>
+): NodeJS.ProcessEnv {
+  return values as unknown as NodeJS.ProcessEnv;
+}
+
 interface GeneratedInstallConfig {
   pipelines: {
     execution: {
       mode?: string;
     };
+  };
+  runtime?: {
+    updateServer?: string;
   };
 }
 
@@ -81,27 +96,130 @@ function extractWriteConfigScript(installer: string): string {
   return installer.slice(scriptStart, scriptEnd);
 }
 
+function extractShellFunction(installer: string, name: string): string {
+  const start = installer.indexOf(`${name}() {`);
+  expect(start).toBeGreaterThanOrEqual(0);
+  const end = installer.indexOf("\n}\n", start);
+  expect(end).toBeGreaterThan(start);
+  return installer.slice(start, end + 2);
+}
+
 function runWriteConfigScript(
   installer: string,
-  useSlurm?: boolean
+  useSlurm?: boolean,
+  updateServer?: string
 ): GeneratedInstallConfig {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "seqdesk-write-config-"));
   try {
     execFileSync(process.execPath, ["-e", extractWriteConfigScript(installer)], {
       cwd: tempDir,
-      env: {
+      env: processEnvironment({
         PATH: process.env.PATH,
         SEQDESK_INSTALL_PIPELINES_ENABLED: "true",
         SEQDESK_INSTALL_RUN_DIR: path.join(tempDir, "runs"),
         ...(useSlurm === undefined
           ? {}
           : { SEQDESK_INSTALL_EXEC_USE_SLURM: String(useSlurm) }),
-      },
+        ...(updateServer
+          ? { SEQDESK_INSTALL_UPDATE_SERVER: updateServer }
+          : {}),
+      }),
       stdio: "pipe",
     });
     return JSON.parse(
       fs.readFileSync(path.join(tempDir, "settings.json"), "utf8")
     ) as GeneratedInstallConfig;
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function extractAdditionalSettingsScript(installer: string): string {
+  const functionMarker = "\napply_additional_settings_to_config_path() {";
+  const functionStart = installer.indexOf(functionMarker) + 1;
+  const marker = "node - \"$config_path\" <<'NODE'\n";
+  const markerStart = installer.indexOf(marker, functionStart);
+  const scriptStart = markerStart + marker.length;
+  const scriptEnd = installer.indexOf("\nNODE\n", scriptStart);
+
+  expect(functionStart).toBeGreaterThan(0);
+  expect(markerStart).toBeGreaterThanOrEqual(functionStart);
+  expect(scriptEnd).toBeGreaterThan(scriptStart);
+  return installer.slice(scriptStart, scriptEnd);
+}
+
+function applyAdditionalSettings(
+  overrides: Record<string, unknown> | string
+): {
+  result: ReturnType<typeof spawnSync>;
+  config?: Record<string, unknown>;
+} {
+  const tempDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "seqdesk-additional-settings-")
+  );
+  const configPath = path.join(tempDir, "profile.json");
+  const overridesPath = path.join(tempDir, "overrides.json");
+  fs.writeFileSync(configPath, "{}");
+  fs.writeFileSync(
+    overridesPath,
+    typeof overrides === "string" ? overrides : JSON.stringify(overrides)
+  );
+  try {
+    const result = spawnSync(process.execPath, ["-", configPath], {
+      input: extractAdditionalSettingsScript(installDist),
+      encoding: "utf8",
+      env: processEnvironment({
+        PATH: process.env.PATH,
+        SEQDESK_ADDITIONAL_SETTINGS_FILE_PATH: overridesPath,
+        SEQDESK_ADDITIONAL_SETTINGS_BLOB: "",
+      }),
+    });
+    const config =
+      result.status === 0
+        ? (JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<
+            string,
+            unknown
+          >)
+        : undefined;
+    return { result, config };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function extractLoadInstallConfigScript(installer: string): string {
+  const functionMarker = "\nload_install_config() {";
+  const functionStart = installer.indexOf(functionMarker) + 1;
+  const marker = "node - \"$config_path\" >\"$temp_env\" <<'NODE'\n";
+  const markerStart = installer.indexOf(marker, functionStart);
+  const scriptStart = markerStart + marker.length;
+  const scriptEnd = installer.indexOf("\nNODE\n", scriptStart);
+
+  expect(functionStart).toBeGreaterThan(0);
+  expect(markerStart).toBeGreaterThanOrEqual(functionStart);
+  expect(scriptEnd).toBeGreaterThan(scriptStart);
+  return installer.slice(scriptStart, scriptEnd);
+}
+
+function parseInstallProfileConfig(
+  profile: Record<string, unknown>,
+  expectedProfileId = "",
+  installer = installDist
+) {
+  const tempDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "seqdesk-profile-config-")
+  );
+  const configPath = path.join(tempDir, "profile.json");
+  fs.writeFileSync(configPath, JSON.stringify(profile));
+  try {
+    return spawnSync(process.execPath, ["-", configPath], {
+      input: extractLoadInstallConfigScript(installer),
+      encoding: "utf8",
+      env: processEnvironment({
+        PATH: process.env.PATH,
+        SEQDESK_EXPECTED_PROFILE_ID: expectedProfileId,
+      }),
+    });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -121,6 +239,23 @@ describe("install profile installer wiring", () => {
       expect(slurmConfig.pipelines.execution.mode).toBe("slurm");
       expect(localConfig.pipelines.execution.mode).toBe("local");
       expect(pathOnlyConfig.pipelines.execution.mode).toBeUndefined();
+    }
+  );
+
+  it.each([
+    ["distribution", installDist],
+    ["source", sourceInstaller],
+  ])(
+    "persists runtime.updateServer in the %s installer",
+    (_name, installer) => {
+      const updateServer = "https://updates.example.test";
+      const config = runWriteConfigScript(
+        installer,
+        undefined,
+        updateServer
+      );
+
+      expect(config.runtime?.updateServer).toBe(updateServer);
     }
   );
 
@@ -157,6 +292,377 @@ describe("install profile installer wiring", () => {
     expect(installDist).toContain("buildInstallProfileConfig");
     expect(installDist).toContain("config.installProfile = installProfile");
     expect(installDist).not.toContain("safeProfile.relayToken");
+  });
+
+  it("protects hosted profile access codes from insecure registry transports", () => {
+    const helperStart = installDist.indexOf("is_safe_profile_registry_url() {");
+    const helperEnd = installDist.indexOf(
+      "\n# Large payloads with a bounded size:",
+      helperStart
+    );
+    expect(helperStart).toBeGreaterThanOrEqual(0);
+    expect(helperEnd).toBeGreaterThan(helperStart);
+    const helper = installDist.slice(helperStart, helperEnd);
+    const checkUrl = (url: string) =>
+      spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            helper,
+            'is_safe_profile_registry_url "$1"',
+          ].join("\n"),
+          "bash",
+          url,
+        ],
+        { encoding: "utf8" }
+      );
+
+    expect(checkUrl("https://seqdesk.org/api/install-profiles").status).toBe(0);
+    expect(checkUrl("http://localhost:3000/api/install-profiles").status).toBe(
+      0
+    );
+    expect(
+      checkUrl("http://127.0.0.1:3000/api/install-profiles").status
+    ).toBe(0);
+    expect(checkUrl("http://profiles.example.test/api").status).not.toBe(0);
+
+    const resolver = extractShellFunction(
+      installDist,
+      "resolve_install_profile"
+    );
+    expect(resolver.indexOf("is_safe_profile_registry_url")).toBeLessThan(
+      resolver.indexOf("Authorization: Bearer")
+    );
+    expect(resolver).toContain("--max-redirs 0");
+    expect(resolver).toContain("--proto-redir '=https'");
+  });
+
+  it("validates the hosted profile identity and minimum release version before install", () => {
+    const valid = parseInstallProfileConfig(
+      {
+        id: "production",
+        minSeqDeskVersion: "1.4.2",
+        app: { port: 8080 },
+        runtime: { updateServer: "https://updates.example.test" },
+        studies: [],
+      },
+      "production"
+    );
+
+    expect(valid.status).toBe(0);
+    expect(valid.stdout).toContain('SEQDESK_CFG_PORT="8080"');
+    expect(valid.stdout).toContain(
+      'SEQDESK_CFG_PROFILE_MIN_VERSION="1.4.2"'
+    );
+    expect(valid.stdout).toContain(
+      'SEQDESK_CFG_UPDATE_SERVER="https://updates.example.test"'
+    );
+    expect(installDist).toContain(
+      "requires SeqDesk ${SEQDESK_PROFILE_MIN_VERSION} or newer"
+    );
+    expect(installDist).toContain(
+      'is_truthy "$SEQDESK_RECONFIGURE" && [ -n "$SEQDESK_PROFILE_MIN_VERSION" ]'
+    );
+
+    const preflightCall = installDist.indexOf(
+      "\npreflight_profile_minimum_version\n"
+    );
+    const postgresMutation = installDist.indexOf(
+      "\nif ! preflight_local_postgres; then",
+      preflightCall
+    );
+    const minicondaMutation = installDist.indexOf(
+      '\n    print_header "Install Miniconda"',
+      preflightCall
+    );
+    expect(preflightCall).toBeGreaterThanOrEqual(0);
+    expect(preflightCall).toBeLessThan(postgresMutation);
+    expect(preflightCall).toBeLessThan(minicondaMutation);
+    expect(installDist).toContain(
+      'SEQDESK_PREFETCHED_VERSION_INFO="$version_info"'
+    );
+    expect(installDist).toContain(
+      'installed_version="$(read_installed_seqdesk_version "$SEQDESK_DIR"'
+    );
+  });
+
+  it("compares hosted profile minimum versions numerically", () => {
+    const check = (current: string, required: string) =>
+      spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            "export SEQDESK_INSTALL_LIB_ONLY=1",
+            'source "$1"',
+            'version_at_least "$2" "$3"',
+          ].join("\n"),
+          "bash",
+          path.join(repoRoot, "scripts/install-dist.sh"),
+          current,
+          required,
+        ],
+        { encoding: "utf8" }
+      );
+
+    expect(check("1.10.0", "1.9.9").status).toBe(0);
+    expect(check("v2.0.0", "1.99.99").status).toBe(0);
+    expect(check("1.4.1", "1.4.2").status).not.toBe(0);
+    expect(check("invalid", "1.4.2").status).not.toBe(0);
+  });
+
+  it("accepts every supported additional-settings root and rejects prototype paths", () => {
+    const accepted = applyAdditionalSettings({
+      access: { publicReadOnly: true },
+      auth: { allowRegistration: false },
+      moduleSettings: { reports: { enabled: true } },
+      sequencingFiles: { scanDepth: 4 },
+      studies: [{ alias: "pilot" }],
+    });
+
+    expect(accepted.result.status).toBe(0);
+    expect(accepted.config).toMatchObject({
+      access: { publicReadOnly: true },
+      auth: { allowRegistration: false },
+      moduleSettings: { reports: { enabled: true } },
+      sequencingFiles: { scanDepth: 4 },
+      studies: [{ alias: "pilot" }],
+    });
+
+    const prototypePath = applyAdditionalSettings(
+      '{"auth":{"__proto__":{"polluted":true}}}'
+    );
+    expect(prototypePath.result.status).not.toBe(0);
+    expect(prototypePath.result.stderr).toContain(
+      'Forbidden additional setting key "__proto__"'
+    );
+  });
+
+  it("rejects mismatched, malformed, and unsafe hosted profile values", () => {
+    const mismatched = parseInstallProfileConfig(
+      { id: "other", app: { port: 8000 } },
+      "production"
+    );
+    const malformedSection = parseInstallProfileConfig({
+      pipelines: ["not", "an", "object"],
+    });
+    const invalidPort = parseInstallProfileConfig({
+      app: { port: 70_000 },
+    });
+    const malformedStudies = parseInstallProfileConfig({
+      studies: { alias: "not-an-array" },
+    });
+
+    expect(mismatched.status).not.toBe(0);
+    expect(mismatched.stderr).toContain("Hosted profile id mismatch");
+    expect(malformedSection.status).not.toBe(0);
+    expect(malformedSection.stderr).toContain(
+      "pipelines must be a JSON object"
+    );
+    expect(invalidPort.status).not.toBe(0);
+    expect(invalidPort.stderr).toContain(
+      "app.port must be an integer between 1 and 65535"
+    );
+    expect(malformedStudies.status).not.toBe(0);
+    expect(malformedStudies.stderr).toContain(
+      "studies must be a JSON array"
+    );
+  });
+
+  it("does not install a private MetaxPath package excluded by pipeline selection", () => {
+    for (const installer of [installDist, sourceInstaller]) {
+      const parsed = parseInstallProfileConfig(
+        {
+          id: "without-metaxpath",
+          pipelines: {
+            enabled: true,
+            enable: ["fastqc", "fastq-checksum"],
+          },
+          privatePipelines: {
+            metaxpath: {
+              packageUrl: "https://packages.example.test/metaxpath.tar.gz",
+              key: "private-package-key",
+              sha256: "a".repeat(64),
+            },
+          },
+        },
+        "",
+        installer
+      );
+
+      expect(parsed.status).toBe(0);
+      expect(parsed.stdout).not.toContain("SEQDESK_CFG_METAXPATH_PACKAGE_URL");
+      expect(parsed.stdout).not.toContain("SEQDESK_CFG_METAXPATH_KEY");
+      expect(parsed.stdout).not.toContain("SEQDESK_CFG_METAXPATH_SHA256");
+      expect(parsed.stdout).not.toContain("private-package-key");
+    }
+  });
+
+  it("cleans resolved profile secrets and release downloads on every exit", () => {
+    expect(installDist).toContain("cleanup_installer_temp_files");
+    expect(installDist).toContain("trap cleanup_installer_temp_files EXIT");
+    expect(installDist).toContain("trap 'exit 130' INT");
+    expect(installDist).toContain("trap 'exit 143' TERM");
+  });
+
+  it("expands home-relative profile storage paths before installer use", () => {
+    const helper = extractShellFunction(installDist, "expand_home_relative_path");
+    const output = execFileSync(
+      "bash",
+      [
+        "-c",
+        [
+          "set -euo pipefail",
+          helper,
+          "expand_home_relative_path '~/seqdesk-data'",
+        ].join("\n"),
+      ],
+      { encoding: "utf8" }
+    );
+
+    expect(output).toBe(path.join(os.homedir(), "seqdesk-data"));
+    expect(installDist).toContain(
+      'SEQDESK_DATA_PATH="$(expand_home_relative_path "$SEQDESK_DATA_PATH")"'
+    );
+    expect(installDist).toContain(
+      'SEQDESK_RUN_DIR="$(expand_home_relative_path "$SEQDESK_RUN_DIR")"'
+    );
+    expect(installDist).toContain(
+      'SEQDESK_PIPELINE_DATABASE_DIR="$(expand_home_relative_path "$SEQDESK_PIPELINE_DATABASE_DIR")"'
+    );
+  });
+
+  it("accepts sha256-prefixed checksums for private MetaxPath packages", () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "seqdesk-private-metaxpath-")
+    );
+    try {
+      const packageDir = path.join(tempDir, "package");
+      const installDir = path.join(tempDir, "seqdesk");
+      const archivePath = path.join(tempDir, "metaxpath.tar.gz");
+      fs.mkdirSync(packageDir, { recursive: true });
+      fs.mkdirSync(installDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(packageDir, "manifest.json"),
+        JSON.stringify({
+          id: "metaxpath",
+          package: { version: "0.1.1" },
+          targets: { supported: ["study"] },
+        })
+      );
+      execFileSync("tar", ["-czf", archivePath, "-C", packageDir, "."], {
+        stdio: "pipe",
+      });
+      const checksum = createHash("sha256")
+        .update(fs.readFileSync(archivePath))
+        .digest("hex")
+        .toUpperCase();
+
+      execFileSync(
+        "bash",
+        [
+          path.join(repoRoot, "scripts/install-private-metaxpath.sh"),
+          "--url",
+          pathToFileURL(archivePath).href,
+          "--sha256",
+          `sha256:${checksum}`,
+          "--dir",
+          installDir,
+        ],
+        { stdio: "pipe" }
+      );
+
+      expect(
+        fs.existsSync(
+          path.join(installDir, "pipelines/metaxpath/manifest.json")
+        )
+      ).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects remote private MetaxPath packages without a SHA256 digest before download", () => {
+    const installDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "seqdesk-private-metaxpath-remote-")
+    );
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          path.join(repoRoot, "scripts/install-private-metaxpath.sh"),
+          "--url",
+          "https://example.invalid/metaxpath.tar.gz",
+          "--dir",
+          installDir,
+        ],
+        { encoding: "utf8" }
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "Remote MetaxPath packages require a SHA256 checksum"
+      );
+      expect(result.stdout).not.toContain("Downloading private package");
+    } finally {
+      fs.rmSync(installDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps private MetaxPath credentials on the original HTTPS origin", () => {
+    expect(privateMetaxPathInstaller).toContain(
+      "Remote MetaxPath package URLs must use HTTPS"
+    );
+    expect(privateMetaxPathInstaller).toContain(
+      'oauth2-bearer = "${escapeCurlConfig(token, "Package token")}"'
+    );
+    expect(privateMetaxPathInstaller).toContain("--proto-redir '=https'");
+    expect(privateMetaxPathInstaller).not.toContain(
+      'header = "Authorization: Bearer'
+    );
+
+    const installDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "seqdesk-private-metaxpath-http-")
+    );
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          path.join(repoRoot, "scripts/install-private-metaxpath.sh"),
+          "--url",
+          "http://packages.example.invalid/metaxpath.tar.gz",
+          "--sha256",
+          "a".repeat(64),
+          "--dir",
+          installDir,
+        ],
+        { encoding: "utf8" }
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(
+        "Remote MetaxPath package URLs must use HTTPS"
+      );
+      expect(result.stdout).not.toContain("Downloading private package");
+    } finally {
+      fs.rmSync(installDir, { recursive: true, force: true });
+    }
+  });
+
+  it("passes private package tokens through the environment instead of process arguments", () => {
+    for (const installer of [installDist, sourceInstaller]) {
+      const installerFunction = extractShellFunction(
+        installer,
+        "install_private_metaxpath_if_configured"
+      );
+
+      expect(installerFunction).toContain(
+        'METAXPATH_PACKAGE_TOKEN="${SEQDESK_METAXPATH_KEY}"'
+      );
+      expect(installerFunction).not.toContain("--token");
+    }
   });
 
   it("applies resolved profiles after database setup and includes the applicator in releases", () => {

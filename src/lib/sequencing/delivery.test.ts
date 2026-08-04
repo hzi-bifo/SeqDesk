@@ -75,7 +75,7 @@ function makeArtifact(overrides: Partial<DeliveryArtifact> = {}): DeliveryArtifa
     visibility: CUSTOMER_SEQUENCING_ARTIFACT_VISIBILITY,
     path: "reports/delivery.html",
     originalName: "delivery.html",
-    size: 42n,
+    size: BigInt(42),
     checksum: "md5-report",
     order: {
       id: "order-1",

@@ -3,6 +3,7 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
+const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
@@ -12,6 +13,10 @@ const { version } = require("../package.json");
 
 const INSTALL_URL = process.env.SEQDESK_INSTALL_URL || "https://seqdesk.org/install.sh";
 const DEFAULT_PROFILE_REGISTRY_URL = "https://seqdesk.org/api/install-profiles";
+const HOSTED_PROFILE_FETCH_TIMEOUT_MS = 30_000;
+const INSTALLER_FETCH_TIMEOUT_MS = 30_000;
+const INSTALL_PROFILE_RELOAD_LOCK_FILE = ".install-profile-reload.lock";
+const INSTALL_PROFILE_LOCK_HEARTBEAT_MS = 60_000;
 // Troubleshooting targets shared with the installer, which prints the same
 // pages next to its own failures. Keep them identical so a reviewer who hits
 // the problem during install and again in doctor lands on one page.
@@ -2687,11 +2692,118 @@ function validateAssetInstallDir(installDir) {
   if (!fileExists(path.join(installDir, "package.json"))) {
     throw new Error(`Install directory is missing package.json: ${installDir}`);
   }
-  const assetScript = path.join(installDir, "scripts", "apply-install-profile-assets.mjs");
+  const appDir = resolveAppDir(installDir);
+  const assetScript = path.join(appDir, "scripts", "apply-install-profile-assets.mjs");
   if (!fileExists(assetScript)) {
     throw new Error(`Install directory is missing scripts/apply-install-profile-assets.mjs: ${installDir}`);
   }
   return assetScript;
+}
+
+function acquireAssetApplyLock(installDir, profileId) {
+  const lockDir = path.join(installDir, "pipelines");
+  const lockPath = path.join(lockDir, INSTALL_PROFILE_RELOAD_LOCK_FILE);
+  const ownerToken = randomUUID();
+  fs.mkdirSync(lockDir, { recursive: true });
+
+  let fd;
+  try {
+    fd = fs.openSync(lockPath, "wx", 0o600);
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      throw new Error(
+        "A hosted profile reload or asset application is already running for this install"
+      );
+    }
+    throw error;
+  }
+
+  try {
+    fs.writeFileSync(
+      fd,
+      JSON.stringify(
+        {
+          profileId: profileId || "local-profile",
+          ownerToken,
+          pid: process.pid,
+          operation: "assets-apply",
+          startedAt: new Date().toISOString(),
+        },
+        null,
+        2
+      )
+    );
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  const stillOwnsLock = () => {
+    try {
+      const current = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+      return isPlainObject(current) && current.ownerToken === ownerToken;
+    } catch {
+      return false;
+    }
+  };
+  const heartbeat = setInterval(() => {
+    if (!stillOwnsLock()) return;
+    const now = new Date();
+    try {
+      fs.utimesSync(lockPath, now, now);
+    } catch {
+      // The owner check on release handles a concurrently removed lock.
+    }
+  }, INSTALL_PROFILE_LOCK_HEARTBEAT_MS);
+  heartbeat.unref();
+
+  return () => {
+    clearInterval(heartbeat);
+    if (stillOwnsLock()) {
+      fs.rmSync(lockPath, { force: true });
+    }
+  };
+}
+
+function resolveAssetDatabaseEnv(installDir) {
+  const configPath = resolveConfigPath(installDir);
+  const configName = path.basename(configPath);
+  if (!fileExists(configPath)) {
+    throw new Error(`${installDir} has no ${configName}, so the asset database is unknown.`);
+  }
+
+  let config;
+  try {
+    config = readJsonFile(configPath);
+  } catch (error) {
+    throw new Error(`${configPath} is not valid JSON: ${error.message}`);
+  }
+
+  const runtime = isPlainObject(config?.runtime) ? config.runtime : {};
+  const databaseUrl = firstString(runtime.databaseUrl, config?.databaseUrl);
+  const configuredDirectUrl = firstString(
+    runtime.directUrl,
+    runtime.databaseDirectUrl,
+    config?.directUrl
+  );
+  const databaseValidation = validatePostgresUrl(databaseUrl);
+  if (!databaseValidation.ok) {
+    throw new Error(
+      `runtime.databaseUrl in ${configName} is ${databaseValidation.detail}.`
+    );
+  }
+  if (configuredDirectUrl) {
+    const directValidation = validatePostgresUrl(configuredDirectUrl);
+    if (!directValidation.ok) {
+      throw new Error(
+        `runtime.directUrl in ${configName} is ${directValidation.detail}.`
+      );
+    }
+  }
+
+  return {
+    databaseUrl,
+    directUrl: configuredDirectUrl || databaseUrl,
+  };
 }
 
 function makeTempProfileFile(profileId, payload) {
@@ -2707,6 +2819,105 @@ function makeTempProfileFile(profileId, payload) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     },
   };
+}
+
+function isLoopbackHostname(hostname) {
+  const normalized = String(hostname || "").toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+}
+
+function parseComparableVersion(value) {
+  const match = String(value || "")
+    .trim()
+    .match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+][0-9A-Za-z.-]+)?$/);
+  return match ? match.slice(1, 4).map((part) => Number(part || 0)) : null;
+}
+
+function versionMeetsMinimum(currentValue, minimumValue) {
+  const current = parseComparableVersion(currentValue);
+  const minimum = parseComparableVersion(minimumValue);
+  if (!current || !minimum) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (current[index] > minimum[index]) return true;
+    if (current[index] < minimum[index]) return false;
+  }
+  return true;
+}
+
+function validateHostedAssetProfile(payload, options) {
+  const resolvedId = firstString(payload.id);
+  if (!resolvedId) {
+    throw new Error("Hosted profile resolver returned a profile without an id");
+  }
+  if (resolvedId !== options.profile) {
+    throw new Error(
+      `Hosted profile id mismatch: requested ${options.profile}, resolved ${resolvedId}`
+    );
+  }
+
+  const structuredSections = [
+    "addons",
+    "access",
+    "app",
+    "auth",
+    "bootstrap",
+    "ena",
+    "forms",
+    "hostedDatabase",
+    "install",
+    "minknowStream",
+    "modules",
+    "moduleSettings",
+    "notifications",
+    "pipelineSmokeTests",
+    "pipelines",
+    "privatePipelines",
+    "profile",
+    "runtime",
+    "seedData",
+    "sequencingFiles",
+    "sequencingTech",
+    "site",
+    "telemetry",
+    "testing",
+  ];
+  for (const section of structuredSections) {
+    if (
+      Object.prototype.hasOwnProperty.call(payload, section) &&
+      payload[section] !== undefined &&
+      !isPlainObject(payload[section])
+    ) {
+      throw new Error(`Hosted profile section ${section} must be a JSON object`);
+    }
+  }
+  for (const section of ["capabilities", "requiredSecrets", "studies"]) {
+    if (
+      Object.prototype.hasOwnProperty.call(payload, section) &&
+      payload[section] !== undefined &&
+      !Array.isArray(payload[section])
+    ) {
+      throw new Error(`Hosted profile section ${section} must be a JSON array`);
+    }
+  }
+
+  if (payload.minSeqDeskVersion === undefined) return;
+  const minimumVersion = firstString(payload.minSeqDeskVersion);
+  if (!minimumVersion || !parseComparableVersion(minimumVersion)) {
+    throw new Error("Hosted profile minSeqDeskVersion must be a semantic version");
+  }
+  const appPackagePath = path.join(resolveAppDir(options.dir), "package.json");
+  const installedVersion = firstString(readJsonFile(appPackagePath).version);
+  if (!installedVersion || !versionMeetsMinimum(installedVersion, minimumVersion)) {
+    throw new Error(
+      `Hosted profile ${resolvedId} requires SeqDesk ${minimumVersion} or newer; this install is ${installedVersion || "unknown"}`
+    );
+  }
 }
 
 async function resolveHostedProfile(options) {
@@ -2728,11 +2939,20 @@ async function resolveHostedProfile(options) {
   } catch (error) {
     throw new Error(`Invalid --profile-registry-url: ${error.message}`);
   }
+  if (
+    profileUrl.protocol !== "https:" &&
+    !(profileUrl.protocol === "http:" && isLoopbackHostname(profileUrl.hostname))
+  ) {
+    throw new Error(
+      "--profile-registry-url must use HTTPS (plain HTTP is allowed only for localhost)"
+    );
+  }
 
   let response;
   try {
     response = await fetch(profileUrl, {
-      redirect: "follow",
+      redirect: "error",
+      signal: AbortSignal.timeout(HOSTED_PROFILE_FETCH_TIMEOUT_MS),
       headers: {
         accept: "application/json",
         authorization: `Bearer ${profileCode}`,
@@ -2740,7 +2960,11 @@ async function resolveHostedProfile(options) {
       },
     });
   } catch (error) {
-    throw new Error(`Could not resolve hosted install profile '${options.profile}': ${error.message}`);
+    const detail =
+      error?.name === "TimeoutError"
+        ? `request timed out after ${HOSTED_PROFILE_FETCH_TIMEOUT_MS / 1000} seconds`
+        : error?.message || String(error);
+    throw new Error(`Could not resolve hosted install profile '${options.profile}': ${detail}`);
   }
 
   const text = await response.text();
@@ -2764,18 +2988,26 @@ async function resolveHostedProfile(options) {
   if (!isPlainObject(payload)) {
     throw new Error(`Hosted install profile '${options.profile}' did not return a JSON object`);
   }
+  validateHostedAssetProfile(payload, options);
 
   return makeTempProfileFile(options.profile, payload);
 }
 
-function runInstalledAssetScript({ installDir, scriptPath, profileConfig, json }) {
+function runInstalledAssetScript({
+  installDir,
+  scriptPath,
+  profileConfig,
+  databaseUrl,
+  directUrl,
+  json,
+}) {
   return new Promise((resolve, reject) => {
     const childArgs = [scriptPath, "--profile-config", profileConfig];
     if (json) childArgs.push("--json");
 
     const child = spawn(process.execPath, childArgs, {
       cwd: installDir,
-      env,
+      env: { ...env, DATABASE_URL: databaseUrl, DIRECT_URL: directUrl },
       stdio: "inherit",
     });
 
@@ -2890,8 +3122,14 @@ async function runAssets(argv) {
   }
 
   let tempProfile = null;
+  let releaseLock = null;
   try {
     const scriptPath = validateAssetInstallDir(options.dir);
+    const { databaseUrl, directUrl } = resolveAssetDatabaseEnv(options.dir);
+    releaseLock = acquireAssetApplyLock(
+      options.dir,
+      options.profile || path.basename(options.profileConfig || "local-profile")
+    );
     let profileConfig = options.profileConfig;
     if (profileConfig) {
       if (!fileExists(profileConfig)) {
@@ -2909,13 +3147,19 @@ async function runAssets(argv) {
       installDir: options.dir,
       scriptPath,
       profileConfig,
+      databaseUrl,
+      directUrl,
       json: options.json,
     });
   } catch (error) {
     console.error(`[seqdesk] ${error.message}`);
     return 1;
   } finally {
-    tempProfile?.cleanup();
+    try {
+      releaseLock?.();
+    } finally {
+      tempProfile?.cleanup();
+    }
   }
 }
 
@@ -2966,12 +3210,17 @@ async function downloadInstaller() {
   try {
     response = await fetch(INSTALL_URL, {
       redirect: "follow",
+      signal: AbortSignal.timeout(INSTALLER_FETCH_TIMEOUT_MS),
       headers: {
         "user-agent": `seqdesk/${version}`,
       },
     });
   } catch (error) {
-    throw new Error(`Could not download installer from ${INSTALL_URL}: ${error.message}`);
+    const detail =
+      error?.name === "TimeoutError"
+        ? `request timed out after ${INSTALLER_FETCH_TIMEOUT_MS / 1000} seconds`
+        : error?.message || String(error);
+    throw new Error(`Could not download installer from ${INSTALL_URL}: ${detail}`);
   }
 
   if (!response.ok) {

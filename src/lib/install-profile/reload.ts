@@ -1,9 +1,11 @@
 import { spawn } from "child_process";
+import { randomUUID } from "crypto";
 import fs from "fs";
 import fsp from "fs/promises";
 import os from "os";
 import path from "path";
 import {
+  ARRAY_INSTALL_PROFILE_SECTIONS,
   INSTALL_ONLY_PROFILE_SECTIONS,
   KNOWN_INSTALL_PROFILE_SECTIONS,
   STRUCTURED_INSTALL_PROFILE_SECTIONS,
@@ -50,6 +52,7 @@ const DEFAULT_PROFILE_REGISTRY_URL = "https://seqdesk.org/api/install-profiles";
 const MAX_CAPTURED_OUTPUT_CHARS = 20_000;
 const RELOAD_LOCK_FILE = ".install-profile-reload.lock";
 const RELOAD_LOCK_STALE_MS = 60 * 60 * 1000;
+const RELOAD_LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -215,21 +218,54 @@ function readPackageVersion(cwd: string): string {
   return "0.0.0";
 }
 
-function parseVersion(value: string): number[] {
-  return value
-    .split(/[.-]/)
-    .slice(0, 3)
-    .map((part) => {
-      const parsed = Number.parseInt(part.replace(/[^0-9].*$/, ""), 10);
-      return Number.isFinite(parsed) ? parsed : 0;
-    });
+type ComparableVersion = {
+  core: [number, number, number];
+  prerelease: string[];
+};
+
+const SEMVER_PATTERN =
+  /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+function parseVersion(value: string): ComparableVersion | null {
+  const match = value.trim().match(SEMVER_PATTERN);
+  if (!match) return null;
+  return {
+    core: [Number(match[1]), Number(match[2]), Number(match[3])],
+    prerelease: match[4] ? match[4].split(".") : [],
+  };
 }
 
-function compareVersions(left: string, right: string): number {
-  const a = parseVersion(left);
-  const b = parseVersion(right);
+function comparePrereleaseIdentifiers(left: string, right: string): number {
+  const leftNumeric = /^\d+$/.test(left);
+  const rightNumeric = /^\d+$/.test(right);
+  if (leftNumeric && rightNumeric) {
+    return Number(left) - Number(right);
+  }
+  if (leftNumeric !== rightNumeric) {
+    return leftNumeric ? -1 : 1;
+  }
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+function compareVersions(left: ComparableVersion, right: ComparableVersion): number {
   for (let index = 0; index < 3; index += 1) {
-    const diff = (a[index] || 0) - (b[index] || 0);
+    const diff = left.core[index] - right.core[index];
+    if (diff !== 0) return diff;
+  }
+
+  if (left.prerelease.length === 0 || right.prerelease.length === 0) {
+    if (left.prerelease.length === right.prerelease.length) return 0;
+    return left.prerelease.length === 0 ? 1 : -1;
+  }
+  const length = Math.max(left.prerelease.length, right.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    const leftIdentifier = left.prerelease[index];
+    const rightIdentifier = right.prerelease[index];
+    if (leftIdentifier === undefined || rightIdentifier === undefined) {
+      return leftIdentifier === undefined ? -1 : 1;
+    }
+    const diff = comparePrereleaseIdentifiers(leftIdentifier, rightIdentifier);
     if (diff !== 0) return diff;
   }
   return 0;
@@ -255,9 +291,24 @@ function validateResolvedInstallProfile({
   }
 
   const minSeqDeskVersion = readString(profile.minSeqDeskVersion);
-  if (minSeqDeskVersion) {
+  if (profile.minSeqDeskVersion !== undefined) {
+    if (!minSeqDeskVersion) {
+      throw new Error(
+        "Hosted profile minSeqDeskVersion must be a semantic version such as 1.2.3"
+      );
+    }
     const currentVersion = readPackageVersion(cwd);
-    if (compareVersions(currentVersion, minSeqDeskVersion) < 0) {
+    const parsedMinimumVersion = parseVersion(minSeqDeskVersion);
+    if (!parsedMinimumVersion) {
+      throw new Error(
+        "Hosted profile minSeqDeskVersion must be a semantic version such as 1.2.3"
+      );
+    }
+    const parsedCurrentVersion = parseVersion(currentVersion);
+    if (!parsedCurrentVersion) {
+      throw new Error(`Installed SeqDesk version is not valid semantic version: ${currentVersion}`);
+    }
+    if (compareVersions(parsedCurrentVersion, parsedMinimumVersion) < 0) {
       throw new Error(
         `Hosted profile ${resolvedId} requires SeqDesk ${minSeqDeskVersion}+; this install is ${currentVersion}`
       );
@@ -277,6 +328,9 @@ function validateResolvedInstallProfile({
     if (STRUCTURED_INSTALL_PROFILE_SECTIONS.has(key) && value !== undefined && !isRecord(value)) {
       throw new Error(`Hosted profile section ${key} must be a JSON object`);
     }
+    if (ARRAY_INSTALL_PROFILE_SECTIONS.has(key) && value !== undefined && !Array.isArray(value)) {
+      throw new Error(`Hosted profile section ${key} must be a JSON array`);
+    }
     if (
       [
         "access",
@@ -292,6 +346,7 @@ function validateResolvedInstallProfile({
         "sequencingFiles",
         "sequencingTech",
         "site",
+        "studies",
         "telemetry",
       ].includes(key)
     ) {
@@ -312,8 +367,91 @@ function validateResolvedInstallProfile({
   };
 }
 
+type ReloadLockSnapshot = {
+  contents: string;
+  device: number;
+  inode: number;
+  modifiedAtMs: number;
+  size: number;
+};
+
+async function readReloadLockSnapshot(lockPath: string): Promise<ReloadLockSnapshot | null> {
+  let handle: fsp.FileHandle;
+  try {
+    handle = await fsp.open(lockPath, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  try {
+    const stat = await handle.stat();
+    return {
+      contents: await handle.readFile("utf8"),
+      device: stat.dev,
+      inode: stat.ino,
+      modifiedAtMs: stat.mtimeMs,
+      size: stat.size,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+function isSameReloadLock(
+  observed: ReloadLockSnapshot,
+  candidate: ReloadLockSnapshot
+): boolean {
+  return (
+    observed.device === candidate.device &&
+    observed.inode === candidate.inode &&
+    observed.modifiedAtMs === candidate.modifiedAtMs &&
+    observed.size === candidate.size &&
+    observed.contents === candidate.contents
+  );
+}
+
+async function restoreQuarantinedReloadLock(
+  lockPath: string,
+  quarantinePath: string
+): Promise<void> {
+  try {
+    await fsp.link(quarantinePath, lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      return;
+    }
+    throw error;
+  }
+  await fsp.rm(quarantinePath, { force: true });
+}
+
+async function reclaimStaleReloadLock(
+  lockPath: string,
+  observed: ReloadLockSnapshot
+): Promise<boolean> {
+  const quarantinePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
+  try {
+    await fsp.rename(lockPath, quarantinePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return true;
+    }
+    throw error;
+  }
+
+  const quarantined = await readReloadLockSnapshot(quarantinePath);
+  if (!quarantined || !isSameReloadLock(observed, quarantined)) {
+    await restoreQuarantinedReloadLock(lockPath, quarantinePath);
+    return false;
+  }
+
+  await fsp.rm(quarantinePath, { force: true });
+  return true;
+}
+
 async function acquireReloadLock(cwd: string, profileId: string): Promise<() => Promise<void>> {
   const lockPath = path.join(cwd, "pipelines", RELOAD_LOCK_FILE);
+  const ownerToken = randomUUID();
   await fsp.mkdir(path.dirname(lockPath), { recursive: true });
   let handle: fsp.FileHandle;
   try {
@@ -321,10 +459,11 @@ async function acquireReloadLock(cwd: string, profileId: string): Promise<() => 
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EEXIST") {
-      const stat = await fsp.stat(lockPath).catch(() => null);
-      if (stat && Date.now() - stat.mtimeMs > RELOAD_LOCK_STALE_MS) {
-        await fsp.rm(lockPath, { force: true });
-        return acquireReloadLock(cwd, profileId);
+      const observed = await readReloadLockSnapshot(lockPath);
+      if (observed && Date.now() - observed.modifiedAtMs > RELOAD_LOCK_STALE_MS) {
+        if (await reclaimStaleReloadLock(lockPath, observed)) {
+          return acquireReloadLock(cwd, profileId);
+        }
       }
       throw new Error("A hosted profile reload is already running");
     }
@@ -334,6 +473,7 @@ async function acquireReloadLock(cwd: string, profileId: string): Promise<() => 
     JSON.stringify(
       {
         profileId,
+        ownerToken,
         pid: process.pid,
         startedAt: new Date().toISOString(),
       },
@@ -342,8 +482,30 @@ async function acquireReloadLock(cwd: string, profileId: string): Promise<() => 
     )
   );
   await handle.close();
+
+  const stillOwnsLock = async (): Promise<boolean> => {
+    try {
+      const current = JSON.parse(await fsp.readFile(lockPath, "utf8"));
+      return isRecord(current) && current.ownerToken === ownerToken;
+    } catch {
+      return false;
+    }
+  };
+  const heartbeat = setInterval(() => {
+    void (async () => {
+      if (await stillOwnsLock()) {
+        const now = new Date();
+        await fsp.utimes(lockPath, now, now).catch(() => undefined);
+      }
+    })();
+  }, RELOAD_LOCK_HEARTBEAT_MS);
+  heartbeat.unref();
+
   return async () => {
-    await fsp.rm(lockPath, { force: true });
+    clearInterval(heartbeat);
+    if (await stillOwnsLock()) {
+      await fsp.rm(lockPath, { force: true });
+    }
   };
 }
 

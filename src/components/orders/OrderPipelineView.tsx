@@ -2878,6 +2878,10 @@ export function OrderPipelineView({
                     {detailRun.runNumber}
                   </code>
                 </DialogTitle>
+                <DialogDescription className="sr-only">
+                  Inspect execution status, timing, settings, errors, and
+                  reviewable outputs for this pipeline run.
+                </DialogDescription>
               </DialogHeader>
               <div className="space-y-3 text-sm">
                 <div className="flex items-center gap-2">

@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { CellContext, RowData } from "@tanstack/react-table";
+import { CellContext } from "@tanstack/react-table";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -30,8 +29,7 @@ export function BarcodeCell<T extends SampleRow>({
   column,
   table,
 }: CellContext<T, unknown>) {
-  const initialValue = getValue() as string;
-  const [value, setValue] = useState(initialValue ?? "");
+  const value = (getValue() as string | undefined) ?? "";
   const meta = column.columnDef.meta as {
     field?: FormFieldDefinition;
     editable?: boolean;
@@ -49,13 +47,8 @@ export function BarcodeCell<T extends SampleRow>({
 
   const options = barcodeOptions?.options || [];
 
-  useEffect(() => {
-    setValue(initialValue ?? "");
-  }, [initialValue]);
-
   const handleChange = (newValue: string) => {
     if (!isEditable) return;
-    setValue(newValue);
     (table.options.meta as { updateData?: (rowIndex: number, columnId: string, value: unknown) => void })
       ?.updateData?.(row.index, column.id, newValue);
   };

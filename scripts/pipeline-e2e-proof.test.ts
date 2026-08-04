@@ -17,7 +17,7 @@ import {
   assertFastqChecksumSummaryRows,
   assertFastqcReportWritebackCoverage,
   assertFastqcSummaryRows,
-  assertMultiqcFastqcCoverage,
+  assertMultiqcFastqcCoverage as assertMultiqcFastqcCoverageImpl,
   assertMultiqcNanoplotMetrics,
   assertNanoplotNanoStatsGroundTruth,
   assertNanoplotSummaryRows,
@@ -53,6 +53,28 @@ import {
   stageFilesMissing,
   writeFastqcInputEvidenceSnapshotFile,
 } from "./lib/pipeline-e2e-proof.mjs";
+
+interface MultiqcFastqcCoverageOptions {
+  expectedSamples: unknown[];
+  generalStatsData?: unknown;
+  fastqcData?: unknown;
+  stagedFastqcArtifacts: unknown[];
+  expectedSequenceCountsByIdentity?:
+    | Map<string, number>
+    | Record<string, number>;
+  context: string;
+}
+
+function assertMultiqcFastqcCoverage(
+  options: MultiqcFastqcCoverageOptions,
+) {
+  return assertMultiqcFastqcCoverageImpl({
+    generalStatsData: undefined,
+    fastqcData: undefined,
+    expectedSequenceCountsByIdentity: undefined,
+    ...options,
+  });
+}
 
 const runId = "cm-run_123";
 const runFolder = "/shared/seqdesk/runs/cm-run_123";

@@ -1,18 +1,24 @@
 /**
- * MIxS Checklist Import Script
+ * MIxS checklist baseline maintenance.
  *
- * This script reads the ENA MIxS XML checklist files from v1 and converts them
- * to the v2 JSON field template format.
+ * With no source directory, this deterministically rebuilds _index.json from
+ * the committed checklist JSON files. Legacy ENA XML conversion is available
+ * only when its source directory is supplied explicitly; the current repository
+ * does not contain the former Django project's project/static/xml directory.
  *
  * Usage:
  *   npx tsx scripts/import-mixs-checklists.ts
+ *   npx tsx scripts/import-mixs-checklists.ts --check
+ *   npx tsx scripts/import-mixs-checklists.ts --source-dir /path/to/ena/xml
  *
  * Output:
- *   Creates JSON files in data/field-templates/mixs-full/ directory
+ *   Rebuilds data/field-templates/mixs-full/_index.json and, when
+ *   --source-dir is provided, converts that directory's XML files first.
  */
 
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
 
 // Simple XML parser - we'll parse manually since the structure is predictable
 function parseXML(xml: string): ChecklistXML {
@@ -231,83 +237,314 @@ function convertToV2Template(checklist: ChecklistXML): V2Template {
   };
 }
 
-// Main execution
-async function main() {
-  const v1XmlDir = path.join(__dirname, "../../project/static/xml");
-  const v2OutputDir = path.join(__dirname, "../data/field-templates/mixs-full");
+interface ChecklistIndexEntry {
+  name: string;
+  file: string;
+  fieldCount: number;
+  mandatoryCount: number;
+}
 
-  // Create output directory
-  if (!fs.existsSync(v2OutputDir)) {
-    fs.mkdirSync(v2OutputDir, { recursive: true });
+interface ChecklistIndex {
+  version: number;
+  source: string;
+  checklists: ChecklistIndexEntry[];
+}
+
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const defaultOutputDir = path.join(scriptDir, "../data/field-templates/mixs-full");
+
+function compareAscii(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function readCommittedTemplate(outputDir: string, file: string): V2Template {
+  const template = JSON.parse(
+    fs.readFileSync(path.join(outputDir, file), "utf-8"),
+  ) as Partial<V2Template>;
+
+  if (
+    typeof template.name !== "string" ||
+    typeof template.version !== "string" ||
+    typeof template.source !== "string" ||
+    typeof template.accession !== "string" ||
+    !Array.isArray(template.fields)
+  ) {
+    throw new Error(`Invalid MIxS checklist JSON: ${file}`);
   }
 
-  // List of XML files to process (excluding non-checklist files)
-  const xmlFiles = fs.readdirSync(v1XmlDir)
-    .filter(f => f.endsWith(".xml"))
-    .filter(f => !f.includes("template") && !f.includes("submission"));
+  return template as V2Template;
+}
 
-  console.log(`Found ${xmlFiles.length} XML files to process`);
-  console.log("---");
+export function buildChecklistIndex(outputDir = defaultOutputDir): ChecklistIndex {
+  const files = fs
+    .readdirSync(outputDir)
+    .filter((file) => file.endsWith(".json") && !file.startsWith("_"))
+    .sort(compareAscii);
 
-  const summary: { name: string; fields: number; mandatory: number }[] = [];
+  const seenAccessions = new Set<string>();
+  const checklists = files.map((file): ChecklistIndexEntry => {
+    const template = readCommittedTemplate(outputDir, file);
+    if (seenAccessions.has(template.accession)) {
+      throw new Error(`Duplicate MIxS checklist accession ${template.accession}`);
+    }
+    seenAccessions.add(template.accession);
 
-  for (const xmlFile of xmlFiles) {
-    const xmlPath = path.join(v1XmlDir, xmlFile);
-    const xmlContent = fs.readFileSync(xmlPath, "utf-8");
+    return {
+      name: template.name,
+      file,
+      fieldCount: template.fields.length,
+      mandatoryCount: template.fields.filter((field) => field.required).length,
+    };
+  });
 
+  return {
+    version: 1,
+    source: "ENA MIxS Checklists (each JSON definition records its ENA accession URL)",
+    checklists,
+  };
+}
+
+export function renderChecklistIndex(outputDir = defaultOutputDir): string {
+  return `${JSON.stringify(buildChecklistIndex(outputDir), null, 2)}\n`;
+}
+
+export function writeChecklistIndex(outputDir = defaultOutputDir): string {
+  const indexPath = path.join(outputDir, "_index.json");
+  fs.writeFileSync(indexPath, renderChecklistIndex(outputDir), "utf-8");
+  return indexPath;
+}
+
+export function checkChecklistIndex(outputDir = defaultOutputDir): boolean {
+  const indexPath = path.join(outputDir, "_index.json");
+  return (
+    fs.existsSync(indexPath) &&
+    fs.readFileSync(indexPath, "utf-8") === renderChecklistIndex(outputDir)
+  );
+}
+
+export function importLegacyXmlChecklists(
+  sourceDir: string,
+  outputDir = defaultOutputDir,
+): number {
+  if (!fs.statSync(sourceDir, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new Error(`MIxS XML source directory does not exist: ${sourceDir}`);
+  }
+
+  const xmlFiles = fs
+    .readdirSync(sourceDir)
+    .filter((file) => file.endsWith(".xml"))
+    .filter((file) => !file.includes("template") && !file.includes("submission"))
+    .sort(compareAscii);
+
+  const imports = xmlFiles.map((xmlFile) => {
+    const xmlContent = fs.readFileSync(path.join(sourceDir, xmlFile), "utf-8");
+    const template = convertToV2Template(parseXML(xmlContent));
+    if (!template.accession.trim()) {
+      throw new Error(`MIxS XML checklist has no accession: ${xmlFile}`);
+    }
+    const baseName = xmlFile
+      .replace(/\.xml$/i, "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "");
+    return {
+      xmlFile,
+      template,
+      proposedFile: `mixs-${baseName}.json`,
+    };
+  });
+
+  const outputExists = fs.existsSync(outputDir);
+  const existingFiles = outputExists
+    ? fs
+        .readdirSync(outputDir)
+        .filter((file) => file.endsWith(".json") && !file.startsWith("_"))
+        .sort(compareAscii)
+    : [];
+  const existingByAccession = new Map<string, string>();
+  const accessionByFile = new Map<string, string>();
+  for (const file of existingFiles) {
+    const template = readCommittedTemplate(outputDir, file);
+    if (existingByAccession.has(template.accession)) {
+      throw new Error(`Duplicate MIxS checklist accession ${template.accession}`);
+    }
+    existingByAccession.set(template.accession, file);
+    accessionByFile.set(file, template.accession);
+  }
+
+  const importedAccessions = new Set<string>();
+  const resolvedImports = imports.map((entry) => {
+    if (importedAccessions.has(entry.template.accession)) {
+      throw new Error(
+        `Duplicate imported MIxS checklist accession ${entry.template.accession}`,
+      );
+    }
+    importedAccessions.add(entry.template.accession);
+
+    // Preserve the repository's established filename when refreshing a known
+    // accession. Legacy XML basenames do not consistently match those names
+    // (for example ENADefaultSampleChecklist.xml -> mixs-default.json).
+    const outputFile =
+      existingByAccession.get(entry.template.accession) ?? entry.proposedFile;
+    const occupyingAccession = accessionByFile.get(outputFile);
+    if (
+      occupyingAccession !== undefined &&
+      occupyingAccession !== entry.template.accession
+    ) {
+      throw new Error(
+        `MIxS import filename collision: ${outputFile} belongs to ${occupyingAccession}`,
+      );
+    }
+    accessionByFile.set(outputFile, entry.template.accession);
+    return { ...entry, outputFile };
+  });
+
+  const outputParent = path.dirname(outputDir);
+  fs.mkdirSync(outputParent, { recursive: true });
+  const stagingDir = fs.mkdtempSync(
+    path.join(outputParent, `.${path.basename(outputDir)}-import-`),
+  );
+  const backupDir = `${stagingDir}-previous`;
+  let outputMovedToBackup = false;
+
+  try {
+    if (outputExists) {
+      fs.chmodSync(stagingDir, fs.statSync(outputDir).mode & 0o777);
+      for (const entry of fs.readdirSync(outputDir)) {
+        fs.cpSync(path.join(outputDir, entry), path.join(stagingDir, entry), {
+          recursive: true,
+          preserveTimestamps: true,
+        });
+      }
+    }
+
+    for (const entry of resolvedImports) {
+      fs.writeFileSync(
+        path.join(stagingDir, entry.outputFile),
+        `${JSON.stringify(entry.template, null, 2)}\n`,
+        "utf-8",
+      );
+    }
+
+    // Build the index against the complete staged directory. Duplicate
+    // accessions, invalid JSON, and index-generation errors are therefore
+    // detected before any committed baseline file is replaced.
+    writeChecklistIndex(stagingDir);
+
+    if (outputExists) {
+      fs.renameSync(outputDir, backupDir);
+      outputMovedToBackup = true;
+    }
     try {
-      const checklist = parseXML(xmlContent);
-      const v2Template = convertToV2Template(checklist);
-
-      // Generate output filename
-      const baseName = xmlFile.replace(".xml", "").toLowerCase().replace(/([A-Z])/g, "-$1").replace(/^-/, "");
-      const outputFile = `mixs-${baseName}.json`;
-      const outputPath = path.join(v2OutputDir, outputFile);
-
-      fs.writeFileSync(outputPath, JSON.stringify(v2Template, null, 2));
-
-      const mandatoryCount = v2Template.fields.filter(f => f.required).length;
-      summary.push({
-        name: v2Template.name,
-        fields: v2Template.fields.length,
-        mandatory: mandatoryCount,
-      });
-
-      console.log(`Converted: ${xmlFile} -> ${outputFile}`);
-      console.log(`  Name: ${v2Template.name}`);
-      console.log(`  Accession: ${v2Template.accession}`);
-      console.log(`  Fields: ${v2Template.fields.length} (${mandatoryCount} mandatory)`);
-      console.log("");
+      fs.renameSync(stagingDir, outputDir);
     } catch (error) {
-      console.error(`Error processing ${xmlFile}:`, error);
+      if (outputMovedToBackup) {
+        fs.renameSync(backupDir, outputDir);
+        outputMovedToBackup = false;
+      }
+      throw error;
+    }
+
+    if (outputMovedToBackup) {
+      fs.rmSync(backupDir, { recursive: true, force: true });
+      outputMovedToBackup = false;
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    if (outputMovedToBackup && !fs.existsSync(outputDir)) {
+      fs.renameSync(backupDir, outputDir);
+      outputMovedToBackup = false;
     }
   }
 
-  // Write summary
-  console.log("---");
-  console.log("Summary:");
-  console.log("---");
-  for (const item of summary) {
-    console.log(`${item.name}: ${item.fields} fields (${item.mandatory} mandatory)`);
+  for (const entry of resolvedImports) {
+    console.log(`Converted ${entry.xmlFile} -> ${entry.outputFile}`);
   }
 
-  // Create an index file
-  const indexPath = path.join(v2OutputDir, "_index.json");
-  const index = {
-    generated: new Date().toISOString(),
-    source: "ENA MIxS Checklists",
-    checklists: summary.map(s => ({
-      name: s.name,
-      file: `mixs-${s.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.json`,
-      fieldCount: s.fields,
-      mandatoryCount: s.mandatory,
-    })),
-  };
-  fs.writeFileSync(indexPath, JSON.stringify(index, null, 2));
-
-  console.log("");
-  console.log(`Created index at: ${indexPath}`);
-  console.log(`Output directory: ${v2OutputDir}`);
+  return xmlFiles.length;
 }
 
-main().catch(console.error);
+interface CliOptions {
+  check: boolean;
+  outputDir: string;
+  sourceDir?: string;
+}
+
+function usage(): string {
+  return [
+    "Usage: npx tsx scripts/import-mixs-checklists.ts [options]",
+    "",
+    "Options:",
+    "  --check              Fail if _index.json differs from committed JSON files",
+    "  --output-dir PATH    Checklist JSON directory (defaults to the repository baseline)",
+    "  --source-dir PATH    Explicit legacy ENA XML directory to import before indexing",
+    "  -h, --help           Show this help",
+  ].join("\n");
+}
+
+function parseArgs(args: string[]): CliOptions {
+  const options: CliOptions = { check: false, outputDir: defaultOutputDir };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--check") {
+      options.check = true;
+    } else if (arg === "--output-dir" || arg === "--source-dir") {
+      const value = args[index + 1];
+      if (!value) throw new Error(`${arg} requires a path`);
+      if (arg === "--output-dir") options.outputDir = path.resolve(value);
+      else options.sourceDir = path.resolve(value);
+      index += 1;
+    } else if (arg === "-h" || arg === "--help") {
+      console.log(usage());
+      process.exitCode = 0;
+      return options;
+    } else {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+  }
+  return options;
+}
+
+export function main(args = process.argv.slice(2)): void {
+  if (args.includes("-h") || args.includes("--help")) {
+    console.log(usage());
+    return;
+  }
+
+  const options = parseArgs(args);
+  if (options.check && options.sourceDir) {
+    throw new Error("--check cannot be combined with --source-dir because import writes JSON files");
+  }
+  if (options.sourceDir) {
+    const imported = importLegacyXmlChecklists(options.sourceDir, options.outputDir);
+    console.log(`Imported ${imported} legacy ENA XML checklist file(s)`);
+    console.log(`Created index at: ${path.join(options.outputDir, "_index.json")}`);
+    return;
+  }
+
+  if (options.check) {
+    if (!checkChecklistIndex(options.outputDir)) {
+      throw new Error(
+        `MIxS checklist index is stale; run npx tsx scripts/import-mixs-checklists.ts --output-dir ${options.outputDir}`,
+      );
+    }
+    console.log(`MIxS checklist index is current: ${path.join(options.outputDir, "_index.json")}`);
+    return;
+  }
+
+  console.log(`Created index at: ${writeChecklistIndex(options.outputDir)}`);
+}
+
+const isDirectRun =
+  process.argv[1] !== undefined &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isDirectRun) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  }
+}

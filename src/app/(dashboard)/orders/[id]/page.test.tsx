@@ -157,7 +157,13 @@ const publishedRun = {
 
 describe("OrderDetailPage published analysis results", () => {
   const fetchMock = vi.fn();
-  let currentOrderPayload: any;
+  let currentOrderPayload: Omit<
+    typeof orderPayload,
+    "sequencingFilesPublishedAt" | "sequencingFilesPublishedById"
+  > & {
+    sequencingFilesPublishedAt: string | null;
+    sequencingFilesPublishedById: string | null;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();

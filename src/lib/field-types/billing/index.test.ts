@@ -169,6 +169,9 @@ describe("getPspElementPattern", () => {
 });
 
 describe("billingFieldType", () => {
+  const displayField = {} as Parameters<
+    NonNullable<typeof billingFieldType.getDisplayValue>
+  >[1];
   it("has correct metadata", () => {
     expect(billingFieldType.type).toBe("billing");
     expect(billingFieldType.label).toBe("Cost Center & PSP");
@@ -211,24 +214,24 @@ describe("billingFieldType", () => {
 
   it("getDisplayValue shows cost center and PSP", () => {
     const value = { costCenter: "12345678", pspElement: "1-1234567-99" };
-    expect(billingFieldType.getDisplayValue!(value)).toBe(
+    expect(billingFieldType.getDisplayValue!(value, displayField)).toBe(
       "Cost Center: 12345678, PSP: 1-1234567-99"
     );
   });
 
   it("getDisplayValue shows only cost center", () => {
     const value = { costCenter: "12345678" };
-    expect(billingFieldType.getDisplayValue!(value)).toBe(
+    expect(billingFieldType.getDisplayValue!(value, displayField)).toBe(
       "Cost Center: 12345678"
     );
   });
 
   it("getDisplayValue returns 'Not provided' for null", () => {
-    expect(billingFieldType.getDisplayValue!(null)).toBe("Not provided");
+    expect(billingFieldType.getDisplayValue!(null, displayField)).toBe("Not provided");
   });
 
   it("getDisplayValue returns 'Not provided' for empty object", () => {
-    expect(billingFieldType.getDisplayValue!({})).toBe("Not provided");
+    expect(billingFieldType.getDisplayValue!({}, displayField)).toBe("Not provided");
   });
 });
 

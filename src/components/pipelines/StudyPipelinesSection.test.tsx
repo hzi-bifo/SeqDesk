@@ -282,7 +282,6 @@ const samples: React.ComponentProps<typeof StudyPipelinesSection>["samples"] = [
     order: null,
     preferredAssemblyId: null,
     assemblies: [],
-    bins: [],
   },
 ];
 
@@ -1403,7 +1402,6 @@ describe("StudyPipelinesSection", () => {
         },
         preferredAssemblyId: null,
         assemblies: [],
-        bins: [],
       },
     ];
     mocks.useSWR.mockImplementation(
@@ -1538,7 +1536,6 @@ describe("StudyPipelinesSection", () => {
             },
           },
         ],
-        bins: [],
       },
     ];
     mocks.useSWR.mockImplementation(makeSwr({ pipelines: [magPipeline], runs: [] }));
@@ -1590,7 +1587,6 @@ describe("StudyPipelinesSection", () => {
             },
           },
         ],
-        bins: [],
       },
     ];
     mocks.useSWR.mockImplementation(makeSwr({ pipelines: [magPipeline], runs: [] }));
@@ -1793,7 +1789,6 @@ describe("StudyPipelinesSection", () => {
         preferredAssemblyId: null,
         // No assemblies -> assemblies check fails -> blocking.
         assemblies: [],
-        bins: [],
       },
     ];
     mocks.useSWR.mockImplementation(submgSwr([]));
@@ -1903,7 +1898,6 @@ describe("StudyPipelinesSection", () => {
         order: null,
         preferredAssemblyId: null,
         assemblies: [],
-        bins: [],
       },
     ];
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
@@ -2290,7 +2284,6 @@ describe("StudyPipelinesSection", () => {
             },
           },
         ],
-        bins: [],
       },
     ];
     fetchMock.mockImplementation((input: RequestInfo | URL) => {

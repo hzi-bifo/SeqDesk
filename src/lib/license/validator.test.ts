@@ -254,7 +254,7 @@ describe("validateLicense", () => {
 
   it("accepts unsigned dev license payloads in development mode", async () => {
     const previousEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "development";
+    (process.env as Record<string, string | undefined>).NODE_ENV = "development";
 
     try {
       const token = generateDevLicense("Local Dev");
@@ -267,7 +267,7 @@ describe("validateLicense", () => {
       expect(payload.type).toBe("enterprise");
       expect(payload.maxUsers).toBe(0);
     } finally {
-      process.env.NODE_ENV = previousEnv;
+      (process.env as Record<string, string | undefined>).NODE_ENV = previousEnv;
     }
 
     expect(() => generateDevLicense("Still Blocked")).toThrow(

@@ -214,8 +214,47 @@ describe("public and demo route quick wins", () => {
     expect(mocks.bootstrapDemoWorkspace).toHaveBeenLastCalledWith("cookie-token", "full");
   });
 
+  it("recovers bootstrap session creation across a concurrent reset gap", async () => {
+    mocks.bootstrapDemoWorkspace
+      .mockResolvedValueOnce({
+        created: false,
+        expiresAt: new Date("2026-03-26T10:00:00.000Z"),
+        workspaceId: "workspace-deleted",
+        token: "workspace-token",
+      })
+      .mockResolvedValueOnce({
+        created: true,
+        expiresAt: new Date("2026-03-26T11:00:00.000Z"),
+        workspaceId: "workspace-winner",
+        token: "workspace-token",
+      });
+    mocks.authorizeDemoWorkspaceToken
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "demo-user-winner" });
+
+    const response = await postDemoBootstrap(
+      new Request("http://localhost/api/demo/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({ workspace: "workspace-token" }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.bootstrapDemoWorkspace).toHaveBeenCalledTimes(2);
+    expect(mocks.bootstrapDemoWorkspace).toHaveBeenNthCalledWith(
+      2,
+      "workspace-token",
+      "full"
+    );
+    expect(mocks.authorizeDemoWorkspaceToken).toHaveBeenCalledTimes(2);
+    expect(await response.json()).toMatchObject({
+      created: true,
+      workspaceId: "workspace-winner",
+    });
+  });
+
   it("maps demo bootstrap failures", async () => {
-    mocks.authorizeDemoWorkspaceToken.mockResolvedValueOnce(null);
+    mocks.authorizeDemoWorkspaceToken.mockResolvedValue(null);
     const failedSession = await postDemoBootstrap(
       new Request("http://localhost/api/demo/bootstrap", {
         method: "POST",
@@ -285,7 +324,7 @@ describe("public and demo route quick wins", () => {
       demoExperience: "full",
     });
 
-    mocks.authorizeDemoWorkspaceToken.mockResolvedValueOnce(null);
+    mocks.authorizeDemoWorkspaceToken.mockResolvedValue(null);
     const failedSession = await postDemoReset(
       new Request("http://localhost/api/demo/reset", {
         method: "POST",
@@ -307,6 +346,42 @@ describe("public and demo route quick wins", () => {
     expect(failed.status).toBe(500);
     expect(await failed.json()).toEqual({
       error: "reset failed",
+    });
+  });
+
+  it("recovers reset session creation across a concurrent reset gap", async () => {
+    mocks.resetDemoWorkspace.mockResolvedValueOnce({
+      created: true,
+      expiresAt: new Date("2026-03-26T10:00:00.000Z"),
+      workspaceId: "workspace-deleted",
+      token: "workspace-token",
+    });
+    mocks.bootstrapDemoWorkspace.mockResolvedValueOnce({
+      created: false,
+      expiresAt: new Date("2026-03-26T11:00:00.000Z"),
+      workspaceId: "workspace-winner",
+      token: "workspace-token",
+    });
+    mocks.authorizeDemoWorkspaceToken
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "demo-user-winner" });
+
+    const response = await postDemoReset(
+      new Request("http://localhost/api/demo/reset", {
+        method: "POST",
+        body: JSON.stringify({ workspace: "workspace-token" }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.bootstrapDemoWorkspace).toHaveBeenCalledWith(
+      "workspace-token",
+      "full"
+    );
+    expect(mocks.authorizeDemoWorkspaceToken).toHaveBeenCalledTimes(2);
+    expect(await response.json()).toMatchObject({
+      created: true,
+      workspaceId: "workspace-winner",
     });
   });
 

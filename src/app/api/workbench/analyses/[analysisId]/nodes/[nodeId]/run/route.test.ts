@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -80,7 +81,7 @@ describe("POST /api/workbench/analyses/[analysisId]/nodes/[nodeId]/run", () => {
   });
 
   it("starts a real importer job for a source node", async () => {
-    const response = await POST(new Request("http://localhost"), params);
+    const response = await POST(new NextRequest("http://localhost"), params);
 
     expect(response.status).toBe(202);
     expect(mocks.createWorkbenchImportJob).toHaveBeenCalledWith({
@@ -109,7 +110,7 @@ describe("POST /api/workbench/analyses/[analysisId]/nodes/[nodeId]/run", () => {
       },
     });
 
-    const response = await POST(new Request("http://localhost"), params);
+    const response = await POST(new NextRequest("http://localhost"), params);
 
     expect(response.status).toBe(400);
     expect(mocks.createWorkbenchImportJob).not.toHaveBeenCalled();

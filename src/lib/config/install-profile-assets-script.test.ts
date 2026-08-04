@@ -8,13 +8,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyProfilePipelineDatabases,
   applyProfileSeedData,
+  buildDownloaderInvocation,
   buildProfilePipelineDatabaseInstallDir,
   buildProfilePipelineDatabaseRoot,
   buildProfilePipelineDatabaseTargetPath,
+  redactSourceUrl,
+  redactTextForLog,
+  resolveProfilePipelineAssetSettings,
   resolveProfileDatabaseRequests,
 } from "../../../scripts/lib/install-profile-assets.mjs";
 
 let tempDir: string;
+
+const testLogger = {
+  log: vi.fn(),
+  warn: vi.fn(),
+} as unknown as Console;
 
 async function createDownloadedFastqBundle(options?: { corruptSha?: boolean }) {
   const sourceDir = path.join(tempDir, "fastq-bundle-source");
@@ -171,6 +180,63 @@ describe("install profile asset script helpers", () => {
     ).toBe("/shared/dbs/metaxpath/db-bundle/installed");
   });
 
+  it("redacts URL credentials and query tokens from persisted and logged text", () => {
+    const sourceUrl =
+      "https://download-user:download-pass@example.org/database.tar.gz?token=secret-token&signature=secret-signature#fragment";
+    expect(redactSourceUrl(sourceUrl)).toBe(
+      "https://example.org/database.tar.gz"
+    );
+    const redactedLog = redactTextForLog(
+      `curl failed for ${sourceUrl}; token=secret-token`,
+      [sourceUrl]
+    );
+    expect(redactedLog).not.toContain("download-user");
+    expect(redactedLog).not.toContain("download-pass");
+    expect(redactedLog).not.toContain("secret-token");
+    expect(redactedLog).not.toContain("secret-signature");
+    expect(redactedLog).toContain("https://example.org/database.tar.gz");
+  });
+
+  it("passes signed download URLs through stdin instead of process arguments", () => {
+    const sourceUrl =
+      "https://download-user:download-pass@example.org/database.tar.gz?token=secret-token";
+
+    for (const command of ["curl", "wget"]) {
+      const invocation = buildDownloaderInvocation(command, sourceUrl, "/tmp/database.tar.gz");
+      expect(invocation.args.join(" ")).not.toContain(sourceUrl);
+      expect(invocation.args.join(" ")).not.toContain("secret-token");
+      expect(invocation.stdin).toContain(sourceUrl);
+    }
+  });
+
+  it("expands home-relative profile paths before resolving pipeline assets", async () => {
+    const prisma = {
+      siteSettings: {
+        findUnique: vi.fn().mockResolvedValue({
+          dataBasePath: null,
+          extraSettings: "{}",
+        }),
+      },
+    };
+
+    await expect(
+      resolveProfilePipelineAssetSettings(prisma, {
+        site: { dataBasePath: "~/seqdesk-data" },
+        pipelines: {
+          databaseDirectory: "~/seqdesk-pipeline-databases",
+          execution: { runDirectory: "~/seqdesk-pipeline-runs" },
+        },
+      })
+    ).resolves.toEqual({
+      dataBasePath: path.join(os.homedir(), "seqdesk-data"),
+      pipelineRunDir: path.join(os.homedir(), "seqdesk-pipeline-runs"),
+      databaseDirectory: path.join(
+        os.homedir(),
+        "seqdesk-pipeline-databases"
+      ),
+    });
+  });
+
   it("skips database downloads unless the profile opts in", async () => {
     const result = await applyProfilePipelineDatabases({
       prisma: {},
@@ -183,7 +249,7 @@ describe("install profile asset script helpers", () => {
         },
       },
       rootDir: process.cwd(),
-      logger: { log: vi.fn(), warn: vi.fn() },
+      logger: testLogger,
     });
 
     expect(result).toEqual({ skipped: true, downloaded: 0, failed: 0 });
@@ -209,7 +275,7 @@ describe("install profile asset script helpers", () => {
           },
         },
         rootDir: process.cwd(),
-        logger: { log: vi.fn(), warn: vi.fn() },
+        logger: testLogger,
       })
     ).rejects.toThrow("Database missing-db is not defined for pipeline metaxpath");
   });
@@ -295,7 +361,7 @@ describe("install profile asset script helpers", () => {
         },
       },
       rootDir,
-      logger: { log: vi.fn(), warn: vi.fn() },
+      logger: testLogger,
     });
 
     const archivePath = path.join(
@@ -326,6 +392,180 @@ describe("install profile asset script helpers", () => {
         },
       })
     );
+  });
+
+  it("replaces a poisoned cached archive and extracts the Kraken database directory", async () => {
+    const rootDir = path.join(tempDir, "kraken-install-root");
+    const databaseRoot = path.join(tempDir, "kraken-profile-dbs");
+    const archiveSourceDir = path.join(tempDir, "kraken-source");
+    const archiveContentDir = path.join(
+      archiveSourceDir,
+      "k2_minusb_20260226"
+    );
+    await fs.mkdir(archiveContentDir, { recursive: true });
+    await Promise.all(
+      ["hash.k2d", "opts.k2d", "taxo.k2d"].map((fileName) =>
+        fs.writeFile(path.join(archiveContentDir, fileName), `${fileName}\n`)
+      )
+    );
+    const archiveSource = path.join(tempDir, "k2_minusb_20260226.tar.gz");
+    execFileSync("tar", [
+      "-czf",
+      archiveSource,
+      "-C",
+      archiveSourceDir,
+      "k2_minusb_20260226",
+    ]);
+    const archiveSha256 = createHash("sha256")
+      .update(await fs.readFile(archiveSource))
+      .digest("hex");
+
+    await fs.mkdir(path.join(rootDir, "data"), { recursive: true });
+    await fs.writeFile(
+      path.join(rootDir, "data", "pipeline-databases.json"),
+      JSON.stringify({
+        "read-cleaning": [
+          {
+            id: "kraken2-db",
+            version: "k2_minusb_20260226",
+            fileName: "k2_minusb_20260226.tar.gz",
+            downloadUrl: `file://${archiveSource}`,
+            sha256: archiveSha256,
+            configKey: "kraken2Db",
+          },
+        ],
+      })
+    );
+
+    const poisonedArchivePath = path.join(
+      databaseRoot,
+      "read-cleaning",
+      "kraken2-db",
+      "k2_minusb_20260226.tar.gz"
+    );
+    await fs.mkdir(path.dirname(poisonedArchivePath), { recursive: true });
+    await fs.writeFile(poisonedArchivePath, "poisoned cached archive");
+
+    const pipelineConfigUpsert = vi.fn().mockResolvedValue({});
+    const result = await applyProfilePipelineDatabases({
+      prisma: makeDatabasePrisma(databaseRoot, pipelineConfigUpsert),
+      profile: {
+        pipelines: {
+          databaseDirectory: databaseRoot,
+          databases: [
+            {
+              pipelineId: "read-cleaning",
+              databaseId: "kraken2-db",
+            },
+          ],
+        },
+      },
+      rootDir,
+      logger: testLogger,
+    });
+
+    const runtimePath = path.join(
+      databaseRoot,
+      "read-cleaning",
+      "kraken2-db",
+      "installed",
+      "k2_minusb_20260226"
+    );
+    await expect(fs.readFile(path.join(runtimePath, "hash.k2d"), "utf8")).resolves.toBe(
+      "hash.k2d\n"
+    );
+    expect(
+      createHash("sha256")
+        .update(await fs.readFile(poisonedArchivePath))
+        .digest("hex")
+    ).toBe(archiveSha256);
+    expect(
+      (await fs.readdir(path.dirname(poisonedArchivePath))).some((name) =>
+        name.endsWith(".part")
+      )
+    ).toBe(false);
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        pipelineId: "read-cleaning",
+        databaseId: "kraken2-db",
+        path: runtimePath,
+        status: "success",
+      }),
+    ]);
+    expect(pipelineConfigUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { pipelineId: "read-cleaning" },
+        create: expect.objectContaining({
+          config: JSON.stringify({ kraken2Db: runtimePath }),
+        }),
+      })
+    );
+  });
+
+  it("persists redacted database source URLs in private status files", async () => {
+    const rootDir = path.join(tempDir, "redacted-status-root");
+    const existingDatabase = path.join(tempDir, "existing", "database.bin");
+    const sensitiveSourceUrl =
+      "https://db-user:db-password@example.org/database.bin?token=secret-token#private";
+    await fs.mkdir(path.dirname(existingDatabase), { recursive: true });
+    await fs.writeFile(existingDatabase, "existing database\n");
+    await fs.mkdir(path.join(rootDir, "data"), { recursive: true });
+    await fs.writeFile(
+      path.join(rootDir, "data", "pipeline-databases.json"),
+      JSON.stringify({
+        custom: [
+          {
+            id: "db",
+            fileName: "database.bin",
+            downloadUrl: sensitiveSourceUrl,
+            configKey: "databasePath",
+          },
+        ],
+      })
+    );
+
+    const result = await applyProfilePipelineDatabases({
+      prisma: makeDatabasePrisma(path.join(tempDir, "profile-dbs")),
+      profile: {
+        pipelines: {
+          databases: [
+            {
+              pipelineId: "custom",
+              databaseId: "db",
+              mode: "skip",
+              path: existingDatabase,
+            },
+          ],
+        },
+      },
+      rootDir,
+      logger: testLogger,
+    });
+
+    const indexPath = path.join(
+      rootDir,
+      "pipelines",
+      ".pipeline-database-downloads.json"
+    );
+    const statusPath = path.join(
+      rootDir,
+      "pipelines",
+      ".pipeline-database-download-status.json"
+    );
+    const persistedText = [
+      await fs.readFile(indexPath, "utf8"),
+      await fs.readFile(statusPath, "utf8"),
+      JSON.stringify(result),
+    ].join("\n");
+    expect(persistedText).toContain("https://example.org/database.bin");
+    expect(persistedText).not.toContain("db-user");
+    expect(persistedText).not.toContain("db-password");
+    expect(persistedText).not.toContain("secret-token");
+    expect((await fs.stat(indexPath)).mode & 0o777).toBe(0o600);
+    expect((await fs.stat(statusPath)).mode & 0o777).toBe(0o600);
+    const logPath = result.results?.[0]?.logPath;
+    expect(typeof logPath).toBe("string");
+    expect((await fs.stat(String(logPath))).mode & 0o777).toBe(0o600);
   });
 
   it("accepts the SeqDesk.com admin array shape for database requests", async () => {
@@ -387,7 +627,7 @@ describe("install profile asset script helpers", () => {
         },
       },
       rootDir,
-      logger: { log: vi.fn(), warn: vi.fn() },
+      logger: testLogger,
     });
 
     const paramsPath = path.join(
@@ -448,7 +688,7 @@ describe("install profile asset script helpers", () => {
         },
       },
       rootDir,
-      logger: { log: vi.fn(), warn: vi.fn() },
+      logger: testLogger,
     });
 
     expect(result).toMatchObject({ skipped: false, downloaded: 1, failed: 0 });
@@ -494,7 +734,7 @@ describe("install profile asset script helpers", () => {
           },
         },
         rootDir,
-        logger: { log: vi.fn(), warn: vi.fn() },
+        logger: testLogger,
       })
     ).rejects.toThrow(
       `metaxpath/db-bundle does not exist or is empty: ${missingParamsPath}`
@@ -520,7 +760,7 @@ describe("install profile asset script helpers", () => {
           },
         },
         rootDir,
-        logger: { log: vi.fn(), warn: vi.fn() },
+        logger: testLogger,
       })
     ).rejects.toThrow("uses mode=skip but no path was provided");
   });
@@ -543,7 +783,7 @@ describe("install profile asset script helpers", () => {
           },
         },
         rootDir,
-        logger: { log: vi.fn(), warn: vi.fn() },
+        logger: testLogger,
       })
     ).rejects.toThrow("requires sha256");
   });
@@ -566,7 +806,7 @@ describe("install profile asset script helpers", () => {
           },
         },
         rootDir,
-        logger: { log: vi.fn(), warn: vi.fn() },
+        logger: testLogger,
       })
     ).rejects.toThrow("requires sha256");
   });
@@ -590,7 +830,7 @@ describe("install profile asset script helpers", () => {
           },
         },
         rootDir,
-        logger: { log: vi.fn(), warn: vi.fn() },
+        logger: testLogger,
       })
     ).rejects.toThrow("allowed asset root");
   });
@@ -622,7 +862,7 @@ describe("install profile asset script helpers", () => {
         },
       },
       rootDir,
-      logger: { log: vi.fn(), warn: vi.fn() },
+      logger: testLogger,
     });
 
     await expect(fs.readFile(archivePath, "utf8")).resolves.toBe("test archive");
@@ -672,6 +912,62 @@ describe("install profile asset script helpers", () => {
       autoDownload: true,
       requests: [
         { pipelineId: "metaxpath", databaseId: "db-bundle", required: true, mode: "ensure" },
+      ],
+    });
+  });
+
+  it("does not resolve database assets for globally or explicitly deselected pipelines", () => {
+    const staleDownload = {
+      pipelineId: "metaxpath",
+      databaseId: "db-bundle",
+      required: true,
+    };
+
+    expect(
+      resolveProfileDatabaseRequests(
+        {
+          pipelines: {
+            enabled: false,
+            databases: { autoDownload: true, downloads: [staleDownload] },
+          },
+        },
+        {}
+      )
+    ).toEqual({ autoDownload: false, requests: [] });
+
+    expect(
+      resolveProfileDatabaseRequests(
+        {
+          pipelines: {
+            enabled: true,
+            enable: ["fastqc"],
+            databases: { autoDownload: true, downloads: [staleDownload] },
+          },
+        },
+        {}
+      )
+    ).toEqual({ autoDownload: true, requests: [] });
+
+    expect(
+      resolveProfileDatabaseRequests(
+        {
+          pipelines: {
+            enabled: true,
+            enable: ["metaxpath"],
+            databases: { autoDownload: true, downloads: [staleDownload] },
+          },
+        },
+        {}
+      )
+    ).toEqual({
+      autoDownload: true,
+      requests: [
+        {
+          pipelineId: "metaxpath",
+          databaseId: "db-bundle",
+          required: true,
+          mode: "ensure",
+        },
       ],
     });
   });
@@ -732,7 +1028,8 @@ describe("install profile asset script helpers", () => {
           ],
         },
       },
-      logger: { log: vi.fn(), warn: vi.fn() },
+      activity: undefined,
+      logger: testLogger,
     });
 
     expect(result.seeded).toBe(1);
@@ -752,6 +1049,15 @@ describe("install profile asset script helpers", () => {
     const bundle = await createDownloadedFastqBundle();
     const installedDataPath = path.join(tempDir, "installed-data");
     const profileDefaultDataPath = path.join(tempDir, "profile-default-data");
+    const cachedArchivePath = path.join(
+      installedDataPath,
+      "fixtures",
+      "ci-runner",
+      ".downloads",
+      "ci-runner-fastq-checksum-smoke.tar.gz"
+    );
+    await fs.mkdir(path.dirname(cachedArchivePath), { recursive: true });
+    await fs.writeFile(cachedArchivePath, "poisoned fixture cache");
     const readCreate = vi.fn().mockResolvedValue({});
     const sampleCreate = vi
       .fn()
@@ -817,15 +1123,20 @@ describe("install profile asset script helpers", () => {
         },
       },
       rootDir: tempDir,
-      logger: { log: vi.fn(), warn: vi.fn() },
+      activity: undefined,
+      logger: testLogger,
     });
 
     expect(result.seeded).toBe(1);
-    expect(result.results[0]).toMatchObject({
+    const seededResult = result.results?.[0];
+    expect(seededResult).toMatchObject({
       fixtureId: "ci-runner-fastq-checksum-smoke",
       orderNumber: "CI-RUNNER-SMOKE-001",
       samples: 2,
     });
+    if (!seededResult || !("logPath" in seededResult)) {
+      throw new Error("Expected downloaded FASTQ seed result to include a log path");
+    }
     expect(readCreate).toHaveBeenCalledTimes(2);
     expect(readCreate.mock.calls[0][0].data).toMatchObject({
       file1: "fixtures/ci-runner/ci-runner-fastq-checksum-smoke/reads/CI-RUNNER-FASTQ-01.fastq.gz",
@@ -848,6 +1159,15 @@ describe("install profile asset script helpers", () => {
         )
       )
     ).rejects.toThrow();
+    expect(
+      createHash("sha256")
+        .update(await fs.readFile(cachedArchivePath))
+        .digest("hex")
+    ).toBe(bundle.sha256);
+    expect((await fs.stat(cachedArchivePath)).mode & 0o777).toBe(0o600);
+    expect((await fs.stat(seededResult.logPath)).mode & 0o777).toBe(
+      0o600
+    );
   });
 
   it("seeds metadata-driven example dataset fixtures from downloaded bundles", async () => {
@@ -994,7 +1314,8 @@ describe("install profile asset script helpers", () => {
         },
       },
       rootDir: tempDir,
-      logger: { log: vi.fn(), warn: vi.fn() },
+      activity: undefined,
+      logger: testLogger,
     });
 
     expect(result.seeded).toBe(1);
@@ -1068,6 +1389,13 @@ describe("install profile asset script helpers", () => {
 
   it("fails a required downloaded FASTQ fixture when the SHA256 does not match", async () => {
     const bundle = await createDownloadedFastqBundle({ corruptSha: true });
+    const cachedArchivePath = path.join(
+      tempDir,
+      "fixtures",
+      "ci-runner",
+      ".downloads",
+      "ci-runner-fastq-checksum-smoke.tar.gz"
+    );
     await expect(
       applyProfileSeedData({
         prisma: {
@@ -1097,9 +1425,11 @@ describe("install profile asset script helpers", () => {
           },
         },
         rootDir: tempDir,
-        logger: { log: vi.fn(), warn: vi.fn() },
+        activity: undefined,
+        logger: testLogger,
       })
     ).rejects.toThrow("SHA256 mismatch");
+    await expect(fs.stat(cachedArchivePath)).rejects.toThrow();
   });
 
   it("keeps downloaded FASTQ fixture read writebacks when reapplied", async () => {
@@ -1174,7 +1504,8 @@ describe("install profile asset script helpers", () => {
         },
       },
       rootDir: tempDir,
-      logger: { log: vi.fn(), warn: vi.fn() },
+      activity: undefined,
+      logger: testLogger,
     });
 
     expect(readUpdate.mock.calls[0][0].data).toMatchObject({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -66,22 +66,15 @@ function formatSelectionMode(mode: AssemblyItem["selection"]["mode"]): string {
 }
 
 export default function AssembliesPage() {
-  const { data: session } = useSession();
+  const { data: session, status: sessionStatus } = useSession();
   const [data, setData] = useState<AssembliesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
-  if (session?.user?.isDemo) {
-    return (
-      <DemoFeatureNotice
-        title="Assemblies are disabled in the public demo"
-        description="Downloaded artifacts depend on pipeline execution and local storage. The hosted researcher demo keeps those infrastructure-backed outputs turned off."
-      />
-    );
-  }
+  const isDemo = session?.user?.isDemo === true;
 
-  const fetchAssemblies = async (isRefresh = false) => {
+  const fetchAssemblies = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     setError("");
 
@@ -98,11 +91,21 @@ export default function AssembliesPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
+    if (sessionStatus === "loading" || isDemo) return;
     void fetchAssemblies();
-  }, []);
+  }, [fetchAssemblies, isDemo, sessionStatus]);
+
+  if (isDemo) {
+    return (
+      <DemoFeatureNotice
+        title="Assemblies are disabled in the public demo"
+        description="Downloaded artifacts depend on pipeline execution and local storage. The hosted researcher demo keeps those infrastructure-backed outputs turned off."
+      />
+    );
+  }
 
   return (
     <PageContainer>

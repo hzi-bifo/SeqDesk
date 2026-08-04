@@ -25,7 +25,7 @@ vi.mock("@/lib/sequencing/server", () => {
   class SequencingApiError extends Error {
     status: number;
 
-    constructor(message: string, status: number) {
+    constructor(status: number, message: string) {
       super(message);
       this.name = "SequencingApiError";
       this.status = status;
@@ -132,7 +132,7 @@ describe("GET /api/orders/[id]/files", () => {
   it("maps sequencing session and not-found errors", async () => {
     const { SequencingApiError } = await import("@/lib/sequencing/server");
     mocks.requireFacilityAdminSequencingSession.mockRejectedValueOnce(
-      new SequencingApiError("Forbidden", 403)
+      new SequencingApiError(403, "Forbidden")
     );
 
     const forbidden = await GET(new Request("http://localhost"), {

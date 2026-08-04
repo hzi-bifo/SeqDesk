@@ -83,6 +83,12 @@ describe("DemoBanner", () => {
     render(<DemoBanner embeddedMode={false} demoExperience="researcher" />);
 
     expect(screen.getByText("Researcher Demo")).toBeTruthy();
+    expect(
+      screen
+        .getByText("Researcher Demo")
+        .closest("div.border-b")
+        ?.getAttribute("style")
+    ).toContain("var(--entity-notes-sidebar-offset, 0px)");
     fireEvent.click(screen.getByTestId("demo-reset-button"));
 
     await waitFor(() => {

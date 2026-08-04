@@ -274,7 +274,8 @@ describe("notifyOrderSubmitted", () => {
     // 1 dispatch for the order user + 1 for each admin (minus self) = 2
     expect(mocks.sendViaSeqDeskRelay).toHaveBeenCalledTimes(2);
     const recipients = mocks.sendViaSeqDeskRelay.mock.calls.map(
-      (c: any) => c[0].recipient.email,
+      ([call]) =>
+        (call as { recipient: { email: string } }).recipient.email,
     );
     expect(recipients).toContain("researcher@example.org");
     expect(recipients).toContain("admin@example.org");

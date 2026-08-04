@@ -5,6 +5,17 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  {
+    // These entry points intentionally use Node's CommonJS loader. Keep the
+    // exception scoped to executable scripts instead of weakening app code.
+    files: ["**/*.cjs", "npm/seqdesk/**/*.js", "scripts/upload-release.js"],
+    languageOptions: {
+      sourceType: "commonjs",
+    },
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
@@ -18,6 +29,8 @@ const eslintConfig = defineConfig([
     ".codex/**",
     // Locally extracted release bundles are build artifacts.
     "seqdesk-*/**",
+    // Generated HTML coverage output is not source code.
+    "coverage/**",
   ]),
 ]);
 

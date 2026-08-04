@@ -10,13 +10,6 @@
 
 import type { LicenseData, LicenseStatus } from './types';
 
-// Public key for license verification (RSA or Ed25519)
-// This key can only VERIFY signatures, not create them
-// Replace with your actual public key
-const LICENSE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Z3VS5JJcds3xfn/ygWyDOxLPLLXC4BhPLK1cQsP1LNVYs+V8lXHl4UQNh/g/X7GCJz6P3V+Q2qVEgBJ5kPLRyXGLCOOAEqT5TqmC/xnKGhpLe5JH5T1jQPIhPIXnKFCmWE5k6v6KPBQ/zFGFSJAVYlZzklYpLHCL5hJPRFJbNVxDCWdGkXZAHJKNJYkxPLLCOOAEqT5TqmC/xnKGhpLe5JH5T1jQPIhPIXnKFCmWE5k6v6KPBQ/zFGFSJAVYlZzklYpLHCL5hJPRFJbNVxDCWdGkXZAHJKNJYkxPLHwz8YJ5YKL1QZF3V+Q2qVEgBJ5kPLRyXGLCOOAEqT5TqmC/xnKGhpLe5QIDAQAB
------END PUBLIC KEY-----`;
-
 // For development/testing: Allow unsigned licenses
 const ALLOW_DEV_LICENSE = process.env.NODE_ENV === 'development';
 

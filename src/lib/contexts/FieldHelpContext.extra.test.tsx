@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, waitFor } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -48,6 +48,39 @@ describe("FieldHelpContext", () => {
       expect(result.current.focusedField).toBeNull();
     });
     expect(result.current.validationError).toBeNull();
+  });
+
+  it("keeps dashboard children mounted when the pathname changes", () => {
+    const mounted = vi.fn();
+    const unmounted = vi.fn();
+
+    function PersistentChild() {
+      React.useEffect(() => {
+        mounted();
+        return unmounted;
+      }, []);
+      return null;
+    }
+
+    const { rerender, unmount } = render(
+      <FieldHelpProvider>
+        <PersistentChild />
+      </FieldHelpProvider>
+    );
+    expect(mounted).toHaveBeenCalledTimes(1);
+
+    mocks.usePathname.mockReturnValue("/studies");
+    rerender(
+      <FieldHelpProvider>
+        <PersistentChild />
+      </FieldHelpProvider>
+    );
+
+    expect(mounted).toHaveBeenCalledTimes(1);
+    expect(unmounted).not.toHaveBeenCalled();
+
+    unmount();
+    expect(unmounted).toHaveBeenCalledTimes(1);
   });
 
   it("throws when the hook is used outside the provider", () => {

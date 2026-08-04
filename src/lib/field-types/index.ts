@@ -10,7 +10,6 @@
  */
 
 import { FormFieldDefinition } from "@/types/form-config";
-import { ReactNode } from "react";
 
 // Base interface for field type plugins
 export interface FieldTypePlugin {

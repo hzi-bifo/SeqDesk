@@ -194,7 +194,7 @@ describe("self-hosted pipeline CI contract", () => {
     expect(publisherJob).not.toContain("refs/heads/");
   });
 
-  it("gates production types without treating test-only typing debt as a release failure", () => {
+  it("gates lint and TypeScript across production, scripts, and tests", () => {
     const packageManifest = JSON.parse(
       fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")
     ) as PackageManifest;
@@ -228,7 +228,9 @@ describe("self-hosted pipeline CI contract", () => {
     expect(nextConfig).toContain(
       'tsconfigPath: "tsconfig.production.json"'
     );
-    expect(publicTests).toContain("run: npm run typecheck:production");
+    expect(publicTests).toContain("run: npm run lint");
+    expect(publicTests).toContain("run: npm run typecheck:all");
+    expect(publicTests).not.toContain("run: npm run typecheck:production");
     expect(canonical).toContain("npm run build -- --webpack");
   });
 
@@ -468,6 +470,22 @@ describe("self-hosted pipeline CI contract", () => {
     );
     expect(realStoreBrowserSpec).toContain(
       "packageStats.isSymbolicLink()"
+    );
+  });
+
+  it("runs the public demo browser journey in the required PR gate", () => {
+    const demoGate = playwrightWorkflow.slice(
+      playwrightWorkflow.indexOf("- name: Run public demo browser flow"),
+      playwrightWorkflow.indexOf("- name: Run real pipeline Store browser flow")
+    );
+
+    expect(demoGate).not.toContain("continue-on-error:");
+    expect(demoGate).toContain("run: npm run test:e2e:demo");
+    expect(demoGate).toContain(
+      "PLAYWRIGHT_DEMO_DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_e2e?schema=public"
+    );
+    expect(demoGate).toContain(
+      "PLAYWRIGHT_DEMO_DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_e2e?schema=public"
     );
   });
 

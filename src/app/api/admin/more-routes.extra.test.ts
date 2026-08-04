@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -150,14 +151,14 @@ describe("small admin route quick wins", () => {
 
   it("revokes invites and maps delete route failures", async () => {
     mocks.getServerSession.mockResolvedValueOnce({ user: { role: "USER" } });
-    const unauthorized = await deleteInvite(new Request("http://localhost"), {
+    const unauthorized = await deleteInvite(new NextRequest("http://localhost"), {
       params: Promise.resolve({ id: "invite-1" }),
     });
     expect(unauthorized.status).toBe(401);
     expect(await unauthorized.json()).toEqual({ error: "Unauthorized" });
 
     mocks.db.adminInvite.findUnique.mockResolvedValueOnce(null);
-    const missing = await deleteInvite(new Request("http://localhost"), {
+    const missing = await deleteInvite(new NextRequest("http://localhost"), {
       params: Promise.resolve({ id: "invite-1" }),
     });
     expect(missing.status).toBe(404);
@@ -167,13 +168,13 @@ describe("small admin route quick wins", () => {
       id: "invite-1",
       usedAt: new Date("2026-03-20T00:00:00.000Z"),
     });
-    const used = await deleteInvite(new Request("http://localhost"), {
+    const used = await deleteInvite(new NextRequest("http://localhost"), {
       params: Promise.resolve({ id: "invite-1" }),
     });
     expect(used.status).toBe(400);
     expect(await used.json()).toEqual({ error: "Cannot revoke a used invite" });
 
-    const success = await deleteInvite(new Request("http://localhost"), {
+    const success = await deleteInvite(new NextRequest("http://localhost"), {
       params: Promise.resolve({ id: "invite-1" }),
     });
     expect(success.status).toBe(200);
@@ -183,7 +184,7 @@ describe("small admin route quick wins", () => {
     expect(await success.json()).toEqual({ success: true });
 
     mocks.db.adminInvite.findUnique.mockRejectedValueOnce(new Error("db down"));
-    const failed = await deleteInvite(new Request("http://localhost"), {
+    const failed = await deleteInvite(new NextRequest("http://localhost"), {
       params: Promise.resolve({ id: "invite-1" }),
     });
     expect(failed.status).toBe(500);

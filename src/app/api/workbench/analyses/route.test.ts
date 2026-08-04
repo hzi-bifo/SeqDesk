@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -33,7 +34,7 @@ describe("/api/workbench/analyses", () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     expect((await GET()).status).toBe(401);
-    expect((await POST(new Request("http://localhost"))).status).toBe(401);
+    expect((await POST(new NextRequest("http://localhost"))).status).toBe(401);
   });
 
   it("lists current-user analyses", async () => {
@@ -46,7 +47,7 @@ describe("/api/workbench/analyses", () => {
 
   it("creates a new analysis for the current user", async () => {
     const response = await POST(
-      new Request("http://localhost", {
+      new NextRequest("http://localhost", {
         method: "POST",
         body: JSON.stringify({ name: "New analysis" }),
       })

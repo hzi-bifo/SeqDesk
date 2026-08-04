@@ -13,6 +13,8 @@ import {
 } from "@tanstack/react-table";
 
 declare module "@tanstack/react-table" {
+  // TanStack requires the generic parameter for declaration merging.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface TableMeta<TData extends RowData> {
     updateData: (rowIndex: number, columnIdOrUpdates: string | Record<string, unknown>, value?: unknown) => void;
   }
@@ -107,7 +109,10 @@ function EditableCell({ getValue, row, column, table }: CellContext<Sample, unkn
   const initialValue = getValue() as string;
   const [value, setValue] = useState(initialValue);
 
-  useEffect(() => setValue(initialValue), [initialValue]);
+  useEffect(() => {
+    // This input intentionally keeps an uncommitted draft until blur.
+    setValue(initialValue);
+  }, [initialValue]);
 
   const onBlur = () => {
     if (value !== initialValue) {
@@ -144,14 +149,11 @@ function EditableCell({ getValue, row, column, table }: CellContext<Sample, unkn
 // Select cell component
 function SelectCell({ getValue, row, column, table }: CellContext<Sample, unknown>) {
   const initialValue = getValue() as string;
-  const [value, setValue] = useState(initialValue);
+  const value = initialValue;
   const options = (column.columnDef.meta as { options?: { value: string; label: string }[] })?.options || [];
-
-  useEffect(() => setValue(initialValue), [initialValue]);
 
   const onChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newValue = e.target.value;
-    setValue(newValue);
     table.options.meta?.updateData(row.index, column.id, newValue);
   };
 
@@ -194,10 +196,6 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
   const [checklistName, setChecklistName] = useState<string | null>(null);
   const apiStudyId = study?.id ?? id;
 
-  useEffect(() => {
-    fetchStudy();
-  }, [id]);
-
   // Warn user about unsaved changes when leaving
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -210,73 +208,76 @@ export default function StudyMetadataPage({ params }: { params: Promise<{ id: st
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [hasChanges]);
 
-  const fetchStudy = async () => {
-    try {
-      const res = await fetch(`/api/studies/${id}`);
-      if (!res.ok) throw new Error("Failed to fetch study");
-      const data = await res.json();
-      setStudy(data);
-      if (typeof data?.id === "string" && data.id !== id) {
-        router.replace(`/studies/${data.id}`);
-      }
-      setSamples(data.samples || []);
-
-      // Parse study metadata
-      if (data.studyMetadata) {
-        try {
-          setStudyMetadata(JSON.parse(data.studyMetadata));
-        } catch {
-          setStudyMetadata({});
+  useEffect(() => {
+    const loadChecklistFields = async (
+      checklistType: string,
+      mixsVersion?: number | null
+    ) => {
+      try {
+        // New studies store the accession; legacy studies store a slug or a free
+        // form name. Resolve to a registry lookup ref either way.
+        const ref = resolveChecklistRef(checklistType);
+        const checklistParams = new URLSearchParams();
+        if (ref.accession) {
+          checklistParams.set("accession", ref.accession);
+        } else if (ref.name) {
+          checklistParams.set("name", ref.name);
+        } else {
+          return;
         }
-      }
+        if (mixsVersion) {
+          checklistParams.set("version", String(mixsVersion));
+        }
 
-      // Load MIxS checklist fields if checklist type is set
-      if (data.checklistType) {
-        await loadChecklistFields(data.checklistType, data.mixsVersion);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load study");
-    } finally {
-      setLoading(false);
-    }
-  };
+        const res = await fetch(`/api/mixs-checklists?${checklistParams.toString()}`);
+        if (!res.ok) return;
 
-  const loadChecklistFields = async (
-    checklistType: string,
-    mixsVersion?: number | null
-  ) => {
-    try {
-      // New studies store the accession; legacy studies store a slug or a free
-      // form name. Resolve to a registry lookup ref either way.
-      const ref = resolveChecklistRef(checklistType);
-      const params = new URLSearchParams();
-      if (ref.accession) {
-        params.set("accession", ref.accession);
-      } else if (ref.name) {
-        params.set("name", ref.name);
-      } else {
-        return;
+        const data = await res.json();
+        if (typeof data.name === "string") {
+          setChecklistName(data.name);
+        }
+        if (data.fields) {
+          const visibleFields = data.fields.filter(
+            (field: MixsField) => field.visible !== false
+          );
+          setChecklistFields(visibleFields);
+        }
+      } catch (err) {
+        console.error("Failed to load checklist fields:", err);
       }
-      if (mixsVersion) {
-        params.set("version", String(mixsVersion));
-      }
+    };
 
-      const res = await fetch(`/api/mixs-checklists?${params.toString()}`);
-      if (!res.ok) return;
+    const fetchStudy = async () => {
+      try {
+        const res = await fetch(`/api/studies/${id}`);
+        if (!res.ok) throw new Error("Failed to fetch study");
+        const data = await res.json();
+        setStudy(data);
+        if (typeof data?.id === "string" && data.id !== id) {
+          router.replace(`/studies/${data.id}`);
+        }
+        setSamples(data.samples || []);
 
-      const data = await res.json();
-      if (typeof data.name === "string") {
-        setChecklistName(data.name);
+        if (data.studyMetadata) {
+          try {
+            setStudyMetadata(JSON.parse(data.studyMetadata));
+          } catch {
+            setStudyMetadata({});
+          }
+        }
+
+        if (data.checklistType) {
+          await loadChecklistFields(data.checklistType, data.mixsVersion);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load study");
+      } finally {
+        setLoading(false);
       }
-      if (data.fields) {
-        // Filter to visible fields only
-        const visibleFields = data.fields.filter((f: MixsField) => f.visible !== false);
-        setChecklistFields(visibleFields);
-      }
-    } catch (err) {
-      console.error("Failed to load checklist fields:", err);
-    }
-  };
+    };
+
+    void fetchStudy();
+  }, [id, router]);
 
   const handleSave = async () => {
     if (!study) return;

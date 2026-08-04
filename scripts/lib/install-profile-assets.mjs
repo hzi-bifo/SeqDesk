@@ -4,6 +4,7 @@ import fsp from "fs/promises";
 import path from "path";
 import { spawn, spawnSync } from "child_process";
 import { gzipSync } from "zlib";
+import { expandLeadingHomePath } from "./install-profile-paths.mjs";
 
 const SITE_SETTINGS_ID = "singleton";
 const DB_DOWNLOAD_INDEX_FILE = ".pipeline-database-downloads.json";
@@ -11,6 +12,9 @@ const DB_DOWNLOAD_STATUS_FILE = ".pipeline-database-download-status.json";
 const DB_DOWNLOAD_LOG_DIR = ".pipeline-database-download-logs";
 const FIXTURE_DOWNLOAD_LOG_DIR = ".profile-fixture-download-logs";
 const DEFAULT_PIPELINE_RUN_DIR = "/data/pipeline_runs";
+const PRIVATE_FILE_MODE = 0o600;
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const REMOTE_METADATA_TIMEOUT_MS = 15_000;
 
 export function isRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -147,6 +151,16 @@ export function loadPipelineDatabaseDefinitions(rootDir = process.cwd()) {
 
 export function resolveProfileDatabaseRequests(profile, definitions = {}) {
   const pipelines = toRecord(profile.pipelines);
+  const pipelinesEnabled = toOptionalBoolean(pipelines.enabled);
+  const hasExplicitEnableList = Array.isArray(pipelines.enable);
+  const enabledPipelineIds = new Set(
+    hasExplicitEnableList
+      ? pipelines.enable.map((value) => toOptionalString(value)).filter(Boolean)
+      : []
+  );
+  if (pipelinesEnabled === false) {
+    return { autoDownload: false, requests: [] };
+  }
   const databasesValue = pipelines.databases;
   const databases = toRecord(databasesValue);
   const rawDownloads = Array.isArray(databasesValue)
@@ -170,6 +184,7 @@ export function resolveProfileDatabaseRequests(profile, definitions = {}) {
       const pipelineId = toOptionalString(item.pipelineId);
       const databaseId = toOptionalString(item.databaseId);
       if (!pipelineId || !databaseId) continue;
+      if (hasExplicitEnableList && !enabledPipelineIds.has(pipelineId)) continue;
       const mode = toOptionalString(item.mode)?.toLowerCase();
       requests.push(buildProfileDatabaseRequest({
         pipelineId,
@@ -234,16 +249,16 @@ export async function resolveProfilePipelineAssetSettings(prisma, profile) {
 
   return {
     pipelineRunDir:
-      toOptionalString(executionProfile.runDirectory) ||
-      toOptionalString(executionProfile.pipelineRunDir) ||
-      toOptionalString(execution.pipelineRunDir) ||
+      expandLeadingHomePath(executionProfile.runDirectory) ||
+      expandLeadingHomePath(executionProfile.pipelineRunDir) ||
+      expandLeadingHomePath(execution.pipelineRunDir) ||
       DEFAULT_PIPELINE_RUN_DIR,
     databaseDirectory:
-      toOptionalString(pipelines.databaseDirectory) ||
-      toOptionalString(execution.pipelineDatabaseDir),
+      expandLeadingHomePath(pipelines.databaseDirectory) ||
+      expandLeadingHomePath(execution.pipelineDatabaseDir),
     dataBasePath:
-      toOptionalString(settings?.dataBasePath) ||
-      toOptionalString(site.dataBasePath),
+      expandLeadingHomePath(settings?.dataBasePath) ||
+      expandLeadingHomePath(site.dataBasePath),
   };
 }
 
@@ -261,8 +276,22 @@ async function readJsonIndex(filePath) {
 }
 
 async function writeJsonIndex(filePath, value) {
-  await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  await fsp.writeFile(filePath, JSON.stringify(value, null, 2));
+  const parentDir = path.dirname(filePath);
+  await fsp.mkdir(parentDir, { recursive: true });
+  const tempPath = path.join(
+    parentDir,
+    `.${path.basename(filePath)}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`
+  );
+  try {
+    await fsp.writeFile(tempPath, JSON.stringify(value, null, 2), {
+      mode: PRIVATE_FILE_MODE,
+      flag: "wx",
+    });
+    await fsp.rename(tempPath, filePath);
+    await fsp.chmod(filePath, PRIVATE_FILE_MODE);
+  } finally {
+    await fsp.rm(tempPath, { force: true }).catch(() => {});
+  }
 }
 
 function getDatabaseRecordKey(pipelineId, databaseId) {
@@ -296,12 +325,20 @@ async function writeDatabaseDownloadStatus(rootDir, pipelineId, databaseId, stat
 
 async function createDatabaseDownloadLogPath(rootDir, pipelineId, databaseId) {
   const logDir = path.join(getPipelinesDir(rootDir), DB_DOWNLOAD_LOG_DIR);
-  await fsp.mkdir(logDir, { recursive: true });
-  return path.join(logDir, `${pipelineId}-${databaseId}-${Date.now()}.log`);
+  await fsp.mkdir(logDir, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+  await fsp.chmod(logDir, PRIVATE_DIRECTORY_MODE);
+  const logPath = path.join(logDir, `${pipelineId}-${databaseId}-${Date.now()}.log`);
+  await fsp.writeFile(logPath, "", { flag: "a", mode: PRIVATE_FILE_MODE });
+  await fsp.chmod(logPath, PRIVATE_FILE_MODE);
+  return logPath;
 }
 
 function appendLog(logPath, message) {
-  fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`);
+  fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`, {
+    encoding: "utf8",
+    mode: PRIVATE_FILE_MODE,
+  });
+  fs.chmodSync(logPath, PRIVATE_FILE_MODE);
 }
 
 function commandExists(command) {
@@ -311,11 +348,17 @@ function commandExists(command) {
   return result.status === 0;
 }
 
-function resolveDownloader() {
-  if (commandExists("curl")) {
+export function buildDownloaderInvocation(command, sourceUrl, targetPath) {
+  if (/[\0\r\n]/.test(sourceUrl)) {
+    throw new Error("Download URL cannot contain control characters");
+  }
+
+  if (command === "curl") {
+    const escapedSourceUrl = sourceUrl
+      .replaceAll("\\", "\\\\")
+      .replaceAll('"', '\\"');
     return {
-      command: "curl",
-      args: (sourceUrl, targetPath) => [
+      args: [
         "-L",
         "-C",
         "-",
@@ -332,24 +375,39 @@ function resolveDownloader() {
         "1024",
         "--output",
         targetPath,
-        sourceUrl,
+        "--config",
+        "-",
       ],
+      stdin: `url = "${escapedSourceUrl}"\n`,
     };
   }
 
-  if (commandExists("wget")) {
+  if (command === "wget") {
     return {
-      command: "wget",
-      args: (sourceUrl, targetPath) => [
+      args: [
         "-c",
         "--tries=8",
         "--waitretry=5",
         "--timeout=30",
         "-O",
         targetPath,
-        sourceUrl,
+        "--input-file",
+        "-",
       ],
+      stdin: `${sourceUrl}\n`,
     };
+  }
+
+  throw new Error(`Unsupported downloader: ${command}`);
+}
+
+function resolveDownloader() {
+  if (commandExists("curl")) {
+    return "curl";
+  }
+
+  if (commandExists("wget")) {
+    return "wget";
   }
 
   throw new Error("Neither curl nor wget is available on this server");
@@ -357,7 +415,10 @@ function resolveDownloader() {
 
 async function getRemoteContentLength(sourceUrl) {
   try {
-    const response = await fetch(sourceUrl, { method: "HEAD" });
+    const response = await fetch(sourceUrl, {
+      method: "HEAD",
+      signal: AbortSignal.timeout(REMOTE_METADATA_TIMEOUT_MS),
+    });
     if (!response.ok) return undefined;
     const header = response.headers.get("content-length");
     const parsed = header ? Number.parseInt(header, 10) : Number.NaN;
@@ -389,7 +450,93 @@ async function calculateSha256(filePath) {
 function normalizeExpectedSha256(value) {
   const expected = toOptionalString(value);
   if (!expected) return undefined;
-  return expected.replace(/^sha256:/i, "").trim().toLowerCase();
+  const normalized = expected.replace(/^sha256:/i, "").trim().toLowerCase();
+  return /^[a-f0-9]{64}$/.test(normalized) ? normalized : undefined;
+}
+
+export function redactSourceUrl(sourceUrl) {
+  const normalized = toOptionalString(sourceUrl);
+  if (!normalized) return normalized;
+  try {
+    const parsed = new URL(normalized);
+    parsed.username = "";
+    parsed.password = "";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "[redacted invalid URL]";
+  }
+}
+
+function collectUrlSecrets(value) {
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = new URL(value);
+    const secrets = [
+      parsed.username,
+      parsed.password,
+      parsed.search,
+      ...Array.from(parsed.searchParams.values()),
+    ];
+    return secrets
+      .flatMap((secret) => {
+        if (!secret) return [];
+        try {
+          const decoded = decodeURIComponent(secret);
+          return decoded === secret ? [secret] : [secret, decoded];
+        } catch {
+          return [secret];
+        }
+      })
+      .filter(Boolean)
+      .sort((left, right) => right.length - left.length);
+  } catch {
+    return [];
+  }
+}
+
+export function redactTextForLog(value, commandArgs = []) {
+  let redacted = String(value);
+  for (const arg of commandArgs) {
+    if (typeof arg !== "string") continue;
+    const safeUrl = redactSourceUrl(arg);
+    if (safeUrl && safeUrl !== "[redacted invalid URL]" && safeUrl !== arg) {
+      redacted = redacted.split(arg).join(safeUrl);
+    }
+    for (const secret of collectUrlSecrets(arg)) {
+      redacted = redacted.split(secret).join("[REDACTED]");
+    }
+  }
+  return redacted;
+}
+
+function formatLoggedCommand(command, args) {
+  return redactTextForLog(
+    `Command: ${command} ${args
+      .map((arg) => {
+        const safeUrl = redactSourceUrl(arg);
+        return safeUrl && safeUrl !== "[redacted invalid URL]" ? safeUrl : arg;
+      })
+      .join(" ")}`,
+    args
+  );
+}
+
+function scrubCommandSecretsFromLog(logPath, args) {
+  try {
+    const current = fs.readFileSync(logPath, "utf8");
+    const redacted = redactTextForLog(current, args);
+    if (redacted !== current) {
+      fs.writeFileSync(logPath, redacted, {
+        encoding: "utf8",
+        mode: PRIVATE_FILE_MODE,
+      });
+    }
+    fs.chmodSync(logPath, PRIVATE_FILE_MODE);
+  } catch {
+    // Logging is best effort, but never fail an otherwise valid install here.
+  }
 }
 
 function isLocalhost(hostname) {
@@ -452,8 +599,8 @@ function assertAllowedExistingAssetPath(targetPath, roots, label) {
 }
 
 function runLoggedCommand(logPath, command, args, options = {}) {
-  appendLog(logPath, `Command: ${command} ${args.join(" ")}`);
-  const fd = fs.openSync(logPath, "a");
+  appendLog(logPath, formatLoggedCommand(command, args));
+  const fd = fs.openSync(logPath, "a", PRIVATE_FILE_MODE);
   try {
     const result = spawnSync(command, args, {
       ...options,
@@ -465,13 +612,22 @@ function runLoggedCommand(logPath, command, args, options = {}) {
     }
   } finally {
     fs.closeSync(fd);
+    scrubCommandSecretsFromLog(logPath, args);
   }
 }
 
-async function runLoggedCommandAsync(logPath, command, args, options = {}, onProgress) {
-  appendLog(logPath, `Command: ${command} ${args.join(" ")}`);
+async function runLoggedCommandAsync(
+  logPath,
+  command,
+  args,
+  options = {},
+  onProgress,
+  stdin,
+  redactionValues = args
+) {
+  appendLog(logPath, formatLoggedCommand(command, args));
   await new Promise((resolve, reject) => {
-    const fd = fs.openSync(logPath, "a");
+    const fd = fs.openSync(logPath, "a", PRIVATE_FILE_MODE);
     let settled = false;
     let progressTimer = null;
     const finish = (error) => {
@@ -484,6 +640,7 @@ async function runLoggedCommandAsync(logPath, command, args, options = {}, onPro
         });
       }
       fs.closeSync(fd);
+      scrubCommandSecretsFromLog(logPath, redactionValues);
       if (error) {
         reject(error);
       } else {
@@ -492,8 +649,14 @@ async function runLoggedCommandAsync(logPath, command, args, options = {}, onPro
     };
     const child = spawn(command, args, {
       ...options,
-      stdio: ["ignore", fd, fd],
+      stdio: [stdin === undefined ? "ignore" : "pipe", fd, fd],
     });
+    if (stdin !== undefined) {
+      child.stdin.on("error", () => {
+        // Process exit handling below reports downloader failures.
+      });
+      child.stdin.end(stdin);
+    }
     progressTimer = onProgress
       ? setInterval(() => {
           Promise.resolve(onProgress()).catch(() => {
@@ -519,30 +682,137 @@ async function runLoggedCommandAsync(logPath, command, args, options = {}, onPro
   });
 }
 
-async function downloadDatabaseArchive({ database, targetPath, logPath }) {
-  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
-  const totalBytes = await getRemoteContentLength(database.downloadUrl);
-  const localBytes = await getFileSize(targetPath);
-
-  if (localBytes > 0 && typeof totalBytes === "number" && localBytes >= totalBytes) {
-    appendLog(logPath, `Archive already present: ${targetPath}`);
-    return { bytesDownloaded: localBytes, totalBytes };
-  }
-
-  const downloader = resolveDownloader();
-  runLoggedCommand(logPath, downloader.command, downloader.args(database.downloadUrl, targetPath));
-  return {
-    bytesDownloaded: await getFileSize(targetPath),
-    totalBytes,
-  };
-}
-
 async function removeFileIfExists(filePath) {
   try {
     await fsp.rm(filePath, { force: true });
   } catch {
     // Best effort. A failed cleanup should not hide the underlying install result.
   }
+}
+
+async function downloadArchiveAtomically({
+  sourceUrl,
+  targetPath,
+  logPath,
+  totalBytes,
+  expectedSha256,
+  label,
+  activity,
+}) {
+  const parentDir = path.dirname(targetPath);
+  await fsp.mkdir(parentDir, { recursive: true });
+  const tempPath = path.join(
+    parentDir,
+    `.${path.basename(targetPath)}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.part`
+  );
+  const handle = await fsp.open(tempPath, "wx", PRIVATE_FILE_MODE);
+  await handle.close();
+
+  try {
+    const downloader = resolveDownloader();
+    const invocation = buildDownloaderInvocation(downloader, sourceUrl, tempPath);
+    await activity?.update?.({
+      phase: "downloading",
+      targetPath,
+      bytesDownloaded: 0,
+      totalBytes,
+      logPath,
+    });
+    await runLoggedCommandAsync(
+      logPath,
+      downloader,
+      invocation.args,
+      {},
+      activity
+        ? async () => {
+            const bytesDownloaded = await getFileSize(tempPath);
+            await activity.update?.({
+              phase: "downloading",
+              targetPath,
+              bytesDownloaded,
+              totalBytes,
+              logPath,
+              progressPercent:
+                typeof totalBytes === "number" && totalBytes > 0
+                  ? Math.max(
+                      0,
+                      Math.min(
+                        100,
+                        Math.round((bytesDownloaded / totalBytes) * 1000) / 10
+                      )
+                    )
+                  : undefined,
+            });
+          }
+        : undefined,
+      invocation.stdin,
+      [...invocation.args, sourceUrl]
+    );
+
+    const bytesDownloaded = await getFileSize(tempPath);
+    if (bytesDownloaded <= 0) {
+      throw new Error(`${label} download produced an empty file`);
+    }
+
+    if (expectedSha256) {
+      const actualSha256 = await calculateSha256(tempPath);
+      if (actualSha256 !== expectedSha256) {
+        throw new Error(
+          `${label} SHA256 mismatch: expected ${expectedSha256}, got ${actualSha256}`
+        );
+      }
+    }
+
+    await fsp.chmod(tempPath, PRIVATE_FILE_MODE);
+    await fsp.rename(tempPath, targetPath);
+    await fsp.chmod(targetPath, PRIVATE_FILE_MODE);
+    return { bytesDownloaded, totalBytes };
+  } finally {
+    await fsp.rm(tempPath, { force: true }).catch(() => {});
+  }
+}
+
+async function downloadDatabaseArchive({
+  database,
+  targetPath,
+  logPath,
+  expectedSha256,
+  label,
+}) {
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+  const totalBytes = await getRemoteContentLength(database.downloadUrl);
+  const localBytes = await getFileSize(targetPath);
+
+  if (localBytes > 0 && expectedSha256) {
+    let actualSha256;
+    try {
+      actualSha256 = await calculateSha256(targetPath);
+    } catch {
+      actualSha256 = undefined;
+    }
+    if (actualSha256 === expectedSha256) {
+      appendLog(logPath, `Archive already present with expected SHA256: ${targetPath}`);
+      return { bytesDownloaded: localBytes, totalBytes: totalBytes ?? localBytes };
+    }
+    appendLog(logPath, `Removed existing archive after SHA256 mismatch: ${targetPath}`);
+    await removeFileIfExists(targetPath);
+  } else if (
+    localBytes > 0 &&
+    typeof totalBytes === "number" &&
+    localBytes >= totalBytes
+  ) {
+    appendLog(logPath, `Archive already present: ${targetPath}`);
+    return { bytesDownloaded: localBytes, totalBytes };
+  }
+
+  return downloadArchiveAtomically({
+    sourceUrl: database.downloadUrl,
+    targetPath,
+    logPath,
+    totalBytes,
+    expectedSha256,
+    label,
+  });
 }
 
 async function verifyExistingDatabasePath(targetPath, label) {
@@ -569,57 +839,58 @@ async function verifyOptionalSha256(filePath, expectedSha256, label) {
   }
 }
 
-async function downloadFileArchive({ sourceUrl, targetPath, logPath, activity }) {
+async function downloadFileArchive({
+  sourceUrl,
+  targetPath,
+  logPath,
+  activity,
+  expectedSha256,
+  label,
+}) {
   assertSafeSourceUrl(sourceUrl, "Fixture source.url");
   await fsp.mkdir(path.dirname(targetPath), { recursive: true });
   const totalBytes = await getRemoteContentLength(sourceUrl);
   const localBytes = await getFileSize(targetPath);
 
-  if (localBytes > 0 && typeof totalBytes === "number" && localBytes >= totalBytes) {
-    appendLog(logPath, `Archive already present: ${targetPath}`);
-    await activity?.update?.({
-      phase: "downloading",
-      targetPath,
-      bytesDownloaded: localBytes,
-      totalBytes,
-      progressPercent: 100,
-      logPath,
-    });
-    return { bytesDownloaded: localBytes, totalBytes };
-  }
-
-  const downloader = resolveDownloader();
-  await activity?.update?.({
-    phase: "downloading",
-    targetPath,
-    bytesDownloaded: localBytes,
-    totalBytes,
-    logPath,
-  });
-  await runLoggedCommandAsync(
-    logPath,
-    downloader.command,
-    downloader.args(sourceUrl, targetPath),
-    {},
-    async () => {
-      const bytesDownloaded = await getFileSize(targetPath);
+  if (localBytes > 0 && expectedSha256) {
+    let actualSha256;
+    try {
+      actualSha256 = await calculateSha256(targetPath);
+    } catch {
+      actualSha256 = undefined;
+    }
+    if (actualSha256 === expectedSha256) {
+      appendLog(logPath, `Archive already present with expected SHA256: ${targetPath}`);
       await activity?.update?.({
         phase: "downloading",
         targetPath,
-        bytesDownloaded,
-        totalBytes,
+        bytesDownloaded: localBytes,
+        totalBytes: totalBytes ?? localBytes,
+        progressPercent: 100,
         logPath,
-        progressPercent:
-          typeof totalBytes === "number" && totalBytes > 0
-            ? Math.max(0, Math.min(100, Math.round((bytesDownloaded / totalBytes) * 1000) / 10))
-            : undefined,
       });
+      return { bytesDownloaded: localBytes, totalBytes: totalBytes ?? localBytes };
     }
-  );
-  return {
-    bytesDownloaded: await getFileSize(targetPath),
+    appendLog(logPath, `Removed existing fixture archive after SHA256 mismatch: ${targetPath}`);
+    await removeFileIfExists(targetPath);
+  } else if (
+    localBytes > 0 &&
+    typeof totalBytes === "number" &&
+    localBytes >= totalBytes
+  ) {
+    appendLog(logPath, `Archive already present: ${targetPath}`);
+    return { bytesDownloaded: localBytes, totalBytes };
+  }
+
+  return downloadArchiveAtomically({
+    sourceUrl,
+    targetPath,
+    logPath,
     totalBytes,
-  };
+    expectedSha256,
+    label,
+    activity,
+  });
 }
 
 function listTarGzipEntries(archivePath) {
@@ -651,6 +922,181 @@ function assertSafeTarEntries(entries) {
     ) {
       throw new Error(`Unsafe archive entry: ${entry}`);
     }
+  }
+}
+
+function normalizeArchiveFormat(value) {
+  const normalized = toOptionalString(value)?.toLowerCase();
+  if (!normalized) return undefined;
+  if (["tar.gz", "tgz", "tar-gzip", "gzip"].includes(normalized)) {
+    return "tar.gz";
+  }
+  if (normalized === "tar") return "tar";
+  throw new Error(`Unsupported database archive format: ${normalized}`);
+}
+
+function resolveDatabaseArchiveFormat(database) {
+  const install = toRecord(database.install);
+  const installType = toOptionalString(install.type)?.toLowerCase();
+  if (installType === "metaxpath_db_bundle") return undefined;
+
+  const configuredFormat = normalizeArchiveFormat(
+    install.archiveFormat || install.format
+  );
+  if (configuredFormat) return configuredFormat;
+
+  if (installType && !["archive", "extract_archive"].includes(installType)) {
+    throw new Error(`Unsupported database install type: ${installType}`);
+  }
+
+  const fileName = (
+    toOptionalString(database.fileName) ||
+    toOptionalString(database.downloadUrl) ||
+    ""
+  ).toLowerCase();
+  if (fileName.endsWith(".tar.gz") || fileName.endsWith(".tgz")) {
+    return "tar.gz";
+  }
+  if (fileName.endsWith(".tar")) return "tar";
+  if (installType) {
+    throw new Error(
+      "Database archive install metadata must define archiveFormat when the filename has no recognized archive extension"
+    );
+  }
+  return undefined;
+}
+
+function listDatabaseArchiveEntries(archivePath, archiveFormat) {
+  const args = archiveFormat === "tar.gz" ? ["-tzf", archivePath] : ["-tf", archivePath];
+  const result = spawnSync("tar", args, { encoding: "utf8" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `tar archive listing failed for ${archivePath}: ${
+        result.stderr || `exit ${result.status}`
+      }`
+    );
+  }
+  return result.stdout
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function normalizeOptionalArchiveSubpath(value) {
+  const raw = toOptionalString(value);
+  if (!raw || raw === ".") return "";
+  const normalized = raw.replace(/\\/g, "/").replace(/^\.\/+/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (
+    normalized.startsWith("/") ||
+    normalized.startsWith("../") ||
+    normalized.includes("/../") ||
+    parts.includes("..") ||
+    /^[A-Za-z]:/.test(normalized)
+  ) {
+    throw new Error("Database archive runtimeSubpath must be a safe relative path");
+  }
+  return parts.join("/");
+}
+
+async function pathExists(targetPath) {
+  try {
+    await fsp.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function replaceDirectoryAtomically(stagingDir, installDir) {
+  const backupDir = `${installDir}.backup-${process.pid}-${crypto
+    .randomBytes(6)
+    .toString("hex")}`;
+  let movedExisting = false;
+  try {
+    if (await pathExists(installDir)) {
+      await fsp.rename(installDir, backupDir);
+      movedExisting = true;
+    }
+    await fsp.rename(stagingDir, installDir);
+    if (movedExisting) {
+      await fsp.rm(backupDir, { recursive: true, force: true });
+    }
+  } catch (error) {
+    await fsp.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+    if (movedExisting && !(await pathExists(installDir))) {
+      await fsp.rename(backupDir, installDir).catch(() => {});
+    }
+    throw error;
+  }
+}
+
+async function extractDatabaseArchive({
+  database,
+  archivePath,
+  installDir,
+  logPath,
+}) {
+  const archiveFormat = resolveDatabaseArchiveFormat(database);
+  if (!archiveFormat) return undefined;
+
+  const entries = listDatabaseArchiveEntries(archivePath, archiveFormat);
+  assertSafeTarEntries(entries);
+
+  await fsp.mkdir(path.dirname(installDir), { recursive: true });
+  const stagingDir = `${installDir}.part-${process.pid}-${crypto
+    .randomBytes(6)
+    .toString("hex")}`;
+  await fsp.mkdir(stagingDir, {
+    recursive: false,
+    mode: PRIVATE_DIRECTORY_MODE,
+  });
+
+  try {
+    const extractArgs =
+      archiveFormat === "tar.gz"
+        ? ["-xzf", archivePath, "-C", stagingDir]
+        : ["-xf", archivePath, "-C", stagingDir];
+    runLoggedCommand(logPath, "tar", extractArgs);
+
+    const configuredSubpath = normalizeOptionalArchiveSubpath(
+      database.install?.runtimeSubpath || database.install?.runtimePath
+    );
+    let runtimeRelativePath = configuredSubpath;
+    if (!runtimeRelativePath) {
+      const children = await fsp.readdir(stagingDir, { withFileTypes: true });
+      if (children.length === 1 && children[0].isDirectory()) {
+        runtimeRelativePath = children[0].name;
+      }
+    }
+
+    const stagedRuntimePath = runtimeRelativePath
+      ? path.join(stagingDir, runtimeRelativePath)
+      : stagingDir;
+    const runtimeStats = await fsp.stat(stagedRuntimePath).catch(() => null);
+    if (!runtimeStats) {
+      throw new Error(
+        `Database archive did not create the configured runtime path: ${
+          runtimeRelativePath || "."
+        }`
+      );
+    }
+
+    await replaceDirectoryAtomically(stagingDir, installDir);
+    const runtimePath = runtimeRelativePath
+      ? path.join(installDir, runtimeRelativePath)
+      : installDir;
+    if (runtimeStats.isDirectory()) {
+      await fsp.chmod(runtimePath, PRIVATE_DIRECTORY_MODE);
+    }
+    return {
+      runtimePath,
+      sizeBytes: runtimeStats.size,
+    };
+  } catch (error) {
+    await fsp.rm(stagingDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
   }
 }
 
@@ -701,18 +1147,21 @@ async function extractVerifiedFastqBundle({
     `${fixtureId}.tar.gz`
   );
   const logDir = path.join(rootDir, "pipelines", FIXTURE_DOWNLOAD_LOG_DIR);
-  await fsp.mkdir(logDir, { recursive: true });
+  await fsp.mkdir(logDir, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+  await fsp.chmod(logDir, PRIVATE_DIRECTORY_MODE);
   const logPath = path.join(logDir, `${profileId}-${fixtureId}-${Date.now()}.log`);
+  await fsp.writeFile(logPath, "", { flag: "a", mode: PRIVATE_FILE_MODE });
+  await fsp.chmod(logPath, PRIVATE_FILE_MODE);
 
   logger.log?.(`Downloading FASTQ fixture bundle ${fixtureId}`);
-  const existingBytes = await getFileSize(archivePath);
-  let download;
-  if (existingBytes > 0 && (await calculateSha256(archivePath)) === expectedSha256) {
-    appendLog(logPath, `Archive already present with expected SHA256: ${archivePath}`);
-    download = { bytesDownloaded: existingBytes, totalBytes: existingBytes };
-  } else {
-    download = await downloadFileArchive({ sourceUrl, targetPath: archivePath, logPath, activity });
-  }
+  const download = await downloadFileArchive({
+    sourceUrl,
+    targetPath: archivePath,
+    logPath,
+    activity,
+    expectedSha256,
+    label: `Fixture ${fixtureId}`,
+  });
   await activity?.update?.({
     phase: "verifying",
     targetPath: archivePath,
@@ -744,7 +1193,7 @@ async function extractVerifiedFastqBundle({
     archivePath,
     extractDir,
     logPath,
-    sourceUrl,
+    sourceUrl: redactSourceUrl(sourceUrl),
     sha256: actualSha256,
     bytesDownloaded: download.bytesDownloaded,
     totalBytes: download.totalBytes,
@@ -761,7 +1210,21 @@ async function installDatabaseIfNeeded({
   archivePath,
   logPath,
 }) {
+  const installDir = buildProfilePipelineDatabaseInstallDir({
+    pipelineRunDir,
+    databaseDirectory,
+    pipelineId,
+    databaseId,
+  });
+
   if (database.install?.type !== "metaxpath_db_bundle") {
+    const extracted = await extractDatabaseArchive({
+      database,
+      archivePath,
+      installDir,
+      logPath,
+    });
+    if (extracted) return extracted;
     return {
       runtimePath: archivePath,
       sizeBytes: await getFileSize(archivePath),
@@ -784,12 +1247,6 @@ async function installDatabaseIfNeeded({
     );
   }
 
-  const installDir = buildProfilePipelineDatabaseInstallDir({
-    pipelineRunDir,
-    databaseDirectory,
-    pipelineId,
-    databaseId,
-  });
   await fsp.mkdir(installDir, { recursive: true });
 
   runLoggedCommand(logPath, "bash", [
@@ -895,6 +1352,14 @@ export async function applyProfilePipelineDatabases({
     } else {
       assertSafeSourceUrl(resolvedDatabase.downloadUrl, `${request.pipelineId}/${request.databaseId} downloadUrl`);
     }
+    const configuredDownloadSha256 = request.sha256 || resolvedDatabase.sha256;
+    const expectedDownloadSha256 = normalizeExpectedSha256(configuredDownloadSha256);
+    if (configuredDownloadSha256 && !expectedDownloadSha256) {
+      throw new Error(
+        `Database ${request.pipelineId}/${request.databaseId} sha256 must contain 64 hexadecimal characters`
+      );
+    }
+    const safeSourceUrl = redactSourceUrl(resolvedDatabase.downloadUrl);
     const configKey = request.configKey || database.configKey;
     if (!configKey) {
       const message = `Database ${request.databaseId} for pipeline ${request.pipelineId} does not define a config key`;
@@ -925,7 +1390,7 @@ export async function applyProfilePipelineDatabases({
     await writeDatabaseDownloadStatus(rootDir, request.pipelineId, request.databaseId, {
       state: "running",
       mode,
-      sourceUrl: resolvedDatabase.downloadUrl,
+      sourceUrl: safeSourceUrl,
       targetPath: statusTargetPath,
       startedAt,
       finishedAt: undefined,
@@ -956,8 +1421,13 @@ export async function applyProfilePipelineDatabases({
           appendLog(logPath, `Removed existing archive before overwrite download: ${targetPath}`);
         }
         logger.log?.(`Downloading database ${request.pipelineId}/${request.databaseId}`);
-        download = await downloadDatabaseArchive({ database: resolvedDatabase, targetPath, logPath });
-        await verifyOptionalSha256(targetPath, request.sha256, `${request.pipelineId}/${request.databaseId}`);
+        download = await downloadDatabaseArchive({
+          database: resolvedDatabase,
+          targetPath,
+          logPath,
+          expectedSha256: expectedDownloadSha256,
+          label: `${request.pipelineId}/${request.databaseId}`,
+        });
         installed = await installDatabaseIfNeeded({
           rootDir,
           pipelineRunDir: settings.pipelineRunDir,
@@ -980,13 +1450,13 @@ export async function applyProfilePipelineDatabases({
         version: resolvedDatabase.version,
         mode,
         path: installed.runtimePath,
-        sourceUrl: resolvedDatabase.downloadUrl,
+        sourceUrl: safeSourceUrl,
         sizeBytes: installed.sizeBytes,
       });
       await writeDatabaseDownloadStatus(rootDir, request.pipelineId, request.databaseId, {
         state: "success",
         mode,
-        sourceUrl: resolvedDatabase.downloadUrl,
+        sourceUrl: safeSourceUrl,
         targetPath: statusTargetPath,
         bytesDownloaded: download.bytesDownloaded,
         totalBytes: download.totalBytes,
@@ -1002,7 +1472,7 @@ export async function applyProfilePipelineDatabases({
         mode,
         status: "success",
         path: installed.runtimePath,
-        sourceUrl: resolvedDatabase.downloadUrl,
+        sourceUrl: safeSourceUrl,
         sizeBytes: installed.sizeBytes,
         bytesDownloaded: download.bytesDownloaded,
         totalBytes: download.totalBytes,
@@ -1015,7 +1485,7 @@ export async function applyProfilePipelineDatabases({
       await writeDatabaseDownloadStatus(rootDir, request.pipelineId, request.databaseId, {
         state: "error",
         mode,
-        sourceUrl: resolvedDatabase.downloadUrl,
+        sourceUrl: safeSourceUrl,
         targetPath: statusTargetPath,
         startedAt,
         finishedAt: new Date().toISOString(),
@@ -1028,7 +1498,7 @@ export async function applyProfilePipelineDatabases({
         mode,
         status: "error",
         error: message,
-        sourceUrl: resolvedDatabase.downloadUrl,
+        sourceUrl: safeSourceUrl,
         targetPath: statusTargetPath,
         logPath,
       });

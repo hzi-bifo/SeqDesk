@@ -191,7 +191,7 @@ mkdir -p "${RELEASE_DIR}/.next"
 cp -R "${ROOT_DIR}/.next/static" "${RELEASE_DIR}/.next/"
 
 echo "Copying runtime assets..."
-for item in public prisma pipelines seqdesk.config.example.json package-lock.json next.config.ts; do
+for item in public prisma pipelines CITATION.cff LICENSE README.md AWS_EC2_INSTALLATION.md CONTRIBUTING.md EXAMPLE_DATASETS.md INSTALLATION_COMPATIBILITY.md seqdesk.config.example.json package-lock.json next.config.ts; do
   if [[ -e "${ROOT_DIR}/${item}" ]]; then
     cp -R "${ROOT_DIR}/${item}" "$RELEASE_DIR/"
   fi

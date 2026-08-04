@@ -300,12 +300,12 @@ describe("trace-parser", () => {
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
     const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
 
-    setIntervalSpy.mockImplementation((callbackFn: () => void, _intervalMs?: number): NodeJS.Timeout => {
+    setIntervalSpy.mockImplementation((callbackFn: () => void): NodeJS.Timeout => {
       intervalCallbacks.push(callbackFn);
       return 1 as unknown as NodeJS.Timeout;
     });
 
-    clearIntervalSpy.mockImplementation((_timerId: any) => void 0);
+    clearIntervalSpy.mockImplementation(() => undefined);
 
     const stop = await watchTraceFile(tracePath, callback, 10);
     expect(callback).toHaveBeenCalledTimes(1);

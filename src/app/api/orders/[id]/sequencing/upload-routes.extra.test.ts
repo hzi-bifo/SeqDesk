@@ -21,7 +21,7 @@ vi.mock("@/lib/sequencing/server", () => {
   class SequencingApiError extends Error {
     status: number;
 
-    constructor(message: string, status: number) {
+    constructor(status: number, message: string) {
       super(message);
       this.name = "SequencingApiError";
       this.status = status;
@@ -134,7 +134,7 @@ describe("sequencing upload and artifact route quick wins", () => {
     const { SequencingApiError } = await import("@/lib/sequencing/server");
 
     mocks.requireFacilityAdminSequencingSession.mockRejectedValueOnce(
-      new SequencingApiError("Forbidden", 403)
+      new SequencingApiError(403, "Forbidden")
     );
     const forbidden = await createUpload(
       new Request("http://localhost/api/orders/order-1/sequencing/uploads", {
@@ -205,7 +205,7 @@ describe("sequencing upload and artifact route quick wins", () => {
     expect(mocks.appendSequencingUploadChunk).toHaveBeenCalledWith(
       "order-1",
       "upload-1",
-      5n,
+      BigInt(5),
       expectedBody
     );
     expect(await success.json()).toEqual({
@@ -251,7 +251,7 @@ describe("sequencing upload and artifact route quick wins", () => {
     const { SequencingApiError } = await import("@/lib/sequencing/server");
 
     mocks.requireFacilityAdminSequencingSession.mockRejectedValueOnce(
-      new SequencingApiError("Unauthorized", 401)
+      new SequencingApiError(401, "Unauthorized")
     );
     const unauthorized = await appendUploadChunk(validRequest.clone(), uploadParams());
     expect(unauthorized.status).toBe(401);
@@ -396,7 +396,7 @@ describe("sequencing upload and artifact route quick wins", () => {
     const { SequencingApiError } = await import("@/lib/sequencing/server");
 
     mocks.requireFacilityAdminSequencingSession.mockRejectedValueOnce(
-      new SequencingApiError("Forbidden", 403)
+      new SequencingApiError(403, "Forbidden")
     );
     const forbidden = await linkArtifact(
       new Request("http://localhost/api/orders/order-1/sequencing/artifacts/link", {

@@ -11,7 +11,7 @@ Usage:
 Options:
   --url <https://.../metaxpath.tar.gz>   Package tarball URL
   --token <token>                        Bearer token for private URL (optional)
-  --sha256 <hex>                         Verify tarball checksum (optional)
+  --sha256 <hex|sha256:hex>              Verify tarball checksum (required for remote URLs)
   --dir <seqdesk-dir>                    SeqDesk root directory (default: repo root)
   --keep-existing                        Abort if pipelines/metaxpath already exists
   -h, --help                             Show this help
@@ -19,7 +19,7 @@ Options:
 Environment variables:
   METAXPATH_PACKAGE_URL                  Default for --url
   METAXPATH_PACKAGE_TOKEN                Default for --token
-  METAXPATH_PACKAGE_SHA256               Default for --sha256
+  METAXPATH_PACKAGE_SHA256               Default for --sha256 (required for remote URLs)
   METAXPATH_MIN_PACKAGE_VERSION          Minimum accepted package version (default: 0.1.1)
   SEQDESK_DIR                            Default for --dir
 
@@ -56,31 +56,72 @@ trim() {
   printf '%s' "$s"
 }
 
+normalize_sha256() {
+  local value
+  value="$(trim "$1")"
+  case "$value" in
+    [sS][hH][aA]256:*)
+      value="${value#*:}"
+      ;;
+  esac
+  value="$(trim "$value")"
+  printf '%s' "$value" | tr '[:upper:]' '[:lower:]'
+}
+
 download_file() {
   local url="$1"
   local output_path="$2"
   local token="$3"
+  local request_file=""
+  local status=0
 
   # Accept: application/octet-stream is required for GitHub's
   # api.github.com/.../releases/assets/<id> endpoint to return the binary
   # rather than a JSON metadata object. It's harmless on static tarball
   # servers, which ignore the Accept header for opaque file downloads.
   if command_exists curl; then
-    if [[ -n "$token" ]]; then
-      curl -fsSL -H "Authorization: Bearer ${token}" -H "Accept: application/octet-stream" "$url" -o "$output_path"
-    else
-      curl -fsSL -H "Accept: application/octet-stream" "$url" -o "$output_path"
+    request_file="$(mktemp "${TMPDIR:-/tmp}/seqdesk-metaxpath-curl.XXXXXX")"
+    chmod 600 "$request_file"
+    if ! METAXPATH_DOWNLOAD_URL="$url" METAXPATH_DOWNLOAD_TOKEN="$token" node <<'NODE' >"$request_file"
+function escapeCurlConfig(value, label) {
+  if (/[\0\r\n]/.test(value)) {
+    throw new Error(`${label} contains control characters`);
+  }
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+const url = escapeCurlConfig(process.env.METAXPATH_DOWNLOAD_URL || "", "Package URL");
+const token = process.env.METAXPATH_DOWNLOAD_TOKEN || "";
+console.log(`url = "${url}"`);
+console.log('header = "Accept: application/octet-stream"');
+if (token) {
+  // Use curl-managed authentication so credentials are stripped if a trusted
+  // HTTPS endpoint redirects the package download to another origin.
+  console.log(`oauth2-bearer = "${escapeCurlConfig(token, "Package token")}"`);
+}
+NODE
+    then
+      rm -f "$request_file"
+      error "Package URL or token contains unsupported control characters"
     fi
-    return 0
+    curl -fsS --location --max-redirs 5 \
+      --proto '=https,file' --proto-redir '=https' \
+      --config "$request_file" --output "$output_path" || status=$?
+    rm -f "$request_file"
+    return "$status"
   fi
 
   if command_exists wget; then
     if [[ -n "$token" ]]; then
-      wget --header="Authorization: Bearer ${token}" --header="Accept: application/octet-stream" -qO "$output_path" "$url"
-    else
-      wget --header="Accept: application/octet-stream" -qO "$output_path" "$url"
+      error "curl is required for authenticated MetaxPath package downloads"
     fi
-    return 0
+    request_file="$(mktemp "${TMPDIR:-/tmp}/seqdesk-metaxpath-wget.XXXXXX")"
+    chmod 600 "$request_file"
+    printf '%s\n' "$url" >"$request_file"
+    wget --header="Accept: application/octet-stream" \
+      --input-file="$request_file" -qO "$output_path" || status=$?
+    rm -f "$request_file"
+    return "$status"
   fi
 
   error "Neither curl nor wget is available"
@@ -178,12 +219,46 @@ while [[ $# -gt 0 ]]; do
 done
 
 PACKAGE_URL="$(trim "$PACKAGE_URL")"
-PACKAGE_SHA256="$(trim "$PACKAGE_SHA256")"
+PACKAGE_SHA256="$(normalize_sha256 "$PACKAGE_SHA256")"
 SEQDESK_DIR="$(trim "$SEQDESK_DIR")"
 
 [[ -z "$PACKAGE_URL" ]] && error "Package URL is required (--url or METAXPATH_PACKAGE_URL)"
 [[ -z "$SEQDESK_DIR" ]] && error "SeqDesk directory is empty"
 [[ ! -d "$SEQDESK_DIR" ]] && error "SeqDesk directory not found: $SEQDESK_DIR"
+command_exists node || error "Node.js is required"
+if ! METAXPATH_VALIDATE_URL="$PACKAGE_URL" METAXPATH_VALIDATE_TOKEN="$PACKAGE_TOKEN" node <<'NODE'
+const raw = process.env.METAXPATH_VALIDATE_URL || "";
+const token = process.env.METAXPATH_VALIDATE_TOKEN || "";
+let url;
+try {
+  url = new URL(raw);
+} catch {
+  console.error("[metaxpath-install] ERROR: Package URL must be a valid URL");
+  process.exit(1);
+}
+if (url.protocol === "file:") {
+  if (token) {
+    console.error("[metaxpath-install] ERROR: Package tokens cannot be used with file URLs");
+    process.exit(1);
+  }
+  process.exit(0);
+}
+if (url.protocol !== "https:") {
+  console.error("[metaxpath-install] ERROR: Remote MetaxPath package URLs must use HTTPS");
+  process.exit(1);
+}
+NODE
+then
+  exit 1
+fi
+if [[ "$PACKAGE_URL" =~ ^[A-Za-z][A-Za-z0-9+.-]*:// ]] &&
+  [[ ! "$PACKAGE_URL" =~ ^[fF][iI][lL][eE]:// ]] &&
+  [[ -z "$PACKAGE_SHA256" ]]; then
+  error "Remote MetaxPath packages require a SHA256 checksum. Provide --sha256 (or METAXPATH_PACKAGE_SHA256); hosted profiles must resolve a release asset with a GitHub SHA-256 digest."
+fi
+if [[ -n "$PACKAGE_SHA256" && ! "$PACKAGE_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+  error "SHA256 must be 64 hexadecimal characters (optionally prefixed with sha256:)"
+fi
 
 command_exists tar || error "tar is required"
 

@@ -20,7 +20,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   FileText,
-  FileOutput,
   X,
   Wrench,
   ArrowRight,
@@ -28,17 +27,13 @@ import {
   Info,
   Settings,
   Users,
-  ChevronRight,
   Hash,
   ToggleLeft,
   Type,
   Folder,
   Database,
-  Upload,
-  Download,
   ArrowUpFromLine,
   ArrowDownToLine,
-  Package,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -430,11 +425,12 @@ function NodeDetailPanel({
   onClose: () => void;
 }) {
   // Get relevant parameters for this step
+  const parameterGroups = pipeline?.parameterGroups;
   const relevantParams = useMemo(() => {
-    if (!node.parameters || !pipeline?.parameterGroups) return [];
+    if (!node.parameters || !parameterGroups) return [];
     const paramNames = new Set(node.parameters);
     const params: PipelineParameter[] = [];
-    for (const group of pipeline.parameterGroups) {
+    for (const group of parameterGroups) {
       for (const param of group.parameters) {
         if (paramNames.has(param.name)) {
           params.push({ ...param, group: group.name });
@@ -442,7 +438,7 @@ function NodeDetailPanel({
       }
     }
     return params;
-  }, [node.parameters, pipeline?.parameterGroups]);
+  }, [node.parameters, parameterGroups]);
 
   return (
     <div className="flex flex-col h-full">
@@ -803,8 +799,8 @@ export function PipelineDagViewer({
     [dagEdges]
   );
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, , onNodesChange] = useNodesState(initialNodes);
+  const [edges, , onEdgesChange] = useEdgesState(initialEdges);
 
   const onNodeClick: NodeMouseHandler = useCallback(
     (event, node) => {

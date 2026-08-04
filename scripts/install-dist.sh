@@ -156,6 +156,7 @@ SEQDESK_PRIVATE_POSTGRES="false"
 SEQDESK_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}"
 SEQDESK_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}"
 SEQDESK_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}"
+SEQDESK_UPDATE_SERVER="${SEQDESK_UPDATE_SERVER:-}"
 SEQDESK_ORDER_FORM_SETTINGS="${SEQDESK_ORDER_FORM_SETTINGS:-}"
 SEQDESK_STUDY_FORM_SETTINGS="${SEQDESK_STUDY_FORM_SETTINGS:-}"
 SEQDESK_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}"
@@ -183,6 +184,8 @@ SEQDESK_PROFILE="${SEQDESK_PROFILE:-${SEQDESK_SETTING:-}}"
 SEQDESK_PROFILE_CODE="${SEQDESK_PROFILE_CODE:-${SEQDESK_KEY:-}}"
 SEQDESK_PROFILE_REGISTRY_URL="${SEQDESK_PROFILE_REGISTRY_URL:-https://seqdesk.org/api/install-profiles}"
 SEQDESK_PROFILE_CONFIG_FILE=""
+SEQDESK_PROFILE_MIN_VERSION=""
+SEQDESK_PREFETCHED_VERSION_INFO=""
 SEQDESK_ADDITIONAL_SETTINGS_FILE="${SEQDESK_ADDITIONAL_SETTINGS_FILE:-}"
 SEQDESK_ADDITIONAL_SETTINGS=()
 SEQDESK_RECONFIGURE="${SEQDESK_RECONFIGURE:-}"
@@ -222,6 +225,7 @@ SEQDESK_PIPELINE_DATABASE_DIR="${SEQDESK_PIPELINE_DATABASE_DIR:-}"
 SEQDESK_METAXPATH_PACKAGE_URL="${SEQDESK_METAXPATH_PACKAGE_URL:-${METAXPATH_PACKAGE_URL:-}}"
 SEQDESK_METAXPATH_KEY="${SEQDESK_METAXPATH_KEY:-${METAXPATH_PACKAGE_TOKEN:-}}"
 SEQDESK_METAXPATH_SHA256="${SEQDESK_METAXPATH_SHA256:-${METAXPATH_PACKAGE_SHA256:-}}"
+TEMP_FILE=""
 
 SEQDESK_LOG_ENABLED="false"
 PM2_CONFIGURED="false"
@@ -645,6 +649,33 @@ curl_fetch_to_file() {
     curl_fetch_with_timeout "$SEQDESK_CURL_MAX_TIME" "$url" "$dest" "$@"
 }
 
+is_safe_profile_registry_url() {
+    local registry_url="${1:-}"
+
+    node - "$registry_url" <<'NODE'
+const raw = process.argv[2];
+let url;
+try {
+  url = new URL(raw);
+} catch {
+  process.exit(1);
+}
+
+const hostname = url.hostname.toLowerCase();
+const isLoopback =
+  hostname === "localhost" ||
+  hostname.endsWith(".localhost") ||
+  hostname === "127.0.0.1" ||
+  hostname === "::1" ||
+  hostname === "[::1]";
+
+if (url.protocol === "https:" || (url.protocol === "http:" && isLoopback)) {
+  process.exit(0);
+}
+process.exit(1);
+NODE
+}
+
 # Large payloads with a bounded size: the release tarball.
 curl_download_to_file() {
     local url="$1"
@@ -1027,6 +1058,28 @@ node_meets_minimum_version() {
       }
       process.exit(0);
     ' "$MIN_NODE_VERSION"
+}
+
+version_at_least() {
+    local current_version="${1:-}"
+    local required_version="${2:-}"
+
+    node -e '
+      const parse = (value) => {
+        const match = String(value).trim().match(
+          /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+][0-9A-Za-z.-]+)?$/
+        );
+        return match ? match.slice(1, 4).map((part) => Number(part || 0)) : null;
+      };
+      const current = parse(process.argv[1]);
+      const required = parse(process.argv[2]);
+      if (!current || !required) process.exit(1);
+      for (let index = 0; index < 3; index += 1) {
+        if (current[index] > required[index]) process.exit(0);
+        if (current[index] < required[index]) process.exit(1);
+      }
+      process.exit(0);
+    ' "$current_version" "$required_version"
 }
 
 is_root_user() {
@@ -3280,6 +3333,123 @@ process.stdout.write(
 NODE
 }
 
+read_installed_seqdesk_version() {
+    local install_dir="$1"
+
+    node - "$install_dir" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const installDir = process.argv[2];
+for (const candidate of [
+  path.join(installDir, "current", "package.json"),
+  path.join(installDir, "package.json"),
+]) {
+  try {
+    const value = JSON.parse(fs.readFileSync(candidate, "utf8"))?.version;
+    if (typeof value === "string" && value.trim()) {
+      process.stdout.write(value.trim());
+      process.exit(0);
+    }
+  } catch {
+    // Try the next supported release layout.
+  }
+}
+process.exit(1);
+NODE
+}
+
+print_profile_minimum_version_error() {
+    local selected_version="$1"
+    local reconfigure_mode="${2:-false}"
+
+    if [ -n "$SEQDESK_PROFILE" ]; then
+        print_error "Hosted profile '$SEQDESK_PROFILE' requires SeqDesk ${SEQDESK_PROFILE_MIN_VERSION} or newer, but the selected version is ${selected_version:-unknown}."
+    else
+        print_error "Installer config requires SeqDesk ${SEQDESK_PROFILE_MIN_VERSION} or newer, but the selected version is ${selected_version:-unknown}."
+    fi
+    if [ "$reconfigure_mode" = "true" ]; then
+        print_info "Update SeqDesk before reconfiguring with this profile."
+    else
+        print_info "Choose a newer SeqDesk release or lower minSeqDeskVersion in the installer config."
+    fi
+    print_troubleshooting_url
+}
+
+# Resolve the selected/installed version before any PostgreSQL or Miniconda
+# provisioning. A profile compatibility failure must leave the host unchanged.
+preflight_profile_minimum_version() {
+    if [ -z "$SEQDESK_PROFILE_MIN_VERSION" ]; then
+        return 0
+    fi
+
+    if is_truthy "$SEQDESK_RECONFIGURE"; then
+        local installed_version=""
+        installed_version="$(read_installed_seqdesk_version "$SEQDESK_DIR" 2>/dev/null || true)"
+        if [ -z "$installed_version" ] || \
+            ! version_at_least "$installed_version" "$SEQDESK_PROFILE_MIN_VERSION"; then
+            print_profile_minimum_version_error "$installed_version" "true"
+            exit 1
+        fi
+        return 0
+    fi
+
+    local version_url="$SEQDESK_API/version"
+    local version_info_file=""
+    local version_info=""
+    local fetch_detail=""
+    local version_fields=""
+    local selected_version=""
+    local selected_download_url=""
+    local selected_checksum=""
+    local selected_file_size=""
+    local version_fields_end=""
+
+    if [ -n "$SEQDESK_VERSION" ]; then
+        version_url="$SEQDESK_API/version?version=$SEQDESK_VERSION"
+    fi
+    version_info_file="$(mktemp)"
+    if curl_fetch_to_file "$version_url" "$version_info_file"; then
+        version_info="$(cat "$version_info_file")"
+    fi
+    fetch_detail="$(curl_failure_detail)"
+    rm -f "$version_info_file"
+
+    if [ -z "$version_info" ]; then
+        print_error "Could not fetch release metadata from the SeqDesk server."
+        print_kv "URL" "$version_url"
+        if [ -n "$fetch_detail" ]; then
+            print_kv "Result" "$fetch_detail"
+        else
+            print_kv "Result" "empty response"
+        fi
+        print_network_failure_hints
+        print_troubleshooting_url
+        exit 1
+    fi
+
+    if ! version_fields="$(parse_release_version_info "$version_info")"; then
+        print_error "Could not parse version info"
+        print_troubleshooting_url
+        exit 1
+    fi
+    IFS=$'\x1f' read -r selected_version selected_download_url selected_checksum \
+        selected_file_size version_fields_end <<< "$version_fields"
+    if [ "$version_fields_end" != "__SEQDESK_VERSION_INFO_END__" ] || \
+        [ -z "$selected_version" ] || [ -z "$selected_download_url" ]; then
+        print_error "Could not parse version info"
+        print_troubleshooting_url
+        exit 1
+    fi
+    if ! version_at_least "$selected_version" "$SEQDESK_PROFILE_MIN_VERSION"; then
+        print_profile_minimum_version_error "$selected_version" "false"
+        exit 1
+    fi
+
+    # Reuse the exact response during the later artifact-download phase so a
+    # changing release endpoint cannot pass one version and download another.
+    SEQDESK_PREFETCHED_VERSION_INFO="$version_info"
+}
+
 update_pm2_display_cmd() {
     case "$PM2_BIN" in
         pm2)
@@ -4010,11 +4180,14 @@ const fs = require("fs");
 
 const configPath = process.argv[2];
 const allowedRoots = new Set([
+  "access",
   "app",
+  "auth",
   "bootstrap",
   "ena",
   "forms",
   "install",
+  "moduleSettings",
   "modules",
   "notifications",
   "pipelines",
@@ -4022,8 +4195,10 @@ const allowedRoots = new Set([
   "privatePipelines",
   "runtime",
   "seedData",
+  "sequencingFiles",
   "sequencingTech",
   "site",
+  "studies",
   "telemetry",
 ]);
 const forbiddenKeys = new Set(["__proto__", "constructor", "prototype"]);
@@ -4170,6 +4345,12 @@ resolve_install_profile() {
         exit 1
     fi
 
+    if ! is_safe_profile_registry_url "$SEQDESK_PROFILE_REGISTRY_URL"; then
+        print_error "Hosted profile registry URLs must use HTTPS (plain HTTP is allowed only for localhost)."
+        print_troubleshooting_url
+        exit 1
+    fi
+
     if ! command_exists curl; then
         print_error "curl is required to resolve hosted install profiles."
         print_troubleshooting_url "https://seqdesk.org/docs/installation/prerequisites#what-the-installer-checks"
@@ -4178,12 +4359,16 @@ resolve_install_profile() {
 
     local profile_url
     local profile_config
+    local profile_id_path
     local fetch_detail
-    profile_url="${SEQDESK_PROFILE_REGISTRY_URL%/}/${SEQDESK_PROFILE}/resolve"
+    profile_id_path="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$SEQDESK_PROFILE")"
+    profile_url="${SEQDESK_PROFILE_REGISTRY_URL%/}/${profile_id_path}/resolve"
     profile_config="$(mktemp)"
 
     print_info "Resolving hosted install profile: $SEQDESK_PROFILE"
     if ! curl_fetch_to_file "$profile_url" "$profile_config" \
+        --max-redirs 0 \
+        --proto-redir '=https' \
         -H "Authorization: Bearer ${SEQDESK_PROFILE_CODE}"; then
         rm -f "$profile_config"
         fetch_detail="$(curl_failure_detail)"
@@ -4252,7 +4437,8 @@ load_install_config() {
     fi
 
     temp_env=$(mktemp)
-    if ! node - "$config_path" >"$temp_env" <<'NODE'
+    if ! SEQDESK_EXPECTED_PROFILE_ID="${SEQDESK_PROFILE:-}" \
+        node - "$config_path" >"$temp_env" <<'NODE'
 const fs = require("fs");
 
 const configPath = process.argv[2];
@@ -4303,6 +4489,20 @@ function toOptionalInt(value) {
   return undefined;
 }
 
+function toOptionalPort(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error("app.port must be an integer between 1 and 65535.");
+  }
+  return parsed;
+}
+
 function escapeShell(value) {
   return String(value)
     .replace(/\\/g, "\\\\")
@@ -4316,6 +4516,73 @@ if (!isRecord(input)) {
 }
 
 const root = input;
+const structuredSections = [
+  "addons",
+  "access",
+  "app",
+  "auth",
+  "bootstrap",
+  "ena",
+  "forms",
+  "hostedDatabase",
+  "install",
+  "minknowStream",
+  "modules",
+  "moduleSettings",
+  "notifications",
+  "pipelineSmokeTests",
+  "pipelines",
+  "privatePipelines",
+  "profile",
+  "runtime",
+  "seedData",
+  "sequencingFiles",
+  "sequencingTech",
+  "site",
+  "telemetry",
+  "testing",
+];
+for (const section of structuredSections) {
+  if (
+    Object.prototype.hasOwnProperty.call(root, section) &&
+    root[section] !== undefined &&
+    !isRecord(root[section])
+  ) {
+    throw new Error(`${section} must be a JSON object.`);
+  }
+}
+for (const section of ["capabilities", "requiredSecrets", "studies"]) {
+  if (
+    Object.prototype.hasOwnProperty.call(root, section) &&
+    root[section] !== undefined &&
+    !Array.isArray(root[section])
+  ) {
+    throw new Error(`${section} must be a JSON array.`);
+  }
+}
+
+const expectedProfileId = toOptionalString(process.env.SEQDESK_EXPECTED_PROFILE_ID);
+if (expectedProfileId) {
+  const resolvedProfileId = toOptionalString(root.id);
+  if (!resolvedProfileId) {
+    throw new Error("Hosted profile resolver returned a profile without an id.");
+  }
+  if (resolvedProfileId !== expectedProfileId) {
+    throw new Error(
+      `Hosted profile id mismatch: requested ${expectedProfileId}, resolved ${resolvedProfileId}.`
+    );
+  }
+}
+
+const minSeqDeskVersion = toOptionalString(root.minSeqDeskVersion);
+if (
+  root.minSeqDeskVersion !== undefined &&
+  (!minSeqDeskVersion ||
+    !/^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(minSeqDeskVersion))
+) {
+  throw new Error("minSeqDeskVersion must be a semantic version such as 1.2.3.");
+}
+
 const app = toRecord(root.app);
 const install = toRecord(root.install);
 const site = toRecord(root.site);
@@ -4354,7 +4621,8 @@ const values = {
   usePm2: toOptionalBoolean(
     firstDefined(root.usePm2, root.pm2, install?.usePm2, install?.pm2)
   ),
-  port: toOptionalInt(firstDefined(root.port, root.appPort, app?.port)),
+  port: toOptionalPort(firstDefined(root.port, root.appPort, app?.port)),
+  minSeqDeskVersion,
   dataPath: toOptionalString(
     firstDefined(
       root.sequencingDataDir,
@@ -4407,6 +4675,9 @@ const values = {
   ),
   blobReadWriteToken: toOptionalString(
     firstDefined(root.blobReadWriteToken, runtime?.blobReadWriteToken)
+  ),
+  updateServer: toOptionalString(
+    firstDefined(root.updateServer, runtime?.updateServer)
   ),
   orderFormSettings: toOptionalString(
     firstDefined(
@@ -4514,6 +4785,17 @@ const values = {
   researcherRole: toOptionalString(bootstrapResearcher?.researcherRole || bootstrapResearcher?.role),
 };
 
+if (
+  Array.isArray(pipelines?.enable) &&
+  !pipelines.enable.some(
+    (pipelineId) => toOptionalString(pipelineId)?.toLowerCase() === "metaxpath"
+  )
+) {
+  values.metaxpathPackageUrl = undefined;
+  values.metaxpathKey = undefined;
+  values.metaxpathSha256 = undefined;
+}
+
 if (values.runDir === "/") {
   values.runDir = undefined;
 }
@@ -4545,6 +4827,9 @@ const out = {};
 if (values.installDir) out.SEQDESK_CFG_DIR = values.installDir;
 if (values.usePm2 !== undefined) out.SEQDESK_CFG_USE_PM2 = values.usePm2 ? "1" : "0";
 if (values.port !== undefined && values.port > 0) out.SEQDESK_CFG_PORT = String(values.port);
+if (values.minSeqDeskVersion) {
+  out.SEQDESK_CFG_PROFILE_MIN_VERSION = values.minSeqDeskVersion;
+}
 if (values.dataPath) out.SEQDESK_CFG_DATA_PATH = values.dataPath;
 if (values.runDir) out.SEQDESK_CFG_RUN_DIR = values.runDir;
 if (values.pipelineDatabaseDir) out.SEQDESK_CFG_PIPELINE_DATABASE_DIR = values.pipelineDatabaseDir;
@@ -4557,6 +4842,7 @@ if (values.adminSecret) out.SEQDESK_CFG_ADMIN_SECRET = values.adminSecret;
 if (values.blobReadWriteToken) {
   out.SEQDESK_CFG_BLOB_READ_WRITE_TOKEN = values.blobReadWriteToken;
 }
+if (values.updateServer) out.SEQDESK_CFG_UPDATE_SERVER = values.updateServer;
 if (values.orderFormSettings) {
   out.SEQDESK_CFG_ORDER_FORM_SETTINGS = values.orderFormSettings;
 }
@@ -4647,6 +4933,7 @@ NODE
     apply_config_value SEQDESK_DIR SEQDESK_CFG_DIR
     apply_config_value SEQDESK_USE_PM2 SEQDESK_CFG_USE_PM2
     apply_config_value SEQDESK_PORT SEQDESK_CFG_PORT
+    apply_config_value SEQDESK_PROFILE_MIN_VERSION SEQDESK_CFG_PROFILE_MIN_VERSION
     apply_config_value SEQDESK_DATA_PATH SEQDESK_CFG_DATA_PATH
     apply_config_value SEQDESK_RUN_DIR SEQDESK_CFG_RUN_DIR
     apply_config_value SEQDESK_PIPELINE_DATABASE_DIR SEQDESK_CFG_PIPELINE_DATABASE_DIR
@@ -4657,6 +4944,7 @@ NODE
     apply_config_value SEQDESK_ANTHROPIC_API_KEY SEQDESK_CFG_ANTHROPIC_API_KEY
     apply_config_value SEQDESK_ADMIN_SECRET SEQDESK_CFG_ADMIN_SECRET
     apply_config_value SEQDESK_BLOB_READ_WRITE_TOKEN SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
+    apply_config_value SEQDESK_UPDATE_SERVER SEQDESK_CFG_UPDATE_SERVER
     apply_config_value SEQDESK_ORDER_FORM_SETTINGS SEQDESK_CFG_ORDER_FORM_SETTINGS
     apply_config_value SEQDESK_STUDY_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
     apply_config_value SEQDESK_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENABLED
@@ -4697,12 +4985,14 @@ NODE
     apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_ROLE SEQDESK_CFG_BOOTSTRAP_RESEARCHER_ROLE
 
     unset SEQDESK_CFG_DIR SEQDESK_CFG_USE_PM2
-    unset SEQDESK_CFG_PORT SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
+    unset SEQDESK_CFG_PORT SEQDESK_CFG_PROFILE_MIN_VERSION
+    unset SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
     unset SEQDESK_CFG_PIPELINE_DATABASE_DIR
     unset SEQDESK_CFG_NEXTAUTH_URL SEQDESK_CFG_NEXTAUTH_SECRET
     unset SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_DATABASE_DIRECT_URL SEQDESK_CFG_WITH_PIPELINES
     unset SEQDESK_CFG_ANTHROPIC_API_KEY SEQDESK_CFG_ADMIN_SECRET
     unset SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
+    unset SEQDESK_CFG_UPDATE_SERVER
     unset SEQDESK_CFG_ORDER_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
     unset SEQDESK_CFG_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENDPOINT
     unset SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS
@@ -4914,6 +5204,21 @@ resolve_absolute_dir() {
     else
         printf '%s/%s' "$PWD" "$(basename "$target")"
     fi
+}
+
+expand_home_relative_path() {
+    local target="${1:-}"
+    case "$target" in
+        "~")
+            printf '%s' "$HOME"
+            ;;
+        "~/"*)
+            printf '%s/%s' "${HOME%/}" "${target:2}"
+            ;;
+        *)
+            printf '%s' "$target"
+            ;;
+    esac
 }
 
 format_kb() {
@@ -5703,14 +6008,15 @@ install_private_metaxpath_if_configured() {
 
     local metaxpath_args=(
         --url "${SEQDESK_METAXPATH_PACKAGE_URL}"
-        --token "${SEQDESK_METAXPATH_KEY}"
         --dir "$(pwd)"
     )
     if [ -n "${SEQDESK_METAXPATH_SHA256:-}" ]; then
         metaxpath_args+=(--sha256 "${SEQDESK_METAXPATH_SHA256}")
     fi
 
-    if ! run_with_spinner "Private MetaxPath pipeline package" ./scripts/install-private-metaxpath.sh "${metaxpath_args[@]}"; then
+    if ! METAXPATH_PACKAGE_TOKEN="${SEQDESK_METAXPATH_KEY}" \
+        run_with_spinner "Private MetaxPath pipeline package" \
+        ./scripts/install-private-metaxpath.sh "${metaxpath_args[@]}"; then
         # run_with_spinner routes the install script's output to $SEQDESK_LOG and only
         # prints the log *path*, so the real cause (auth/token, version floor, sha256
         # mismatch, download error) is otherwise invisible — especially in CI where the
@@ -5755,6 +6061,7 @@ write_config() {
     SEQDESK_INSTALL_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}" \
     SEQDESK_INSTALL_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}" \
     SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}" \
+    SEQDESK_INSTALL_UPDATE_SERVER="${SEQDESK_UPDATE_SERVER:-}" \
     SEQDESK_INSTALL_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}" \
     SEQDESK_INSTALL_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}" \
     SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}" \
@@ -5793,6 +6100,7 @@ const directUrl = process.env.SEQDESK_INSTALL_DATABASE_DIRECT_URL || '';
 const anthropicApiKey = process.env.SEQDESK_INSTALL_ANTHROPIC_API_KEY || '';
 const adminSecret = process.env.SEQDESK_INSTALL_ADMIN_SECRET || '';
 const blobReadWriteToken = process.env.SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN || '';
+const updateServer = process.env.SEQDESK_INSTALL_UPDATE_SERVER || '';
 const telemetryEnabledRaw = process.env.SEQDESK_INSTALL_TELEMETRY_ENABLED || '';
 const telemetryEndpoint = process.env.SEQDESK_INSTALL_TELEMETRY_ENDPOINT || '';
 const telemetryIntervalHoursRaw = process.env.SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS || '';
@@ -5957,6 +6265,7 @@ if (nextAuthSecret) runtime.nextAuthSecret = nextAuthSecret;
 if (anthropicApiKey) runtime.anthropicApiKey = anthropicApiKey;
 if (adminSecret) runtime.adminSecret = adminSecret;
 if (blobReadWriteToken) runtime.blobReadWriteToken = blobReadWriteToken;
+if (updateServer) runtime.updateServer = updateServer;
 if (Object.keys(runtime).length > 0) {
   config.runtime = runtime;
 }
@@ -6300,6 +6609,15 @@ on_error() {
     exit $exit_code
 }
 
+cleanup_installer_temp_files() {
+    if [ -n "${TEMP_FILE:-}" ] && [ -f "$TEMP_FILE" ]; then
+        rm -f "$TEMP_FILE"
+    fi
+    if [ -n "${SEQDESK_PROFILE_CONFIG_FILE:-}" ] && [ -f "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
+        rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
+    fi
+}
+
 print_login_summary() {
     local unchanged_accounts=""
     local unchanged_noun="that account"
@@ -6498,6 +6816,9 @@ fi
 parse_args "$@"
 
 trap on_error ERR
+trap cleanup_installer_temp_files EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 configure_install_log
 
@@ -6692,6 +7013,12 @@ if { is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_PREPARE_POSTGRES"; 
     load_existing_install_values "$SEQDESK_DIR"
 fi
 
+SEQDESK_DATA_PATH="$(expand_home_relative_path "$SEQDESK_DATA_PATH")"
+SEQDESK_RUN_DIR="$(expand_home_relative_path "$SEQDESK_RUN_DIR")"
+SEQDESK_PIPELINE_DATABASE_DIR="$(expand_home_relative_path "$SEQDESK_PIPELINE_DATABASE_DIR")"
+
+preflight_profile_minimum_version
+
 if is_truthy "$SEQDESK_PREPARE_POSTGRES"; then
     prepare_postgres_and_exit
 fi
@@ -6826,10 +7153,6 @@ fi
 print_step "Download SeqDesk"
 
 LATEST_VERSION=""
-TEMP_FILE=""
-# Ensure the downloaded release tarball never leaks if a later step (backup mv,
-# extraction) fails; TEMP_FILE is "" until mktemp runs, so this is a no-op early.
-trap 'rm -f "$TEMP_FILE"' EXIT
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     RELEASE_INTEGRITY="not applicable (reconfigure; the installed release is kept)"
     print_info "Reconfigure mode enabled; skipping release download."
@@ -6843,12 +7166,17 @@ else
     # `2>/dev/null || true` form threw both away, leaving a reviewer behind an
     # institute proxy with "Could not connect to SeqDesk server" and no clue.
     VERSION_INFO=""
-    VERSION_INFO_FILE=$(mktemp)
-    if curl_fetch_to_file "$VERSION_URL" "$VERSION_INFO_FILE"; then
-        VERSION_INFO=$(cat "$VERSION_INFO_FILE")
+    VERSION_FETCH_DETAIL=""
+    if [ -n "$SEQDESK_PREFETCHED_VERSION_INFO" ]; then
+        VERSION_INFO="$SEQDESK_PREFETCHED_VERSION_INFO"
+    else
+        VERSION_INFO_FILE=$(mktemp)
+        if curl_fetch_to_file "$VERSION_URL" "$VERSION_INFO_FILE"; then
+            VERSION_INFO=$(cat "$VERSION_INFO_FILE")
+        fi
+        VERSION_FETCH_DETAIL="$(curl_failure_detail)"
+        rm -f "$VERSION_INFO_FILE"
     fi
-    VERSION_FETCH_DETAIL="$(curl_failure_detail)"
-    rm -f "$VERSION_INFO_FILE"
 
     if [ -z "$VERSION_INFO" ]; then
         print_error "Could not fetch release metadata from the SeqDesk server."
@@ -6883,6 +7211,18 @@ else
     fi
 
     print_success "Latest version: $LATEST_VERSION"
+
+    if [ -n "$SEQDESK_PROFILE_MIN_VERSION" ] && \
+        ! version_at_least "$LATEST_VERSION" "$SEQDESK_PROFILE_MIN_VERSION"; then
+        if [ -n "$SEQDESK_PROFILE" ]; then
+            print_error "Hosted profile '$SEQDESK_PROFILE' requires SeqDesk ${SEQDESK_PROFILE_MIN_VERSION} or newer, but the selected release is ${LATEST_VERSION}."
+        else
+            print_error "Installer config requires SeqDesk ${SEQDESK_PROFILE_MIN_VERSION} or newer, but the selected release is ${LATEST_VERSION}."
+        fi
+        print_info "Choose a newer SeqDesk release or lower minSeqDeskVersion in the installer config."
+        print_troubleshooting_url
+        exit 1
+    fi
 
     TEMP_FILE=$(mktemp)
 
@@ -7066,6 +7406,17 @@ if command_exists node && [ -f package.json ]; then
 fi
 if [ -z "$INSTALLED_VERSION" ]; then
     INSTALLED_VERSION="${SEQDESK_VERSION:-unknown}"
+fi
+if is_truthy "$SEQDESK_RECONFIGURE" && [ -n "$SEQDESK_PROFILE_MIN_VERSION" ] && \
+    ! version_at_least "$INSTALLED_VERSION" "$SEQDESK_PROFILE_MIN_VERSION"; then
+    if [ -n "$SEQDESK_PROFILE" ]; then
+        print_error "Hosted profile '$SEQDESK_PROFILE' requires SeqDesk ${SEQDESK_PROFILE_MIN_VERSION} or newer, but this installation is ${INSTALLED_VERSION}."
+    else
+        print_error "Installer config requires SeqDesk ${SEQDESK_PROFILE_MIN_VERSION} or newer, but this installation is ${INSTALLED_VERSION}."
+    fi
+    print_info "Update SeqDesk before reconfiguring with this profile."
+    print_troubleshooting_url
+    exit 1
 fi
 
 # Install runtime dependencies

@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, AlertCircle, Info } from "lucide-react";
-import type { ParseResult, ValidationError } from "@/lib/excel/sample-parser";
+import type { ParseResult } from "@/lib/excel/sample-parser";
 
 interface UploadValidationDialogProps {
   open: boolean;
@@ -27,7 +27,7 @@ export function UploadValidationDialog({
 }: UploadValidationDialogProps) {
   if (!result) return null;
 
-  const { samples, errors, warnings, unmappedColumns, totalRows } = result;
+  const { errors, warnings, unmappedColumns, totalRows } = result;
   const errorRows = new Set(errors.filter((e) => e.severity === "error").map((e) => e.row));
   const validCount = totalRows - errorRows.size;
   const hasErrors = errors.length > 0;

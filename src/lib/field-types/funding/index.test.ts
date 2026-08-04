@@ -50,6 +50,9 @@ describe("FUNDING_AGENCIES", () => {
 });
 
 describe("fundingFieldType", () => {
+  const displayField = {} as Parameters<
+    NonNullable<typeof fundingFieldType.getDisplayValue>
+  >[1];
   it("has correct metadata", () => {
     expect(fundingFieldType.type).toBe("funding");
     expect(fundingFieldType.label).toBe("External Funding & Grants");
@@ -131,13 +134,13 @@ describe("fundingFieldType", () => {
 
   describe("getDisplayValue", () => {
     it("returns 'No funding sources' for null", () => {
-      expect(fundingFieldType.getDisplayValue!(null)).toBe(
+      expect(fundingFieldType.getDisplayValue!(null, displayField)).toBe(
         "No funding sources"
       );
     });
 
     it("returns 'No funding sources' for empty entries", () => {
-      expect(fundingFieldType.getDisplayValue!({ entries: [] })).toBe(
+      expect(fundingFieldType.getDisplayValue!({ entries: [] }, displayField)).toBe(
         "No funding sources"
       );
     });
@@ -153,7 +156,7 @@ describe("fundingFieldType", () => {
           },
         ],
       };
-      expect(fundingFieldType.getDisplayValue!(value)).toBe(
+      expect(fundingFieldType.getDisplayValue!(value, displayField)).toBe(
         "NIH (National Institutes of Health): R01-GM123456"
       );
     });
@@ -170,7 +173,7 @@ describe("fundingFieldType", () => {
           { id: "2", agencyId: "nsf", grantNumber: "2023456" },
         ],
       };
-      expect(fundingFieldType.getDisplayValue!(value)).toBe(
+      expect(fundingFieldType.getDisplayValue!(value, displayField)).toBe(
         "NIH (National Institutes of Health): R01-GM123456 (+1 more)"
       );
     });
@@ -182,7 +185,7 @@ describe("fundingFieldType", () => {
           { id: "2", agencyId: "nsf", grantNumber: "2023456" },
         ],
       };
-      expect(fundingFieldType.getDisplayValue!(value)).toBe(
+      expect(fundingFieldType.getDisplayValue!(value, displayField)).toBe(
         "2 funding sources"
       );
     });
@@ -193,7 +196,7 @@ describe("fundingFieldType", () => {
           { id: "1", agencyId: "nih", grantNumber: "R01-GM123456" },
         ],
       };
-      expect(fundingFieldType.getDisplayValue!(value)).toBe(
+      expect(fundingFieldType.getDisplayValue!(value, displayField)).toBe(
         "1 funding source"
       );
     });
@@ -211,7 +214,7 @@ describe("fundingFieldType", () => {
         ],
       };
       // agency?.name ("Other") takes precedence over agencyOther in display
-      expect(fundingFieldType.getDisplayValue!(value)).toBe(
+      expect(fundingFieldType.getDisplayValue!(value, displayField)).toBe(
         "Other: CF-001"
       );
     });
@@ -228,7 +231,7 @@ describe("fundingFieldType", () => {
           },
         ],
       };
-      expect(fundingFieldType.getDisplayValue!(value)).toBe(
+      expect(fundingFieldType.getDisplayValue!(value, displayField)).toBe(
         "Custom Foundation: CF-001"
       );
     });
@@ -244,7 +247,7 @@ describe("fundingFieldType", () => {
           },
         ],
       };
-      expect(fundingFieldType.getDisplayValue!(value)).toBe(
+      expect(fundingFieldType.getDisplayValue!(value, displayField)).toBe(
         "DFG (Deutsche Forschungsgemeinschaft): SFB1234"
       );
     });

@@ -209,22 +209,28 @@ describe("SidebarAdminNav", () => {
       })
     );
 
-    render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
+    const { container } = render(
+      <SidebarAdminNav collapsed={false} unreadMessages={0} />
+    );
 
     const badge = await screen.findByRole("button", {
       name: /2 required infrastructure settings missing/i,
     });
     expect(badge.textContent).toBe("!");
     expect(badge.className).toContain("bg-red-100");
-    expect(screen.getByRole("link", { name: "Compute backend" }).getAttribute("href")).toBe(
+    expect(badge.tagName).toBe("BUTTON");
+    expect(badge.getAttribute("type")).toBe("button");
+
+    const infrastructureLink = screen.getByRole("link", { name: "Infrastructure" });
+    const missingItemLink = screen.getByRole("link", { name: "Compute backend" });
+    expect(missingItemLink.getAttribute("href")).toBe(
       "/admin/data-compute"
     );
+    expect(infrastructureLink.contains(missingItemLink)).toBe(false);
+    expect(container.querySelector("a a")).toBeNull();
 
     fireEvent.click(badge);
     expect(mocks.push).toHaveBeenCalledWith("/admin/data-compute");
-
-    fireEvent.keyDown(badge, { key: "Enter" });
-    expect(mocks.push).toHaveBeenCalledTimes(2);
   });
 
   it("shows a recommended infrastructure gap badge when nothing is required", async () => {
@@ -253,7 +259,7 @@ describe("SidebarAdminNav", () => {
     expect(badge.className).toContain("bg-amber-100");
     expect(screen.getByText(/1 recommended setting pending/i)).toBeTruthy();
 
-    fireEvent.keyDown(badge, { key: " " });
+    fireEvent.click(badge);
     expect(mocks.push).toHaveBeenCalledWith("/admin/settings/notifications");
   });
 

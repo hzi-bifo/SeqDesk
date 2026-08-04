@@ -278,32 +278,23 @@ export function SidebarAdminNav({
             <Link href="/admin/minknow-stream" className={adminSubItemClass("/admin/minknow-stream")}>
               MinKNOW Stream
             </Link>
-            <Link
-              href="/admin/data-compute"
+            <div
               className={cn(
                 adminSubItemClass("/admin/data-compute"),
                 "flex items-center justify-between gap-2"
               )}
             >
-              <span>Infrastructure</span>
+              <Link href="/admin/data-compute" className="min-w-0 flex-1">
+                Infrastructure
+              </Link>
               {!infrastructureReadiness.loading &&
                 (hasRequiredInfrastructureGaps || hasRecommendedInfrastructureGaps) && (
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
+                      <button
+                        type="button"
+                        onClick={() => {
                           router.push(infrastructureReadiness.firstMissingHref);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            router.push(infrastructureReadiness.firstMissingHref);
-                          }
                         }}
                         className={cn(
                           "inline-flex items-center justify-center h-5 min-w-5 px-1 rounded-full text-[11px] font-semibold",
@@ -322,7 +313,7 @@ export function SidebarAdminNav({
                         ) : (
                           <AlertTriangle className="h-3 w-3" />
                         )}
-                      </span>
+                      </button>
                     </TooltipTrigger>
                     <TooltipContent side="right" align="start" sideOffset={8} className="max-w-xs text-left">
                       <div className="space-y-2">
@@ -360,7 +351,7 @@ export function SidebarAdminNav({
                     </TooltipContent>
                   </Tooltip>
                 )}
-            </Link>
+            </div>
             <Link href="/admin/background-workers" className={adminSubItemClass("/admin/background-workers")}>
               Background Workers
             </Link>

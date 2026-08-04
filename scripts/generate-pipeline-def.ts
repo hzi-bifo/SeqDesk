@@ -19,7 +19,6 @@ import fs from 'fs';
 import path from 'path';
 
 const NFCORE_RAW_URL = 'https://raw.githubusercontent.com/nf-core';
-const NFCORE_API_URL = 'https://nf-co.re/api';
 
 interface ModuleInfo {
   name: string;
@@ -114,23 +113,6 @@ async function fetchModulesJson(pipeline: string, version: string = 'master'): P
   }
 }
 
-async function fetchPipelineInfo(pipeline: string): Promise<Record<string, unknown> | null> {
-  // Try nf-core API
-  const url = `https://nf-co.re/pipelines/${pipeline}/releases`;
-
-  try {
-    const response = await fetch(url, {
-      headers: { 'Accept': 'application/json' }
-    });
-    if (!response.ok) {
-      return null;
-    }
-    return await response.json();
-  } catch {
-    return null;
-  }
-}
-
 function extractModules(modulesJson: Record<string, unknown>): ModuleInfo[] {
   const modules: ModuleInfo[] = [];
 
@@ -152,7 +134,7 @@ function extractModules(modulesJson: Record<string, unknown>): ModuleInfo[] {
   return modules;
 }
 
-function generateSteps(modules: ModuleInfo[], pipeline: string): StepDef[] {
+function generateSteps(modules: ModuleInfo[]): StepDef[] {
   // Group modules by category
   const categoryGroups = new Map<string, ModuleInfo[]>();
 
@@ -287,7 +269,7 @@ Examples:
   }
 
   // Generate steps
-  const steps = generateSteps(modules, pipeline);
+  const steps = generateSteps(modules);
 
   console.log(`\nGenerated ${steps.length} workflow steps:\n`);
   for (const step of steps) {

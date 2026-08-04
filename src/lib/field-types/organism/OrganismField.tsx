@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { searchTaxonomy, getTaxonomyByTaxId, type TaxonomyEntry } from "./taxonomy-data";
 import { Search, Check, ExternalLink } from "lucide-react";
@@ -15,6 +15,7 @@ interface OrganismFieldProps {
   className?: string;
   // For table cell mode
   compact?: boolean;
+  onBlur?: () => void;
 }
 
 export function OrganismField({
@@ -25,10 +26,10 @@ export function OrganismField({
   disabled = false,
   className,
   compact = false,
+  onBlur,
 }: OrganismFieldProps) {
   const [inputValue, setInputValue] = useState("");
   const [isOpen, setIsOpen] = useState(false);
-  const [results, setResults] = useState<TaxonomyEntry[]>([]);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -36,6 +37,8 @@ export function OrganismField({
   // Initialize input value from props
   useEffect(() => {
     if (value && scientificName) {
+      // Keep the editable label synchronized with committed taxonomy props.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setInputValue(scientificName);
     } else if (value) {
       // Try to look up the scientific name from taxId
@@ -50,16 +53,10 @@ export function OrganismField({
     }
   }, [value, scientificName]);
 
-  // Search as user types
-  useEffect(() => {
-    if (inputValue.length >= 2) {
-      const searchResults = searchTaxonomy(inputValue, 8);
-      setResults(searchResults);
-      setHighlightedIndex(0);
-    } else {
-      setResults([]);
-    }
-  }, [inputValue]);
+  const results = useMemo(
+    () => (inputValue.length >= 2 ? searchTaxonomy(inputValue, 8) : []),
+    [inputValue]
+  );
 
   // Handle click outside to close dropdown
   useEffect(() => {
@@ -82,7 +79,6 @@ export function OrganismField({
     onChange(entry.taxId, entry.scientificName);
     setInputValue(entry.scientificName);
     setIsOpen(false);
-    setResults([]);
   }, [onChange]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -117,6 +113,7 @@ export function OrganismField({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value;
     setInputValue(newValue);
+    setHighlightedIndex(0);
     setIsOpen(true);
 
     // If user clears the input, clear the values
@@ -147,6 +144,7 @@ export function OrganismField({
         }
       }
       setIsOpen(false);
+      onBlur?.();
     }, 200);
   };
 
@@ -281,6 +279,7 @@ export function OrganismCellEditor({
       value={value}
       scientificName={scientificName}
       onChange={onChange}
+      onBlur={onBlur}
       compact
       className="w-full"
     />

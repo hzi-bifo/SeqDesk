@@ -209,6 +209,28 @@ describe("LiveLogViewer", () => {
       screen.getByRole("tab", { name: "Output" }).getAttribute("aria-selected")
     ).toBe("true");
     expect(screen.getByText(/stdout line 1/)).toBeTruthy();
+
+    // If a subsequent poll restores steps, Output remains selected rather than
+    // unexpectedly returning the user to the formerly active Steps tab.
+    mocks.useSWR.mockImplementation((url: string) => {
+      if (url.includes("type=output")) {
+        return {
+          data: {
+            content: "stdout line 1\nstdout line 2",
+            steps: [{ process: "ALIGN_READS", status: "running", tasks: 2 }],
+          },
+          mutate: mocks.mutateOutput,
+        };
+      }
+      return { data: { content: "stderr line 1" }, mutate: mocks.mutateError };
+    });
+
+    rerender(<LiveLogViewer runId="run-1" isRunning />);
+
+    expect(screen.getByRole("tab", { name: /Steps/ })).toBeTruthy();
+    expect(
+      screen.getByRole("tab", { name: "Output" }).getAttribute("aria-selected")
+    ).toBe("true");
   });
 
   it("copies log output, toggles auto-scroll, and downloads the active log", async () => {

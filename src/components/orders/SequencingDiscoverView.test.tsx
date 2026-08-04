@@ -37,6 +37,73 @@ vi.mock("@/components/ui/scroll-area", () => ({
 }));
 
 import { SequencingDiscoverView } from "./SequencingDiscoverView";
+import type {
+  SequencingReadSummary,
+  SequencingSampleRow,
+} from "@/lib/sequencing/types";
+
+function makeRead(
+  overrides: Pick<SequencingReadSummary, "id" | "file1"> &
+    Partial<SequencingReadSummary>
+): SequencingReadSummary {
+  return {
+    file2: null,
+    checksum1: null,
+    checksum2: null,
+    readCount1: null,
+    readCount2: null,
+    fileSize1: null,
+    fileSize2: null,
+    fastqcReport1: null,
+    fastqcReport2: null,
+    pipelineRunId: null,
+    pipelineRunNumber: null,
+    pipelineSources: null,
+    dataClass: "cleaned",
+    dataClassLabel: "Cleaned",
+    dataClassSource: "associate",
+    readOrigin: "associate",
+    readOriginLabel: "Associated",
+    isSimulated: false,
+    isProtectedRaw: false,
+    isActive: true,
+    supersededByReadId: null,
+    classifiedAt: null,
+    classifiedById: null,
+    classificationNote: null,
+    filesMissing: false,
+    ...overrides,
+  };
+}
+
+function makeSample(
+  overrides: Pick<SequencingSampleRow, "id" | "sampleId"> &
+    Partial<SequencingSampleRow>
+): SequencingSampleRow {
+  const sample: SequencingSampleRow = {
+    sampleAlias: null,
+    sampleTitle: null,
+    facilityStatus: "WAITING",
+    facilityStatusUpdatedAt: null,
+    updatedAt: "2026-04-01T10:00:00.000Z",
+    read: null,
+    integrityStatus: "empty",
+    hasReads: false,
+    protectedProvenanceCount: 0,
+    protectedProvenance: [],
+    sequencingRun: null,
+    artifactCount: 0,
+    qcArtifactCount: 0,
+    latestArtifactStage: null,
+    artifacts: [],
+    stream: null,
+    ...overrides,
+  };
+  sample.hasReads = overrides.hasReads ?? sample.read !== null;
+  sample.integrityStatus =
+    overrides.integrityStatus ?? (sample.hasReads ? "complete" : "empty");
+  return sample;
+}
 
 const storageFiles = [
   {
@@ -135,23 +202,22 @@ describe("SequencingDiscoverView", () => {
         dataBasePathConfigured
         onDataChanged={onDataChanged}
         samples={[
-          {
+          makeSample({
             id: "sample-a",
             sampleId: "SAMPLE_A",
             sampleAlias: "Alpha",
-            read: {
+            read: makeRead({
               id: "read-a",
               file1: "run-a/SAMPLE_A_R1.fastq.gz",
-              file2: null,
-            },
-          },
-          {
+            }),
+          }),
+          makeSample({
             id: "sample-b",
             sampleId: "SAMPLE_B",
             sampleAlias: null,
             read: null,
-          },
-        ] as any}
+          }),
+        ]}
       />
     );
 
@@ -260,13 +326,13 @@ describe("SequencingDiscoverView", () => {
         dataBasePathConfigured
         onDataChanged={onDataChanged}
         samples={[
-          {
+          makeSample({
             id: "sample-a",
             sampleId: "SAMPLE_A",
             sampleAlias: "Alpha",
             read: null,
-          },
-        ] as any}
+          }),
+        ]}
       />
     );
 

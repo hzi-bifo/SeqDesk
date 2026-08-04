@@ -13,6 +13,8 @@ import {
 
 // Extend TanStack Table meta types
 declare module "@tanstack/react-table" {
+  // TanStack requires the generic parameter for declaration merging.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface TableMeta<TData extends RowData> {
     updateData: (rowIndex: number, columnIdOrUpdates: string | Record<string, unknown>, value?: unknown) => void;
   }
@@ -51,7 +53,6 @@ import {
   Maximize2,
   Minimize2,
   PlusCircle,
-  Settings2,
   ChevronDown,
 } from "lucide-react";
 import type { FormFieldDefinition } from "@/types/form-config";
@@ -422,7 +423,7 @@ function CheckboxCell({
     if (val === "false") return false;
     return Boolean(val);
   };
-  const [checked, setChecked] = useState(normalizeChecked(initialValue));
+  const checked = normalizeChecked(initialValue);
   const columnMeta = column.columnDef.meta as {
     editable?: boolean;
     isReadOnlyAfterSave?: boolean;
@@ -436,14 +437,9 @@ function CheckboxCell({
   const isRequired = columnMeta?.required ?? headerStr.endsWith("*");
   const hasValue = checked;
 
-  useEffect(() => {
-    setChecked(normalizeChecked(initialValue));
-  }, [initialValue]);
-
   const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (isReadOnly) return;
     const nextValue = e.target.checked;
-    setChecked(nextValue);
     table.options.meta?.updateData(row.index, column.id, nextValue);
   };
 
@@ -501,7 +497,7 @@ function MultiSelectCell({
     if (val === undefined || val === null || val === "") return [];
     return [String(val)];
   };
-  const [value, setValue] = useState<string[]>(normalizeValues(initialValue));
+  const value = normalizeValues(initialValue);
   const columnMeta = column.columnDef.meta as {
     options?: { value: string; label: string }[];
     editable?: boolean;
@@ -517,14 +513,9 @@ function MultiSelectCell({
   const isRequired = columnMeta?.required ?? headerStr.endsWith("*");
   const hasValue = value.length > 0;
 
-  useEffect(() => {
-    setValue(normalizeValues(initialValue));
-  }, [initialValue]);
-
   const onChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     if (isReadOnly) return;
     const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value);
-    setValue(selected);
     table.options.meta?.updateData(row.index, column.id, selected);
   };
 
@@ -600,11 +591,8 @@ export default function SamplesPage({
   const [selectedRows, setSelectedRows] = useState<Record<string, boolean>>({});
 
   // MIxS checklist state
-  const [availableChecklists, setAvailableChecklists] = useState<{ name: string; accession: string; fieldCount: number }[]>([]);
   const [selectedChecklist, setSelectedChecklist] = useState<string | null>(null);
   const [checklistFields, setChecklistFields] = useState<MixsField[]>([]);
-  const [showChecklistSelector, setShowChecklistSelector] = useState(false);
-  const [loadingChecklist, setLoadingChecklist] = useState(false);
 
   // Per-sample custom fields from Order Form Builder
   const [perSampleFields, setPerSampleFields] = useState<FormFieldDefinition[]>([]);
@@ -656,19 +644,19 @@ export default function SamplesPage({
 
   const isEditable = order?.status === "DRAFT";
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (showChecklistSelector) {
-        const target = e.target as HTMLElement;
-        if (!target.closest('[data-checklist-dropdown]')) {
-          setShowChecklistSelector(false);
-        }
-      }
-    };
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, [showChecklistSelector]);
+  const handleDeleteRow = useCallback((sample: Sample) => {
+    if (sample.isNew) {
+      setSamples((prev) => prev.filter((candidate) => candidate !== sample));
+    } else {
+      setSamples((prev) =>
+        prev.map((candidate) =>
+          candidate.id === sample.id ? { ...candidate, isDeleted: true } : candidate
+        )
+      );
+    }
+    setHasChanges(true);
+    setSuccess("");
+  }, []);
 
   // Build columns dynamically based on form configuration
   const columns = useMemo((): ColumnDef<Sample>[] => {
@@ -791,7 +779,7 @@ export default function SamplesPage({
     }
 
     return cols;
-  }, [checklistFields, perSampleFields, isEditable]);
+  }, [checklistFields, handleDeleteRow, perSampleFields, isEditable]);
 
   // Table instance
   // Memoize filtered data to prevent unnecessary re-renders
@@ -862,22 +850,6 @@ export default function SamplesPage({
       updateData,
     },
   });
-
-  // Fetch available checklists
-  useEffect(() => {
-    const fetchChecklists = async () => {
-      try {
-        const res = await fetch("/api/mixs-checklists");
-        if (res.ok) {
-          const data = await res.json();
-          setAvailableChecklists(data.checklists || []);
-        }
-      } catch (error) {
-        console.error("Failed to load checklists:", error);
-      }
-    };
-    fetchChecklists();
-  }, []);
 
   // Fetch per-sample fields from Order Form Builder
   useEffect(() => {
@@ -953,7 +925,6 @@ export default function SamplesPage({
     }
 
     const loadChecklistFields = async () => {
-      setLoadingChecklist(true);
       try {
         const res = await fetch(`/api/mixs-checklists?accession=${selectedChecklist}`);
         if (res.ok) {
@@ -962,41 +933,11 @@ export default function SamplesPage({
         }
       } catch (error) {
         console.error("Failed to load checklist fields:", error);
-      } finally {
-        setLoadingChecklist(false);
       }
     };
 
     loadChecklistFields();
   }, [selectedChecklist]);
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-        e.preventDefault();
-        if (hasChanges && !saving && order?.status === "DRAFT") {
-          handleSave();
-        }
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === "n") {
-        e.preventDefault();
-        if (order?.status === "DRAFT") {
-          handleAddRow();
-        }
-      }
-      if (e.key === "Escape" && isFullscreen) {
-        setIsFullscreen(false);
-      }
-      if (e.key === "F11") {
-        e.preventDefault();
-        setIsFullscreen(!isFullscreen);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [hasChanges, saving, order?.status, isFullscreen]);
 
   // Warn before leaving with unsaved changes
   useEffect(() => {
@@ -1049,18 +990,6 @@ export default function SamplesPage({
     }));
 
     setSamples((prev) => [...prev, ...newSamples]);
-    setHasChanges(true);
-    setSuccess("");
-  }, []);
-
-  const handleDeleteRow = useCallback((sample: Sample) => {
-    if (sample.isNew) {
-      setSamples((prev) => prev.filter((s) => s !== sample));
-    } else {
-      setSamples((prev) =>
-        prev.map((s) => (s.id === sample.id ? { ...s, isDeleted: true } : s))
-      );
-    }
     setHasChanges(true);
     setSuccess("");
   }, []);
@@ -1269,7 +1198,7 @@ export default function SamplesPage({
     [perSampleFields]
   );
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     setError("");
     setSuccess("");
     setSaving(true);
@@ -1356,26 +1285,36 @@ export default function SamplesPage({
     } finally {
       setSaving(false);
     }
-  };
+  }, [checklistFields, perSampleFields, resolvedParams.id, samples, selectedChecklist]);
 
-  const handleChecklistChange = async (accession: string) => {
-    setSelectedChecklist(accession || null);
-    setShowChecklistSelector(false);
+  // Keyboard shortcuts use memoized actions so the listener never captures
+  // stale rows or checklist configuration.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        if (hasChanges && !saving && order?.status === "DRAFT") {
+          void handleSave();
+        }
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "n") {
+        e.preventDefault();
+        if (order?.status === "DRAFT") {
+          handleAddRow();
+        }
+      }
+      if (e.key === "Escape" && isFullscreen) {
+        setIsFullscreen(false);
+      }
+      if (e.key === "F11") {
+        e.preventDefault();
+        setIsFullscreen((current) => !current);
+      }
+    };
 
-    // Auto-save checklist selection to database
-    try {
-      await fetch(`/api/orders/${resolvedParams.id}/samples`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          samples: samples, // Keep existing samples
-          checklist: accession || null,
-        }),
-      });
-    } catch (error) {
-      console.error("Failed to save checklist selection:", error);
-    }
-  };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleAddRow, handleSave, hasChanges, isFullscreen, order?.status, saving]);
 
   const handleCellClick = (fieldId: string) => {
     const field = fieldMetadata[fieldId];
@@ -1402,8 +1341,6 @@ export default function SamplesPage({
   };
 
   const activeSampleCount = samples.filter((s) => !s.isDeleted).length;
-  const selectedChecklistName = availableChecklists.find(c => c.accession === selectedChecklist)?.name || "Select checklist...";
-
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center min-h-[400px]">

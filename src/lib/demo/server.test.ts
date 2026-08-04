@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       findMany: vi.fn(),
       deleteMany: vi.fn(),
     },
@@ -69,6 +70,7 @@ const mocks = vi.hoisted(() => ({
     },
     read: {
       create: vi.fn(),
+      deleteMany: vi.fn(),
     },
     studyFormConfig: {
       create: vi.fn(),
@@ -102,6 +104,8 @@ import {
   authorizeDemoWorkspaceToken,
   bootstrapDemoWorkspace,
   cleanupExpiredDemoWorkspaces,
+  getDemoFacilityWorkspaceUserIds,
+  getDemoWorkspaceIdentifier,
   getDemoWorkspaceCookieName,
   getDemoCookieOptions,
   getAuthSessionCookieName,
@@ -193,13 +197,14 @@ describe("demo workspace server helpers", () => {
 
     mocks.db.demoWorkspace.findUnique.mockResolvedValue(null);
     mocks.db.demoWorkspace.update.mockResolvedValue({});
+    mocks.db.demoWorkspace.updateMany.mockResolvedValue({ count: 1 });
     mocks.db.demoWorkspace.findMany.mockResolvedValue([]);
     mocks.db.study.findMany.mockResolvedValue([]);
     mocks.db.user.findMany.mockResolvedValue([]);
 
     mocks.db.order.findMany.mockResolvedValue([]);
     mocks.db.sample.findMany.mockResolvedValue([]);
-    mocks.db.read.deleteMany = vi.fn().mockResolvedValue({ count: 0 });
+    mocks.db.read.deleteMany.mockResolvedValue({ count: 0 });
     mocks.db.statusNote.deleteMany.mockResolvedValue({ count: 0 });
     mocks.db.ticketMessage.deleteMany.mockResolvedValue({ count: 0 });
     mocks.db.pipelineRun.deleteMany.mockResolvedValue({ count: 0 });
@@ -212,6 +217,7 @@ describe("demo workspace server helpers", () => {
 
   it("bootstraps a shared demo workspace with researcher and facility personas", async () => {
     const result = await bootstrapDemoWorkspace(undefined, "researcher");
+    const workspaceIdentifier = getDemoWorkspaceIdentifier(result.token);
 
     expect(result.created).toBe(true);
     expect(result.workspaceId).toBe("workspace-1");
@@ -222,9 +228,24 @@ describe("demo workspace server helpers", () => {
     expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
     expect(mocks.db.orderFormConfig.update).toHaveBeenCalledTimes(1);
     expect(mocks.db.user.create).toHaveBeenCalledTimes(2);
+    expect(mocks.db.user.create.mock.calls[0][0].data.email).toBe(
+      `demo-researcher-${workspaceIdentifier.toLowerCase()}@seqdesk.local`
+    );
+    expect(mocks.db.user.create.mock.calls[1][0].data.email).toBe(
+      `demo-facility-${workspaceIdentifier.toLowerCase()}@seqdesk.local`
+    );
     expect(mocks.db.study.create).toHaveBeenCalledTimes(5);
     expect(mocks.db.studyFormConfig.create).toHaveBeenCalledTimes(2);
     expect(mocks.db.order.create).toHaveBeenCalledTimes(7);
+    expect(
+      mocks.db.order.create.mock.calls.map((call) => call[0].data.orderNumber)
+    ).toEqual(
+      expect.arrayContaining([
+        `DEMO-${workspaceIdentifier}-001`,
+        `DEMO-${workspaceIdentifier}-002`,
+        `DEMO-${workspaceIdentifier}-003`,
+      ])
+    );
     const draftOrder = mocks.db.order.create.mock.calls[0][0].data;
     const submittedOrder = mocks.db.order.create.mock.calls[1][0].data;
     expect(draftOrder.platform).toBeNull();
@@ -309,6 +330,19 @@ describe("demo workspace server helpers", () => {
     expect(mocks.db.pipelineRunEvent.create).toHaveBeenCalledTimes(8);
   });
 
+  it("gives workspace tokens with the same readable prefix distinct stable identifiers", () => {
+    const firstToken = "shared-1770000000000";
+    const secondToken = "shared-1770000000001";
+
+    const firstIdentifier = getDemoWorkspaceIdentifier(firstToken);
+    const secondIdentifier = getDemoWorkspaceIdentifier(secondToken);
+
+    expect(firstIdentifier).toMatch(/^SHARED-[A-F0-9]{16}$/);
+    expect(secondIdentifier).toMatch(/^SHARED-[A-F0-9]{16}$/);
+    expect(firstIdentifier).not.toBe(secondIdentifier);
+    expect(getDemoWorkspaceIdentifier(firstToken)).toBe(firstIdentifier);
+  });
+
   it("reuses an existing active workspace for the facility persona", async () => {
     const existingWorkspace = {
       id: "workspace-existing",
@@ -345,9 +379,72 @@ describe("demo workspace server helpers", () => {
       workspaceId: "workspace-existing",
       userId: "admin-existing",
     });
-    expect(mocks.db.demoWorkspace.update).toHaveBeenCalledTimes(1);
+    expect(mocks.db.demoWorkspace.updateMany).toHaveBeenCalledTimes(1);
     expect(mocks.db.user.create).not.toHaveBeenCalled();
     expect(mocks.db.order.create).not.toHaveBeenCalled();
+  });
+
+  it("reuses a concurrent replacement when the first bootstrap refresh loses", async () => {
+    const originalWorkspace = {
+      id: "workspace-original",
+      tokenHash: "hash",
+      userId: "user-original",
+      adminUserId: "admin-original",
+      seedVersion: 1,
+      lastSeenAt: new Date("2026-03-06T08:00:00Z"),
+      expiresAt: new Date("2099-03-06T20:00:00Z"),
+      user: {
+        id: "user-original",
+        email: "demo-researcher-original@seqdesk.local",
+        firstName: "Demo",
+        lastName: "Researcher",
+        role: "RESEARCHER",
+        isDemo: true,
+      },
+      adminUser: {
+        id: "admin-original",
+        email: "demo-facility-original@seqdesk.local",
+        firstName: "Facility",
+        lastName: "Admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+      },
+    };
+    const replacementWorkspace = {
+      ...originalWorkspace,
+      id: "workspace-replacement",
+      userId: "user-replacement",
+      adminUserId: "admin-replacement",
+      user: {
+        ...originalWorkspace.user,
+        id: "user-replacement",
+      },
+      adminUser: {
+        ...originalWorkspace.adminUser,
+        id: "admin-replacement",
+      },
+    };
+    mocks.db.demoWorkspace.findUnique
+      .mockResolvedValueOnce(originalWorkspace)
+      .mockResolvedValueOnce(replacementWorkspace);
+    mocks.db.demoWorkspace.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const result = await bootstrapDemoWorkspace("demo-token", "facility");
+
+    expect(result).toMatchObject({
+      created: false,
+      workspaceId: "workspace-replacement",
+      userId: "admin-replacement",
+    });
+    expect(mocks.db.user.create).not.toHaveBeenCalled();
+    expect(mocks.db.demoWorkspace.updateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "workspace-replacement" }),
+      })
+    );
   });
 
   it("authorizes the requested facility persona for an active workspace", async () => {
@@ -388,13 +485,73 @@ describe("demo workspace server helpers", () => {
       isDemo: true,
       demoExperience: "facility",
     });
-    expect(mocks.db.demoWorkspace.update).toHaveBeenCalledWith({
-      where: { id: "workspace-existing" },
+    expect(mocks.db.demoWorkspace.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "workspace-existing",
+        seedVersion: 1,
+        expiresAt: { gt: expect.any(Date) },
+      },
       data: expect.objectContaining({
         lastSeenAt: expect.any(Date),
         expiresAt: expect.any(Date),
       }),
     });
+  });
+
+  it("authorizes a concurrent replacement when the first refresh loses", async () => {
+    const originalWorkspace = {
+      id: "workspace-original",
+      tokenHash: "hash",
+      userId: "user-original",
+      adminUserId: "admin-original",
+      seedVersion: 1,
+      lastSeenAt: new Date("2026-03-06T08:00:00Z"),
+      expiresAt: new Date("2099-03-06T20:00:00Z"),
+      user: {
+        id: "user-original",
+        email: "demo-researcher-original@seqdesk.local",
+        firstName: "Demo",
+        lastName: "Researcher",
+        role: "RESEARCHER",
+        isDemo: true,
+      },
+      adminUser: {
+        id: "admin-original",
+        email: "demo-facility-original@seqdesk.local",
+        firstName: "Facility",
+        lastName: "Admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+      },
+    };
+    const replacementWorkspace = {
+      ...originalWorkspace,
+      id: "workspace-replacement",
+      userId: "user-replacement",
+      adminUserId: "admin-replacement",
+      user: {
+        ...originalWorkspace.user,
+        id: "user-replacement",
+      },
+      adminUser: {
+        ...originalWorkspace.adminUser,
+        id: "admin-replacement",
+      },
+    };
+    mocks.db.demoWorkspace.findUnique
+      .mockResolvedValueOnce(originalWorkspace)
+      .mockResolvedValueOnce(replacementWorkspace);
+    mocks.db.demoWorkspace.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const result = await authorizeDemoWorkspaceToken("demo-token", "facility");
+
+    expect(result).toMatchObject({
+      id: "admin-replacement",
+      demoExperience: "facility",
+    });
+    expect(mocks.db.demoWorkspace.updateMany).toHaveBeenCalledTimes(2);
   });
 
   it("resets an existing workspace while preserving its shared workspace token", async () => {
@@ -423,7 +580,9 @@ describe("demo workspace server helpers", () => {
         isDemo: true,
       },
     };
-    mocks.db.demoWorkspace.findUnique.mockResolvedValue(existingWorkspace);
+    mocks.db.demoWorkspace.findUnique
+      .mockResolvedValueOnce(existingWorkspace)
+      .mockResolvedValueOnce(null);
     mocks.db.study.findMany.mockResolvedValue([{ id: "study-ready" }]);
 
     const result = await resetDemoWorkspace("demo-token", "facility");
@@ -442,6 +601,9 @@ describe("demo workspace server helpers", () => {
         id: "workspace-expired",
         userId: "user-expired",
         adminUserId: "admin-expired",
+        seedVersion: 1,
+        lastSeenAt: new Date("2020-01-01T00:00:00Z"),
+        expiresAt: new Date("2020-01-01T06:00:00Z"),
       },
     ]);
     mocks.db.study.findMany.mockResolvedValue([{ id: "study-expired" }]);
@@ -480,6 +642,30 @@ describe("demo workspace server helpers", () => {
     const result = await cleanupExpiredDemoWorkspaces();
 
     expect(result).toEqual({ deletedWorkspaces: 0 });
+    expect(mocks.db.user.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("skips cleanup when a concurrent refresh changed the selected workspace", async () => {
+    const selectedWorkspace = {
+      id: "workspace-refreshed",
+      userId: "user-refreshed",
+      adminUserId: "admin-refreshed",
+      seedVersion: 1,
+      lastSeenAt: new Date("2020-01-01T00:00:00Z"),
+      expiresAt: new Date("2020-01-01T06:00:00Z"),
+    };
+    mocks.db.demoWorkspace.findMany.mockResolvedValue([selectedWorkspace]);
+    mocks.db.demoWorkspace.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    const result = await cleanupExpiredDemoWorkspaces();
+
+    expect(result).toEqual({ deletedWorkspaces: 0 });
+    expect(mocks.db.demoWorkspace.updateMany).toHaveBeenCalledWith({
+      where: selectedWorkspace,
+      data: { lastSeenAt: selectedWorkspace.lastSeenAt },
+    });
+    expect(mocks.db.pipelineRun.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.db.demoWorkspace.deleteMany).not.toHaveBeenCalled();
     expect(mocks.db.user.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -546,6 +732,70 @@ describe("demo workspace server helpers", () => {
 
     expect(result.created).toBe(true);
     expect(result.userId).toBe("user-1");
+  });
+
+  it("removes all user-owned pipeline runs before deleting an orphaned demo user", async () => {
+    const token = "shared-1770000000000";
+    const workspaceIdentifier = getDemoWorkspaceIdentifier(token);
+    mocks.db.user.create.mockReset();
+    mocks.db.user.create
+      .mockRejectedValueOnce(new Error("unique demo identity collision"))
+      .mockRejectedValueOnce(new Error("retry stopped after cleanup"));
+    mocks.db.user.findMany.mockResolvedValue([{ id: "orphan-user" }]);
+    mocks.db.demoWorkspace.findMany.mockResolvedValue([]);
+    mocks.db.order.findMany.mockResolvedValue([{ id: "orphan-order" }]);
+    mocks.db.study.findMany.mockResolvedValue([{ id: "orphan-study" }]);
+    mocks.db.sample.findMany.mockResolvedValue([{ id: "orphan-sample" }]);
+
+    await expect(bootstrapDemoWorkspace(token, "researcher")).rejects.toThrow(
+      "retry stopped after cleanup"
+    );
+    expect(mocks.db.user.findMany).toHaveBeenCalledWith({
+      where: {
+        isDemo: true,
+        email: {
+          in: expect.arrayContaining([
+            `demo-researcher-${workspaceIdentifier.toLowerCase()}@seqdesk.local`,
+            "demo-researcher-shared-17700@seqdesk.local",
+          ]),
+        },
+      },
+      select: { id: true },
+    });
+    expect(mocks.db.pipelineRun.deleteMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { userId: { in: ["orphan-user"] } },
+          { orderId: { in: ["orphan-order"] } },
+          { studyId: { in: ["orphan-study"] } },
+        ],
+      },
+    });
+    expect(mocks.db.user.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["orphan-user"] } },
+    });
+    expect(
+      mocks.db.pipelineRun.deleteMany.mock.invocationCallOrder[0]
+    ).toBeLessThan(mocks.db.user.deleteMany.mock.invocationCallOrder[0]);
+  });
+
+  it("does not treat a legacy colliding identity linked to another workspace as orphaned", async () => {
+    const token = "shared-1770000000001";
+    mocks.db.user.create.mockReset();
+    mocks.db.user.create
+      .mockRejectedValueOnce(new Error("legacy identity collision"))
+      .mockRejectedValueOnce(new Error("retry stopped after cleanup"));
+    mocks.db.user.findMany.mockResolvedValue([{ id: "active-legacy-user" }]);
+    mocks.db.demoWorkspace.findMany.mockResolvedValue([
+      { userId: "active-legacy-user", adminUserId: null },
+    ]);
+
+    await expect(bootstrapDemoWorkspace(token, "researcher")).rejects.toThrow(
+      "retry stopped after cleanup"
+    );
+    expect(mocks.db.user.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.db.order.deleteMany).not.toHaveBeenCalled();
+    expect(mocks.db.study.deleteMany).not.toHaveBeenCalled();
   });
 });
 
@@ -630,6 +880,55 @@ describe("isFacilityDemoSession", () => {
         user: { isDemo: true, demoExperience: "researcher" },
       } as never)
     ).toBe(false);
+  });
+});
+
+describe("getDemoFacilityWorkspaceUserIds", () => {
+  it("returns null for a real facility administrator", async () => {
+    const callsBefore = mocks.db.demoWorkspace.findUnique.mock.calls.length;
+    const result = await getDemoFacilityWorkspaceUserIds({
+      user: {
+        id: "real-admin",
+        role: "FACILITY_ADMIN",
+        isDemo: false,
+      },
+    } as never);
+
+    expect(result).toBeNull();
+    expect(mocks.db.demoWorkspace.findUnique).toHaveBeenCalledTimes(callsBefore);
+  });
+
+  it("fails closed for a stale facility-demo session", async () => {
+    mocks.db.demoWorkspace.findUnique.mockResolvedValue(null);
+
+    const result = await getDemoFacilityWorkspaceUserIds({
+      user: {
+        id: "stale-demo-admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+        demoExperience: "facility",
+      },
+    } as never);
+
+    expect(result).toEqual([]);
+  });
+
+  it("returns both users for an active facility-demo workspace", async () => {
+    mocks.db.demoWorkspace.findUnique.mockResolvedValue({
+      userId: "demo-researcher",
+      adminUserId: "demo-admin",
+    });
+
+    const result = await getDemoFacilityWorkspaceUserIds({
+      user: {
+        id: "demo-admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+        demoExperience: "facility",
+      },
+    } as never);
+
+    expect(result).toEqual(["demo-researcher", "demo-admin"]);
   });
 });
 
@@ -837,11 +1136,17 @@ describe("cleanupExpiredDemoWorkspaces with multiple workspaces", () => {
         id: "ws-1",
         userId: "user-1",
         adminUserId: "admin-1",
+        seedVersion: 1,
+        lastSeenAt: new Date("2020-01-01T00:00:00Z"),
+        expiresAt: new Date("2020-01-01T06:00:00Z"),
       },
       {
         id: "ws-2",
         userId: "user-2",
         adminUserId: "admin-2",
+        seedVersion: 1,
+        lastSeenAt: new Date("2020-01-02T00:00:00Z"),
+        expiresAt: new Date("2020-01-02T06:00:00Z"),
       },
     ]);
     mocks.db.study.findMany.mockResolvedValue([]);
@@ -867,6 +1172,9 @@ describe("cleanupExpiredDemoWorkspaces with multiple workspaces", () => {
         id: "ws-1",
         userId: "user-1",
         adminUserId: null,
+        seedVersion: 1,
+        lastSeenAt: new Date("2020-01-01T00:00:00Z"),
+        expiresAt: new Date("2020-01-01T06:00:00Z"),
       },
     ]);
     mocks.db.study.findMany.mockResolvedValue([]);

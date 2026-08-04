@@ -310,7 +310,9 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 ## Publishing
 
 The package version is auto-synced from the root `package.json` during publish
-(`prepublishOnly`), so you only bump the app version once.
+(`prepublishOnly`). When that version changes, the same command updates the
+software version and UTC release date in the repository's `CITATION.cff`, so you
+only bump the app version once.
 
 ```bash
 cd npm/seqdesk

@@ -7,7 +7,6 @@ import {
   MixsSnapshots,
   MIXS_SETTINGS_KEY,
   MIXS_SNAPSHOTS_KEY,
-  MIXS_SNAPSHOT_LIMIT,
 } from "@/types/mixs-checklist";
 
 // Dedicated env override so it does not collide with SEQDESK_API_URL (which the
@@ -230,10 +229,12 @@ async function readSnapshots(db: DbLike): Promise<MixsSnapshots> {
 }
 
 /**
- * Snapshot the given config's checklists under its version, keeping only the
- * most recent MIXS_SNAPSHOT_LIMIT versions. Call this with the OUTGOING config
- * just before applying an update, so older studies can still resolve their
- * pinned definitions.
+ * Snapshot the given config's checklists under its version. Call this with the
+ * OUTGOING config just before applying an update, so every existing study can
+ * continue resolving the exact definition recorded by its pinned mixsVersion.
+ * Historical snapshots are intentionally retained without a count-based limit:
+ * deleting an old version would make a pinned study fall through to a newer
+ * active definition.
  */
 export async function snapshotMixsConfig(
   db: DbLike,
@@ -254,16 +255,6 @@ export async function snapshotMixsConfig(
     ...config.checklists,
     ...(config.deprecated ?? []),
   ];
-
-  // Retain only the newest N versions.
-  const versions = Object.keys(snapshots)
-    .map((v) => parseInt(v, 10))
-    .filter((v) => Number.isFinite(v))
-    .sort((a, b) => b - a);
-  const keep = new Set(versions.slice(0, MIXS_SNAPSHOT_LIMIT).map(String));
-  for (const key of Object.keys(snapshots)) {
-    if (!keep.has(key)) delete snapshots[key];
-  }
 
   extra[MIXS_SNAPSHOTS_KEY] = JSON.stringify(snapshots);
   await writeExtraSettings(db, extra);

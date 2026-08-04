@@ -260,7 +260,7 @@ describe("loadStudyFormSchema", () => {
       groups: storedGroups,
     });
 
-    const result = await loadStudyFormSchema();
+    await loadStudyFormSchema();
     // version matches STUDY_FORM_DEFAULTS_VERSION (1), so ensureStudyModuleDefaultFields should NOT be called
     expect(mocks.ensureStudyModuleDefaultFields).not.toHaveBeenCalled();
     expect(mocks.normalizeStudyFormSchema).toHaveBeenCalledWith({
@@ -279,7 +279,7 @@ describe("loadStudyFormSchema", () => {
       groups: fixedGroups,
     });
 
-    const result = await loadStudyFormSchema();
+    await loadStudyFormSchema();
     expect(mocks.normalizeStudyFormSchema).toHaveBeenCalledWith({
       fields: [],
       groups: fixedGroups,

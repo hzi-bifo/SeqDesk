@@ -3,8 +3,10 @@ import { createDraftOrder } from "./helpers";
 
 test.setTimeout(90000);
 
+const navigationOptions = { waitUntil: "domcontentloaded" as const };
+
 async function openDemo(page: Page, path = "/demo") {
-  await page.goto(path);
+  await page.goto(path, navigationOptions);
   await expect(page).toHaveURL(/\/orders$/);
   await expect(
     page.getByRole("heading", { name: /^(My|All|Department) Sequencing Orders$/ })
@@ -57,17 +59,22 @@ test("public demo boots with seeded researcher data and hides infra-backed tabs"
   await openDemo(page);
 
   const seededOrderId = await fetchOrderIdByName(page, "Gut recovery metagenome cohort");
-  await page.goto(`/orders/${seededOrderId}`);
+  await page.goto(`/orders/${seededOrderId}`, navigationOptions);
   await expect(page.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
   await expect(page.getByText("Projects")).toBeVisible();
   await expect(page.getByRole("tab", { name: /Read Files/i })).toHaveCount(0);
   await expect(page.getByText("Manage Files")).toHaveCount(0);
 
   const seededStudyId = await fetchStudyIdByTitle(page, "Gut Recovery Cohort");
-  await page.goto(`/studies/${seededStudyId}`);
+  await page.goto(`/studies/${seededStudyId}`, navigationOptions);
   await expect(page.getByText("Gut Recovery Cohort").first()).toBeVisible();
   await expect(page.getByRole("tab", { name: /Read Files/i })).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "ENA" })).toHaveCount(0);
+
+  await page.goto("/assemblies", navigationOptions);
+  await expect(
+    page.getByText("Assemblies are disabled in the public demo")
+  ).toBeVisible();
 });
 
 test("demo changes persist in one browser session and disappear after reset", async ({
@@ -78,12 +85,12 @@ test("demo changes persist in one browser session and disappear after reset", as
   const orderName = `Demo Session ${Date.now()}`;
   const { orderPath } = await createDraftOrder(page, orderName, 1);
 
-  await page.goto(orderPath);
+  await page.goto(orderPath, navigationOptions);
   await expect(page.getByRole("heading", { name: "Sequencing Order Details" })).toBeVisible();
 
   await expectOrderInApi(page, orderName, true);
 
-  await page.reload();
+  await page.reload(navigationOptions);
   await expectOrderInApi(page, orderName, true);
 
   await page.getByTestId("demo-reset-button").click();
@@ -110,7 +117,7 @@ test("different browser contexts stay isolated, while /demo and /demo/embed shar
   await isolatedContext.close();
 
   const embedPage = await page.context().newPage();
-  await embedPage.goto("/demo/embed");
+  await embedPage.goto("/demo/embed", navigationOptions);
   await expect(embedPage).toHaveURL(/\/orders$/);
   await expectOrderInApi(embedPage, orderName, true);
 
@@ -133,7 +140,7 @@ test("researcher and facility demos share one seeded workspace when they use the
   await createDraftOrder(researcherPage, orderName, 1);
 
   await expectOrderInApi(researcherPage, orderName, true);
-  await facilityPage.reload();
+  await facilityPage.reload(navigationOptions);
   await expectOrderInApi(facilityPage, orderName, true);
 
   await researcherContext.close();
@@ -171,9 +178,15 @@ test("facility demo shows seeded analysis data but rejects pipeline execution", 
 }) => {
   await openDemo(page, `/demo/admin?workspace=facility-${Date.now()}`);
 
-  await page.goto("/analysis");
+  await page.goto("/analysis", navigationOptions);
   await expect(page.getByRole("heading", { name: "Analysis Runs" })).toBeVisible();
-  await expect(page.getByText("MAG").first()).toBeVisible();
+  await expect(
+    page
+      .getByRole("row", {
+        name: /MAG-.* MAG Pipeline Human Gut Shotgun Metagenomes \(Demo\) Completed/,
+      })
+      .first()
+  ).toBeVisible();
 
   const studiesResponse = await page.request.get("/api/studies");
   expect(studiesResponse.ok()).toBeTruthy();

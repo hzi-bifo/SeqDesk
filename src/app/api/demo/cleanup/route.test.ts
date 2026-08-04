@@ -19,6 +19,9 @@ function makeRequest(headers: Record<string, string> = {}) {
 
 describe("GET /api/demo/cleanup", () => {
   const originalEnv = process.env;
+  const setNodeEnv = (value: "development" | "production" | "test") => {
+    (process.env as Record<string, string | undefined>).NODE_ENV = value;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -36,7 +39,7 @@ describe("GET /api/demo/cleanup", () => {
   it("allows access in non-production when no secret is configured", async () => {
     delete process.env.CRON_SECRET;
     delete process.env.DEMO_CLEANUP_SECRET;
-    process.env.NODE_ENV = "development";
+    setNodeEnv("development");
 
     const response = await GET(makeRequest());
 
@@ -100,7 +103,7 @@ describe("GET /api/demo/cleanup", () => {
   it("returns cleanup result on success", async () => {
     delete process.env.CRON_SECRET;
     delete process.env.DEMO_CLEANUP_SECRET;
-    process.env.NODE_ENV = "development";
+    setNodeEnv("development");
 
     const response = await GET(makeRequest());
     const data = await response.json();
@@ -112,7 +115,7 @@ describe("GET /api/demo/cleanup", () => {
   it("sets no-cache headers", async () => {
     delete process.env.CRON_SECRET;
     delete process.env.DEMO_CLEANUP_SECRET;
-    process.env.NODE_ENV = "development";
+    setNodeEnv("development");
 
     const response = await GET(makeRequest());
 
@@ -122,7 +125,7 @@ describe("GET /api/demo/cleanup", () => {
   it("returns 500 with error message when cleanup throws Error", async () => {
     delete process.env.CRON_SECRET;
     delete process.env.DEMO_CLEANUP_SECRET;
-    process.env.NODE_ENV = "development";
+    setNodeEnv("development");
     mocks.cleanupExpiredDemoWorkspaces.mockRejectedValue(
       new Error("Database connection failed")
     );
@@ -138,7 +141,7 @@ describe("GET /api/demo/cleanup", () => {
   it("returns 500 with generic message for non-Error throws", async () => {
     delete process.env.CRON_SECRET;
     delete process.env.DEMO_CLEANUP_SECRET;
-    process.env.NODE_ENV = "development";
+    setNodeEnv("development");
     mocks.cleanupExpiredDemoWorkspaces.mockRejectedValue("string error");
 
     const response = await GET(makeRequest());
@@ -150,7 +153,7 @@ describe("GET /api/demo/cleanup", () => {
   it("returns 401 in production when no secret is configured", async () => {
     delete process.env.CRON_SECRET;
     delete process.env.DEMO_CLEANUP_SECRET;
-    process.env.NODE_ENV = "production";
+    setNodeEnv("production");
 
     const response = await GET(makeRequest());
 

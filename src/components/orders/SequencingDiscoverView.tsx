@@ -88,19 +88,29 @@ function formatFileSize(bytes?: number | null): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function getAssignmentFailureMessage(payload: any, fallback: string): string | null {
-  if (payload?.error) return String(payload.error);
-  if (payload?.success === false) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getAssignmentFailureMessage(payload: unknown, fallback: string): string | null {
+  if (!isRecord(payload)) return null;
+  if (payload.error) return String(payload.error);
+  if (payload.success === false) {
     const failures = Array.isArray(payload.results)
-      ? payload.results.filter((result: any) => result && result.success === false)
+      ? payload.results.filter(
+          (result): result is Record<string, unknown> =>
+            isRecord(result) && result.success === false
+        )
       : [];
     if (failures.length > 0) {
       return failures
         .slice(0, 3)
-        .map((failure: any) =>
-          failure?.sampleId && failure?.error
-            ? `${failure.sampleId}: ${failure.error}`
-            : failure?.error || fallback
+        .map((failure) =>
+          failure.sampleId && failure.error
+            ? `${String(failure.sampleId)}: ${String(failure.error)}`
+            : failure.error
+              ? String(failure.error)
+              : fallback
         )
         .join("; ");
     }

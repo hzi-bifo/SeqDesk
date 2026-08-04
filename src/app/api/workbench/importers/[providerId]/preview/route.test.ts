@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -25,7 +26,7 @@ vi.mock("@/lib/workbench/importers/registry", () => ({
 import { POST } from "./route";
 
 function request(body: unknown) {
-  return new Request("http://localhost/api/workbench/importers/mock/preview", {
+  return new NextRequest("http://localhost/api/workbench/importers/mock/preview", {
     method: "POST",
     body: JSON.stringify(body),
     headers: { "content-type": "application/json" },

@@ -60,6 +60,7 @@ export const INSTALL_PROFILE_SECTION_DISPOSITIONS: InstallProfileSectionDisposit
   { section: "sequencingTech", kind: "structured", reload: "reload-safe" },
   { section: "shortDescription", kind: "scalar", reload: "metadata-only" },
   { section: "site", kind: "structured", reload: "reload-safe" },
+  { section: "studies", kind: "array", reload: "reload-safe" },
   { section: "telemetry", kind: "structured", reload: "reload-safe" },
   { section: "testing", kind: "structured", reload: "install-only" },
   { section: "version", kind: "scalar", reload: "metadata-only" },
@@ -118,6 +119,7 @@ export const INSTALL_PROFILE_COVERAGE: InstallProfileCoverageEntry[] = [
   entry("forms.order", "forms.order", "OrderFormConfig.schema", "reload-safe", "reload-safe", "profile-managed"),
   entry("forms.study", "forms.study", "SiteSettings.extraSettings.studyForm*", "reload-safe", "reload-safe", "profile-managed"),
   entry("forms.runAssignment", "forms.runAssignment", "SiteSettings.extraSettings.sequencingRunSampleForm*", "reload-safe", "reload-safe", "profile-managed"),
+  entry("studies", "studies", "Study + StudyFormConfig", "reload-safe", "reload-safe", "profile-managed"),
   entry("hostedDatabase", "hostedDatabase", "SeqDesk.com profile metadata", "metadata-only", "metadata-only", "none"),
   entry("modules", "modules", "SiteSettings.modulesConfig", "reload-safe", "reload-safe", "merge-only"),
   entry("sequencingTech", "sequencingTech.config", "SiteSettings.extraSettings.sequencingTechConfig", "reload-safe", "reload-safe", "profile-managed"),
@@ -175,6 +177,12 @@ export const KNOWN_INSTALL_PROFILE_SECTIONS = new Set(
 export const STRUCTURED_INSTALL_PROFILE_SECTIONS = new Set(
   INSTALL_PROFILE_SECTION_DISPOSITIONS
     .filter((item) => item.kind === "structured")
+    .map((item) => item.section)
+);
+
+export const ARRAY_INSTALL_PROFILE_SECTIONS = new Set(
+  INSTALL_PROFILE_SECTION_DISPOSITIONS
+    .filter((item) => item.kind === "array")
     .map((item) => item.section)
 );
 

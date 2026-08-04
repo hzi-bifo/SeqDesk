@@ -28,8 +28,15 @@ export async function POST(request: Request) {
     const demoExperience = normalizeDemoExperience(body.demoExperience);
     const existingToken =
       explicitToken || cookieStore.get(getDemoWorkspaceCookieName())?.value;
-    const result = await bootstrapDemoWorkspace(existingToken, demoExperience);
-    const user = await authorizeDemoWorkspaceToken(result.token, demoExperience);
+    let result = await bootstrapDemoWorkspace(existingToken, demoExperience);
+    let user = await authorizeDemoWorkspaceToken(result.token, demoExperience);
+    if (!user) {
+      // A concurrent reset can leave a committed delete-to-seed gap after the
+      // first bootstrap returned. Seed or reuse the eventual winner once, then
+      // authorize that exact result.
+      result = await bootstrapDemoWorkspace(result.token, demoExperience);
+      user = await authorizeDemoWorkspaceToken(result.token, demoExperience);
+    }
     if (!user) {
       throw new Error("Failed to create demo session");
     }

@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, Trash2, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   Project,
-  ProjectsFieldValue,
   generateProjectId,
   parseProjectsValue,
   stringifyProjectsValue,
@@ -29,17 +28,8 @@ export function ProjectsFormRenderer({
   disabled,
   onFocus,
 }: ProjectsFormRendererProps) {
-  const [projects, setProjects] = useState<Project[]>(() => parseProjectsValue(value));
+  const projects = useMemo(() => parseProjectsValue(value), [value]);
   const [newProjectName, setNewProjectName] = useState("");
-
-  // Sync external value changes
-  useEffect(() => {
-    const parsed = parseProjectsValue(value);
-    // Only update if different (by comparing stringified)
-    if (JSON.stringify(parsed) !== JSON.stringify(projects)) {
-      setProjects(parsed);
-    }
-  }, [value]);
 
   const handleAddProject = () => {
     if (!newProjectName.trim()) return;
@@ -50,7 +40,6 @@ export function ProjectsFormRenderer({
     };
 
     const updated = [...projects, newProject];
-    setProjects(updated);
     onChange(stringifyProjectsValue(updated));
     setNewProjectName("");
   };
@@ -60,13 +49,11 @@ export function ProjectsFormRenderer({
     if (field.required && projects.length <= 1) return;
 
     const updated = projects.filter((p) => p.id !== id);
-    setProjects(updated);
     onChange(stringifyProjectsValue(updated));
   };
 
   const handleProjectNameChange = (id: string, name: string) => {
     const updated = projects.map((p) => (p.id === id ? { ...p, name } : p));
-    setProjects(updated);
     onChange(stringifyProjectsValue(updated));
   };
 

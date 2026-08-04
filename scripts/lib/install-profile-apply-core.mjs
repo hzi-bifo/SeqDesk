@@ -9,8 +9,8 @@ import {
   normalizeStringArray,
   mergeManagedGroups,
   mergeManagedFields,
-  mergeManagedStringArrays,
 } from "../../src/lib/forms/order-form-schema.mjs";
+import { expandLeadingHomePath } from "./install-profile-paths.mjs";
 
 const SITE_SETTINGS_ID = "singleton";
 const ORDER_FORM_ID = "singleton";
@@ -22,42 +22,6 @@ const INSTALL_PROFILE_PIPELINE_ALLOWLIST_KEY = "installProfilePipelineAllowlist"
 const INSTALL_PROFILE_MANAGED_KEY = "installProfileManaged";
 const ACCOUNT_VALIDATION_SETTINGS_KEY = "accountValidationSettings";
 const BILLING_SETTINGS_KEY = "billingSettings";
-
-function usage() {
-  console.log(`Usage:
-  node scripts/apply-install-profile.mjs --profile-config <file>
-
-Options:
-  --profile-config <file>  Resolved install profile JSON
-  -h, --help              Show this help
-`);
-}
-
-function parseArgs(argv) {
-  const args = {
-    profileConfig: process.env.SEQDESK_INSTALL_PROFILE_CONFIG || "",
-  };
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "-h" || arg === "--help") {
-      usage();
-      process.exit(0);
-    }
-    if (arg === "--profile-config" || arg === "--profile_config") {
-      args.profileConfig = argv[index + 1] || "";
-      index += 1;
-      continue;
-    }
-    throw new Error(`Unknown option: ${arg}`);
-  }
-
-  if (!args.profileConfig) {
-    throw new Error("--profile-config is required");
-  }
-
-  return args;
-}
 
 function parseJsonObject(value) {
   if (isRecord(value)) return value;
@@ -173,17 +137,27 @@ function persistSafeInstallProfileMetadata(profile) {
   // Read and write the SAME resolved file so we never split into two configs.
   const configPath = resolveRuntimeConfigPath();
   let config = {};
-  try {
-    if (fs.existsSync(configPath)) {
-      const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      config = isRecord(parsed) ? parsed : {};
+  if (fs.existsSync(configPath)) {
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    } catch (error) {
+      const detail = error instanceof Error ? `: ${error.message}` : "";
+      throw new Error(
+        `Refusing to replace malformed runtime settings in ${configPath}${detail}`
+      );
     }
-  } catch {
-    config = {};
+    if (!isRecord(parsed)) {
+      throw new Error(
+        `Refusing to replace runtime settings in ${configPath}: expected a JSON object`
+      );
+    }
+    config = parsed;
   }
 
   config.installProfile = metadata;
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+  fs.chmodSync(configPath, 0o600);
   return true;
 }
 
@@ -339,10 +313,6 @@ function buildPipelineProfileConfig(pipelines, pipelineId) {
   Object.assign(merged, toRecord(pipelineConfig.config));
 
   return merged;
-}
-
-function mergePipelineConfig(existingConfig, profileConfig) {
-  return mergePipelineConfigWithManagedKeys(existingConfig, profileConfig);
 }
 
 function mergePipelineConfigWithManagedKeys(existingConfig, profileConfig, previousManagedKeys = []) {
@@ -852,18 +822,27 @@ async function applySiteProfile(prisma, profile) {
   }
 
   const site = toRecord(profile.site);
-  const dataBasePath = toOptionalString(site.dataBasePath);
+  const siteName = toOptionalString(site.name);
+  const contactEmail = toOptionalString(site.contactEmail);
+  const dataBasePath = expandLeadingHomePath(site.dataBasePath);
+  if (siteName) {
+    update.siteName = siteName;
+  }
+  if (contactEmail) {
+    update.contactEmail = contactEmail;
+  }
   if (dataBasePath) {
     update.dataBasePath = dataBasePath;
   }
 
   const pipelines = toRecord(profile.pipelines);
   const pipelinesEnabled = toOptionalBoolean(pipelines.enabled);
+  const pipelineSelectionProvided = Array.isArray(pipelines.enable);
   const enablePipelineIds = normalizeStringArray(pipelines.enable);
-  const databaseDirectory = toOptionalString(pipelines.databaseDirectory);
+  const databaseDirectory = expandLeadingHomePath(pipelines.databaseDirectory);
   if (pipelinesEnabled === false) {
     extra[INSTALL_PROFILE_PIPELINE_ALLOWLIST_KEY] = [];
-  } else if (pipelinesEnabled === true && enablePipelineIds.length > 0) {
+  } else if (pipelinesEnabled === true && pipelineSelectionProvided) {
     extra[INSTALL_PROFILE_PIPELINE_ALLOWLIST_KEY] = enablePipelineIds;
   }
   const execution = toRecord(pipelines.execution);
@@ -887,7 +866,9 @@ async function applySiteProfile(prisma, profile) {
     const nextManagedExecutionKeys = new Set();
 
     const mode = toOptionalString(execution.mode)?.toLowerCase();
-    const runDirectory = toOptionalString(execution.runDirectory || execution.pipelineRunDir);
+    const runDirectory = expandLeadingHomePath(
+      execution.runDirectory || execution.pipelineRunDir
+    );
     const useSlurm = toOptionalBoolean(execution.useSlurm ?? slurm.enabled);
     const slurmQueue = toOptionalString(execution.slurmQueue || slurm.queue);
     const slurmCores = toOptionalInt(execution.slurmCores ?? slurm.cores);
@@ -1020,6 +1001,7 @@ async function applySiteProfile(prisma, profile) {
 async function applyPipelineEnablement(prisma, profile) {
   const pipelines = toRecord(profile.pipelines);
   const enabled = toOptionalBoolean(pipelines.enabled);
+  const pipelineSelectionProvided = Array.isArray(pipelines.enable);
   const enableIds = normalizeStringArray(pipelines.enable);
   const allowlist = new Set(enableIds);
   const settings = await loadSiteSettings(prisma);
@@ -1060,10 +1042,7 @@ async function applyPipelineEnablement(prisma, profile) {
     return 0;
   }
 
-  if (
-    enabled !== true ||
-    (enableIds.length === 0 && Object.keys(previousPipelineConfigKeys).length === 0)
-  ) {
+  if (enabled !== true || !pipelineSelectionProvided) {
     return 0;
   }
 

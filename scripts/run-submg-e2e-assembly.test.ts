@@ -7,9 +7,14 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildMegahitAssemblyGz,
-  resolveFixtureAssemblySource,
+  resolveFixtureAssemblySource as resolveFixtureAssemblySourceImpl,
   selectAssemblySource,
 } from "./run-submg-e2e.mjs";
+
+const resolveFixtureAssemblySource = resolveFixtureAssemblySourceImpl as (options?: {
+  requestedSource?: string;
+  submitAssembly?: boolean;
+}) => string;
 
 const temporaryDirectories: string[] = [];
 

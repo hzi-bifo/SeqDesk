@@ -78,6 +78,13 @@ jobs:
       - name: Run Playwright tests
         run: npm run test:e2e
 
+      - name: Run public demo browser flow
+        env:
+          PLAYWRIGHT_DEMO_DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_e2e?schema=public
+          PLAYWRIGHT_DEMO_DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_e2e?schema=public
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/demo
+        run: npm run test:e2e:demo
+
       - name: Run real pipeline Store browser flow
         env:
           SEQDESK_PIPELINE_REGISTRY_URL: http://127.0.0.1:3219/registry

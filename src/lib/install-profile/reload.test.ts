@@ -163,7 +163,7 @@ describe("install profile reload helpers", () => {
       json: vi.fn().mockResolvedValue({
         id: "dev",
         version: "1.0.0",
-        minSeqDeskVersion: "99.0.0",
+        minSeqDeskVersion: "v99.0.0",
       }),
     }) as unknown as typeof fetch;
 
@@ -173,8 +173,32 @@ describe("install profile reload helpers", () => {
         profileCode: "setup-code",
         cwd: tempDir,
       })
-    ).rejects.toThrow("requires SeqDesk 99.0.0+");
+    ).rejects.toThrow("requires SeqDesk v99.0.0+");
   });
+
+  it.each(["not-a-version", "1.2", "1.2.3.4", "01.2.3", "1.2.3-01", "", null, 99])(
+    "rejects malformed minimum SeqDesk version %s",
+    async (minSeqDeskVersion) => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          id: "dev",
+          version: "1.0.0",
+          minSeqDeskVersion,
+        }),
+      }) as unknown as typeof fetch;
+
+      await expect(
+        reloadHostedInstallProfile({
+          profileId: "dev",
+          profileCode: "setup-code",
+          cwd: tempDir,
+        })
+      ).rejects.toThrow(
+        "Hosted profile minSeqDeskVersion must be a semantic version such as 1.2.3"
+      );
+    }
+  );
 
   it("returns validation warnings for install-time-only sections", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
@@ -228,6 +252,12 @@ describe("install profile reload helpers", () => {
         sequencingFiles: {},
         sequencingTech: {},
         site: {},
+        studies: [
+          {
+            title: "Hosted study",
+            alias: "hosted-study",
+          },
+        ],
         telemetry: {},
       }),
     }) as unknown as typeof fetch;
@@ -252,6 +282,7 @@ describe("install profile reload helpers", () => {
       "sequencingFiles",
       "sequencingTech",
       "site",
+      "studies",
       "telemetry",
     ]);
   });
@@ -279,6 +310,26 @@ describe("install profile reload helpers", () => {
         cwd: tempDir,
       })
     ).rejects.toThrow("Hosted profile section access must be a JSON object");
+  });
+
+  it("rejects malformed study definitions before applying settings", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "dev",
+        version: "1.0.0",
+        minSeqDeskVersion: "1.0.0",
+        studies: { alias: "not-an-array" },
+      }),
+    }) as unknown as typeof fetch;
+
+    await expect(
+      reloadHostedInstallProfile({
+        profileId: "dev",
+        profileCode: "setup-code",
+        cwd: tempDir,
+      })
+    ).rejects.toThrow("Hosted profile section studies must be a JSON array");
   });
 
   it("rejects concurrent hosted profile reloads", async () => {
@@ -317,5 +368,94 @@ describe("install profile reload helpers", () => {
 
     expect(result.profile.id).toBe("dev");
     await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not unlink a replacement installed after observing a stale lock", async () => {
+    const lockPath = path.join(tempDir, "pipelines", ".install-profile-reload.lock");
+    await fs.mkdir(path.dirname(lockPath), { recursive: true });
+    await fs.writeFile(
+      lockPath,
+      JSON.stringify({
+        profileId: "dev",
+        ownerToken: "stale-owner",
+        pid: 111_111,
+        startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      })
+    );
+    const staleDate = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await fs.utimes(lockPath, staleDate, staleDate);
+
+    const replacement = {
+      profileId: "dev",
+      ownerToken: "replacement-owner",
+      pid: 999_999,
+      startedAt: new Date().toISOString(),
+    };
+    const originalRename = fs.rename.bind(fs);
+    const renameSpy = vi
+      .spyOn(fs, "rename")
+      .mockImplementationOnce(async (oldPath, newPath) => {
+        await fs.rm(oldPath, { force: true });
+        await fs.writeFile(oldPath, JSON.stringify(replacement));
+        await originalRename(oldPath, newPath);
+      });
+
+    await expect(
+      reloadHostedInstallProfile({
+        profileId: "dev",
+        profileCode: "setup-code",
+        cwd: tempDir,
+      })
+    ).rejects.toThrow("already running");
+
+    expect(renameSpy).toHaveBeenCalledOnce();
+    expect(JSON.parse(await fs.readFile(lockPath, "utf8"))).toEqual(replacement);
+    expect(
+      (await fs.readdir(path.dirname(lockPath))).filter((name) =>
+        name.includes(".install-profile-reload.lock.stale-")
+      )
+    ).toEqual([]);
+  });
+
+  it("does not remove a reload lock that has been replaced by another owner", async () => {
+    const lockPath = path.join(tempDir, "pipelines", ".install-profile-reload.lock");
+    await fs.writeFile(
+      path.join(tempDir, "scripts", "apply-install-profile.mjs"),
+      "setTimeout(() => console.log('applied settings'), 150)\n"
+    );
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "dev",
+        version: "1.0.0",
+        minSeqDeskVersion: "1.0.0",
+      }),
+    }) as unknown as typeof fetch;
+
+    const reload = reloadHostedInstallProfile({
+      profileId: "dev",
+      profileCode: "setup-code",
+      cwd: tempDir,
+    });
+
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      try {
+        await fs.stat(lockPath);
+        break;
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    const replacement = {
+      profileId: "dev",
+      ownerToken: "replacement-owner",
+      pid: 999_999,
+      startedAt: new Date().toISOString(),
+    };
+    await fs.writeFile(lockPath, JSON.stringify(replacement));
+
+    await reload;
+
+    expect(JSON.parse(await fs.readFile(lockPath, "utf8"))).toEqual(replacement);
   });
 });

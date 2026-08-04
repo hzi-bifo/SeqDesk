@@ -46,7 +46,6 @@ interface CliOptions {
 const DEFAULT_HOST = "127.0.0.1";
 const PLAYWRIGHT_CLI_PATH = path.join(process.cwd(), "node_modules", "playwright", "cli.js");
 const PLAYWRIGHT_REPORTER_PATH = path.join(process.cwd(), "scripts", "playwright-dashboard-reporter.ts");
-const TERMINAL_RUN_STATES = new Set<DashboardRunState>(["passed", "failed", "cancelled"]);
 
 function printHelp(): void {
   process.stdout.write(`Usage: node scripts/test-dashboard.ts [options] [filters...]

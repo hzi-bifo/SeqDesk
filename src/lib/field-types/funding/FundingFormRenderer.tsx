@@ -131,7 +131,7 @@ export function FundingFormRenderer({
         {/* Entries */}
         {entries.length > 0 && (
           <div className="space-y-3 mb-4">
-            {entries.map((entry, index) => {
+            {entries.map((entry) => {
               const isExpanded = expandedEntries.has(entry.id);
               const agency = FUNDING_AGENCIES.find((a) => a.id === entry.agencyId);
               const displayName = entry.agencyId === "other"

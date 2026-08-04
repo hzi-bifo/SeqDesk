@@ -13,7 +13,7 @@ vi.mock("@/lib/sequencing/server", () => {
   class SequencingApiError extends Error {
     status: number;
 
-    constructor(message: string, status: number) {
+    constructor(status: number, message: string) {
       super(message);
       this.name = "SequencingApiError";
       this.status = status;
@@ -74,7 +74,7 @@ describe("POST /api/orders/[id]/sequencing/checksums", () => {
     const { SequencingApiError } = await import("@/lib/sequencing/server");
 
     mocks.requireFacilityAdminSequencingSession.mockRejectedValueOnce(
-      new SequencingApiError("Unauthorized", 401)
+      new SequencingApiError(401, "Unauthorized")
     );
 
     const response = await POST(

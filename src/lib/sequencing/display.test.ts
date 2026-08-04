@@ -68,6 +68,7 @@ function makeSample(
     qcArtifactCount: 0,
     latestArtifactStage: null,
     artifacts: [],
+    stream: null,
     ...overrides,
   };
 }

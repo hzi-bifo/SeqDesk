@@ -620,7 +620,7 @@ describe("dummy seed lifecycle helpers", () => {
     submittedStudy?: boolean;
     storedBasePath?: string;
   } = {}) {
-    let extraSettings = JSON.stringify({ unrelated: true });
+    let extraSettings: string | null = JSON.stringify({ unrelated: true });
     return {
       $queryRaw: vi.fn(async () => 1),
       siteSettings: {

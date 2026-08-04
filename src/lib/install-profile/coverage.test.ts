@@ -155,6 +155,7 @@ describe("install profile coverage matrix", () => {
       "sequencingTech",
       "shortDescription",
       "site",
+      "studies",
       "telemetry",
       "testing",
       "version",

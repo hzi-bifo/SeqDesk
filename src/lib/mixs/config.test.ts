@@ -3,7 +3,6 @@ import type { MixsChecklist, MixsConfig } from "@/types/mixs-checklist";
 import {
   MIXS_SETTINGS_KEY,
   MIXS_SNAPSHOTS_KEY,
-  MIXS_SNAPSHOT_LIMIT,
 } from "@/types/mixs-checklist";
 
 // config.ts reads committed JSON via `import fs from "fs"`, so we mock fs and
@@ -360,10 +359,10 @@ describe("snapshotMixsConfig", () => {
     expect(snaps["5"].map((c: MixsChecklist) => c.name)).toEqual(["Active", "Gone"]);
   });
 
-  it("retains only the newest MIXS_SNAPSHOT_LIMIT versions", async () => {
+  it("retains every applied version so pinned studies never lose their definition", async () => {
     const { snapshotMixsConfig } = await loadModule();
     const { db, extra } = makeDb({});
-    const total = MIXS_SNAPSHOT_LIMIT + 2;
+    const total = 12;
     for (let v = 1; v <= total; v += 1) {
       await snapshotMixsConfig(db, { version: v, checklists: [makeChecklist({ name: `v${v}` })] });
     }
@@ -371,8 +370,8 @@ describe("snapshotMixsConfig", () => {
     const kept = Object.keys(snaps)
       .map(Number)
       .sort((a, b) => a - b);
-    expect(kept).toHaveLength(MIXS_SNAPSHOT_LIMIT);
-    expect(kept).toEqual([3, 4, 5, 6, 7]);
+    expect(kept).toHaveLength(total);
+    expect(kept).toEqual(Array.from({ length: total }, (_, index) => index + 1));
   });
 
   it("recovers from a corrupt existing snapshots blob", async () => {

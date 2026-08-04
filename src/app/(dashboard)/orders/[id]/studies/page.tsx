@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useState, useEffect, use } from "react";
 import { useModuleEnabled } from "@/lib/modules";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -97,7 +96,6 @@ export default function OrderStudiesPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const router = useRouter();
   const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
 
   const [order, setOrder] = useState<Order | null>(null);
@@ -117,11 +115,7 @@ export default function OrderStudiesPage({
   const [newStudyChecklist, setNewStudyChecklist] = useState("");
   const [creatingStudy, setCreatingStudy] = useState(false);
 
-  useEffect(() => {
-    fetchData();
-  }, [id]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [orderRes, studiesRes] = await Promise.all([
         fetch(`/api/orders/${id}`),
@@ -142,7 +136,11 @@ export default function OrderStudiesPage({
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
 
   const handleToggleSample = (sampleId: string) => {
     const newSelected = new Set(selectedSamples);

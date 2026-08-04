@@ -10,7 +10,7 @@ import {
   getDataStorageStatus,
   inspectStoragePath,
   parseDataStorageArgs,
-  runDataStorageCommand,
+  runDataStorageCommand as runDataStorageCommandImpl,
 } from "../../../scripts/configure-data-storage.mjs";
 
 const tempDirectories: string[] = [];
@@ -49,6 +49,22 @@ function makePrisma(
     current: () => row,
   };
 }
+
+function processEnvironment(
+  values: Record<string, string | undefined>
+): NodeJS.ProcessEnv {
+  return values as unknown as NodeJS.ProcessEnv;
+}
+
+const runDataStorageCommand = runDataStorageCommandImpl as unknown as (
+  argv: string[],
+  options?: {
+    environment?: NodeJS.ProcessEnv;
+    createPrismaClient?: () => Promise<
+      ReturnType<typeof makePrisma> & { $disconnect: () => Promise<void> }
+    >;
+  }
+) => ReturnType<typeof runDataStorageCommandImpl>;
 
 afterEach(async () => {
   await Promise.all(
@@ -90,7 +106,7 @@ describe("configure-data-storage worker", () => {
       storagePath,
       configPath,
       prisma,
-      environment: {},
+      environment: processEnvironment({}),
     });
 
     expect(result).toMatchObject({
@@ -143,7 +159,7 @@ describe("configure-data-storage worker", () => {
         storagePath,
         configPath,
         prisma,
-        environment: {},
+        environment: processEnvironment({}),
       })
     ).rejects.toMatchObject({ code: "PATH_NOT_FOUND" });
     await expect(fs.access(storagePath)).rejects.toMatchObject({
@@ -156,7 +172,7 @@ describe("configure-data-storage worker", () => {
       configPath,
       create: true,
       prisma,
-      environment: {},
+      environment: processEnvironment({}),
     });
     expect(created).toMatchObject({
       ok: true,
@@ -196,7 +212,7 @@ describe("configure-data-storage worker", () => {
         storagePath: requestedPath,
         configPath,
         prisma,
-        environment: { SEQDESK_DATA_PATH: overridePath },
+        environment: processEnvironment({ SEQDESK_DATA_PATH: overridePath }),
       })
     ).rejects.toMatchObject({ code: "ENV_OVERRIDE_CONFLICT" });
 
@@ -223,7 +239,7 @@ describe("configure-data-storage worker", () => {
         storagePath,
         configPath,
         prisma,
-        environment: {},
+        environment: processEnvironment({}),
       })
     ).rejects.toMatchObject({
       code: "DATABASE_WRITE_FAILED",
@@ -263,7 +279,9 @@ describe("configure-data-storage worker", () => {
     const status = await getDataStorageStatus({
       configPath,
       prisma,
-      environment: { SEQDESK_DATA_PATH: environmentPath },
+      environment: processEnvironment({
+        SEQDESK_DATA_PATH: environmentPath,
+      }),
     });
 
     expect(status).toMatchObject({
@@ -332,7 +350,9 @@ describe("configure-data-storage worker", () => {
         "--json",
       ],
       {
-        environment: { DATABASE_URL: "postgresql://not-printed" },
+        environment: processEnvironment({
+          DATABASE_URL: "postgresql://not-printed",
+        }),
         createPrismaClient: async () => ({
           ...makePrisma(null),
           $disconnect: disconnect,

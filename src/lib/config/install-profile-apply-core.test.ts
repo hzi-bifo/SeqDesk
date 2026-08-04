@@ -1,6 +1,10 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyOrderForm,
+  applyPipelineEnablement,
   applySiteProfile,
   applyStudyDefinitions,
   normalizeAccessSettings,
@@ -9,6 +13,7 @@ import {
   normalizeBillingSettings,
   normalizeNotificationManagedSettings,
   normalizeSequencingFilesConfig,
+  persistSafeInstallProfileMetadata,
 } from "../../../scripts/lib/install-profile-apply-core.mjs";
 import { decryptSecret, isEncrypted } from "../../../scripts/lib/secret-store.mjs";
 
@@ -40,6 +45,47 @@ function createPrisma(settings: SiteSettingsState = {}) {
         };
         return state.siteSettings;
       }),
+    },
+  };
+}
+
+function createPipelinePrisma(
+  settings: SiteSettingsState,
+  pipelineConfigs: Record<string, { enabled: boolean; config: string | null }>
+) {
+  const prisma = createPrisma(settings);
+  const configs = new Map(
+    Object.entries(pipelineConfigs).map(([pipelineId, config]) => [
+      pipelineId,
+      { pipelineId, ...config },
+    ])
+  );
+
+  return {
+    ...prisma,
+    configs,
+    pipelineConfig: {
+      findUnique: vi.fn(async ({ where }: { where: { pipelineId: string } }) => {
+        return configs.get(where.pipelineId) ?? null;
+      }),
+      upsert: vi.fn(
+        async ({
+          where,
+          update,
+          create,
+        }: {
+          where: { pipelineId: string };
+          update: { enabled: boolean; config: string | null };
+          create: { pipelineId: string; enabled: boolean; config: string | null };
+        }) => {
+          const existing = configs.get(where.pipelineId);
+          const next = existing
+            ? { ...existing, ...update }
+            : { ...create };
+          configs.set(where.pipelineId, next);
+          return next;
+        }
+      ),
     },
   };
 }
@@ -356,6 +402,160 @@ describe("install profile applicator core", () => {
     });
   });
 
+  it("applies site identity and expands home-relative storage paths", async () => {
+    const prisma = createPrisma();
+
+    await applySiteProfile(prisma, {
+      id: "macbook-local",
+      version: "1.0.0",
+      site: {
+        name: " Local SeqDesk ",
+        contactEmail: " local@example.org ",
+        dataBasePath: "~/seqdesk-data",
+      },
+      pipelines: {
+        databaseDirectory: "~/seqdesk-pipeline-databases",
+        execution: {
+          runDirectory: "~/seqdesk-pipeline-runs",
+        },
+      },
+    });
+
+    const { update, extra } = lastSiteSettingsWrite(prisma);
+    expect(update).toMatchObject({
+      siteName: "Local SeqDesk",
+      contactEmail: "local@example.org",
+      dataBasePath: path.join(os.homedir(), "seqdesk-data"),
+    });
+    expect(extra.pipelineExecution).toMatchObject({
+      pipelineRunDir: path.join(os.homedir(), "seqdesk-pipeline-runs"),
+      pipelineDatabaseDir: path.join(
+        os.homedir(),
+        "seqdesk-pipeline-databases"
+      ),
+    });
+  });
+
+  it("treats an explicit empty pipeline selection as authoritative", async () => {
+    const prisma = createPipelinePrisma(
+      {
+        extraSettings: JSON.stringify({
+          installProfilePipelineAllowlist: ["fastqc"],
+          [MANAGED_KEY]: { pipelineConfigKeys: {} },
+        }),
+      },
+      {
+        fastqc: {
+          enabled: true,
+          config: JSON.stringify({ localSetting: "keep" }),
+        },
+      }
+    );
+
+    const profile = {
+      id: "dev",
+      version: "2",
+      pipelines: {
+        enabled: true,
+        enable: [],
+      },
+    };
+
+    await applySiteProfile(prisma, profile);
+    await expect(applyPipelineEnablement(prisma, profile)).resolves.toBe(0);
+
+    const extra = JSON.parse(String(prisma.state.siteSettings?.extraSettings));
+    expect(extra.installProfilePipelineAllowlist).toEqual([]);
+    expect(prisma.configs.get("fastqc")).toMatchObject({
+      enabled: false,
+      config: JSON.stringify({ localSetting: "keep" }),
+    });
+  });
+
+  it("removes prior profile-managed pipeline config for an explicit empty selection", async () => {
+    const prisma = createPipelinePrisma(
+      {
+        extraSettings: JSON.stringify({
+          installProfilePipelineAllowlist: ["fastqc"],
+          [MANAGED_KEY]: {
+            pipelineConfigKeys: { fastqc: ["profileSetting"] },
+          },
+        }),
+      },
+      {
+        fastqc: {
+          enabled: true,
+          config: JSON.stringify({
+            profileSetting: "remove",
+            localSetting: "keep",
+          }),
+        },
+      }
+    );
+
+    const profile = {
+      id: "dev",
+      version: "2",
+      pipelines: {
+        enabled: true,
+        enable: [],
+      },
+    };
+
+    await applySiteProfile(prisma, profile);
+    await applyPipelineEnablement(prisma, profile);
+
+    expect(prisma.configs.get("fastqc")).toMatchObject({
+      enabled: false,
+      config: JSON.stringify({ localSetting: "keep" }),
+    });
+    const extra = JSON.parse(String(prisma.state.siteSettings?.extraSettings));
+    expect(extra[MANAGED_KEY].pipelineConfigKeys).toEqual({});
+  });
+
+  it("preserves legacy pipeline state when the enable list is absent", async () => {
+    const originalExtra = {
+      installProfilePipelineAllowlist: ["fastqc"],
+      [MANAGED_KEY]: {
+        pipelineConfigKeys: { fastqc: ["profileSetting"] },
+      },
+    };
+    const originalConfig = JSON.stringify({
+      profileSetting: "keep",
+      localSetting: "keep",
+    });
+    const prisma = createPipelinePrisma(
+      { extraSettings: JSON.stringify(originalExtra) },
+      {
+        fastqc: {
+          enabled: true,
+          config: originalConfig,
+        },
+      }
+    );
+    const profile = {
+      id: "legacy",
+      version: "2",
+      pipelines: {
+        enabled: true,
+      },
+    };
+
+    await applySiteProfile(prisma, profile);
+    await expect(applyPipelineEnablement(prisma, profile)).resolves.toBe(0);
+
+    const extra = JSON.parse(String(prisma.state.siteSettings?.extraSettings));
+    expect(extra.installProfilePipelineAllowlist).toEqual(["fastqc"]);
+    expect(extra[MANAGED_KEY].pipelineConfigKeys).toEqual({
+      fastqc: ["profileSetting"],
+    });
+    expect(prisma.pipelineConfig.upsert).not.toHaveBeenCalled();
+    expect(prisma.configs.get("fastqc")).toMatchObject({
+      enabled: true,
+      config: originalConfig,
+    });
+  });
+
   it("prunes only previously profile-managed values on later reloads", async () => {
     const prisma = createPrisma();
     await applySiteProfile(prisma, {
@@ -578,6 +778,41 @@ describe("install profile applicator core", () => {
 
     const { extra } = lastSiteSettingsWrite(prisma);
     expect(extra.sequencingFiles).toEqual({ scanDepth: 3 });
+  });
+
+  it("refuses to replace malformed runtime settings when persisting profile metadata", () => {
+    const testDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "seqdesk-profile-runtime-settings-")
+    );
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(testDir);
+      const settingsPath = path.join(testDir, "settings.json");
+
+      for (const invalidSettings of ["{not-json", "[]", "null"]) {
+        fs.writeFileSync(settingsPath, invalidSettings);
+        expect(() =>
+          persistSafeInstallProfileMetadata({ id: "dev", version: "1.0.0" })
+        ).toThrow(/Refusing to replace .*runtime settings/);
+        expect(fs.readFileSync(settingsPath, "utf8")).toBe(invalidSettings);
+      }
+
+      fs.writeFileSync(
+        settingsPath,
+        JSON.stringify({ runtime: { databaseUrl: "postgresql://local" } })
+      );
+      expect(
+        persistSafeInstallProfileMetadata({ id: "dev", version: "1.0.0" })
+      ).toBe(true);
+      expect(JSON.parse(fs.readFileSync(settingsPath, "utf8"))).toMatchObject({
+        runtime: { databaseUrl: "postgresql://local" },
+        installProfile: { id: "dev", version: "1.0.0" },
+      });
+      expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o600);
+    } finally {
+      process.chdir(previousCwd);
+      fs.rmSync(testDir, { recursive: true, force: true });
+    }
   });
 });
 

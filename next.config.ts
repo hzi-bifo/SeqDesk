@@ -41,6 +41,10 @@ function getPublicAppSurface() {
 }
 
 const nextConfig: NextConfig = {
+  // Playwright uses the loopback IP while Next may identify the dev host as
+  // localhost. Declare that origin explicitly for current and future Next.js
+  // dev-server cross-origin enforcement.
+  allowedDevOrigins: ["127.0.0.1"],
   // Standalone output for distribution
   // Creates minimal deployment without node_modules
   output: "standalone",

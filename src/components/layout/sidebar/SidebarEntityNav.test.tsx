@@ -66,6 +66,15 @@ vi.mock("@/lib/orders/progress-status", () => ({
 
 import { SidebarEntityNav } from "./SidebarEntityNav";
 
+const entityContextDefaults = {
+  isLoading: false,
+  currentSubPage: "overview",
+};
+
+function entityData(label: string) {
+  return { label, sublabel: "", status: "" };
+}
+
 describe("SidebarEntityNav", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -123,7 +132,12 @@ describe("SidebarEntityNav", () => {
 
     const { container } = render(
       <SidebarEntityNav
-        entityContext={{ entityType: null, entityId: null, entityData: null }}
+        entityContext={{
+          ...entityContextDefaults,
+          entityType: null,
+          entityId: null,
+          entityData: null,
+        }}
         collapsed={false}
       />
     );
@@ -135,9 +149,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "order",
           entityId: "order-1",
-          entityData: { label: "Order 1" },
+          entityData: entityData("Order 1"),
         }}
         collapsed={false}
         showAdminControls
@@ -174,9 +189,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "study",
           entityId: "study-1",
-          entityData: { label: "Study 1" },
+          entityData: entityData("Study 1"),
         }}
         collapsed={false}
         isDemoUser
@@ -208,9 +224,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "study",
           entityId: "study-1",
-          entityData: { label: "Study 1" },
+          entityData: entityData("Study 1"),
         }}
         collapsed={false}
         showAdminControls
@@ -239,9 +256,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "study",
           entityId: "study-1",
-          entityData: { label: "Study 1" },
+          entityData: entityData("Study 1"),
         }}
         collapsed={false}
         showAdminControls
@@ -272,9 +290,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "study",
           entityId: "study-1",
-          entityData: { label: "Study 1" },
+          entityData: entityData("Study 1"),
         }}
         collapsed={false}
         showAdminControls
@@ -296,9 +315,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "study",
           entityId: "study-1",
-          entityData: { label: "Study 1" },
+          entityData: entityData("Study 1"),
         }}
         collapsed={false}
         showAdminControls
@@ -320,9 +340,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "study",
           entityId: "study-1",
-          entityData: { label: "Study 1" },
+          entityData: entityData("Study 1"),
         }}
         collapsed={false}
         showAdminControls
@@ -343,9 +364,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "study",
           entityId: "study-1",
-          entityData: { label: "Study 1" },
+          entityData: entityData("Study 1"),
         }}
         collapsed={false}
         showAdminControls
@@ -366,9 +388,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "study",
           entityId: "study-1",
-          entityData: { label: "Study 1" },
+          entityData: entityData("Study 1"),
         }}
         collapsed={false}
         showAdminControls
@@ -391,9 +414,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "order",
           entityId: "order-1",
-          entityData: { label: "Order 1" },
+          entityData: entityData("Order 1"),
         }}
         collapsed={false}
         showAdminControls
@@ -414,9 +438,10 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "order",
           entityId: "order-1",
-          entityData: { label: "Order 1" },
+          entityData: entityData("Order 1"),
         }}
         collapsed={false}
         showAdminControls
@@ -439,6 +464,7 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "study",
           entityId: "study-1",
           entityData: { label: "Study 1", sublabel: "STD-001", status: "READY" },
@@ -467,6 +493,7 @@ describe("SidebarEntityNav", () => {
     render(
       <SidebarEntityNav
         entityContext={{
+          ...entityContextDefaults,
           entityType: "study",
           entityId: "study-1",
           entityData: { label: "Study 1", sublabel: "STD-001", status: "PUBLISHED" },
@@ -486,7 +513,12 @@ describe("SidebarEntityNav", () => {
 
     const { container } = render(
       <SidebarEntityNav
-        entityContext={{ entityType: null, entityId: null, entityData: null }}
+        entityContext={{
+          ...entityContextDefaults,
+          entityType: null,
+          entityId: null,
+          entityData: null,
+        }}
         collapsed={false}
         showAdminControls
       />

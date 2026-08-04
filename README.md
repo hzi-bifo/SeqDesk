@@ -746,6 +746,12 @@ e2e harnesses, see **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 - Tested environments and CI evidence: [Installation compatibility](./INSTALLATION_COMPATIBILITY.md)
 - Releases and update info: [seqdesk.org](https://seqdesk.org)
 
+## Citation
+
+If you use SeqDesk in your work, cite the software metadata in
+[CITATION.cff](./CITATION.cff). Add the article DOI as the preferred citation
+after the SeqDesk paper is published.
+
 ## License
 
 Licensed under the Apache License 2.0 — see [LICENSE](./LICENSE).

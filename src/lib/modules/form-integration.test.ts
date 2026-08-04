@@ -21,7 +21,6 @@ describe("form module integration", () => {
       getFormModuleForField({
         ...baseField,
         type: "sequencing-tech",
-        label: "Sequencing Technology",
         name: "_sequencing_tech",
       })
     ).toBe("sequencing-tech");
@@ -30,7 +29,6 @@ describe("form module integration", () => {
       getFormModuleForField({
         ...baseField,
         type: "text",
-        label: "Sample Alias",
         name: "sample_alias",
         moduleSource: "ena-sample-fields",
       })
@@ -73,7 +71,6 @@ describe("form module integration", () => {
       isFieldAvailableForModules({
         ...baseField,
         type: "sequencing-tech",
-        label: "Sequencing Technology",
         name: "_sequencing_tech",
       }, config)
     ).toBe(true);

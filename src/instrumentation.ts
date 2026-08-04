@@ -39,36 +39,16 @@ export function shouldAutostartPipelineMonitor(
 }
 
 export async function register() {
-  if (!shouldAutostartPipelineMonitor()) return;
-
-  try {
-    const { ensureWorkerStarted, wireMonitorLifecycle } = await import(
-      "@/lib/workers/process"
+  // Next invokes instrumentation in both Node and Edge runtimes. Keep the
+  // runtime-specific import directly inside this compile-time branch so the
+  // Edge bundle never traverses Node-only worker dependencies.
+  if (
+    process.env.NEXT_RUNTIME === "nodejs" &&
+    shouldAutostartPipelineMonitor()
+  ) {
+    const { registerNodeInstrumentation } = await import(
+      "./instrumentation-node"
     );
-    const result = await ensureWorkerStarted("pipeline-monitor");
-    const detail = [
-      result.pid ? `pid=${result.pid}` : null,
-      result.reason ? result.reason : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
-    console.log(
-      `[instrumentation] pipeline-monitor autostart: ${result.action}${detail ? ` (${detail})` : ""}`,
-    );
-
-    // Tie the monitor WE started to this server's lifecycle: stop it on a clean
-    // shutdown so it does not outlive the app and pin the release dir. The signal
-    // wiring lives in the worker module (Node-only, dynamically imported) so the
-    // Edge-runtime compile of this hook stays free of direct `process.*` calls.
-    if (result.action === "started" && typeof result.pid === "number") {
-      wireMonitorLifecycle(result.pid);
-    }
-  } catch (error) {
-    // Best-effort: never let a worker-start failure break server boot. An admin
-    // can still start the worker by hand from the worker panel.
-    console.error(
-      "[instrumentation] pipeline-monitor autostart failed:",
-      error instanceof Error ? error.message : error,
-    );
+    await registerNodeInstrumentation();
   }
 }

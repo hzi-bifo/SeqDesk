@@ -83,6 +83,9 @@ describe("simulate-reads generate-reads template discovery", () => {
 
     expect(source.modeUsed).toBe("template");
     expect(source.templatePair).toHaveLength(1);
+    if (!source.templatePair) {
+      throw new Error("Expected template mode to resolve one template pair");
+    }
 
     const generated = await loadTemplateReads({
       templatePair: source.templatePair[0],

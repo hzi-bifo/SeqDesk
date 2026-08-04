@@ -16,7 +16,11 @@ async function temporaryDestination() {
 }
 
 function response(body: Uint8Array, status = 200) {
-  return new Response(body, { status });
+  const arrayBuffer = body.buffer.slice(
+    body.byteOffset,
+    body.byteOffset + body.byteLength,
+  ) as ArrayBuffer;
+  return new Response(arrayBuffer, { status });
 }
 
 afterEach(async () => {

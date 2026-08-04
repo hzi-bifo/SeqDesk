@@ -60,9 +60,12 @@ export function DemoBanner({
 
   return (
     <div
-      className={`border-b border-border bg-gradient-to-r from-background via-card to-background ${
+      className={`border-b border-border bg-gradient-to-r from-background via-card to-background transition-[padding-right] duration-300 ${
         embeddedMode ? "px-3 py-2.5" : "px-4 py-3"
       }`}
+      style={{
+        paddingRight: `calc(${embeddedMode ? "0.75rem" : "1rem"} + var(--entity-notes-sidebar-offset, 0px))`,
+      }}
     >
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>

@@ -51,8 +51,11 @@ jobs:
       - name: Prepare test database
         run: npm run db:migrate:deploy
 
-      - name: Type-check production sources
-        run: npm run typecheck:production
+      - name: Lint source, scripts, and tests
+        run: npm run lint
+
+      - name: Type-check source, scripts, and tests
+        run: npm run typecheck:all
 
       - name: Gate pipeline Store, readiness, enable, and rollback contracts
         env:

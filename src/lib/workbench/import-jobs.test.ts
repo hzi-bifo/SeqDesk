@@ -121,7 +121,14 @@ describe("workbench import jobs", () => {
       input: { taxon: "Escherichia coli" },
       preview: {
         providerId: "mock-provider",
-        summary: { selectedCount: 0 },
+        summary: {
+          label: "No genomes selected",
+          totalFound: 0,
+          selectedCount: 0,
+          capped: false,
+          cap: 0,
+          hardMax: 0,
+        },
         genomes: [],
       },
     });

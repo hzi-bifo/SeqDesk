@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { CellContext } from "@tanstack/react-table";
 import { searchTaxonomy, getTaxonomyByTaxId, type TaxonomyEntry } from "./taxonomy-data";
@@ -15,15 +15,12 @@ interface SampleRow {
 }
 
 export function OrganismCell<T extends SampleRow>({
-  getValue,
   row,
   column,
   table,
 }: CellContext<T, unknown>) {
-  const initialValue = getValue() as string;
   const [inputValue, setInputValue] = useState("");
   const [isOpen, setIsOpen] = useState(false);
-  const [results, setResults] = useState<TaxonomyEntry[]>([]);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 320 });
   const inputRef = useRef<HTMLInputElement>(null);
@@ -45,6 +42,9 @@ export function OrganismCell<T extends SampleRow>({
   // Initialize display value
   useEffect(() => {
     if (scientificName) {
+      // The table editor owns a draft label while focused; synchronize it when
+      // virtualization supplies a different committed row value.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setInputValue(scientificName);
     } else if (taxId) {
       const entry = getTaxonomyByTaxId(taxId);
@@ -58,16 +58,10 @@ export function OrganismCell<T extends SampleRow>({
     }
   }, [taxId, scientificName]);
 
-  // Search as user types
-  useEffect(() => {
-    if (inputValue.length >= 2 && isOpen) {
-      const searchResults = searchTaxonomy(inputValue, 6);
-      setResults(searchResults);
-      setHighlightedIndex(0);
-    } else {
-      setResults([]);
-    }
-  }, [inputValue, isOpen]);
+  const results = useMemo(
+    () => (inputValue.length >= 2 && isOpen ? searchTaxonomy(inputValue, 6) : []),
+    [inputValue, isOpen]
+  );
 
   // Handle click outside
   useEffect(() => {
@@ -118,7 +112,6 @@ export function OrganismCell<T extends SampleRow>({
   const handleSelect = useCallback((entry: TaxonomyEntry) => {
     setInputValue(entry.scientificName);
     setIsOpen(false);
-    setResults([]);
 
     // Update both taxId and scientificName in the table
     const updateFn = (table.options.meta as { updateData?: (rowIndex: number, updates: Record<string, unknown>) => void })?.updateData;
@@ -286,6 +279,7 @@ export function OrganismCell<T extends SampleRow>({
           value={inputValue}
           onChange={(e) => {
             setInputValue(e.target.value);
+            setHighlightedIndex(0);
             setIsOpen(true);
           }}
           onFocus={() => {

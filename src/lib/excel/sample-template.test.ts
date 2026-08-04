@@ -22,7 +22,7 @@ async function loadWorkbookFromBlob(blob: Blob) {
   const ExcelJS = await import("exceljs");
   const workbook = new ExcelJS.Workbook();
   const buffer = Buffer.from(await blob.arrayBuffer());
-  await workbook.xlsx.load(buffer);
+  await workbook.xlsx.load(buffer as never);
   return workbook;
 }
 
@@ -165,9 +165,11 @@ describe("generateSampleTemplate", () => {
     expect(validationSheet?.state).toBe("veryHidden");
 
     const samples = workbook.getWorksheet("Samples");
-    const siteDv = samples?.getCell("B2").dataValidation;
-    const depthDv = samples?.getCell("C2").dataValidation;
-    const codeDv = samples?.getCell("D2").dataValidation;
+    expect(samples).toBeDefined();
+    if (!samples) throw new Error("Expected Samples worksheet");
+    const siteDv = samples.getCell("B2").dataValidation;
+    const depthDv = samples.getCell("C2").dataValidation;
+    const codeDv = samples.getCell("D2").dataValidation;
 
     expect(siteDv.type).toBe("list");
     expect(Array.isArray(siteDv.formulae)).toBe(true);
@@ -196,8 +198,10 @@ describe("generateSampleTemplate", () => {
     const blob = await generateSampleTemplate(fields, []);
     const workbook = await loadWorkbookFromBlob(blob);
     const samples = workbook.getWorksheet("Samples");
+    expect(samples).toBeDefined();
+    if (!samples) throw new Error("Expected Samples worksheet");
 
-    const ratioDv = samples?.getCell("B2").dataValidation;
+    const ratioDv = samples.getCell("B2").dataValidation;
     expect(ratioDv.type).toBe("decimal");
     expect(ratioDv.operator).toBe("between");
     expect(String(ratioDv.formulae?.[0] || "")).toBe("0.5");
@@ -220,8 +224,10 @@ describe("generateSampleTemplate", () => {
     const blob = await generateSampleTemplate(fields, []);
     const workbook = await loadWorkbookFromBlob(blob);
     const samples = workbook.getWorksheet("Samples");
+    expect(samples).toBeDefined();
+    if (!samples) throw new Error("Expected Samples worksheet");
 
-    const countDv = samples?.getCell("B2").dataValidation;
+    const countDv = samples.getCell("B2").dataValidation;
     expect(countDv.type).toBe("whole");
     expect(countDv.operator).toBe("greaterThanOrEqual");
     expect(String(countDv.formulae?.[0] || "")).toBe("1");

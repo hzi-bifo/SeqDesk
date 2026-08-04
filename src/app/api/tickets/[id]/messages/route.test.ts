@@ -29,10 +29,6 @@ const userSession = {
   user: { id: "user-1", role: "RESEARCHER" },
 };
 
-const adminSession = {
-  user: { id: "admin-1", role: "FACILITY_ADMIN" },
-};
-
 const makeParams = (id: string) => ({ params: Promise.resolve({ id }) });
 
 describe("POST /api/tickets/[id]/messages", () => {

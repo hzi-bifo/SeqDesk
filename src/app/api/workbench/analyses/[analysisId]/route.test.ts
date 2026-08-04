@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -36,7 +37,7 @@ describe("/api/workbench/analyses/[analysisId]", () => {
   });
 
   it("returns only analyses scoped to the current user", async () => {
-    const response = await GET(new Request("http://localhost"), params);
+    const response = await GET(new NextRequest("http://localhost"), params);
 
     expect(response.status).toBe(200);
     expect(mocks.getWorkbenchAnalysisForUser).toHaveBeenCalledWith("user-1", "analysis-1");
@@ -50,7 +51,7 @@ describe("/api/workbench/analyses/[analysisId]", () => {
     });
 
     const response = await PATCH(
-      new Request("http://localhost", {
+      new NextRequest("http://localhost", {
         method: "PATCH",
         body: JSON.stringify({
           revision: 2,

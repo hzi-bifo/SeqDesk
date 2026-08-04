@@ -200,6 +200,24 @@ function focusFirstCellEditor(cell: HTMLElement) {
   }
 }
 
+const ORDER_STEP_ICONS: Record<
+  string,
+  React.ComponentType<{ className?: string }>
+> = {
+  FileText,
+  Settings,
+  ClipboardList,
+  ClipboardPen,
+  CheckCircle2,
+  Leaf,
+  FlaskConical,
+  User,
+  Mail,
+  Building2,
+  AlertCircle,
+  Table: TableIcon,
+};
+
 // Editable cell component for text/number/date fields
 function EditableCell({
   getValue,
@@ -216,6 +234,9 @@ function EditableCell({
   const isEditable = meta?.editable !== false;
 
   useEffect(() => {
+    // Table cells keep an uncommitted draft until blur; refresh that draft
+    // when virtualization reuses the cell for a different backing value.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setValue(initialValue ?? "");
   }, [initialValue]);
 
@@ -328,19 +349,14 @@ function SelectCell({
   table,
 }: CellContext<SampleRow, unknown>) {
   const initialValue = getValue() as string;
-  const [value, setValue] = useState(initialValue ?? "");
+  const value = initialValue ?? "";
   const meta = column.columnDef.meta as { field?: FormFieldDefinition; editable?: boolean } | undefined;
   const field = meta?.field;
   const options = field?.options || [];
   const isEditable = meta?.editable !== false;
 
-  useEffect(() => {
-    setValue(initialValue ?? "");
-  }, [initialValue]);
-
   const handleChange = (newValue: string) => {
     if (!isEditable) return;
-    setValue(newValue);
     table.options.meta?.updateData(row.index, column.id, newValue);
   };
 
@@ -433,14 +449,10 @@ function CheckboxCell({
     if (val === "false") return false;
     return Boolean(val);
   };
-  const [checked, setChecked] = useState(normalizeChecked(initialValue));
+  const checked = normalizeChecked(initialValue);
   const meta = column.columnDef.meta as { field?: FormFieldDefinition; editable?: boolean } | undefined;
   const field = meta?.field;
   const isEditable = meta?.editable !== false;
-
-  useEffect(() => {
-    setChecked(normalizeChecked(initialValue));
-  }, [initialValue]);
 
   const onFocus = () => {
     if (field) {
@@ -451,7 +463,6 @@ function CheckboxCell({
   const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!isEditable) return;
     const nextValue = e.target.checked;
-    setChecked(nextValue);
     table.options.meta?.updateData(row.index, column.id, nextValue);
   };
 
@@ -504,15 +515,11 @@ function MultiSelectCell({
     if (val === undefined || val === null || val === "") return [];
     return [String(val)];
   };
-  const [value, setValue] = useState<string[]>(normalizeValues(initialValue));
+  const value = normalizeValues(initialValue);
   const meta = column.columnDef.meta as { field?: FormFieldDefinition; editable?: boolean } | undefined;
   const field = meta?.field;
   const options = field?.options || [];
   const isEditable = meta?.editable !== false;
-
-  useEffect(() => {
-    setValue(normalizeValues(initialValue));
-  }, [initialValue]);
 
   const onFocus = () => {
     if (field) {
@@ -523,7 +530,6 @@ function MultiSelectCell({
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     if (!isEditable) return;
     const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value);
-    setValue(selected);
     table.options.meta?.updateData(row.index, column.id, selected);
   };
 
@@ -618,7 +624,6 @@ export function OrderWizardPage({
   // Edit mode - if edit param is present, we're editing an existing order
   const editOrderId = forcedEditOrderId ?? searchParams.get("edit");
   const isEditMode = !!editOrderId;
-  const [loadingOrder, setLoadingOrder] = useState(isEditMode);
   const [editOrderStatus, setEditOrderStatus] = useState<string | null>(null);
 
   const [currentStep, setCurrentStep] = useState(0);
@@ -903,15 +908,6 @@ export function OrderWizardPage({
     });
   }, [fieldValues.numberOfSamples]);
 
-  // Update sample field value
-  const handleSampleFieldChange = (sampleId: string, fieldName: string, value: unknown) => {
-    setSamples((prev) =>
-      prev.map((s) =>
-        s.id === sampleId ? { ...s, [fieldName]: value } : s
-      )
-    );
-  };
-
   // Auto-generate sample aliases based on index
   const handleAutoGenerateAliases = () => {
     if (samples.length === 0) return;
@@ -947,26 +943,6 @@ export function OrderWizardPage({
           scientificName,
           scientific_name: scientificName,
         };
-      })
-    );
-    setError("");
-  };
-
-  // Copy a specific field value from first row to all rows
-  const handleCopyFieldToAll = (fieldName: string, fieldLabel: string) => {
-    if (samples.length < 2) return;
-    const firstSample = samples[0];
-    const value = firstSample[fieldName];
-
-    if (value === undefined || value === null || value === "") {
-      setError(`First sample has no ${fieldLabel.toLowerCase()} set`);
-      return;
-    }
-
-    setSamples((prev) =>
-      prev.map((s, index) => {
-        if (index === 0) return s;
-        return { ...s, [fieldName]: value };
       })
     );
     setError("");
@@ -1148,7 +1124,6 @@ export function OrderWizardPage({
         const res = await fetch(`/api/orders/${editOrderId}`);
         if (!res.ok) {
           setError("Failed to load sequencing order for editing");
-          setLoadingOrder(false);
           return;
         }
 
@@ -1257,39 +1232,46 @@ export function OrderWizardPage({
       } catch (err) {
         console.error("Failed to load order:", err);
         setError("Failed to load sequencing order for editing");
-      } finally {
-        setLoadingOrder(false);
       }
     };
 
     fetchOrder();
   }, [isEditMode, editOrderId, formSchema]);
 
-  // Get groups sorted by order
-  const allGroups = (formSchema?.groups || DEFAULT_GROUPS).sort((a, b) => a.order - b.order);
-  // Hide software step/group when Sequencing Tech is enabled and active on the form.
-  const hasActiveSequencingTechField = sequencingTechModuleEnabled && (formSchema?.fields || []).some(
-    (field) => field.visible && !field.perSample && field.type === "sequencing-tech"
-  );
-  const hiddenGroupIds = new Set(
-    hasActiveSequencingTechField
-      ? allGroups
-          .filter((group) => {
-            const groupName = group.name.toLowerCase();
-            const groupId = group.id.toLowerCase();
-            return groupName.includes("software") || groupId.includes("software");
-          })
-          .map((group) => group.id)
-      : []
-  );
-  const groups = allGroups.filter((group) => !hiddenGroupIds.has(group.id));
+  // Get groups sorted by order, without mutating the loaded schema/defaults.
+  const { groups, hiddenGroupIds } = useMemo(() => {
+    const allGroups = [...(formSchema?.groups || DEFAULT_GROUPS)].sort(
+      (a, b) => a.order - b.order
+    );
+    const hasActiveSequencingTechField =
+      sequencingTechModuleEnabled &&
+      (formSchema?.fields || []).some(
+        (field) => field.visible && !field.perSample && field.type === "sequencing-tech"
+      );
+    const hiddenIds = new Set(
+      hasActiveSequencingTechField
+        ? allGroups
+            .filter((group) => {
+              const groupName = group.name.toLowerCase();
+              const groupId = group.id.toLowerCase();
+              return groupName.includes("software") || groupId.includes("software");
+            })
+            .map((group) => group.id)
+        : []
+    );
+    return {
+      groups: allGroups.filter((group) => !hiddenIds.has(group.id)),
+      hiddenGroupIds: hiddenIds,
+    };
+  }, [formSchema?.fields, formSchema?.groups, sequencingTechModuleEnabled]);
 
   const canEditSamples = !isEditMode || editOrderStatus === "DRAFT";
 
   // Get visible fields sorted by order (also filter by module state)
   // Exclude perSample fields - those are collected in the samples table after order creation
-  const visibleFields = (formSchema?.fields || [])
-    .filter((f) => {
+  const visibleFields = useMemo(
+    () =>
+      (formSchema?.fields || []).filter((f) => {
       if (!f.visible) return false;
       // Filter out per-sample fields - they go in the samples table
       if (f.perSample) return false;
@@ -1306,8 +1288,16 @@ export function OrderWizardPage({
       // Filter out sequencing-tech fields if module is disabled
       if (f.type === "sequencing-tech" && !sequencingTechModuleEnabled) return false;
       return true;
-    })
-    .sort((a, b) => a.order - b.order);
+      }).sort((a, b) => a.order - b.order),
+    [
+      billingModuleEnabled,
+      formSchema?.fields,
+      fundingModuleEnabled,
+      hiddenGroupIds,
+      isFacilityAdmin,
+      sequencingTechModuleEnabled,
+    ]
+  );
 
   // New orders: auto-select dropdowns that have exactly one valid option.
   useEffect(() => {
@@ -1339,11 +1329,15 @@ export function OrderWizardPage({
   }, [isEditMode, visibleFields]);
 
   // Admin-only fields shown in a separate section for admins
-  const adminOnlyFields = isFacilityAdmin
-    ? (formSchema?.fields || [])
-        .filter((f) => f.visible && f.adminOnly && !f.perSample)
-        .sort((a, b) => a.order - b.order)
-    : [];
+  const adminOnlyFields = useMemo(
+    () =>
+      isFacilityAdmin
+        ? (formSchema?.fields || [])
+            .filter((f) => f.visible && f.adminOnly && !f.perSample)
+            .sort((a, b) => a.order - b.order)
+        : [],
+    [formSchema?.fields, isFacilityAdmin]
+  );
 
   // Check if there's a MIxS field with available templates
   const mixsFieldDef = visibleFields.find((f) => f.type === "mixs");
@@ -1353,22 +1347,6 @@ export function OrderWizardPage({
     return visibleFields.filter(
       (f) => f.groupId === groupId && f.type !== "mixs"
     );
-  };
-
-  // Map icon names to components
-  const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
-    FileText,
-    Settings,
-    ClipboardList,
-    ClipboardPen,
-    CheckCircle2,
-    Leaf,
-    FlaskConical,
-    User,
-    Mail,
-    Building2,
-    AlertCircle,
-    Table: TableIcon,
   };
 
   // Get fields without a group (orphaned fields)
@@ -1382,30 +1360,42 @@ export function OrderWizardPage({
   const studyPreselectedFromParam =
     studyFromParamAvailable;
 
-  const steps = [
-    ...((dynamicStudiesEnabled && !isEditMode && !studyPreselectedFromParam)
-      ? [
-          {
-            id: "_study",
-            title: "Study",
-            description:
-              "Associate this sequencing order with a study (optional)",
-            icon: FileText,
-          },
-        ]
-      : []),
-    ...buildOrderProgressSteps({
-      fields: [...visibleFields, ...adminOnlyFields],
+  const steps = useMemo(
+    () => [
+      ...((dynamicStudiesEnabled && !isEditMode && !studyPreselectedFromParam)
+        ? [
+            {
+              id: "_study",
+              title: "Study",
+              description:
+                "Associate this sequencing order with a study (optional)",
+              icon: FileText,
+            },
+          ]
+        : []),
+      ...buildOrderProgressSteps({
+        fields: [...visibleFields, ...adminOnlyFields],
+        groups,
+        enabledMixsChecklists: formSchema?.enabledMixsChecklists || [],
+        includeFacilityFields: isFacilityAdmin,
+      }).map((step) => ({
+        id: step.id,
+        title: step.label,
+        description: step.description,
+        icon: ORDER_STEP_ICONS[step.icon] || FileText,
+      })),
+    ],
+    [
+      adminOnlyFields,
+      dynamicStudiesEnabled,
+      formSchema?.enabledMixsChecklists,
       groups,
-      enabledMixsChecklists: formSchema?.enabledMixsChecklists || [],
-      includeFacilityFields: isFacilityAdmin,
-    }).map((step) => ({
-      id: step.id,
-      title: step.label,
-      description: step.description,
-      icon: iconMap[step.icon] || FileText,
-    })),
-  ];
+      isEditMode,
+      isFacilityAdmin,
+      studyPreselectedFromParam,
+      visibleFields,
+    ]
+  );
   const currentStepParam = searchParams.get("step");
   const editScope = searchParams.get("scope");
   const facilityEditSteps = [

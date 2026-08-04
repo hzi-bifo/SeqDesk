@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import type { FormFieldDefinition } from "@/types/form-config";
 
@@ -14,15 +14,18 @@ interface FieldHelpContextType {
 const FieldHelpContext = createContext<FieldHelpContextType | undefined>(undefined);
 
 export function FieldHelpProvider({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const [statePathname, setStatePathname] = useState(pathname);
   const [focusedField, setFocusedField] = useState<FormFieldDefinition | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const pathname = usePathname();
 
-  // Clear focused field and validation error when navigating to a different page
-  useEffect(() => {
+  // Reset page-specific help before rendering the new route. Keeping the
+  // provider instance stable avoids remounting the persistent dashboard shell.
+  if (statePathname !== pathname) {
+    setStatePathname(pathname);
     setFocusedField(null);
     setValidationError(null);
-  }, [pathname]);
+  }
 
   return (
     <FieldHelpContext.Provider value={{ focusedField, setFocusedField, validationError, setValidationError }}>

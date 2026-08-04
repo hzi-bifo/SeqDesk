@@ -22,7 +22,7 @@ describe("field type registry", () => {
       type: "custom-text",
       label: "Custom Text",
       defaultConfig: {
-        type: "text",
+        type: "text" as const,
         label: "Custom Text",
         name: "customText",
       },

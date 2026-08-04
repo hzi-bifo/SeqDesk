@@ -93,6 +93,7 @@ function jsonRequest(path: string, method: string, body?: unknown) {
 function duplicateInviteError() {
   return new Prisma.PrismaClientKnownRequestError("duplicate", {
     code: "P2002",
+    clientVersion: "5.22.0",
   });
 }
 

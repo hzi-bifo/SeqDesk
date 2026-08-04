@@ -15,7 +15,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await requireFacilityAdminSequencingSession();
+    await requireFacilityAdminSequencingSession();
     const { id } = await params;
     const body = (await request.json()) as {
       assignments?: Array<{

@@ -141,7 +141,9 @@ const publishedDelivery = {
 
 describe("OrderSequencingPage delivery controls", () => {
   const fetchMock = vi.fn();
-  let currentDelivery: any;
+  let currentDelivery: Omit<typeof unpublishedDelivery, "publishedAt"> & {
+    publishedAt: string | null;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();

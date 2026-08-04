@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     const { url } = await request.json();
 
     // Get current settings
-    let settings = await db.siteSettings.findUnique({
+    const settings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
     });
 

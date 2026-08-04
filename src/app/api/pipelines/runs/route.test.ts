@@ -102,7 +102,7 @@ describe("GET /api/pipelines/runs", () => {
         role: "USER",
       },
     });
-    mocks.getDemoFacilityWorkspaceUserIds.mockResolvedValue([]);
+    mocks.getDemoFacilityWorkspaceUserIds.mockResolvedValue(null);
     mocks.db.pipelineRun.findMany.mockResolvedValue([
       {
         id: "run-1",
@@ -278,6 +278,37 @@ describe("GET /api/pipelines/runs", () => {
       expect.objectContaining({
         where: {
           orderId: "order-1",
+        },
+      })
+    );
+  });
+
+  it("fails closed when a stale facility-demo session has no workspace users", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "stale-demo-admin",
+        role: "FACILITY_ADMIN",
+        isDemo: true,
+      },
+    });
+    mocks.getDemoFacilityWorkspaceUserIds.mockResolvedValue([]);
+
+    await GET(
+      new NextRequest("http://localhost:3000/api/pipelines/runs")
+    );
+
+    expect(mocks.db.pipelineRun.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          AND: [
+            {
+              OR: [
+                { userId: { in: [] } },
+                { study: { userId: { in: [] } } },
+                { order: { userId: { in: [] } } },
+              ],
+            },
+          ],
         },
       })
     );

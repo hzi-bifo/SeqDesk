@@ -82,6 +82,10 @@ const fields: FormFieldDefinition[] = [
   },
 ];
 
+function systemOrderFields(name: string | null, platform: string | null) {
+  return { name, platform };
+}
+
 describe("order progress status", () => {
   it("marks grouped order steps based on filled values", () => {
     const statuses = computeOrderProgressStepStatuses({
@@ -89,8 +93,7 @@ describe("order progress status", () => {
       groups,
       includeFacilityFields: true,
       order: {
-        name: "Order A",
-        platform: null,
+        ...systemOrderFields("Order A", null),
         customFields: JSON.stringify({ facility_notes: "Checked" }),
         numberOfSamples: 1,
         samples: [
@@ -118,8 +121,7 @@ describe("order progress status", () => {
       fields,
       groups,
       order: {
-        name: "Order A",
-        platform: "ILLUMINA",
+        ...systemOrderFields("Order A", "ILLUMINA"),
         customFields: null,
         numberOfSamples: 2,
         samples: [
@@ -156,8 +158,7 @@ describe("order progress status", () => {
       groups,
       includeFacilityFields: true,
       order: {
-        name: "Order A",
-        platform: "ILLUMINA",
+        ...systemOrderFields("Order A", "ILLUMINA"),
         customFields: null,
         numberOfSamples: 2,
         samples: [
@@ -199,8 +200,7 @@ describe("order progress status", () => {
       fields,
       groups,
       order: {
-        name: "Order A",
-        platform: "ILLUMINA",
+        ...systemOrderFields("Order A", "ILLUMINA"),
         customFields: null,
         numberOfSamples: 2,
         samples: [
@@ -236,8 +236,7 @@ describe("order progress status", () => {
       fields,
       groups,
       order: {
-        name: "Order A",
-        platform: null,
+        ...systemOrderFields("Order A", null),
         customFields: null,
         numberOfSamples: 0,
         samples: [],
@@ -247,8 +246,7 @@ describe("order progress status", () => {
       fields,
       groups,
       order: {
-        name: "Order A",
-        platform: "ILLUMINA",
+        ...systemOrderFields("Order A", "ILLUMINA"),
         customFields: null,
         numberOfSamples: 1,
         samples: [
@@ -288,8 +286,7 @@ describe("order progress status", () => {
       fields,
       groups,
       order: {
-        name: null,
-        platform: null,
+        ...systemOrderFields(null, null),
         customFields: null,
         numberOfSamples: 0,
         samples: [],
@@ -304,8 +301,7 @@ describe("order progress status", () => {
       fields,
       groups,
       order: {
-        name: "Order A",
-        platform: "ILLUMINA",
+        ...systemOrderFields("Order A", "ILLUMINA"),
         customFields: null,
         numberOfSamples: 0,
         samples: [],
@@ -334,8 +330,7 @@ describe("order progress status", () => {
       groups,
       enabledMixsChecklists: ["soil"],
       order: {
-        name: "Order A",
-        platform: "ILLUMINA",
+        ...systemOrderFields("Order A", "ILLUMINA"),
         customFields: JSON.stringify({
           _mixsChecklist: "soil",
           _mixsFields: ["collection_date", "depth"],
@@ -378,8 +373,7 @@ describe("order progress status", () => {
       groups,
       enabledMixsChecklists: ["soil"],
       order: {
-        name: "Order A",
-        platform: null,
+        ...systemOrderFields("Order A", null),
         customFields: null,
         numberOfSamples: 0,
         samples: [],
@@ -490,8 +484,7 @@ describe("order progress status", () => {
       fields,
       groups,
       order: {
-        name: "Order A",
-        platform: "ILLUMINA",
+        ...systemOrderFields("Order A", "ILLUMINA"),
         customFields: "not-valid-json",
         numberOfSamples: 1,
         samples: [
@@ -518,8 +511,7 @@ describe("order progress status", () => {
       fields,
       groups,
       order: {
-        name: "Order A",
-        platform: null,
+        ...systemOrderFields("Order A", null),
         customFields: JSON.stringify([1, 2, 3]),
         numberOfSamples: 0,
         samples: [],

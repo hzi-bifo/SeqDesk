@@ -432,7 +432,7 @@ export async function listPipelineRunsForOperator(args: {
   // Facility-demo isolation: a seeded run is attributed via userId (the
   // workspace's facility admin) AND via study/order (the researcher), so match
   // all three to catch it without leaking other workspaces' runs.
-  if (args.demoWorkspaceUserIds && args.demoWorkspaceUserIds.length > 0) {
+  if (args.demoWorkspaceUserIds) {
     andFilters.push({
       OR: [
         { userId: { in: args.demoWorkspaceUserIds } },

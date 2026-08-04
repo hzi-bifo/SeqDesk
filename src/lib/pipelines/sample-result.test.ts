@@ -55,11 +55,14 @@ function makeSample(overrides: Partial<SequencingSampleRow> = {}): SequencingSam
     read: makeRead(),
     integrityStatus: "complete",
     hasReads: true,
+    protectedProvenanceCount: 0,
+    protectedProvenance: [],
     sequencingRun: null,
     artifactCount: 0,
     qcArtifactCount: 0,
     latestArtifactStage: null,
     artifacts: [],
+    stream: null,
     ...overrides,
   };
 }

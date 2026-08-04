@@ -84,6 +84,7 @@ SEQDESK_DATABASE_DIRECT_URL="${SEQDESK_DATABASE_DIRECT_URL:-}"
 SEQDESK_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}"
 SEQDESK_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}"
 SEQDESK_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}"
+SEQDESK_UPDATE_SERVER="${SEQDESK_UPDATE_SERVER:-}"
 SEQDESK_ORDER_FORM_SETTINGS="${SEQDESK_ORDER_FORM_SETTINGS:-}"
 SEQDESK_STUDY_FORM_SETTINGS="${SEQDESK_STUDY_FORM_SETTINGS:-}"
 SEQDESK_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}"
@@ -1296,6 +1297,9 @@ const values = {
   blobReadWriteToken: toOptionalString(
     firstDefined(root.blobReadWriteToken, runtime?.blobReadWriteToken)
   ),
+  updateServer: toOptionalString(
+    firstDefined(root.updateServer, runtime?.updateServer)
+  ),
   orderFormSettings: toOptionalString(
     firstDefined(
       root.orderFormSettings,
@@ -1389,6 +1393,17 @@ const values = {
   notificationRelayToken: toOptionalString(notifications?.relayToken),
 };
 
+if (
+  Array.isArray(pipelines?.enable) &&
+  !pipelines.enable.some(
+    (pipelineId) => toOptionalString(pipelineId)?.toLowerCase() === "metaxpath"
+  )
+) {
+  values.metaxpathPackageUrl = undefined;
+  values.metaxpathKey = undefined;
+  values.metaxpathSha256 = undefined;
+}
+
 if (values.runDir === "/") {
   values.runDir = undefined;
 }
@@ -1428,6 +1443,7 @@ if (values.adminSecret) out.SEQDESK_CFG_ADMIN_SECRET = values.adminSecret;
 if (values.blobReadWriteToken) {
   out.SEQDESK_CFG_BLOB_READ_WRITE_TOKEN = values.blobReadWriteToken;
 }
+if (values.updateServer) out.SEQDESK_CFG_UPDATE_SERVER = values.updateServer;
 if (values.orderFormSettings) {
   out.SEQDESK_CFG_ORDER_FORM_SETTINGS = values.orderFormSettings;
 }
@@ -1511,6 +1527,7 @@ NODE
     apply_config_value SEQDESK_ANTHROPIC_API_KEY SEQDESK_CFG_ANTHROPIC_API_KEY
     apply_config_value SEQDESK_ADMIN_SECRET SEQDESK_CFG_ADMIN_SECRET
     apply_config_value SEQDESK_BLOB_READ_WRITE_TOKEN SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
+    apply_config_value SEQDESK_UPDATE_SERVER SEQDESK_CFG_UPDATE_SERVER
     apply_config_value SEQDESK_ORDER_FORM_SETTINGS SEQDESK_CFG_ORDER_FORM_SETTINGS
     apply_config_value SEQDESK_STUDY_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
     apply_config_value SEQDESK_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENABLED
@@ -1542,6 +1559,7 @@ NODE
     unset SEQDESK_CFG_DATABASE_URL SEQDESK_CFG_DATABASE_DIRECT_URL SEQDESK_CFG_WITH_PIPELINES
     unset SEQDESK_CFG_ANTHROPIC_API_KEY SEQDESK_CFG_ADMIN_SECRET
     unset SEQDESK_CFG_BLOB_READ_WRITE_TOKEN
+    unset SEQDESK_CFG_UPDATE_SERVER
     unset SEQDESK_CFG_ORDER_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
     unset SEQDESK_CFG_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENDPOINT
     unset SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS
@@ -1799,14 +1817,14 @@ install_private_metaxpath_if_configured() {
     print_info "Installing private MetaxPath pipeline package..."
     local metaxpath_args=(
         --url "${SEQDESK_METAXPATH_PACKAGE_URL}"
-        --token "${SEQDESK_METAXPATH_KEY}"
         --dir "$(pwd)"
     )
     if [ -n "${SEQDESK_METAXPATH_SHA256:-}" ]; then
         metaxpath_args+=(--sha256 "${SEQDESK_METAXPATH_SHA256}")
     fi
 
-    if ./scripts/install-private-metaxpath.sh "${metaxpath_args[@]}"; then
+    if METAXPATH_PACKAGE_TOKEN="${SEQDESK_METAXPATH_KEY}" \
+        ./scripts/install-private-metaxpath.sh "${metaxpath_args[@]}"; then
         print_success "Private MetaxPath pipeline installed"
     else
         print_error "Private MetaxPath pipeline installation failed."
@@ -1835,6 +1853,7 @@ write_config() {
     SEQDESK_INSTALL_ANTHROPIC_API_KEY="${SEQDESK_ANTHROPIC_API_KEY:-}" \
     SEQDESK_INSTALL_ADMIN_SECRET="${SEQDESK_ADMIN_SECRET:-}" \
     SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN="${SEQDESK_BLOB_READ_WRITE_TOKEN:-}" \
+    SEQDESK_INSTALL_UPDATE_SERVER="${SEQDESK_UPDATE_SERVER:-}" \
     SEQDESK_INSTALL_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}" \
     SEQDESK_INSTALL_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}" \
     SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}" \
@@ -1857,6 +1876,7 @@ const directUrl = process.env.SEQDESK_INSTALL_DATABASE_DIRECT_URL || '';
 const anthropicApiKey = process.env.SEQDESK_INSTALL_ANTHROPIC_API_KEY || '';
 const adminSecret = process.env.SEQDESK_INSTALL_ADMIN_SECRET || '';
 const blobReadWriteToken = process.env.SEQDESK_INSTALL_BLOB_READ_WRITE_TOKEN || '';
+const updateServer = process.env.SEQDESK_INSTALL_UPDATE_SERVER || '';
 const telemetryEnabledRaw = process.env.SEQDESK_INSTALL_TELEMETRY_ENABLED || '';
 const telemetryEndpoint = process.env.SEQDESK_INSTALL_TELEMETRY_ENDPOINT || '';
 const telemetryIntervalHoursRaw = process.env.SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS || '';
@@ -1949,6 +1969,7 @@ if (nextAuthSecret) runtime.nextAuthSecret = nextAuthSecret;
 if (anthropicApiKey) runtime.anthropicApiKey = anthropicApiKey;
 if (adminSecret) runtime.adminSecret = adminSecret;
 if (blobReadWriteToken) runtime.blobReadWriteToken = blobReadWriteToken;
+if (updateServer) runtime.updateServer = updateServer;
 if (Object.keys(runtime).length > 0) {
   config.runtime = runtime;
 }

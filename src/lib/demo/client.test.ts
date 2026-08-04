@@ -16,7 +16,7 @@ const originalPublicDemoFlag = process.env.NEXT_PUBLIC_SEQDESK_ENABLE_PUBLIC_DEM
 
 function setWindow(value?: unknown): void {
   if (value === undefined) {
-    delete globalWindow.window;
+    Reflect.deleteProperty(globalWindow, "window");
     return;
   }
 
@@ -31,7 +31,7 @@ afterEach(() => {
   if (hadWindow) {
     setWindow(originalWindow);
   } else {
-    delete globalWindow.window;
+    Reflect.deleteProperty(globalWindow, "window");
   }
 
   if (originalPublicDemoFlag === undefined) {
@@ -51,7 +51,7 @@ describe("demo client helpers", () => {
   });
 
   it("detects whether the app is running inside an embedded frame", () => {
-    delete globalWindow.window;
+    Reflect.deleteProperty(globalWindow, "window");
     expect(isEmbeddedFrame()).toBe(false);
 
     const sameWindow = {};

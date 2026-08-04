@@ -98,5 +98,3 @@ export type MixsSnapshots = Record<string, MixsChecklist[]>;
 export const MIXS_SETTINGS_KEY = "mixsChecklistsConfig";
 /** SiteSettings.extraSettings key for historical checklist snapshots. */
 export const MIXS_SNAPSHOTS_KEY = "mixsChecklistsSnapshots";
-/** How many historical version snapshots to retain. */
-export const MIXS_SNAPSHOT_LIMIT = 5;

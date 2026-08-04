@@ -1088,11 +1088,14 @@ export default function SequencingTechPage() {
                                     }}
                                   >
                                     {device.image ? (
-                                      <img
-                                        src={device.image}
-                                        alt={device.name}
-                                        className="h-full w-full object-cover"
-                                      />
+                                      <>
+                                        {/* eslint-disable-next-line @next/next/no-img-element -- Device image URLs are admin-configured and cannot use a fixed remote-host allowlist. */}
+                                        <img
+                                          src={device.image}
+                                          alt={device.name}
+                                          className="h-full w-full object-cover"
+                                        />
+                                      </>
                                     ) : (
                                       device.name.charAt(0)
                                     )}

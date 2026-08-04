@@ -47,7 +47,7 @@ vi.mock("@/lib/sequencing/server", () => {
   class SequencingApiError extends Error {
     status: number;
 
-    constructor(message: string, status: number) {
+    constructor(status: number, message: string) {
       super(message);
       this.name = "SequencingApiError";
       this.status = status;
@@ -156,7 +156,7 @@ describe("order route coverage quick wins", () => {
 
     const { SequencingApiError } = await import("@/lib/sequencing/server");
     mocks.requireFacilityAdminSequencingReadSession.mockRejectedValueOnce(
-      new SequencingApiError("Forbidden", 403)
+      new SequencingApiError(403, "Forbidden")
     );
 
     const forbidden = await getSequencingSummary(
@@ -255,7 +255,7 @@ describe("order route coverage quick wins", () => {
 
     const { SequencingApiError } = await import("@/lib/sequencing/server");
     mocks.requireFacilityAdminSequencingSession.mockRejectedValueOnce(
-      new SequencingApiError("Unauthorized", 401)
+      new SequencingApiError(401, "Unauthorized")
     );
     const unauthorized = await browseSequencing(
       new NextRequest("http://localhost/api/orders/order-1/sequencing/browse"),
@@ -299,7 +299,7 @@ describe("order route coverage quick wins", () => {
   it("maps checksum route validation and unexpected failures", async () => {
     const { SequencingApiError } = await import("@/lib/sequencing/server");
     mocks.requireFacilityAdminSequencingSession.mockRejectedValueOnce(
-      new SequencingApiError("Forbidden", 403)
+      new SequencingApiError(403, "Forbidden")
     );
 
     const forbidden = await computeChecksums(
@@ -561,7 +561,7 @@ describe("order route coverage quick wins", () => {
 
     const { SequencingApiError } = await import("@/lib/sequencing/server");
     mocks.requireFacilityAdminSequencingSession.mockRejectedValueOnce(
-      new SequencingApiError("Forbidden", 403)
+      new SequencingApiError(403, "Forbidden")
     );
     const forbidden = await clearSequencingReadFields(
       new Request("http://localhost/api/orders/order-1/sequencing/reads", {

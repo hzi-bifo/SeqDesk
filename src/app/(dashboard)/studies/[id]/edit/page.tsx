@@ -10,7 +10,6 @@ import {
   flexRender,
   ColumnDef,
   CellContext,
-  RowData,
 } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
 import { StepProgressNav } from "@/components/ui/step-progress-nav";
@@ -272,6 +271,9 @@ const EditableCell = React.memo(function EditableCell({
   const fieldIsDate = isDateField(field as FormFieldDefinition);
 
   useEffect(() => {
+    // The editor keeps an uncommitted draft until blur and must reset when a
+    // virtualized cell is reused for another backing value.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setValue(initialValue ?? "");
     const hasInitialValue = initialValue !== undefined && initialValue !== null && initialValue !== "";
     if (hasInitialValue) {
@@ -489,15 +491,11 @@ const CheckboxCell = React.memo(function CheckboxCell({
     if (val === "false") return false;
     return Boolean(val);
   };
-  const [checked, setChecked] = useState(normalizeChecked(initialValue));
+  const checked = normalizeChecked(initialValue);
   const meta = column.columnDef.meta as StudyColumnMeta | undefined;
   const field = meta?.field as FormFieldDefinition | undefined;
   const isEditable = meta?.editable !== false;
   const { setFocusedField, setValidationError: setContextValidationError } = useFieldHelp();
-
-  useEffect(() => {
-    setChecked(normalizeChecked(initialValue));
-  }, [initialValue]);
 
   const onFocus = () => {
     if (!field) return;
@@ -511,7 +509,6 @@ const CheckboxCell = React.memo(function CheckboxCell({
   const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!isEditable) return;
     const nextValue = e.target.checked;
-    setChecked(nextValue);
     setContextValidationError(validateFieldValue(field, nextValue));
     table.options.meta?.updateData(row.index, column.id, nextValue);
   };
@@ -568,16 +565,12 @@ const MultiSelectCell = React.memo(function MultiSelectCell({
     }
     return [String(val)];
   };
-  const [value, setValue] = useState<string[]>(normalizeValues(initialValue));
+  const value = normalizeValues(initialValue);
   const meta = column.columnDef.meta as StudyColumnMeta | undefined;
   const field = meta?.field as FormFieldDefinition | undefined;
   const options = field?.options || [];
   const isEditable = meta?.editable !== false;
   const { setFocusedField, setValidationError: setContextValidationError } = useFieldHelp();
-
-  useEffect(() => {
-    setValue(normalizeValues(initialValue));
-  }, [initialValue]);
 
   const onFocus = () => {
     if (!field) return;
@@ -591,7 +584,6 @@ const MultiSelectCell = React.memo(function MultiSelectCell({
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     if (!isEditable) return;
     const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value);
-    setValue(selected);
     setContextValidationError(validateFieldValue(field, selected));
     table.options.meta?.updateData(row.index, column.id, selected);
   };
@@ -993,32 +985,6 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         if (res.ok) {
           const data = await res.json();
           setMixsTemplate(data);
-          // Select required fields + any fields that have data in sampleMetadata
-          const mixsFieldNames = new Set<string>(
-            data.fields.map((field: MixsField) => field.name)
-          );
-          const fieldsWithData = new Set<string>();
-          sampleMetadata.forEach(row => {
-            Object.keys(row).forEach(key => {
-              const candidate = key.startsWith("_mixs_")
-                ? key.replace("_mixs_", "")
-                : key;
-              const value = row[key];
-              const hasValue =
-                value !== undefined &&
-                value !== null &&
-                value !== "" &&
-                (!Array.isArray(value) || value.length > 0);
-              if (mixsFieldNames.has(candidate) && hasValue) {
-                fieldsWithData.add(candidate);
-              }
-            });
-          });
-          const selected = new Set([
-            ...data.fields.filter((f: MixsField) => f.required).map((f: MixsField) => f.name),
-            ...fieldsWithData
-          ]);
-          setSelectedMixsFields(selected);
         }
       } catch {
         console.error("Failed to load MIxS template");
@@ -1029,6 +995,36 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
     fetchMixsTemplate();
   }, [checklistType, formConfig?.modules.mixs]);
+
+  // Required fields and fields containing existing metadata must stay visible.
+  // Preserve any optional fields the user has already selected.
+  useEffect(() => {
+    if (!mixsTemplate) return;
+
+    const mixsFieldNames = new Set(mixsTemplate.fields.map((field) => field.name));
+    const fieldsToKeep = new Set(
+      mixsTemplate.fields.filter((field) => field.required).map((field) => field.name)
+    );
+    for (const row of sampleMetadata) {
+      for (const [key, value] of Object.entries(row)) {
+        const candidate = key.startsWith("_mixs_") ? key.replace("_mixs_", "") : key;
+        const hasValue =
+          value !== undefined &&
+          value !== null &&
+          value !== "" &&
+          (!Array.isArray(value) || value.length > 0);
+        if (mixsFieldNames.has(candidate) && hasValue) {
+          fieldsToKeep.add(candidate);
+        }
+      }
+    }
+
+    setSelectedMixsFields((current) => {
+      const next = new Set(current);
+      fieldsToKeep.forEach((field) => next.add(field));
+      return next.size === current.size ? current : next;
+    });
+  }, [mixsTemplate, sampleMetadata]);
 
   // Fetch available samples
   useEffect(() => {
@@ -1072,7 +1068,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
         return row;
       });
     });
-  }, [selectedSampleIds, availableSamples, id]);
+  }, [selectedSampleIds, availableSamples, activeStudyId]);
 
   const hasPerSampleFields = useMemo(() => {
     const mixsFieldsActive = Boolean(formConfig?.modules.mixs && mixsTemplate);
@@ -1138,7 +1134,7 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
     }
 
     return [...customFields, ...requiredMixsFields, ...optionalMixsFields];
-  }, [formConfig, mixsTemplate, selectedMixsFields.size, [...selectedMixsFields].join(',')]);
+  }, [formConfig, mixsTemplate, selectedMixsFields]);
 
   const STEPS: Step[] = useMemo(() => {
     const steps: Step[] = [];
@@ -1656,8 +1652,6 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
   // Filter samples - show unassigned + already in this study
   const eligibleSamples = availableSamples.filter(s => s.studyId === null || s.studyId === activeStudyId);
-  const selectedSamples = availableSamples.filter(s => selectedSampleIds.includes(s.id));
-
   const ValidationIndicator = ({ isValid, touched: isTouched }: { isValid: boolean; touched: boolean }) => {
     if (!isTouched || !isValid) return null;
     return <div className="absolute right-3 top-1/2 -translate-y-1/2"><CheckCircle2 className="h-4 w-4 text-green-500" /></div>;

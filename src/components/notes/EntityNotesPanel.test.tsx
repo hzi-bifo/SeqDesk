@@ -324,12 +324,14 @@ describe("EntityNotesPanel", () => {
   });
 
   it("shows the loading spinner before notes resolve", () => {
-    let resolveFetch: ((value: Response) => void) | null = null;
+    const pendingFetch: { resolve: ((value: Response) => void) | null } = {
+      resolve: null,
+    };
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/orders/order-1") {
         return new Promise<Response>((resolve) => {
-          resolveFetch = resolve;
+          pendingFetch.resolve = resolve;
         });
       }
       return Promise.resolve(jsonResponse({}));
@@ -350,7 +352,15 @@ describe("EntityNotesPanel", () => {
     expect(container.querySelector(".animate-spin")).toBeTruthy();
     expect(screen.queryByLabelText("notes editor")).toBeNull();
     // Resolve to avoid an unhandled pending promise after teardown.
-    resolveFetch?.(jsonResponse({ id: "order-1", orderNumber: "ORD-1", notes: null, notesEditedAt: null, notesEditedBy: null }));
+    pendingFetch.resolve?.(
+      jsonResponse({
+        id: "order-1",
+        orderNumber: "ORD-1",
+        notes: null,
+        notesEditedAt: null,
+        notesEditedBy: null,
+      })
+    );
   });
 
   it("renders an error state and retries via Try again", async () => {

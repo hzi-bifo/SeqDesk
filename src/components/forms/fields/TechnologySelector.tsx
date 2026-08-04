@@ -35,10 +35,6 @@ interface TechResponse {
   barcodeSets: BarcodeSet[];
 }
 
-const TECHNOLOGY_IMAGE_FALLBACKS: Record<string, string> = {
-  "ont-minion": "/images/sequencers/devices/ont-minion-mk1d.png",
-};
-
 export function TechnologySelector({
   value,
   onChange,
@@ -121,15 +117,6 @@ export function TechnologySelector({
         : technologies,
     [devices, showDeviceStep, technologies]
   );
-  const technologyPreviewImageById = useMemo(() => {
-    const previews = new Map<string, string>();
-    for (const device of devices) {
-      if (!device.image || previews.has(device.platformId)) continue;
-      previews.set(device.platformId, device.image);
-    }
-    return previews;
-  }, [devices]);
-
   const toggleExpanded = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setExpandedId(expandedId === id ? null : id);
@@ -427,10 +414,6 @@ export function TechnologySelector({
               {techs.map((tech) => {
                 const isSelected = selection?.technologyId === tech.id;
                 const isExpanded = expandedId === tech.id;
-                const previewImage =
-                  technologyPreviewImageById.get(tech.id) ??
-                  TECHNOLOGY_IMAGE_FALLBACKS[tech.id];
-
                 return (
                   <GlassCard
                     key={tech.id}
@@ -619,6 +602,7 @@ export function TechnologySelector({
                     className="h-14 w-14 flex-shrink-0 flex items-center justify-center rounded-lg"
                     style={{ backgroundColor: "#E1E1DD" }}
                   >
+                    {/* eslint-disable-next-line @next/next/no-img-element -- Device image URLs are admin-configured and cannot use a fixed remote-host allowlist. */}
                     <img
                       src={autoDevice.image}
                       alt={autoDevice.name}
@@ -658,6 +642,7 @@ export function TechnologySelector({
                           className="h-14 w-14 flex-shrink-0 flex items-center justify-center rounded-lg"
                           style={{ backgroundColor: "#E1E1DD" }}
                         >
+                          {/* eslint-disable-next-line @next/next/no-img-element -- Device image URLs are admin-configured and cannot use a fixed remote-host allowlist. */}
                           <img
                             src={device.image}
                             alt={device.name}

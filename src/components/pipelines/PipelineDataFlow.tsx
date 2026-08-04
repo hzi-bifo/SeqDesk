@@ -49,17 +49,6 @@ function getSourceIcon(source: string) {
   }
 }
 
-function getSourceLabel(source: string) {
-  switch (source) {
-    case "order_reads":
-      return "Order Files";
-    case "samplesheet":
-      return "Auto-generated";
-    default:
-      return source;
-  }
-}
-
 function getDestinationIcon(destination: string) {
   switch (destination) {
     case "sample_assemblies":

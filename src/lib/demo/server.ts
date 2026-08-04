@@ -152,11 +152,40 @@ function hashDemoToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+const DEMO_WORKSPACE_HASH_SUFFIX_LENGTH = 16;
+
+/**
+ * Stable, display-safe identifier derived from the complete workspace token.
+ *
+ * Public demo workspace keys commonly share a human-readable prefix (for
+ * example, `shared-<timestamp>`). Deriving database-unique seed values from
+ * that raw prefix makes otherwise distinct workspaces collide. Keep a short,
+ * sanitized human-readable prefix for reviewer-facing records and append a
+ * truncated SHA-256 digest so the complete token determines the identity.
+ */
+export function getDemoWorkspaceIdentifier(token: string): string {
+  const readablePrefix =
+    token.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "DEMO";
+  const hashSuffix = hashDemoToken(token)
+    .slice(0, DEMO_WORKSPACE_HASH_SUFFIX_LENGTH)
+    .toUpperCase();
+  return `${readablePrefix}-${hashSuffix}`;
+}
+
 function createDemoToken(): string {
   return randomBytes(32).toString("hex");
 }
 
 function createDemoEmail(
+  token: string,
+  demoExperience: DemoExperience
+): string {
+  const prefix = demoExperience === "facility" ? "facility" : "researcher";
+  const workspaceIdentifier = getDemoWorkspaceIdentifier(token).toLowerCase();
+  return `demo-${prefix}-${workspaceIdentifier}@seqdesk.local`;
+}
+
+function createLegacyDemoEmail(
   token: string,
   demoExperience: DemoExperience
 ): string {
@@ -275,7 +304,7 @@ async function createDemoWorkspaceInternal(
   const expiresAt = addHours(now, DEMO_SESSION_TTL_HOURS);
   const rawToken = preferredToken?.trim() || createDemoToken();
   const tokenHash = hashDemoToken(rawToken);
-  const prefix = rawToken.slice(0, 6).toUpperCase();
+  const prefix = getDemoWorkspaceIdentifier(rawToken);
   const researcherEmail = createDemoEmail(rawToken, "researcher");
   const adminEmail = createDemoEmail(rawToken, "facility");
   const passwordHash = await hash(rawToken, 10);
@@ -1671,82 +1700,125 @@ async function destroyWorkspaceByToken(token: string): Promise<boolean> {
  * remain in the database (e.g., from a partial destroy in older code).
  */
 async function cleanupOrphanedDemoRecords(token: string): Promise<void> {
-  const prefix = token.slice(0, 6).toUpperCase();
-  const orderNumberPrefix = `DEMO-${prefix}-`;
-  const emailSuffix = "@seqdesk.local";
+  const workspaceIdentifier = getDemoWorkspaceIdentifier(token);
+  const candidateEmails = [
+    createDemoEmail(token, "researcher"),
+    createDemoEmail(token, "facility"),
+    // Include identities created before full-token hash identifiers were
+    // introduced. Exact email matching plus the workspace-link check below
+    // prevents one legacy `shared-*` token from deleting another active one.
+    createLegacyDemoEmail(token, "researcher"),
+    createLegacyDemoEmail(token, "facility"),
+  ];
 
   await db.$transaction(async (tx) => {
-    // Find orphaned orders by order number pattern
-    const orphanedOrders = await tx.order.findMany({
-      where: { orderNumber: { startsWith: orderNumberPrefix } },
-      select: { id: true, userId: true },
-    });
-
-    if (orphanedOrders.length > 0) {
-      const orderIds = orphanedOrders.map((o) => o.id);
-      const userIds = [...new Set(orphanedOrders.map((o) => o.userId))];
-
-      // Clean up samples' reads
-      const samples = await tx.sample.findMany({
-        where: { orderId: { in: orderIds } },
-        select: { id: true },
-      });
-      if (samples.length > 0) {
-        await tx.read.deleteMany({ where: { sampleId: { in: samples.map((s) => s.id) } } });
-      }
-
-      // Clean up pipeline runs referencing these orders
-      await tx.pipelineRun.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.statusNote.deleteMany({ where: { userId: { in: userIds } } });
-      await tx.ticket.deleteMany({ where: { orderId: { in: orderIds } } });
-      await tx.order.deleteMany({ where: { id: { in: orderIds } } });
-    }
-
-    // Clean up orphaned demo users and their studies
-    const orphanedUsers = await tx.user.findMany({
+    const candidateUsers = await tx.user.findMany({
       where: {
         isDemo: true,
-        AND: [
-          { email: { endsWith: emailSuffix } },
-          { email: { contains: token.slice(0, 6) } },
-        ],
+        email: { in: [...new Set(candidateEmails)] },
       },
       select: { id: true },
     });
 
-    if (orphanedUsers.length > 0) {
-      const orphanUserIds = orphanedUsers.map((u) => u.id);
-      // Delete pipeline runs linked to orphaned users' studies
-      const orphanStudies = await tx.study.findMany({
+    if (candidateUsers.length === 0) {
+      return;
+    }
+
+    const candidateUserIds = candidateUsers.map((user) => user.id);
+    const linkedWorkspaces = await tx.demoWorkspace.findMany({
+      where: {
+        OR: [
+          { userId: { in: candidateUserIds } },
+          { adminUserId: { in: candidateUserIds } },
+        ],
+      },
+      select: { userId: true, adminUserId: true },
+    });
+    const linkedUserIds = new Set(
+      linkedWorkspaces.flatMap((workspace) => [
+        workspace.userId,
+        ...(workspace.adminUserId ? [workspace.adminUserId] : []),
+      ])
+    );
+    const orphanUserIds = candidateUserIds.filter(
+      (userId) => !linkedUserIds.has(userId)
+    );
+
+    if (orphanUserIds.length === 0) {
+      return;
+    }
+
+    const [orphanedOrders, orphanedStudies] = await Promise.all([
+      tx.order.findMany({
         where: { userId: { in: orphanUserIds } },
         select: { id: true },
-      });
-      if (orphanStudies.length > 0) {
-        await tx.pipelineRun.deleteMany({
-          where: { studyId: { in: orphanStudies.map((s) => s.id) } },
-        });
-      }
-      await tx.study.deleteMany({ where: { userId: { in: orphanUserIds } } });
-      await tx.demoWorkspace.deleteMany({
-        where: { OR: [{ userId: { in: orphanUserIds } }, { adminUserId: { in: orphanUserIds } }] },
-      });
-      await tx.user.deleteMany({ where: { id: { in: orphanUserIds } } });
+      }),
+      tx.study.findMany({
+        where: { userId: { in: orphanUserIds } },
+        select: { id: true },
+      }),
+    ]);
+    const orderIds = orphanedOrders.map((order) => order.id);
+    const studyIds = orphanedStudies.map((study) => study.id);
+    const samples = orderIds.length > 0
+      ? await tx.sample.findMany({
+          where: { orderId: { in: orderIds } },
+          select: { id: true },
+        })
+      : [];
+    const sampleIds = samples.map((sample) => sample.id);
+
+    if (sampleIds.length > 0) {
+      await tx.read.deleteMany({ where: { sampleId: { in: sampleIds } } });
     }
+
+    await tx.statusNote.deleteMany({ where: { userId: { in: orphanUserIds } } });
+    await tx.ticketMessage.deleteMany({ where: { userId: { in: orphanUserIds } } });
+    await tx.ticket.deleteMany({
+      where: {
+        OR: [
+          { userId: { in: orphanUserIds } },
+          ...(orderIds.length > 0 ? [{ orderId: { in: orderIds } }] : []),
+          ...(studyIds.length > 0 ? [{ studyId: { in: studyIds } }] : []),
+        ],
+      },
+    });
+    // PipelineRun.userId is required and has no cascade. Include it directly;
+    // cleaning only orderId/studyId leaves user-owned runs that block deletion.
+    await tx.pipelineRun.deleteMany({
+      where: {
+        OR: [
+          { userId: { in: orphanUserIds } },
+          ...(orderIds.length > 0 ? [{ orderId: { in: orderIds } }] : []),
+          ...(studyIds.length > 0 ? [{ studyId: { in: studyIds } }] : []),
+        ],
+      },
+    });
+    await tx.order.deleteMany({ where: { id: { in: orderIds } } });
+    await tx.study.deleteMany({ where: { id: { in: studyIds } } });
+    await tx.user.deleteMany({ where: { id: { in: orphanUserIds } } });
   });
 
-  console.log(`[Demo Cleanup] Orphan cleanup completed for prefix ${prefix}`);
+  console.log(
+    `[Demo Cleanup] Orphan cleanup completed for workspace ${workspaceIdentifier}`
+  );
 }
 
-async function refreshWorkspace(workspaceId: string): Promise<Date> {
-  const refreshedExpiry = addHours(new Date(), DEMO_SESSION_TTL_HOURS);
-  await db.demoWorkspace.update({
-    where: { id: workspaceId },
+async function refreshWorkspace(workspaceId: string): Promise<Date | null> {
+  const refreshedAt = new Date();
+  const refreshedExpiry = addHours(refreshedAt, DEMO_SESSION_TTL_HOURS);
+  const result = await db.demoWorkspace.updateMany({
+    where: {
+      id: workspaceId,
+      seedVersion: DEMO_SEED_VERSION,
+      expiresAt: { gt: refreshedAt },
+    },
     data: {
-      lastSeenAt: new Date(),
+      lastSeenAt: refreshedAt,
       expiresAt: refreshedExpiry,
     },
   });
-  return refreshedExpiry;
+  return result.count > 0 ? refreshedExpiry : null;
 }
 
 export function getDemoWorkspaceCookieName(): string {
@@ -1844,15 +1916,19 @@ export function isFacilityDemoSession(
 // Scoping list queries to these ids isolates each demo session. Returns null for
 // a real (non-demo) FACILITY_ADMIN, so their unfiltered cross-account access is
 // unchanged, and null for the researcher demo (already scoped by its own userId).
+// A facility-demo token whose workspace has been reset returns an empty array,
+// which lets consumers fail closed instead of mistaking the stale JWT for an
+// unrestricted real facility administrator.
 export async function getDemoFacilityWorkspaceUserIds(
   session: Session | null | undefined
 ): Promise<string[] | null> {
-  if (!isFacilityDemoSession(session) || !session?.user?.id) return null;
+  if (!isFacilityDemoSession(session)) return null;
+  if (!session?.user?.id) return [];
   const workspace = await db.demoWorkspace.findUnique({
     where: { adminUserId: session.user.id },
     select: { userId: true, adminUserId: true },
   });
-  if (!workspace) return null;
+  if (!workspace) return [];
   return [workspace.userId, workspace.adminUserId].filter(
     (value): value is string => Boolean(value)
   );
@@ -1866,26 +1942,35 @@ export async function authorizeDemoWorkspaceToken(
     return null;
   }
 
-  const workspace = await findWorkspaceByToken(token);
-  if (!workspace) {
-    return null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const workspace = await findWorkspaceByToken(token);
+    if (!workspace) {
+      return null;
+    }
+
+    if (!isWorkspaceReusable(workspace)) {
+      await db.$transaction(async (tx) => {
+        await destroyWorkspaceByRecord(tx, workspace);
+      });
+      return null;
+    }
+
+    const refreshedExpiry = await refreshWorkspace(workspace.id);
+    if (!refreshedExpiry) {
+      // A concurrent reset may have replaced the record after our lookup.
+      // Re-resolve the token once so authorization can follow that winner.
+      continue;
+    }
+
+    const selectedUser = selectWorkspaceUser(workspace, demoExperience);
+    if (!selectedUser) {
+      return null;
+    }
+
+    return toDemoAuthUser(selectedUser, demoExperience);
   }
 
-  if (!isWorkspaceReusable(workspace)) {
-    await db.$transaction(async (tx) => {
-      await destroyWorkspaceByRecord(tx, workspace);
-    });
-    return null;
-  }
-
-  await refreshWorkspace(workspace.id);
-
-  const selectedUser = selectWorkspaceUser(workspace, demoExperience);
-  if (!selectedUser) {
-    return null;
-  }
-
-  return toDemoAuthUser(selectedUser, demoExperience);
+  return null;
 }
 
 export async function bootstrapDemoWorkspace(
@@ -1899,45 +1984,79 @@ export async function bootstrapDemoWorkspace(
   const normalizedToken = token?.trim() || null;
 
   if (normalizedToken) {
-    const existing = await findWorkspaceByToken(normalizedToken);
-    if (existing && isWorkspaceReusable(existing)) {
-      const refreshedExpiry = await refreshWorkspace(existing.id);
-      return {
-        created: false,
-        expiresAt: refreshedExpiry,
-        token: normalizedToken,
-        userId: getDemoUserIdForExperience(existing, demoExperience),
-        workspaceId: existing.id,
-      };
+    const reuseWorkspace = async (): Promise<DemoBootstrapResult | null> => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const existing = await findWorkspaceByToken(normalizedToken);
+        if (!existing) {
+          return null;
+        }
+
+        if (!isWorkspaceReusable(existing)) {
+          // Delete the exact record we inspected. Re-resolving by token here
+          // could destroy a fresh replacement created by a concurrent reset.
+          await db.$transaction(async (tx) => {
+            await destroyWorkspaceByRecord(tx, existing);
+          });
+          return null;
+        }
+
+        const refreshedExpiry = await refreshWorkspace(existing.id);
+        if (!refreshedExpiry) {
+          // The record changed between lookup and refresh. Re-resolve once so
+          // a concurrent reset's replacement can be reused without colliding.
+          continue;
+        }
+
+        return {
+          created: false,
+          expiresAt: refreshedExpiry,
+          token: normalizedToken,
+          userId: getDemoUserIdForExperience(existing, demoExperience),
+          workspaceId: existing.id,
+        };
+      }
+
+      return null;
+    };
+
+    const reusable = await reuseWorkspace();
+    if (reusable) {
+      return reusable;
     }
 
-    if (existing) {
-      await destroyWorkspaceByToken(normalizedToken);
+    let lastCreateError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const created = await createDemoWorkspaceInternal(normalizedToken);
+        return {
+          created: true,
+          expiresAt: created.expiresAt,
+          token: created.token,
+          userId: getDemoUserIdForExperience(created, demoExperience),
+          workspaceId: created.workspaceId,
+        };
+      } catch (error) {
+        lastCreateError = error;
+
+        // Another request may have created the same workspace after our
+        // lookup. Reuse that winner before treating the collision as orphaned
+        // state; this is the normal researcher/facility reset race.
+        const concurrentWorkspace = await reuseWorkspace();
+        if (concurrentWorkspace) {
+          return concurrentWorkspace;
+        }
+
+        if (attempt === 0) {
+          console.warn(
+            "[Demo Bootstrap] Create failed, attempting orphan cleanup:",
+            error
+          );
+          await cleanupOrphanedDemoRecords(normalizedToken);
+        }
+      }
     }
 
-    try {
-      const created = await createDemoWorkspaceInternal(normalizedToken);
-      return {
-        created: true,
-        expiresAt: created.expiresAt,
-        token: created.token,
-        userId: getDemoUserIdForExperience(created, demoExperience),
-        workspaceId: created.workspaceId,
-      };
-    } catch (error) {
-      // Retry once after cleaning up orphaned records by token prefix
-      console.warn("[Demo Bootstrap] Create failed, attempting orphan cleanup:", error);
-      await destroyWorkspaceByToken(normalizedToken).catch(() => {});
-      await cleanupOrphanedDemoRecords(normalizedToken);
-      const created = await createDemoWorkspaceInternal(normalizedToken);
-      return {
-        created: true,
-        expiresAt: created.expiresAt,
-        token: created.token,
-        userId: getDemoUserIdForExperience(created, demoExperience),
-        workspaceId: created.workspaceId,
-      };
-    }
+    throw lastCreateError;
   }
 
   const created = await createDemoWorkspaceInternal();
@@ -1963,12 +2082,15 @@ export async function resetDemoWorkspace(
     await destroyWorkspaceByToken(normalizedToken);
   }
 
-  const created = await createDemoWorkspaceInternal(normalizedToken);
+  // A concurrent request may seed the workspace after deletion but before this
+  // request recreates it. The bootstrap path safely creates or reuses that
+  // freshly seeded winner.
+  const created = await bootstrapDemoWorkspace(normalizedToken, demoExperience);
   return {
     created: true,
     expiresAt: created.expiresAt,
     token: created.token,
-    userId: getDemoUserIdForExperience(created, demoExperience),
+    userId: created.userId,
     workspaceId: created.workspaceId,
   };
 }
@@ -1988,16 +2110,44 @@ export async function cleanupExpiredDemoWorkspaces(): Promise<{
       id: true,
       userId: true,
       adminUserId: true,
+      seedVersion: true,
+      lastSeenAt: true,
+      expiresAt: true,
     },
   });
 
+  let deletedWorkspaces = 0;
   for (const workspace of expired) {
-    await db.$transaction(async (tx) => {
+    const deleted = await db.$transaction(async (tx) => {
+      // Claim the exact state selected above before deleting dependants. This
+      // UPDATE takes a row lock; if a concurrent authorization refreshed the
+      // workspace first, its timestamps no longer match and cleanup skips it.
+      const claim = await tx.demoWorkspace.updateMany({
+        where: {
+          id: workspace.id,
+          userId: workspace.userId,
+          adminUserId: workspace.adminUserId,
+          seedVersion: workspace.seedVersion,
+          lastSeenAt: workspace.lastSeenAt,
+          expiresAt: workspace.expiresAt,
+        },
+        data: {
+          lastSeenAt: workspace.lastSeenAt,
+        },
+      });
+      if (claim.count === 0) {
+        return false;
+      }
+
       await destroyWorkspaceByRecord(tx, workspace);
+      return true;
     });
+    if (deleted) {
+      deletedWorkspaces += 1;
+    }
   }
 
   return {
-    deletedWorkspaces: expired.length,
+    deletedWorkspaces,
   };
 }

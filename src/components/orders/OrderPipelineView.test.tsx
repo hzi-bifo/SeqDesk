@@ -672,6 +672,11 @@ describe("OrderPipelineView", () => {
 
     fireEvent.click(screen.getByLabelText("View details for RUN-2026-001"));
     expect(screen.getByText("Run Details")).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Inspect execution status, timing, settings, errors, and reviewable outputs/
+      )
+    ).toBeTruthy();
     expect(screen.getByText(/Published by Ada Admin/i)).toBeTruthy();
     expect(screen.getByText("Read count:")).toBeTruthy();
     expect(screen.getByText("No")).toBeTruthy();

@@ -10,7 +10,6 @@ import {
   flexRender,
   ColumnDef,
   CellContext,
-  RowData,
 } from "@tanstack/react-table";
 import { Button } from "@/components/ui/button";
 import { StepProgressNav } from "@/components/ui/step-progress-nav";
@@ -309,6 +308,9 @@ const EditableCell = React.memo(function EditableCell({
   const fieldIsDate = isDateField(field as FormFieldDefinition);
 
   useEffect(() => {
+    // The editor keeps an uncommitted draft until blur and must reset when a
+    // virtualized cell is reused for another backing value.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setValue(initialValue ?? "");
     const hasInitialValue = initialValue !== undefined && initialValue !== null && initialValue !== "";
     if (hasInitialValue) {
@@ -552,15 +554,11 @@ const CheckboxCell = React.memo(function CheckboxCell({
     if (val === "false") return false;
     return Boolean(val);
   };
-  const [checked, setChecked] = useState(normalizeChecked(initialValue));
+  const checked = normalizeChecked(initialValue);
   const meta = column.columnDef.meta as StudyColumnMeta | undefined;
   const field = meta?.field as FormFieldDefinition | undefined;
   const isEditable = meta?.editable !== false;
   const { setFocusedField, setValidationError: setContextValidationError } = useFieldHelp();
-
-  useEffect(() => {
-    setChecked(normalizeChecked(initialValue));
-  }, [initialValue]);
 
   const onFocus = () => {
     if (!field) return;
@@ -574,7 +572,6 @@ const CheckboxCell = React.memo(function CheckboxCell({
   const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!isEditable) return;
     const nextValue = e.target.checked;
-    setChecked(nextValue);
     setContextValidationError(validateFieldValue(field, nextValue));
     table.options.meta?.updateData(row.index, column.id, nextValue);
   };
@@ -631,16 +628,12 @@ const MultiSelectCell = React.memo(function MultiSelectCell({
     }
     return [String(val)];
   };
-  const [value, setValue] = useState<string[]>(normalizeValues(initialValue));
+  const value = normalizeValues(initialValue);
   const meta = column.columnDef.meta as StudyColumnMeta | undefined;
   const field = meta?.field as FormFieldDefinition | undefined;
   const options = field?.options || [];
   const isEditable = meta?.editable !== false;
   const { setFocusedField, setValidationError: setContextValidationError } = useFieldHelp();
-
-  useEffect(() => {
-    setValue(normalizeValues(initialValue));
-  }, [initialValue]);
 
   const onFocus = () => {
     if (!field) return;
@@ -654,7 +647,6 @@ const MultiSelectCell = React.memo(function MultiSelectCell({
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     if (!isEditable) return;
     const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value);
-    setValue(selected);
     setContextValidationError(validateFieldValue(field, selected));
     table.options.meta?.updateData(row.index, column.id, selected);
   };
@@ -1847,8 +1839,6 @@ export default function NewStudyPage() {
   // Filter samples
   const unassignedSamples = availableSamples.filter(s => s.studyId === null);
   const assignedSamples = availableSamples.filter(s => s.studyId !== null);
-  const selectedSamples = availableSamples.filter(s => selectedSampleIds.includes(s.id));
-
   // Validation indicator component
   const ValidationIndicator = ({ isValid, touched: isTouched }: { isValid: boolean; touched: boolean }) => {
     if (!isTouched || !isValid) return null;

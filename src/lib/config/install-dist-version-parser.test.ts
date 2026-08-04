@@ -6,6 +6,12 @@ import { fileURLToPath } from "node:url";
 
 import { afterAll, describe, expect, it } from "vitest";
 
+function processEnvironment(
+  values: Record<string, string | undefined>
+): NodeJS.ProcessEnv {
+  return values as unknown as NodeJS.ProcessEnv;
+}
+
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(currentDir, "../../..");
 const installDistPath = path.join(repoRoot, "scripts/install-dist.sh");
@@ -198,13 +204,13 @@ pm2_exec_runtime "$@"`,
         ...args,
       ],
       {
-        env: {
+        env: processEnvironment({
           PATH: process.env.PATH ?? "/usr/bin:/bin",
           DATABASE_URL: env.DATABASE_URL,
           DIRECT_URL: env.DIRECT_URL,
           SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED: env.SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED,
           SEQDESK_DATA_PATH: env.SEQDESK_DATA_PATH,
-        },
+        }),
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
       }
