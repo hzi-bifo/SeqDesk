@@ -44,6 +44,7 @@ import {
   pathIsWithin,
   pathsReferToSameLocation,
   readCanonicalPipelineExit,
+  resolveHistoricalSequencingInputPath,
   resolveLocalManifestPipelineTarget,
   SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS,
   SLURM_PROOF_VISIBILITY_TIMEOUT_MS,
@@ -1702,6 +1703,74 @@ describe("pipeline E2E proof helpers", () => {
         context: "reads-QC fixture",
       }),
     ).toThrow(/wrong persisted sample/);
+  });
+
+  it("keeps MultiQC provenance on historical source inputs after Read replacement", () => {
+    const [expected] = deriveMultiqcExpectedSamplesFromSourceInputs({
+      candidateSamples: [
+        {
+          sampleId: "S1",
+          sampleRecordId: "sample-1",
+          activeReads: [
+            {
+              id: "replacement-read-1",
+              file1: "/reads/replacement-one.fastq.gz",
+              file2: "/reads/replacement-two.fastq.gz",
+            },
+          ],
+        },
+      ],
+      sourceInputSamples: [
+        {
+          sampleId: "S1",
+          sampleRecordId: "sample-1",
+          file1: "/reads/historical-one.fastq.gz",
+          file2: "/reads/historical-two.fastq.gz",
+        },
+      ],
+      context: "MultiQC historical source fixture",
+    });
+
+    expect(expected).toMatchObject({
+      sampleId: "S1",
+      sampleRecordId: "sample-1",
+      file1: "/reads/historical-one.fastq.gz",
+      file2: "/reads/historical-two.fastq.gz",
+      pairedEnd: true,
+    });
+  });
+
+  it("keeps historical MultiQC inputs inside canonical sequencing storage", () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "seqdesk-multiqc-history-"),
+    );
+    const storage = path.join(root, "storage");
+    const inside = path.join(storage, "historical.fastq.gz");
+    const outside = path.join(root, "outside.fastq.gz");
+    const escaped = path.join(storage, "escaped.fastq.gz");
+    try {
+      fs.mkdirSync(storage);
+      fs.writeFileSync(inside, "historical-fastq");
+      fs.writeFileSync(outside, "outside-fastq");
+      fs.symlinkSync(outside, escaped);
+
+      expect(
+        resolveHistoricalSequencingInputPath({
+          storedPath: inside,
+          dataBasePath: storage,
+          context: "MultiQC historical fixture",
+        }),
+      ).toBe(fs.realpathSync.native(inside));
+      expect(() =>
+        resolveHistoricalSequencingInputPath({
+          storedPath: escaped,
+          dataBasePath: storage,
+          context: "MultiQC symlink escape fixture",
+        }),
+      ).toThrow(/escapes sequencing storage/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("requires complete staged and parsed MultiQC sample/mate coverage", () => {
@@ -3552,7 +3621,12 @@ describe("pipeline E2E proof helpers", () => {
     expect(multiqcProof).toContain("sourceRun?.pipelineId !== \"fastqc\"");
     expect(multiqcProof).toContain("sourceRun?.status !== \"completed\"");
     expect(multiqcProof).toContain("sha256OfFile(sourceFile.path)");
-    expect(multiqcProof).toContain("sourceInputEvidence.groundTruthByIdentity");
+    expect(multiqcProof).toContain(
+      "resolveHistoricalSequencingInputPath({",
+    );
+    expect(multiqcProof).toContain("computeCachedFastqGroundTruth(");
+    expect(multiqcProof).not.toContain("bindExpectedSamplesToRunInputs({");
+    expect(multiqcProof).not.toContain("exactly one active DB Read");
     expect(multiqcProof).toContain(
       "fastqcData.totalSequences !== rawGroundTruth.readCount",
     );

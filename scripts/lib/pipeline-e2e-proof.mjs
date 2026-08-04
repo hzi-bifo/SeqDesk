@@ -220,6 +220,61 @@ export function pathIsWithin(candidate, expectedRoot) {
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`));
 }
 
+export function resolveHistoricalSequencingInputPath({
+  storedPath,
+  dataBasePath,
+  context,
+}) {
+  const label =
+    typeof context === "string" && context.trim() ? context.trim() : "input";
+  if (
+    typeof storedPath !== "string" ||
+    !path.isAbsolute(storedPath) ||
+    typeof dataBasePath !== "string" ||
+    !path.isAbsolute(dataBasePath)
+  ) {
+    fail(`${label}: historical sequencing input and storage root must be absolute`);
+  }
+
+  let canonicalRoot;
+  try {
+    canonicalRoot = fs.realpathSync.native(path.resolve(dataBasePath));
+    if (!fs.statSync(canonicalRoot).isDirectory()) {
+      fail(`${label}: sequencing storage root is not a directory`);
+    }
+  } catch (error) {
+    fail(
+      `${label}: could not resolve sequencing storage root`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  const candidate = path.resolve(storedPath);
+  if (!pathIsWithin(candidate, canonicalRoot)) {
+    fail(`${label}: historical sequencing input escapes sequencing storage`);
+  }
+
+  let canonical;
+  try {
+    canonical = fs.realpathSync.native(candidate);
+    const stat = fs.statSync(canonical);
+    if (!stat.isFile() || stat.size <= 0) {
+      fail(`${label}: historical sequencing input is not a non-empty regular file`);
+    }
+  } catch (error) {
+    fail(
+      `${label}: could not resolve historical sequencing input`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  if (!pathIsWithin(canonical, canonicalRoot)) {
+    fail(
+      `${label}: canonical historical sequencing input escapes sequencing storage`,
+    );
+  }
+  return canonical;
+}
+
 export function assertExactSampleCoverage({
   expectedSampleIds,
   observedSampleIds,

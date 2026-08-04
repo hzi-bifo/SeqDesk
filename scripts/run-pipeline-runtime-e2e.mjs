@@ -49,6 +49,7 @@ import {
   parsePrimarySacctRecord,
   pathIsWithin,
   pathsReferToSameLocation,
+  resolveHistoricalSequencingInputPath,
   resolveLocalManifestPipelineTarget,
   SLURM_PROOF_VISIBILITY_POLL_INTERVAL_MS,
   SLURM_PROOF_VISIBILITY_TIMEOUT_MS,
@@ -2733,6 +2734,35 @@ function expectedFastqcSamplesForRun({
   return expectedSamples;
 }
 
+function expectedMultiqcSamplesForRun({ run, context }) {
+  const samples = selectedTargetSamplesForRun({ run, context });
+  const sampleIds = new Set();
+  const sampleRecordIds = new Set();
+  const expectedSamples = samples.map((sample) => {
+    const sampleId =
+      typeof sample?.sampleId === "string" ? sample.sampleId.trim() : "";
+    const sampleRecordId =
+      typeof sample?.id === "string" ? sample.id.trim() : "";
+    if (
+      !sampleId ||
+      !sampleRecordId ||
+      sampleIds.has(sampleId) ||
+      sampleRecordIds.has(sampleRecordId)
+    ) {
+      fail(
+        `${context}: target study samples need unique IDs and persisted IDs`,
+      );
+    }
+    sampleIds.add(sampleId);
+    sampleRecordIds.add(sampleRecordId);
+    return { sampleId, sampleRecordId };
+  });
+  if (expectedSamples.length === 0) {
+    fail(`${context}: run exposed no selected target study samples`);
+  }
+  return expectedSamples;
+}
+
 // fastqc summary-TSV metric correctness: fetch summary/fastqc-summary.tsv (the file is
 // required to be ingested as a PipelineArtifact row), prove exact target-sample
 // coverage, validate every R1/R2 metric, and cross-check the summary against the Read
@@ -3055,6 +3085,29 @@ async function buildMultiqcFastqcGroundTruth({
     }
   }
 
+  const settings = await requestJson(
+    client,
+    "/api/admin/settings/sequencing-files",
+    {},
+    "MultiQC: fetch sequencing-files settings for historical source inputs",
+  );
+  const dataBasePath =
+    typeof settings?.dataBasePath === "string" &&
+    path.isAbsolute(settings.dataBasePath)
+      ? path.resolve(settings.dataBasePath)
+      : null;
+  if (!dataBasePath) {
+    fail(
+      "MultiQC: sequencing data base path is unavailable or not absolute",
+    );
+  }
+  const resolveHistoricalInputPath = (storedPath, identity) =>
+    resolveHistoricalSequencingInputPath({
+      storedPath,
+      dataBasePath,
+      context: `MultiQC historical FastQC source ${identity}`,
+    });
+
   const sourceRunCache = new Map();
   const loadSourceRun = async (sourceRunId) => {
     let pending = sourceRunCache.get(sourceRunId);
@@ -3113,24 +3166,10 @@ async function buildMultiqcFastqcGroundTruth({
           }
           columns.set(name, matches[0]);
         }
-        const sourceCandidates = expectedFastqcSamplesForRun({
-          run: sourceRun,
-          context: `MultiQC source FastQC run ${sourceRunId}`,
-        });
-        const sourceInputEvidence = await bindExpectedSamplesToRunInputs({
-          client,
-          run: sourceRun,
-          runId: sourceRunId,
-          expectedSamples: sourceCandidates,
-          r1Column: "fastq_1",
-          r2Column: "fastq_2",
-          context: `MultiQC source FastQC run ${sourceRunId}`,
-        });
         return {
           sourceRun,
           samplesheet,
           columns,
-          sourceInputEvidence,
         };
       })();
       sourceRunCache.set(sourceRunId, pending);
@@ -3153,7 +3192,6 @@ async function buildMultiqcFastqcGroundTruth({
       sourceRun,
       samplesheet,
       columns,
-      sourceInputEvidence,
     } = await loadSourceRun(sourceRunId);
     const sourceArtifacts = (sourceRun.artifacts ?? []).filter(
       (artifact) => artifact?.id === inventoryArtifact?.artifactId,
@@ -3248,33 +3286,31 @@ async function buildMultiqcFastqcGroundTruth({
         `MultiQC: source FastQC samplesheet does not contain exactly one row for ${expected.sample.sampleId}`,
       );
     }
-    const inputColumn = expected.mate === "R1" ? "fastq_1" : "fastq_2";
-    const sourceInput = sourceRows[0][columns.get(inputColumn)];
+    const sourceFile1 = resolveHistoricalInputPath(
+      sourceRows[0][columns.get("fastq_1")],
+      `${expected.sample.sampleId}/R1`,
+    );
+    const storedFile2 = sourceRows[0][columns.get("fastq_2")];
+    const sourceFile2 = storedFile2
+      ? resolveHistoricalInputPath(
+          storedFile2,
+          `${expected.sample.sampleId}/R2`,
+        )
+      : null;
+    const sourceInput = expected.mate === "R1" ? sourceFile1 : sourceFile2;
     if (!sourceInput) {
       fail(`MultiQC: source FastQC samplesheet has no ${expected.mate} input`);
     }
-    const boundSourceSample = sourceInputEvidence.expectedSamples.find(
-      (sample) => sample.sampleId === expected.sample.sampleId,
+    sourceInputSamples.push({
+      sampleId: expected.sample.sampleId,
+      sampleRecordId: expected.sample.sampleRecordId,
+      file1: sourceFile1,
+      file2: sourceFile2,
+    });
+    const rawGroundTruth = await computeCachedFastqGroundTruth(
+      sourceInput,
+      `MultiQC historical FastQC source ${expected.identity}`,
     );
-    const boundSourceInput =
-      expected.mate === "R1"
-        ? boundSourceSample?.file1
-        : boundSourceSample?.file2;
-    if (
-      !boundSourceSample ||
-      !boundSourceInput ||
-      !pathsReferToSameLocation(boundSourceInput, sourceInput)
-    ) {
-      fail(
-        `MultiQC: source FastQC input is not bound to exactly one active DB Read for ${expected.identity}`,
-      );
-    }
-    sourceInputSamples.push(boundSourceSample);
-    const rawGroundTruth =
-      sourceInputEvidence.groundTruthByIdentity.get(expected.identity);
-    if (!rawGroundTruth) {
-      fail(`MultiQC: raw FASTQ ground truth is missing for ${expected.identity}`);
-    }
     const fastqcData = await extractFastqcDataFromZip({
       zipPath: stagedFile.path,
       root: run.runFolder,
@@ -3671,10 +3707,9 @@ async function assertMultiqcAggregation({ client, run, runId }) {
       );
     }
   }
-  const candidateSamples = expectedFastqcSamplesForRun({
+  const candidateSamples = expectedMultiqcSamplesForRun({
     run,
     context: `multiqc aggregation for run ${runId}`,
-    allowSamplesWithoutReads: true,
   });
   const fastqcGroundTruth = await buildMultiqcFastqcGroundTruth({
     client,
