@@ -8,8 +8,8 @@ type: software
 authors:
   - family-names: Münch
     given-names: Philipp
-version: 1.1.128
-date-released: "2026-08-04"
+version: 1.1.129
+date-released: "2026-08-05"
 repository-code: "https://github.com/hzi-bifo/SeqDesk"
 url: "https://seqdesk.org"
 license: Apache-2.0

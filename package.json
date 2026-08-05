@@ -1,6 +1,6 @@
 {
   "name": "seqdesk",
-  "version": "1.1.128",
+  "version": "1.1.129",
   "description": "Sequencing-facility software for orders, standards-aware metadata, workflows, and data submission",
   "private": true,
   "author": "Philipp Münch",
