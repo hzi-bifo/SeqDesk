@@ -12,6 +12,7 @@ interface CitationMetadata {
   authors?: Array<{
     "family-names"?: string;
     "given-names"?: string;
+    orcid?: string;
   }>;
 }
 
@@ -44,7 +45,18 @@ describe("software citation metadata", () => {
       expect.arrayContaining([
         expect.objectContaining({
           "family-names": "Münch",
-          "given-names": "Philipp",
+          "given-names": "Philipp C.",
+          orcid: "https://orcid.org/0000-0003-3233-9693",
+        }),
+        expect.objectContaining({
+          "family-names": "Robertson",
+          "given-names": "Gary",
+          orcid: "https://orcid.org/0000-0001-7588-2106",
+        }),
+        expect.objectContaining({
+          "family-names": "McHardy",
+          "given-names": "Alice Carolyn",
+          orcid: "https://orcid.org/0000-0003-2370-3430",
         }),
       ])
     );

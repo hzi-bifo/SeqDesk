@@ -4,6 +4,8 @@
 sequencing orders, samples, studies, sequencing files, and bioinformatics pipeline execution, and
 runs self-hosted on your own infrastructure.
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21806366.svg)](https://doi.org/10.5281/zenodo.21806366)
+
 > 📖 **Full documentation: [seqdesk.org/docs](https://seqdesk.org/docs)** — installation,
 > configuration, orders & studies, sequencing files, pipelines, ENA submission, administration, and
 > updates. This README covers installing and developing **the repository itself**.
@@ -749,8 +751,12 @@ e2e harnesses, see **[CONTRIBUTING.md](./CONTRIBUTING.md)**.
 ## Citation
 
 If you use SeqDesk in your work, cite the software metadata in
-[CITATION.cff](./CITATION.cff). Add the article DOI as the preferred citation
-after the SeqDesk paper is published.
+[CITATION.cff](./CITATION.cff). Use the permanent
+[SeqDesk concept DOI](https://doi.org/10.5281/zenodo.21806366) to reference the
+software across releases, or cite
+[SeqDesk v1.1.130](https://doi.org/10.5281/zenodo.21806367) when reproducibility
+requires the exact archived version. Add the article DOI as the preferred
+citation after the SeqDesk paper is published.
 
 ## License
 
