@@ -7,8 +7,47 @@ abstract: >-
 type: software
 authors:
   - family-names: Münch
-    given-names: Philipp
-version: 1.1.129
+    given-names: "Philipp C."
+    orcid: "https://orcid.org/0000-0003-3233-9693"
+    affiliation: >-
+      Department for Computational Biology of Infection Research, Helmholtz
+      Center for Infection Research, 38124 Braunschweig, Germany; Braunschweig
+      Integrated Centre of Systems Biology (BRICS), Technische Universität
+      Braunschweig, Braunschweig, Germany; Department of Biostatistics, Harvard
+      School of Public Health, Boston, Massachusetts, USA; Cluster of Excellence
+      RESIST (EXC 2155), Hannover Medical School, 30625 Hannover, Germany; TI BBD
+      Subunit Bioinformatics and Machine Learning, German Centre for Infection
+      Research (DZIF)
+    email: philipp.muench@helmholtz-hzi.de
+  - family-names: Robertson
+    given-names: Gary
+    affiliation: >-
+      Department for Computational Biology of Infection Research, Helmholtz
+      Center for Infection Research, 38124 Braunschweig, Germany; Braunschweig
+      Integrated Centre of Systems Biology (BRICS), Technische Universität
+      Braunschweig, Braunschweig, Germany
+  - family-names: McHardy
+    given-names: "Alice Carolyn"
+    orcid: "https://orcid.org/0000-0003-2370-3430"
+    affiliation: >-
+      Department for Computational Biology of Infection Research, Helmholtz
+      Center for Infection Research, 38124 Braunschweig, Germany; Braunschweig
+      Integrated Centre of Systems Biology (BRICS), Technische Universität
+      Braunschweig, Braunschweig, Germany; Cluster of Excellence RESIST (EXC
+      2155), Hannover Medical School, 30625 Hannover, Germany; TI BBD Subunit
+      Bioinformatics and Machine Learning, German Centre for Infection Research
+      (DZIF)
+    email: alice.mchardy@helmholtz-hzi.de
+contact:
+  - family-names: Münch
+    given-names: "Philipp C."
+    orcid: "https://orcid.org/0000-0003-3233-9693"
+    email: philipp.muench@helmholtz-hzi.de
+  - family-names: McHardy
+    given-names: "Alice Carolyn"
+    orcid: "https://orcid.org/0000-0003-2370-3430"
+    email: alice.mchardy@helmholtz-hzi.de
+version: 1.1.130
 date-released: "2026-08-05"
 repository-code: "https://github.com/hzi-bifo/SeqDesk"
 url: "https://seqdesk.org"
