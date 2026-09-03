@@ -64,6 +64,7 @@ import { SidebarUserMenu } from "./SidebarUserMenu";
 import { DEPLOYMENT_PROFILES } from "@/lib/deployment-profile";
 
 const sequencingCenterProfile = DEPLOYMENT_PROFILES["sequencing-center"];
+const sharedLabProfile = DEPLOYMENT_PROFILES["shared-lab"];
 const workbenchProfile = DEPLOYMENT_PROFILES["research-workbench"];
 
 function sidebarValue(collapsed: boolean, sidebarWidth = SIDEBAR_DEFAULT_WIDTH) {
@@ -296,6 +297,40 @@ describe("sidebar shell quick wins", () => {
     expect(screen.queryByText("Private Workbench")).toBeNull();
     expect(screen.queryByRole("link", { name: /Workbench/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /Canvas/i })).toBeNull();
+  });
+
+  it("shows Shared Lab terminology and operations without admin settings", () => {
+    mocks.usePathname.mockReturnValue("/orders/order-1");
+    mocks.useSidebarEntity.mockReturnValue({
+      entityType: "order",
+      entityId: "order-1",
+      entityData: {
+        label: "Shared project",
+        sublabel: "Project",
+        status: "DRAFT",
+      },
+      isLoading: false,
+      currentSubPage: "overview",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) })
+    );
+
+    render(
+      <SidebarContext.Provider value={sidebarValue(false, 300)}>
+        <Sidebar
+          user={{ id: "member-1", name: "Lab Member", role: "RESEARCHER" }}
+          deploymentProfile={sharedLabProfile}
+        />
+      </SidebarContext.Provider>
+    );
+
+    expect(screen.getByText("Projects")).toBeTruthy();
+    expect(screen.getByText("Sequencing Data")).toBeTruthy();
+    expect(screen.getByText("Lab member")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Application Settings/i })).toBeNull();
+    expect(screen.queryByText("Support")).toBeNull();
   });
 
   it("hides sequencing navigation but keeps admin settings in Workbench mode", () => {

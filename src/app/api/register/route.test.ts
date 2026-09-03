@@ -157,20 +157,44 @@ describe("POST /api/register", () => {
     });
     mocks.db.adminInvite.findUnique.mockResolvedValue({
       id: "invite-1",
-      code: "MEMBER01",
+      code: "M-MEMBER01",
       usedAt: null,
       expiresAt: new Date(Date.now() + 86400000),
       email: "new@example.com",
     });
 
     const response = await POST(
-      makeRequest({ ...validBody, inviteCode: "member01" })
+      makeRequest({ ...validBody, inviteCode: "m-member01" })
     );
 
     expect(response.status).toBe(201);
     expect(mocks.db.adminInvite.findUnique).toHaveBeenCalledWith({
-      where: { code: "MEMBER01" },
+      where: { code: "M-MEMBER01" },
     });
+  });
+
+  it("does not allow a member invitation to create an administrator", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue({
+      id: "invite-1",
+      code: "M-MEMBER01",
+      usedAt: null,
+      expiresAt: new Date(Date.now() + 86400000),
+      email: null,
+    });
+
+    const response = await POST(
+      makeRequest({
+        ...validBody,
+        role: "FACILITY_ADMIN",
+        inviteCode: "M-MEMBER01",
+      })
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "This invite is for a different account type",
+    });
+    expect(mocks.hash).not.toHaveBeenCalled();
   });
 
   it("creates admin with valid invite code and returns 201", async () => {

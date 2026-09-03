@@ -23,6 +23,7 @@ const SEQUENCING_MEMBER_CAPABILITIES = new Set<Capability>([
   "orders.read",
   "studies.create",
   "studies.read",
+  "samples.manage",
   "analysis.read_own",
   "data.archive",
 ]);

@@ -3780,9 +3780,14 @@ prompt_deployment_profile() {
     fi
 
     print_info "Operating model — how will this SeqDesk installation be used?"
-    echo "    1) Sequencing center   — researchers request sequencing; facility staff manage delivery"
-    echo "    2) Shared lab          — one lab shares sequencing work; admins configure the system"
-    echo "    3) Research workbench  — researchers import/upload data and run analysis workflows"
+    echo "    1) Sequencing center"
+    echo "       Choose this when outside researchers submit requests and facility staff deliver data."
+    echo "    2) Shared lab"
+    echo "       Choose this when one team shares projects and every member may operate sequencing."
+    echo "       Administrators still protect system settings, credentials, updates, and pipeline installs."
+    echo "    3) Research workbench"
+    echo "       Choose this when people upload or import existing data and run approved workflows."
+    echo "       Sequencing orders are hidden; data belongs to personal or explicitly shared workspaces."
     echo "       This selects one view of the same application; it does not install a separate edition."
 
     local profile_choice
@@ -3892,39 +3897,45 @@ run_interactive_wizard_accounts() {
         SEQDESK_GENERATED_ADMIN_PASSWORD="$INTERACTIVE_RESULT"
     fi
 
-    # Shared Lab and Workbench use one initial administrator. Additional members
-    # belong in authenticated onboarding, where invitation and enrollment policy
-    # can be applied safely. Keep the center's optional researcher account for
-    # compatibility until its onboarding flow replaces this prompt too.
-    if [ "$SEQDESK_DEPLOYMENT_PROFILE" != "sequencing-center" ]; then
-        SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="0"
-        print_info "  Additional accounts are configured after the first administrator signs in."
-        print_success "Guided setup captured. Continuing the installation..."
+    # Every profile starts with one administrator. Member creation belongs in
+    # authenticated onboarding so enrollment policy and invite scope are
+    # already active; the installer never creates a generic demo login.
+    SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="0"
+    print_info "  Additional accounts are invited after the first administrator signs in."
+
+    print_success "Guided setup captured. Continuing the installation..."
+}
+
+# Turn every supported fresh install into the same secure bootstrap operation.
+# Guided installs may collect a chosen password; unattended/configured installs
+# get a generated one shown exactly once in the final summary. Reconfigure never
+# creates an account or changes credentials.
+ensure_secure_bootstrap_accounts() {
+    if is_truthy "$SEQDESK_RECONFIGURE"; then
         return 0
     fi
 
-    local make_researcher
-    make_researcher=$(read_input "  Also create a researcher (non-admin) account? (Y/n): ")
-    make_researcher=${make_researcher:-Y}
-    case "$make_researcher" in
-        n|N|no|NO)
-            SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="0"
-            print_info "  Skipping the researcher account."
-            ;;
-        *)
-            SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="1"
-            interactive_prompt_email "  Researcher email" "user@example.com"
-            SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL="$INTERACTIVE_RESULT"
-            interactive_prompt_password "  Researcher password"
-            SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD="$INTERACTIVE_RESULT"
-            SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="$INTERACTIVE_RESULT_GENERATED"
-            if [ "$INTERACTIVE_RESULT_GENERATED" = "true" ]; then
-                SEQDESK_GENERATED_RESEARCHER_PASSWORD="$INTERACTIVE_RESULT"
-            fi
-            ;;
-    esac
+    SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="0"
+    SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL=""
+    SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD=""
+    SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH=""
 
-    print_success "Guided setup captured. Continuing the installation..."
+    if [ -z "$SEQDESK_BOOTSTRAP_ADMIN_EMAIL" ]; then
+        SEQDESK_BOOTSTRAP_ADMIN_EMAIL="admin@example.com"
+    fi
+
+    if [ -z "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD" ] && \
+        [ -z "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH" ]; then
+        local generated_password
+        if ! generated_password="$(generate_postgres_password)"; then
+            print_error "Cannot generate the initial administrator password: openssl, node and /dev/urandom are unavailable."
+            exit 1
+        fi
+        SEQDESK_BOOTSTRAP_ADMIN_PASSWORD="$generated_password"
+        SEQDESK_GENERATED_ADMIN_PASSWORD="$generated_password"
+        SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="true"
+        print_info "Generated a strong password for the initial administrator; it will be shown once after successful setup."
+    fi
 }
 
 # Kept as a single entry point for callers (and tests) that drive the whole
@@ -3946,7 +3957,7 @@ Usage:
 Options:
   -y, --yes                    Non-interactive mode (accept defaults)
   --interactive                Guided setup wizard: choose the database and
-                               create the admin/researcher accounts, with a
+                               create one secure administrator account, with a
                                live database reachability check
   --verbose                    Print the diagnostic detail that normally goes
                                only to the install log
@@ -5596,9 +5607,7 @@ print_config_summary() {
     if [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ]; then
         print_kv "Admin account" "$SEQDESK_BOOTSTRAP_ADMIN_EMAIL"
     fi
-    if [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
-        print_kv "Researcher account" "$SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL"
-    fi
+    print_kv "Additional accounts" "invite after first administrator login"
     print_kv "$config_name" "$config_status"
 }
 
@@ -6777,7 +6786,7 @@ print_login_summary() {
         if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED:-false}" = "true" ]; then
             print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com} / existing password (unchanged)"
         elif [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
-            print_kv "Researcher" "not created"
+            print_kv "Additional members" "invite after login"
         elif [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
             print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com}"
             print_secret_kv "Researcher password" "${SEQDESK_GENERATED_RESEARCHER_PASSWORD}"
@@ -6825,7 +6834,7 @@ print_login_summary() {
             print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
         fi
         if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
-            print_kv "Researcher" "not created"
+            print_kv "Additional members" "invite after login"
         elif [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
             if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
                 print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL}"
@@ -6841,9 +6850,8 @@ print_login_summary() {
             echo "  Save the generated passwords now — they are not stored anywhere else."
         fi
     else
-        print_kv "Admin" "admin@example.com / admin"
-        print_kv "Researcher" "user@example.com / user"
-        echo "  Change the default admin password immediately after first login."
+        print_warning "No bootstrap administrator credentials were configured."
+        echo "  Re-run the guided installer locally to create secure administrator access."
     fi
 
     # Everything above assumes the database was inspected. When it could not be,
@@ -7210,6 +7218,7 @@ fi
 # Second half of the wizard: the account details and generated credentials,
 # asked only once the database they will be created in is known to work.
 run_interactive_wizard_accounts
+ensure_secure_bootstrap_accounts
 
 # Pipeline support
 print_step "Configure pipeline support"
@@ -7725,17 +7734,17 @@ elif [ "$SEED_OK" = "true" ]; then
     elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ] || [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
         print_info "Bootstrap account configuration applied."
         if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
-            print_info "Researcher account not created."
+            print_info "Additional member accounts will be invited after administrator login."
         fi
     else
-        print_info "Default users available: admin@example.com/admin and user@example.com/user"
+        print_warning "No bootstrap administrator account was configured."
     fi
 else
     print_info "Seed did not complete during install -- the app will auto-seed on first launch"
     if [ "$SEQDESK_DB_ADOPTED" = "true" ]; then
         print_info "The accounts already in this database keep their current passwords."
     elif ! is_truthy "$SEQDESK_RECONFIGURE"; then
-        print_info "Default users after first launch: admin@example.com/admin and user@example.com/user"
+        print_info "The configured administrator will be created on first launch; no default member account is enabled."
     fi
 fi
 

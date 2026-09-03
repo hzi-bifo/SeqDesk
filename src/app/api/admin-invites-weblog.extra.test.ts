@@ -126,7 +126,7 @@ describe("admin invites and run weblog quick wins", () => {
     ]);
     mocks.db.adminInvite.create.mockResolvedValue({
       id: "invite-1",
-      code: "ABCDEF01",
+      code: "A-ABCDEF01",
       email: "admin@example.test",
       expiresAt: new Date("2026-04-01T15:30:00.000Z"),
       createdById: "admin-1",
@@ -208,6 +208,7 @@ describe("admin invites and run weblog quick wins", () => {
       {
         id: "invite-1",
         code: "ABCDEF01",
+        accountRole: "FACILITY_ADMIN",
         email: "admin@example.test",
         createdBy: {
           firstName: "Ada",
@@ -232,8 +233,8 @@ describe("admin invites and run weblog quick wins", () => {
         email: "admin@example.test",
       })
     );
-    expect(unauthorized.status).toBe(401);
-    expect(await unauthorized.json()).toEqual({ error: "Unauthorized" });
+    expect(unauthorized.status).toBe(403);
+    expect(await unauthorized.json()).toEqual({ error: "Forbidden" });
 
     const invalidDays = await postAdminInvites(
       jsonRequest("/api/admin/invites", "POST", {
@@ -266,7 +267,7 @@ describe("admin invites and run weblog quick wins", () => {
     expect(success.status).toBe(201);
     expect(mocks.db.adminInvite.create).toHaveBeenCalledWith({
       data: {
-        code: "ABCDEF01",
+        code: "A-ABCDEF01",
         email: "admin@example.test",
         expiresAt: daysFromNow(7),
         createdById: "admin-1",
@@ -279,7 +280,8 @@ describe("admin invites and run weblog quick wins", () => {
     });
     expect(await success.json()).toEqual({
       id: "invite-1",
-      code: "ABCDEF01",
+      code: "A-ABCDEF01",
+      accountRole: "FACILITY_ADMIN",
       email: "admin@example.test",
       expiresAt: "2026-04-01T15:30:00.000Z",
       createdById: "admin-1",
@@ -298,7 +300,7 @@ describe("admin invites and run weblog quick wins", () => {
       .mockRejectedValueOnce(duplicateInviteError())
       .mockResolvedValueOnce({
         id: "invite-2",
-        code: "BBBBBBBB",
+        code: "A-BBBBBBBB",
         email: null,
         expiresAt: new Date("2026-03-28T15:30:00.000Z"),
         createdById: "admin-1",
@@ -315,7 +317,7 @@ describe("admin invites and run weblog quick wins", () => {
     expect(retried.status).toBe(201);
     expect(mocks.db.adminInvite.create).toHaveBeenNthCalledWith(1, {
       data: {
-        code: "AAAAAAAA",
+        code: "A-AAAAAAAA",
         email: null,
         expiresAt: daysFromNow(3),
         createdById: "admin-1",
@@ -328,7 +330,7 @@ describe("admin invites and run weblog quick wins", () => {
     });
     expect(mocks.db.adminInvite.create).toHaveBeenNthCalledWith(2, {
       data: {
-        code: "BBBBBBBB",
+        code: "A-BBBBBBBB",
         email: null,
         expiresAt: daysFromNow(3),
         createdById: "admin-1",

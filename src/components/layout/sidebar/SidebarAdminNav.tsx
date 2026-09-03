@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { startVisiblePolling } from "@/lib/polling";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useModuleEnabled } from "@/lib/modules";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 
 interface SidebarAdminNavProps {
   collapsed: boolean;
@@ -28,6 +29,7 @@ export function SidebarAdminNav({
   const pathname = usePathname();
   const router = useRouter();
   const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
+  const deploymentProfile = useDeploymentProfile();
 
   const isAccountsPage = (path: string) =>
     path.startsWith("/admin/users") ||
@@ -196,12 +198,14 @@ export function SidebarAdminNav({
             )}
           >
             <Link href="/admin/users" className={adminSubItemClass("/admin/users")}>
-              Researchers
+              {deploymentProfile.terminology.member}s
             </Link>
-            <Link href="/admin/departments" className={adminSubItemClass("/admin/departments")}>
-              Departments
-            </Link>
-            <Link
+            {deploymentProfile.id === "sequencing-center" && (
+              <Link href="/admin/departments" className={adminSubItemClass("/admin/departments")}>
+                Departments
+              </Link>
+            )}
+            {deploymentProfile.id === "sequencing-center" && <Link
               href="/messages"
               className={cn(
                 adminSubItemClass("/messages"),
@@ -214,7 +218,7 @@ export function SidebarAdminNav({
                   {unreadMessages > 9 ? "9+" : unreadMessages}
                 </span>
               )}
-            </Link>
+            </Link>}
           </div>
         </>
       )}

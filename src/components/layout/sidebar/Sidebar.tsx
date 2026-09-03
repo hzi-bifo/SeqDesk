@@ -30,9 +30,11 @@ import { SidebarAdminNav } from "./SidebarAdminNav";
 import { SidebarSupportNav } from "./SidebarSupportNav";
 import { SidebarUserMenu } from "./SidebarUserMenu";
 import type { DeploymentProfileDefinition } from "@/lib/deployment-profile";
+import { hasCapability, principalFromSession } from "@/lib/authorization";
 
 interface SidebarProps {
   user: {
+    id?: string;
     name?: string | null;
     email?: string | null;
     role?: string;
@@ -58,9 +60,16 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
   const [isResizing, setIsResizing] = useState(false);
   const workbenchAppMode = deploymentProfile.experience === "workbench";
 
-  const isFacilityAdmin = user.role === "FACILITY_ADMIN";
+  const principal = principalFromSession({
+    user: { ...user, id: user.id || "sidebar-session-user" },
+  });
   const isDemoUser = user.isDemo === true;
-  const showAdminControls = isFacilityAdmin;
+  const showAdminControls = Boolean(
+    principal && hasCapability(deploymentProfile, principal, "system.settings.manage")
+  );
+  const showOperationalControls = Boolean(
+    principal && hasCapability(deploymentProfile, principal, "sequencing.runs.manage")
+  );
 
   const isAdminPage = pathname.startsWith("/admin") || pathname.startsWith("/messages");
   const suppressSidebarFieldHelp =
@@ -230,7 +239,11 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
           ) : (
             <>
               {/* Regular lab mode: Entity Switcher */}
-              <SidebarEntitySwitcher entityContext={entityContext} collapsed={collapsed} />
+              <SidebarEntitySwitcher
+                entityContext={entityContext}
+                collapsed={collapsed}
+                deploymentProfile={deploymentProfile}
+              />
 
               {/* Navigation */}
               <nav className={cn("flex-1 p-3 space-y-1 overflow-y-auto", collapsed && "px-2")}>
@@ -238,7 +251,8 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
                   entityContext={entityContext}
                   collapsed={collapsed}
                   isDemoUser={isDemoUser}
-                  showAdminControls={showAdminControls}
+                  showOperationalControls={showOperationalControls}
+                  deploymentProfile={deploymentProfile}
                 />
               </nav>
 
@@ -250,12 +264,14 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
               )}
 
               {/* Support section - Researchers only */}
-              {!isFacilityAdmin && !isDemoUser && (
+              {deploymentProfile.id === "sequencing-center" &&
+                !showAdminControls &&
+                !isDemoUser && (
                 <SidebarSupportNav
                   collapsed={collapsed}
                   unreadMessages={isDemoUser ? 0 : unreadMessages}
                 />
-              )}
+                )}
             </>
           )}
         </>
@@ -280,7 +296,11 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
       )}
 
       {/* User Menu */}
-      <SidebarUserMenu user={user} collapsed={collapsed} />
+      <SidebarUserMenu
+        user={user}
+        collapsed={collapsed}
+        deploymentProfile={deploymentProfile}
+      />
 
       {canResize && (
         <div

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   isDemoSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   authOptions: { providers: [] },
 }));
 
@@ -18,6 +19,10 @@ vi.mock("@/lib/demo/server", () => ({
   isDemoSession: mocks.isDemoSession,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 import {
   requireFacilityAdminSequencingSession,
   SequencingApiError,
@@ -27,6 +32,17 @@ describe("requireFacilityAdminSequencingSession", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.isDemoSession.mockReturnValue(false);
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
   });
 
   it("throws a 401 error when no session exists", async () => {
@@ -40,7 +56,7 @@ describe("requireFacilityAdminSequencingSession", () => {
 
   it("rejects demo sessions even for facility admins", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.isDemoSession.mockReturnValue(true);
 
@@ -52,12 +68,12 @@ describe("requireFacilityAdminSequencingSession", () => {
 
   it("rejects non-admin sessions", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "RESEARCHER" },
+      user: { id: "user-1", role: "RESEARCHER" },
     });
 
     await expect(requireFacilityAdminSequencingSession()).rejects.toMatchObject({
       status: 403,
-      message: "Only facility admins can manage sequencing data",
+      message: "You do not have permission to manage sequencing data",
     });
   });
 
@@ -69,6 +85,41 @@ describe("requireFacilityAdminSequencingSession", () => {
 
     await expect(requireFacilityAdminSequencingSession()).resolves.toBe(session);
     expect(mocks.getServerSession).toHaveBeenCalledWith(mocks.authOptions);
+  });
+
+  it("returns the session for Shared Lab members", async () => {
+    const session = {
+      user: { id: "member-1", role: "RESEARCHER" },
+    };
+    mocks.getServerSession.mockResolvedValue(session);
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
+
+    await expect(requireFacilityAdminSequencingSession()).resolves.toBe(session);
+  });
+
+  it("returns 404 when sequencing operations are absent from the profile", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "research-workbench",
+      domains: ["core", "analysis", "publishing", "workbench"],
+    });
+
+    await expect(requireFacilityAdminSequencingSession()).rejects.toMatchObject({
+      status: 404,
+      message: "Sequencing operations are not available",
+    });
   });
 
   it("exposes the custom error status", () => {

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 
 // DELETE /api/admin/invites/[id] - Revoke an invite
 export async function DELETE(
@@ -10,8 +12,16 @@ export async function DELETE(
 ) {
   const session = await getServerSession(authOptions);
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const decision = decideCapability(
+    session,
+    "system.users.manage",
+    getServerDeploymentProfile()
+  );
+  if (!decision.allowed) {
+    return NextResponse.json(
+      { error: decision.status === 401 ? "Unauthorized" : "Forbidden" },
+      { status: decision.status }
+    );
   }
 
   const { id } = await params;

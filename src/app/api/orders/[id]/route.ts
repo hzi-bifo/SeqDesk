@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   notifyOrderStatusChanged,
   notifyOrderSubmitted,
@@ -93,7 +95,7 @@ type OrderUpdateBody = {
 
 async function getOrderWithResolvedRelations(
   id: string,
-  options?: { isFacilityAdmin?: boolean }
+  options?: { canOperate?: boolean }
 ): Promise<OrderDetailResponse | null> {
   const order = await db.order.findUnique({
     where: { id },
@@ -125,7 +127,7 @@ async function getOrderWithResolvedRelations(
 
   if (!order) return null;
 
-  const readWhere = options?.isFacilityAdmin
+  const readWhere = options?.canOperate
     ? undefined
     : order.sequencingFilesPublishedAt
       ? { isActive: true, dataClass: "cleaned" }
@@ -222,16 +224,37 @@ export async function GET(
     }
 
     const { id } = await params;
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const deploymentProfile = getServerDeploymentProfile();
+    const readAll = decideCapability(session, "orders.read_all", deploymentProfile);
+    const readOwn = decideCapability(session, "orders.read", deploymentProfile);
+    const readGrant = readAll.allowed ? readAll.grant : readOwn.grant;
+    if (!readGrant) {
+      const status = readOwn.status;
+      return NextResponse.json(
+        {
+          error:
+            status === 404
+              ? "Not found"
+              : status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status }
+      );
+    }
 
-    const order = await getOrderWithResolvedRelations(id, { isFacilityAdmin });
+    const canOperate = decideCapability(
+      session,
+      "orders.process",
+      deploymentProfile
+    ).allowed;
+    const order = await getOrderWithResolvedRelations(id, { canOperate });
 
     if (!order) {
       return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
-    // Check permission: must be owner or facility admin
-    if (!isFacilityAdmin && order.userId !== session.user.id) {
+    if (readGrant.scope !== "installation" && order.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -259,7 +282,26 @@ export async function PUT(
 
     const { id } = await params;
     const body = (await request.json().catch(() => ({}))) as OrderUpdateBody;
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const deploymentProfile = getServerDeploymentProfile();
+    const readDecision = decideCapability(session, "orders.read", deploymentProfile);
+    if (!readDecision.allowed) {
+      return NextResponse.json(
+        {
+          error:
+            readDecision.status === 404
+              ? "Not found"
+              : readDecision.status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status: readDecision.status }
+      );
+    }
+    const canOperate = decideCapability(
+      session,
+      "orders.process",
+      deploymentProfile
+    ).allowed;
 
     // Check if order exists and user has permission
     const existing = await db.order.findUnique({
@@ -302,8 +344,9 @@ export async function PUT(
       numberOfSamples !== undefined ||
       customFields !== undefined;
 
-    // Researchers can edit metadata on DRAFT/SUBMITTED orders, but not COMPLETED ones.
-    if (!isFacilityAdmin) {
+    // Requesters can edit their own active orders. Operators and Shared Lab
+    // members receive installation-scoped operational access from the profile.
+    if (!canOperate) {
       if (existing.userId !== session.user.id) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
@@ -345,7 +388,7 @@ export async function PUT(
       const newIdx = STATUS_ORDER.indexOf(status);
 
       // Researchers can only advance to SUBMITTED
-      if (!isFacilityAdmin) {
+      if (!canOperate) {
         if (status !== "SUBMITTED" || existing.status !== "DRAFT") {
           return NextResponse.json(
             { error: "Invalid status transition" },
@@ -355,7 +398,7 @@ export async function PUT(
       }
 
       // Facility admins can change status more freely but should generally follow order
-      if (newIdx < currentIdx && !isFacilityAdmin) {
+      if (newIdx < currentIdx && !canOperate) {
         return NextResponse.json(
           { error: "Cannot move status backwards" },
           { status: 400 }
@@ -478,7 +521,26 @@ export async function DELETE(
     }
 
     const { id } = await params;
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const deploymentProfile = getServerDeploymentProfile();
+    const readDecision = decideCapability(session, "orders.read", deploymentProfile);
+    if (!readDecision.allowed) {
+      return NextResponse.json(
+        {
+          error:
+            readDecision.status === 404
+              ? "Not found"
+              : readDecision.status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status: readDecision.status }
+      );
+    }
+    const canPurgeShared = decideCapability(
+      session,
+      "data.purge_shared",
+      deploymentProfile
+    ).allowed;
 
     const existing = await db.order.findUnique({
       where: { id },
@@ -488,15 +550,17 @@ export async function DELETE(
       return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
-    // Only owner or facility admin can delete
-    if (!isFacilityAdmin && existing.userId !== session.user.id) {
+    // Permanent deletion of another member's record is installation
+    // administration, even in Shared Lab. Creators retain the legacy ability
+    // to remove their own draft until archive/trash replaces hard deletion.
+    if (!canPurgeShared && existing.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     // Check deletion rules for non-draft orders
     if (existing.status !== "DRAFT") {
       // Researchers can never delete submitted orders
-      if (!isFacilityAdmin) {
+      if (!canPurgeShared) {
         return NextResponse.json(
           { error: "Cannot delete order after submission" },
           { status: 400 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +45,9 @@ import {
 import { notifyPanel } from "@/lib/notifications/client";
 import { toast } from "@/components/ui/toast";
 import { PageLoader } from "@/components/ui/page-loader";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+
+type InviteAccountRole = "RESEARCHER" | "FACILITY_ADMIN";
 
 interface Admin {
   id: string;
@@ -62,6 +66,7 @@ interface Invite {
   usedAt: string | null;
   createdBy: { firstName: string; lastName: string };
   usedBy: { firstName: string; lastName: string; email: string } | null;
+  accountRole: InviteAccountRole;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -86,6 +91,7 @@ function fallbackCopyText(text: string): boolean {
 export default function AdminAccountsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const deploymentProfile = useDeploymentProfile();
 
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -98,6 +104,9 @@ export default function AdminAccountsPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteExpires, setInviteExpires] = useState("7");
+  const [inviteRole, setInviteRole] = useState<InviteAccountRole>(
+    deploymentProfile.id === "sequencing-center" ? "FACILITY_ADMIN" : "RESEARCHER"
+  );
   const [creating, setCreating] = useState(false);
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -213,6 +222,7 @@ export default function AdminAccountsPage() {
         body: JSON.stringify({
           email: trimmedEmail || null,
           expiresInDays,
+          accountRole: inviteRole,
         }),
       });
 
@@ -233,7 +243,9 @@ export default function AdminAccountsPage() {
       setCreateDialogOpen(false);
       setInviteEmail("");
       setInviteExpires("7");
-      toast.success("Invite created successfully");
+      toast.success(
+        `${inviteRole === "FACILITY_ADMIN" ? "Administrator" : deploymentProfile.terminology.member} invite created`
+      );
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to create invite"
@@ -358,22 +370,22 @@ export default function AdminAccountsPage() {
     <>
       <div className="sticky top-0 z-30 bg-card border-b border-border">
         <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
-          <span className="text-sm font-medium">Admin Accounts</span>
+          <span className="text-sm font-medium">Accounts &amp; Invites</span>
         </div>
       </div>
     <PageContainer>
       <div className="mb-4 mt-6">
-        <h1 className="text-xl font-semibold">Admin Accounts</h1>
+        <h1 className="text-xl font-semibold">Accounts &amp; Invites</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Manage facility administrators and invitation access
+          Invite {deploymentProfile.terminology.member.toLowerCase()}s and manage administrators
         </p>
       </div>
 
-      <HelpBox title="What are admin accounts?">
-        Admin accounts can manage users, forms, infrastructure, pipelines, ENA
-        settings, and other facility-wide configuration. Use email-restricted
-        invites whenever possible, and revoke unused invite codes once setup is
-        complete.
+      <HelpBox title="How account access works">
+        All accounts use the same sign-in page. {deploymentProfile.terminology.member}s
+        can perform the scientific work allowed by the {deploymentProfile.label} profile.
+        Administrators can additionally manage accounts, pipelines, infrastructure,
+        credentials, and updates. Use email-restricted invites whenever possible.
       </HelpBox>
 
       <div className="sticky top-16 z-30 mb-6">
@@ -408,7 +420,7 @@ export default function AdminAccountsPage() {
       </div>
 
       <div className="space-y-6">
-        <GlassCard className="p-6">
+        {deploymentProfile.id === "sequencing-center" && <GlassCard className="p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
               <Users className="h-5 w-5 text-muted-foreground" />
@@ -465,7 +477,7 @@ export default function AdminAccountsPage() {
               </div>
             </div>
           </div>
-        </GlassCard>
+        </GlassCard>}
 
         <GlassCard className="p-6">
           <div className="flex items-center justify-between gap-3 mb-4">
@@ -518,6 +530,9 @@ export default function AdminAccountsPage() {
                       </span>
                     </div>
                   </div>
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={`/admin/users/${admin.id}`}>Manage access</Link>
+                  </Button>
                 </div>
               ))}
             </div>
@@ -540,7 +555,7 @@ export default function AdminAccountsPage() {
               <LinkIcon className="h-8 w-8 mx-auto mb-2 text-muted-foreground opacity-60" />
               <p className="text-sm font-medium">No pending invites</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Use &quot;Create Invite&quot; to add another administrator.
+                Use &quot;Create Invite&quot; to add a member or another administrator.
               </p>
             </div>
           ) : (
@@ -553,6 +568,11 @@ export default function AdminAccountsPage() {
                         <code className="text-xs font-mono font-semibold bg-secondary px-2 py-1 rounded">
                           {invite.code}
                         </code>
+                        <Badge variant={invite.accountRole === "FACILITY_ADMIN" ? "default" : "secondary"}>
+                          {invite.accountRole === "FACILITY_ADMIN"
+                            ? "Administrator"
+                            : deploymentProfile.terminology.member}
+                        </Badge>
                         {invite.email ? (
                           <span className="text-xs text-muted-foreground">
                             restricted to {invite.email}
@@ -671,18 +691,46 @@ export default function AdminAccountsPage() {
           if (!open) {
             setInviteEmail("");
             setInviteExpires("7");
+            setInviteRole(
+              deploymentProfile.id === "sequencing-center"
+                ? "FACILITY_ADMIN"
+                : "RESEARCHER"
+            );
           }
         }}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create Admin Invite</DialogTitle>
+            <DialogTitle>Create Invite</DialogTitle>
             <DialogDescription>
-              Generate an invite code for a new administrator
+              Choose the account access before sharing the one-time code
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="invite-role">Account access</Label>
+              <Select
+                value={inviteRole}
+                onValueChange={(value) => setInviteRole(value as InviteAccountRole)}
+              >
+                <SelectTrigger id="invite-role" className="bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="RESEARCHER">
+                    {deploymentProfile.terminology.member} — scientific work
+                  </SelectItem>
+                  <SelectItem value="FACILITY_ADMIN">
+                    Administrator — scientific work and system configuration
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                The invite is locked to this access level and cannot be upgraded during registration.
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="invite-email">Email (optional)</Label>
               <Input

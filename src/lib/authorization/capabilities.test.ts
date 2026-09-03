@@ -20,6 +20,7 @@ function principal(
 describe("deployment profile capability grants", () => {
   it.each([
     ["sequencing-center", "member", "requester", "orders.create", true, "own"],
+    ["sequencing-center", "member", "requester", "samples.manage", true, "own"],
     ["sequencing-center", "member", "requester", "analysis.run", false, null],
     ["sequencing-center", "admin", "operator", "analysis.run", true, "installation"],
     ["shared-lab", "member", "requester", "analysis.run", true, "installation"],

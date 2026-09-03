@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   notifyOrderUpdatedInApp: vi.fn(),
   db: {
     order: {
@@ -46,6 +47,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/notifications/in-app", () => ({
   notifyOrderUpdatedInApp: mocks.notifyOrderUpdatedInApp,
 }));
@@ -55,6 +60,17 @@ import { DELETE, GET, PUT } from "./route";
 describe("GET /api/orders/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -152,6 +168,60 @@ describe("GET /api/orders/[id]", () => {
     );
 
     expect(response.status).toBe(403);
+  });
+
+  it("lets a Shared Lab member view another member's order with operational data", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      name: "Shared project",
+      status: "SUBMITTED",
+      statusUpdatedAt: new Date("2024-01-01"),
+      createdAt: new Date("2024-01-01"),
+      userId: "other-member",
+      sequencingFilesPublishedAt: null,
+      _count: { samples: 0 },
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1"),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.sample.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { orderId: "order-1" },
+        select: expect.objectContaining({
+          reads: expect.not.objectContaining({ where: expect.anything() }),
+        }),
+      })
+    );
+  });
+
+  it("does not expose order details in Research Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "research-workbench",
+      domains: ["core", "analysis", "publishing", "workbench"],
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1"),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(404);
+    expect(mocks.db.order.findUnique).not.toHaveBeenCalled();
   });
 
   it("returns order details for the owner", async () => {
@@ -268,6 +338,17 @@ describe("GET /api/orders/[id]", () => {
 describe("DELETE /api/orders/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
     mocks.db.sample.updateMany.mockResolvedValue({ count: 1 });
     mocks.db.order.delete.mockResolvedValue({ id: "order-1" });
   });
@@ -386,6 +467,38 @@ describe("DELETE /api/orders/[id]", () => {
     expect(mocks.db.order.delete).not.toHaveBeenCalled();
   });
 
+  it("does not let a Shared Lab member permanently delete another member's order", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-2", role: "RESEARCHER" },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "member-1",
+      status: "DRAFT",
+    });
+
+    const response = await DELETE(
+      new NextRequest("http://localhost:3000/api/orders/order-1", {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.db.order.delete).not.toHaveBeenCalled();
+  });
+
   it("allows owners to delete draft orders without consulting the setting", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: {
@@ -415,6 +528,17 @@ describe("DELETE /api/orders/[id]", () => {
 describe("PUT /api/orders/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
     mocks.notifyOrderUpdatedInApp.mockResolvedValue(undefined);
   });
 
@@ -459,6 +583,51 @@ describe("PUT /api/orders/[id]", () => {
       "order-1",
       expect.objectContaining({ id: "user-1", role: "RESEARCHER" }),
       expect.stringContaining("updated order details")
+    );
+  });
+
+  it("lets a Shared Lab member update another member's completed order", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-2", role: "RESEARCHER" },
+    });
+    const existingOrder = {
+      id: "order-1",
+      userId: "member-1",
+      status: "COMPLETED",
+      name: "Old name",
+    };
+    mocks.db.order.findUnique.mockResolvedValue(existingOrder);
+    mocks.db.order.update.mockResolvedValue({
+      ...existingOrder,
+      name: "Corrected name",
+    });
+
+    const response = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Corrected name" }),
+      }),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "order-1" },
+        data: expect.objectContaining({ name: "Corrected name" }),
+      })
     );
   });
 

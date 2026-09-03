@@ -7,6 +7,7 @@ import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
 import { PageLoader } from "@/components/ui/page-loader";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 import {
   ChevronRight,
   Search,
@@ -48,6 +49,9 @@ type SortDirection = "asc" | "desc";
 export default function UsersPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const deploymentProfile = useDeploymentProfile();
+  const memberLabel = deploymentProfile.terminology.member;
+  const memberLabelPlural = `${memberLabel}s`;
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -74,14 +78,14 @@ export default function UsersPage() {
       } catch (error) {
         console.error("Failed to load users:", error);
         setUsers([]);
-        setError("Failed to load researchers");
+        setError(`Failed to load ${memberLabelPlural.toLowerCase()}`);
       } finally {
         setLoading(false);
       }
     };
 
     fetchUsers();
-  }, [session, status, router]);
+  }, [session, status, router, memberLabelPlural]);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-US", {
@@ -196,24 +200,27 @@ export default function UsersPage() {
     <>
       <div className="sticky top-0 z-30 bg-card border-b border-border">
         <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
-          <span className="text-sm font-medium">Researchers</span>
+          <span className="text-sm font-medium">{memberLabelPlural}</span>
         </div>
       </div>
     <PageContainer>
       {/* Header */}
       <div className="flex items-center justify-between mb-6 mt-6">
         <div>
-          <h1 className="text-xl font-semibold">Researchers</h1>
+          <h1 className="text-xl font-semibold">{memberLabelPlural}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {filteredUsers.length} of {users.length} registered researcher{users.length !== 1 ? "s" : ""}
+            {filteredUsers.length} of {users.length} registered {memberLabel.toLowerCase()}
+            {users.length !== 1 ? "s" : ""}
           </p>
         </div>
       </div>
 
-      <HelpBox title="What are researchers?">
-        Researchers are user accounts that submit sequencing orders, create
-        studies, and provide metadata. Use this page to find a researcher, review
-        their department and role, and open their sequencing order and study history.
+      <HelpBox title={`What are ${memberLabelPlural.toLowerCase()}?`}>
+        {deploymentProfile.id === "sequencing-center"
+          ? "Researchers submit sequencing orders, create studies, and provide metadata."
+          : deploymentProfile.id === "shared-lab"
+            ? "Lab members share ordinary sequencing, sample, and analysis work. Administrators additionally control protected system configuration."
+            : "Members import or upload data and run approved analyses in their own or shared workspaces."}
       </HelpBox>
 
       {error && (
@@ -225,9 +232,9 @@ export default function UsersPage() {
       {users.length === 0 ? (
         <div className="bg-white rounded-xl p-12 text-center">
           <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-30" />
-          <h2 className="text-lg font-medium mb-2">No researchers yet</h2>
+          <h2 className="text-lg font-medium mb-2">No {memberLabelPlural.toLowerCase()} yet</h2>
           <p className="text-sm text-muted-foreground">
-            Researchers will appear here once they register
+            {memberLabelPlural} will appear here once they accept an invitation
           </p>
         </div>
       ) : (
@@ -240,7 +247,7 @@ export default function UsersPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <input
                   type="text"
-                  placeholder="Search researchers..."
+                  placeholder={`Search ${memberLabelPlural.toLowerCase()}...`}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 text-sm bg-stone-50 border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -300,7 +307,7 @@ export default function UsersPage() {
               onClick={() => handleSort("name")}
               className="col-span-3 flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
-              Researcher
+              {memberLabel}
               {sortField === "name" && <ArrowUpDown className="h-3 w-3" />}
             </button>
             <button
@@ -410,7 +417,7 @@ export default function UsersPage() {
 
           {filteredUsers.length === 0 && hasActiveFilters && (
             <div className="py-12 text-center text-muted-foreground">
-              <p className="text-sm">No researchers match your filters</p>
+              <p className="text-sm">No {memberLabelPlural.toLowerCase()} match your filters</p>
               <button
                 onClick={clearFilters}
                 className="mt-2 text-sm text-primary hover:underline"

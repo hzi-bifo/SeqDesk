@@ -7,6 +7,7 @@ import {
   AccountValidationSettings,
 } from "@/lib/modules/types";
 import { getServerEnrollmentPolicy } from "@/lib/deployment-profile/enrollment.server";
+import { getInviteAccountRole } from "@/lib/accounts/invite-role";
 
 // Check if account validation module is enabled and get settings
 async function getAccountValidationConfig(): Promise<{
@@ -183,6 +184,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           { error: "This invite is for a different email address" },
           { status: 400 }
+        );
+      }
+
+      if (getInviteAccountRole(invite.code) !== role) {
+        return NextResponse.json(
+          { error: "This invite is for a different account type" },
+          { status: 403 }
         );
       }
     }

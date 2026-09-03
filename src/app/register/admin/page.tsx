@@ -9,11 +9,14 @@ import { Label } from "@/components/ui/label";
 import { GlassCard } from "@/components/ui/glass-card";
 import {
   Shield,
+  UserRound,
   Loader2,
   AlertCircle,
   CheckCircle2,
   ArrowLeft,
 } from "lucide-react";
+
+type InviteAccountRole = "RESEARCHER" | "FACILITY_ADMIN";
 
 function AdminRegisterContent() {
   const router = useRouter();
@@ -24,6 +27,7 @@ function AdminRegisterContent() {
   const [codeVerified, setCodeVerified] = useState(false);
   const [codeError, setCodeError] = useState("");
   const [restrictedEmail, setRestrictedEmail] = useState<string | null>(null);
+  const [accountRole, setAccountRole] = useState<InviteAccountRole | null>(null);
   const [verifying, setVerifying] = useState(false);
 
   const [email, setEmail] = useState("");
@@ -65,9 +69,11 @@ function AdminRegisterContent() {
       if (!data.valid) {
         setCodeError(data.error || "Invalid invite code");
         setCodeVerified(false);
+        setAccountRole(null);
       } else {
         setCodeVerified(true);
         setRestrictedEmail(data.email);
+        setAccountRole(data.accountRole);
         if (data.email) {
           setEmail(data.email);
         }
@@ -83,7 +89,7 @@ function AdminRegisterContent() {
     e.preventDefault();
     setSubmitNotice(null);
 
-    if (!codeVerified) {
+    if (!codeVerified || !accountRole) {
       setSubmitNotice({ type: "error", message: "Please verify your invite code first" });
       return;
     }
@@ -93,8 +99,8 @@ function AdminRegisterContent() {
       return;
     }
 
-    if (password.length < 6) {
-      setSubmitNotice({ type: "error", message: "Password must be at least 6 characters" });
+    if (password.length < 8) {
+      setSubmitNotice({ type: "error", message: "Password must be at least 8 characters" });
       return;
     }
 
@@ -109,7 +115,7 @@ function AdminRegisterContent() {
           password,
           firstName,
           lastName,
-          role: "FACILITY_ADMIN",
+          role: accountRole,
           inviteCode: inviteCode.trim().toUpperCase(),
         }),
       });
@@ -148,11 +154,23 @@ function AdminRegisterContent() {
           {/* Header */}
           <div className="text-center mb-6">
             <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
-              <Shield className="h-6 w-6 text-primary" />
+              {accountRole === "RESEARCHER" ? (
+                <UserRound className="h-6 w-6 text-primary" />
+              ) : (
+                <Shield className="h-6 w-6 text-primary" />
+              )}
             </div>
-            <h1 className="text-2xl font-bold">Admin Registration</h1>
+            <h1 className="text-2xl font-bold">
+              {accountRole === "RESEARCHER"
+                ? "Member Registration"
+                : accountRole === "FACILITY_ADMIN"
+                  ? "Administrator Registration"
+                  : "Invitation Registration"}
+            </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Create your administrator account
+              {accountRole
+                ? `Create your ${accountRole === "FACILITY_ADMIN" ? "administrator" : "member"} account`
+                : "Verify your invite to see the account access granted to you"}
             </p>
           </div>
 
@@ -202,7 +220,7 @@ function AdminRegisterContent() {
               <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-50 text-emerald-700 text-sm">
                 <CheckCircle2 className="h-4 w-4" />
                 <span>
-                  Invite code <code className="font-mono font-semibold">{inviteCode}</code> verified
+                  Invite verified for a {accountRole === "FACILITY_ADMIN" ? "administrator" : "member"} account
                 </span>
               </div>
 
@@ -271,7 +289,7 @@ function AdminRegisterContent() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  minLength={6}
+                  minLength={8}
                   disabled={submitting}
                 />
               </div>
@@ -299,7 +317,7 @@ function AdminRegisterContent() {
                     Creating Account...
                   </>
                 ) : (
-                  "Create Admin Account"
+                  `Create ${accountRole === "FACILITY_ADMIN" ? "Administrator" : "Member"} Account`
                 )}
               </Button>
             </form>

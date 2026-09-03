@@ -14,10 +14,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string; runId: string }> }
 ) {
   try {
-    const session = await requireFacilityAdminSequencingReadSession();
+    await requireFacilityAdminSequencingReadSession();
     const { id, runId } = await params;
     const payload = await listSequencingRunsForOrder(id, {
-      isFacilityAdmin: session.user.role === "FACILITY_ADMIN",
+      isFacilityAdmin: true,
     });
     const run = payload.runs.find((item) => item.id === runId);
     if (!run) {

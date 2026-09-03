@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   isStudyModuleEnabled,
   loadStudyFormSchema,
@@ -367,7 +369,24 @@ export async function GET(
     }
 
     const { id } = await params;
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const deploymentProfile = getServerDeploymentProfile();
+    const readAll = decideCapability(session, "studies.read_all", deploymentProfile);
+    const readOwn = decideCapability(session, "studies.read", deploymentProfile);
+    const readGrant = readAll.allowed ? readAll.grant : readOwn.grant;
+    if (!readGrant) {
+      const status = readOwn.status;
+      return NextResponse.json(
+        {
+          error:
+            status === 404
+              ? "Not found"
+              : status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status }
+      );
+    }
 
     const study = await getStudyWithResolvedOrders(id);
 
@@ -375,8 +394,7 @@ export async function GET(
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
     }
 
-    // Check ownership (unless facility admin)
-    if (!isFacilityAdmin && study.userId !== session.user.id) {
+    if (readGrant.scope !== "installation" && study.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -399,6 +417,25 @@ export async function PUT(
     const session = await getServerSession(authOptions);
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const deploymentProfile = getServerDeploymentProfile();
+    const readAll = decideCapability(session, "studies.read_all", deploymentProfile);
+    const readOwn = decideCapability(session, "studies.read", deploymentProfile);
+    const readGrant = readAll.allowed ? readAll.grant : readOwn.grant;
+    if (!readGrant) {
+      const status = readOwn.status;
+      return NextResponse.json(
+        {
+          error:
+            status === 404
+              ? "Not found"
+              : status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status }
+      );
     }
 
     const { id } = await params;
@@ -451,10 +488,15 @@ export async function PUT(
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    if (!isFacilityAdmin && existing.userId !== session.user.id) {
+    if (readGrant.scope !== "installation" && existing.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+
+    const canManageUnfilteredMetadata = decideCapability(
+      session,
+      "system.settings.manage",
+      deploymentProfile
+    ).allowed;
 
     // Build update data
     const updateData: Record<string, unknown> = {};
@@ -467,7 +509,7 @@ export async function PUT(
         typeof checklistType === "string" ? checklistType.trim() || null : null;
     }
     if (studyMetadata !== undefined) {
-      if (isFacilityAdmin) {
+      if (canManageUnfilteredMetadata) {
         updateData.studyMetadata =
           typeof studyMetadata === "string"
             ? studyMetadata
@@ -567,6 +609,26 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const deploymentProfile = getServerDeploymentProfile();
+    const readDecision = decideCapability(
+      session,
+      "studies.read",
+      deploymentProfile
+    );
+    if (!readDecision.allowed || !readDecision.grant) {
+      return NextResponse.json(
+        {
+          error:
+            readDecision.status === 404
+              ? "Not found"
+              : readDecision.status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status: readDecision.status }
+      );
+    }
+
     const { id } = await params;
     const resolvedStudyId = await resolveStudyId(id);
     if (!resolvedStudyId) {
@@ -583,8 +645,12 @@ export async function DELETE(
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    if (!isFacilityAdmin && existing.userId !== session.user.id) {
+    const canPurgeShared = decideCapability(
+      session,
+      "data.purge_shared",
+      deploymentProfile
+    ).allowed;
+    if (!canPurgeShared && existing.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

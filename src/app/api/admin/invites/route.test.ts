@@ -56,14 +56,14 @@ describe("GET /api/admin/invites", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns 401 when not admin", async () => {
+  it("returns 403 when not admin", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
 
     const response = await GET();
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns invites for admin", async () => {
@@ -118,7 +118,7 @@ describe("POST /api/admin/invites", () => {
     });
     const createdInvite = {
       id: "inv-1",
-      code: "ABCD1234",
+      code: "A-ABCD1234",
       email: "test@example.com",
       createdBy: { firstName: "Admin", lastName: "User" },
     };
@@ -134,7 +134,8 @@ describe("POST /api/admin/invites", () => {
 
     expect(response.status).toBe(201);
     const body = await response.json();
-    expect(body.code).toBe("ABCD1234");
+    expect(body.code).toBe("A-ABCD1234");
+    expect(body.accountRole).toBe("FACILITY_ADMIN");
     // Verify email was normalized to lowercase
     const createCall = mocks.db.adminInvite.create.mock.calls[0][0];
     expect(createCall.data.email).toBe("test@example.com");
@@ -146,7 +147,7 @@ describe("POST /api/admin/invites", () => {
     });
     const createdInvite = {
       id: "inv-1",
-      code: "ABCD1234",
+      code: "A-ABCD1234",
       email: null,
       createdBy: { firstName: "Admin", lastName: "User" },
     };
@@ -161,6 +162,30 @@ describe("POST /api/admin/invites", () => {
     const response = await POST(request);
 
     expect(response.status).toBe(201);
+  });
+
+  it("creates a member-targeted invitation", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
+    });
+    mocks.db.adminInvite.create.mockImplementation(async ({ data }) => ({
+      id: "inv-member",
+      ...data,
+    }));
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/admin/invites", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accountRole: "RESEARCHER" }),
+      })
+    );
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "M-ABCD1234",
+      accountRole: "RESEARCHER",
+    });
   });
 
   it("returns 400 for invalid email", async () => {

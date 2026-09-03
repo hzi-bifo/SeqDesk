@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getInviteAccountRole } from "@/lib/accounts/invite-role";
 
 // POST /api/admin/invites/verify - Verify an invite code
 export async function POST(request: NextRequest) {
@@ -41,6 +42,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       valid: true,
       email: invite.email, // May be null (unrestricted) or a specific email
+      accountRole: getInviteAccountRole(invite.code),
     });
   } catch (error) {
     console.error("Failed to verify invite:", error);

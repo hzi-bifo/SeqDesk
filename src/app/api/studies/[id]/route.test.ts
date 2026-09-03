@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   loadStudyFormSchema: vi.fn(),
   parseStudyModulesConfig: vi.fn(),
   isStudyModuleEnabled: vi.fn(),
@@ -40,6 +41,10 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
+}));
+
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
 }));
 
 vi.mock("@/lib/studies/schema", () => ({
@@ -99,6 +104,20 @@ function setupFindUniqueMock(studyOverrides: Record<string, unknown> = {}) {
     return null;
   });
 }
+
+beforeEach(() => {
+  mocks.getServerDeploymentProfile.mockReturnValue({
+    id: "sequencing-center",
+    domains: [
+      "core",
+      "facility-intake",
+      "sample-catalog",
+      "sequencing-operations",
+      "analysis",
+      "publishing",
+    ],
+  });
+});
 
 const BASE_URL = "http://localhost:3000/api/studies/study-1";
 
@@ -162,6 +181,47 @@ describe("GET /api/studies/[id]", () => {
     const req = new NextRequest(BASE_URL);
     const response = await GET(req, { params: Promise.resolve({ id: "study-1" }) });
     expect(response.status).toBe(200);
+  });
+
+  it("lets a Shared Lab member access another member's study", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-2", role: "RESEARCHER" },
+    });
+    setupFindUniqueMock({ userId: "member-1" });
+
+    const response = await GET(new NextRequest(BASE_URL), {
+      params: Promise.resolve({ id: "study-1" }),
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("does not expose study details in Research Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "research-workbench",
+      domains: ["core", "analysis", "publishing", "workbench"],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await GET(new NextRequest(BASE_URL), {
+      params: Promise.resolve({ id: "study-1" }),
+    });
+
+    expect(response.status).toBe(404);
+    expect(mocks.db.study.findUnique).not.toHaveBeenCalled();
   });
 });
 
@@ -247,6 +307,48 @@ describe("PUT /api/studies/[id]", () => {
       },
     });
   });
+
+  it("lets a Shared Lab member update another member's study without admin-only metadata access", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-2", role: "RESEARCHER" },
+    });
+    setupFindUniqueMock({
+      userId: "member-1",
+      studyMetadata: JSON.stringify({ hidden_admin_only: "keep" }),
+    });
+
+    const response = await PUT(
+      new NextRequest(BASE_URL, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: "Shared update",
+          studyMetadata: { hidden_admin_only: "replace" },
+        }),
+      }),
+      { params: Promise.resolve({ id: "study-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.study.update).toHaveBeenCalledWith({
+      where: { id: "study-1" },
+      data: {
+        title: "Shared update",
+        studyMetadata: JSON.stringify({ hidden_admin_only: "keep" }),
+      },
+    });
+  });
 });
 
 describe("DELETE /api/studies/[id]", () => {
@@ -306,6 +408,32 @@ describe("DELETE /api/studies/[id]", () => {
     const req = new NextRequest(BASE_URL, { method: "DELETE" });
     const response = await DELETE(req, { params: Promise.resolve({ id: "study-1" }) });
     expect(response.status).toBe(403);
+  });
+
+  it("does not let a Shared Lab member permanently delete another member's study", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-2", role: "RESEARCHER" },
+    });
+    setupFindUniqueMock({ userId: "member-1" });
+
+    const response = await DELETE(
+      new NextRequest(BASE_URL, { method: "DELETE" }),
+      { params: Promise.resolve({ id: "study-1" }) }
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.db.study.delete).not.toHaveBeenCalled();
   });
 
   it("allows FACILITY_ADMIN to delete any study", async () => {

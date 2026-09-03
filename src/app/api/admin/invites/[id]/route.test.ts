@@ -48,15 +48,15 @@ describe("DELETE /api/admin/invites/[id]", () => {
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
-  it("returns 401 when user is not admin", async () => {
+  it("returns 403 when user is not admin", async () => {
     mocks.getServerSession.mockResolvedValue(userSession);
     const req = new NextRequest("http://localhost/api/admin/invites/inv-1", {
       method: "DELETE",
     });
 
     const res = await DELETE(req, makeParams("inv-1"));
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Forbidden" });
   });
 
   it("returns 404 when invite not found", async () => {

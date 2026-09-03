@@ -1,7 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+
+function sampleAccess(session: Parameters<typeof decideCapability>[0]) {
+  return decideCapability(
+    session,
+    "samples.manage",
+    getServerDeploymentProfile()
+  );
+}
+
+function deniedSampleResponse(decision: ReturnType<typeof sampleAccess>) {
+  return NextResponse.json(
+    {
+      error:
+        decision.status === 404
+          ? "Not found"
+          : decision.status === 401
+            ? "Unauthorized"
+            : "Forbidden",
+    },
+    { status: decision.status }
+  );
+}
 
 // GET single sample
 export async function GET(
@@ -13,6 +37,9 @@ export async function GET(
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const access = sampleAccess(session);
+    if (!access.allowed || !access.grant) return deniedSampleResponse(access);
 
     const { id } = await params;
 
@@ -32,9 +59,7 @@ export async function GET(
       return NextResponse.json({ error: "Sample not found" }, { status: 404 });
     }
 
-    // Check ownership
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    if (!isFacilityAdmin && sample.order.userId !== session.user.id) {
+    if (access.grant.scope !== "installation" && sample.order.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -56,6 +81,9 @@ export async function PUT(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const access = sampleAccess(session);
+    if (!access.allowed || !access.grant) return deniedSampleResponse(access);
+
     const { id } = await params;
     const body = await request.json();
 
@@ -73,9 +101,7 @@ export async function PUT(
       return NextResponse.json({ error: "Sample not found" }, { status: 404 });
     }
 
-    // Check ownership
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    if (!isFacilityAdmin && existing.order.userId !== session.user.id) {
+    if (access.grant.scope !== "installation" && existing.order.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -116,6 +142,10 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const deploymentProfile = getServerDeploymentProfile();
+    const access = decideCapability(session, "samples.manage", deploymentProfile);
+    if (!access.allowed || !access.grant) return deniedSampleResponse(access);
+
     const { id } = await params;
 
     // Get sample with order to check ownership
@@ -132,14 +162,16 @@ export async function DELETE(
       return NextResponse.json({ error: "Sample not found" }, { status: 404 });
     }
 
-    // Check ownership
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    if (!isFacilityAdmin && existing.order.userId !== session.user.id) {
+    const canPurgeShared = decideCapability(
+      session,
+      "data.purge_shared",
+      deploymentProfile
+    ).allowed;
+    if (!canPurgeShared && existing.order.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Only allow deletion if order is in DRAFT status (unless admin)
-    if (!isFacilityAdmin && existing.order.status !== "DRAFT") {
+    if (!canPurgeShared && existing.order.status !== "DRAFT") {
       return NextResponse.json(
         { error: "Cannot delete samples from a submitted order" },
         { status: 400 }

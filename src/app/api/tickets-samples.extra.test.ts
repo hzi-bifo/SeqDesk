@@ -57,7 +57,7 @@ describe("ticket and sample route quick wins", () => {
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "user-1",
-        role: "USER",
+        role: "RESEARCHER",
       },
     });
     mocks.ticketReferencesSupported.mockResolvedValue(true);

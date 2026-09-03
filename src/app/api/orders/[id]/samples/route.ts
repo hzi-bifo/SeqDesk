@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { DEFAULT_FORM_SCHEMA, type FormFieldDefinition } from "@/types/form-config";
 import {
   ensureOrderModuleDefaultFields,
@@ -29,6 +31,29 @@ const sampleSelect = {
   checklistUnits: true,
   customFields: true,
 } as const;
+
+function sampleAccess(session: Parameters<typeof decideCapability>[0]) {
+  const profile = getServerDeploymentProfile();
+  return {
+    profile,
+    access: decideCapability(session, "samples.manage", profile),
+    canOperate: decideCapability(session, "orders.process", profile).allowed,
+  };
+}
+
+function deniedSampleResponse(decision: ReturnType<typeof decideCapability>) {
+  return NextResponse.json(
+    {
+      error:
+        decision.status === 404
+          ? "Not found"
+          : decision.status === 401
+            ? "Unauthorized"
+            : "Forbidden",
+    },
+    { status: decision.status }
+  );
+}
 
 interface SampleRecord {
   id: string;
@@ -136,7 +161,8 @@ export async function GET(
     }
 
     const { id } = await params;
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const { access } = sampleAccess(session);
+    if (!access.allowed || !access.grant) return deniedSampleResponse(access);
 
     // Check order exists and user has access, include sampleset
     const order = await db.order.findUnique({
@@ -156,7 +182,7 @@ export async function GET(
       return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
-    if (!isFacilityAdmin && order.userId !== session.user.id) {
+    if (access.grant.scope !== "installation" && order.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -199,7 +225,8 @@ export async function POST(
     }
 
     const { id } = await params;
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const { access, canOperate } = sampleAccess(session);
+    if (!access.allowed || !access.grant) return deniedSampleResponse(access);
 
     // Check order exists and user has access
     const order = await db.order.findUnique({
@@ -211,7 +238,7 @@ export async function POST(
       return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
-    if (!isFacilityAdmin && order.userId !== session.user.id) {
+    if (access.grant.scope !== "installation" && order.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -226,7 +253,7 @@ export async function POST(
     }
 
     if (facilityFieldsOnly) {
-      if (!isFacilityAdmin) {
+      if (!canOperate) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
 

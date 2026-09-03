@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   notifyOrderCreatedInApp: vi.fn(),
   db: {
     order: {
@@ -31,6 +32,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/notifications/in-app", () => ({
   notifyOrderCreatedInApp: mocks.notifyOrderCreatedInApp,
 }));
@@ -40,6 +45,17 @@ import { GET, POST } from "./route";
 describe("POST /api/orders", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "user-1",
@@ -168,6 +184,17 @@ describe("POST /api/orders", () => {
 describe("GET /api/orders", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
     mocks.db.order.findMany.mockResolvedValue([]);
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
   });
@@ -197,6 +224,46 @@ describe("GET /api/orders", () => {
     // Admin sees all - where clause should be empty
     const args = mocks.db.order.findMany.mock.calls[0][0] as { where: Record<string, unknown> };
     expect(args.where).toEqual({});
+  });
+
+  it("Shared Lab members see installation-scoped orders", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: {} })
+    );
+    await expect(response.json()).resolves.toMatchObject({ sharingMode: "all" });
+  });
+
+  it("does not expose orders in Research Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "research-workbench",
+      domains: ["core", "analysis", "publishing", "workbench"],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await GET();
+
+    expect(response.status).toBe(404);
+    expect(mocks.db.order.findMany).not.toHaveBeenCalled();
   });
 
   it("regular user sees only own orders when department sharing disabled", async () => {

@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
+import {
+  formatInviteCode,
+  getInviteAccountRole,
+  isInviteAccountRole,
+} from "@/lib/accounts/invite-role";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { Prisma } from "@prisma/client";
 import { randomBytes } from "crypto";
 
@@ -11,8 +18,16 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export async function GET() {
   const session = await getServerSession(authOptions);
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const decision = decideCapability(
+    session,
+    "system.users.manage",
+    getServerDeploymentProfile()
+  );
+  if (!decision.allowed) {
+    return NextResponse.json(
+      { error: decision.status === 401 ? "Unauthorized" : "Forbidden" },
+      { status: decision.status }
+    );
   }
 
   try {
@@ -28,7 +43,12 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(invites);
+    return NextResponse.json(
+      invites.map((invite) => ({
+        ...invite,
+        accountRole: getInviteAccountRole(invite.code),
+      }))
+    );
   } catch (error) {
     console.error("Failed to fetch invites:", error);
     return NextResponse.json(
@@ -42,15 +62,31 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const decision = decideCapability(
+    session,
+    "system.users.manage",
+    getServerDeploymentProfile()
+  );
+  if (!decision.allowed) {
+    return NextResponse.json(
+      { error: decision.status === 401 ? "Unauthorized" : "Forbidden" },
+      { status: decision.status }
+    );
   }
 
   try {
-    const { email, expiresInDays = 7 } = await request.json();
+    const { email, expiresInDays = 7, accountRole = "FACILITY_ADMIN" } =
+      await request.json();
     const normalizedEmail =
       typeof email === "string" ? email.trim().toLowerCase() : null;
     const parsedExpiresInDays = Number.parseInt(String(expiresInDays), 10);
+
+    if (!isInviteAccountRole(accountRole)) {
+      return NextResponse.json(
+        { error: "accountRole must be RESEARCHER or FACILITY_ADMIN" },
+        { status: 400 }
+      );
+    }
 
     if (
       !Number.isInteger(parsedExpiresInDays) ||
@@ -76,14 +112,17 @@ export async function POST(request: NextRequest) {
 
     let invite = null;
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      const code = randomBytes(4).toString("hex").toUpperCase();
+      const code = formatInviteCode(
+        randomBytes(4).toString("hex"),
+        accountRole
+      );
       try {
         invite = await db.adminInvite.create({
           data: {
             code,
             email: normalizedEmail || null,
             expiresAt,
-            createdById: session.user.id,
+            createdById: decision.principal!.id,
           },
           include: {
             createdBy: {
@@ -110,7 +149,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json(invite, { status: 201 });
+    return NextResponse.json(
+      { ...invite, accountRole: getInviteAccountRole(invite.code) },
+      { status: 201 }
+    );
   } catch (error) {
     console.error("Failed to create invite:", error);
     return NextResponse.json(

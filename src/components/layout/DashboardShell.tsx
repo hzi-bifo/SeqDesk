@@ -27,6 +27,7 @@ import {
 interface DashboardShellProps {
   children: ReactNode;
   user: {
+    id?: string;
     name?: string | null;
     email?: string | null;
     role?: string;

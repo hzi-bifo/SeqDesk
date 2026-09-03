@@ -29,12 +29,19 @@ import {
   getPipelineProgressIndicatorClassName,
   getPipelineProgressIndicatorLabel,
 } from "./pipelineProgress";
+import {
+  getDeploymentProfileDefinition,
+  type DeploymentProfileDefinition,
+} from "@/lib/deployment-profile";
 
 interface SidebarEntityNavProps {
   entityContext: SidebarEntityContext;
   collapsed: boolean;
   isDemoUser?: boolean;
+  /** @deprecated Tests and transitional callers should use showOperationalControls. */
   showAdminControls?: boolean;
+  showOperationalControls?: boolean;
+  deploymentProfile?: DeploymentProfileDefinition;
 }
 
 interface NavItem {
@@ -84,26 +91,30 @@ export function SidebarEntityNav({
   collapsed,
   isDemoUser = false,
   showAdminControls = false,
+  showOperationalControls: showOperationalControlsProp,
+  deploymentProfile = getDeploymentProfileDefinition("sequencing-center"),
 }: SidebarEntityNavProps) {
+  const showOperationalControls =
+    showOperationalControlsProp ?? showAdminControls;
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { entityType, entityId } = entityContext;
   const { steps: orderFormSteps, facilitySections, loading: orderFormLoading } = useOrderFormSteps(
-    showAdminControls,
+    showOperationalControls,
     entityType === "order" ? entityId : null
   );
   const {
     overviewSections: studyOverviewSections,
     facilitySections: studyFacilitySections,
     loading: studyFormLoading,
-  } = useStudyFormSteps(showAdminControls, entityType === "study" ? entityId : null);
+  } = useStudyFormSteps(showOperationalControls, entityType === "study" ? entityId : null);
   const orderPipelines = useOrderPipelines(
-    showAdminControls,
+    showOperationalControls,
     entityType === "order" ? entityId : null,
     !isDemoUser
   );
   const studyPipelines = useStudyPipelines(
-    showAdminControls,
+    showOperationalControls,
     entityType === "study" ? entityId : null,
     !isDemoUser
   );
@@ -113,7 +124,7 @@ export function SidebarEntityNav({
   // Fetch sequencing association status for the associate sub-item indicator
   const [seqAssocStatus, setSeqAssocStatus] = useState<"none" | "partial" | "complete">("none");
   useEffect(() => {
-    if (entityType !== "order" || !entityId || !showAdminControls) return;
+    if (entityType !== "order" || !entityId || !showOperationalControls) return;
     let cancelled = false;
     fetch(`/api/orders/${entityId}/sequencing`)
       .then((r) => (r.ok ? r.json() : null))
@@ -126,7 +137,7 @@ export function SidebarEntityNav({
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [entityType, entityId, showAdminControls, pathname]);
+  }, [entityType, entityId, showOperationalControls, pathname]);
 
   const [studyReadFileStatus, setStudyReadFileStatus] = useState<{
     studyId: string | null;
@@ -225,13 +236,14 @@ export function SidebarEntityNav({
     { key: "overview", label: "Overview", href: entityId ? `/studies/${entityId}` : undefined, icon: FileText, show: true },
     {
       key: "facility",
-      label: "Facility Fields",
+      label:
+        deploymentProfile.id === "shared-lab" ? "Lab Fields" : "Facility Fields",
       href: entityId ? `/studies/${entityId}/facility` : undefined,
       icon: Building2,
-      show: showAdminControls && studyFacilitySections.length > 0,
+      show: showOperationalControls && studyFacilitySections.length > 0,
     },
     { key: "sequencing", label: "Sequencing Data", href: entityId ? `/studies/${entityId}?tab=samples` : undefined, icon: HardDrive, show: true },
-    { key: "analysis", label: "Analysis", href: entityId ? `/studies/${entityId}?tab=pipelines` : undefined, icon: Workflow, show: showAdminControls },
+    { key: "analysis", label: "Analysis", href: entityId ? `/studies/${entityId}?tab=pipelines` : undefined, icon: Workflow, show: showOperationalControls },
     { key: "publishing", label: "Publishing", href: entityId ? `/studies/${entityId}?tab=publishing` : undefined, icon: Send, show: true },
   ];
 
@@ -266,13 +278,14 @@ export function SidebarEntityNav({
     { key: "details", label: "Overview", href: entityId ? `/orders/${entityId}` : undefined, icon: FileText, show: true },
     {
       key: "facility",
-      label: "Facility Fields",
+      label:
+        deploymentProfile.id === "shared-lab" ? "Lab Fields" : "Facility Fields",
       href: entityId ? `/orders/${entityId}?section=facility` : undefined,
       icon: Building2,
-      show: showAdminControls && !!facilityStep,
+      show: showOperationalControls && !!facilityStep,
     },
-    { key: "sequencing", label: "Sequencing Data", href: entityId ? `/orders/${entityId}/sequencing` : undefined, icon: HardDrive, show: showAdminControls },
-    { key: "analysis", label: "Analysis", href: entityId ? `/orders/${entityId}/sequencing?view=analysis` : undefined, icon: FlaskConical, show: showAdminControls && orderPipelines.length > 0 },
+    { key: "sequencing", label: "Sequencing Data", href: entityId ? `/orders/${entityId}/sequencing` : undefined, icon: HardDrive, show: showOperationalControls },
+    { key: "analysis", label: "Analysis", href: entityId ? `/orders/${entityId}/sequencing?view=analysis` : undefined, icon: FlaskConical, show: showOperationalControls && orderPipelines.length > 0 },
   ];
 
   const items = activeTab === "studies" ? studyItems : orderItems;

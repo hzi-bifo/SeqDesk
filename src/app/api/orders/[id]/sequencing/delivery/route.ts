@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   assertSequencingDeliveryAccess,
   buildOrderSequencingDeliverySummary,
@@ -17,8 +19,36 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const profile = getServerDeploymentProfile();
+    const operationalAccess = decideCapability(
+      session,
+      "sequencing.files.manage",
+      profile
+    );
+    const requesterAccess = decideCapability(session, "orders.read", profile);
+    const accessGrant = operationalAccess.allowed
+      ? operationalAccess.grant
+      : requesterAccess.grant;
+    if (!accessGrant) {
+      const status = requesterAccess.status;
+      return NextResponse.json(
+        {
+          error:
+            status === 404
+              ? "Not found"
+              : status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status }
+      );
+    }
+
     const { id } = await params;
-    const accessError = await assertSequencingDeliveryAccess(id, session.user);
+    const accessError = await assertSequencingDeliveryAccess(id, session.user, {
+      accessScope:
+        accessGrant.scope === "installation" ? "installation" : "own",
+    });
     if (accessError) {
       return NextResponse.json(accessError.body, { status: accessError.status });
     }

@@ -5,9 +5,14 @@ import { useRef, useState, useEffect } from "react";
 import { LogOut, Settings, ChevronUp, Shield } from "lucide-react";
 import { signOut } from "next-auth/react";
 import { cn } from "@/lib/utils";
+import {
+  getDeploymentProfileDefinition,
+  type DeploymentProfileDefinition,
+} from "@/lib/deployment-profile";
 
 interface SidebarUserMenuProps {
   user: {
+    id?: string;
     name?: string | null;
     email?: string | null;
     role?: string;
@@ -15,9 +20,14 @@ interface SidebarUserMenuProps {
     demoExperience?: "researcher" | "facility";
   };
   collapsed: boolean;
+  deploymentProfile?: DeploymentProfileDefinition;
 }
 
-export function SidebarUserMenu({ user, collapsed }: SidebarUserMenuProps) {
+export function SidebarUserMenu({
+  user,
+  collapsed,
+  deploymentProfile = getDeploymentProfileDefinition("sequencing-center"),
+}: SidebarUserMenuProps) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -27,10 +37,12 @@ export function SidebarUserMenu({ user, collapsed }: SidebarUserMenuProps) {
   const userRoleLabel = isFacilityDemoUser
     ? "Facility Demo"
     : isFacilityAdmin
-      ? "Facility Admin"
+      ? deploymentProfile.id === "sequencing-center"
+        ? "Facility Admin"
+        : "Administrator"
       : isDemoUser
         ? "Researcher Demo"
-        : "Researcher";
+        : deploymentProfile.terminology.member;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

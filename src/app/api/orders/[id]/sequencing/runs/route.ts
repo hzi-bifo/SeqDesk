@@ -15,10 +15,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await requireFacilityAdminSequencingReadSession();
+    await requireFacilityAdminSequencingReadSession();
     const { id } = await params;
     const payload = await listSequencingRunsForOrder(id, {
-      isFacilityAdmin: session.user.role === "FACILITY_ADMIN",
+      isFacilityAdmin: true,
     });
     return NextResponse.json(payload);
   } catch (error) {

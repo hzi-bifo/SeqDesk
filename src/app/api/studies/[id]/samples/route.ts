@@ -1,8 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { loadStudyFormSchema } from "@/lib/studies/schema";
+
+function sampleAccess(session: Parameters<typeof decideCapability>[0]) {
+  const profile = getServerDeploymentProfile();
+  return {
+    profile,
+    access: decideCapability(session, "samples.manage", profile),
+    canManageUnfilteredMetadata: decideCapability(
+      session,
+      "system.settings.manage",
+      profile
+    ).allowed,
+  };
+}
+
+function deniedSampleResponse(decision: ReturnType<typeof decideCapability>) {
+  return NextResponse.json(
+    {
+      error:
+        decision.status === 404
+          ? "Not found"
+          : decision.status === 401
+            ? "Unauthorized"
+            : "Forbidden",
+    },
+    { status: decision.status }
+  );
+}
 
 function parseJsonObject(value: unknown): Record<string, unknown> {
   if (!value) return {};
@@ -38,6 +67,9 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { access, canManageUnfilteredMetadata } = sampleAccess(session);
+    if (!access.allowed || !access.grant) return deniedSampleResponse(access);
+
     const { id: studyId } = await params;
     const body = await request.json();
     const { sampleIds, perSampleData } = body;
@@ -59,8 +91,7 @@ export async function POST(
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    if (!isFacilityAdmin && study.userId !== session.user.id) {
+    if (access.grant.scope !== "installation" && study.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -79,7 +110,7 @@ export async function POST(
     });
 
     // Check ownership of all samples
-    if (!isFacilityAdmin) {
+    if (access.grant.scope !== "installation") {
       const unauthorized = samples.filter(
         (s) => s.order.userId !== session.user.id
       );
@@ -104,7 +135,7 @@ export async function POST(
     // Save per-sample metadata (collection_date, geographic_location, etc.)
     if (perSampleData && typeof perSampleData === "object") {
       const schema = await loadStudyFormSchema({
-        isFacilityAdmin,
+        isFacilityAdmin: canManageUnfilteredMetadata,
         applyRoleFilter: true,
         applyModuleFilter: true,
         studyId,
@@ -119,7 +150,7 @@ export async function POST(
           (perSampleData as Record<string, unknown>)[sampleId]
         );
 
-        if (isFacilityAdmin) {
+        if (canManageUnfilteredMetadata) {
           await db.sample.update({
             where: { id: sampleId },
             data: { checklistData: stringifyOrNull(submitted) },
@@ -172,6 +203,9 @@ export async function PUT(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { access, canManageUnfilteredMetadata } = sampleAccess(session);
+    if (!access.allowed || !access.grant) return deniedSampleResponse(access);
+
     const { id: studyId } = await params;
     const body = await request.json();
     const { sampleIds, perSampleData } = body;
@@ -193,8 +227,7 @@ export async function PUT(
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    if (!isFacilityAdmin && study.userId !== session.user.id) {
+    if (access.grant.scope !== "installation" && study.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -220,7 +253,7 @@ export async function PUT(
         include: { order: { select: { userId: true } } },
       });
 
-      if (!isFacilityAdmin) {
+      if (access.grant.scope !== "installation") {
         const unauthorized = newSamples.filter(
           (s) => s.order.userId !== session.user.id
         );
@@ -252,7 +285,7 @@ export async function PUT(
     // Update per-sample metadata (checklistData)
     if (perSampleData && typeof perSampleData === "object") {
       const schema = await loadStudyFormSchema({
-        isFacilityAdmin,
+        isFacilityAdmin: canManageUnfilteredMetadata,
         applyRoleFilter: true,
         applyModuleFilter: true,
         studyId,
@@ -274,7 +307,7 @@ export async function PUT(
           (perSampleData as Record<string, unknown>)[sampleId]
         );
 
-        if (isFacilityAdmin) {
+        if (canManageUnfilteredMetadata) {
           await db.sample.update({
             where: { id: sampleId },
             data: { checklistData: stringifyOrNull(submitted) },
@@ -328,6 +361,9 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { access } = sampleAccess(session);
+    if (!access.allowed || !access.grant) return deniedSampleResponse(access);
+
     const { id: studyId } = await params;
     const body = await request.json();
     const { sampleIds } = body;
@@ -349,8 +385,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    if (!isFacilityAdmin && study.userId !== session.user.id) {
+    if (access.grant.scope !== "installation" && study.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

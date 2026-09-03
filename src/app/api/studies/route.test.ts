@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   getActiveMixsConfig: vi.fn(),
   db: {
     study: {
@@ -24,6 +25,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/mixs/config", () => ({
   getActiveMixsConfig: mocks.getActiveMixsConfig,
 }));
@@ -31,6 +36,20 @@ vi.mock("@/lib/mixs/config", () => ({
 import { GET, POST } from "./route";
 
 const BASE_URL = "http://localhost:3000/api/studies";
+
+beforeEach(() => {
+  mocks.getServerDeploymentProfile.mockReturnValue({
+    id: "sequencing-center",
+    domains: [
+      "core",
+      "facility-intake",
+      "sample-catalog",
+      "sequencing-operations",
+      "analysis",
+      "publishing",
+    ],
+  });
+});
 
 describe("GET /api/studies", () => {
   beforeEach(() => {
@@ -92,6 +111,43 @@ describe("GET /api/studies", () => {
 
     await GET();
     expect(mocks.db.study.findMany.mock.calls[0][0].where).toEqual({});
+  });
+
+  it("returns all studies for a Shared Lab member", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.db.study.findMany.mockResolvedValue([]);
+
+    await GET();
+
+    expect(mocks.db.study.findMany.mock.calls[0][0].where).toEqual({});
+  });
+
+  it("does not expose studies in Research Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "research-workbench",
+      domains: ["core", "analysis", "publishing", "workbench"],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await GET();
+
+    expect(response.status).toBe(404);
+    expect(mocks.db.study.findMany).not.toHaveBeenCalled();
   });
 
   it("returns 500 when db throws", async () => {

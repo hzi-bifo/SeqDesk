@@ -5,6 +5,8 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Badge } from "@/components/ui/badge";
+import { AccountAccessControl } from "@/components/admin/AccountAccessControl";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   ArrowLeft,
   Mail,
@@ -26,9 +28,10 @@ interface UserProfilePageProps {
 export default async function UserProfilePage({ params }: UserProfilePageProps) {
   const session = await getServerSession(authOptions);
   const { id } = await params;
+  const deploymentProfile = getServerDeploymentProfile();
 
   if (!session || session.user.role !== "FACILITY_ADMIN") {
-    redirect("/orders");
+    redirect(deploymentProfile.defaultRoute);
   }
 
   const user = await db.user.findUnique({
@@ -62,6 +65,11 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
     notFound();
   }
 
+  const administratorCount =
+    user.role === "FACILITY_ADMIN"
+      ? await db.user.count({ where: { role: "FACILITY_ADMIN" } })
+      : 0;
+
   const formatDate = (date: Date) => {
     return new Date(date).toLocaleDateString("en-US", {
       month: "short",
@@ -81,8 +89,11 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
   };
 
   const roleLabels: Record<string, string> = {
-    FACILITY_ADMIN: "Facility Admin",
-    RESEARCHER: "Researcher",
+    FACILITY_ADMIN:
+      deploymentProfile.id === "sequencing-center"
+        ? "Facility Admin"
+        : "Administrator",
+    RESEARCHER: deploymentProfile.terminology.member,
   };
 
   const researcherRoleLabels: Record<string, string> = {
@@ -135,6 +146,16 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
             )}
           </div>
         </div>
+      </div>
+
+      <div className="mb-8">
+        <AccountAccessControl
+          userId={user.id}
+          role={user.role}
+          isFinalAdministrator={
+            user.role === "FACILITY_ADMIN" && administratorCount <= 1
+          }
+        />
       </div>
 
       {/* Info Grid */}

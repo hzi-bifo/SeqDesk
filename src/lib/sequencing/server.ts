@@ -1,6 +1,8 @@
 import { getServerSession } from "next-auth";
 import type { Session } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { isDemoSession } from "@/lib/demo/server";
 
 export class SequencingApiError extends Error {
@@ -26,8 +28,20 @@ export async function requireFacilityAdminSequencingSession(): Promise<Session> 
     );
   }
 
-  if (session.user.role !== "FACILITY_ADMIN") {
-    throw new SequencingApiError(403, "Only facility admins can manage sequencing data");
+  const decision = decideCapability(
+    session,
+    "sequencing.runs.manage",
+    getServerDeploymentProfile()
+  );
+  if (!decision.allowed) {
+    throw new SequencingApiError(
+      decision.status,
+      decision.status === 404
+        ? "Sequencing operations are not available"
+        : decision.status === 401
+          ? "Unauthorized"
+          : "You do not have permission to manage sequencing data"
+    );
   }
 
   return session;
@@ -41,8 +55,20 @@ export async function requireFacilityAdminSequencingReadSession(): Promise<Sessi
     throw new SequencingApiError(401, "Unauthorized");
   }
 
-  if (session.user.role !== "FACILITY_ADMIN") {
-    throw new SequencingApiError(403, "Only facility admins can manage sequencing data");
+  const decision = decideCapability(
+    session,
+    "sequencing.runs.manage",
+    getServerDeploymentProfile()
+  );
+  if (!decision.allowed) {
+    throw new SequencingApiError(
+      decision.status,
+      decision.status === 404
+        ? "Sequencing operations are not available"
+        : decision.status === 401
+          ? "Unauthorized"
+          : "You do not have permission to manage sequencing data"
+    );
   }
 
   return session;

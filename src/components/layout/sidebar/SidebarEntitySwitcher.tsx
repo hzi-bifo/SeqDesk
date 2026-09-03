@@ -7,17 +7,20 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { OrderSelector } from "../OrderSelector";
 import { StudySelector } from "../StudySelector";
 import type { SidebarEntityContext } from "./useSidebarEntity";
+import type { DeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 type SidebarTab = "orders" | "studies";
 
 interface SidebarEntitySwitcherProps {
   entityContext: SidebarEntityContext;
   collapsed: boolean;
+  deploymentProfile: DeploymentProfileDefinition;
 }
 
 export function SidebarEntitySwitcher({
   entityContext,
   collapsed,
+  deploymentProfile,
 }: SidebarEntitySwitcherProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -44,10 +47,14 @@ export function SidebarEntitySwitcher({
   const currentOrderName = entityType === "order" ? entityData?.label ?? null : null;
   const currentStudyId = entityType === "study" ? entityId : null;
   const currentStudyTitle = entityType === "study" ? entityData?.label ?? null : null;
+  const orderLabel =
+    deploymentProfile.terminology.workItem === "Project"
+      ? "Projects"
+      : "Sequencing Orders";
 
   if (collapsed) {
     const ActiveIcon = activeTab === "orders" ? Inbox : BookOpen;
-    const activeLabel = activeTab === "orders" ? "Sequencing Orders" : "Studies";
+    const activeLabel = activeTab === "orders" ? orderLabel : "Studies";
 
     return (
       <>
@@ -100,7 +107,7 @@ export function SidebarEntitySwitcher({
             )}
           >
             <Inbox className="h-3.5 w-3.5" />
-            Sequencing Orders
+            {orderLabel}
           </button>
           <button
             onClick={() => handleTabClick("studies")}

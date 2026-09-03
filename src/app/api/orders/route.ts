@@ -2,7 +2,9 @@ import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { notifyOrderCreatedInApp } from "@/lib/notifications/in-app";
 
@@ -60,15 +62,33 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const deploymentProfile = getServerDeploymentProfile();
+    const readAll = decideCapability(session, "orders.read_all", deploymentProfile);
+    const readOwn = decideCapability(session, "orders.read", deploymentProfile);
+    const readGrant = readAll.allowed ? readAll.grant : readOwn.grant;
+    if (!readGrant) {
+      const status = readOwn.status;
+      return NextResponse.json(
+        {
+          error:
+            status === 404
+              ? "Not found"
+              : status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status }
+      );
+    }
+
     const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
     // Build the where clause based on role and settings
     let whereClause = {};
     let sharingMode: "personal" | "department" | "all" = "personal";
 
-    if (isFacilityAdmin) {
-      // Admins see all orders
+    if (readGrant.scope === "installation") {
+      // Operators and Shared Lab members see installation-scoped orders.
       whereClause = demoWsUserIds ? { userId: { in: demoWsUserIds } } : {};
       sharingMode = "all";
     } else {
@@ -159,6 +179,25 @@ export async function POST(request: NextRequest) {
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const decision = decideCapability(
+      session,
+      "orders.create",
+      getServerDeploymentProfile()
+    );
+    if (!decision.allowed) {
+      return NextResponse.json(
+        {
+          error:
+            decision.status === 404
+              ? "Not found"
+              : decision.status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status: decision.status }
+      );
     }
 
     const body = await request.json();

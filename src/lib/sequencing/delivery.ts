@@ -393,7 +393,8 @@ export async function buildOrderSequencingDeliverySummary(
 
 export async function assertSequencingDeliveryAccess(
   orderId: string,
-  user: DeliveryUser
+  user: DeliveryUser,
+  options?: { accessScope?: "own" | "installation" }
 ) {
   const order = await db.order.findUnique({
     where: { id: orderId },
@@ -408,7 +409,7 @@ export async function assertSequencingDeliveryAccess(
     return { status: 404 as const, body: { error: "Sequencing Order not found" } };
   }
 
-  if (isFacilityAdmin(user)) return null;
+  if (options?.accessScope === "installation" || isFacilityAdmin(user)) return null;
 
   if (order.userId !== user.id) {
     return { status: 403 as const, body: { error: "Forbidden" } };

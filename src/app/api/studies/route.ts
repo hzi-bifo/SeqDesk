@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { getActiveMixsConfig } from "@/lib/mixs/config";
 
@@ -14,11 +16,33 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const deploymentProfile = getServerDeploymentProfile();
+    const readAll = decideCapability(session, "studies.read_all", deploymentProfile);
+    const readOwn = decideCapability(session, "studies.read", deploymentProfile);
+    const readGrant = readAll.allowed ? readAll.grant : readOwn.grant;
+    if (!readGrant) {
+      const status = readOwn.status;
+      return NextResponse.json(
+        {
+          error:
+            status === 404
+              ? "Not found"
+              : status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status }
+      );
+    }
     const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
     const studies = await db.study.findMany({
-      where: isFacilityAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId: session.user.id },
+      where:
+        readGrant.scope === "installation"
+          ? demoWsUserIds
+            ? { userId: { in: demoWsUserIds } }
+            : {}
+          : { userId: session.user.id },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -87,6 +111,25 @@ export async function POST(request: NextRequest) {
 
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const decision = decideCapability(
+      session,
+      "studies.create",
+      getServerDeploymentProfile()
+    );
+    if (!decision.allowed) {
+      return NextResponse.json(
+        {
+          error:
+            decision.status === 404
+              ? "Not found"
+              : decision.status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status: decision.status }
+      );
     }
 
     const body = await request.json();
