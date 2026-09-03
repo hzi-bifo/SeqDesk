@@ -5,6 +5,10 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { ticketReferencesSupported } from "@/lib/tickets/reference-support";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 async function isDepartmentSharingEnabled(): Promise<boolean> {
   try {
@@ -22,10 +26,11 @@ async function isDepartmentSharingEnabled(): Promise<boolean> {
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "support.tickets.use");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
+  const userId = access.principal!.id;
 
   const supportsReferences = await ticketReferencesSupported();
   if (!supportsReferences) {
@@ -36,25 +41,32 @@ export async function GET() {
     });
   }
 
-  const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+  const canReadAllOrders = decideServerCapability(
+    session,
+    "orders.read_all"
+  ).allowed;
+  const canReadAllStudies = decideServerCapability(
+    session,
+    "studies.read_all"
+  ).allowed;
   const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
   let orderWhere: Prisma.OrderWhereInput = demoWsUserIds
     ? { userId: { in: demoWsUserIds } }
     : {};
-  if (!isFacilityAdmin) {
+  if (!canReadAllOrders) {
     const departmentSharing = await isDepartmentSharingEnabled();
     if (departmentSharing) {
       const user = await db.user.findUnique({
-        where: { id: session.user.id },
+        where: { id: userId },
         select: { departmentId: true },
       });
 
       orderWhere = user?.departmentId
         ? { user: { departmentId: user.departmentId } }
-        : { userId: session.user.id };
+        : { userId };
     } else {
-      orderWhere = { userId: session.user.id };
+      orderWhere = { userId };
     }
   }
 
@@ -69,7 +81,7 @@ export async function GET() {
       },
     }),
     db.study.findMany({
-      where: isFacilityAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId: session.user.id },
+      where: canReadAllStudies ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,

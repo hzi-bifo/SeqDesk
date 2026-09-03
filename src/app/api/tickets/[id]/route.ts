@@ -3,6 +3,10 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ticketReferencesSupported } from "@/lib/tickets/reference-support";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 // GET /api/tickets/[id] - Get single ticket with messages
 export async function GET(
@@ -10,13 +14,17 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "support.tickets.use");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const { id } = await params;
-  const isAdmin = session.user.role === "FACILITY_ADMIN";
+  const userId = access.principal!.id;
+  const canManageTickets = decideServerCapability(
+    session,
+    "support.tickets.manage"
+  ).allowed;
 
   try {
     const supportsReferences = await ticketReferencesSupported();
@@ -104,7 +112,7 @@ export async function GET(
     }
 
     // Check access: admins can see all, users can only see their own
-    if (!isAdmin && ticket.userId !== session.user.id) {
+    if (!canManageTickets && ticket.userId !== userId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -112,7 +120,7 @@ export async function GET(
     const now = new Date();
     await db.ticket.update({
       where: { id },
-      data: isAdmin ? { adminReadAt: now } : { userReadAt: now },
+      data: canManageTickets ? { adminReadAt: now } : { userReadAt: now },
       select: { id: true },
     });
 
@@ -132,13 +140,17 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "support.tickets.use");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const { id } = await params;
-  const isAdmin = session.user.role === "FACILITY_ADMIN";
+  const userId = access.principal!.id;
+  const canManageTickets = decideServerCapability(
+    session,
+    "support.tickets.manage"
+  ).allowed;
 
   try {
     const ticket = await db.ticket.findUnique({
@@ -155,7 +167,7 @@ export async function PATCH(
     }
 
     // Check access
-    if (!isAdmin && ticket.userId !== session.user.id) {
+    if (!canManageTickets && ticket.userId !== userId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -166,7 +178,7 @@ export async function PATCH(
     const updateData: { status?: string; priority?: string; closedAt?: Date | null } = {};
 
     if (status) {
-      if (!isAdmin && status !== "CLOSED") {
+      if (!canManageTickets && status !== "CLOSED") {
         return NextResponse.json(
           { error: "Users can only close tickets" },
           { status: 403 }
@@ -176,7 +188,7 @@ export async function PATCH(
       updateData.closedAt = status === "CLOSED" ? new Date() : null;
     }
 
-    if (priority && isAdmin) {
+    if (priority && canManageTickets) {
       updateData.priority = priority;
     }
 

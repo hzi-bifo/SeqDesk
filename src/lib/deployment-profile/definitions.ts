@@ -25,6 +25,7 @@ export const DEPLOYMENT_PROFILES: Readonly<
       "sequencing-operations",
       "analysis",
       "publishing",
+      "support",
     ],
     ownership: { scientificRecords: "requester" },
     enrollment: { defaultPolicy: "self-registration" },

@@ -6,6 +6,10 @@ import { db } from "@/lib/db";
 import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { ticketReferencesSupported } from "@/lib/tickets/reference-support";
 import { notifyTicketCreated } from "@/lib/notifications/dispatcher";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 type LegacyTicketRow = {
   id: string;
@@ -40,7 +44,11 @@ async function isDepartmentSharingEnabled(): Promise<boolean> {
   }
 }
 
-async function canAccessOrder(orderId: string, userId: string, isAdmin: boolean) {
+async function canAccessOrder(
+  orderId: string,
+  userId: string,
+  canReadAllOrders: boolean
+) {
   const order = await db.order.findUnique({
     where: { id: orderId },
     select: {
@@ -58,7 +66,7 @@ async function canAccessOrder(orderId: string, userId: string, isAdmin: boolean)
     return false;
   }
 
-  if (isAdmin || order.userId === userId) {
+  if (canReadAllOrders || order.userId === userId) {
     return true;
   }
 
@@ -74,8 +82,8 @@ async function canAccessOrder(orderId: string, userId: string, isAdmin: boolean)
   return !!user?.departmentId && user.departmentId === order.user.departmentId;
 }
 
-async function getLegacyTickets(userId: string, isAdmin: boolean) {
-  const whereClause = isAdmin
+async function getLegacyTickets(userId: string, canManageTickets: boolean) {
+  const whereClause = canManageTickets
     ? Prisma.sql``
     : Prisma.sql`WHERE t."userId" = ${userId}`;
 
@@ -138,12 +146,16 @@ async function getLegacyTickets(userId: string, isAdmin: boolean) {
 // GET /api/tickets - List tickets
 export async function GET() {
   const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "support.tickets.use");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
-  const isAdmin = session.user.role === "FACILITY_ADMIN";
+  const userId = access.principal!.id;
+  const canManageTickets = decideServerCapability(
+    session,
+    "support.tickets.manage"
+  ).allowed;
   const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
   try {
@@ -152,7 +164,7 @@ export async function GET() {
     try {
       tickets = supportsReferences
         ? await db.ticket.findMany({
-            where: isAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId: session.user.id },
+            where: canManageTickets ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId },
             orderBy: { updatedAt: "desc" },
             include: {
               user: {
@@ -182,7 +194,7 @@ export async function GET() {
             },
           })
         : await db.ticket.findMany({
-            where: isAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId: session.user.id },
+            where: canManageTickets ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId },
             orderBy: { updatedAt: "desc" },
             select: {
               id: true,
@@ -211,13 +223,13 @@ export async function GET() {
             },
           });
     } catch {
-      tickets = await getLegacyTickets(session.user.id, isAdmin);
+      tickets = await getLegacyTickets(userId, canManageTickets);
     }
 
     // Calculate unread status for each ticket
     const ticketsWithUnread = tickets.map((ticket) => {
       let hasUnread = false;
-      if (isAdmin) {
+      if (canManageTickets) {
         // Admin: unread if user sent a message after admin last read
         hasUnread = ticket.lastUserMessageAt
           ? !ticket.adminReadAt || ticket.lastUserMessageAt > ticket.adminReadAt
@@ -244,9 +256,9 @@ export async function GET() {
 // POST /api/tickets - Create a new ticket
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "support.tickets.use");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {
@@ -267,10 +279,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const isAdmin = session.user.role === "FACILITY_ADMIN";
+    const userId = access.principal!.id;
+    const canReadAllOrders = decideServerCapability(
+      session,
+      "orders.read_all"
+    ).allowed;
+    const canReadAllStudies = decideServerCapability(
+      session,
+      "studies.read_all"
+    ).allowed;
 
     if (supportsReferences && orderId) {
-      const canAccess = await canAccessOrder(orderId, session.user.id, isAdmin);
+      const canAccess = await canAccessOrder(orderId, userId, canReadAllOrders);
       if (!canAccess) {
         return NextResponse.json(
           { error: "Selected order could not be found" },
@@ -285,7 +305,7 @@ export async function POST(request: NextRequest) {
         select: { id: true, userId: true },
       });
 
-      if (!study || (!isAdmin && study.userId !== session.user.id)) {
+      if (!study || (!canReadAllStudies && study.userId !== userId)) {
         return NextResponse.json(
           { error: "Selected study could not be found" },
           { status: 404 }
@@ -300,7 +320,7 @@ export async function POST(request: NextRequest) {
             data: {
               subject,
               priority: priority || "NORMAL",
-              userId: session.user.id,
+              userId,
               orderId: orderId || null,
               studyId: studyId || null,
               lastUserMessageAt: new Date(),
@@ -325,7 +345,7 @@ export async function POST(request: NextRequest) {
             data: {
               subject,
               priority: priority || "NORMAL",
-              userId: session.user.id,
+              userId,
               lastUserMessageAt: new Date(),
             },
             select: {
@@ -342,7 +362,7 @@ export async function POST(request: NextRequest) {
       await tx.ticketMessage.create({
         data: {
           content: message,
-          userId: session.user.id,
+          userId,
           ticketId: newTicket.id,
         },
       });
@@ -351,10 +371,10 @@ export async function POST(request: NextRequest) {
     });
 
     await notifyTicketCreated(ticket.id, {
-      id: session.user.id,
-      role: session.user.role,
-      email: session.user.email,
-      name: session.user.name,
+      id: userId,
+      role: session!.user.role,
+      email: session!.user.email,
+      name: session!.user.name,
     });
 
     return NextResponse.json(ticket, { status: 201 });

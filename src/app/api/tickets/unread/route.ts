@@ -3,26 +3,34 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 // GET /api/tickets/unread - Get count of unread tickets
 export async function GET() {
   const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "support.tickets.use");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
-  if (session.user.isDemo) {
+  if (access.principal?.isDemo) {
     return NextResponse.json({ count: 0 });
   }
 
-  const isAdmin = session.user.role === "FACILITY_ADMIN";
+  const userId = access.principal!.id;
+  const canManageTickets = decideServerCapability(
+    session,
+    "support.tickets.manage"
+  ).allowed;
   const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
   try {
     const tickets = await db.ticket.findMany({
-      where: isAdmin
+      where: canManageTickets
         ? (demoWsUserIds ? { userId: { in: demoWsUserIds }, status: { not: "CLOSED" } } : { status: { not: "CLOSED" } })
-        : { userId: session.user.id, status: { not: "CLOSED" } },
+        : { userId, status: { not: "CLOSED" } },
       select: {
         id: true,
         lastUserMessageAt: true,
@@ -35,7 +43,7 @@ export async function GET() {
     let unreadCount = 0;
 
     for (const ticket of tickets) {
-      if (isAdmin) {
+      if (canManageTickets) {
         // Admin: unread if user sent a message after admin last read
         if (ticket.lastUserMessageAt) {
           if (!ticket.adminReadAt || ticket.lastUserMessageAt > ticket.adminReadAt) {

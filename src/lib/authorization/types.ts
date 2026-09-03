@@ -39,6 +39,8 @@ export const CAPABILITIES = [
   "data.restore",
   "data.purge_shared",
   "publishing.submit",
+  "support.tickets.use",
+  "support.tickets.manage",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -105,4 +107,6 @@ export const CAPABILITY_DOMAINS: Readonly<Record<Capability, DeploymentDomainId>
   "data.restore": "core",
   "data.purge_shared": "core",
   "publishing.submit": "publishing",
+  "support.tickets.use": "support",
+  "support.tickets.manage": "support",
 };

@@ -23,7 +23,7 @@ const MODULE_DOMAIN_REQUIREMENTS: Readonly<
   studies: ["sample-catalog"],
   "sequencing-data": ["sequencing-operations"],
   "archive-submissions": ["publishing"],
-  support: ["facility-intake"],
+  support: ["support"],
   "workbench-data": ["workbench"],
   "data-imports": ["workbench"],
   pipelines: ["analysis"],
@@ -183,4 +183,3 @@ export function assertDeploymentProfileCompatible(
     );
   }
 }
-

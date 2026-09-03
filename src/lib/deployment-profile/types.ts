@@ -15,6 +15,7 @@ export type DeploymentDomainId =
   | "sequencing-operations"
   | "analysis"
   | "publishing"
+  | "support"
   | "workbench";
 
 export type DeploymentOwnershipScope =

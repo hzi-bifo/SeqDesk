@@ -57,7 +57,10 @@ option must create workspace-owned data instead of leaking the facility model.
 Sidebar counts, entity search, and recent activity now derive their queries from
 capability scopes: Sequencing Center requesters see their own records, Shared
 Lab members see installation-wide work, and the facility sidebar returns `404`
-in Workbench.
+in Workbench. The support desk is now its own Sequencing-Center-only domain:
+requesters use their own tickets, facility operators manage all tickets, and
+Shared Lab/Workbench administrators do not inherit access from their system
+role.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -260,6 +263,7 @@ Acceptance:
   - [x] `workbench.use`, `workbench.import`, `workbench.run`
   - [x] `data.archive`, `data.restore`, `data.purge_shared`
   - [x] `publishing.submit`
+  - [x] `support.tickets.use`, `support.tickets.manage`
 - [x] Add table-driven tests for representative profile x account level x capability x scope combinations; expand to exhaustive catalog coverage before release.
 - [ ] Add tests proving an already signed-in administrator loses protected access immediately after demotion or deactivation.
 - [ ] Add a repository check that rejects new `session.user.role === ...` authorization outside the compatibility package.
@@ -291,7 +295,7 @@ Convert APIs before relying on capability-based UI.
 - [x] Convert sample CRUD, sample-study assignment, and table/export access.
 - [x] Convert sequencing discovery, upload, run assignment, streaming, visibility, and delivery operations.
 - [x] Convert sidebar entity/count queries to use centralized resource scopes.
-- [ ] Convert tickets/notes/mentions and make the domain optional outside Sequencing Center.
+- [x] Convert tickets/notes/mentions and make the support domain optional outside Sequencing Center.
 
 ### Analysis
 

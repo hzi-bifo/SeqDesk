@@ -3,6 +3,10 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { notifyTicketReply } from "@/lib/notifications/dispatcher";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 // POST /api/tickets/[id]/messages - Add a message to a ticket
 export async function POST(
@@ -10,13 +14,17 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "support.tickets.use");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const { id } = await params;
-  const isAdmin = session.user.role === "FACILITY_ADMIN";
+  const userId = access.principal!.id;
+  const canManageTickets = decideServerCapability(
+    session,
+    "support.tickets.manage"
+  ).allowed;
 
   try {
     const ticket = await db.ticket.findUnique({
@@ -33,7 +41,7 @@ export async function POST(
     }
 
     // Check access
-    if (!isAdmin && ticket.userId !== session.user.id) {
+    if (!canManageTickets && ticket.userId !== userId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -61,7 +69,7 @@ export async function POST(
       const newMessage = await tx.ticketMessage.create({
         data: {
           content: content.trim(),
-          userId: session.user.id,
+          userId,
           ticketId: id,
         },
         include: {
@@ -81,7 +89,7 @@ export async function POST(
         where: { id },
         data: {
           updatedAt: now,
-          ...(isAdmin
+          ...(canManageTickets
             ? {
                 lastAdminMessageAt: now,
                 adminReadAt: now,
@@ -102,10 +110,10 @@ export async function POST(
     });
 
     await notifyTicketReply(id, {
-      id: session.user.id,
-      role: session.user.role,
-      email: session.user.email,
-      name: session.user.name,
+      id: userId,
+      role: session!.user.role,
+      email: session!.user.email,
+      name: session!.user.name,
     });
 
     return NextResponse.json(message, { status: 201 });

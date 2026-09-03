@@ -75,4 +75,17 @@ describe("server capability API helpers", () => {
       reason: "domain-unavailable",
     });
   });
+
+  it("keeps the facility support desk unavailable outside Sequencing Center", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+
+    const response = authorizationErrorResponse(
+      decideServerCapability(adminSession, "support.tickets.manage")
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Not found" });
+  });
 });

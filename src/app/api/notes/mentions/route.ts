@@ -9,18 +9,20 @@ import {
   type NoteMentionGroup,
   type NoteMentionItem,
 } from "@/lib/notes/mentions";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
+import type { ResourceScope } from "@/lib/authorization";
 
 const MAX_ITEMS_PER_GROUP = 50;
 
-type NotesMentionSession = {
-  user?: {
-    id?: string | null;
-    role?: string | null;
-  };
-} | null;
-
-function canAccessOwner(session: NotesMentionSession, userId: string): boolean {
-  return session?.user?.role === "FACILITY_ADMIN" || session?.user?.id === userId;
+function canAccessOwner(
+  principalId: string,
+  scope: ResourceScope,
+  ownerId: string
+): boolean {
+  return scope === "installation" || principalId === ownerId;
 }
 
 function basename(value: string | null | undefined): string {
@@ -116,7 +118,11 @@ function requestedKeysFromParams(request: NextRequest): Set<string> {
   );
 }
 
-async function getOrderMentionItems(orderId: string, session: NotesMentionSession): Promise<NoteMentionItem[] | null> {
+async function getOrderMentionItems(
+  orderId: string,
+  principalId: string,
+  scope: ResourceScope
+): Promise<NoteMentionItem[] | null> {
   const order = await db.order.findUnique({
     where: { id: orderId },
     select: {
@@ -152,7 +158,7 @@ async function getOrderMentionItems(orderId: string, session: NotesMentionSessio
     },
   });
 
-  if (!order || !canAccessOwner(session, order.userId)) {
+  if (!order || !canAccessOwner(principalId, scope, order.userId)) {
     return null;
   }
 
@@ -345,7 +351,11 @@ async function getOrderMentionItems(orderId: string, session: NotesMentionSessio
   return items;
 }
 
-async function getStudyMentionItems(studyId: string, session: NotesMentionSession): Promise<NoteMentionItem[] | null> {
+async function getStudyMentionItems(
+  studyId: string,
+  principalId: string,
+  scope: ResourceScope
+): Promise<NoteMentionItem[] | null> {
   const study = await db.study.findUnique({
     where: { id: studyId },
     select: {
@@ -381,7 +391,7 @@ async function getStudyMentionItems(studyId: string, session: NotesMentionSessio
     },
   });
 
-  if (!study || !canAccessOwner(session, study.userId)) {
+  if (!study || !canAccessOwner(principalId, scope, study.userId)) {
     return null;
   }
 
@@ -552,9 +562,10 @@ async function getStudyMentionItems(studyId: string, session: NotesMentionSessio
 
 export async function GET(request: NextRequest) {
   try {
-    const session = (await getServerSession(authOptions)) as NotesMentionSession;
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const session = await getServerSession(authOptions);
+    const routeAccess = decideServerCapability(session, "orders.read");
+    if (!routeAccess.allowed) {
+      return authorizationErrorResponse(routeAccess);
     }
 
     const entityType = request.nextUrl.searchParams.get("entityType");
@@ -566,10 +577,26 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid mention context" }, { status: 400 });
     }
 
+    const entityAccess =
+      entityType === "study"
+        ? decideServerCapability(session, "studies.read")
+        : routeAccess;
+    if (!entityAccess.allowed || !entityAccess.grant || !entityAccess.principal) {
+      return authorizationErrorResponse(entityAccess);
+    }
+
     const items =
       entityType === "order"
-        ? await getOrderMentionItems(entityId, session)
-        : await getStudyMentionItems(entityId, session);
+        ? await getOrderMentionItems(
+            entityId,
+            entityAccess.principal.id,
+            entityAccess.grant.scope
+          )
+        : await getStudyMentionItems(
+            entityId,
+            entityAccess.principal.id,
+            entityAccess.grant.scope
+          );
 
     if (!items) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });

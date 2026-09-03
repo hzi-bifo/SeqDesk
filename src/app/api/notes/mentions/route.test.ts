@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     order: {
       findUnique: vi.fn(),
@@ -40,7 +41,12 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 import { GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 function request(url: string) {
   return new NextRequest(`http://localhost:3000${url}`);
@@ -49,6 +55,9 @@ function request(url: string) {
 describe("GET /api/notes/mentions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -209,5 +218,27 @@ describe("GET /api/notes/mentions", () => {
     const response = await GET(request("/api/notes/mentions?entityType=study&entityId=study-1"));
 
     expect(response.status).toBe(404);
+  });
+
+  it("allows Shared Lab members to mention records from the shared catalog", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.db.study.findUnique.mockResolvedValue({
+      id: "study-1",
+      title: "Shared study",
+      alias: null,
+      userId: "other-member",
+      samples: [],
+    });
+
+    const response = await GET(
+      request("/api/notes/mentions?entityType=study&entityId=study-1")
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      mentions: [expect.objectContaining({ type: "study", id: "study-1" })],
+    });
   });
 });

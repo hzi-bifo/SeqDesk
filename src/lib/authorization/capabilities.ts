@@ -28,6 +28,7 @@ const SEQUENCING_MEMBER_CAPABILITIES = new Set<Capability>([
   "samples.manage",
   "analysis.read_own",
   "data.archive",
+  "support.tickets.use",
 ]);
 
 const SEQUENCING_OPERATOR_CAPABILITIES = new Set<Capability>([
@@ -48,6 +49,7 @@ const SEQUENCING_OPERATOR_CAPABILITIES = new Set<Capability>([
   "data.restore",
   "data.purge_shared",
   "publishing.submit",
+  "support.tickets.manage",
 ]);
 
 const SHARED_LAB_MEMBER_CAPABILITIES = new Set<Capability>([
