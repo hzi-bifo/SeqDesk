@@ -2,6 +2,8 @@
 
 Companion to `docs/architecture/deployment-profiles-plan.md`.
 
+Decision gates and their recommended defaults are in `docs/architecture/deployment-profiles-decision-register.md`.
+
 This checklist implements the agreed model:
 
 - SeqDesk remains one application with one release artifact, one npm launcher, one updater, and one canonical installer.
@@ -14,6 +16,22 @@ This checklist implements the agreed model:
 - A profile is a server-enforced runtime policy, not merely a different sidebar or cosmetic view.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
+
+## Decision gate before implementation
+
+- [ ] Confirm one installation represents one organization/team and one deployment profile.
+- [ ] Confirm peer `ADMIN` accounts with no permanent system `OWNER` role.
+- [ ] Confirm Shared Lab and Workbench are invite-only by default after bootstrap.
+- [ ] Confirm the deployment profile is local/restart-required rather than database/UI-editable initially.
+- [ ] Confirm the authorization principal has a future service-account extension point without implementing service tokens now.
+- [ ] Confirm the first Workbench supports multiple private workspaces per researcher and defers collaboration.
+- [ ] Confirm imports copy into managed storage by default; approved-path linking is explicit and read-only.
+- [ ] Confirm browser upload, ENA/SRA, and generalized NCBI are ahead of arbitrary URL import.
+- [ ] Confirm the first Workbench makes no regulated/controlled human-data support claim and exposes no anonymous data links.
+- [ ] Confirm members can execute only administrator-approved, pinned workflow packages.
+- [ ] Decide whether Shared Lab displays the existing `Order` entity as “Order,” “Project,” or “Sequencing Work.”
+
+The installer naming is not an open choice: keep its existing hosted-install `--profile` option and use `--deployment-profile` for the new application mode.
 
 ## Milestone 0 — Characterize current behavior
 
@@ -34,19 +52,23 @@ Likely areas:
 
 ## Milestone 1 — Canonical deployment profile
 
+- [ ] Treat one SeqDesk installation as one organization/team with one active deployment profile; do not add per-user or multi-tenant profile switching.
 - [ ] Create `src/lib/deployment-profile/types.ts` with `sequencing-center`, `shared-lab`, and `research-workbench` identifiers.
 - [ ] Create profile definitions containing enabled domains, landing route, terminology, ownership scope, and default capability grants.
 - [ ] Create a server-side resolver using the existing configuration precedence.
 - [ ] Add `deployment.profile` to `SeqDeskConfig` in `src/lib/config/types.ts`.
 - [ ] Add defaults and environment/file parsing in `src/lib/config/loader.ts`.
-- [ ] Add database merge/save handling in `src/lib/config/database-merge.ts` if profile editing is supported after installation.
+- [ ] Keep the deployment profile in local canonical configuration and restart-required; do not make it database/UI-editable in the first release.
 - [ ] Add install-profile coverage in `src/lib/install-profile/coverage.ts` and the installer apply code.
 - [ ] Add the selected profile to `seqdesk.config.example.json`.
 - [ ] Keep one application version and one release tarball for all profiles.
 - [ ] Keep `scripts/install-dist.sh` as the single canonical installer implementation.
 - [ ] Add an interactive installer question for `sequencing-center`, `shared-lab`, or `research-workbench`.
-- [ ] Add one non-interactive installer option, for example `--profile <id>`, for automation.
+- [ ] Add `--deployment-profile <id>` as the non-interactive application-mode option.
+- [ ] Preserve the existing `--profile <id>` option for hosted install profiles; do not repurpose it for deployment profiles.
+- [ ] Keep deployment profile, hosted install profile, and Nextflow execution profile names/types distinct throughout code and UI.
 - [ ] Allow hosted install profiles to preselect the deployment profile through the same canonical configuration field.
+- [ ] Mark hosted-profile-managed settings as read-only and show their source; distinguish overridable profile defaults from non-overridable compatibility/security constraints.
 - [ ] If profile-specific install URLs or commands are added, make them thin wrappers that call the canonical installer; do not copy the installer logic.
 - [ ] Treat the selected profile as installation-wide and fixed at runtime; do not add a per-user profile/view switch.
 - [ ] Do not expose profile switching in the initial web UI.
@@ -75,14 +97,17 @@ Acceptance:
 ## Milestone 2 — Principal, capabilities, and scopes
 
 - [ ] Create `src/lib/authorization/` with `Principal`, `Capability`, `ResourceScope`, `hasCapability`, and `requireCapability`.
+- [ ] Reserve a principal kind for `human` versus future `service` accounts so automation never needs to impersonate a human administrator.
 - [ ] Keep system administration separate from scientific workflow permissions.
 - [ ] Represent at least `MEMBER` and `ADMIN` as system-level concepts.
+- [ ] Do not add a permanent system-level `OWNER`; administrators are peers protected by the final-active-administrator invariant.
 - [ ] Represent Sequencing Center requester/operator behavior separately from system administration.
 - [ ] Map current `RESEARCHER` users to member/requester behavior.
 - [ ] Map current `FACILITY_ADMIN` users to administrator/operator behavior during migration.
 - [ ] Add an authorization/session revision so promotion, demotion, deactivation, and profile-policy changes take effect without waiting for a stale JWT to expire.
 - [ ] Revoke or reject API credentials and queued privileged actions after account deactivation/demotion.
 - [ ] Define resource scopes: `own`, `department`, `workspace`, and `installation`.
+- [ ] Treat `createdBy` as immutable provenance, not as the universal access-control owner: Shared Lab records are installation-scoped and Workbench records are workspace-scoped.
 - [ ] Define the initial capability catalog:
   - [ ] `system.settings.manage`
   - [ ] `system.users.manage`
@@ -150,7 +175,7 @@ Convert APIs before relying on capability-based UI.
 Acceptance:
 
 - [ ] UI hiding is never the only authorization control.
-- [ ] Disabled profile domains return the chosen consistent response (`404` for unavailable domain or `403` for an understood but forbidden action).
+- [ ] Disabled profile domains return `404`; available domains/actions return `403` when the authenticated principal lacks capability or resource scope; missing/invalid authentication returns `401`.
 - [ ] Cross-user and cross-workspace access tests pass.
 
 ## Milestone 4 — Shared Lab accounts and registration
@@ -159,7 +184,9 @@ Acceptance:
 - [ ] Use one registration page and one login page.
 - [ ] Remove the researcher/facility-admin choice from Shared Lab registration.
 - [ ] Label ordinary accounts “Member,” not “Researcher.”
-- [ ] Make the first account on a new Shared Lab installation an administrator.
+- [ ] Default Shared Lab and Research Workbench to invite-only enrollment after bootstrap; keep self-registration an explicit administrator setting and retain configurable researcher self-registration for Sequencing Center.
+- [ ] Keep all profiles authenticated; do not add a no-login “single-user” shortcut.
+- [ ] Make the initial account on a new installation an administrator through the secure bootstrap flow.
 - [ ] Create/claim the first administrator through locally supplied installer credentials or a short-lived single-use bootstrap token; do not leave an externally reachable first-user-wins registration endpoint.
 - [ ] Make initial-administrator claiming atomic so concurrent requests cannot both pass an empty-installation check.
 - [ ] Let administrators invite/create members.
@@ -178,6 +205,7 @@ Acceptance:
 - [ ] Preserve immutable creator/actor provenance when operational ownership changes.
 - [ ] Add a local, audited administrator-recovery command for an operator with filesystem/database access.
 - [ ] Ensure administrator recovery cannot be invoked through an unauthenticated browser endpoint.
+- [ ] Keep capability/resource authorization independent of the credential provider so OIDC/LDAP can be added later without implementing them in this milestone.
 - [ ] Keep profile selection install-time only for the first release; if transitions are added later, expose them through a guarded administrative migration command rather than a casual settings toggle.
 
 Likely areas:
@@ -208,6 +236,8 @@ Acceptance:
 - [ ] Keep tickets and billing as optional compatible modules if a small lab wants them.
 - [ ] Remove researcher-only/facility-only branches from shared scientific views; render actions from capabilities.
 - [ ] Keep administrator settings links visible only to administrators.
+- [ ] Add optimistic concurrency to meaningful shared-record edits; reject stale updates with `409 Conflict` instead of silently overwriting another member's change.
+- [ ] Keep multi-record operations such as sample/run assignment transactional.
 - [ ] Decide the display term for the existing `Order` record: initially keep storage/API names and test “Project” or “Sequencing Work” as Shared Lab UI terminology.
 - [ ] Adjust notifications so normal Shared Lab actions do not notify an artificial requester/facility counterpart.
 - [ ] Add administrator-configurable compute, concurrency, storage, and retention limits without removing members' ability to launch approved workflows.
@@ -264,20 +294,35 @@ Likely areas:
 
 ## Milestone 8 — Research Workbench completion
 
-- [ ] Generalize `WorkbenchDataset` from NCBI genome bundles to typed datasets with asset manifests and provenance.
-- [ ] Add resumable browser upload with checksum, quota/free-space checks, cancellation, and abandoned-upload cleanup.
+- [ ] Remove `WorkbenchWorkspace.ownerId @unique` so a user can create multiple private workspaces; enforce at most one default workspace per user.
+- [ ] Keep collaborative workspace membership out of the first release unless it becomes a launch requirement; preserve an additive path to resource-level `OWNER`/`EDITOR`/`VIEWER` membership later.
+- [ ] Replace user-cascade ownership so deleting/deactivating a login cannot cascade-delete a Workbench workspace or import provenance.
+- [ ] Generalize `WorkbenchDataset` from NCBI genome bundles to workspace-owned typed datasets with asset manifests and provenance.
+- [ ] Separate logical workspace datasets from immutable `DataAsset`/content-addressed `StorageObject` records; do not use the current global cache key as an authorization boundary.
+- [ ] Reference-count physical storage so deleting one workspace link cannot remove bytes still used by another dataset, run, trash/retention record, or cache entry.
+- [ ] Represent samples and typed/nested asset collections explicitly, including single/paired reads, lanes, technical replicates, samplesheets, references, annotations, and reports.
+- [ ] Add resumable upload-session persistence with reserved bytes, idempotent completion, checksum/type validation, cancellation, and abandoned-upload cleanup.
+- [ ] Enforce archive entry-count, expanded-size, traversal, and compression-ratio limits before materializing an uploaded archive.
 - [ ] Add imports from administrator-approved server roots; never accept arbitrary filesystem paths from clients.
+- [ ] Copy approved-path imports into managed storage by default; if read-only linking is enabled, record/revalidate identity, size, modification time, and checksum at run start.
 - [ ] Add real ENA/SRA accession import.
 - [ ] Generalize the existing NCBI taxon importer.
-- [ ] Add protected HTTP(S) import with redirect revalidation, internal-address blocking, size limits, and archive-expansion limits.
+- [ ] Preserve repository metadata and accessions separately from downloaded bytes; do not assume an SRA run file contains BioSample/BioProject metadata.
+- [ ] Defer arbitrary HTTP(S) import from the first release; when added, require provider/host policy, redirect revalidation, internal-address blocking, transfer limits, and archive-expansion limits.
+- [ ] Define installation-owned versus user-owned importer credentials and ensure neither is exposed in APIs, logs, parameters, or provenance values.
+- [ ] Apply an explicit data-support boundary: authenticated/private use only, no anonymous public dataset links, and no regulated/controlled human-data compliance claim in the first release.
+- [ ] Enforce installation capacity/free-space floors and optional member/workspace quotas, including active uploads, work directories, managed outputs, caches, trash, and retention holds.
+- [ ] Count deduplicated storage once physically while displaying every logical reference that prevents reclamation.
+- [ ] Preserve metadata needed for future asynchronous RO-Crate-compatible dataset/analysis export.
 - [ ] Complete Workbench Data, Imports, Runs, and Results views.
-- [ ] Decide whether shared Workbench workspaces are required for the first release; keep private workspaces as the default.
 
 Acceptance:
 
-- [ ] A member can create a usable dataset without an order or study.
+- [ ] A member can create several private workspaces and usable datasets without an order or study.
 - [ ] Dataset provenance includes its source, retrieval/upload details, checksums, and validation state.
 - [ ] Cache reuse never grants another workspace access to a dataset.
+- [ ] Changing dataset bytes produces a new dataset/version; display metadata edits cannot change the immutable run input snapshot.
+- [ ] Deactivating a user does not destroy their Workbench data.
 
 ## Milestone 9 — Target-agnostic pipeline execution
 
@@ -287,6 +332,10 @@ Acceptance:
 - [ ] Validate Workbench dataset kinds/assets against semantic pipeline input requirements.
 - [ ] Materialize Workbench outputs as result datasets rather than `Read`, `Assembly`, or `Bin` records tied to fake orders.
 - [ ] Keep facility-specific output write-back in facility adapters.
+- [ ] Snapshot exact input asset IDs/checksums, approved pipeline package/revision/checksum, allowed parameters, effective execution configuration, initiating principal, and available tool/container versions for every run.
+- [ ] Model retries/resumes as attempts linked to one logical run instead of overwriting the prior execution record.
+- [ ] Permit members to run only administrator-approved packages; reject arbitrary scripts, containers, Nextflow configuration, and unrestricted cluster options.
+- [ ] Pass runtime credentials through a dedicated secret mechanism; never serialize secret values as pipeline parameters, commands, logs, or provenance.
 - [ ] Complete canvas pipeline-node execution and Workbench run/result navigation.
 
 Acceptance journey:
@@ -305,6 +354,10 @@ Acceptance journey:
 - [ ] Define a coherent backup set: database, canonical configuration, secrets, installed pipeline metadata, and managed data roots.
 - [ ] Add restore verification that checks the selected profile and module compatibility before workers start.
 - [ ] Test account deactivation, data transfer/retention, and administrator recovery.
+- [ ] Test interrupted/resumed uploads, quota reservation release, storage-object reference counting, and safe cleanup.
+- [ ] Test stale Shared Lab edits return conflicts instead of overwriting newer state.
+- [ ] Test deployment-profile/default/constraint precedence and prove hosted-managed values cannot be changed through the UI.
+- [ ] Document the supported data boundary and avoid controlled/regulated-data claims until the separate security design exists.
 - [ ] If profile migration is added later, require preflight/backup, show visibility and permission changes, and block migration while incompatible jobs or sequencing streams are active.
 - [ ] Test upgrades and rollbacks with stale sessions to prove permission changes remain enforced.
 - [ ] Add the three mandatory end-to-end journeys to release gates.

@@ -6,6 +6,8 @@ Branch: `codex/modular-deployment-modes`
 
 Scope: application architecture and phased implementation plan; no production behavior is changed by this document.
 
+Pre-implementation choices and recommended defaults are tracked in `docs/architecture/deployment-profiles-decision-register.md`.
+
 ## Decision summary
 
 SeqDesk should support three explicit deployment profiles in two product families:
@@ -33,6 +35,8 @@ one SeqDesk release artifact
 ```
 
 The interactive installer should ask which profile to use. Automated and hosted-profile installations should pass the same choice non-interactively. All paths must invoke the same installer and consume the same signed/checksummed release artifact. Convenience links or commands may preselect a profile, but they must be thin entry points into the canonical installer rather than copied installer scripts.
+
+The word “profile” is already used by the hosted installer (`--profile`) and by Nextflow execution profiles. Keep those contracts distinct: the new installer option is `--deployment-profile`, hosted configuration remains `--profile`, and compute selection remains `nextflowProfile`.
 
 This is the recommended approach for a solo developer because fixes, migrations, dependency updates, security patches, release verification, and rollback behavior stay unified. Three installers or build flavors would multiply paths that can drift and require every release problem to be diagnosed across several artifacts.
 
@@ -78,14 +82,14 @@ Those concepts happen to align in a large sequencing center, but they do not ali
 | Ownership | Requester-owned, facility-wide operator view | Shared operational workspace | Private or explicitly shared workspace |
 | Handoff | Researcher submits; facility processes | No requester/facility handoff | No sequencing-service handoff |
 | Operational permissions | Depend on workflow role | All members can perform normal lab work | Members operate on their own/shared workspaces |
-| System settings | Installation admins only | Installation owner/admin only | Installation owner/admin only |
+| System settings | Installation admins only | Installation admins only | Installation admins only |
 | Communication/tickets | Useful and enabled by default | Optional/off by default | Not part of the core profile |
 | Sequencing integration | Core | Core | Optional data source, not the organizing model |
 | Public repository publishing | Facility/broker-oriented | Optional | Researcher-oriented and optional |
 
 ### Important Shared Lab rule
 
-“No researcher/admin differentiation” should apply to scientific and operational work, not to installation secrets or destructive administration. A Shared Lab member should be able to create and edit shared projects, attach data, manage sequencing runs, and launch pipelines. Only an installation owner/admin should manage accounts, credentials, updates, storage roots, and global configuration.
+“No researcher/admin differentiation” should apply to scientific and operational work, not to installation secrets or destructive administration. A Shared Lab member should be able to create and edit shared projects, attach data, manage sequencing runs, and launch pipelines. Only an installation administrator should manage accounts, credentials, updates, storage roots, and global configuration.
 
 Making every user a `FACILITY_ADMIN` would be quick, but it would also expose infrastructure and secret-bearing settings. The capability model below avoids that.
 
@@ -102,7 +106,7 @@ All profiles use the same sign-in screen and account mechanism. “Login type”
 For Shared Lab specifically:
 
 - registration does not ask the user to choose “researcher” or “facility admin”;
-- the first account becomes an administrator;
+- the initial account is created or claimed as an administrator through the secure bootstrap flow;
 - administrators can promote or demote other accounts, so more than one administrator is supported;
 - the final administrator cannot be demoted or deleted until another administrator exists;
 - members can create and edit shared projects, samples, sequencing runs, data attachments, analyses, and workflow runs;
@@ -112,6 +116,8 @@ For Shared Lab specifically:
 “All scientific/operational work” excludes installation-wide destructive and code-installation actions. Members can use approved pipelines and work with shared data, but installing an arbitrary pipeline package is equivalent to granting code execution on the SeqDesk host. Permanent purge of shared raw data/results, cancellation of another user's active job, and changes to compute quotas or retention policy require separate capabilities and should be administrator-only by default. Recoverable archive/trash actions can be granted more broadly.
 
 The first implementation can map current roles through the capability layer (`RESEARCHER` -> member and `FACILITY_ADMIN` -> administrator/operator) without immediately rewriting stored users. An additive schema migration can later separate `systemRole` (`MEMBER` or `ADMIN`) from an optional facility workflow role (`REQUESTER` or `OPERATOR`).
+
+There is no separate permanent `OWNER` system role. Administrators are peers, and the final-active-administrator invariant prevents lockout. Workspace-level ownership or future `OWNER`/`EDITOR`/`VIEWER` membership is a resource relationship, not system authority.
 
 ## Architecture
 
@@ -149,7 +155,7 @@ Each profile definition should declare:
 - compatible optional modules;
 - setup and registration behavior.
 
-Resolve the active profile once on the server, using the existing configuration precedence rules. Persist the chosen profile in `settings.json`/install-profile configuration and mirror it in `SiteSettings.extraSettings` only when database editing is deliberately supported. Expose a sanitized resolved profile to client components through the dashboard layout. Do not make authorization depend on a `NEXT_PUBLIC_*` value.
+Resolve the active profile once on the server, using the existing configuration precedence rules. Persist the chosen profile in `settings.json`/install-profile configuration and do not make it database/UI-editable in the first release. Expose a sanitized resolved profile to client components through the dashboard layout. Do not make authorization depend on a `NEXT_PUBLIC_*` value.
 
 For the migration period, translate the existing values as follows:
 
@@ -211,11 +217,11 @@ Default grants:
 | Principal | Sequencing Center | Shared Lab | Research Workbench |
 | --- | --- | --- | --- |
 | Member/current `RESEARCHER` | Own requests, studies, and published results | Shared scientific/operational work, including runs | Own/shared workspace data and runs |
-| Owner/current `FACILITY_ADMIN` | Facility operations plus system administration | Same operational access plus system administration | Workspace access plus system administration |
+| Admin/operator/current `FACILITY_ADMIN` | Facility operations plus system administration during migration | Same operational access plus system administration | Own/shared workspace access plus system administration |
 
 Resource scope must remain part of authorization. A capability answers what a principal may do; a scope answers which records they may do it to (`own`, `department`, `workspace`, or `installation`).
 
-During migration, keep the database `role` strings for compatibility but prohibit new direct comparisons outside the authorization package. Once route coverage is complete, migrate toward explicit system roles such as `OWNER`, `ADMIN`, and `MEMBER`. Workflow behavior should come from the deployment profile and resource membership, not from system role names.
+During migration, keep the database `role` strings for compatibility but prohibit new direct comparisons outside the authorization package. Once route coverage is complete, migrate toward explicit system roles `ADMIN` and `MEMBER`. Workflow behavior should come from the deployment profile and resource membership, not from system role names.
 
 Authorization changes must take effect promptly. The current JWT-based session carries the role assigned at login, so promotion, demotion, deactivation, or profile-policy changes need a server-validated authorization revision or forced session renewal. A demoted administrator must not retain administrator access until an old session naturally expires.
 
@@ -286,7 +292,7 @@ This is the key reuse point: all profiles share the pipeline runtime without for
 
 ### 6. Complete the researcher data model
 
-Build on the existing `WorkbenchWorkspace`, `WorkbenchAnalysis`, `WorkbenchDataset`, and import-job models. Do not reuse `Order` as a generic project.
+Build on the existing `WorkbenchWorkspace`, `WorkbenchAnalysis`, `WorkbenchDataset`, and import-job models. Do not reuse `Order` as a generic project. Remove the current one-workspace-per-owner restriction so a researcher can create multiple private workspaces while retaining at most one default workspace.
 
 Generalize `WorkbenchDataset` beyond reference-genome bundles. It currently includes provider-specific fields such as `genomeCount`; new datasets need typed, provenance-aware assets:
 
@@ -295,9 +301,11 @@ Generalize `WorkbenchDataset` beyond reference-genome bundles. It currently incl
 - sample sheet or sample/lane/pair metadata where relevant;
 - source provider, source URI/accession, request parameters, retrieval time, tool/provider version, and license where known;
 - validation state and compatibility with pipeline input slots;
-- owner/workspace visibility and lifecycle state.
+- workspace visibility and lifecycle state.
 
-An initial JSON manifest is acceptable for an MVP, but paths, ownership, and checksums must remain server-controlled. Normalize assets into their own table when querying individual assets or enforcing retention becomes important.
+Separate workspace-owned logical datasets from physical cached content. An initial JSON manifest is acceptable while the contract is proven, but paths, ownership, and checksums must remain server-controlled. Normalize immutable assets/storage objects into their own tables before relying on cross-workspace deduplication, per-asset retention, or quota accounting. A shared cache key must never become a shared authorization record.
+
+The manifest must represent sample collections explicitly, including single/paired reads, lanes, technical replicates, and typed asset roles. Filename inference may propose a structure but cannot be the persisted semantic model.
 
 The Workbench object flow should be:
 
@@ -315,7 +323,7 @@ Prioritized input providers:
 2. **Import from configured server path**: selectable only beneath administrator-approved roots; never accept an arbitrary client-supplied path.
 3. **ENA/SRA accession import**: preview metadata and retrieve real records through supported tools/APIs.
 4. **NCBI datasets**: generalize the existing taxon genome importer.
-5. **HTTP(S) URL import**: strict scheme allowlist, DNS/IP protections, redirects revalidated, size limits, and checksums to prevent SSRF and storage abuse.
+5. **HTTP(S) URL import**: defer from the first Workbench release; when added, require a strict scheme/host/network policy, redirect revalidation, size limits, and checksums to prevent SSRF and storage abuse.
 6. **Reuse prior SeqDesk results**: attach an existing compatible result dataset without copying when policy permits.
 
 Importers should create immutable provenance records and materialize datasets through one shared service. They should not write directly to arbitrary domain tables.
@@ -325,8 +333,8 @@ Importers should create immutable provenance records and materialize datasets th
 The setup flow should ask for the deployment profile before profile-specific configuration.
 
 - Sequencing Center: facility identity, first facility administrator, researcher registration/invites, intake forms, sequencing storage and instruments.
-- Shared Lab: lab identity, first owner, member invitations/registration, shared data scope, sequencing storage and instruments.
-- Research Workbench: workspace identity, first owner, data/import storage, pipeline runtime; no facility name or sequencing-order copy.
+- Shared Lab: lab identity, first administrator, member invitations/registration, shared data scope, sequencing storage and instruments.
+- Research Workbench: workspace identity, first administrator, data/import storage, pipeline runtime; no facility name or sequencing-order copy.
 
 Copy should come from profile/domain terminology where meaning differs. Do not scatter ternaries across pages. Keep underlying entity names stable during the first implementation phase; introduce display labels through the profile definition.
 
@@ -394,17 +402,20 @@ Exit condition: profile work no longer requires duplicating role checks, and UI 
 ### Phase 3 — Shared Lab profile
 
 - Add `shared-lab` profile defaults and setup option.
-- Grant members installation-wide scientific/operational scope while retaining owner-only system administration.
+- Grant members installation-wide scientific/operational scope while retaining administrator-only system administration.
 - Remove the requester/facility handoff from the Shared Lab UI; simplify status actions and hide tickets/departments by default.
 - Use shared ownership filters in orders, studies, samples, sequencing, analysis, and sidebar counts.
 - Add neutral terminology where it improves comprehension without changing stored data.
 - Provide a tested `sequencing-center -> shared-lab` transition that preserves all records and can be reversed while no Shared Lab-only access changes are pending.
 
-Exit condition: two ordinary lab members can see and operate the same sequencing work, while neither can access owner-only secrets or infrastructure controls.
+Exit condition: two ordinary lab members can see and operate the same sequencing work, while neither can access administrator-only secrets or infrastructure controls.
 
 ### Phase 4 — Research Workbench data foundation
 
 - Generalize dataset manifests and provenance.
+- Allow multiple private workspaces per member while retaining at most one default workspace.
+- Separate workspace-owned logical datasets from immutable physical storage objects/cache entries.
+- Represent samples, paired reads, lanes, and nested/typed asset collections explicitly.
 - Add browser upload and approved-server-path providers.
 - Add ENA/SRA import and broaden NCBI import.
 - Complete Imports and Data views, quotas/free-space handling, cancellation, retry, and cleanup.
@@ -462,7 +473,7 @@ The second slice should introduce the capability API and convert one complete ve
 ## Security and operational requirements
 
 - Enforce profile/domain access in APIs and server layouts, not only navigation.
-- Keep system administration owner-only in Shared Lab and Workbench.
+- Keep system administration administrator-only in Shared Lab and Workbench.
 - Validate all local paths against configured roots and canonicalize them after resolving symlinks.
 - Protect URL import against SSRF, redirect bypasses, excessive downloads, and archive expansion attacks.
 - Apply upload quotas, free-space checks, extension/content validation, checksums, cancellation, and cleanup of abandoned partial files.
@@ -492,21 +503,22 @@ Additionally require:
 
 - table-driven capability tests for profile x principal x action x scope;
 - route reachability tests for profile x route family;
-- API tests proving hidden domains return 404/403 as defined;
+- API tests proving hidden domains return `404` and available-but-forbidden actions return `403`;
 - cross-user/workspace isolation tests;
 - legacy configuration and existing-installation migration tests;
 - clean-install tests for one install profile per deployment profile;
 - pipeline runtime tests proving facility and Workbench adapters produce equivalent execution inputs where appropriate.
 
-## Remaining product decisions before Phase 3/4
+## Product decisions before Phase 3/4
 
-These choices do not block the foundation work, but they should be answered before exposing new profiles:
+The full prioritized register is in `docs/architecture/deployment-profiles-decision-register.md`. The remaining user-facing choices are:
 
 1. Should “Sequencing Order” be relabeled as “Project” in Shared Lab, or is the order terminology still useful?
-2. Is the first Workbench release single-user/private-workspace only, or must shared team workspaces ship immediately?
-3. Which researcher input is the first must-have after NCBI genomes: browser upload, server-path import, or ENA/SRA accessions?
+2. Must collaborative Workbench workspaces ship in the first release, or can the first release support multiple private workspaces per researcher?
+3. Should Shared Lab and Workbench remain invite-only by default, with self-registration available only when an administrator deliberately enables it?
+4. Is the first Workbench release explicitly limited to ordinary research data, with regulated/controlled human-data support deferred pending a separate security/compliance design?
 
-Already decided: Shared Lab work is shared by default, subject to separate destructive-action permissions, and one installation exposes one deployment profile. Recommended answers for the remaining questions are: keep stored `Order` but test a neutral display label, ship private Workbench first, and implement browser upload plus ENA/SRA next.
+Recommended answers are: keep stored `Order` while testing a neutral display label, ship multiple private Workbench workspaces before collaboration, default small-team profiles to invite-only, and make no controlled-data claim in the first release. Browser upload and ENA/SRA accession import should be the first new input paths; arbitrary URL import should wait for the complete egress/SSRF policy.
 
 ## Explicit non-goals for the first milestones
 
@@ -515,6 +527,8 @@ Already decided: Shared Lab work is shared by default, subject to separate destr
 - Making every Shared Lab user an installation administrator.
 - Faking Workbench datasets as sequencing orders.
 - Supporting arbitrary local filesystem paths supplied by a browser.
+- Providing anonymous/public Workbench dataset links or claiming regulated human-data compliance.
+- Running arbitrary member-supplied scripts, containers, or Nextflow configuration.
 - Supporting multiple deployment profiles concurrently in one installation.
 - Replacing the existing packaged Nextflow runtime.
 - Moving code between the SeqDesk, SeqDesk.com, and MetaxPath repositories without a separately approved compatibility change.
