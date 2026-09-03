@@ -48,12 +48,17 @@ Likely areas:
 - [ ] Add one non-interactive installer option, for example `--profile <id>`, for automation.
 - [ ] Allow hosted install profiles to preselect the deployment profile through the same canonical configuration field.
 - [ ] If profile-specific install URLs or commands are added, make them thin wrappers that call the canonical installer; do not copy the installer logic.
+- [ ] Treat the selected profile as installation-wide and fixed at runtime; do not add a per-user profile/view switch.
+- [ ] Do not expose profile switching in the initial web UI.
 - [ ] Preserve the selected profile across update and rollback operations.
 - [ ] Use one database schema and migration chain for all profiles.
 - [ ] Install/download large optional pipeline packages, databases, instrument integrations, and import tools only when required by the selected profile/modules.
 - [ ] Map legacy `lab` to `sequencing-center` and legacy `workbench` to `research-workbench`.
 - [ ] Deprecate, but initially support, `NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY`.
 - [ ] Ensure authorization reads only the server-resolved profile, never a client-controlled or `NEXT_PUBLIC_*` value.
+- [ ] Validate profile identifiers and reject unknown values instead of falling back to a broader profile.
+- [ ] Add a compatibility validator for profile x domain x module dependencies and conflicts.
+- [ ] Run compatibility validation during install, hosted-profile reload, startup, and settings updates.
 - [ ] Pass a sanitized profile descriptor from the dashboard layout to client navigation/components.
 - [ ] Keep `sequencing-center` as the default for every existing installation.
 
@@ -65,6 +70,7 @@ Acceptance:
 - [ ] Updating an installation changes the application version without changing its selected profile.
 - [ ] Server routes, APIs, landing redirects, and client navigation agree on the active profile.
 - [ ] Profile resolution and legacy aliases have focused tests.
+- [ ] Invalid or incomplete profile/module combinations fail closed with actionable diagnostics.
 
 ## Milestone 2 — Principal, capabilities, and scopes
 
@@ -74,6 +80,8 @@ Acceptance:
 - [ ] Represent Sequencing Center requester/operator behavior separately from system administration.
 - [ ] Map current `RESEARCHER` users to member/requester behavior.
 - [ ] Map current `FACILITY_ADMIN` users to administrator/operator behavior during migration.
+- [ ] Add an authorization/session revision so promotion, demotion, deactivation, and profile-policy changes take effect without waiting for a stale JWT to expire.
+- [ ] Revoke or reject API credentials and queued privileged actions after account deactivation/demotion.
 - [ ] Define resource scopes: `own`, `department`, `workspace`, and `installation`.
 - [ ] Define the initial capability catalog:
   - [ ] `system.settings.manage`
@@ -81,14 +89,18 @@ Acceptance:
   - [ ] `system.updates.manage`
   - [ ] `system.pipelines.manage`
   - [ ] `system.workflows.publish`
+  - [ ] `system.quotas.manage`, `system.retention.manage`
   - [ ] `orders.create`, `orders.read`, `orders.read_all`, `orders.process`
   - [ ] `studies.create`, `studies.read`, `studies.read_all`, `studies.publish`
   - [ ] `samples.manage`
   - [ ] `sequencing.runs.manage`, `sequencing.files.manage`, `sequencing.deliver`
   - [ ] `analysis.run`, `analysis.read_own`, `analysis.read_all`, `analysis.resolve_outputs`
+  - [ ] `analysis.cancel_own`, `analysis.cancel_all`
   - [ ] `workbench.use`, `workbench.import`, `workbench.run`
+  - [ ] `data.archive`, `data.restore`, `data.purge_shared`
   - [ ] `publishing.submit`
 - [ ] Add table-driven tests for every profile x account level x capability x scope combination.
+- [ ] Add tests proving an already signed-in administrator loses protected access immediately after demotion or deactivation.
 - [ ] Add a repository check that rejects new `session.user.role === ...` authorization outside the compatibility package.
 
 Acceptance:
@@ -126,6 +138,8 @@ Convert APIs before relying on capability-based UI.
 - [ ] Convert log, weblog, artifact, output resolution, result selection, and cleaned-read routes.
 - [ ] Allow `analysis.run` independently of system pipeline configuration.
 - [ ] Keep pipeline installation and global defaults behind `system.pipelines.manage`.
+- [ ] Treat installation of a pipeline/package as privileged host code installation; never infer it from permission to run an approved pipeline.
+- [ ] Apply configured compute/concurrency limits to member-launched runs.
 
 ### Workbench
 
@@ -146,13 +160,25 @@ Acceptance:
 - [ ] Remove the researcher/facility-admin choice from Shared Lab registration.
 - [ ] Label ordinary accounts “Member,” not “Researcher.”
 - [ ] Make the first account on a new Shared Lab installation an administrator.
+- [ ] Create/claim the first administrator through locally supplied installer credentials or a short-lived single-use bootstrap token; do not leave an externally reachable first-user-wins registration endpoint.
+- [ ] Make initial-administrator claiming atomic so concurrent requests cannot both pass an empty-installation check.
 - [ ] Let administrators invite/create members.
 - [ ] Let administrators promote a member to administrator.
 - [ ] Let administrators demote another administrator.
 - [ ] Prevent demotion, deletion, or deactivation of the final active administrator.
+- [ ] Enforce the final-administrator check and role update in one transaction to prevent concurrent demotions.
 - [ ] Prevent users from self-promoting through registration or profile-update requests.
 - [ ] Record administrator promotion/demotion with actor, target, timestamp, and old/new level.
-- [ ] Decide whether profile switching is install-only or exposed through an audited migration wizard; do not add a casual toggle.
+- [ ] Default to account deactivation; make hard deletion a separate destructive workflow.
+- [ ] Keep Shared Lab scientific records accessible after their creator is deactivated.
+- [ ] Separate reversible archive/trash from permanent purge; keep permanent purge of shared data administrator-only by default.
+- [ ] Allow members to cancel their own runs; require a separate capability to cancel another member's active run.
+- [ ] Require explicit transfer, export, retention, or purge handling before deleting the owner of a private Workbench workspace.
+- [ ] Prevent user removal from cascade-deleting a Workbench workspace or research history unexpectedly.
+- [ ] Preserve immutable creator/actor provenance when operational ownership changes.
+- [ ] Add a local, audited administrator-recovery command for an operator with filesystem/database access.
+- [ ] Ensure administrator recovery cannot be invoked through an unauthenticated browser endpoint.
+- [ ] Keep profile selection install-time only for the first release; if transitions are added later, expose them through a guarded administrative migration command rather than a casual settings toggle.
 
 Likely areas:
 
@@ -170,6 +196,9 @@ Acceptance:
 - [ ] Multiple administrators are supported.
 - [ ] Members and administrators sign in through the same page.
 - [ ] Registration never accepts an administrator grant without existing administrator authorization or first-account bootstrap rules.
+- [ ] An unclaimed installation exposed to the network cannot be claimed by an arbitrary browser visitor.
+- [ ] Deactivated or demoted accounts cannot retain access through an existing session or API credential.
+- [ ] Losing normal administrator credentials has a documented local recovery procedure.
 
 ## Milestone 5 — Shared Lab scientific experience
 
@@ -181,6 +210,7 @@ Acceptance:
 - [ ] Keep administrator settings links visible only to administrators.
 - [ ] Decide the display term for the existing `Order` record: initially keep storage/API names and test “Project” or “Sequencing Work” as Shared Lab UI terminology.
 - [ ] Adjust notifications so normal Shared Lab actions do not notify an artificial requester/facility counterpart.
+- [ ] Add administrator-configurable compute, concurrency, storage, and retention limits without removing members' ability to launch approved workflows.
 - [ ] Update help text, empty states, onboarding, and demo/seed data for Shared Lab.
 
 Acceptance journey:
@@ -220,6 +250,7 @@ Acceptance:
 - [ ] Build page titles and default landing routes from profile definitions.
 - [ ] Gate facility, sequencing, publishing, Workbench, and admin route groups on the server.
 - [ ] Make terminology a profile concern instead of adding page-level ternaries.
+- [ ] Keep route names, API fields, exported manifests, and automation contracts stable when only UI terminology changes.
 - [ ] Ensure direct URLs cannot bypass profile availability or permissions.
 - [ ] Update profile-specific login, registration, help, and empty-state copy.
 
@@ -271,6 +302,11 @@ Acceptance journey:
 - [ ] Run those three fixtures against the exact same release tarball.
 - [ ] Verify one checksum, one update feed, and one rollback path for the shared artifact.
 - [ ] Verify profile-specific optional dependencies are installed only when selected.
+- [ ] Define a coherent backup set: database, canonical configuration, secrets, installed pipeline metadata, and managed data roots.
+- [ ] Add restore verification that checks the selected profile and module compatibility before workers start.
+- [ ] Test account deactivation, data transfer/retention, and administrator recovery.
+- [ ] If profile migration is added later, require preflight/backup, show visibility and permission changes, and block migration while incompatible jobs or sequencing streams are active.
+- [ ] Test upgrades and rollbacks with stale sessions to prove permission changes remain enforced.
 - [ ] Add the three mandatory end-to-end journeys to release gates.
 - [ ] Test supported profile transitions and rollback behavior.
 - [ ] Confirm profile changes never delete hidden-domain data or silently broaden access.

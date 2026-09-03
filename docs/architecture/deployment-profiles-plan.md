@@ -109,6 +109,8 @@ For Shared Lab specifically:
 - only administrators can manage accounts, installed/enabled pipeline packages, shared workflow catalog entries, instruments, storage roots, credentials, software updates, and global settings;
 - members may create personal workflows and select run parameters; “configure workflows” in the administrator sense means controlling the installation-wide approved catalog and defaults.
 
+“All scientific/operational work” excludes installation-wide destructive and code-installation actions. Members can use approved pipelines and work with shared data, but installing an arbitrary pipeline package is equivalent to granting code execution on the SeqDesk host. Permanent purge of shared raw data/results, cancellation of another user's active job, and changes to compute quotas or retention policy require separate capabilities and should be administrator-only by default. Recoverable archive/trash actions can be granted more broadly.
+
 The first implementation can map current roles through the capability layer (`RESEARCHER` -> member and `FACILITY_ADMIN` -> administrator/operator) without immediately rewriting stored users. An additive schema migration can later separate `systemRole` (`MEMBER` or `ADMIN`) from an optional facility workflow role (`REQUESTER` or `OPERATOR`).
 
 ## Architecture
@@ -155,9 +157,11 @@ For the migration period, translate the existing values as follows:
 - current `workbench` surface -> `research-workbench`;
 - `NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY` -> deprecated compatibility alias.
 
-The profile should be restart-required initially. Changing profiles on an installation with existing data can hide workflows or change access scope, so an unrestricted settings toggle is unsafe. A future migration wizard can support deliberate transitions.
+The profile should be restart-required initially. Changing profiles on an installation with existing data can hide workflows or change access scope, so an unrestricted settings toggle is unsafe. A future guarded migration command can support deliberate transitions.
 
 The installer and updater remain profile-neutral. Installation writes the selected profile into canonical configuration, and the application resolves it at runtime. Updating SeqDesk replaces the shared application release while preserving the installation's selected profile and profile-managed settings.
+
+For the first supported release, treat the profile as an **installation identity**, not as a per-user view switch. One installation has one active profile. Do not expose live profile switching in the web UI. A later administrative migration command may support selected transitions only after it performs a backup/preflight, reports permission and visibility changes, and confirms that no incompatible jobs are active.
 
 ### 2. Separate profiles, domains, feature modules, and capabilities
 
@@ -212,6 +216,8 @@ Default grants:
 Resource scope must remain part of authorization. A capability answers what a principal may do; a scope answers which records they may do it to (`own`, `department`, `workspace`, or `installation`).
 
 During migration, keep the database `role` strings for compatibility but prohibit new direct comparisons outside the authorization package. Once route coverage is complete, migrate toward explicit system roles such as `OWNER`, `ADMIN`, and `MEMBER`. Workflow behavior should come from the deployment profile and resource membership, not from system role names.
+
+Authorization changes must take effect promptly. The current JWT-based session carries the role assigned at login, so promotion, demotion, deactivation, or profile-policy changes need a server-validated authorization revision or forced session renewal. A demoted administrator must not retain administrator access until an old session naturally expires.
 
 ### 4. Compose navigation and route access by domain
 
@@ -324,6 +330,35 @@ The setup flow should ask for the deployment profile before profile-specific con
 
 Copy should come from profile/domain terminology where meaning differs. Do not scatter ternaries across pages. Keep underlying entity names stable during the first implementation phase; introduce display labels through the profile definition.
 
+Public API field names, database identifiers, exported manifests, and automation contracts should remain stable when only display terminology changes. For example, showing “Project” in Shared Lab must not silently rename `orderId` in an existing API.
+
+## Account lifecycle and data stewardship
+
+Profile design must define what happens when a person leaves. Scientific records should belong to the installation/workspace, while `createdBy` and ownership fields preserve provenance and access responsibility.
+
+- Default to account deactivation rather than hard deletion.
+- Revoke sessions, API credentials, and queued privileged actions when an account is deactivated or demoted.
+- Shared Lab records remain available to the lab when their creator leaves.
+- Private Workbench resources require an explicit transfer, export, retention, or purge decision before their owner can be deleted.
+- Administrators do not automatically gain access to private Workbench data; any support-access mechanism must be explicit, time-limited, and audited.
+- Never cascade-delete a research workspace merely because an administrator removed a login.
+- Keep immutable creator/actor information even when operational ownership is transferred.
+
+The application also needs a secure recovery path if normal administrator access is lost. Provide a local CLI operation, available only to an operator with installation filesystem/database access, that can promote or recover an administrator and records the recovery event. This is separate from browser registration and must not accept a remote unauthenticated request.
+
+First-administrator creation must also be protected. The installer should create the initial administrator from locally supplied bootstrap credentials or issue a short-lived, single-use bootstrap token. Do not make “the first browser registration becomes administrator” available on an externally reachable unclaimed server. Initial claiming and the final-administrator invariant must be atomic so two concurrent requests cannot create an unsafe state.
+
+## Profile and module compatibility
+
+Every domain and feature module should declare the profiles it supports, required capabilities, dependencies, and conflicts. Validate the complete configuration at installation, reload, startup, and before an administrator saves changes. Invalid combinations must fail closed with an actionable message; they must not silently enable a dependency or fall back to Sequencing Center.
+
+Examples:
+
+- `billing-info` requires the facility-intake domain;
+- sequencing-run assignment requires sequencing operations and sequencing technology;
+- Workbench import providers can require optional command-line tools or network access;
+- ENA broker submission is a facility-oriented publishing configuration, while personal repository import/export uses user-scoped credentials.
+
 ## Recommended implementation phases
 
 ### Phase 0 — Freeze behavior with characterization tests
@@ -435,6 +470,15 @@ The second slice should introduce the capability API and convert one complete ve
 - Treat dataset sharing and cache reuse separately: identical bytes may share storage internally without granting cross-workspace access.
 - Ensure background jobs re-check target ownership/capabilities when queued and record the initiating principal.
 - Do not expose secrets or operator-only filesystem paths in Workbench API responses.
+- Invalidate or re-authorize active sessions after account-level or profile-level permission changes.
+- Prefer account deactivation and explicit resource transfer over destructive user deletion.
+- Separate installation credentials from user-owned repository/file-source credentials.
+- Audit profile changes, administrator recovery, permission changes, support access, credential changes, and destructive data operations.
+- Treat pipeline/package installation as privileged code installation; ordinary members may run only administrator-approved packages.
+- Separate reversible archive/trash from permanent purge, and protect shared-data purge with a dedicated capability and audit record.
+- Apply administrator-configured compute, concurrency, storage, and retention limits even when every Shared Lab member may launch workflows.
+- Block profile migration while incompatible imports, uploads, sequencing streams, or pipeline jobs are active.
+- Back up and restore the database, canonical configuration, secrets, installed pipeline metadata, and managed data roots as a coherent installation; verify the restored profile before starting workers.
 
 ## Test and release matrix
 
@@ -454,17 +498,15 @@ Additionally require:
 - clean-install tests for one install profile per deployment profile;
 - pipeline runtime tests proving facility and Workbench adapters produce equivalent execution inputs where appropriate.
 
-## Decisions to validate before Phase 3/4
+## Remaining product decisions before Phase 3/4
 
 These choices do not block the foundation work, but they should be answered before exposing new profiles:
 
-1. In Shared Lab, should all members see all work by default, or should projects optionally be private?
-2. Should “Sequencing Order” be relabeled as “Project” in Shared Lab, or is the order terminology still useful?
-3. Is the first Workbench release single-user/private-workspace only, or must shared team workspaces ship immediately?
-4. Which researcher input is the first must-have after NCBI genomes: browser upload, server-path import, or ENA/SRA accessions?
-5. Should a single installation ever expose more than one profile simultaneously, or is one profile per deployment the supported model?
+1. Should “Sequencing Order” be relabeled as “Project” in Shared Lab, or is the order terminology still useful?
+2. Is the first Workbench release single-user/private-workspace only, or must shared team workspaces ship immediately?
+3. Which researcher input is the first must-have after NCBI genomes: browser upload, server-path import, or ENA/SRA accessions?
 
-Recommended initial answers are: shared-by-default Shared Lab work, keep stored `Order` but test a neutral display label, private Workbench first, implement browser upload plus ENA/SRA next, and support one deployment profile per installation until the domain and authorization boundaries are mature.
+Already decided: Shared Lab work is shared by default, subject to separate destructive-action permissions, and one installation exposes one deployment profile. Recommended answers for the remaining questions are: keep stored `Order` but test a neutral display label, ship private Workbench first, and implement browser upload plus ENA/SRA next.
 
 ## Explicit non-goals for the first milestones
 
