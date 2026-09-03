@@ -15,6 +15,9 @@ model User {
   firstName      String
   lastName       String
   phone          String?
+  /// Installation-level authorization. `role` remains as a rollback-compatible
+  /// facility-workflow/login field until every stored user and integration has migrated.
+  systemRole     String          @default("MEMBER")
   role           String          @default("RESEARCHER")
   isDemo         Boolean         @default(false)
   researcherRole String?
@@ -45,6 +48,8 @@ model User {
   workbenchWorkspace WorkbenchWorkspace? @relation("WorkbenchWorkspaceOwner")
   workbenchImportJobsCreated WorkbenchImportJob[] @relation("WorkbenchImportJobCreator")
   department     Department?     @relation(fields: [departmentId], references: [id])
+
+  @@index([systemRole])
 }
 
 model InAppNotification {

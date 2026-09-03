@@ -8,6 +8,16 @@ import { normalizeDemoExperience } from "@/lib/demo/types";
 
 bootstrapRuntimeEnv();
 
+function resolveSystemRole(user: {
+  systemRole?: string | null;
+  role?: string | null;
+}): "MEMBER" | "ADMIN" {
+  if (user.systemRole === "ADMIN" || user.systemRole === "MEMBER") {
+    return user.systemRole;
+  }
+  return user.role === "FACILITY_ADMIN" ? "ADMIN" : "MEMBER";
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
@@ -40,6 +50,7 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: `${user.firstName} ${user.lastName}`,
           role: user.role,
+          systemRole: resolveSystemRole(user),
           isDemo: user.isDemo,
           demoExperience: undefined,
         };
@@ -66,6 +77,7 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: `${user.firstName} ${user.lastName}`,
           role: user.role,
+          systemRole: resolveSystemRole(user),
           isDemo: user.isDemo,
           demoExperience: user.demoExperience,
         };
@@ -79,6 +91,7 @@ export const authOptions: NextAuthOptions = {
     async jwt({ token, user }) {
       if (user) {
         token.role = user.role;
+        token.systemRole = resolveSystemRole(user);
         token.id = user.id;
         token.isDemo = Boolean(user.isDemo);
         token.demoExperience = user.demoExperience;
@@ -89,14 +102,16 @@ export const authOptions: NextAuthOptions = {
         // removed account is converted to a disabled principal immediately.
         const currentUser = await db.user.findUnique({
           where: { id: String(token.id) },
-          select: { role: true, isDemo: true },
+          select: { role: true, systemRole: true, isDemo: true },
         });
         if (currentUser) {
           token.role = currentUser.role;
+          token.systemRole = resolveSystemRole(currentUser);
           token.isDemo = currentUser.isDemo;
           token.authorizationValid = true;
         } else {
           token.role = "DISABLED";
+          token.systemRole = "DISABLED";
           token.authorizationValid = false;
         }
       }
@@ -105,6 +120,7 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       if (session.user) {
         session.user.role = token.role as string;
+        session.user.systemRole = token.systemRole as string;
         session.user.id = token.id as string;
         session.user.isDemo = Boolean(token.isDemo);
         session.user.authorizationValid = token.authorizationValid !== false;

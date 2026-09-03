@@ -234,7 +234,7 @@ async function notifyAdmins(input: {
 }): Promise<void> {
   const admins = await db.user.findMany({
     where: {
-      role: "FACILITY_ADMIN",
+      systemRole: "ADMIN",
     },
     select: {
       id: true,

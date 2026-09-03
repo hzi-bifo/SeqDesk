@@ -1121,7 +1121,7 @@ function readStudyDefinitions(profile) {
 // user. Returns null when the install has no users yet (study creation is skipped).
 async function resolveProfileStudyOwner(prisma) {
   const admin = await prisma.user.findFirst({
-    where: { role: "FACILITY_ADMIN" },
+    where: { systemRole: "ADMIN" },
     orderBy: { createdAt: "asc" },
     select: { id: true },
   });

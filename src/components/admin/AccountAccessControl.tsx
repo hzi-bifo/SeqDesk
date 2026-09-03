@@ -9,17 +9,17 @@ import { toast } from "@/components/ui/toast";
 
 export function AccountAccessControl({
   userId,
-  role,
+  systemRole,
   isFinalAdministrator,
 }: {
   userId: string;
-  role: string;
+  systemRole: string;
   isFinalAdministrator: boolean;
 }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
-  const isAdministrator = role === "FACILITY_ADMIN";
-  const targetRole = isAdministrator ? "RESEARCHER" : "FACILITY_ADMIN";
+  const isAdministrator = systemRole === "ADMIN";
+  const targetSystemRole = isAdministrator ? "MEMBER" : "ADMIN";
 
   const changeAccess = async () => {
     const action = isAdministrator ? "remove administrator access" : "make this user an administrator";
@@ -30,7 +30,7 @@ export function AccountAccessControl({
       const response = await fetch(`/api/admin/users/${userId}/role`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ role: targetRole }),
+        body: JSON.stringify({ systemRole: targetSystemRole }),
       });
       const body = (await response.json().catch(() => null)) as
         | { error?: string }

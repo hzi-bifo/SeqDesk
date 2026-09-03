@@ -24,14 +24,16 @@ vi.mock("@/lib/db", () => ({
 
 import { GET } from "./route";
 
-const adminSession = { user: { id: "admin-1", role: "FACILITY_ADMIN" } };
+const adminSession = {
+  user: { id: "admin-1", systemRole: "ADMIN", role: "RESEARCHER" },
+};
 
 describe("GET /api/admin/users", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("returns users for admin with default RESEARCHER role filter", async () => {
+  it("returns members by default", async () => {
     mocks.getServerSession.mockResolvedValue(adminSession);
-    const users = [{ id: "u1", name: "Alice", role: "RESEARCHER" }];
+    const users = [{ id: "u1", name: "Alice", systemRole: "MEMBER" }];
     mocks.db.user.findMany.mockResolvedValue(users);
 
     const req = new NextRequest("http://localhost/api/admin/users");
@@ -41,12 +43,29 @@ describe("GET /api/admin/users", () => {
     expect(await res.json()).toEqual(users);
     expect(mocks.db.user.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { role: "RESEARCHER" },
+        where: { systemRole: "MEMBER" },
       })
     );
   });
 
-  it("filters by role query param", async () => {
+  it("filters by system role query param", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.db.user.findMany.mockResolvedValue([]);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/users?systemRole=ADMIN"
+    );
+    const res = await GET(req);
+
+    expect(res.status).toBe(200);
+    expect(mocks.db.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { systemRole: "ADMIN" },
+      })
+    );
+  });
+
+  it("retains the legacy facility-role filter for compatibility", async () => {
     mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.db.user.findMany.mockResolvedValue([]);
 
@@ -57,20 +76,30 @@ describe("GET /api/admin/users", () => {
 
     expect(res.status).toBe(200);
     expect(mocks.db.user.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { role: "FACILITY_ADMIN" },
-      })
+      expect.objectContaining({ where: { role: "FACILITY_ADMIN" } })
     );
   });
 
   it("returns 403 for non-admin", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { id: "u1", role: "RESEARCHER" },
+      user: { id: "u1", systemRole: "MEMBER", role: "FACILITY_ADMIN" },
     });
 
     const req = new NextRequest("http://localhost/api/admin/users");
     const res = await GET(req);
     expect(res.status).toBe(403);
+  });
+
+  it("rejects invalid system-role filters", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+
+    const req = new NextRequest(
+      "http://localhost/api/admin/users?systemRole=OWNER"
+    );
+    const res = await GET(req);
+
+    expect(res.status).toBe(400);
+    expect(mocks.db.user.findMany).not.toHaveBeenCalled();
   });
 
   it("returns 401 when no session", async () => {

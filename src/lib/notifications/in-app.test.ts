@@ -159,6 +159,9 @@ describe("in-app notifications", () => {
 
     await notifyOrderCreatedInApp("order-1", { id: "admin-1", name: "Facility Admin" });
 
+    expect(mocks.db.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { systemRole: "ADMIN" } })
+    );
     expect(mocks.db.inAppNotification.createMany).toHaveBeenCalledTimes(1);
     const data = mocks.db.inAppNotification.createMany.mock.calls[0][0].data;
     expect(data).toHaveLength(1);

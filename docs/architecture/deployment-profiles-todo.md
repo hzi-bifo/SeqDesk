@@ -65,7 +65,12 @@ read/process scopes, so Shared Lab members get the intended shared workflow
 without being treated as system administrators. Server layouts, post-login
 routing, legacy order-file redirects, and account-management pages now use the
 same capability model, and a repository test prevents new direct session-role
-authorization checks outside the compatibility adapter.
+authorization checks outside the compatibility adapter. Installation-level
+Member/Administrator access is now stored independently from the legacy
+researcher/facility workflow role. Existing users are backfilled, old sessions
+and callers remain compatible during the transition, and account promotion,
+demotion, bootstrap, notifications, setup readiness, and administrator lists
+use the explicit system role.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -270,7 +275,7 @@ Acceptance:
   - [x] `publishing.submit`
   - [x] `support.tickets.use`, `support.tickets.manage`
 - [x] Add table-driven tests for representative profile x account level x capability x scope combinations; expand to exhaustive catalog coverage before release.
-- [ ] Add tests proving an already signed-in administrator loses protected access immediately after demotion or deactivation.
+- [ ] Add tests proving an already signed-in administrator loses protected access immediately after demotion or deactivation. Demotion and deleted-account JWT refresh are covered; reversible deactivation still needs a model and test.
 - [x] Add a repository check that rejects new `session.user.role === ...` authorization outside the compatibility package.
 
 Acceptance:
@@ -400,23 +405,23 @@ Acceptance journey:
 
 Do this only after authorization no longer depends on raw `User.role` checks.
 
-- [ ] Add an explicit system-level field, for example `systemRole: MEMBER | ADMIN`.
-- [ ] Add an optional facility workflow field if the Sequencing Center needs independent requester/operator assignments.
-- [ ] Backfill current users:
-  - [ ] `RESEARCHER` -> `systemRole=MEMBER`, facility role `REQUESTER`.
-  - [ ] `FACILITY_ADMIN` -> `systemRole=ADMIN`, facility role `OPERATOR`.
-- [ ] Preserve current sessions during deployment or document the required re-login.
-- [ ] Update NextAuth token/session fields to carry only the minimal principal data needed by the UI.
+- [x] Add an explicit system-level field, for example `systemRole: MEMBER | ADMIN`.
+- [x] Keep the legacy role temporarily as an independent facility-workflow field (`RESEARCHER` = requester, `FACILITY_ADMIN` = operator) while its eventual replacement is named and migrated.
+- [x] Backfill current users:
+  - [x] `RESEARCHER` -> `systemRole=MEMBER`, facility role `REQUESTER`.
+  - [x] `FACILITY_ADMIN` -> `systemRole=ADMIN`, facility role `OPERATOR`.
+- [x] Preserve current sessions during deployment by refreshing both authorization fields from the database on each authenticated request.
+- [x] Update NextAuth token/session fields to carry the system and facility-workflow dimensions needed by capability-aware UI.
 - [ ] Remove role-specific registration payloads where the profile determines defaults.
-- [ ] Retain a compatibility reader until all stored users and tests are migrated.
+- [x] Retain a compatibility reader until all stored users and tests are migrated.
 - [ ] Remove the deprecated `role` field only in a later release after rollback compatibility is no longer required.
 - [ ] Follow the repository database reset-and-seed workflow while developing the schema change.
 
 Acceptance:
 
-- [ ] System administrators can be added in every profile.
-- [ ] Sequencing Center operators do not need access to installation secrets unless separately made administrators.
-- [ ] Shared Lab members receive operational rights from the profile rather than an admin role.
+- [x] System administrators can be added in every profile.
+- [x] Sequencing Center operators do not need access to installation secrets unless separately made administrators.
+- [x] Shared Lab members receive operational rights from the profile rather than an admin role.
 
 ## Milestone 7 — Profile-composed UI and navigation
 

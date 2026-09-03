@@ -280,6 +280,9 @@ describe("notifyOrderSubmitted", () => {
     expect(recipients).toContain("researcher@example.org");
     expect(recipients).toContain("admin@example.org");
     expect(recipients).not.toContain("self@example.org");
+    expect(mocks.db.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { systemRole: "ADMIN" } })
+    );
   });
 
   it("swallows errors from loadOrderForNotification (best-effort)", async () => {

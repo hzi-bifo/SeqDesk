@@ -59,6 +59,7 @@ describe("authOptions", () => {
       firstName: "Test",
       lastName: "Researcher",
       role: "RESEARCHER",
+      systemRole: "MEMBER",
       isDemo: false,
     });
     mocks.compare.mockResolvedValue(true);
@@ -77,6 +78,7 @@ describe("authOptions", () => {
       email: "user@example.com",
       name: "Test Researcher",
       role: "RESEARCHER",
+      systemRole: "MEMBER",
       isDemo: false,
       demoExperience: undefined,
     });
@@ -139,6 +141,7 @@ describe("authOptions", () => {
       email: "demo@example.com",
       name: "Demo User",
       role: "RESEARCHER",
+      systemRole: "MEMBER",
       isDemo: true,
       demoExperience: "facility",
     });
@@ -170,6 +173,7 @@ describe("authOptions", () => {
         user: {
           id: "user-1",
           role: "FACILITY_ADMIN",
+          systemRole: "ADMIN",
           isDemo: true,
           demoExperience: "facility",
         } as never,
@@ -182,6 +186,7 @@ describe("authOptions", () => {
     ).resolves.toEqual({
       id: "user-1",
       role: "FACILITY_ADMIN",
+      systemRole: "ADMIN",
       isDemo: true,
       demoExperience: "facility",
       authorizationValid: true,
@@ -193,6 +198,7 @@ describe("authOptions", () => {
         token: {
           id: "user-1",
           role: "FACILITY_ADMIN",
+          systemRole: "ADMIN",
           isDemo: true,
           demoExperience: "facility",
           authorizationValid: true,
@@ -202,6 +208,7 @@ describe("authOptions", () => {
       user: {
         id: "user-1",
         role: "FACILITY_ADMIN",
+        systemRole: "ADMIN",
         isDemo: true,
         authorizationValid: true,
         demoExperience: "facility",
@@ -214,6 +221,7 @@ describe("authOptions", () => {
         token: {
           id: "user-2",
           role: "RESEARCHER",
+          systemRole: "MEMBER",
           isDemo: true,
           demoExperience: "researcher",
           authorizationValid: true,
@@ -223,6 +231,7 @@ describe("authOptions", () => {
       user: {
         id: "user-2",
         role: "RESEARCHER",
+        systemRole: "MEMBER",
         isDemo: true,
         authorizationValid: true,
         demoExperience: "researcher",
@@ -233,6 +242,7 @@ describe("authOptions", () => {
   it("refreshes authorization from the database for an existing JWT", async () => {
     mocks.db.user.findUnique.mockResolvedValue({
       role: "RESEARCHER",
+      systemRole: "MEMBER",
       isDemo: false,
     });
 
@@ -241,6 +251,7 @@ describe("authOptions", () => {
         token: {
           id: "user-1",
           role: "FACILITY_ADMIN",
+          systemRole: "ADMIN",
           isDemo: false,
           authorizationValid: true,
         } as never,
@@ -254,8 +265,13 @@ describe("authOptions", () => {
     ).resolves.toEqual({
       id: "user-1",
       role: "RESEARCHER",
+      systemRole: "MEMBER",
       isDemo: false,
       authorizationValid: true,
+    });
+    expect(mocks.db.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      select: { role: true, systemRole: true, isDemo: true },
     });
   });
 
@@ -267,6 +283,7 @@ describe("authOptions", () => {
         token: {
           id: "deleted-user",
           role: "FACILITY_ADMIN",
+          systemRole: "ADMIN",
           isDemo: false,
         } as never,
         user: undefined as never,
@@ -279,6 +296,7 @@ describe("authOptions", () => {
     ).resolves.toMatchObject({
       id: "deleted-user",
       role: "DISABLED",
+      systemRole: "DISABLED",
       authorizationValid: false,
     });
   });

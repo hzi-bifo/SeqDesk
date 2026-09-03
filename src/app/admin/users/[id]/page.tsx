@@ -73,8 +73,8 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
   }
 
   const administratorCount =
-    user.role === "FACILITY_ADMIN"
-      ? await db.user.count({ where: { role: "FACILITY_ADMIN" } })
+    user.systemRole === "ADMIN"
+      ? await db.user.count({ where: { systemRole: "ADMIN" } })
       : 0;
 
   const formatDate = (date: Date) => {
@@ -93,14 +93,6 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
       hour: "2-digit",
       minute: "2-digit",
     });
-  };
-
-  const roleLabels: Record<string, string> = {
-    FACILITY_ADMIN:
-      deploymentProfile.id === "sequencing-center"
-        ? "Facility Admin"
-        : "Administrator",
-    RESEARCHER: deploymentProfile.terminology.member,
   };
 
   const researcherRoleLabels: Record<string, string> = {
@@ -142,8 +134,10 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
               <h1 className="text-xl font-semibold">
                 {user.firstName} {user.lastName}
               </h1>
-              <Badge variant={user.role === "FACILITY_ADMIN" ? "default" : "secondary"}>
-                {roleLabels[user.role] || user.role}
+              <Badge variant={user.systemRole === "ADMIN" ? "default" : "secondary"}>
+                {user.systemRole === "ADMIN"
+                  ? "Administrator"
+                  : deploymentProfile.terminology.member}
               </Badge>
             </div>
             {user.researcherRole && (
@@ -158,9 +152,9 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
       <div className="mb-8">
         <AccountAccessControl
           userId={user.id}
-          role={user.role}
+          systemRole={user.systemRole}
           isFinalAdministrator={
-            user.role === "FACILITY_ADMIN" && administratorCount <= 1
+            user.systemRole === "ADMIN" && administratorCount <= 1
           }
         />
       </div>

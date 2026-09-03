@@ -25,15 +25,22 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const role = searchParams.get("role");
+  const systemRole = searchParams.get("systemRole");
 
   if (role && role !== "RESEARCHER" && role !== "FACILITY_ADMIN") {
     return NextResponse.json({ error: "Invalid account role" }, { status: 400 });
   }
+  if (systemRole && systemRole !== "MEMBER" && systemRole !== "ADMIN") {
+    return NextResponse.json({ error: "Invalid system role" }, { status: 400 });
+  }
 
-  // Filter by role if specified, otherwise default to RESEARCHER
-  const whereClause: Record<string, unknown> = role
-    ? { role: role }
-    : { role: "RESEARCHER" };
+  // `role` remains as a compatibility filter for callers that still organize
+  // facility workflow assignments. Account-management screens use systemRole.
+  const whereClause: Record<string, unknown> = systemRole
+    ? { systemRole }
+    : role
+      ? { role }
+      : { systemRole: "MEMBER" };
 
   // Scope a facility-demo session to its own workspace's two users only.
   if (demoWsUserIds) {

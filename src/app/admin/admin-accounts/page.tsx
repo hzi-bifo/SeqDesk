@@ -138,7 +138,7 @@ export default function AdminAccountsPage() {
 
     try {
       const [adminsRes, invitesRes, accessRes] = await Promise.all([
-        fetch("/api/admin/users?role=FACILITY_ADMIN"),
+        fetch("/api/admin/users?systemRole=ADMIN"),
         fetch("/api/admin/invites"),
         fetch("/api/admin/settings/access"),
       ]);

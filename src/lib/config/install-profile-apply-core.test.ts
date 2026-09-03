@@ -818,12 +818,12 @@ describe("install profile applicator core", () => {
 
 describe("install profile study definitions (per-study dynamic forms)", () => {
   function createStudyDefsPrisma(options?: {
-    users?: Array<{ id: string; role: string }>;
+    users?: Array<{ id: string; systemRole: string }>;
     studies?: Array<{ id: string; alias: string | null }>;
     modulesConfig?: string | null;
   }) {
     const state = {
-      users: options?.users ?? [{ id: "admin-1", role: "FACILITY_ADMIN" }],
+      users: options?.users ?? [{ id: "admin-1", systemRole: "ADMIN" }],
       studies: (options?.studies ?? []).map((s) => ({ ...s })) as Array<
         Record<string, unknown>
       >,
@@ -840,8 +840,10 @@ describe("install profile study definitions (per-study dynamic forms)", () => {
       user: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         findFirst: vi.fn(async (args?: any) => {
-          const role = args?.where?.role;
-          const match = state.users.find((u) => (role ? u.role === role : true));
+          const systemRole = args?.where?.systemRole;
+          const match = state.users.find((u) =>
+            systemRole ? u.systemRole === systemRole : true
+          );
           return match ? { id: match.id } : null;
         }),
       },

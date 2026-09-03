@@ -54,7 +54,7 @@ const admin = {
   email: "admin@example.org",
   firstName: "Ada",
   lastName: "Admin",
-  role: "FACILITY_ADMIN",
+  systemRole: "ADMIN",
 };
 
 let tempDir: string;
@@ -547,7 +547,7 @@ describe("installed demo-data command", () => {
   it("requires an explicit owner when several admins are plausible", async () => {
     mocks.db.user.findUnique.mockResolvedValue(null);
     mocks.db.user.findMany.mockResolvedValue([
-      { ...admin, role: undefined },
+      admin,
       {
         id: "admin-2",
         email: "second@example.org",
@@ -559,7 +559,7 @@ describe("installed demo-data command", () => {
     await expect(
       resolveDemoDataOwner({ configPath })
     ).rejects.toMatchObject({
-      code: "MULTIPLE_FACILITY_ADMINS",
+      code: "MULTIPLE_ADMINISTRATORS",
     });
   });
 

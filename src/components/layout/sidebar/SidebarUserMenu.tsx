@@ -9,6 +9,7 @@ import {
   getDeploymentProfileDefinition,
   type DeploymentProfileDefinition,
 } from "@/lib/deployment-profile";
+import { principalFromSession } from "@/lib/authorization";
 
 interface SidebarUserMenuProps {
   user: {
@@ -16,6 +17,7 @@ interface SidebarUserMenuProps {
     name?: string | null;
     email?: string | null;
     role?: string;
+    systemRole?: string;
     isDemo?: boolean;
     demoExperience?: "researcher" | "facility";
   };
@@ -31,12 +33,15 @@ export function SidebarUserMenu({
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  const isFacilityAdmin = user.role === "FACILITY_ADMIN";
+  const principal = principalFromSession({
+    user: { ...user, id: user.id || "sidebar-menu-session-user" },
+  });
+  const isAdministrator = principal?.accountLevel === "admin";
   const isDemoUser = user.isDemo === true;
   const isFacilityDemoUser = user.demoExperience === "facility";
   const userRoleLabel = isFacilityDemoUser
     ? "Facility Demo"
-    : isFacilityAdmin
+    : isAdministrator
       ? deploymentProfile.id === "sequencing-center"
         ? "Facility Admin"
         : "Administrator"
@@ -75,7 +80,7 @@ export function SidebarUserMenu({
             <Settings className="h-4 w-4" />
             Account Settings
           </Link>
-          {isFacilityAdmin && !isFacilityDemoUser && (
+          {isAdministrator && !isFacilityDemoUser && (
             <Link
               href="/admin"
               onClick={() => setUserMenuOpen(false)}
@@ -110,7 +115,7 @@ export function SidebarUserMenu({
             <Settings className="h-4 w-4" />
             Account Settings
           </Link>
-          {isFacilityAdmin && !isFacilityDemoUser && (
+          {isAdministrator && !isFacilityDemoUser && (
             <Link
               href="/admin"
               onClick={() => setUserMenuOpen(false)}

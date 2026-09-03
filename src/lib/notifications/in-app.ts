@@ -128,7 +128,7 @@ function uniqueRecipients(recipients: Recipient[], actor?: Actor | null): Recipi
 
 async function loadFacilityAdmins(): Promise<Recipient[]> {
   return db.user.findMany({
-    where: { role: "FACILITY_ADMIN" },
+    where: { systemRole: "ADMIN" },
     select: { id: true, firstName: true, lastName: true, email: true },
   });
 }

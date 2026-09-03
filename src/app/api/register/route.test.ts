@@ -4,6 +4,8 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   hash: vi.fn(),
   getServerEnrollmentPolicy: vi.fn(),
+  transactionUserCreate: vi.fn(),
+  transactionInviteUpdate: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -70,18 +72,20 @@ describe("POST /api/register", () => {
     });
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.db.user.findUnique.mockResolvedValue(null);
+    mocks.transactionUserCreate.mockResolvedValue({
+      id: "user-1",
+      email: "new@example.com",
+      firstName: "Jane",
+      lastName: "Doe",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+    });
     mocks.db.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
       const tx = {
         user: {
-          create: vi.fn().mockResolvedValue({
-            id: "user-1",
-            email: "new@example.com",
-            firstName: "Jane",
-            lastName: "Doe",
-            role: "RESEARCHER",
-          }),
+          create: mocks.transactionUserCreate,
         },
-        adminInvite: { update: vi.fn() },
+        adminInvite: { update: mocks.transactionInviteUpdate },
       };
       return fn(tx);
     });
@@ -94,6 +98,14 @@ describe("POST /api/register", () => {
     expect(response.status).toBe(201);
     expect(data.user.email).toBe("new@example.com");
     expect(mocks.hash).toHaveBeenCalledWith("securepassword", 12);
+    expect(mocks.transactionUserCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          systemRole: "MEMBER",
+          role: "RESEARCHER",
+        }),
+      })
+    );
   });
 
   it("returns 400 when required fields are missing", async () => {
@@ -205,20 +217,13 @@ describe("POST /api/register", () => {
       expiresAt: new Date(Date.now() + 86400000), // tomorrow
       email: null,
     });
-    mocks.db.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
-      const tx = {
-        user: {
-          create: vi.fn().mockResolvedValue({
-            id: "admin-1",
-            email: "admin@example.com",
-            firstName: "Admin",
-            lastName: "User",
-            role: "FACILITY_ADMIN",
-          }),
-        },
-        adminInvite: { update: vi.fn() },
-      };
-      return fn(tx);
+    mocks.transactionUserCreate.mockResolvedValue({
+      id: "admin-1",
+      email: "admin@example.com",
+      firstName: "Admin",
+      lastName: "User",
+      role: "FACILITY_ADMIN",
+      systemRole: "ADMIN",
     });
 
     const response = await POST(
@@ -234,6 +239,14 @@ describe("POST /api/register", () => {
     expect(response.status).toBe(201);
     const data = await response.json();
     expect(data.user.role).toBe("FACILITY_ADMIN");
+    expect(mocks.transactionUserCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          systemRole: "ADMIN",
+          role: "FACILITY_ADMIN",
+        }),
+      })
+    );
   });
 
   it("returns 400 for invalid invite code", async () => {

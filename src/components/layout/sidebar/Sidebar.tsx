@@ -38,6 +38,7 @@ interface SidebarProps {
     name?: string | null;
     email?: string | null;
     role?: string;
+    systemRole?: string;
     isDemo?: boolean;
     demoExperience?: "researcher" | "facility";
   };

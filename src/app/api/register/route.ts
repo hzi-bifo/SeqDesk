@@ -246,6 +246,7 @@ export async function POST(request: NextRequest) {
           password: hashedPassword,
           firstName,
           lastName,
+          systemRole: role === "FACILITY_ADMIN" ? "ADMIN" : "MEMBER",
           role,
           researcherRole: role === "RESEARCHER" ? researcherRole : null,
           departmentId: role === "RESEARCHER" ? departmentId : null,

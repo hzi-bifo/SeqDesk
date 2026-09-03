@@ -430,6 +430,7 @@ async function seedBootstrapAccounts(
       password: adminBootstrap.passwordHash,
       firstName: adminBootstrap.firstName,
       lastName: adminBootstrap.lastName,
+      systemRole: "ADMIN",
       role: "FACILITY_ADMIN",
       facilityName: adminBootstrap.facilityName,
     }));
@@ -447,6 +448,7 @@ async function seedBootstrapAccounts(
           password: researcherBootstrap.passwordHash,
           firstName: researcherBootstrap.firstName,
           lastName: researcherBootstrap.lastName,
+          systemRole: "MEMBER",
           role: "RESEARCHER",
           researcherRole: researcherBootstrap.researcherRole,
           institution: researcherBootstrap.institution,

@@ -112,14 +112,14 @@ async function findAdminByEmail(email: string): Promise<DemoDataOwner | null> {
       email: true,
       firstName: true,
       lastName: true,
-      role: true,
+      systemRole: true,
     },
   });
   if (!user) return null;
-  if (user.role !== "FACILITY_ADMIN") {
+  if (user.systemRole !== "ADMIN") {
     throw new DemoDataCommandError(
-      "USER_NOT_FACILITY_ADMIN",
-      `${email} exists, but is not a facility administrator. Choose a FACILITY_ADMIN account with --user-email.`
+      "USER_NOT_ADMINISTRATOR",
+      `${email} exists, but is not an administrator. Choose an administrator account with --user-email.`
     );
   }
   return user;
@@ -157,7 +157,7 @@ export async function resolveDemoDataOwner(
   if (defaultOwner) return defaultOwner;
 
   const admins = await db.user.findMany({
-    where: { role: "FACILITY_ADMIN" },
+    where: { systemRole: "ADMIN" },
     orderBy: [{ createdAt: "asc" }, { email: "asc" }],
     take: 2,
     select: {
@@ -170,14 +170,14 @@ export async function resolveDemoDataOwner(
 
   if (admins.length === 0) {
     throw new DemoDataCommandError(
-      "NO_FACILITY_ADMIN",
-      "This SeqDesk database has no facility administrator to own the demo dataset."
+      "NO_ADMINISTRATOR",
+      "This SeqDesk database has no administrator to own the example dataset."
     );
   }
   if (admins.length > 1) {
     throw new DemoDataCommandError(
-      "MULTIPLE_FACILITY_ADMINS",
-      "This installation has multiple facility administrators. Choose the owner explicitly with --user-email."
+      "MULTIPLE_ADMINISTRATORS",
+      "This installation has multiple administrators. Choose the owner explicitly with --user-email."
     );
   }
   return admins[0];

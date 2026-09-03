@@ -71,6 +71,9 @@ describe("checkDatabaseStatus", () => {
       hasAdministrator: true,
       reason: "configured",
     });
+    expect(mocks.db.user.count).toHaveBeenCalledWith({
+      where: { systemRole: "ADMIN" },
+    });
   });
 
   it("reports when settings exist but no administrator can sign in", async () => {

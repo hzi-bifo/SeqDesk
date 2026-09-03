@@ -144,7 +144,8 @@ describe("sidebar shell quick wins", () => {
         user={{
           name: "Ada Admin",
           email: "ada@example.test",
-          role: "FACILITY_ADMIN",
+          role: "RESEARCHER",
+          systemRole: "ADMIN",
         }}
       />
     );
@@ -163,6 +164,22 @@ describe("sidebar shell quick wins", () => {
     });
 
     expect(mocks.signOut).toHaveBeenCalledWith({ redirect: false });
+  });
+
+  it("does not show administration for a facility operator who is a member", () => {
+    render(
+      <SidebarUserMenu
+        collapsed={false}
+        user={{
+          name: "Opal Operator",
+          role: "FACILITY_ADMIN",
+          systemRole: "MEMBER",
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Opal Operator/i }));
+    expect(screen.queryByRole("link", { name: "Administration" })).toBeNull();
   });
 
   it("renders collapsed demo user menu without admin link", () => {

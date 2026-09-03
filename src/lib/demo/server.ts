@@ -126,6 +126,7 @@ type DemoWorkspaceUser = {
   firstName: string;
   lastName: string;
   role: string;
+  systemRole: string;
   isDemo: boolean;
 };
 
@@ -135,6 +136,7 @@ export type DemoAuthUser = {
   firstName: string;
   lastName: string;
   role: string;
+  systemRole: string;
   isDemo: boolean;
   demoExperience: DemoExperience;
 };
@@ -318,6 +320,7 @@ async function createDemoWorkspaceInternal(
         firstName: "Demo",
         lastName: "Researcher",
         role: "RESEARCHER",
+        systemRole: "MEMBER",
         isDemo: true,
         institution: "SeqDesk Demo Workspace",
         researcherRole: "POSTDOC",
@@ -331,6 +334,7 @@ async function createDemoWorkspaceInternal(
         firstName: "Facility",
         lastName: "Admin",
         role: "FACILITY_ADMIN",
+        systemRole: "ADMIN",
         isDemo: true,
         facilityName: "SeqDesk Demo Facility",
       },
@@ -1603,6 +1607,7 @@ async function findWorkspaceByToken(
           firstName: true,
           lastName: true,
           role: true,
+          systemRole: true,
           isDemo: true,
         },
       },
@@ -1613,6 +1618,7 @@ async function findWorkspaceByToken(
           firstName: true,
           lastName: true,
           role: true,
+          systemRole: true,
           isDemo: true,
         },
       },
@@ -1875,6 +1881,7 @@ export async function createDemoSessionToken(
       email: user.email,
       name: `${user.firstName} ${user.lastName}`.trim(),
       role: user.role,
+      systemRole: user.systemRole,
       isDemo: user.isDemo,
       demoExperience: user.demoExperience,
     },

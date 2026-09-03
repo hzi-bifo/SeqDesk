@@ -175,6 +175,7 @@ describe("autoSeedIfNeeded", () => {
           firstName: "Facility",
           lastName: "Owner",
           facilityName: "SeqDesk Dev",
+          systemRole: "ADMIN",
           role: "FACILITY_ADMIN",
         }),
       })
@@ -189,6 +190,7 @@ describe("autoSeedIfNeeded", () => {
           lastName: "User",
           institution: "HZI",
           researcherRole: "POSTDOC",
+          systemRole: "MEMBER",
           role: "RESEARCHER",
         }),
       })
@@ -220,6 +222,7 @@ describe("autoSeedIfNeeded", () => {
       expect.objectContaining({
         where: { email: "admin@example.com" },
         create: expect.objectContaining({
+          systemRole: "ADMIN",
           role: "FACILITY_ADMIN",
           password: DEFAULT_ADMIN_PASSWORD_HASH,
         }),
@@ -229,6 +232,7 @@ describe("autoSeedIfNeeded", () => {
       expect.objectContaining({
         where: { email: "user@example.com" },
         create: expect.objectContaining({
+          systemRole: "MEMBER",
           role: "RESEARCHER",
           password: DEFAULT_USER_PASSWORD_HASH,
         }),

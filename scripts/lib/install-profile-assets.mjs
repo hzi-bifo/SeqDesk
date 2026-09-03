@@ -1542,6 +1542,7 @@ async function ensureUser(prisma, role, fallback) {
       password: hashSync(crypto.randomBytes(18).toString("hex"), 10),
       firstName: fallback.firstName,
       lastName: fallback.lastName,
+      systemRole: role === "FACILITY_ADMIN" ? "ADMIN" : "MEMBER",
       role,
       ...(role === "FACILITY_ADMIN"
         ? { facilityName: fallback.facilityName || "SeqDesk Profile Smoke" }

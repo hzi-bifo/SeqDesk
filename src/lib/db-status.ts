@@ -119,7 +119,7 @@ export async function checkDatabaseStatus(): Promise<DatabaseStatus> {
     }
 
     const administratorCount = await db.user.count({
-      where: { role: "FACILITY_ADMIN" },
+      where: { systemRole: "ADMIN" },
     });
 
     return {
