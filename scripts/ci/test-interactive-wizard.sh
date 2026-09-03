@@ -342,7 +342,7 @@ assert_contains "review shows hosted lock state" \
 
 SAVED_PLAN="$TEST_TMP_DIR/saved-install-plan.json"
 confirm_config "$plan_json" >"$OUT" 2>&1 <<EOF
-2
+3
 $SAVED_PLAN
 1
 EOF
@@ -358,6 +358,23 @@ if save_sanitized_install_plan "$plan_json" "$SAVED_PLAN" >"$OUT" 2>&1; then
 else
     echo "ok: saved plan refuses to overwrite an existing file"
 fi
+
+if (
+    rebuild_guided_plan_after_back() {
+        SEQDESK_DEPLOYMENT_PROFILE="shared-lab"
+    }
+    confirm_config "$plan_json" <<'EOF'
+2
+1
+EOF
+) >"$OUT" 2>&1; then
+    echo "ok: review Back action rebuilds and returns to the decision screen"
+else
+    echo "FAIL: review Back action did not return to the decision screen" >&2
+    FAILURES=$((FAILURES + 1))
+fi
+assert_contains "Back renders the revised normalized plan" \
+    "one lab shares sequencing and analysis work" "$OUT"
 
 SEQDESK_USE_PM2=""
 resolve_service_mode_for_plan >"$OUT" 2>&1 <<'EOF'

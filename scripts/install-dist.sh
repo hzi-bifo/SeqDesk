@@ -6641,6 +6641,65 @@ process.stdout.write(destination);
 NODE
 }
 
+reset_guided_plan_answers() {
+    # Back means "start the explained choices again", not "edit the JSON in
+    # place". Only guided-answer state is cleared; install target, release,
+    # logging and other command-level controls stay intact.
+    SEQDESK_DEPLOYMENT_PROFILE=""
+    SEQDESK_ACCESS_AUDIENCE=""
+    SEQDESK_BIND_HOST=""
+    SEQDESK_PORT=""
+    SEQDESK_NEXTAUTH_URL=""
+    SEQDESK_DATABASE_URL=""
+    SEQDESK_DATABASE_DIRECT_URL=""
+    MACOS_POSTGRES_SOCKET_DIR=""
+    SEQDESK_PRIVATE_POSTGRES="false"
+    SEQDESK_WITH_PIPELINES=""
+    PIPELINES_ENABLED="false"
+    SEQDESK_DATA_PATH=""
+    SEQDESK_RUN_DIR=""
+    SEQDESK_PIPELINE_DATABASE_DIR=""
+    SEQDESK_BOOTSTRAP_ADMIN_EMAIL=""
+    SEQDESK_BOOTSTRAP_ADMIN_PASSWORD=""
+    SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH=""
+    SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="false"
+    SEQDESK_GENERATED_ADMIN_PASSWORD=""
+    SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="0"
+    SEQDESK_USE_PM2=""
+    SEQDESK_TELEMETRY_ENABLED=""
+}
+
+rebuild_guided_plan_after_back() {
+    reset_guided_plan_answers
+    run_interactive_wizard_database
+    validate_deployment_profile
+    normalize_access_topology || return 1
+
+    SEQDESK_PREFLIGHT_READ_ONLY="true"
+    if ! preflight_local_postgres; then
+        SEQDESK_PREFLIGHT_READ_ONLY="false"
+        return 1
+    fi
+    SEQDESK_PREFLIGHT_READ_ONLY="false"
+
+    run_interactive_wizard_accounts
+    ensure_secure_bootstrap_accounts
+    resolve_pipeline_enablement
+    resolve_service_mode_for_plan
+    resolve_optional_content_for_plan
+
+    if [ "$PIPELINES_ENABLED" = "true" ] && {
+        [ "$CONDA_RESOLUTION" = "invalid-configured" ] ||
+        [ "$CONDA_RESOLUTION" = "invalid-defaults" ];
+    }; then
+        print_unusable_conda_prefix_error
+        return 1
+    fi
+
+    print_preflight_summary
+    resolve_release_metadata_for_plan
+}
+
 confirm_config() {
     if is_truthy "$SEQDESK_YES"; then
         return 0
@@ -6654,15 +6713,25 @@ confirm_config() {
         while true; do
             echo ""
             echo "  1) Install this plan"
-            echo "  2) Save a sanitized JSON copy, then return here"
-            echo "  3) Cancel without changing the system"
+            echo "  2) Back — restart the guided choices"
+            echo "  3) Save a sanitized JSON copy, then return here"
+            echo "  4) Cancel without changing the system"
             action=$(read_input "  Choose [1]: ")
             action=${action:-1}
             case "$action" in
                 1|install|continue)
                     return 0
                     ;;
-                2|save)
+                2|back|change)
+                    print_header "Change guided choices"
+                    if ! rebuild_guided_plan_after_back; then
+                        print_warning "The revised choices did not pass preflight; review the messages above and try again."
+                        continue
+                    fi
+                    plan_json="$(build_install_plan_json)"
+                    render_install_plan_human "$plan_json"
+                    ;;
+                3|save)
                     destination=$(read_input "  Save as [./seqdesk-install-plan.json]: ")
                     destination=${destination:-./seqdesk-install-plan.json}
                     if saved_path="$(save_sanitized_install_plan "$plan_json" "$destination" 2>/dev/null)"; then
@@ -6672,12 +6741,12 @@ confirm_config() {
                         print_warning "Could not save the plan to $destination. The parent must exist and an existing file will not be overwritten."
                     fi
                     ;;
-                3|cancel|quit|q)
+                4|cancel|quit|q)
                     print_info "Installation cancelled before any application, database, or service changes."
                     exit 0
                     ;;
                 *)
-                    print_error "  Choose 1, 2, or 3."
+                    print_error "  Choose 1, 2, 3, or 4."
                     ;;
             esac
         done
