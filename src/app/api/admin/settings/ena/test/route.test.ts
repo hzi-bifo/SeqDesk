@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -22,6 +23,11 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 import { POST } from "./route";
 
 function makeRequest(body?: unknown) {
@@ -39,6 +45,9 @@ describe("POST /api/admin/settings/ena/test", () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "u1", role: "FACILITY_ADMIN" },
     });
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.fetch.mockResolvedValue({
       status: 200,
@@ -55,14 +64,38 @@ describe("POST /api/admin/settings/ena/test", () => {
     expect(await response.json()).toEqual({ error: "Unauthorized" });
   });
 
-  it("returns 401 when user is not FACILITY_ADMIN", async () => {
+  it("returns 403 when a Sequencing Center researcher cannot publish", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "u1", role: "RESEARCHER" },
     });
 
     const response = await POST(makeRequest({ enaUsername: "Webin-12345", enaPassword: "pass" }));
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
+  });
+
+  it("lets a Shared Lab member test only the saved installation credentials", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      enaUsername: "Webin-99999",
+      enaPassword: "saved-pass",
+      enaTestMode: true,
+    });
+
+    const response = await POST(
+      makeRequest({ enaUsername: "Webin-12345", enaPassword: "unsaved-pass" })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.success).toBe(true);
+    expect(data.username).toBeUndefined();
+    expect(mocks.db.siteSettings.findUnique).toHaveBeenCalled();
   });
 
   it("succeeds with credentials in request body", async () => {

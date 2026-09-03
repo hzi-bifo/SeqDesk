@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -21,7 +22,12 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 import { GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 import {
   STUDY_INFORMATION_SECTION_ID,
   STUDY_METADATA_SECTION_ID,
@@ -97,6 +103,9 @@ function buildSiteSettings() {
 describe("GET /api/study-form-schema", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.db.siteSettings.findUnique.mockResolvedValue(buildSiteSettings());
   });
 
@@ -169,6 +178,28 @@ describe("GET /api/study-form-schema", () => {
     ]);
     expect(body.perSampleFields.map((f: { name: string }) => f.name)).toEqual([
       "host_id",
+      "internal_sample_note",
+    ]);
+  });
+
+  it("keeps operational study fields for Shared Lab members", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await GET(
+      new Request("http://localhost/api/study-form-schema")
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.fields.map((field: { name: string }) => field.name)).toEqual([
+      "legacy_field",
+      "host_id",
+      "internal_study_note",
       "internal_sample_note",
     ]);
   });

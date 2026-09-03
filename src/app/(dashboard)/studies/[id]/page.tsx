@@ -43,6 +43,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { StudyPipelinesSection } from "@/components/pipelines/StudyPipelinesSection";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 import { type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
 import {
   STUDY_ADDITIONAL_DETAILS_SECTION_ID,
@@ -382,6 +383,12 @@ export default function StudyDetailPage({
   const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
   const searchParams = useSearchParams();
   const { data: session } = useSession();
+  const canManageStudies = useCapability("samples.manage");
+  const canUseOperationalStudyFields = useCapability("orders.process");
+  const canPublishStudies = useCapability("studies.publish");
+  const canSubmitPublications = useCapability("publishing.submit");
+  const canRunAnalysis = useCapability("analysis.run");
+  const canManageSettings = useCapability("system.settings.manage");
   const [study, setStudy] = useState<Study | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -433,7 +440,6 @@ export default function StudyDetailPage({
 
   // Check if current user is the owner of this study
   const isOwner = session?.user?.id === study?.user?.id;
-  const isAdmin = session?.user?.role === "FACILITY_ADMIN";
   const isDemoUser = session?.user?.isDemo === true;
   const apiStudyId = study?.id ?? id;
   const loadedStudyId = study?.id ?? null;
@@ -528,7 +534,7 @@ export default function StudyDetailPage({
   // Skipped for demo users: publishing is a view-only showcase, so we keep the
   // clean disabled "Register" button instead of an admin credentials error.
   useEffect(() => {
-    if (selectedPublishingTarget !== "ena" || !isAdmin || isDemoUser) return;
+    if (selectedPublishingTarget !== "ena" || !canSubmitPublications || isDemoUser) return;
     if (enaCheck.status !== "idle") return;
 
     setEnaCheck({ status: "checking" });
@@ -544,11 +550,11 @@ export default function StudyDetailPage({
       .catch(() => {
         setEnaCheck({ status: "error", message: "Failed to check ENA credentials" });
       });
-  }, [selectedPublishingTarget, isAdmin, isDemoUser, enaCheck.status]);
+  }, [selectedPublishingTarget, canSubmitPublications, isDemoUser, enaCheck.status]);
 
   // Fetch ENA submissions for this study
   const fetchEnaSubmissions = useCallback(() => {
-    if (!study || !isAdmin) return;
+    if (!study || !canSubmitPublications) return;
     fetch("/api/admin/submissions")
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
@@ -561,7 +567,7 @@ export default function StudyDetailPage({
       .catch(() => {
         setEnaSubmissionsLoaded(true);
       });
-  }, [study, isAdmin]);
+  }, [study, canSubmitPublications]);
 
   useEffect(() => {
     if (selectedPublishingTarget !== "ena" || enaSubmissionsLoaded) return;
@@ -838,7 +844,7 @@ export default function StudyDetailPage({
 
   const fallbackStudyMetadataRows = useMemo(
     () => {
-      if (!isAdmin) return [];
+      if (!canUseOperationalStudyFields) return [];
       return Object.entries(parsedStudyMetadata).filter(
         ([key, value]) =>
           !key.startsWith("_mixs") &&
@@ -846,7 +852,7 @@ export default function StudyDetailPage({
           hasDisplayValue(value)
       );
     },
-    [parsedStudyMetadata, knownStudyFieldNames, isAdmin]
+    [parsedStudyMetadata, knownStudyFieldNames, canUseOperationalStudyFields]
   );
 
   const hasAdditionalDetailsSection =
@@ -890,9 +896,9 @@ export default function StudyDetailPage({
               })),
             }
           : null,
-        includeFacilityFields: isAdmin,
+        includeFacilityFields: canUseOperationalStudyFields,
       }),
-    [isAdmin, study, studyFormFields, studyPerSampleFields]
+    [canUseOperationalStudyFields, study, studyFormFields, studyPerSampleFields]
   );
   const studySamples = study?.samples ?? [];
   const hasAssociatedSamplesSection =
@@ -916,7 +922,7 @@ export default function StudyDetailPage({
     }
 
     if (requestedSection === "facility") {
-      if (!isAdmin || facilitySections.length === 0) {
+      if (!canUseOperationalStudyFields || facilitySections.length === 0) {
         router.replace(`/studies/${apiStudyId}`);
         return;
       }
@@ -930,7 +936,7 @@ export default function StudyDetailPage({
     apiStudyId,
     currentTab,
     facilitySections.length,
-    isAdmin,
+    canUseOperationalStudyFields,
     loading,
     requestedSection,
     requestedSubsection,
@@ -1106,7 +1112,7 @@ export default function StudyDetailPage({
                 ) : (
                   <div className="border-t px-5 py-6 text-sm text-muted-foreground">
                     No samples are linked yet.
-                    {(isOwner || isAdmin) && !study.submitted && (
+                    {(isOwner || canManageStudies) && !study.submitted && (
                       <>
                         {" "}
                         <Link href={`/studies/${id}/edit`} className="font-medium text-primary hover:underline">
@@ -1508,7 +1514,7 @@ export default function StudyDetailPage({
             </div>
           </>
 
-          {(isAdmin || (!study.submitted && !study.readyForSubmission)) && (
+          {(canPublishStudies || (!study.submitted && !study.readyForSubmission)) && (
             <div className="bg-card rounded-lg border overflow-hidden mt-4">
               <div className="px-5 py-4 flex items-center justify-between gap-3">
                 <div>
@@ -1540,7 +1546,7 @@ export default function StudyDetailPage({
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {(isOwner || isAdmin) && study.readyForSubmission && (
+                  {(isOwner || canPublishStudies) && study.readyForSubmission && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -1555,7 +1561,7 @@ export default function StudyDetailPage({
                       Back to Draft
                     </Button>
                   )}
-                  {isOwner && !study.readyForSubmission && (
+                  {(isOwner || canPublishStudies) && !study.readyForSubmission && (
                     <Button
                       size="sm"
                       onClick={() => setMarkReadyDialogOpen(true)}
@@ -1763,8 +1769,8 @@ export default function StudyDetailPage({
         </TabsContent>
         )}
 
-        {/* Pipelines Tab - admin only */}
-        {isAdmin && totalSamples > 0 && (
+        {/* Pipelines Tab - available to users who may run analysis */}
+        {canRunAnalysis && totalSamples > 0 && (
           <TabsContent value="pipelines">
             <StudyPipelinesSection
               studyId={study.id}
@@ -1830,7 +1836,7 @@ export default function StudyDetailPage({
                     </CardContent>
                   </Card>
                 </Link>
-                {isAdmin && totalSamples > 0 && (
+                {canRunAnalysis && totalSamples > 0 && (
                   <Link
                     href={`/studies/${id}?tab=publishing&publisher=submg`}
                     className="block"
@@ -2005,7 +2011,7 @@ export default function StudyDetailPage({
                     </p>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    {!study.submitted && isAdmin && (
+                    {!study.submitted && canSubmitPublications && (
                       <>
                         {/* Test / Production toggle */}
                         <div className="inline-flex rounded-lg border border-border bg-muted/50 p-0.5">
@@ -2038,7 +2044,7 @@ export default function StudyDetailPage({
                             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                             Checking ENA...
                           </Button>
-                        ) : enaCredentialsMissing ? (
+                        ) : enaCredentialsMissing && canManageSettings ? (
                           <Button
                             size="sm"
                             variant="outline"
@@ -2050,6 +2056,17 @@ export default function StudyDetailPage({
                               <AlertCircle className="h-4 w-4 mr-2" />
                               Set ENA credentials
                             </Link>
+                          </Button>
+                        ) : enaCredentialsMissing ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-[#FFBA00]/30 bg-[#FFBA00]/10 text-[#8A6400]"
+                            title="Ask an application administrator to configure the installation's ENA credentials"
+                            disabled
+                          >
+                            <AlertCircle className="h-4 w-4 mr-2" />
+                            Ask admin to configure ENA
                           </Button>
                         ) : enaCheck.status === "error" ? (
                           <Button
@@ -2111,7 +2128,7 @@ export default function StudyDetailPage({
                   </div>
                 )}
 
-                {enaCredentialsMissing && (
+                {enaCredentialsMissing && canManageSettings && (
                   <Link
                     href="/admin/ena#ena-username"
                     className="flex items-start justify-between gap-3 rounded-lg border border-[#FFBA00]/30 bg-[#FFBA00]/10 px-4 py-3 text-sm text-[#8A6400] transition-colors hover:bg-[#FFBA00]/15"
@@ -2132,10 +2149,22 @@ export default function StudyDetailPage({
                   </Link>
                 )}
 
+                {enaCredentialsMissing && !canManageSettings && (
+                  <div className="flex items-start gap-2 rounded-lg border border-[#FFBA00]/30 bg-[#FFBA00]/10 px-4 py-3 text-sm text-[#8A6400]">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      <span className="block font-medium">ENA credentials missing</span>
+                      <span className="block text-xs">
+                        Ask an application administrator to configure the installation&apos;s Webin account.
+                      </span>
+                    </span>
+                  </div>
+                )}
+
 
                 {/* Section 3: Requirements (conditional on mode) */}
                 {(() => {
-                  const productionChecks = !study.submitted && isAdmin ? [
+                  const productionChecks = !study.submitted && canSubmitPublications ? [
                     {
                       key: "allChecks",
                       label: "Requirements",

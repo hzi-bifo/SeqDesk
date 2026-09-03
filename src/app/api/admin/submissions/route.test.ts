@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     $transaction: vi.fn(),
     $queryRaw: vi.fn(),
@@ -43,6 +44,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/ena", () => ({
   submitStudyToENA: mocks.submitStudyToENA,
   submitSamplesToENA: mocks.submitSamplesToENA,
@@ -51,6 +56,7 @@ vi.mock("@/lib/ena", () => ({
   generateSubmissionXml: mocks.generateSubmissionXml,
 }));
 
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 import { GET, POST } from "./route";
 
 const adminSession = {
@@ -64,6 +70,9 @@ const researcherSession = {
 describe("GET /api/admin/submissions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
   it("returns 401 when user is not authenticated", async () => {
@@ -76,12 +85,12 @@ describe("GET /api/admin/submissions", () => {
     expect(body.error).toBe("Unauthorized");
   });
 
-  it("returns 401 when user is not FACILITY_ADMIN", async () => {
+  it("returns 403 when a Sequencing Center researcher cannot publish", async () => {
     mocks.getServerSession.mockResolvedValue(researcherSession);
 
     const response = await GET();
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns enriched submissions with study entity details", async () => {
@@ -110,6 +119,19 @@ describe("GET /api/admin/submissions", () => {
     expect(body).toHaveLength(1);
     expect(body[0].entityDetails.title).toBe("Test Study");
     expect(body[0].accessionNumbers.study).toBe("ERP123");
+  });
+
+  it("lets a Shared Lab member view the installation submission history", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue(researcherSession);
+    mocks.db.submission.findMany.mockResolvedValue([]);
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
   });
 
   it("returns enriched submissions with sample entity details", async () => {
@@ -155,6 +177,9 @@ describe("GET /api/admin/submissions", () => {
 describe("POST /api/admin/submissions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.db.$queryRaw.mockResolvedValue(undefined);
     mocks.db.$executeRaw.mockResolvedValue(0);
     mocks.db.$transaction.mockImplementation(async (callback) => callback(mocks.db));
@@ -186,7 +211,7 @@ describe("POST /api/admin/submissions", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns 401 when user is RESEARCHER", async () => {
+  it("returns 403 when a Sequencing Center researcher cannot publish", async () => {
     mocks.getServerSession.mockResolvedValue(researcherSession);
 
     const request = new Request("http://localhost/api/admin/submissions", {
@@ -196,7 +221,27 @@ describe("POST /api/admin/submissions", () => {
     });
 
     const response = await POST(request);
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
+  });
+
+  it("lets a Shared Lab member reach study publishing validation", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue(researcherSession);
+
+    const request = new Request("http://localhost/api/admin/submissions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entityType: "study" }),
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "entityType and entityId are required",
+    });
   });
 
   it("returns 400 when entityType or entityId is missing", async () => {

@@ -2,16 +2,40 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { decideCapability } from "@/lib/authorization";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { decryptSecret } from "@/lib/security/secret-store";
 
 // POST /api/admin/settings/ena/test - Test ENA connection
 // Accepts credentials in request body (for testing before save) or uses saved credentials
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
+  const deploymentProfile = getServerDeploymentProfile();
+  const publishingAccess = decideCapability(
+    session,
+    "publishing.submit",
+    deploymentProfile
+  );
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!publishingAccess.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          publishingAccess.status === 401
+            ? "Unauthorized"
+            : publishingAccess.status === 404
+              ? "Not found"
+              : "Forbidden",
+      },
+      { status: publishingAccess.status }
+    );
   }
+
+  const canManageSettings = decideCapability(
+    session,
+    "system.settings.manage",
+    deploymentProfile
+  ).allowed;
 
   try {
     // Try to get credentials from request body first (for testing before save)
@@ -22,7 +46,10 @@ export async function POST(request: Request) {
 
     try {
       const body = await request.json();
-      if (body.enaUsername) {
+      // Only administrators may test unsaved credentials. Scientific users
+      // can validate the installation-managed account without seeing or
+      // replacing its stored values.
+      if (canManageSettings && body.enaUsername) {
         enaUsername = body.enaUsername;
         enaTestMode = body.enaTestMode ?? true;
 
@@ -160,7 +187,7 @@ export async function POST(request: Request) {
         success: true,
         message: `Credentials verified with ENA ${enaTestMode ? "Test" : "Production"} server`,
         server: baseUrl,
-        username: enaUsername,
+        ...(canManageSettings ? { username: enaUsername } : {}),
       });
     }
 

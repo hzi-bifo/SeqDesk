@@ -3,6 +3,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
+import {
+  decideCapability,
+  type CapabilityDecision,
+} from "@/lib/authorization";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { decryptSecret } from "@/lib/security/secret-store";
 import {
   submitStudyToENA,
@@ -52,12 +57,28 @@ function getEnaBrokerSettings(extraSettingsValue: string | null | undefined): {
   };
 }
 
+function authorizationResponse(decision: CapabilityDecision): NextResponse {
+  const error =
+    decision.status === 401
+      ? "Unauthorized"
+      : decision.status === 404
+        ? "Not found"
+        : "Forbidden";
+  return NextResponse.json({ error }, { status: decision.status });
+}
+
 // GET /api/admin/submissions - List all submissions
 export async function GET() {
   const session = await getServerSession(authOptions);
+  const deploymentProfile = getServerDeploymentProfile();
+  const publishingAccess = decideCapability(
+    session,
+    "publishing.submit",
+    deploymentProfile
+  );
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!publishingAccess.allowed || !publishingAccess.grant) {
+    return authorizationResponse(publishingAccess);
   }
 
   const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
@@ -75,6 +96,7 @@ export async function GET() {
     const enrichedSubmissions = await Promise.all(
       submissions.map(async (submission) => {
         let entityDetails = null;
+        let entityOwnerId: string | null = null;
 
         if (submission.entityType === "study") {
           const study = await db.study.findUnique({
@@ -95,6 +117,7 @@ export async function GET() {
             },
           });
           entityDetails = study;
+          entityOwnerId = study?.user?.id ?? null;
         } else if (submission.entityType === "sample") {
           const sample = await db.sample.findUnique({
             where: { id: submission.entityId },
@@ -107,11 +130,31 @@ export async function GET() {
                 select: {
                   id: true,
                   title: true,
+                  userId: true,
                 },
               },
+              order: { select: { userId: true } },
             },
           });
-          entityDetails = sample;
+          entityOwnerId = sample?.study?.userId ?? sample?.order?.userId ?? null;
+          entityDetails = sample
+            ? {
+                id: sample.id,
+                sampleId: sample.sampleId,
+                sampleTitle: sample.sampleTitle,
+                sampleAccessionNumber: sample.sampleAccessionNumber,
+                study: sample.study
+                  ? { id: sample.study.id, title: sample.study.title }
+                  : null,
+              }
+            : null;
+        }
+
+        if (
+          publishingAccess.grant?.scope !== "installation" &&
+          entityOwnerId !== publishingAccess.principal?.id
+        ) {
+          return null;
         }
 
         return {
@@ -124,7 +167,7 @@ export async function GET() {
       })
     );
 
-    return NextResponse.json(enrichedSubmissions);
+    return NextResponse.json(enrichedSubmissions.filter((submission) => submission !== null));
   } catch (error) {
     console.error("Error fetching submissions:", error);
     return NextResponse.json(
@@ -137,9 +180,15 @@ export async function GET() {
 // POST /api/admin/submissions - Create a new submission (trigger ENA registration)
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions);
+  const deploymentProfile = getServerDeploymentProfile();
+  const publishingAccess = decideCapability(
+    session,
+    "publishing.submit",
+    deploymentProfile
+  );
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!publishingAccess.allowed || !publishingAccess.grant) {
+    return authorizationResponse(publishingAccess);
   }
 
   let pendingSubmissionId: string | null = null;
@@ -210,6 +259,21 @@ export async function POST(request: Request) {
 
       if (!study) {
         return NextResponse.json({ error: "Study not found" }, { status: 404 });
+      }
+
+      const studyPublishingAccess = decideCapability(
+        session,
+        "studies.publish",
+        deploymentProfile
+      );
+      if (!studyPublishingAccess.allowed || !studyPublishingAccess.grant) {
+        return authorizationResponse(studyPublishingAccess);
+      }
+      if (
+        studyPublishingAccess.grant.scope !== "installation" &&
+        study.userId !== studyPublishingAccess.principal?.id
+      ) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
 
       // Edge case: Study already submitted to ENA

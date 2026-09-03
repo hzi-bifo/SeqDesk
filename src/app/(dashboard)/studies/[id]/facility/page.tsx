@@ -19,6 +19,7 @@ import {
   getStudyFacilityFieldSubsectionAnchorId,
   isStudyFacilityFieldSubsectionId,
 } from "@/lib/studies/facility-sections";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 
 interface StudyFormSchemaResponse {
   fields?: FormFieldDefinition[];
@@ -104,7 +105,8 @@ export default function StudyFacilityFieldsPage({
   params: Promise<{ id: string }>;
 }) {
   const resolvedParams = use(params);
-  const { data: session, status: sessionStatus } = useSession();
+  const { status: sessionStatus } = useSession();
+  const canUseOperationalStudyFields = useCapability("orders.process");
   const router = useRouter();
   const searchParams = useSearchParams();
   const [study, setStudy] = useState<Study | null>(null);
@@ -115,7 +117,6 @@ export default function StudyFacilityFieldsPage({
   const [error, setError] = useState("");
   const [notFound, setNotFound] = useState(false);
 
-  const isAdmin = session?.user?.role === "FACILITY_ADMIN";
   const apiStudyId = study?.id ?? resolvedParams.id;
   const loadedStudyId = study?.id ?? null;
   const requestedSubsection = searchParams.get("subsection");
@@ -182,24 +183,24 @@ export default function StudyFacilityFieldsPage({
 
   const visibleFacilityStudyFields = useMemo(
     () =>
-      isAdmin
+      canUseOperationalStudyFields
         ? studyFormFields
             .filter((field) => field.adminOnly)
             .slice()
             .sort((a, b) => a.order - b.order)
         : [],
-    [isAdmin, studyFormFields]
+    [canUseOperationalStudyFields, studyFormFields]
   );
 
   const visibleFacilitySampleFields = useMemo(
     () =>
-      isAdmin
+      canUseOperationalStudyFields
         ? studyPerSampleFields
             .filter((field) => field.adminOnly)
             .slice()
             .sort((a, b) => a.order - b.order)
         : [],
-    [isAdmin, studyPerSampleFields]
+    [canUseOperationalStudyFields, studyPerSampleFields]
   );
 
   const parsedStudyMetadata = useMemo(
@@ -227,21 +228,21 @@ export default function StudyFacilityFieldsPage({
               })),
             }
           : null,
-        includeFacilityFields: isAdmin,
+        includeFacilityFields: canUseOperationalStudyFields,
       }),
-    [isAdmin, study, studyFormFields, studyPerSampleFields]
+    [canUseOperationalStudyFields, study, studyFormFields, studyPerSampleFields]
   );
 
   useEffect(() => {
     if (sessionStatus === "loading" || loading || schemaLoading) return;
-    if (!isAdmin) {
+    if (!canUseOperationalStudyFields) {
       router.replace(`/studies/${apiStudyId}`);
       return;
     }
     if (facilitySections.length === 0) {
       router.replace(`/studies/${apiStudyId}`);
     }
-  }, [apiStudyId, facilitySections.length, isAdmin, loading, router, schemaLoading, sessionStatus]);
+  }, [apiStudyId, canUseOperationalStudyFields, facilitySections.length, loading, router, schemaLoading, sessionStatus]);
 
   useEffect(() => {
     if (!loadedStudyId) return;
@@ -261,7 +262,7 @@ export default function StudyFacilityFieldsPage({
     );
   }
 
-  if (!isAdmin) {
+  if (!canUseOperationalStudyFields) {
     return null;
   }
 

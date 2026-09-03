@@ -33,7 +33,10 @@ notes, sequencing operations, inspection, delivery, preview, and download paths
 now honor profile resource scopes, including installation-wide Shared Lab
 access. A central server route map returns `404` for unavailable
 Workbench/sequencing/support domains, so hidden navigation is not the only
-profile boundary.
+profile boundary. Study list/detail/edit/form views and ENA publishing now use
+the same capability model: Shared Lab members can work across the shared study
+catalog and submit through installation-managed ENA credentials, while only
+administrators can configure credentials or delete submission history.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -260,7 +263,7 @@ Convert APIs before relying on capability-based UI.
 ### Facility and sample operations
 
 - [x] Convert order list/detail/create/update/delete access and visibility filters.
-- [ ] Convert study list/detail/create/update/delete and publishing access.
+- [x] Convert study list/detail/create/update/delete and publishing access.
 - [x] Convert sample CRUD, sample-study assignment, and table/export access.
 - [x] Convert sequencing discovery, upload, run assignment, streaming, visibility, and delivery operations.
 - [ ] Convert sidebar entity/count queries to use centralized resource scopes.

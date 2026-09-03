@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { decideCapability, type CapabilityDecision } from "@/lib/authorization";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { encryptSecret } from "@/lib/security/secret-store";
 
 function parseExtraSettings(value: string | null | undefined): Record<string, unknown> {
@@ -16,12 +18,35 @@ function parseExtraSettings(value: string | null | undefined): Record<string, un
   }
 }
 
+function settingsAuthorization(session: Parameters<typeof decideCapability>[0]): CapabilityDecision {
+  return decideCapability(
+    session,
+    "system.settings.manage",
+    getServerDeploymentProfile()
+  );
+}
+
+function authorizationResponse(decision: CapabilityDecision): NextResponse {
+  return NextResponse.json(
+    {
+      error:
+        decision.status === 401
+          ? "Unauthorized"
+          : decision.status === 404
+            ? "Not found"
+            : "Forbidden",
+    },
+    { status: decision.status }
+  );
+}
+
 // GET /api/admin/settings/ena - Get ENA settings (password masked)
 export async function GET() {
   const session = await getServerSession(authOptions);
+  const access = settingsAuthorization(session);
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!access.allowed) {
+    return authorizationResponse(access);
   }
 
   try {
@@ -60,9 +85,10 @@ export async function GET() {
 // PUT /api/admin/settings/ena - Update ENA settings
 export async function PUT(request: Request) {
   const session = await getServerSession(authOptions);
+  const access = settingsAuthorization(session);
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!access.allowed) {
+    return authorizationResponse(access);
   }
 
   try {

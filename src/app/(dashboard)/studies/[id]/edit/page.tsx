@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
   useReactTable,
@@ -64,6 +63,7 @@ import {
 import { PageNotice } from "@/components/ui/page-notice";
 import { toast } from "@/components/ui/toast";
 import { notifyPanel } from "@/lib/notifications/client";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 
 // Per-sample field definition
 interface PerSampleField extends Omit<FormFieldDefinition, 'options'> {
@@ -742,7 +742,7 @@ interface ExistingStudy {
 export default function EditStudyPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { data: session } = useSession();
+  const canUseOperationalStudyFields = useCapability("orders.process");
   const [resolvedStudyId, setResolvedStudyId] = useState(id);
   const activeStudyId = resolvedStudyId;
   const { focusedField, setFocusedField } = useFieldHelp();
@@ -777,8 +777,6 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
 
   const [sampleMetadata, setSampleMetadata] = useState<SampleMetadataRow[]>([]);
 
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
-
   const studyFields = useMemo(() => {
     const fields = (formConfig?.studyFields || [])
       .filter((field) => field.visible !== false && field.type !== "mixs" && !field.adminOnly);
@@ -786,11 +784,11 @@ export default function EditStudyPage({ params }: { params: Promise<{ id: string
   }, [formConfig?.studyFields]);
 
   const adminOnlyStudyFields = useMemo(() => {
-    if (!isFacilityAdmin) return [];
+    if (!canUseOperationalStudyFields) return [];
     return (formConfig?.studyFields || [])
       .filter((field) => field.visible !== false && field.adminOnly)
       .sort((a, b) => a.order - b.order);
-  }, [formConfig?.studyFields, isFacilityAdmin]);
+  }, [formConfig?.studyFields, canUseOperationalStudyFields]);
 
   const studyFieldGroups = useMemo(() => {
     const sortedGroups = [...(formConfig?.groups || [])].sort((a, b) => a.order - b.order);

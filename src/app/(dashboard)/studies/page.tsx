@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { notifyPanel } from "@/lib/notifications/client";
 import { ErrorBanner } from "@/components/ui/error-banner";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 
 interface Study {
   id: string;
@@ -65,6 +66,9 @@ type SortDirection = "asc" | "desc";
 
 export default function StudiesPage() {
   const { data: session } = useSession();
+  const canCreateStudy = useCapability("studies.create");
+  const canReadAllStudies = useCapability("studies.read_all");
+  const canPurgeSharedStudies = useCapability("data.purge_shared");
   const [studies, setStudies] = useState<Study[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -79,10 +83,6 @@ export default function StudiesPage() {
   const [deleting, setDeleting] = useState(false);
   const [selectedStudyIds, setSelectedStudyIds] = useState<Set<string>>(new Set());
   const [bulkEditMode, setBulkEditMode] = useState(false);
-
-  const isResearcher = session?.user?.role === "RESEARCHER";
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
-  const canCreateStudy = isResearcher || isFacilityAdmin;
 
   useEffect(() => {
     const fetchStudies = async () => {
@@ -192,9 +192,11 @@ export default function StudiesPage() {
   const deletableStudies = useMemo(
     () =>
       studies.filter(
-        (study) => !study.submitted && (session?.user?.id === study.user.id || isFacilityAdmin)
+        (study) =>
+          !study.submitted &&
+          (session?.user?.id === study.user.id || canPurgeSharedStudies)
       ),
-    [studies, session?.user?.id, isFacilityAdmin]
+    [canPurgeSharedStudies, studies, session?.user?.id]
   );
   const selectedStudies = useMemo(
     () => deletableStudies.filter((study) => selectedStudyIds.has(study.id)),
@@ -318,14 +320,14 @@ export default function StudiesPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold">
-            {isFacilityAdmin ? "All Studies" : "My Studies"}
+            {canReadAllStudies ? "All Studies" : "My Studies"}
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {studies.length} stud{studies.length !== 1 ? "ies" : "y"}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
-          {isFacilityAdmin && (
+          {canPurgeSharedStudies && (
             bulkEditMode ? (
               <Button size="sm" variant="outline" onClick={exitBulkEditMode}>
                 Done
@@ -357,7 +359,7 @@ export default function StudiesPage() {
         <div className="bg-card rounded-xl p-12 text-center border border-border">
           <h2 className="text-lg font-medium mb-2">No studies yet</h2>
           <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
-            {isResearcher
+            {!canReadAllStudies
               ? "Studies group samples for ENA submission. First create an order with samples, then create a study to associate those samples with metadata."
               : "Studies group samples for ENA submission. Create an order with samples first, then create a study to associate metadata."}
           </p>
@@ -376,7 +378,7 @@ export default function StudiesPage() {
         </div>
       ) : (
         <div className="bg-card rounded-xl overflow-hidden border border-border">
-          {isFacilityAdmin && bulkEditMode && selectedStudies.length > 0 && (
+          {canPurgeSharedStudies && bulkEditMode && selectedStudies.length > 0 && (
             <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/40 px-4 py-3">
               <p className="text-sm text-muted-foreground">
                 {selectedStudies.length} stud{selectedStudies.length !== 1 ? "ies" : "y"} selected
@@ -425,7 +427,7 @@ export default function StudiesPage() {
                 </div>
 
                 {/* User Filter (Admin only) */}
-                {isFacilityAdmin && (
+                {canReadAllStudies && (
                   <div className="relative flex-1 sm:flex-none">
                     <select
                       value={userFilter}
@@ -479,7 +481,7 @@ export default function StudiesPage() {
           <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
             <button
               onClick={() => handleSort("title")}
-              className={`${isFacilityAdmin ? "col-span-5" : "col-span-7"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+              className={`${canReadAllStudies ? "col-span-5" : "col-span-7"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
             >
               Study
               {sortField === "title" && <ArrowUpDown className="h-3 w-3" />}
@@ -491,7 +493,7 @@ export default function StudiesPage() {
               Status
               {sortField === "status" && <ArrowUpDown className="h-3 w-3" />}
             </button>
-            {isFacilityAdmin && <div className="col-span-2">Researcher</div>}
+            {canReadAllStudies && <div className="col-span-2">Owner</div>}
             <button
               onClick={() => handleSort("samples")}
               className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors justify-end"
@@ -514,7 +516,9 @@ export default function StudiesPage() {
             {filteredStudies.map((study) => {
               const status = study.submitted ? "published" : "draft";
               const statusConfig = STATUS_CONFIG[status];
-              const canDeleteStudy = !study.submitted && (session?.user?.id === study.user.id || isFacilityAdmin);
+              const canDeleteStudy =
+                !study.submitted &&
+                (session?.user?.id === study.user.id || canPurgeSharedStudies);
               const isSelected = selectedStudyIds.has(study.id);
 
               return (
@@ -547,7 +551,7 @@ export default function StudiesPage() {
                               {study.studyAccessionId}
                             </p>
                           )}
-                          {isFacilityAdmin && (
+                          {canReadAllStudies && (
                             <p className="text-xs text-muted-foreground mt-0.5">
                               {study.user.firstName} {study.user.lastName}
                             </p>
@@ -566,7 +570,7 @@ export default function StudiesPage() {
                               {study.studyAccessionId}
                             </p>
                           )}
-                          {isFacilityAdmin && (
+                          {canReadAllStudies && (
                             <p className="text-xs text-muted-foreground mt-0.5">
                               {study.user.firstName} {study.user.lastName}
                             </p>
@@ -623,7 +627,7 @@ export default function StudiesPage() {
                   {/* Desktop layout */}
                   <div className="hidden md:contents">
                     {/* Study Info */}
-                    <div className={`${isFacilityAdmin ? "col-span-5" : "col-span-7"} min-w-0`}>
+                    <div className={`${canReadAllStudies ? "col-span-5" : "col-span-7"} min-w-0`}>
                       {bulkEditMode ? (
                         <>
                           <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
@@ -660,7 +664,7 @@ export default function StudiesPage() {
                     </div>
 
                     {/* Researcher (Admin only) */}
-                    {isFacilityAdmin && (
+                    {canReadAllStudies && (
                       <div className="col-span-2 min-w-0">
                         <p className="text-sm truncate">
                           {study.user.firstName} {study.user.lastName}

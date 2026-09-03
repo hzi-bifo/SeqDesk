@@ -36,10 +36,10 @@ describe("GET /api/admin/settings/ena", () => {
     vi.clearAllMocks();
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for non-admin users", async () => {
     mocks.getServerSession.mockResolvedValue(userSession);
     const res = await GET();
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -98,14 +98,14 @@ describe("PUT /api/admin/settings/ena", () => {
     mocks.db.siteSettings.upsert.mockResolvedValue({});
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for non-admin users", async () => {
     mocks.getServerSession.mockResolvedValue(userSession);
     const req = new NextRequest("http://localhost/api/admin/settings/ena", {
       method: "PUT",
       body: JSON.stringify({ enaUsername: "Webin-99999" }),
     });
     const res = await PUT(req);
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("validates ENA username format", async () => {

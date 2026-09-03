@@ -2,6 +2,65 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  decideCapability,
+  type Capability,
+  type CapabilityDecision,
+  type SessionPrincipalInput,
+} from "@/lib/authorization";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+
+function authorizationResponse(decision: CapabilityDecision): NextResponse {
+  const error =
+    decision.status === 401
+      ? "Unauthorized"
+      : decision.status === 404
+        ? "Not found"
+        : "Forbidden";
+  return NextResponse.json({ error }, { status: decision.status });
+}
+
+async function authorizeSubmission(
+  session: SessionPrincipalInput | null | undefined,
+  capability: Capability,
+  submission?: { entityType: string; entityId: string }
+): Promise<CapabilityDecision> {
+  const decision = decideCapability(
+    session,
+    capability,
+    getServerDeploymentProfile()
+  );
+  if (
+    !decision.allowed ||
+    !decision.grant ||
+    decision.grant.scope === "installation" ||
+    !submission
+  ) {
+    return decision;
+  }
+
+  let ownerId: string | null = null;
+  if (submission.entityType === "study") {
+    const study = await db.study.findUnique({
+      where: { id: submission.entityId },
+      select: { userId: true },
+    });
+    ownerId = study?.userId ?? null;
+  } else if (submission.entityType === "sample") {
+    const sample = await db.sample.findUnique({
+      where: { id: submission.entityId },
+      select: {
+        study: { select: { userId: true } },
+        order: { select: { userId: true } },
+      },
+    });
+    ownerId = sample?.study?.userId ?? sample?.order?.userId ?? null;
+  }
+
+  return ownerId === decision.principal?.id
+    ? decision
+    : { ...decision, allowed: false, status: 403, reason: "forbidden", grant: undefined };
+}
 
 // GET /api/admin/submissions/[id] - Get single submission
 export async function GET(
@@ -9,9 +68,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
+  const initialAccess = await authorizeSubmission(session, "publishing.submit");
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!initialAccess.allowed) {
+    return authorizationResponse(initialAccess);
   }
 
   const { id } = await params;
@@ -23,6 +83,15 @@ export async function GET(
 
     if (!submission) {
       return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    }
+
+    const submissionAccess = await authorizeSubmission(
+      session,
+      "publishing.submit",
+      submission
+    );
+    if (!submissionAccess.allowed) {
+      return authorizationResponse(submissionAccess);
     }
 
     return NextResponse.json(submission);
@@ -41,9 +110,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
+  const deleteAccess = await authorizeSubmission(session, "data.purge_shared");
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!deleteAccess.allowed) {
+    return authorizationResponse(deleteAccess);
   }
 
   const { id } = await params;
@@ -139,9 +209,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
+  const initialAccess = await authorizeSubmission(session, "publishing.submit");
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!initialAccess.allowed) {
+    return authorizationResponse(initialAccess);
   }
 
   const { id } = await params;
@@ -157,6 +228,20 @@ export async function PATCH(
     const validStatuses = ["PENDING", "SUBMITTED", "ACCEPTED", "REJECTED", "ERROR", "CANCELLED"];
     if (!validStatuses.includes(status)) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+    }
+
+    const existingSubmission = await db.submission.findUnique({ where: { id } });
+    if (!existingSubmission) {
+      return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    }
+
+    const submissionAccess = await authorizeSubmission(
+      session,
+      "publishing.submit",
+      existingSubmission
+    );
+    if (!submissionAccess.allowed) {
+      return authorizationResponse(submissionAccess);
     }
 
     const submission = await db.submission.update({

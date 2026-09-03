@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     submission: {
       findUnique: vi.fn(),
@@ -30,6 +31,11 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 import { GET, DELETE, PATCH } from "./route";
 
 const makeParams = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -37,16 +43,19 @@ const makeParams = (id: string) => ({ params: Promise.resolve({ id }) });
 describe("GET /api/admin/submissions/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
-  it("returns 401 when not admin", async () => {
+  it("returns 403 when a Sequencing Center researcher cannot publish", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
 
     const response = await GET(new Request("http://localhost"), makeParams("sub-1"));
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -81,11 +90,33 @@ describe("GET /api/admin/submissions/[id]", () => {
     const body = await response.json();
     expect(body.id).toBe("sub-1");
   });
+
+  it("lets a Shared Lab member read shared submission details", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.db.submission.findUnique.mockResolvedValue({
+      id: "sub-1",
+      entityType: "study",
+      entityId: "study-1",
+      status: "ACCEPTED",
+    });
+
+    const response = await GET(new Request("http://localhost"), makeParams("sub-1"));
+
+    expect(response.status).toBe(200);
+  });
 });
 
 describe("DELETE /api/admin/submissions/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
   it("returns 401 when not admin", async () => {
@@ -105,6 +136,23 @@ describe("DELETE /api/admin/submissions/[id]", () => {
     const response = await DELETE(new Request("http://localhost"), makeParams("sub-1"));
 
     expect(response.status).toBe(404);
+  });
+
+  it("keeps Shared Lab submission-history deletion admin-only", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await DELETE(
+      new Request("http://localhost"),
+      makeParams("sub-1")
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.db.submission.findUnique).not.toHaveBeenCalled();
   });
 
   it("deletes a simple submission", async () => {
@@ -215,6 +263,9 @@ describe("DELETE /api/admin/submissions/[id]", () => {
 describe("PATCH /api/admin/submissions/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
   it("returns 401 when not admin", async () => {
@@ -268,6 +319,11 @@ describe("PATCH /api/admin/submissions/[id]", () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
+    mocks.db.submission.findUnique.mockResolvedValue({
+      id: "sub-1",
+      entityType: "study",
+      entityId: "study-1",
+    });
     const updated = { id: "sub-1", status: "CANCELLED" };
     mocks.db.submission.update.mockResolvedValue(updated);
 
@@ -286,5 +342,31 @@ describe("PATCH /api/admin/submissions/[id]", () => {
       where: { id: "sub-1" },
       data: { status: "CANCELLED" },
     });
+  });
+
+  it("lets a Shared Lab member update shared submission status", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.db.submission.findUnique.mockResolvedValue({
+      id: "sub-1",
+      entityType: "study",
+      entityId: "study-1",
+    });
+    mocks.db.submission.update.mockResolvedValue({ id: "sub-1", status: "CANCELLED" });
+
+    const response = await PATCH(
+      new Request("http://localhost", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: "CANCELLED" }),
+      }),
+      makeParams("sub-1")
+    );
+
+    expect(response.status).toBe(200);
   });
 });

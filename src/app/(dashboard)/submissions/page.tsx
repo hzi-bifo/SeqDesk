@@ -31,6 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { DemoFeatureNotice } from "@/components/demo/DemoFeatureNotice";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 
 interface Submission {
   id: string;
@@ -263,6 +264,8 @@ export default function SubmissionsPage() {
   const confirm = useConfirm();
   const { data: session, status: sessionStatus } = useSession();
   const router = useRouter();
+  const canSubmitPublications = useCapability("publishing.submit");
+  const canDeleteSubmissionHistory = useCapability("data.purge_shared");
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -286,12 +289,12 @@ export default function SubmissionsPage() {
   useEffect(() => {
     if (sessionStatus === "loading") return;
     if (session?.user?.isDemo) return;
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
+    if (!session || !canSubmitPublications) {
       router.push("/orders");
       return;
     }
     fetchSubmissions();
-  }, [session, sessionStatus, router]);
+  }, [canSubmitPublications, session, sessionStatus, router]);
 
   const fetchSubmissions = async () => {
     try {
@@ -449,7 +452,7 @@ export default function SubmissionsPage() {
     );
   }
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
+  if (!session || !canSubmitPublications) {
     return null;
   }
 
@@ -652,22 +655,24 @@ export default function SubmissionsPage() {
                           </Link>
                         </Button>
                       )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(submission.id);
-                        }}
-                        disabled={deletingId === submission.id}
-                      >
-                        {deletingId === submission.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-3.5 w-3.5" />
-                        )}
-                      </Button>
+                      {canDeleteSubmissionHistory && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(submission.id);
+                          }}
+                          disabled={deletingId === submission.id}
+                        >
+                          {deletingId === submission.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      )}
                       {isExpanded ? (
                         <ChevronUp className="h-4 w-4 text-muted-foreground" />
                       ) : (
@@ -795,23 +800,25 @@ export default function SubmissionsPage() {
                               Processing...
                             </Button>
                           )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(submission.id);
-                            }}
-                            disabled={deletingId === submission.id}
-                          >
-                            {deletingId === submission.id ? (
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-4 w-4 mr-2" />
-                            )}
-                            Delete
-                          </Button>
+                          {canDeleteSubmissionHistory && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDelete(submission.id);
+                              }}
+                              disabled={deletingId === submission.id}
+                            >
+                              {deletingId === submission.id ? (
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4 mr-2" />
+                              )}
+                              Delete
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>

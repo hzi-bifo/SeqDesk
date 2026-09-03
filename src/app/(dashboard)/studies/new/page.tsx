@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
   useReactTable,
@@ -64,6 +63,7 @@ import { InlineFieldHelp, hasInlineFieldHelpContent } from "@/components/ui/inli
 import { PageNotice } from "@/components/ui/page-notice";
 import { toast } from "@/components/ui/toast";
 import { notifyPanel } from "@/lib/notifications/client";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 
 // Note: TanStack Table meta types are extended globally in orders/new/page.tsx
 // PerSampleField extends FormFieldDefinition properties for compatibility
@@ -862,7 +862,7 @@ interface MixsTemplate {
 
 export default function NewStudyPage() {
   const router = useRouter();
-  const { data: session } = useSession();
+  const canUseOperationalStudyFields = useCapability("orders.process");
   const { focusedField, setFocusedField } = useFieldHelp();
   const [currentStep, setCurrentStep] = useState(0);
   const [title, setTitle] = useState("");
@@ -899,21 +899,19 @@ export default function NewStudyPage() {
   // Per-sample data for the table
   const [sampleMetadata, setSampleMetadata] = useState<SampleMetadataRow[]>([]);
 
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
-
   const studyFields = useMemo(() => {
     const fields = (formConfig?.studyFields || [])
       .filter((field) => field.visible !== false && field.type !== "mixs" && !field.adminOnly);
     return fields.sort((a, b) => a.order - b.order);
   }, [formConfig?.studyFields]);
 
-  // Admin-only study fields shown in a separate section for admins
+  // Operational study fields are shown separately from requester-facing fields.
   const adminOnlyStudyFields = useMemo(() => {
-    if (!isFacilityAdmin) return [];
+    if (!canUseOperationalStudyFields) return [];
     return (formConfig?.studyFields || [])
       .filter((field) => field.visible !== false && field.adminOnly)
       .sort((a, b) => a.order - b.order);
-  }, [formConfig?.studyFields, isFacilityAdmin]);
+  }, [formConfig?.studyFields, canUseOperationalStudyFields]);
 
   const studyFieldGroups = useMemo(() => {
     const sortedGroups = [...(formConfig?.groups || [])].sort((a, b) => a.order - b.order);
