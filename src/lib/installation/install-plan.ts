@@ -38,6 +38,20 @@ export const installPlanSchema = z
         estimatedDownloadBytes: z.number().int().positive().optional(),
       })
       .strict(),
+    preflight: z
+      .object({
+        targetWritable: z.boolean(),
+        installationAvailableBytes: z.number().int().nonnegative().optional(),
+        installationRequiredBytes: z.number().int().positive(),
+        storageAvailableBytes: z
+          .object({
+            managedData: z.number().int().nonnegative().optional(),
+            pipelineRuns: z.number().int().nonnegative().optional(),
+            pipelineCache: z.number().int().nonnegative().optional(),
+          })
+          .strict(),
+      })
+      .strict(),
     deployment: z
       .object({
         profile: z.enum(["sequencing-center", "shared-lab", "research-workbench"]),
@@ -73,6 +87,12 @@ export const installPlanSchema = z
         executor: z.enum(["local", "slurm"]).optional(),
         starterPackages: z.array(z.string().min(1)),
         runSmokeTest: z.boolean(),
+        runtimeDownload: z
+          .object({
+            status: z.enum(["not-required", "resolved-at-apply", "estimated"]),
+            estimatedBytes: z.number().int().positive().optional(),
+          })
+          .strict(),
       })
       .strict(),
     service: z
@@ -140,6 +160,16 @@ export const installPlanSchema = z
         code: "custom",
         path: ["execution", "executor"],
         message: "An executor is required exactly when workflow execution is prepared.",
+      });
+    }
+    if (
+      (plan.execution.runtimeDownload.status === "estimated") !==
+      Boolean(plan.execution.runtimeDownload.estimatedBytes)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["execution", "runtimeDownload"],
+        message: "An estimated runtime download must include its estimated byte size.",
       });
     }
     if (

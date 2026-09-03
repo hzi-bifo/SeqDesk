@@ -6197,6 +6197,21 @@ install_plan_entry_source() {
     fi
 }
 
+install_plan_available_bytes() {
+    # Measure the filesystem that will back a possibly-not-yet-created path.
+    # Empty output means the platform could not provide a reliable value.
+    local requested_path="$1"
+    local existing_path=""
+    local free_kb=""
+    [ -n "$requested_path" ] || return 0
+    existing_path="$(nearest_existing_directory "$requested_path" 2>/dev/null || true)"
+    [ -n "$existing_path" ] || return 0
+    free_kb="$(gating_disk_kb "$existing_path")"
+    if [[ "$free_kb" =~ ^[0-9]+$ ]]; then
+        printf '%s' "$((free_kb * 1024))"
+    fi
+}
+
 build_install_plan_json() {
     local operation="install"
     local database_mode="local"
@@ -6204,6 +6219,13 @@ build_install_plan_json() {
     local entry_source
     local executor="local"
     local admin_name="${SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME:-} ${SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME:-}"
+    local target_parent=""
+    local target_writable="false"
+    local target_available_bytes=""
+    local managed_data_available_bytes=""
+    local run_available_bytes=""
+    local cache_available_bytes=""
+    local required_install_bytes=2147483648
     is_truthy "$SEQDESK_RECONFIGURE" && operation="reconfigure"
     is_truthy "$SEQDESK_UPDATE_EXISTING" && operation="update"
     uses_local_postgres_target || database_mode="existing"
@@ -6218,6 +6240,18 @@ build_install_plan_json() {
     is_truthy "${SEQDESK_EXEC_USE_SLURM:-}" && executor="slurm"
     entry_source="$(install_plan_entry_source)"
     PLAN_TARGET_CLASSIFICATION="$(classify_install_target)"
+    target_parent="$(resolve_parent_dir "$SEQDESK_DIR")"
+    is_writable_target "$SEQDESK_DIR" && target_writable="true"
+    target_available_bytes="$(install_plan_available_bytes "$target_parent")"
+    managed_data_available_bytes="$(install_plan_available_bytes "$SEQDESK_DATA_PATH")"
+    run_available_bytes="$(install_plan_available_bytes "$SEQDESK_RUN_DIR")"
+    cache_available_bytes="$(install_plan_available_bytes "$SEQDESK_PIPELINE_DATABASE_DIR")"
+    if [[ "$PLAN_RELEASE_SIZE" =~ ^[0-9]+$ ]] && [ "$PLAN_RELEASE_SIZE" -gt 0 ]; then
+        local release_reserve_bytes=$((PLAN_RELEASE_SIZE * 3))
+        if [ "$release_reserve_bytes" -gt "$required_install_bytes" ]; then
+            required_install_bytes="$release_reserve_bytes"
+        fi
+    fi
 
     SEQDESK_PLAN_OPERATION="$operation" \
     SEQDESK_DIR="$SEQDESK_DIR" \
@@ -6236,6 +6270,12 @@ build_install_plan_json() {
     SEQDESK_PLAN_RELEASE_SOURCE="${SEQDESK_API%/}/version" \
     SEQDESK_PLAN_RELEASE_CHECKSUM="$PLAN_RELEASE_CHECKSUM" \
     SEQDESK_PLAN_RELEASE_SIZE="$PLAN_RELEASE_SIZE" \
+    SEQDESK_PLAN_TARGET_WRITABLE="$target_writable" \
+    SEQDESK_PLAN_TARGET_AVAILABLE_BYTES="$target_available_bytes" \
+    SEQDESK_PLAN_MANAGED_DATA_AVAILABLE_BYTES="$managed_data_available_bytes" \
+    SEQDESK_PLAN_RUN_AVAILABLE_BYTES="$run_available_bytes" \
+    SEQDESK_PLAN_CACHE_AVAILABLE_BYTES="$cache_available_bytes" \
+    SEQDESK_PLAN_REQUIRED_INSTALL_BYTES="$required_install_bytes" \
     SEQDESK_PLAN_TARGET_CLASSIFICATION="$PLAN_TARGET_CLASSIFICATION" \
     SEQDESK_PLAN_DATABASE_MODE="$database_mode" \
     SEQDESK_PLAN_DATABASE_RUNTIME_REF="$([ -n "$SEQDESK_DATABASE_URL" ] && printf '%s' 'protected-input:database-url' || printf '%s' 'generated-local')" \
@@ -6249,6 +6289,11 @@ build_install_plan_json() {
     node <<'NODE'
 const truthy = (value) => ["1", "true", "yes", "y", "on"].includes(String(value || "").toLowerCase());
 const optional = (value) => value || undefined;
+const optionalBytes = (value) => {
+  if (value === "" || value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+};
 const size = Number(process.env.SEQDESK_PLAN_RELEASE_SIZE || "");
 const profile = process.env.SEQDESK_DEPLOYMENT_PROFILE;
 const pipelines = truthy(process.env.SEQDESK_PLAN_PIPELINES);
@@ -6281,6 +6326,16 @@ const plan = {
     checksum: optional(process.env.SEQDESK_PLAN_RELEASE_CHECKSUM),
     estimatedDownloadBytes: Number.isFinite(size) && size > 0 ? size : undefined,
   },
+  preflight: {
+    targetWritable: truthy(process.env.SEQDESK_PLAN_TARGET_WRITABLE),
+    installationAvailableBytes: optionalBytes(process.env.SEQDESK_PLAN_TARGET_AVAILABLE_BYTES),
+    installationRequiredBytes: Number(process.env.SEQDESK_PLAN_REQUIRED_INSTALL_BYTES),
+    storageAvailableBytes: {
+      managedData: optionalBytes(process.env.SEQDESK_PLAN_MANAGED_DATA_AVAILABLE_BYTES),
+      pipelineRuns: optionalBytes(process.env.SEQDESK_PLAN_RUN_AVAILABLE_BYTES),
+      pipelineCache: optionalBytes(process.env.SEQDESK_PLAN_CACHE_AVAILABLE_BYTES),
+    },
+  },
   deployment: { profile },
   access: {
     audience: process.env.SEQDESK_ACCESS_AUDIENCE,
@@ -6304,6 +6359,9 @@ const plan = {
     executor: pipelines ? process.env.SEQDESK_PLAN_EXECUTOR : undefined,
     starterPackages: [],
     runSmokeTest: false,
+    runtimeDownload: {
+      status: pipelines ? "resolved-at-apply" : "not-required",
+    },
   },
   service: {
     manager: usePm2 ? "pm2" : "manual",
@@ -6331,6 +6389,8 @@ const plan = {
     service: entrySource,
     enrollment: "default",
     bootstrap: entrySource,
+    "optional.exampleData": "default",
+    "optional.telemetry": entrySource,
     release: process.env.SEQDESK_VERSION ? "cli" : "default",
   },
   lockedPaths: [],
@@ -6345,25 +6405,71 @@ render_install_plan_human() {
     SEQDESK_INSTALL_PLAN_JSON="$1" node <<'NODE'
 const plan = JSON.parse(process.env.SEQDESK_INSTALL_PLAN_JSON);
 const line = (label, value) => console.log(`  ${label.padEnd(22)} ${value ?? "not configured"}`);
+const formatBytes = (bytes) => {
+  if (bytes === undefined || bytes === null) return "unknown";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = unit === 0 || value >= 10 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[unit]}`;
+};
+const profileSummary = {
+  "sequencing-center": "requesters submit sequencing work; facility staff process and deliver it",
+  "shared-lab": "one lab shares sequencing and analysis work; administrators also configure SeqDesk",
+  "research-workbench": "researchers import or upload data and run analyses in private workspaces",
+};
+const sourceLabels = {
+  default: "built-in default",
+  answer: "guided answer",
+  cli: "command line",
+  config: "configuration file",
+  hosted: "hosted profile",
+};
 console.log("\nInstallation plan");
 line("Operation", plan.operation);
 line("Target", `${plan.target.directory} (${plan.target.classification})`);
 line("Release", `v${plan.release.version}${plan.release.checksum ? ", checksum published" : ", no checksum published"}`);
+line("Release download", plan.release.estimatedDownloadBytes ? formatBytes(plan.release.estimatedDownloadBytes) : "size not published");
+line("Install disk reserve", `${formatBytes(plan.preflight.installationRequiredBytes)} required; ${formatBytes(plan.preflight.installationAvailableBytes)} available`);
+line("Target writable", plan.preflight.targetWritable ? "yes" : "no");
 line("Deployment profile", plan.deployment.profile);
+line("Profile behavior", profileSummary[plan.deployment.profile]);
 line("Enrollment", plan.enrollment.policy);
 line("Access", plan.access.audience);
 line("Browser URL", plan.access.browserUrl);
 line("Bind host", plan.access.bindHost);
 line("Local health URL", plan.access.localHealthUrl);
 line("Database", `${plan.database.mode} (${plan.database.runtimeUrlRef})`);
-line("Managed data", plan.storage.managedDataRoot);
-line("Pipeline runs", plan.storage.runRoot);
-line("Pipeline cache", plan.storage.cacheRoot);
+line("Managed data", plan.storage.managedDataRoot ? `${plan.storage.managedDataRoot} (${formatBytes(plan.preflight.storageAvailableBytes.managedData)} free)` : undefined);
+line("Pipeline runs", plan.storage.runRoot ? `${plan.storage.runRoot} (${formatBytes(plan.preflight.storageAvailableBytes.pipelineRuns)} free)` : undefined);
+line("Pipeline cache", plan.storage.cacheRoot ? `${plan.storage.cacheRoot} (${formatBytes(plan.preflight.storageAvailableBytes.pipelineCache)} free)` : undefined);
 line("Workflow execution", plan.execution.prepareNow ? plan.execution.executor : "deferred");
+line(
+  "Workflow downloads",
+  plan.execution.runtimeDownload.status === "not-required"
+    ? "none"
+    : plan.execution.runtimeDownload.status === "estimated"
+      ? formatBytes(plan.execution.runtimeDownload.estimatedBytes)
+      : "size resolved by Conda during installation; not published"
+);
 line("Service", plan.service.manager === "pm2" ? "PM2; start now and request boot startup" : "manual start");
 line("Initial administrator", plan.bootstrap.adminEmail);
 line("Password", plan.bootstrap.passwordRef);
+line("Optional example data", plan.optional.exampleData ? "enabled" : "disabled");
 line("Telemetry", plan.optional.telemetry ? "enabled" : "disabled");
+console.log("\nValue sources");
+for (const source of ["answer", "cli", "config", "hosted", "default"]) {
+  const paths = Object.entries(plan.sources)
+    .filter(([, value]) => value === source)
+    .map(([path]) => path);
+  if (paths.length > 0) line(sourceLabels[source], paths.join(", "));
+}
+line("Locked values", plan.lockedPaths.length > 0 ? plan.lockedPaths.join(", ") : "none");
+if (plan.warnings.length > 0) console.log("\nWarnings");
 for (const warning of plan.warnings) console.log(`  WARNING: ${warning}`);
 NODE
 }

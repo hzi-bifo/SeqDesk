@@ -307,6 +307,12 @@ plan_json="$(build_install_plan_json)"
 assert_contains "plan schema is versioned" '"schemaVersion": 1' <(printf '%s\n' "$plan_json")
 assert_contains "plan carries the selected profile" \
     '"profile": "research-workbench"' <(printf '%s\n' "$plan_json")
+assert_contains "plan records measured installation free space" \
+    '"installationAvailableBytes":' <(printf '%s\n' "$plan_json")
+assert_contains "plan records the enforced disk reserve" \
+    '"installationRequiredBytes": 2147483648' <(printf '%s\n' "$plan_json")
+assert_contains "plan marks workflow download size for apply-time resolution" \
+    '"status": "resolved-at-apply"' <(printf '%s\n' "$plan_json")
 assert_contains "plan separates browser and bind values" \
     '"bindHost": "127.0.0.1"' <(printf '%s\n' "$plan_json")
 assert_contains "plan contains a protected database reference" \
@@ -319,6 +325,20 @@ assert_not_contains "plan omits the migration password" \
     "direct-secret" <(printf '%s\n' "$plan_json")
 assert_not_contains "plan omits the administrator password" \
     "account-secret" <(printf '%s\n' "$plan_json")
+
+render_install_plan_human "$plan_json" >"$OUT"
+assert_contains "review explains the selected profile behavior" \
+    "researchers import or upload data" "$OUT"
+assert_contains "review shows the published release size" \
+    "121 KiB" "$OUT"
+assert_contains "review explains unknown workflow download size" \
+    "size resolved by Conda during installation" "$OUT"
+assert_contains "review shows optional content" \
+    "Optional example data  disabled" "$OUT"
+assert_contains "review shows value provenance" \
+    "Value sources" "$OUT"
+assert_contains "review shows hosted lock state" \
+    "Locked values          none" "$OUT"
 
 SEQDESK_USE_PM2=""
 resolve_service_mode_for_plan >"$OUT" 2>&1 <<'EOF'

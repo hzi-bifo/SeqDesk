@@ -199,7 +199,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 
 ### Review, apply, and verify
 
-- [ ] Expand the current redacted review (which now includes profile, administrator, enrollment, access topology, service lifecycle, database, paths, and pipeline enablement) with free-space results, executor/download estimates, optional content, value sources/locks, and warnings.
+- [x] Expand the redacted review with profile behavior, measured free-space results and enforced install reserve, executor choice, published release size, honest apply-time workflow-download sizing, optional content, value sources/locks, and warnings.
 - [ ] Allow Back, Save sanitized plan, Install, and Cancel before mutations begin.
 - [x] After confirmation, ask no new product/configuration questions; display stable pending/running/done/failed stages.
 - [x] Take an exclusive per-target apply lock and record schema-versioned, secret-free recovery checkpoints through material stages.

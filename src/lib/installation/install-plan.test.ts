@@ -13,6 +13,16 @@ function validPlan() {
       checksum: "sha256:abc",
       estimatedDownloadBytes: 1234,
     },
+    preflight: {
+      targetWritable: true,
+      installationAvailableBytes: 10_000_000_000,
+      installationRequiredBytes: 2_147_483_648,
+      storageAvailableBytes: {
+        managedData: 20_000_000_000,
+        pipelineRuns: 20_000_000_000,
+        pipelineCache: 20_000_000_000,
+      },
+    },
     deployment: { profile: "research-workbench" },
     access: {
       audience: "team-server",
@@ -36,6 +46,7 @@ function validPlan() {
       executor: "local",
       starterPackages: [],
       runSmokeTest: false,
+      runtimeDownload: { status: "resolved-at-apply" },
     },
     service: {
       manager: "pm2",
@@ -111,5 +122,18 @@ describe("InstallPlan", () => {
         service: { manager: "manual", startNow: true, startOnBootRequested: false },
       })
     ).toThrow(/service manager conflicts/i);
+  });
+
+  it("requires a size when workflow runtime downloads are estimated", () => {
+    const plan = validPlan();
+    expect(() =>
+      parseInstallPlan({
+        ...plan,
+        execution: {
+          ...plan.execution,
+          runtimeDownload: { status: "estimated" },
+        },
+      })
+    ).toThrow(/estimated byte size/i);
   });
 });
