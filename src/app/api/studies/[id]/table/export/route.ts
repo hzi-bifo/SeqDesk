@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+import {
+  canAccessStudyOwner,
+  canUseOperationalStudyFields,
+  decideStudyReadAccess,
+  studyAuthorizationError,
+} from "@/lib/studies/authorization";
 import { buildStudyTableData } from "@/lib/studies/study-table";
 
 // GET an XLSX export of the study "Table overview": one row per sample, the same
@@ -17,13 +24,23 @@ export async function GET(
     }
 
     const { id } = await params;
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    const data = await buildStudyTableData(id, { isFacilityAdmin });
+    const profile = getServerDeploymentProfile();
+    const access = decideStudyReadAccess(session, profile);
+    if (!access.allowed || !access.grant || !access.principal) {
+      return NextResponse.json(
+        { error: studyAuthorizationError(access) },
+        { status: access.status }
+      );
+    }
+    const canUseOperationalFields = canUseOperationalStudyFields(session, profile);
+    const data = await buildStudyTableData(id, {
+      isFacilityAdmin: canUseOperationalFields,
+    });
 
     if (!data) {
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
     }
-    if (!isFacilityAdmin && data.study.userId !== session.user.id) {
+    if (!canAccessStudyOwner(access, data.study.userId)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

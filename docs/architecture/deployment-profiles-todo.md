@@ -261,7 +261,7 @@ Convert APIs before relying on capability-based UI.
 
 - [x] Convert order list/detail/create/update/delete access and visibility filters.
 - [ ] Convert study list/detail/create/update/delete and publishing access.
-- [ ] Convert sample CRUD, sample-study assignment, and table/export access.
+- [x] Convert sample CRUD, sample-study assignment, and table/export access.
 - [x] Convert sequencing discovery, upload, run assignment, streaming, visibility, and delivery operations.
 - [ ] Convert sidebar entity/count queries to use centralized resource scopes.
 - [ ] Convert tickets/notes/mentions and make the domain optional outside Sequencing Center.

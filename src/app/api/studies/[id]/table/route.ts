@@ -11,6 +11,14 @@ import {
 import { loadStudyFormSchema } from "@/lib/studies/schema";
 import { loadOrderFormSchema } from "@/lib/orders/order-form";
 import { parseJsonObject } from "@/lib/json-object";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+import {
+  canAccessStudyOwner,
+  canUseOperationalStudyFields,
+  decideStudyMutationAccess,
+  decideStudyReadAccess,
+  studyAuthorizationError,
+} from "@/lib/studies/authorization";
 import { validateStudyTableCellValue } from "@/lib/studies/study-table-validation";
 import type { FormFieldDefinition } from "@/types/form-config";
 
@@ -27,13 +35,23 @@ export async function GET(
     }
 
     const { id } = await params;
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    const data = await buildStudyTableData(id, { isFacilityAdmin });
+    const profile = getServerDeploymentProfile();
+    const access = decideStudyReadAccess(session, profile);
+    if (!access.allowed || !access.grant || !access.principal) {
+      return NextResponse.json(
+        { error: studyAuthorizationError(access) },
+        { status: access.status }
+      );
+    }
+    const canUseOperationalFields = canUseOperationalStudyFields(session, profile);
+    const data = await buildStudyTableData(id, {
+      isFacilityAdmin: canUseOperationalFields,
+    });
 
     if (!data) {
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
     }
-    if (!isFacilityAdmin && data.study.userId !== session.user.id) {
+    if (!canAccessStudyOwner(access, data.study.userId)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -115,7 +133,15 @@ export async function PATCH(
     }
 
     const { id } = await params;
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const profile = getServerDeploymentProfile();
+    const access = decideStudyMutationAccess(session, profile);
+    if (!access.allowed || !access.grant || !access.principal) {
+      return NextResponse.json(
+        { error: studyAuthorizationError(access) },
+        { status: access.status }
+      );
+    }
+    const canUseOperationalFields = canUseOperationalStudyFields(session, profile);
 
     const body = await request.json().catch(() => null);
     const sampleId = typeof body?.sampleId === "string" ? body.sampleId : null;
@@ -133,7 +159,7 @@ export async function PATCH(
     if (!study) {
       return NextResponse.json({ error: "Study not found" }, { status: 404 });
     }
-    if (!isFacilityAdmin && study.userId !== session.user.id) {
+    if (!canAccessStudyOwner(access, study.userId)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -152,7 +178,7 @@ export async function PATCH(
       const name = columnKey.slice("checklist:".length);
       const schema = await loadStudyFormSchema({
         studyId: study.id,
-        isFacilityAdmin,
+        isFacilityAdmin: canUseOperationalFields,
         applyRoleFilter: true,
         applyModuleFilter: true,
       });
@@ -218,7 +244,9 @@ export async function PATCH(
       );
     } else if (columnKey.startsWith("custom:")) {
       const name = columnKey.slice("custom:".length);
-      const schema = await loadOrderFormSchema({ isFacilityAdmin });
+      const schema = await loadOrderFormSchema({
+        isFacilityAdmin: canUseOperationalFields,
+      });
       const field = schema.perSampleFields.find((f) => f.name === name);
       if (!field || !EDITABLE_FIELD_TYPES.has(field.type)) {
         return NextResponse.json(

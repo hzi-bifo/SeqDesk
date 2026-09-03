@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 
 export async function PUT(
   request: NextRequest,
@@ -12,6 +14,25 @@ export async function PUT(
     const session = await getServerSession(authOptions);
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const access = decideCapability(
+      session,
+      "samples.manage",
+      getServerDeploymentProfile()
+    );
+    if (!access.allowed || !access.grant || !access.principal) {
+      return NextResponse.json(
+        {
+          error:
+            access.status === 404
+              ? "Not found"
+              : access.status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status: access.status }
+      );
     }
 
     const { id: sampleId } = await params;
@@ -77,11 +98,11 @@ export async function PUT(
       return NextResponse.json({ error: "Sample not found" }, { status: 404 });
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
     const ownsSample =
-      sample.order.userId === session.user.id || sample.study?.userId === session.user.id;
+      sample.order.userId === access.principal.id ||
+      sample.study?.userId === access.principal.id;
 
-    if (!isFacilityAdmin && !ownsSample) {
+    if (access.grant.scope !== "installation" && !ownsSample) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

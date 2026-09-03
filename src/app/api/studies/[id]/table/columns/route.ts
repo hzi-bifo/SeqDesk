@@ -3,6 +3,11 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { parseJsonObject } from "@/lib/json-object";
+import {
+  canAccessStudyOwner,
+  decideStudyMutationAccess,
+  studyAuthorizationError,
+} from "@/lib/studies/authorization";
 import { loadStudyChecklistFieldNames } from "@/lib/studies/study-table";
 
 const studyColumnSelect = {
@@ -44,7 +49,13 @@ async function mutate(
   }
 
   const { id } = await params;
-  const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+  const access = decideStudyMutationAccess(session);
+  if (!access.allowed || !access.grant || !access.principal) {
+    return NextResponse.json(
+      { error: studyAuthorizationError(access) },
+      { status: access.status }
+    );
+  }
 
   const body = await request.json().catch(() => null);
   const fieldName =
@@ -60,7 +71,7 @@ async function mutate(
   if (!study) {
     return NextResponse.json({ error: "Study not found" }, { status: 404 });
   }
-  if (!isFacilityAdmin && study.userId !== session.user.id) {
+  if (!canAccessStudyOwner(access, study.userId)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
