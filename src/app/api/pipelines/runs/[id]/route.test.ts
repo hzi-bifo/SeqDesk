@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
+  deployment: { profileId: "sequencing-center" },
   getServerSession: vi.fn(),
   isDemoSession: vi.fn(),
   execFile: vi.fn(),
@@ -40,6 +41,21 @@ vi.mock("@/lib/auth", () => ({
   authOptions: {},
 }));
 
+vi.mock("@/lib/deployment-profile/server", async () => {
+  const { getDeploymentProfileDefinition } = await import(
+    "@/lib/deployment-profile/definitions"
+  );
+  return {
+    getServerDeploymentProfile: () =>
+      getDeploymentProfileDefinition(
+        mocks.deployment.profileId as
+          | "sequencing-center"
+          | "shared-lab"
+          | "research-workbench"
+      ),
+  };
+});
+
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
@@ -66,10 +82,11 @@ import { DELETE, GET } from "./route";
 describe("GET /api/pipelines/runs/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.deployment.profileId = "sequencing-center";
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "user-1",
-        role: "USER",
+        role: "RESEARCHER",
       },
     });
     mocks.isDemoSession.mockReturnValue(false);
@@ -603,6 +620,7 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.deployment.profileId = "sequencing-center";
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "admin-1",
@@ -617,6 +635,7 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
       currentStep: "Running",
       queueJobId: "local-321",
       runFolder: "/runs/run-1",
+      userId: "admin-1",
     });
     mocks.db.pipelineRun.update.mockResolvedValue(null);
     // Cancel now writes via a guarded updateMany (terminal-state race fix).
@@ -643,7 +662,7 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "user-1",
-        role: "USER",
+        role: "RESEARCHER",
       },
     });
 
@@ -655,7 +674,69 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
     );
 
     expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({ error: "Unauthorized" });
+    expect(await response.json()).toEqual({ error: "Forbidden" });
+  });
+
+  it("lets a Shared Lab member cancel a run they initiated", async () => {
+    mocks.deployment.profileId = "shared-lab";
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      userId: "member-1",
+      status: "running",
+      statusSource: "launcher",
+      currentStep: "Running",
+      queueJobId: "local-321",
+      runFolder: "/runs/run-1",
+    });
+    stubLocalJobActiveThenExited();
+
+    const response = await DELETE(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1", {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("does not let a Shared Lab member cancel another member's run", async () => {
+    mocks.deployment.profileId = "shared-lab";
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ userId: "member-2" });
+
+    const response = await DELETE(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1", {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Forbidden" });
+  });
+
+  it("returns 404 for facility run cancellation in Research Workbench", async () => {
+    mocks.deployment.profileId = "research-workbench";
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await DELETE(
+      new NextRequest("http://localhost:3000/api/pipelines/runs/run-1", {
+        method: "DELETE",
+      }),
+      { params: Promise.resolve({ id: "run-1" }) }
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Not found" });
+    expect(mocks.db.pipelineRun.findUnique).not.toHaveBeenCalled();
   });
 
   it("blocks deletes in the public demo", async () => {

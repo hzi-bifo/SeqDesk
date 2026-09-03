@@ -458,8 +458,15 @@ export default function OrderSequencingPage({
   const runPlanImportRef = useRef<HTMLInputElement | null>(null);
 
   const orderId = resolvedParams.id;
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const canManageSequencing = useCapability("sequencing.runs.manage");
+  const canReadAllAnalysis = useCapability("analysis.read_all");
+  const canDeliverSequencing = useCapability("sequencing.deliver");
   const canRunPipelines = useCapability("analysis.run");
+  const canManagePipelines = useCapability("system.pipelines.manage");
+  const canResolveOutputs = useCapability("analysis.resolve_outputs");
+  const canCancelOwnRuns = useCapability("analysis.cancel_own");
+  const canCancelAllRuns = useCapability("analysis.cancel_all");
+  const canPurgeRuns = useCapability("data.purge_shared");
   const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
 
   const sampleOptions = useMemo(() => data?.samples ?? [], [data?.samples]);
@@ -478,7 +485,7 @@ export default function OrderSequencingPage({
 
   // Fetch pipeline runs for analysis overview
   useEffect(() => {
-    if (activeView !== "analysis" || !isFacilityAdmin) return;
+    if (activeView !== "analysis" || !canReadAllAnalysis) return;
     let cancelled = false;
     setAnalysisRunsLoading(true);
     fetch(`/api/pipelines/runs?orderId=${orderId}&limit=200`)
@@ -495,7 +502,7 @@ export default function OrderSequencingPage({
         if (!cancelled) setAnalysisRunsLoading(false);
       });
     return () => { cancelled = true; };
-  }, [activeView, orderId, isFacilityAdmin]);
+  }, [activeView, canReadAllAnalysis, orderId]);
 
   const refreshSummary = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -525,7 +532,7 @@ export default function OrderSequencingPage({
   }, [orderId]);
 
   const refreshDelivery = useCallback(async () => {
-    if (!canRunPipelines) {
+    if (!canDeliverSequencing) {
       setDelivery(null);
       return;
     }
@@ -544,7 +551,7 @@ export default function OrderSequencingPage({
     } finally {
       setDeliveryLoading(false);
     }
-  }, [isFacilityAdmin, orderId]);
+  }, [canDeliverSequencing, orderId]);
 
   const handleSequencingDataChanged = useCallback(() => {
     void refreshSummary({ silent: true });
@@ -623,7 +630,7 @@ export default function OrderSequencingPage({
   }, [canRunPipelines]);
 
   const refreshRunPlans = useCallback(async () => {
-    if (!isFacilityAdmin) {
+    if (!canManageSequencing) {
       setRunPlans([]);
       setRunPlanFields([]);
       return;
@@ -649,28 +656,28 @@ export default function OrderSequencingPage({
     } finally {
       setRunPlansLoading(false);
     }
-  }, [assignmentRunId, isFacilityAdmin, orderId]);
+  }, [assignmentRunId, canManageSequencing, orderId]);
 
   useEffect(() => {
     if (sessionStatus === "loading") {
       return;
     }
 
-    if (!isFacilityAdmin) {
+    if (!canManageSequencing) {
       setLoading(false);
       return;
     }
 
     void refreshSummary();
-  }, [isFacilityAdmin, refreshSummary, sessionStatus]);
+  }, [canManageSequencing, refreshSummary, sessionStatus]);
 
   useEffect(() => {
-    if (sessionStatus === "loading" || !isFacilityAdmin) {
+    if (sessionStatus === "loading" || !canDeliverSequencing) {
       return;
     }
 
     void refreshDelivery();
-  }, [isFacilityAdmin, refreshDelivery, sessionStatus]);
+  }, [canDeliverSequencing, refreshDelivery, sessionStatus]);
 
   useEffect(() => {
     if (sessionStatus === "loading") {
@@ -1548,14 +1555,14 @@ export default function OrderSequencingPage({
     );
   }
 
-  if (!isFacilityAdmin) {
+  if (!canManageSequencing) {
     return (
       <PageContainer>
         <Card>
           <CardHeader>
             <CardTitle>Sequencing Data</CardTitle>
             <CardDescription>
-              This workspace is available only to facility administrators.
+              Your account cannot manage sequencing data in this deployment.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -1744,8 +1751,13 @@ export default function OrderSequencingPage({
             void refreshDelivery();
           }}
           isDemo={isDemo}
-          isFacilityAdmin={isFacilityAdmin}
           canRunPipelines={canRunPipelines}
+          canManagePipelines={canManagePipelines}
+          canResolveOutputs={canResolveOutputs}
+          canCancelOwnRuns={canCancelOwnRuns}
+          canCancelAllRuns={canCancelAllRuns}
+          canPurgeRuns={canPurgeRuns}
+          currentUserId={session?.user?.id}
         />
       </PageContainer>
     );

@@ -56,6 +56,7 @@ describe("runtime app surface proxy", () => {
       "/api/studies/study-1",
       "/api/samples/sample-1",
       "/api/files",
+      "/api/pipelines/runs/run-1/logs",
       "/api/sidebar/counts",
       "/api/admin/form-config",
       "/api/admin/settings/ena",

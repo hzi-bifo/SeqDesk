@@ -6,6 +6,10 @@ import fs from 'fs/promises';
 import { isDemoSession } from '@/lib/demo/server';
 import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-service';
 import {
+  isPipelineRunAuthorizationError,
+  requireFacilityPipelineCapability,
+} from '@/lib/pipelines/run-visibility';
+import {
   isActiveQueueState,
   isQueueSnapshotRetryable,
   isTerminalQueueState,
@@ -58,9 +62,12 @@ export async function POST(
 ) {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session || session.user.role !== 'FACILITY_ADMIN') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    const access = requireFacilityPipelineCapability(
+      session,
+      'data.purge_shared'
+    );
+    if (isPipelineRunAuthorizationError(access)) {
+      return NextResponse.json(access.body, { status: access.status });
     }
 
     if (isDemoSession(session)) {

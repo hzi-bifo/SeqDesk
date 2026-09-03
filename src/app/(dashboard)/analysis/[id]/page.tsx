@@ -48,6 +48,7 @@ import {
   useSlurmAvailability,
   type ExecutionModeRequest,
 } from "@/components/pipelines/ExecutionTargetControl";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -259,7 +260,7 @@ interface Run {
     name: string;
     orderNumber: string;
   } | null;
-  user: { firstName: string; lastName: string; email: string };
+  user: { id: string; firstName: string; lastName: string; email: string };
   steps: { id: string; stepId: string; stepName: string; status: string; startedAt: string | null; completedAt: string | null }[];
   assembliesCreated: { id: string; assemblyName: string; assemblyFile: string | null; sample: { sampleId: string } }[];
   binsCreated: { id: string; binName: string; binFile: string | null; completeness: number | null; contamination: number | null; sample: { sampleId: string } }[];
@@ -359,7 +360,10 @@ export default function AnalysisRunDetailPage({
   const searchParams = useSearchParams();
   const searchParamString = searchParams.toString();
   const { data: session } = useSession();
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const canManagePipelines = useCapability("system.pipelines.manage");
+  const canRunPipelines = useCapability("analysis.run");
+  const canCancelOwnRuns = useCapability("analysis.cancel_own");
+  const canCancelAllRuns = useCapability("analysis.cancel_all");
   const isDemoUser = session?.user?.isDemo === true;
 
   const { data, error, isLoading, mutate } = useSWR(
@@ -421,7 +425,7 @@ export default function AnalysisRunDetailPage({
   const { data: pipelineSettingsData } = useSWR<{
     pipelines: AdminPipelineExecutionSummary[];
   }>(
-    isFacilityAdmin && run?.pipelineId
+    canManagePipelines && run?.pipelineId
       ? "/api/admin/settings/pipelines?enabled=true"
       : null,
     fetcher
@@ -431,7 +435,7 @@ export default function AnalysisRunDetailPage({
     slurmAvailabilityLoading,
     slurmAvailabilityError,
   } = useSlurmAvailability(
-    Boolean(isFacilityAdmin && !isDemoUser && run?.status === "failed")
+    Boolean(canManagePipelines && !isDemoUser && run?.status === "failed")
   );
   const retryPipeline = useMemo(
     () =>
@@ -453,7 +457,7 @@ export default function AnalysisRunDetailPage({
   );
   const retryExecutionTargetBlockMessage = useMemo(
     () =>
-      run?.status === "failed" && isFacilityAdmin
+      run?.status === "failed" && canManagePipelines
         ? getExecutionTargetBlockMessage({
             executionMode: retryExecutionMode,
             executionPolicy: retryExecutionPolicy,
@@ -463,7 +467,7 @@ export default function AnalysisRunDetailPage({
           })
         : null,
     [
-      isFacilityAdmin,
+      canManagePipelines,
       retryExecutionMode,
       retryExecutionPolicy,
       run?.status,
@@ -491,6 +495,11 @@ export default function AnalysisRunDetailPage({
           ? queueStateToDisplayStatus(queueStateForUi)
           : run?.status || "pending";
   const runIsActive = ["running", "queued", "pending"].includes(effectiveRunStatus);
+  const canCancelRun = Boolean(
+    run &&
+      (canCancelAllRuns ||
+        (canCancelOwnRuns && run.user?.id === session?.user?.id))
+  );
   const resultErrors = Array.isArray(run?.results?.errors)
     ? run?.results?.errors
     : run?.results?.errors
@@ -792,7 +801,7 @@ export default function AnalysisRunDetailPage({
       return;
     }
     if (
-      isFacilityAdmin &&
+      canManagePipelines &&
       isExecutionTargetBlocked({
         executionMode: retryExecutionMode,
         executionPolicy: retryExecutionPolicy,
@@ -825,7 +834,7 @@ export default function AnalysisRunDetailPage({
           studyId: run.study.id,
           sampleIds,
           config: run.config || {},
-          ...(isFacilityAdmin ? { executionMode: retryExecutionMode } : {}),
+          ...(canManagePipelines ? { executionMode: retryExecutionMode } : {}),
         }),
       });
 
@@ -1206,13 +1215,13 @@ export default function AnalysisRunDetailPage({
               <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
               Refresh
             </Button>
-            {["pending", "queued", "running"].includes(effectiveRunStatus) && (
+            {canCancelRun && ["pending", "queued", "running"].includes(effectiveRunStatus) && (
               <Button variant="destructive" size="sm" onClick={handleCancel} disabled={cancelling}>
                 <StopCircle className="h-3.5 w-3.5 mr-1.5" />
                 Cancel
               </Button>
             )}
-            {run.status === "failed" && (
+            {canRunPipelines && run.status === "failed" && (
               <Button
                 size="sm"
                 onClick={handleRetry}
@@ -1235,7 +1244,7 @@ export default function AnalysisRunDetailPage({
         <div className="px-6 lg:px-8 mt-4 text-sm text-destructive">{retryError}</div>
       )}
 
-      {run.status === "failed" && isFacilityAdmin && (
+      {run.status === "failed" && canManagePipelines && (
         <div className="px-6 lg:px-8 mt-4">
           <ExecutionTargetControl
             id="analysis-retry-execution-mode"

@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Dna, FlaskConical, Upload, Loader2, Play, AlertCircle, CheckCircle2, XCircle, AlertTriangle, ChevronDown, Settings, ExternalLink } from "lucide-react";
 import Link from "next/link";
-import { useSession } from "next-auth/react";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
 import {
   ExecutionTargetControl,
@@ -112,8 +112,7 @@ function getPipelineIcon(icon: string) {
 }
 
 export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps) {
-  const { data: session } = useSession();
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const canManagePipelines = useCapability("system.pipelines.manage");
   const { data: pipelinesData } = useSWR(
     "/api/admin/settings/pipelines?enabled=true",
     fetcher
@@ -146,7 +145,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
     slurmAvailability,
     slurmAvailabilityLoading,
     slurmAvailabilityError,
-  } = useSlurmAvailability(Boolean(isFacilityAdmin && runDialogOpen));
+  } = useSlurmAvailability(Boolean(canManagePipelines && runDialogOpen));
 
   // Pre-check metadata for all pipelines on mount
   const [metadataPrecheck, setMetadataPrecheck] = useState<Record<string, MetadataValidation>>({});
@@ -158,7 +157,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
   const selectedPipelineId = selectedPipeline?.pipelineId;
   const executionTargetBlockMessage = useMemo(
     () =>
-      selectedPipeline && isFacilityAdmin
+      selectedPipeline && canManagePipelines
         ? getExecutionTargetBlockMessage({
             executionMode,
             executionPolicy: selectedPipeline.executionPolicy,
@@ -169,7 +168,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
         : null,
     [
       executionMode,
-      isFacilityAdmin,
+      canManagePipelines,
       selectedPipeline,
       slurmAvailability,
       slurmAvailabilityError,
@@ -320,7 +319,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
   const handleStartRun = async () => {
     if (!selectedPipeline || selectedSamples.size === 0) return;
     if (
-      isFacilityAdmin &&
+      canManagePipelines &&
       isExecutionTargetBlocked({
         executionMode,
         executionPolicy: selectedPipeline.executionPolicy,
@@ -362,7 +361,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
           studyId,
           sampleIds: Array.from(selectedSamples),
           config: localConfig,
-          ...(isFacilityAdmin ? { executionMode } : {}),
+          ...(canManagePipelines ? { executionMode } : {}),
         }),
       });
 
@@ -804,7 +803,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
                 </div>
               )}
 
-              {isFacilityAdmin && selectedPipeline && (
+              {canManagePipelines && selectedPipeline && (
                 <div className="border-t py-4">
                   <ExecutionTargetControl
                     id="legacy-study-pipeline-execution-mode"

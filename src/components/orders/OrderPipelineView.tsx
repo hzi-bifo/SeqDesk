@@ -203,6 +203,7 @@ type PipelineRun = {
   startedAt: string | null;
   completedAt: string | null;
   user?: {
+    id: string;
     firstName: string | null;
     lastName: string | null;
     email: string;
@@ -584,13 +585,13 @@ function getRunAllActionCopy({
 function PendingWritebackReviewPanel({
   run,
   isDemo,
-  isFacilityAdmin,
+  canResolveOutputs,
   onPromoted,
   onError,
 }: {
   run: PipelineRun;
   isDemo?: boolean;
-  isFacilityAdmin?: boolean;
+  canResolveOutputs?: boolean;
   onPromoted?: () => void;
   onError?: (message: string) => void;
 }) {
@@ -599,7 +600,7 @@ function PendingWritebackReviewPanel({
   const [reviewChecked, setReviewChecked] = useState(false);
   const [promoting, setPromoting] = useState(false);
   const response = useSWR<PendingWritebackResponse>(
-    run.status === "completed" && shouldOfferPendingReview(run)
+    canResolveOutputs && run.status === "completed" && shouldOfferPendingReview(run)
       ? `/api/pipelines/runs/${run.id}/pending-writebacks`
       : null,
     fetcher
@@ -621,7 +622,11 @@ function PendingWritebackReviewPanel({
     );
   }, [response.data]);
 
-  if (run.status !== "completed" || !shouldOfferPendingReview(run)) {
+  if (
+    !canResolveOutputs ||
+    run.status !== "completed" ||
+    !shouldOfferPendingReview(run)
+  ) {
     return null;
   }
 
@@ -815,7 +820,7 @@ function PendingWritebackReviewPanel({
             </table>
           </div>
 
-          {isFacilityAdmin && !isDemo ? (
+          {canResolveOutputs && !isDemo ? (
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <Button
                 type="button"
@@ -917,8 +922,15 @@ interface OrderPipelineViewProps {
   onRunCompleted?: () => void;
   onSampleDataChanged?: () => void;
   isDemo?: boolean;
+  /** @deprecated Use the capability props below. Kept for older callers/tests. */
   isFacilityAdmin?: boolean;
   canRunPipelines?: boolean;
+  canManagePipelines?: boolean;
+  canResolveOutputs?: boolean;
+  canCancelOwnRuns?: boolean;
+  canCancelAllRuns?: boolean;
+  canPurgeRuns?: boolean;
+  currentUserId?: string;
 }
 
 export function OrderPipelineView({
@@ -930,6 +942,12 @@ export function OrderPipelineView({
   isDemo,
   isFacilityAdmin = false,
   canRunPipelines = isFacilityAdmin,
+  canManagePipelines = isFacilityAdmin,
+  canResolveOutputs = isFacilityAdmin,
+  canCancelOwnRuns = false,
+  canCancelAllRuns = isFacilityAdmin,
+  canPurgeRuns = isFacilityAdmin,
+  currentUserId,
 }: OrderPipelineViewProps) {
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
   const [executionMode, setExecutionMode] = useState<ExecutionModeRequest>("default");
@@ -948,6 +966,7 @@ export function OrderPipelineView({
   const [selectMode, setSelectMode] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const deletionSelectMode = selectMode && canPurgeRuns && !isDemo;
   const [selectionUpdatingRunId, setSelectionUpdatingRunId] = useState<string | null>(null);
   const [detailRun, setDetailRun] = useState<PipelineRun | null>(null);
   const [changeSourceSample, setChangeSourceSample] = useState<{
@@ -968,7 +987,7 @@ export function OrderPipelineView({
     slurmAvailability,
     slurmAvailabilityLoading,
     slurmAvailabilityError,
-  } = useSlurmAvailability(Boolean(isFacilityAdmin && !isDemo));
+  } = useSlurmAvailability(Boolean(canManagePipelines && !isDemo));
 
   const pipelinesResponse = useSWR<{ pipelines: AdminPipeline[] }>(
     "/api/admin/settings/pipelines?enabled=true&catalog=order",
@@ -1140,7 +1159,7 @@ export function OrderPipelineView({
   const failedRunCount = statusCounts.failed ?? 0;
   const executionTargetBlockMessage = useMemo(
     () =>
-      pipeline && isFacilityAdmin && !isDemo
+      pipeline && canManagePipelines && !isDemo
         ? getExecutionTargetBlockMessage({
             executionMode,
             executionPolicy: pipeline.executionPolicy,
@@ -1152,7 +1171,7 @@ export function OrderPipelineView({
     [
       executionMode,
       isDemo,
-      isFacilityAdmin,
+      canManagePipelines,
       pipeline,
       slurmAvailability,
       slurmAvailabilityError,
@@ -1227,7 +1246,7 @@ export function OrderPipelineView({
     async (sampleIds: string[]) => {
       if (!pipeline || !canRunPipelines) return;
       if (
-        isFacilityAdmin &&
+        canManagePipelines &&
         isExecutionTargetBlocked({
           executionMode,
           executionPolicy: pipeline.executionPolicy,
@@ -1265,7 +1284,7 @@ export function OrderPipelineView({
             orderId,
             sampleIds,
             config: localConfig,
-            ...(isFacilityAdmin ? { executionMode } : {}),
+            ...(canManagePipelines ? { executionMode } : {}),
           }),
         });
 
@@ -1311,7 +1330,7 @@ export function OrderPipelineView({
       confirm,
       executionMode,
       executionTargetBlockMessage,
-      isFacilityAdmin,
+      canManagePipelines,
       canRunPipelines,
       localConfig,
       orderId,
@@ -1326,6 +1345,7 @@ export function OrderPipelineView({
 
   const handleDeleteRun = useCallback(
     async (runId: string) => {
+      if (!canPurgeRuns || isDemo) return;
       setDeletingRun(true);
       try {
         const res = await fetch(`/api/pipelines/runs/${runId}/delete`, {
@@ -1344,7 +1364,7 @@ export function OrderPipelineView({
         setDeletingRun(false);
       }
     },
-    [runsResponse, onSampleDataChanged]
+    [canPurgeRuns, isDemo, runsResponse, onSampleDataChanged]
   );
 
   const handleStopRun = useCallback(
@@ -1388,7 +1408,7 @@ export function OrderPipelineView({
   );
 
   const handleBulkDelete = useCallback(async () => {
-    if (selectedRunIds.size === 0) return;
+    if (!canPurgeRuns || selectedRunIds.size === 0) return;
     setBulkDeleting(true);
     try {
       for (const runId of selectedRunIds) {
@@ -1409,11 +1429,11 @@ export function OrderPipelineView({
     } finally {
       setBulkDeleting(false);
     }
-  }, [selectedRunIds, runsResponse, onSampleDataChanged]);
+  }, [canPurgeRuns, selectedRunIds, runsResponse, onSampleDataChanged]);
 
   const handleSetVisibleRun = useCallback(
     async (run: PipelineRun, selected: boolean) => {
-      if (!isFacilityAdmin || isDemo) return;
+      if (!canResolveOutputs || isDemo) return;
 
       setSelectionUpdatingRunId(run.id);
       setError("");
@@ -1437,7 +1457,7 @@ export function OrderPipelineView({
         setSelectionUpdatingRunId(null);
       }
     },
-    [isDemo, isFacilityAdmin, runsResponse]
+    [canResolveOutputs, isDemo, runsResponse]
   );
 
   // Deletable runs are those not currently running
@@ -1940,7 +1960,7 @@ export function OrderPipelineView({
         {getOrderPipelineHelpText(pipeline)}
       </HelpBox>
 
-      {isFacilityAdmin && !isDemo ? (
+      {canManagePipelines && !isDemo ? (
         <ExecutionTargetControl
           id="order-pipeline-execution-mode"
           value={executionMode}
@@ -2451,7 +2471,7 @@ export function OrderPipelineView({
           </div>
           {allRuns.length > 0 && (
             <div className="flex items-center gap-2">
-              {selectMode ? (
+              {deletionSelectMode ? (
                 <>
                   <span className="text-xs text-muted-foreground">
                     {selectedRunIds.size} selected
@@ -2480,14 +2500,16 @@ export function OrderPipelineView({
                 </>
               ) : (
                 <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => setSelectMode(true)}
-                  >
-                    Select
-                  </Button>
+                  {canPurgeRuns && !isDemo && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setSelectMode(true)}
+                    >
+                      Select
+                    </Button>
+                  )}
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
                     <SelectTrigger className="h-8 w-[160px] text-xs">
                       <SelectValue />
@@ -2531,7 +2553,7 @@ export function OrderPipelineView({
               <table className="w-full text-sm">
                 <thead className="border-b bg-secondary/30">
                   <tr>
-                    {selectMode && (
+                    {deletionSelectMode && (
                       <th className="w-[40px] px-3 py-2.5">
                         <Checkbox
                           checked={allFilteredSelected && deletableFilteredRuns.length > 0}
@@ -2573,26 +2595,29 @@ export function OrderPipelineView({
                   {filteredRuns.map((run) => {
                     const details = getRunDetails(run);
                     const sampleCount = getSampleCount(run);
+                    const canCancelThisRun =
+                      canCancelAllRuns ||
+                      (canCancelOwnRuns && run.user?.id === currentUserId);
 
                     return (
                       <tr
                         key={run.id}
-                        tabIndex={selectMode ? undefined : 0}
+                        tabIndex={deletionSelectMode ? undefined : 0}
                         aria-label={`View details for ${run.runNumber}`}
                         className={cn(
                           "transition-colors hover:bg-secondary/20",
-                          !selectMode &&
+                          !deletionSelectMode &&
                             "cursor-pointer focus-visible:bg-secondary/20 focus-visible:outline-none",
-                          selectMode && selectedRunIds.has(run.id) && "bg-secondary/30"
+                          deletionSelectMode && selectedRunIds.has(run.id) && "bg-secondary/30"
                         )}
                         onClick={() => {
-                          if (!selectMode) {
+                          if (!deletionSelectMode) {
                             setDetailRun(run);
                           }
                         }}
                         onKeyDown={(event) => {
                           if (
-                            selectMode ||
+                            deletionSelectMode ||
                             event.currentTarget !== event.target ||
                             (event.key !== "Enter" && event.key !== " ")
                           ) {
@@ -2603,7 +2628,7 @@ export function OrderPipelineView({
                           setDetailRun(run);
                         }}
                       >
-                        {selectMode && (
+                        {deletionSelectMode && (
                           <td
                             className="px-3 py-3 align-top"
                             onClick={(event) => event.stopPropagation()}
@@ -2724,7 +2749,7 @@ export function OrderPipelineView({
                                 <Info className="h-4 w-4" />
                                 View details
                               </DropdownMenuItem>
-                              {isFacilityAdmin && !isDemo && run.status === "completed" && !isRunVisibleToUser(run) && (
+                              {canResolveOutputs && !isDemo && run.status === "completed" && !isRunVisibleToUser(run) && (
                                 <DropdownMenuItem
                                   disabled={selectionUpdatingRunId === run.id}
                                   onSelect={(event) => {
@@ -2736,7 +2761,7 @@ export function OrderPipelineView({
                                   Make visible to user
                                 </DropdownMenuItem>
                               )}
-                              {isFacilityAdmin && !isDemo && shouldOfferPendingReview(run) && (
+                              {canResolveOutputs && !isDemo && shouldOfferPendingReview(run) && (
                                 <DropdownMenuItem
                                   onSelect={(event) => {
                                     event.preventDefault();
@@ -2747,7 +2772,7 @@ export function OrderPipelineView({
                                   Review pending outputs
                                 </DropdownMenuItem>
                               )}
-                              {isFacilityAdmin && !isDemo && isRunVisibleToUser(run) && (
+                              {canResolveOutputs && !isDemo && isRunVisibleToUser(run) && (
                                 <DropdownMenuItem
                                   disabled={selectionUpdatingRunId === run.id}
                                   onSelect={(event) => {
@@ -2759,7 +2784,7 @@ export function OrderPipelineView({
                                   Hide from user
                                 </DropdownMenuItem>
                               )}
-                              {isFacilityAdmin &&
+                              {canCancelThisRun &&
                                 !isDemo &&
                                 ["pending", "queued", "running"].includes(
                                   run.status
@@ -2775,7 +2800,7 @@ export function OrderPipelineView({
                                     Stop run
                                   </DropdownMenuItem>
                                 )}
-                              {!isDemo && (
+                              {canPurgeRuns && !isDemo && (
                                 <DropdownMenuItem
                                   variant="destructive"
                                   disabled={run.status === "running" || deletingRun}
@@ -2797,7 +2822,7 @@ export function OrderPipelineView({
                   {filteredRuns.length === 0 && statusFilter !== "all" && (
                     <tr>
                       <td
-                        colSpan={selectMode ? 10 : 9}
+                        colSpan={deletionSelectMode ? 10 : 9}
                         className="px-4 py-8 text-center text-muted-foreground"
                       >
                         No {statusFilter} runs found.
@@ -2813,7 +2838,7 @@ export function OrderPipelineView({
 
       {/* Delete confirmation dialog */}
       <Dialog
-        open={Boolean(deleteTarget)}
+        open={canPurgeRuns && Boolean(deleteTarget)}
         onOpenChange={(open) => {
           if (!open && !deletingRun) setDeleteTarget(null);
         }}
@@ -2996,7 +3021,7 @@ export function OrderPipelineView({
                 <PendingWritebackReviewPanel
                   run={detailRun}
                   isDemo={isDemo}
-                  isFacilityAdmin={isFacilityAdmin}
+                  canResolveOutputs={canResolveOutputs}
                   onPromoted={() => {
                     void runsResponse.mutate();
                     onSampleDataChanged?.();
@@ -3102,7 +3127,7 @@ export function OrderPipelineView({
         )}
       </Dialog>
       <Dialog
-        open={showBulkDeleteConfirm}
+        open={canPurgeRuns && showBulkDeleteConfirm}
         onOpenChange={(open) => {
           if (!open && !bulkDeleting) setShowBulkDeleteConfirm(false);
         }}

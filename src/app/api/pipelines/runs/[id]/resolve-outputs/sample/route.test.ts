@@ -121,11 +121,11 @@ describe("POST /api/pipelines/runs/[id]/resolve-outputs/sample", () => {
     expect(response.status).toBe(403);
   });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
     const response = await POST(makeRequest(), { params });
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
   });
 
   it("returns 403 for demo session", async () => {

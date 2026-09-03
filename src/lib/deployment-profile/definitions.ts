@@ -107,6 +107,7 @@ export function isModuleEnabled(
 
 const SEQUENCING_EXPERIENCE_PATHS = [
   "/analysis",
+  "/api/pipelines/runs",
   "/assemblies",
   "/orders",
   "/studies",

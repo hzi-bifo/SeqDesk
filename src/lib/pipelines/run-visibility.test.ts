@@ -1,75 +1,154 @@
 import { describe, expect, it } from "vitest";
 
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
+
 import {
+  authorizePipelineRunRead,
   canReadPipelineRun,
+  decideFacilityPipelineCapability,
   isPipelineRunPublished,
-  userOwnsPipelineRun,
+  requireFacilityPipelineCapability,
+  userOwnsPipelineRunTarget,
 } from "./run-visibility";
 
-const owner = { id: "user-1", role: "RESEARCHER" };
-const admin = { id: "admin-1", role: "FACILITY_ADMIN" };
-const stranger = { id: "user-2", role: "RESEARCHER" };
+const ownerSession = {
+  user: { id: "user-1", role: "RESEARCHER" },
+};
+const adminSession = {
+  user: { id: "admin-1", role: "FACILITY_ADMIN" },
+};
+const strangerSession = {
+  user: { id: "user-2", role: "RESEARCHER" },
+};
+const sequencingCenter = getDeploymentProfileDefinition("sequencing-center");
+const sharedLab = getDeploymentProfileDefinition("shared-lab");
+const workbench = getDeploymentProfileDefinition("research-workbench");
+
+describe("pipeline run capability boundary", () => {
+  it("returns 401 for missing or invalid authentication", () => {
+    expect(
+      requireFacilityPipelineCapability(null, "analysis.read_own", sequencingCenter)
+    ).toMatchObject({ status: 401, body: { error: "Unauthorized" } });
+    expect(
+      requireFacilityPipelineCapability(
+        { user: { id: "removed", role: "FACILITY_ADMIN", authorizationValid: false } },
+        "analysis.read_all",
+        sequencingCenter
+      )
+    ).toMatchObject({ status: 401 });
+  });
+
+  it("returns 404 for facility run APIs in Research Workbench", () => {
+    expect(
+      decideFacilityPipelineCapability(
+        ownerSession,
+        "analysis.read_own",
+        workbench
+      )
+    ).toMatchObject({
+      allowed: false,
+      status: 404,
+      reason: "domain-unavailable",
+    });
+    expect(
+      decideFacilityPipelineCapability(
+        adminSession,
+        "analysis.resolve_outputs",
+        workbench
+      )
+    ).toMatchObject({ allowed: false, status: 404 });
+  });
+
+  it("keeps pipeline configuration separate from running workflows", () => {
+    expect(
+      decideFacilityPipelineCapability(
+        ownerSession,
+        "analysis.run",
+        sharedLab
+      ).allowed
+    ).toBe(true);
+    expect(
+      decideFacilityPipelineCapability(
+        ownerSession,
+        "system.pipelines.manage",
+        sharedLab
+      )
+    ).toMatchObject({ allowed: false, status: 403 });
+  });
+});
 
 describe("isPipelineRunPublished", () => {
-  it("is true when there is at least one selected result selection", () => {
-    expect(isPipelineRunPublished({ selectedResultSelections: [{ id: "s1" }] })).toBe(true);
-  });
-
-  it("is false when there are no selections", () => {
+  it("requires at least one selected result", () => {
+    expect(isPipelineRunPublished({ selectedResultSelections: [{ id: "s1" }] })).toBe(
+      true
+    );
     expect(isPipelineRunPublished({ selectedResultSelections: [] })).toBe(false);
     expect(isPipelineRunPublished({ selectedResultSelections: null })).toBe(false);
-    expect(isPipelineRunPublished({})).toBe(false);
   });
 });
 
-describe("userOwnsPipelineRun", () => {
-  it("matches the study owner", () => {
-    expect(userOwnsPipelineRun(owner, { study: { userId: "user-1" } })).toBe(true);
-  });
+describe("pipeline run read scopes", () => {
+  const publishedOwnerRun = {
+    study: { userId: "user-1" },
+    selectedResultSelections: [{ id: "s1" }],
+  };
 
-  it("matches the order owner", () => {
-    expect(userOwnsPipelineRun(owner, { order: { userId: "user-1" } })).toBe(true);
-  });
-
-  it("rejects a non-owner", () => {
-    expect(userOwnsPipelineRun(stranger, { study: { userId: "user-1" } })).toBe(false);
-  });
-});
-
-describe("canReadPipelineRun", () => {
-  it("always allows facility admins, even for unpublished runs", () => {
+  it("recognizes the order or study owner as the requester-facing owner", () => {
+    expect(userOwnsPipelineRunTarget("user-1", publishedOwnerRun)).toBe(true);
     expect(
-      canReadPipelineRun(admin, {
-        study: { userId: "user-1" },
+      userOwnsPipelineRunTarget("user-1", { order: { userId: "user-1" } })
+    ).toBe(true);
+    expect(userOwnsPipelineRunTarget("user-2", publishedOwnerRun)).toBe(false);
+  });
+
+  it("lets Sequencing Center operators read every run", () => {
+    const access = requireFacilityPipelineCapability(
+      adminSession,
+      "analysis.read_all",
+      sequencingCenter
+    );
+    if (!("grant" in access)) throw new Error("Expected an analysis.read_all grant");
+
+    expect(
+      canReadPipelineRun(access.grant, access.principalId, {
+        study: { userId: "someone-else" },
         selectedResultSelections: [],
       })
     ).toBe(true);
   });
 
-  it("allows a non-admin owner only for published runs", () => {
+  it("lets a Sequencing Center requester read only selected results for their target", () => {
     expect(
-      canReadPipelineRun(owner, {
-        study: { userId: "user-1" },
-        selectedResultSelections: [{ id: "s1" }],
-      })
-    ).toBe(true);
+      authorizePipelineRunRead(ownerSession, publishedOwnerRun, sequencingCenter)
+    ).toBeNull();
+    expect(
+      authorizePipelineRunRead(
+        ownerSession,
+        { ...publishedOwnerRun, selectedResultSelections: [] },
+        sequencingCenter
+      )
+    ).toMatchObject({ status: 403 });
+    expect(
+      authorizePipelineRunRead(strangerSession, publishedOwnerRun, sequencingCenter)
+    ).toMatchObject({ status: 403 });
   });
 
-  it("rejects a non-admin owner of an unpublished run", () => {
+  it("lets every Shared Lab member read runs installation-wide", () => {
     expect(
-      canReadPipelineRun(owner, {
-        study: { userId: "user-1" },
-        selectedResultSelections: [],
-      })
-    ).toBe(false);
+      authorizePipelineRunRead(
+        strangerSession,
+        {
+          study: { userId: "user-1" },
+          selectedResultSelections: [],
+        },
+        sharedLab
+      )
+    ).toBeNull();
   });
 
-  it("rejects a non-owner of a published run", () => {
+  it("returns 404 instead of leaking facility runs to Workbench", () => {
     expect(
-      canReadPipelineRun(stranger, {
-        study: { userId: "user-1" },
-        selectedResultSelections: [{ id: "s1" }],
-      })
-    ).toBe(false);
+      authorizePipelineRunRead(ownerSession, publishedOwnerRun, workbench)
+    ).toMatchObject({ status: 404, body: { error: "Not found" } });
   });
 });

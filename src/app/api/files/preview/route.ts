@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { isDemoSession } from "@/lib/demo/server";
 import { serveDemoPipelineFile } from "@/lib/demo/pipeline-preview";
-import { canReadPipelineRun } from "@/lib/pipelines/run-visibility";
+import { authorizePipelineRunRead } from "@/lib/pipelines/run-visibility";
 import { safeJoin } from "@/lib/files/paths";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import {
@@ -135,17 +136,26 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      // Non-admins can only view files from their own studies or orders.
-      if (!canReadPipelineRun(session.user, matchingRun)) {
-        return new NextResponse("Forbidden", { status: 403 });
+      const accessError = authorizePipelineRunRead(session, matchingRun);
+      if (accessError) {
+        return new NextResponse(accessError.body.error, {
+          status: accessError.status,
+        });
       }
     } else {
       const artifact = await findSequencingDeliveryArtifactByPath(filePath);
-      const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-      if (!artifact && !isFacilityAdmin) {
+      const manageFiles = decideCapability(session, "sequencing.files.manage");
+      if (manageFiles.status === 404) {
+        return new NextResponse("Not found", { status: 404 });
+      }
+      if (!artifact && !manageFiles.allowed) {
         return new NextResponse("File not found or access denied", { status: 404 });
       }
-      if (artifact && !isFacilityAdmin && !canUserAccessDeliveryArtifact(session.user, artifact)) {
+      if (
+        artifact &&
+        !manageFiles.allowed &&
+        !canUserAccessDeliveryArtifact(session.user, artifact)
+      ) {
         return new NextResponse("Forbidden", { status: 403 });
       }
     }

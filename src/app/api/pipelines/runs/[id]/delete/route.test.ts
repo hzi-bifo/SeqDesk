@@ -194,7 +194,7 @@ describe("POST /api/pipelines/runs/[id]/delete", () => {
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "user-1",
-        role: "USER",
+        role: "RESEARCHER",
       },
     });
 

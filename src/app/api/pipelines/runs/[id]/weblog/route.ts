@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getExecutionSettings } from "@/lib/pipelines/execution-settings";
+import { authorizePipelineRunRead } from "@/lib/pipelines/run-visibility";
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -54,6 +55,10 @@ export async function GET(
             userId: true,
           },
         },
+        selectedResultSelections: {
+          select: { id: true },
+          take: 1,
+        },
       },
     });
 
@@ -61,12 +66,14 @@ export async function GET(
       return NextResponse.json({ error: "Run not found" }, { status: 404 });
     }
 
-    if (
-      session.user.role !== "FACILITY_ADMIN" &&
-      run.study?.userId !== session.user.id &&
-      run.order?.userId !== session.user.id
-    ) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    // Preserve the existing requester-facing behavior for this diagnostic
+    // endpoint: target owners may inspect live weblog events before a result is
+    // selected, while details and output-file routes stay publication-gated.
+    const accessError = authorizePipelineRunRead(session, run, undefined, {
+      ownRequiresPublished: false,
+    });
+    if (accessError) {
+      return NextResponse.json(accessError.body, { status: accessError.status });
     }
 
     const events = await db.pipelineRunEvent.findMany({

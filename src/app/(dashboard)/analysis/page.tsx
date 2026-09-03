@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "@/components/ui/toast";
 import { Loader2, RefreshCw, Dna, FlaskConical, Upload, Square, Search, ChevronDown } from "lucide-react";
 import Link from "next/link";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
@@ -157,7 +158,7 @@ type RunData = {
   lastTraceAt?: string | null;
   queueUpdatedAt?: string | null;
   updatedAt?: string;
-  user: { firstName: string; lastName: string; email?: string };
+  user: { id: string; firstName: string; lastName: string; email?: string };
   createdAt: string;
   queueStatus?: string | null;
   queueReason?: string | null;
@@ -189,9 +190,15 @@ export default function AnalysisDashboardPage() {
   const isDemoUser = session?.user?.isDemo === true;
   const isFacilityDemo = session?.user?.demoExperience === "facility";
   const isResearcherDemo = isDemoUser && !isFacilityDemo;
-  const isResearcher = session?.user?.role === "RESEARCHER";
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
-  const canCreateStudy = isResearcher || isFacilityAdmin;
+  const canCreateStudy = useCapability("studies.create");
+  const canCancelOwnRuns = useCapability("analysis.cancel_own");
+  const canCancelAllRuns = useCapability("analysis.cancel_all");
+  const canCancelRun = useCallback(
+    (run: RunData) =>
+      canCancelAllRuns ||
+      (canCancelOwnRuns && run.user?.id === session?.user?.id),
+    [canCancelAllRuns, canCancelOwnRuns, session?.user?.id]
+  );
 
   // Build query params
   const params = new URLSearchParams();
@@ -525,7 +532,7 @@ export default function AnalysisDashboardPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        {effectiveStatus === "running" && (
+                        {effectiveStatus === "running" && canCancelRun(run) && (
                           <Button
                             variant="ghost"
                             size="icon"

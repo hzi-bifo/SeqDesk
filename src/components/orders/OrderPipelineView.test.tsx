@@ -403,7 +403,12 @@ const runs = [
     createdAt: "2026-04-01T10:00:00.000Z",
     startedAt: "2026-04-01T10:01:00.000Z",
     completedAt: "2026-04-01T10:02:00.000Z",
-    user: { firstName: "Ada", lastName: "Lovelace", email: "ada@example.test" },
+    user: {
+      id: "admin-1",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@example.test",
+    },
   },
   {
     id: "run-2",
@@ -435,7 +440,12 @@ const runs = [
     createdAt: "2026-04-01T12:00:00.000Z",
     startedAt: "2026-04-01T12:01:00.000Z",
     completedAt: null,
-    user: { firstName: null, lastName: null, email: "runner@example.test" },
+    user: {
+      id: "member-1",
+      firstName: null,
+      lastName: null,
+      email: "runner@example.test",
+    },
   },
 ];
 
@@ -609,7 +619,8 @@ describe("OrderPipelineView", () => {
 
     expect(screen.getByText("Simulate Reads")).toBeTruthy();
     expect(screen.getByText("Generate test read files")).toBeTruthy();
-    expect(screen.getByLabelText("Run all ready samples")).toBeTruthy();
+    const runAllButton = screen.getByLabelText("Run all ready samples");
+    await waitFor(() => expect(runAllButton.hasAttribute("disabled")).toBe(false));
     expect(screen.getByText("2 ready")).toBeTruthy();
     expect(screen.getByText("1 active")).toBeTruthy();
     expect(screen.getByText("1 completed")).toBeTruthy();
@@ -628,7 +639,7 @@ describe("OrderPipelineView", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("Run all ready samples").hasAttribute("disabled")).toBe(false);
     });
-    fireEvent.click(screen.getByLabelText("Run all ready samples"));
+    fireEvent.click(runAllButton);
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -695,6 +706,61 @@ describe("OrderPipelineView", () => {
       });
       expect(fetchMock).toHaveBeenCalledWith("/api/pipelines/runs/run-2/delete", {
         method: "POST",
+      });
+    });
+  });
+
+  it("lets a Shared Lab member run and cancel their own work without configuration or purge controls", async () => {
+    const otherMemberRun = {
+      ...runs[2],
+      id: "run-other",
+      runNumber: "RUN-2026-004",
+      user: {
+        id: "member-2",
+        firstName: "Other",
+        lastName: "Member",
+        email: "other@example.test",
+      },
+    };
+    mockSimulateRunsResponse({ runs: [runs[0], runs[2], otherMemberRun], total: 3 });
+
+    render(
+      <OrderPipelineView
+        orderId="order-1"
+        pipelineId="simulate-reads"
+        samples={samples}
+        canRunPipelines
+        canResolveOutputs
+        canCancelOwnRuns
+        currentUserId="member-1"
+      />
+    );
+
+    const memberRunAllButton = screen.getByLabelText("Run all ready samples");
+    await waitFor(() =>
+      expect(memberRunAllButton.hasAttribute("disabled")).toBe(false)
+    );
+    expect(screen.queryByRole("button", { name: "Select" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete run" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Stop run" })).toHaveLength(1);
+
+    fireEvent.click(memberRunAllButton);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/pipelines/runs",
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+    const createBody = JSON.parse(
+      fetchMock.mock.calls.find(([url]) => url === "/api/pipelines/runs")![1].body
+    );
+    expect(createBody.executionMode).toBeUndefined();
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Stop run" }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/pipelines/runs/run-3", {
+        method: "DELETE",
       });
     });
   });

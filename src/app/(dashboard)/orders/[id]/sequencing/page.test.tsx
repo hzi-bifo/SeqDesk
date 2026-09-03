@@ -41,6 +41,8 @@ vi.mock("@/components/orders/SequencingStreamView", () => ({
 }));
 
 import OrderSequencingPage from "./page";
+import { DeploymentProfileProvider } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 function jsonResponse(payload: unknown, ok = true) {
   return {
@@ -208,15 +210,41 @@ describe("OrderSequencingPage delivery controls", () => {
     vi.unstubAllGlobals();
   });
 
-  async function renderPage() {
+  async function renderPage(
+    profileId: "sequencing-center" | "shared-lab" = "sequencing-center"
+  ) {
     await act(async () => {
       render(
-        <Suspense fallback={<div>Loading</div>}>
-          <OrderSequencingPage params={Promise.resolve({ id: "order-1" })} />
-        </Suspense>
+        <DeploymentProfileProvider
+          profile={getDeploymentProfileDefinition(profileId)}
+        >
+          <Suspense fallback={<div>Loading</div>}>
+            <OrderSequencingPage params={Promise.resolve({ id: "order-1" })} />
+          </Suspense>
+        </DeploymentProfileProvider>
       );
     });
   }
+
+  it("opens the sequencing workspace for a Shared Lab member", async () => {
+    mocks.useSession.mockReturnValue({
+      status: "authenticated",
+      data: {
+        user: {
+          id: "member-1",
+          role: "RESEARCHER",
+          isDemo: false,
+        },
+      },
+    });
+
+    await renderPage("shared-lab");
+
+    expect(await screen.findByText("Delivery to user")).toBeTruthy();
+    expect(
+      screen.queryByText("Your account cannot manage sequencing data in this deployment.")
+    ).toBeNull();
+  });
 
   it("shows delivery readiness and publishes through the confirmation modal", async () => {
     await renderPage();

@@ -9,7 +9,7 @@ import {
   queueSnapshotToRunStatus,
   readIdentityCheckedQueueSnapshot,
 } from "@/lib/pipelines/queue-probe";
-import { canReadPipelineRun } from "@/lib/pipelines/run-visibility";
+import { authorizePipelineRunRead } from "@/lib/pipelines/run-visibility";
 
 const TERMINAL_RUN_STATUSES = ["completed", "failed", "cancelled"];
 
@@ -126,8 +126,9 @@ export async function GET(
       return NextResponse.json({ error: "Run not found" }, { status: 404 });
     }
 
-    if (!canReadPipelineRun(session.user, run)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const accessError = authorizePipelineRunRead(session, run);
+    if (accessError) {
+      return NextResponse.json(accessError.body, { status: accessError.status });
     }
 
     if (!run.queueJobId) {

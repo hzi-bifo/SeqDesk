@@ -7,6 +7,10 @@ import {
   listPendingWritebacks,
   promotePendingWritebacks,
 } from "@/lib/pipelines/pending-writebacks";
+import {
+  isPipelineRunAuthorizationError,
+  requireFacilityPipelineCapability,
+} from "@/lib/pipelines/run-visibility";
 
 export async function GET(
   request: NextRequest,
@@ -15,8 +19,12 @@ export async function GET(
   void request;
   try {
     const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    const access = requireFacilityPipelineCapability(
+      session,
+      "analysis.resolve_outputs"
+    );
+    if (isPipelineRunAuthorizationError(access)) {
+      return NextResponse.json(access.body, { status: access.status });
     }
 
     const { id } = await params;
@@ -36,8 +44,12 @@ export async function POST(
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    const access = requireFacilityPipelineCapability(
+      session,
+      "analysis.resolve_outputs"
+    );
+    if (isPipelineRunAuthorizationError(access)) {
+      return NextResponse.json(access.body, { status: access.status });
     }
 
     if (isDemoSession(session)) {
@@ -58,7 +70,7 @@ export async function POST(
     const result = await promotePendingWritebacks({
       runId: id,
       sampleIds,
-      userId: session.user.id,
+      userId: access.principalId,
     });
 
     return NextResponse.json({ success: true, ...result });

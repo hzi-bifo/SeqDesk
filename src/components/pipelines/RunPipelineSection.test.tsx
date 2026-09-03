@@ -218,7 +218,9 @@ describe("RunPipelineSection", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.useSession.mockReturnValue({ data: { user: { role: "CUSTOMER" } } });
+    mocks.useSession.mockReturnValue({
+      data: { user: { id: "researcher-1", role: "RESEARCHER" } },
+    });
     mocks.useQuickPrerequisiteStatus.mockReturnValue({
       systemReady: { ready: true, summary: "Ready" },
       checkingSystem: false,
@@ -639,13 +641,17 @@ describe("RunPipelineSection", () => {
   // ---------------------------------------------------------------------------
 
   it("renders the execution target control for facility admins", async () => {
-    mocks.useSession.mockReturnValue({ data: { user: { role: "FACILITY_ADMIN" } } });
+    mocks.useSession.mockReturnValue({
+      data: { user: { id: "admin-1", role: "FACILITY_ADMIN" } },
+    });
     await openDialog();
     expect(await screen.findByTestId("execution-target-control")).toBeTruthy();
   });
 
   it("blocks the run when the execution target is blocked", async () => {
-    mocks.useSession.mockReturnValue({ data: { user: { role: "FACILITY_ADMIN" } } });
+    mocks.useSession.mockReturnValue({
+      data: { user: { id: "admin-1", role: "FACILITY_ADMIN" } },
+    });
     mocks.getExecutionTargetBlockMessage.mockReturnValue("SLURM unavailable: down.");
     mocks.isExecutionTargetBlocked.mockReturnValue(true);
 
@@ -657,7 +663,9 @@ describe("RunPipelineSection", () => {
   });
 
   it("surfaces the block message if Start is somehow triggered while blocked", async () => {
-    mocks.useSession.mockReturnValue({ data: { user: { role: "FACILITY_ADMIN" } } });
+    mocks.useSession.mockReturnValue({
+      data: { user: { id: "admin-1", role: "FACILITY_ADMIN" } },
+    });
     // Not blocked for the disabled-button computation, but isExecutionTargetBlocked
     // returns true inside handleStartRun.
     mocks.getExecutionTargetBlockMessage.mockReturnValue(null);
@@ -738,7 +746,9 @@ describe("RunPipelineSection", () => {
   });
 
   it("includes executionMode in the payload for facility admins", async () => {
-    mocks.useSession.mockReturnValue({ data: { user: { role: "FACILITY_ADMIN" } } });
+    mocks.useSession.mockReturnValue({
+      data: { user: { id: "admin-1", role: "FACILITY_ADMIN" } },
+    });
     fetchMock.mockImplementation(startFetch({}));
     await clickStart();
     await screen.findByText("Pipeline Run Started");

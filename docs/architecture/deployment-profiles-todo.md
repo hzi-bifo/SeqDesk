@@ -25,10 +25,12 @@ redacted `InstallPlan`; explains profile, access, database, storage, and workflo
 choices; classifies existing targets; and preserves the selected profile during
 maintenance. Authenticated first-login onboarding and profile-aware operational
 readiness are implemented. A unified question engine, resumable apply
-checkpoints, remaining action-level capability migration, and the full release
-matrix remain open. A central server route map now returns `404` for unavailable
-Workbench/sequencing/support domains, so hidden navigation is not the only
-profile boundary.
+checkpoints, remaining domain-by-domain capability migration, and the full
+release matrix remain open. The facility pipeline-run API/UI slice now uses
+separate capabilities for execution, global pipeline configuration, result
+resolution, own/all cancellation, and shared-data purge. A central server route
+map returns `404` for unavailable Workbench/sequencing/support domains, so
+hidden navigation is not the only profile boundary.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -263,10 +265,10 @@ Convert APIs before relying on capability-based UI.
 
 ### Analysis
 
-- [ ] Convert pipeline run list/create/start/cancel/delete routes.
-- [ ] Convert log, weblog, artifact, output resolution, result selection, and cleaned-read routes.
-- [ ] Allow `analysis.run` independently of system pipeline configuration.
-- [ ] Keep pipeline installation and global defaults behind `system.pipelines.manage`.
+- [x] Convert pipeline run list/create/start/cancel/delete routes.
+- [x] Convert log, weblog, artifact, output resolution, result selection, and cleaned-read routes.
+- [x] Allow `analysis.run` independently of system pipeline configuration.
+- [x] Keep pipeline installation and global defaults behind `system.pipelines.manage`.
 - [ ] Treat installation of a pipeline/package as privileged host code installation; never infer it from permission to run an approved pipeline.
 - [ ] Apply configured compute/concurrency limits to member-launched runs.
 
@@ -303,7 +305,7 @@ Acceptance:
 - [ ] Default to account deactivation; make hard deletion a separate destructive workflow.
 - [ ] Keep Shared Lab scientific records accessible after their creator is deactivated.
 - [ ] Separate reversible archive/trash from permanent purge; keep permanent purge of shared data administrator-only by default.
-- [ ] Allow members to cancel their own runs; require a separate capability to cancel another member's active run.
+- [x] Allow members to cancel their own runs; require a separate capability to cancel another member's active run.
 - [ ] Require explicit transfer, export, retention, or purge handling before deleting the owner of a private Workbench workspace.
 - [ ] Prevent user removal from cascade-deleting a Workbench workspace or research history unexpectedly.
 - [ ] Preserve immutable creator/actor provenance when operational ownership changes.
@@ -478,13 +480,13 @@ Acceptance journey:
 
 ### Change 1: profile foundation
 
-- [ ] Implement Milestone 1 only.
-- [ ] Preserve all existing behavior.
-- [ ] Do not yet offer Shared Lab in setup.
+- [x] Implement the Milestone 1 profile foundation.
+- [x] Preserve Sequencing Center as the compatibility default.
+- [x] Keep unsupported profiles out of production exposure until their remaining acceptance gates pass.
 
 ### Change 2: capability vertical slice
 
-- [ ] Implement the principal/capability primitives.
-- [ ] Convert pipeline run list/create/start and the corresponding UI as one complete slice.
-- [ ] Prove that “run a workflow” and “configure installed workflows/pipelines” are separate capabilities.
+- [x] Implement the principal/capability primitives.
+- [x] Convert the facility pipeline-run API family and corresponding UI as one complete slice.
+- [x] Prove that “run a workflow” and “configure installed workflows/pipelines” are separate capabilities.
 - [ ] Use that pattern to convert the remaining APIs incrementally.

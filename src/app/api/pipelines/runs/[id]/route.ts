@@ -7,7 +7,10 @@ import {
   cancelPipelineRunForOperator,
   getPipelineRunDetailsForOperator,
 } from '@/lib/pipelines/pipeline-run-ops-service';
-import { assertPipelineRunReadAccess } from '@/lib/pipelines/run-visibility';
+import {
+  assertPipelineRunCancelAccess,
+  assertPipelineRunReadAccess,
+} from '@/lib/pipelines/run-visibility';
 
 // GET - Get run details
 export async function GET(
@@ -46,8 +49,8 @@ export async function DELETE(
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || session.user.role !== 'FACILITY_ADMIN') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     if (isDemoSession(session)) {
@@ -58,6 +61,11 @@ export async function DELETE(
     }
 
     const { id } = await params;
+    const accessError = await assertPipelineRunCancelAccess(id, session);
+    if (accessError) {
+      return NextResponse.json(accessError.body, { status: accessError.status });
+    }
+
     const result = await cancelPipelineRunForOperator(id);
     if (result.status >= 400) {
       return NextResponse.json(result.body, { status: result.status });

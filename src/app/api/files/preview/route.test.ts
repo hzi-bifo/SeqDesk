@@ -28,6 +28,16 @@ vi.mock("@/lib/auth", () => ({
   authOptions: {},
 }));
 
+vi.mock("@/lib/deployment-profile/server", async () => {
+  const { getDeploymentProfileDefinition } = await import(
+    "@/lib/deployment-profile/definitions"
+  );
+  return {
+    getServerDeploymentProfile: () =>
+      getDeploymentProfileDefinition("sequencing-center"),
+  };
+});
+
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));

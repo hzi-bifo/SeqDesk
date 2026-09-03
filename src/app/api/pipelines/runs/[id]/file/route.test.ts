@@ -27,6 +27,16 @@ vi.mock("@/lib/auth", () => ({
   authOptions: {},
 }));
 
+vi.mock("@/lib/deployment-profile/server", async () => {
+  const { getDeploymentProfileDefinition } = await import(
+    "@/lib/deployment-profile/definitions"
+  );
+  return {
+    getServerDeploymentProfile: () =>
+      getDeploymentProfileDefinition("sequencing-center"),
+  };
+});
+
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
@@ -157,7 +167,7 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
 
   it("returns 403 when user is not admin and not the owner", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { id: "user-other", role: "USER" },
+      user: { id: "user-other", role: "RESEARCHER" },
     });
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       runFolder: "/tmp/run-1",
@@ -177,7 +187,7 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
 
   it("allows access when user owns the order", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { id: "user-owner", role: "USER" },
+      user: { id: "user-owner", role: "RESEARCHER" },
     });
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       runFolder: "/tmp/run-1",
@@ -196,7 +206,7 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
 
   it("returns 403 when the order owner requests an unselected run file", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { id: "user-owner", role: "USER" },
+      user: { id: "user-owner", role: "RESEARCHER" },
     });
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       runFolder: "/tmp/run-1",

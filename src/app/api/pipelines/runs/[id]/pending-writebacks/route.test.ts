@@ -63,14 +63,14 @@ describe("GET /api/pipelines/runs/[id]/pending-writebacks", () => {
     mocks.listPendingWritebacks.mockResolvedValue(summary);
   });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     const response = await GET(makeRequest(undefined, "GET"), {
       params: baseParams,
     });
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Unauthorized" });
     expect(mocks.listPendingWritebacks).not.toHaveBeenCalled();
   });
@@ -138,14 +138,14 @@ describe("POST /api/pipelines/runs/[id]/pending-writebacks", () => {
     });
   });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     const response = await POST(makeRequest({ sampleIds: ["sample-1"] }), {
       params: baseParams,
     });
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Unauthorized" });
     expect(mocks.promotePendingWritebacks).not.toHaveBeenCalled();
   });

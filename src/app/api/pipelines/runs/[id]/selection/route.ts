@@ -5,6 +5,10 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isDemoSession } from "@/lib/demo/server";
 import { getPipelineRunTargetKey } from "@/lib/pipelines/result-files";
+import {
+  isPipelineRunAuthorizationError,
+  requireFacilityPipelineCapability,
+} from "@/lib/pipelines/run-visibility";
 
 async function getSelectableRun(id: string) {
   return db.pipelineRun.findUnique({
@@ -40,8 +44,12 @@ export async function PUT(
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    const access = requireFacilityPipelineCapability(
+      session,
+      "analysis.resolve_outputs"
+    );
+    if (isPipelineRunAuthorizationError(access)) {
+      return NextResponse.json(access.body, { status: access.status });
     }
 
     if (isDemoSession(session)) {
@@ -85,14 +93,14 @@ export async function PUT(
         studyId: target.studyId,
         orderId: target.orderId,
         selectedRunId: run.id,
-        selectedById: session.user.id,
+        selectedById: access.principalId,
         selectedAt: new Date(),
       },
       update: {
         studyId: target.studyId,
         orderId: target.orderId,
         selectedRunId: run.id,
-        selectedById: session.user.id,
+        selectedById: access.principalId,
         selectedAt: new Date(),
       },
       include: {
@@ -118,8 +126,12 @@ export async function DELETE(
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    const access = requireFacilityPipelineCapability(
+      session,
+      "analysis.resolve_outputs"
+    );
+    if (isPipelineRunAuthorizationError(access)) {
+      return NextResponse.json(access.body, { status: access.status });
     }
 
     if (isDemoSession(session)) {

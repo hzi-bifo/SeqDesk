@@ -259,6 +259,7 @@ interface PipelineRun {
   startedAt: string | null;
   completedAt: string | null;
   user?: {
+    id: string;
     firstName: string | null;
     lastName: string | null;
     email: string;
@@ -834,8 +835,14 @@ export function StudyPipelinesSection({
   categoryFilter,
 }: StudyPipelinesSectionProps) {
   const { data: session } = useSession();
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
   const canRunPipelines = useCapability("analysis.run");
+  const canManagePipelines = useCapability("system.pipelines.manage");
+  const canManageSettings = useCapability("system.settings.manage");
+  const canManageSequencingFiles = useCapability("sequencing.files.manage");
+  const canResolveOutputs = useCapability("analysis.resolve_outputs");
+  const canCancelOwnRuns = useCapability("analysis.cancel_own");
+  const canCancelAllRuns = useCapability("analysis.cancel_all");
+  const canPurgeRuns = useCapability("data.purge_shared");
   const isDemoUser = session?.user?.isDemo === true;
 
   // --- Data fetching ---
@@ -846,7 +853,7 @@ export function StudyPipelinesSection({
     fetcher
   );
   const { data: enaSettingsData } = useSWR<EnaSettingsResponse>(
-    isFacilityAdmin ? "/api/admin/settings/ena" : null,
+    canManageSettings ? "/api/admin/settings/ena" : null,
     fetcher
   );
   const {
@@ -877,6 +884,7 @@ export function StudyPipelinesSection({
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const deletionSelectMode = selectMode && canPurgeRuns;
 
   // --- Assembly selection state ---
   const initialPreferredAssemblyMap = useMemo(() => {
@@ -921,7 +929,7 @@ export function StudyPipelinesSection({
     slurmAvailability,
     slurmAvailabilityLoading,
     slurmAvailabilityError,
-  } = useSlurmAvailability(Boolean(isFacilityAdmin && !isDemoUser));
+  } = useSlurmAvailability(Boolean(canManagePipelines && !isDemoUser));
 
   // --- Derived data ---
   const enabledPipelines: Pipeline[] = useMemo(() => {
@@ -1074,7 +1082,7 @@ export function StudyPipelinesSection({
 
   const executionTargetBlockMessage = useMemo(
     () =>
-      selectedPipeline && isFacilityAdmin
+      selectedPipeline && canManagePipelines
         ? getExecutionTargetBlockMessage({
             executionMode,
             executionPolicy: selectedPipeline.executionPolicy,
@@ -1085,7 +1093,7 @@ export function StudyPipelinesSection({
         : null,
     [
       executionMode,
-      isFacilityAdmin,
+      canManagePipelines,
       selectedPipeline,
       slurmAvailability,
       slurmAvailabilityError,
@@ -1224,7 +1232,7 @@ export function StudyPipelinesSection({
   const handleStartPipeline = async () => {
     if (!selectedPipeline || !canRunPipelines) return;
     if (
-      isFacilityAdmin &&
+      canManagePipelines &&
       isExecutionTargetBlocked({
         executionMode,
         executionPolicy: selectedPipeline.executionPolicy,
@@ -1252,7 +1260,7 @@ export function StudyPipelinesSection({
           studyId,
           sampleIds: Array.from(eligibleSampleIds),
           config: localConfig,
-          ...(isFacilityAdmin ? { executionMode } : {}),
+          ...(canManagePipelines ? { executionMode } : {}),
         }),
       });
 
@@ -1338,7 +1346,7 @@ export function StudyPipelinesSection({
   };
 
   const handleDeleteRun = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !canPurgeRuns) return;
 
     setDeletingRun(true);
     setDeleteRunError(null);
@@ -1368,7 +1376,7 @@ export function StudyPipelinesSection({
   };
 
   const handleBulkDelete = async () => {
-    if (selectedRunIds.size === 0) return;
+    if (!canPurgeRuns || selectedRunIds.size === 0) return;
     setBulkDeleting(true);
 
     try {
@@ -1398,7 +1406,7 @@ export function StudyPipelinesSection({
   };
 
   const handleSetFinalRun = async (run: PipelineRun, selected: boolean) => {
-    if (!isFacilityAdmin) return;
+    if (!canResolveOutputs) return;
 
     setSelectionUpdatingRunId(run.id);
     setError("");
@@ -1870,7 +1878,7 @@ export function StudyPipelinesSection({
       })()}
 
       {/* Section 3: Settings */}
-      {isFacilityAdmin && selectedPipeline && (
+      {canManagePipelines && selectedPipeline && (
         <ExecutionTargetControl
           id="study-pipeline-execution-mode"
           value={executionMode}
@@ -1995,7 +2003,7 @@ export function StudyPipelinesSection({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {isFacilityAdmin && isSubmgSelected && missingChecksumFilePaths.length > 0 && (
+            {canManageSequencingFiles && isSubmgSelected && missingChecksumFilePaths.length > 0 && (
               <Button
                 size="sm"
                 variant="outline"
@@ -2279,7 +2287,7 @@ export function StudyPipelinesSection({
           </div>
           {visibleRuns.length > 0 && (
             <div className="flex items-center gap-2">
-              {selectMode ? (
+              {deletionSelectMode ? (
                 <>
                   <span className="text-xs text-muted-foreground">
                     {selectedRunIds.size} selected
@@ -2308,14 +2316,16 @@ export function StudyPipelinesSection({
                 </>
               ) : (
                 <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => setSelectMode(true)}
-                  >
-                    Select
-                  </Button>
+                  {canPurgeRuns && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setSelectMode(true)}
+                    >
+                      Select
+                    </Button>
+                  )}
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
                     <SelectTrigger className="h-8 w-[160px] text-xs">
                       <SelectValue />
@@ -2359,7 +2369,7 @@ export function StudyPipelinesSection({
               <table className="w-full text-sm">
                 <thead className="border-b bg-secondary/30">
                   <tr>
-                    {selectMode && (
+                    {deletionSelectMode && (
                       <th className="w-[40px] px-3 py-2.5">
                         <Checkbox
                           checked={allFilteredSelected && deletableFilteredRuns.length > 0}
@@ -2406,17 +2416,20 @@ export function StudyPipelinesSection({
                     const analysisRunHref =
                       `/analysis/${run.id}?studyId=${encodeURIComponent(studyId)}` +
                       `&pipeline=${encodeURIComponent(run.pipelineId)}`;
+                    const canCancelThisRun =
+                      canCancelAllRuns ||
+                      (canCancelOwnRuns && run.user?.id === session?.user?.id);
 
                     return (
                       <tr
                         key={run.id}
                         className={cn(
                           "cursor-pointer transition-colors hover:bg-secondary/20",
-                          selectMode && selectedRunIds.has(run.id) && "bg-secondary/30"
+                          deletionSelectMode && selectedRunIds.has(run.id) && "bg-secondary/30"
                         )}
                         onClick={() => window.open(analysisRunHref, '_blank')}
                       >
-                        {selectMode && (
+                        {deletionSelectMode && (
                           <td
                             className="px-3 py-3 align-top"
                             onClick={(e) => e.stopPropagation()}
@@ -2522,7 +2535,7 @@ export function StudyPipelinesSection({
                                 <ExternalLink className="h-4 w-4" />
                                 View details
                               </DropdownMenuItem>
-                              {isFacilityAdmin && run.status === "completed" && !run.isSelectedFinal && (
+                              {canResolveOutputs && run.status === "completed" && !run.isSelectedFinal && (
                                 <DropdownMenuItem
                                   disabled={selectionUpdatingRunId === run.id}
                                   onSelect={(event) => {
@@ -2534,7 +2547,7 @@ export function StudyPipelinesSection({
                                   Use as final
                                 </DropdownMenuItem>
                               )}
-                              {isFacilityAdmin && run.isSelectedFinal && (
+                              {canResolveOutputs && run.isSelectedFinal && (
                                 <DropdownMenuItem
                                   disabled={selectionUpdatingRunId === run.id}
                                   onSelect={(event) => {
@@ -2546,7 +2559,7 @@ export function StudyPipelinesSection({
                                   Clear final
                                 </DropdownMenuItem>
                               )}
-                              {isFacilityAdmin &&
+                              {canCancelThisRun &&
                                 ["pending", "queued", "running"].includes(
                                   run.status
                                 ) && (
@@ -2561,18 +2574,20 @@ export function StudyPipelinesSection({
                                     Stop run
                                   </DropdownMenuItem>
                                 )}
-                              <DropdownMenuItem
-                                variant="destructive"
-                                disabled={displayStatus === "running" || deletingRun}
-                                onSelect={(event) => {
-                                  event.preventDefault();
-                                  setDeleteRunError(null);
-                                  setDeleteTarget(run);
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                                Delete run
-                              </DropdownMenuItem>
+                              {canPurgeRuns && (
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  disabled={displayStatus === "running" || deletingRun}
+                                  onSelect={(event) => {
+                                    event.preventDefault();
+                                    setDeleteRunError(null);
+                                    setDeleteTarget(run);
+                                  }}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                  Delete run
+                                </DropdownMenuItem>
+                              )}
                             </DropdownMenuContent>
                           </DropdownMenu>
                         </td>
@@ -2582,7 +2597,7 @@ export function StudyPipelinesSection({
                   {filteredRuns.length === 0 && statusFilter !== "all" && (
                     <tr>
                       <td
-                        colSpan={selectMode ? 10 : 9}
+                        colSpan={deletionSelectMode ? 10 : 9}
                         className="px-4 py-8 text-center text-muted-foreground"
                       >
                         No {statusFilter} runs found.
@@ -2598,7 +2613,7 @@ export function StudyPipelinesSection({
 
       {/* Section 6: Delete Run Dialog */}
       <Dialog
-        open={Boolean(deleteTarget)}
+        open={canPurgeRuns && Boolean(deleteTarget)}
         onOpenChange={(open) => {
           if (!open) {
             setDeleteTarget(null);
@@ -2649,7 +2664,7 @@ export function StudyPipelinesSection({
 
       {/* Bulk Delete Confirmation Dialog */}
       <Dialog
-        open={showBulkDeleteConfirm}
+        open={canPurgeRuns && showBulkDeleteConfirm}
         onOpenChange={(open) => {
           if (!open) setShowBulkDeleteConfirm(false);
         }}
