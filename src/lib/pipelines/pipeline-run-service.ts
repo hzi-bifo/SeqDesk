@@ -51,6 +51,7 @@ import { getReadCleaningPathIssues } from '@/lib/pipelines/read-cleaning-path-va
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { supportsPipelineTarget } from '@/lib/pipelines/target';
 import type { PipelineTarget } from '@/lib/pipelines/types';
+import type { ResourceScope } from '@/lib/authorization';
 
 const execAsync = promisify(exec);
 
@@ -62,12 +63,14 @@ export type PipelineServiceResponse<TBody = Record<string, unknown>> = {
 type CreatePipelineRunInput = {
   body: Record<string, unknown>;
   userId: string;
+  accessScope: ResourceScope;
 };
 
 type StartPipelineRunInput = {
   runId: string;
   body?: Record<string, unknown>;
   userId: string;
+  accessScope: ResourceScope;
 };
 
 function jsonResponse<TBody extends Record<string, unknown>>(
@@ -400,7 +403,7 @@ async function finalizeLocalRun(
 
 export async function listPipelineRunsForOperator(args: {
   userId: string;
-  role: string;
+  readScope: ResourceScope;
   // When set (facility-demo session), restrict the otherwise-unfiltered admin
   // listing to runs owned by these workspace users, isolating the demo session.
   demoWorkspaceUserIds?: string[] | null;
@@ -417,7 +420,7 @@ export async function listPipelineRunsForOperator(args: {
   const where: Record<string, unknown> = {};
   const andFilters: Record<string, unknown>[] = [];
 
-  if (args.role !== 'FACILITY_ADMIN') {
+  if (args.readScope === 'own' || args.readScope === 'department') {
     andFilters.push({
       OR: [
         { study: { userId: args.userId } },
@@ -425,6 +428,11 @@ export async function listPipelineRunsForOperator(args: {
       ],
     });
     andFilters.push({ selectedResultSelections: { some: {} } });
+  } else if (args.readScope === 'workspace') {
+    // Facility-targeted runs do not yet carry a Workbench workspace key. Keep
+    // this compatibility endpoint limited to runs initiated by the member;
+    // Workbench execution uses its workspace-owned adapter routes.
+    andFilters.push({ userId: args.userId });
   } else if (args.publishedOnly) {
     andFilters.push({ selectedResultSelections: { some: {} } });
   }
@@ -574,6 +582,7 @@ export async function listPipelineRunsForOperator(args: {
 export async function createPipelineRunForOperator({
   body,
   userId,
+  accessScope,
 }: CreatePipelineRunInput): Promise<PipelineServiceResponse> {
   const pipelineId = typeof body.pipelineId === 'string' ? body.pipelineId : '';
   const studyId = typeof body.studyId === 'string' ? body.studyId : undefined;
@@ -671,6 +680,17 @@ export async function createPipelineRunForOperator({
 
   if (target.type === 'order' && !order) {
     return jsonResponse({ error: 'Sequencing Order not found' }, 404);
+  }
+
+  const targetOwnerId = target.type === 'study' ? study?.userId : order?.userId;
+  if (accessScope === 'workspace') {
+    return jsonResponse(
+      { error: 'Facility pipeline targets are not available in a Workbench workspace' },
+      404
+    );
+  }
+  if (accessScope !== 'installation' && targetOwnerId !== userId) {
+    return jsonResponse({ error: 'Forbidden' }, 403);
   }
 
   if (requestedSampleIds && requestedSampleIds.length > 0) {
@@ -787,6 +807,7 @@ export async function startPipelineRunForOperator({
   runId,
   body = {},
   userId,
+  accessScope,
 }: StartPipelineRunInput): Promise<PipelineServiceResponse> {
   const startBody = body;
 
@@ -834,6 +855,17 @@ export async function startPipelineRunForOperator({
 
   if (!run) {
     return jsonResponse({ error: 'Run not found' }, 404);
+  }
+
+  const runOwnerId = run.study?.userId ?? run.order?.userId ?? run.userId;
+  if (accessScope === 'workspace') {
+    return jsonResponse(
+      { error: 'Facility pipeline targets are not available in a Workbench workspace' },
+      404
+    );
+  }
+  if (accessScope !== 'installation' && runOwnerId !== userId) {
+    return jsonResponse({ error: 'Forbidden' }, 403);
   }
 
   if (run.status !== 'pending') {

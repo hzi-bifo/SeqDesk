@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
     siteSettings: {
       findUnique: vi.fn(),
     },
+    user: {
+      count: vi.fn(),
+    },
   },
 }));
 

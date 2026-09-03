@@ -1793,6 +1793,7 @@ async function runCommand(parsed: ParsedArgs): Promise<number> {
     const user = (operator.body as { user: { id: string } }).user;
     const create = await services.runService.createPipelineRunForOperator({
       userId: user.id,
+      accessScope: 'installation',
       body: {
         pipelineId,
         studyId,
@@ -1808,6 +1809,7 @@ async function runCommand(parsed: ParsedArgs): Promise<number> {
     const start = await services.runService.startPipelineRunForOperator({
       runId: run.id,
       userId: user.id,
+      accessScope: 'installation',
       body: execution ? { executionMode: execution } : {},
     });
     if (start.status >= 400) return outputServiceResult(start, parsed.json);

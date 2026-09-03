@@ -8,6 +8,20 @@ export type DeploymentProfileId = (typeof DEPLOYMENT_PROFILE_IDS)[number];
 
 export type DeploymentExperience = "sequencing" | "workbench";
 
+export type DeploymentDomainId =
+  | "core"
+  | "facility-intake"
+  | "sample-catalog"
+  | "sequencing-operations"
+  | "analysis"
+  | "publishing"
+  | "workbench";
+
+export type DeploymentOwnershipScope =
+  | "requester"
+  | "installation"
+  | "workspace";
+
 export type DeploymentModuleId =
   | "orders"
   | "studies"
@@ -28,8 +42,19 @@ export interface DeploymentProfileDefinition {
   description: string;
   experience: DeploymentExperience;
   defaultRoute: "/orders" | "/workbench/data";
+  domains: readonly DeploymentDomainId[];
   modules: readonly DeploymentModuleId[];
   accountModel: "service-roles" | "collaborative-lab" | "self-service";
+  ownership: {
+    scientificRecords: DeploymentOwnershipScope;
+  };
+  enrollment: {
+    defaultPolicy: "self-registration" | "invite-only";
+  };
+  terminology: {
+    member: "Researcher" | "Lab member" | "Member";
+    workItem: "Order" | "Project" | "Workspace";
+  };
 }
 
 export interface DeploymentProfileConfig {

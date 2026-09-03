@@ -918,6 +918,7 @@ interface OrderPipelineViewProps {
   onSampleDataChanged?: () => void;
   isDemo?: boolean;
   isFacilityAdmin?: boolean;
+  canRunPipelines?: boolean;
 }
 
 export function OrderPipelineView({
@@ -928,6 +929,7 @@ export function OrderPipelineView({
   onSampleDataChanged,
   isDemo,
   isFacilityAdmin = false,
+  canRunPipelines = isFacilityAdmin,
 }: OrderPipelineViewProps) {
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
   const [executionMode, setExecutionMode] = useState<ExecutionModeRequest>("default");
@@ -1223,7 +1225,7 @@ export function OrderPipelineView({
 
   const runPipeline = useCallback(
     async (sampleIds: string[]) => {
-      if (!pipeline) return;
+      if (!pipeline || !canRunPipelines) return;
       if (
         isFacilityAdmin &&
         isExecutionTargetBlocked({
@@ -1310,6 +1312,7 @@ export function OrderPipelineView({
       executionMode,
       executionTargetBlockMessage,
       isFacilityAdmin,
+      canRunPipelines,
       localConfig,
       orderId,
       pipeline,
@@ -1843,6 +1846,7 @@ export function OrderPipelineView({
                       size="sm"
                       className="h-9 w-40"
                       disabled={
+                        !canRunPipelines ||
                         readySamples.length === 0 ||
                         runningAll ||
                         systemBlocked ||

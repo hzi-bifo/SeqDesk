@@ -82,6 +82,23 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id;
         token.isDemo = Boolean(user.isDemo);
         token.demoExperience = user.demoExperience;
+        token.authorizationValid = true;
+      } else if (token.id) {
+        // JWT sessions must not retain a stale administrator role until token
+        // expiry. Refresh the stored role for every authenticated request; a
+        // removed account is converted to a disabled principal immediately.
+        const currentUser = await db.user.findUnique({
+          where: { id: String(token.id) },
+          select: { role: true, isDemo: true },
+        });
+        if (currentUser) {
+          token.role = currentUser.role;
+          token.isDemo = currentUser.isDemo;
+          token.authorizationValid = true;
+        } else {
+          token.role = "DISABLED";
+          token.authorizationValid = false;
+        }
       }
       return token;
     },
@@ -90,6 +107,7 @@ export const authOptions: NextAuthOptions = {
         session.user.role = token.role as string;
         session.user.id = token.id as string;
         session.user.isDemo = Boolean(token.isDemo);
+        session.user.authorizationValid = token.authorizationValid !== false;
         session.user.demoExperience =
           token.demoExperience === "facility" ? "facility" : token.isDemo ? "researcher" : undefined;
       }

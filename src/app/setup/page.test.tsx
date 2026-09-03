@@ -30,6 +30,8 @@ type SetupStatus = {
     | "database-config"
     | "database-unreachable"
     | "schema-missing"
+    | "initial-data-missing"
+    | "administrator-missing"
     | "seeding"
     | "seed-failed"
     | "unknown-error";
@@ -286,6 +288,38 @@ describe("SetupPage", () => {
     // Use an async query: the page polls /api/setup/status, and a refetch can
     // transiently swap in a spinner, so a synchronous getByText here is racy.
     expect(await screen.findByText("Seeding initial data")).toBeTruthy();
+  });
+
+  it("shows guided recovery when administrator access is missing", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        makeStatus({
+          configured: true,
+          phase: "administrator-missing",
+          steps: [
+            {
+              id: "login",
+              label: "Admin login",
+              status: "error",
+              description:
+                "Create a secure administrator account before exposing this installation.",
+            },
+          ],
+          nextAction: {
+            label: "Create administrator",
+            description:
+              "Re-run the guided installer locally and configure a secure administrator account.",
+            command: "seqdesk --reconfigure",
+          },
+        })
+      )
+    );
+
+    render(<SetupPage />);
+
+    expect(await screen.findByText("Administrator access is missing")).toBeTruthy();
+    expect(screen.getByText("Create administrator")).toBeTruthy();
+    expect(screen.getAllByText("seqdesk --reconfigure").length).toBeGreaterThan(0);
   });
 
   it("shows seed failure command", async () => {

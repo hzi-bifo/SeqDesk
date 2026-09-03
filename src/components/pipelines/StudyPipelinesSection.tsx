@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageNotice } from "@/components/ui/page-notice";
@@ -834,6 +835,7 @@ export function StudyPipelinesSection({
 }: StudyPipelinesSectionProps) {
   const { data: session } = useSession();
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const canRunPipelines = useCapability("analysis.run");
   const isDemoUser = session?.user?.isDemo === true;
 
   // --- Data fetching ---
@@ -1220,7 +1222,7 @@ export function StudyPipelinesSection({
   }, [studyId, isSubmgSelected]);
 
   const handleStartPipeline = async () => {
-    if (!selectedPipeline) return;
+    if (!selectedPipeline || !canRunPipelines) return;
     if (
       isFacilityAdmin &&
       isExecutionTargetBlocked({
@@ -1789,6 +1791,7 @@ export function StudyPipelinesSection({
               size="sm"
               disabled={
                 isDemoUser ||
+                !canRunPipelines ||
                 !selectedPipeline ||
                 readinessIssues.length > 0 ||
                 startingPipelineId !== null ||
@@ -1800,6 +1803,8 @@ export function StudyPipelinesSection({
               title={
                 isDemoUser
                   ? "Pipeline execution isn't available in the public demo — this is a view-only showcase of example results."
+                  : !canRunPipelines
+                    ? "Your account cannot run pipelines in this deployment profile."
                   : readinessIssues.length > 0
                     ? readinessIssues[0]
                     : executionTargetBlockMessage || undefined

@@ -30,6 +30,8 @@ type SetupPhase =
   | "database-config"
   | "database-unreachable"
   | "schema-missing"
+  | "initial-data-missing"
+  | "administrator-missing"
   | "seeding"
   | "seed-failed"
   | "unknown-error";
@@ -101,6 +103,18 @@ const PHASE_COPY: Record<
     title: "Database schema is missing",
     description: "Run migrations before SeqDesk can create initial setup data.",
     tone: "warning",
+  },
+  "initial-data-missing": {
+    title: "Complete the guided setup",
+    description:
+      "The database schema is available, but operating-model settings and administrator access still need to be created.",
+    tone: "warning",
+  },
+  "administrator-missing": {
+    title: "Administrator access is missing",
+    description:
+      "The application is configured, but no administrator account can sign in. Re-run the guided installer locally.",
+    tone: "error",
   },
   seeding: {
     title: "Creating initial data",

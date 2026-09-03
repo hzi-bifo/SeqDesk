@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   hash: vi.fn(),
+  getServerEnrollmentPolicy: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -26,6 +27,10 @@ vi.mock("bcryptjs", () => ({
 
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
+}));
+
+vi.mock("@/lib/deployment-profile/enrollment.server", () => ({
+  getServerEnrollmentPolicy: mocks.getServerEnrollmentPolicy,
 }));
 
 vi.mock("@/lib/modules/types", () => ({
@@ -58,6 +63,11 @@ describe("POST /api/register", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.hash.mockResolvedValue("hashed-pw");
+    mocks.getServerEnrollmentPolicy.mockResolvedValue({
+      policy: "self-registration",
+      allowSelfRegistration: true,
+      source: "profile-default",
+    });
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.db.user.findUnique.mockResolvedValue(null);
     mocks.db.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
@@ -112,14 +122,55 @@ describe("POST /api/register", () => {
     expect(data.error).toBe("User with this email already exists");
   });
 
-  it("returns 400 when FACILITY_ADMIN lacks invite code", async () => {
+  it("returns 403 when FACILITY_ADMIN lacks invite code", async () => {
     const response = await POST(
       makeRequest({ ...validBody, role: "FACILITY_ADMIN" })
     );
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(403);
     const data = await response.json();
     expect(data.error).toBe("Admin registration requires an invite code");
+  });
+
+  it("requires an invite for a member when the profile is invite-only", async () => {
+    mocks.getServerEnrollmentPolicy.mockResolvedValue({
+      policy: "invite-only",
+      allowSelfRegistration: false,
+      source: "profile-default",
+    });
+
+    const response = await POST(makeRequest(validBody));
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "This SeqDesk installation is invite-only",
+      code: "INVITE_REQUIRED",
+    });
+    expect(mocks.hash).not.toHaveBeenCalled();
+  });
+
+  it("creates a member from a valid invite on an invite-only profile", async () => {
+    mocks.getServerEnrollmentPolicy.mockResolvedValue({
+      policy: "invite-only",
+      allowSelfRegistration: false,
+      source: "profile-default",
+    });
+    mocks.db.adminInvite.findUnique.mockResolvedValue({
+      id: "invite-1",
+      code: "MEMBER01",
+      usedAt: null,
+      expiresAt: new Date(Date.now() + 86400000),
+      email: "new@example.com",
+    });
+
+    const response = await POST(
+      makeRequest({ ...validBody, inviteCode: "member01" })
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.db.adminInvite.findUnique).toHaveBeenCalledWith({
+      where: { code: "MEMBER01" },
+    });
   });
 
   it("creates admin with valid invite code and returns 201", async () => {

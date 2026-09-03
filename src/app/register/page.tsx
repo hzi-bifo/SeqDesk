@@ -10,6 +10,10 @@ import {
 } from "lucide-react";
 
 type UserRole = "RESEARCHER" | null;
+type DeploymentProfileId =
+  | "sequencing-center"
+  | "shared-lab"
+  | "research-workbench";
 
 interface Department {
   id: string;
@@ -33,6 +37,9 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loadingDepartments, setLoadingDepartments] = useState(false);
+  const [deploymentProfile, setDeploymentProfile] =
+    useState<DeploymentProfileId>("sequencing-center");
+  const [inviteOnly, setInviteOnly] = useState(false);
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -42,9 +49,40 @@ export default function RegisterPage() {
   const [institution, setInstitution] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+
+  const isSequencingCenter = deploymentProfile === "sequencing-center";
+  const effectiveRole: UserRole = isSequencingCenter
+    ? selectedRole
+    : "RESEARCHER";
+  const memberLabel =
+    deploymentProfile === "shared-lab"
+      ? "Lab member"
+      : deploymentProfile === "research-workbench"
+        ? "Member"
+        : "Researcher";
 
   useEffect(() => {
-    if (selectedRole) {
+    fetch("/api/setup/status")
+      .then((res) => res.json())
+      .then((data) => {
+        const id = data?.deploymentProfile?.id;
+        if (
+          id === "sequencing-center" ||
+          id === "shared-lab" ||
+          id === "research-workbench"
+        ) {
+          setDeploymentProfile(id);
+        }
+        setInviteOnly(data?.enrollment?.policy === "invite-only");
+      })
+      .catch(() => {
+        // The registration API remains authoritative if setup status is unavailable.
+      });
+  }, []);
+
+  useEffect(() => {
+    if (effectiveRole && isSequencingCenter) {
       setLoadingDepartments(true);
       fetch("/api/departments")
         .then((res) => res.json())
@@ -56,7 +94,7 @@ export default function RegisterPage() {
           setLoadingDepartments(false);
         });
     }
-  }, [selectedRole]);
+  }, [effectiveRole, isSequencingCenter]);
 
   const handleBack = () => {
     setSelectedRole(null);
@@ -88,10 +126,11 @@ export default function RegisterPage() {
           password,
           firstName,
           lastName,
-          role: selectedRole,
+          role: effectiveRole,
           researcherRole: researcherRole || undefined,
           departmentId: departmentId || undefined,
           institution: institution || undefined,
+          inviteCode: inviteCode || undefined,
         }),
       });
 
@@ -146,7 +185,7 @@ export default function RegisterPage() {
               boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
             }}
           >
-            {!selectedRole ? (
+            {!effectiveRole ? (
               <>
                 <div className="text-center mb-8">
                   <h1
@@ -211,6 +250,7 @@ export default function RegisterPage() {
               </>
             ) : (
               <>
+                {isSequencingCenter && (
                 <div className="mb-6">
                   <button
                     onClick={handleBack}
@@ -222,13 +262,18 @@ export default function RegisterPage() {
                     Back
                   </button>
                 </div>
+                )}
 
                 <div className="text-center mb-8">
                   <h2 className="text-xl font-semibold mb-2" style={{ color: '#171717' }}>
-                    Researcher Account
+                    {memberLabel} Account
                   </h2>
                   <p className="text-sm" style={{ color: '#525252' }}>
-                    Create an account to submit sequencing orders
+                    {deploymentProfile === "research-workbench"
+                      ? "Join this SeqDesk workbench to import data and run analyses"
+                      : deploymentProfile === "shared-lab"
+                        ? "Join your lab's shared sequencing and analysis workspace"
+                        : "Create an account to submit sequencing orders"}
                   </p>
                 </div>
 
@@ -279,6 +324,28 @@ export default function RegisterPage() {
                     </div>
                   </div>
 
+                  {inviteOnly && (
+                    <div>
+                      <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
+                        Invite code
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Enter the code from your administrator"
+                        value={inviteCode}
+                        onChange={(e) => setInviteCode(e.target.value)}
+                        required
+                        disabled={isLoading}
+                        autoCapitalize="characters"
+                        className="w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
+                        style={inputStyle}
+                      />
+                      <p className="text-xs mt-1" style={{ color: '#737373' }}>
+                        This installation is invite-only.
+                      </p>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
                       Email
@@ -295,6 +362,7 @@ export default function RegisterPage() {
                     />
                   </div>
 
+                  {isSequencingCenter && (
                   <div>
                     <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
                       Role
@@ -314,7 +382,9 @@ export default function RegisterPage() {
                       ))}
                     </select>
                   </div>
+                  )}
 
+                  {isSequencingCenter && (
                   <div>
                     <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
                       Research Department
@@ -339,7 +409,9 @@ export default function RegisterPage() {
                       </p>
                     )}
                   </div>
+                  )}
 
+                  {isSequencingCenter && (
                   <div>
                     <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
                       Institution (optional)
@@ -354,6 +426,7 @@ export default function RegisterPage() {
                       style={inputStyle}
                     />
                   </div>
+                  )}
 
                   <div>
                     <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>

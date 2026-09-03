@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth';
+import { decideCapability } from '@/lib/authorization';
+import { getServerDeploymentProfile } from '@/lib/deployment-profile/server';
 import { isDemoSession } from '@/lib/demo/server';
 import { startPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-service';
 
@@ -13,8 +15,20 @@ export async function POST(
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || session.user.role !== 'FACILITY_ADMIN') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const deploymentProfile = getServerDeploymentProfile();
+    if (deploymentProfile.experience === 'workbench') {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+    const decision = decideCapability(session, 'analysis.run', deploymentProfile);
+    if (!decision.allowed || !decision.grant) {
+      return NextResponse.json(
+        { error: decision.status === 404 ? 'Not found' : 'Forbidden' },
+        { status: decision.status }
+      );
     }
 
     if (isDemoSession(session)) {
@@ -39,6 +53,7 @@ export async function POST(
       runId: id,
       body: startBody,
       userId: session.user.id,
+      accessScope: decision.grant.scope,
     });
 
     return NextResponse.json(result.body, { status: result.status });

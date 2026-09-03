@@ -24,6 +24,7 @@ export type InstallProfileMetadata = {
 export type DatabaseStatus = {
   exists: boolean;
   configured: boolean;
+  hasAdministrator?: boolean;
   reason: DatabaseStatusReason;
   error?: string;
   installProfile?: InstallProfileMetadata;
@@ -117,9 +118,14 @@ export async function checkDatabaseStatus(): Promise<DatabaseStatus> {
       };
     }
 
+    const administratorCount = await db.user.count({
+      where: { role: "FACILITY_ADMIN" },
+    });
+
     return {
       exists: true,
       configured: true,
+      hasAdministrator: administratorCount > 0,
       reason: "configured",
       installProfile: parseInstallProfileFromExtraSettings(settings.extraSettings),
     };

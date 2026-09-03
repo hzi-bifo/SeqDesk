@@ -8,6 +8,7 @@ import type { PipelineConfigSchema } from "@/lib/pipelines/types";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     pipelineConfig: {
       findMany: vi.fn(),
@@ -146,6 +147,10 @@ vi.mock("@/lib/auth", () => ({
   authOptions: {},
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
@@ -213,8 +218,13 @@ import { updateManagedPipeline } from "@/lib/pipelines/pipeline-management-servi
 describe("GET /api/admin/settings/pipelines", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      experience: "sequencing",
+      domains: ["core", "facility-intake", "sample-catalog", "sequencing-operations", "analysis", "publishing"],
+    });
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.getAllPipelineIds.mockReturnValue(["fastqc", "mag"]);
     mocks.db.pipelineConfig.findMany.mockResolvedValue([]);
@@ -367,7 +377,7 @@ describe("GET /api/admin/settings/pipelines", () => {
 
   it("returns 403 when user is not FACILITY_ADMIN", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "RESEARCHER" },
+      user: { id: "member-1", role: "RESEARCHER" },
     });
 
     const response = await GET(
@@ -377,14 +387,61 @@ describe("GET /api/admin/settings/pipelines", () => {
     expect(response.status).toBe(403);
   });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     const response = await GET(
       new NextRequest("http://localhost/api/admin/settings/pipelines")
     );
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
+  });
+
+  it("returns only runnable, non-admin settings to a Shared Lab member", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      experience: "sequencing",
+      domains: ["core", "facility-intake", "sample-catalog", "sequencing-operations", "analysis", "publishing"],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.getAllPipelineIds.mockReturnValue(["fastqc"]);
+    mocks.db.pipelineConfig.findMany.mockResolvedValue([
+      {
+        pipelineId: "fastqc",
+        enabled: true,
+        config: JSON.stringify({ requiredToken: "server-secret" }),
+      },
+    ]);
+    const property = mocks.pipelineRegistry.fastqc.configSchema.properties.requiredToken as {
+      type: string;
+      title: string;
+      "x-seqdesk"?: { placement: "admin" };
+    };
+    property["x-seqdesk"] = { placement: "admin" };
+
+    try {
+      const response = await GET(
+        new NextRequest(
+          "http://localhost/api/admin/settings/pipelines?enabled=true&catalog=order"
+        )
+      );
+      const payload = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(payload.pipelines).toHaveLength(1);
+      expect(payload.pipelines[0].config.requiredToken).toBeUndefined();
+      expect(payload.pipelines[0].defaultConfig.requiredToken).toBeUndefined();
+      expect(payload.pipelines[0].configSchema.properties.requiredToken).toBeUndefined();
+      expect(payload.pipelines[0].readiness).toBeUndefined();
+      expect(payload.pipelines[0].executionPolicy).toEqual({
+        mode: "local",
+        source: "global",
+      });
+    } finally {
+      delete property["x-seqdesk"];
+    }
   });
 
   it("returns all pipelines when enabledOnly is false", async () => {
@@ -1457,8 +1514,13 @@ describe("GET /api/admin/settings/pipelines", () => {
 describe("POST /api/admin/settings/pipelines", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      experience: "sequencing",
+      domains: ["core", "facility-intake", "sample-catalog", "sequencing-operations", "analysis", "publishing"],
+    });
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.getExecutionSettings.mockResolvedValue({
       useSlurm: false,
@@ -1471,7 +1533,7 @@ describe("POST /api/admin/settings/pipelines", () => {
 
   it("returns 403 when user is not FACILITY_ADMIN", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "RESEARCHER" },
+      user: { id: "member-1", role: "RESEARCHER" },
     });
 
     const response = await POST(

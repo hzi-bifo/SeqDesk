@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth';
+import { decideCapability } from '@/lib/authorization';
+import { getServerDeploymentProfile } from '@/lib/deployment-profile/server';
 import {
   getDemoFacilityWorkspaceUserIds,
   isDemoSession,
@@ -20,6 +22,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const deploymentProfile = getServerDeploymentProfile();
+    if (deploymentProfile.experience === 'workbench') {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    const readAll = decideCapability(session, 'analysis.read_all', deploymentProfile);
+    const readOwn = decideCapability(session, 'analysis.read_own', deploymentProfile);
+    const readGrant = readAll.allowed ? readAll.grant : readOwn.grant;
+    if (!readGrant) {
+      const status = readOwn.status === 401 ? 401 : readOwn.status;
+      return NextResponse.json(
+        { error: status === 404 ? 'Not found' : status === 401 ? 'Unauthorized' : 'Forbidden' },
+        { status }
+      );
+    }
+
     const { searchParams } = new URL(request.url);
     const publishedOnly =
       searchParams.get('publishedOnly') === 'true' ||
@@ -29,7 +47,7 @@ export async function GET(request: NextRequest) {
       await getDemoFacilityWorkspaceUserIds(session);
     const result = await listPipelineRunsForOperator({
       userId: session.user.id,
-      role: session.user.role,
+      readScope: readGrant.scope,
       demoWorkspaceUserIds,
       pipelineId: searchParams.get('pipelineId'),
       status: searchParams.get('status'),
@@ -55,8 +73,20 @@ export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || session.user.role !== 'FACILITY_ADMIN') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const deploymentProfile = getServerDeploymentProfile();
+    if (deploymentProfile.experience === 'workbench') {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+    const decision = decideCapability(session, 'analysis.run', deploymentProfile);
+    if (!decision.allowed || !decision.grant) {
+      return NextResponse.json(
+        { error: decision.status === 404 ? 'Not found' : 'Forbidden' },
+        { status: decision.status }
+      );
     }
 
     if (isDemoSession(session)) {
@@ -74,6 +104,7 @@ export async function POST(request: NextRequest) {
     const result = await createPipelineRunForOperator({
       body,
       userId: session.user.id,
+      accessScope: decision.grant.scope,
     });
 
     return NextResponse.json(result.body, { status: result.status });

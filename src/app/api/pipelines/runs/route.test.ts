@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   mergePipelineDerivedConfig: vi.fn(),
   isDemoSession: vi.fn(),
   getDemoFacilityWorkspaceUserIds: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   supportsPipelineTarget: vi.fn(),
   db: {
     pipelineRun: {
@@ -87,6 +88,10 @@ vi.mock("@/lib/demo/server", () => ({
   getDemoFacilityWorkspaceUserIds: mocks.getDemoFacilityWorkspaceUserIds,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/pipelines/target", () => ({
   supportsPipelineTarget: mocks.supportsPipelineTarget,
 }));
@@ -96,10 +101,15 @@ import { GET, POST } from "./route";
 describe("GET /api/pipelines/runs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      experience: "sequencing",
+      domains: ["core", "facility-intake", "sample-catalog", "sequencing-operations", "analysis", "publishing"],
+    });
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "user-1",
-        role: "USER",
+        role: "RESEARCHER",
       },
     });
     mocks.getDemoFacilityWorkspaceUserIds.mockResolvedValue(null);
@@ -342,6 +352,11 @@ describe("GET /api/pipelines/runs", () => {
 describe("POST /api/pipelines/runs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      experience: "sequencing",
+      domains: ["core", "facility-intake", "sample-catalog", "sequencing-operations", "analysis", "publishing"],
+    });
     delete (mocks.pipelineRegistry as Record<string, unknown>).metaxpath;
     mocks.getServerSession.mockResolvedValue({
       user: {
@@ -396,6 +411,50 @@ describe("POST /api/pipelines/runs", () => {
     );
 
     expect(response.status).toBe(403);
+    expect(mocks.db.pipelineRun.create).not.toHaveBeenCalled();
+  });
+
+  it("allows a Shared Lab member to create a run for shared sequencing work", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      experience: "sequencing",
+      domains: ["core", "facility-intake", "sample-catalog", "sequencing-operations", "analysis", "publishing"],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          pipelineId: "simulate-reads",
+          orderId: "order-1",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.pipelineRun.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ userId: "member-1", orderId: "order-1" }),
+    });
+  });
+
+  it("does not expose facility-targeted run creation in Research Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "research-workbench",
+      experience: "workbench",
+      domains: ["core", "analysis", "publishing", "workbench"],
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost:3000/api/pipelines/runs", {
+        method: "POST",
+        body: JSON.stringify({ pipelineId: "simulate-reads", orderId: "order-1" }),
+      })
+    );
+
+    expect(response.status).toBe(404);
     expect(mocks.db.pipelineRun.create).not.toHaveBeenCalled();
   });
 

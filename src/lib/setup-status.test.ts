@@ -150,6 +150,41 @@ describe("buildSetupStatusResponse", () => {
     );
   });
 
+  it("sends an uninitialized schema through the guided installer", () => {
+    const response = build({
+      exists: true,
+      configured: false,
+      reason: "not_seeded",
+    });
+
+    expect(response.phase).toBe("initial-data-missing");
+    expect(response.nextAction).toMatchObject({
+      label: "Complete guided setup",
+      command: "seqdesk --reconfigure",
+    });
+    expect(response.steps.find((step) => step.id === "seed")?.status).toBe(
+      "pending"
+    );
+  });
+
+  it("blocks readiness when settings exist without an administrator", () => {
+    const response = build({
+      exists: true,
+      configured: true,
+      hasAdministrator: false,
+      reason: "configured",
+    });
+
+    expect(response.phase).toBe("administrator-missing");
+    expect(response.nextAction).toMatchObject({
+      label: "Create administrator",
+      command: "seqdesk --reconfigure",
+    });
+    expect(response.steps.find((step) => step.id === "login")?.status).toBe(
+      "error"
+    );
+  });
+
   it("classifies seeding progress and seed failures", () => {
     const inProgress = build(
       {
@@ -181,6 +216,7 @@ describe("buildSetupStatusResponse", () => {
       {
         exists: true,
         configured: true,
+        hasAdministrator: true,
         reason: "configured",
         installProfile: {
           id: "twincore",

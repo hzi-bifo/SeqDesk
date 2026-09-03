@@ -18,6 +18,7 @@ import { DEMO_READY_MESSAGE, isEmbeddedFrame, postDemoFrameMessage } from "@/lib
 import { StudySelector } from "./StudySelector";
 import { OrderSelector } from "./OrderSelector";
 import { useSidebarEntity } from "./sidebar/useSidebarEntity";
+import { DeploymentProfileProvider } from "@/components/deployment-profile/DeploymentProfileProvider";
 import {
   isRouteAvailableInDeploymentProfile,
   type DeploymentProfileDefinition,
@@ -295,18 +296,20 @@ export function DashboardShell({
   }, [embeddedMode, pathname]);
 
   return (
-    <SidebarProvider embeddedMode={embeddedMode}>
-      <FieldHelpProvider>
-        <DashboardContent
-          user={user}
-          version={version}
-          deploymentProfile={deploymentProfile}
-          embeddedMode={embeddedMode}
-        >
-          {children}
-        </DashboardContent>
-        <Footer isDemo={Boolean(user.isDemo)} />
-      </FieldHelpProvider>
-    </SidebarProvider>
+    <DeploymentProfileProvider profile={deploymentProfile}>
+      <SidebarProvider embeddedMode={embeddedMode}>
+        <FieldHelpProvider>
+          <DashboardContent
+            user={user}
+            version={version}
+            deploymentProfile={deploymentProfile}
+            embeddedMode={embeddedMode}
+          >
+            {children}
+          </DashboardContent>
+          <Footer isDemo={Boolean(user.isDemo)} />
+        </FieldHelpProvider>
+      </SidebarProvider>
+    </DeploymentProfileProvider>
   );
 }

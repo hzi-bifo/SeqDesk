@@ -8,6 +8,7 @@ import { notifyPanel } from "@/lib/notifications/client";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { FastqcMetricBadges } from "@/components/orders/FastqcMetricBadges";
 import { OrderPipelineView } from "@/components/orders/OrderPipelineView";
+import { useCapability } from "@/components/deployment-profile/useCapability";
 import { SequencingDiscoverView } from "@/components/orders/SequencingDiscoverView";
 import { SequencingStreamView } from "@/components/orders/SequencingStreamView";
 import { Badge } from "@/components/ui/badge";
@@ -458,6 +459,7 @@ export default function OrderSequencingPage({
 
   const orderId = resolvedParams.id;
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const canRunPipelines = useCapability("analysis.run");
   const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
 
   const sampleOptions = useMemo(() => data?.samples ?? [], [data?.samples]);
@@ -523,7 +525,7 @@ export default function OrderSequencingPage({
   }, [orderId]);
 
   const refreshDelivery = useCallback(async () => {
-    if (!isFacilityAdmin) {
+    if (!canRunPipelines) {
       setDelivery(null);
       return;
     }
@@ -602,7 +604,7 @@ export default function OrderSequencingPage({
   }, [confirm, getSampleForReadPath, orderId]);
 
   const refreshOrderPipelines = useCallback(async () => {
-    if (!isFacilityAdmin) {
+    if (!canRunPipelines) {
       setOrderPipelines([]);
       return;
     }
@@ -618,7 +620,7 @@ export default function OrderSequencingPage({
       console.error("[Order Sequencing] Failed to load order pipelines:", pipelineError);
       setOrderPipelines([]);
     }
-  }, [isFacilityAdmin]);
+  }, [canRunPipelines]);
 
   const refreshRunPlans = useCallback(async () => {
     if (!isFacilityAdmin) {
@@ -1743,6 +1745,7 @@ export default function OrderSequencingPage({
           }}
           isDemo={isDemo}
           isFacilityAdmin={isFacilityAdmin}
+          canRunPipelines={canRunPipelines}
         />
       </PageContainer>
     );

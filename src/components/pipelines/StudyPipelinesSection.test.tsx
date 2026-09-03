@@ -376,7 +376,7 @@ describe("StudyPipelinesSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.useSession.mockReturnValue({
-      data: { user: { role: "FACILITY_ADMIN" } },
+      data: { user: { id: "admin-1", role: "FACILITY_ADMIN" } },
     });
     mocks.useQuickPrerequisiteStatus.mockReturnValue({
       systemReady: { ready: true, summary: "Ready" },
@@ -1204,7 +1204,9 @@ describe("StudyPipelinesSection", () => {
   // ---------------------------------------------------------------------------
 
   it("hides the execution target control and final-run actions for non-admins", async () => {
-    mocks.useSession.mockReturnValue({ data: { user: { role: "CUSTOMER" } } });
+    mocks.useSession.mockReturnValue({
+      data: { user: { id: "member-1", role: "CUSTOMER" } },
+    });
     mocks.useSWR.mockImplementation(
       makeSwr({
         runs: [

@@ -6,6 +6,7 @@ import {
   DEFAULT_ACCOUNT_VALIDATION_SETTINGS,
   AccountValidationSettings,
 } from "@/lib/modules/types";
+import { getServerEnrollmentPolicy } from "@/lib/deployment-profile/enrollment.server";
 
 // Check if account validation module is enabled and get settings
 async function getAccountValidationConfig(): Promise<{
@@ -132,13 +133,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Admin registration requires a valid invite code
+    const enrollment = await getServerEnrollmentPolicy();
+
+    // Administrator registration always requires an invite. Shared Lab and
+    // Workbench members are invite-only by default; an administrator may
+    // deliberately enable self-registration through the existing auth policy.
     let invite = null;
-    if (role === "FACILITY_ADMIN") {
+    if (role === "FACILITY_ADMIN" || !enrollment.allowSelfRegistration) {
       if (!inviteCode) {
         return NextResponse.json(
-          { error: "Admin registration requires an invite code" },
-          { status: 400 }
+          {
+            error:
+              role === "FACILITY_ADMIN"
+                ? "Admin registration requires an invite code"
+                : "This SeqDesk installation is invite-only",
+            code: "INVITE_REQUIRED",
+          },
+          { status: 403 }
         );
       }
 

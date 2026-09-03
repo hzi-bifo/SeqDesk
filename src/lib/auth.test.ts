@@ -184,6 +184,7 @@ describe("authOptions", () => {
       role: "FACILITY_ADMIN",
       isDemo: true,
       demoExperience: "facility",
+      authorizationValid: true,
     });
 
     await expect(
@@ -194,6 +195,7 @@ describe("authOptions", () => {
           role: "FACILITY_ADMIN",
           isDemo: true,
           demoExperience: "facility",
+          authorizationValid: true,
         } as never,
       } as never)
     ).resolves.toEqual({
@@ -201,6 +203,7 @@ describe("authOptions", () => {
         id: "user-1",
         role: "FACILITY_ADMIN",
         isDemo: true,
+        authorizationValid: true,
         demoExperience: "facility",
       },
     });
@@ -213,6 +216,7 @@ describe("authOptions", () => {
           role: "RESEARCHER",
           isDemo: true,
           demoExperience: "researcher",
+          authorizationValid: true,
         } as never,
       } as never)
     ).resolves.toEqual({
@@ -220,8 +224,62 @@ describe("authOptions", () => {
         id: "user-2",
         role: "RESEARCHER",
         isDemo: true,
+        authorizationValid: true,
         demoExperience: "researcher",
       },
+    });
+  });
+
+  it("refreshes authorization from the database for an existing JWT", async () => {
+    mocks.db.user.findUnique.mockResolvedValue({
+      role: "RESEARCHER",
+      isDemo: false,
+    });
+
+    await expect(
+      authOptions.callbacks?.jwt?.({
+        token: {
+          id: "user-1",
+          role: "FACILITY_ADMIN",
+          isDemo: false,
+          authorizationValid: true,
+        } as never,
+        user: undefined as never,
+        account: null,
+        profile: undefined,
+        trigger: undefined,
+        isNewUser: false,
+        session: undefined,
+      })
+    ).resolves.toEqual({
+      id: "user-1",
+      role: "RESEARCHER",
+      isDemo: false,
+      authorizationValid: true,
+    });
+  });
+
+  it("invalidates the JWT when its user no longer exists", async () => {
+    mocks.db.user.findUnique.mockResolvedValue(null);
+
+    await expect(
+      authOptions.callbacks?.jwt?.({
+        token: {
+          id: "deleted-user",
+          role: "FACILITY_ADMIN",
+          isDemo: false,
+        } as never,
+        user: undefined as never,
+        account: null,
+        profile: undefined,
+        trigger: undefined,
+        isNewUser: false,
+        session: undefined,
+      })
+    ).resolves.toMatchObject({
+      id: "deleted-user",
+      role: "DISABLED",
+      authorizationValid: false,
     });
   });
 });

@@ -16,6 +16,8 @@ export type SetupPhase =
   | "database-config"
   | "database-unreachable"
   | "schema-missing"
+  | "initial-data-missing"
+  | "administrator-missing"
   | "seeding"
   | "seed-failed"
   | "unknown-error";
@@ -53,6 +55,7 @@ export type SetupInstallContext = {
 export type SetupStatusResponse = {
   exists: boolean;
   configured: boolean;
+  hasAdministrator?: boolean;
   error?: string;
   phase: SetupPhase;
   steps: SetupStep[];
@@ -225,7 +228,7 @@ function getPhase(
   database: SetupDatabaseContext
 ): SetupPhase {
   if (status.configured) {
-    return "ready";
+    return status.hasAdministrator === false ? "administrator-missing" : "ready";
   }
 
   if (options.seedInProgress) {
@@ -254,7 +257,7 @@ function getPhase(
   }
 
   if (status.reason === "not_seeded") {
-    return "seeding";
+    return "initial-data-missing";
   }
 
   return "unknown-error";
@@ -322,8 +325,10 @@ function buildSteps(
     id: "seed",
     label: "Initial data",
     status:
-      status.configured
-        ? "complete"
+      phase === "administrator-missing"
+        ? "error"
+        : status.configured
+          ? "complete"
         : phase === "seed-failed"
           ? "error"
           : phase === "seeding"
@@ -331,9 +336,13 @@ function buildSteps(
             : "pending",
     description: seedError
       ? seedError
-      : status.configured
-        ? "Users, site settings, and default forms are available."
-        : "SeqDesk is creating the initial admin data and form configuration.",
+      : phase === "administrator-missing"
+        ? "Site settings exist, but no administrator account can sign in."
+        : status.configured
+          ? "Users, site settings, and default forms are available."
+          : phase === "initial-data-missing"
+            ? "Initial settings and administrator access have not been created yet."
+            : "SeqDesk is creating the initial admin data and form configuration.",
     command: phase === "seed-failed" ? "npm run db:seed" : undefined,
   });
 
@@ -352,10 +361,18 @@ function buildSteps(
   steps.push({
     id: "login",
     label: "Admin login",
-    status: status.configured ? "complete" : "pending",
-    description: status.configured
-      ? "Setup is complete. Continue to the login screen."
-      : "Login is available after the setup checks pass.",
+    status:
+      phase === "administrator-missing"
+        ? "error"
+        : status.configured
+          ? "complete"
+          : "pending",
+    description:
+      phase === "administrator-missing"
+        ? "Create a secure administrator account before exposing this installation."
+        : status.configured
+          ? "Setup is complete. Continue to the login screen."
+          : "Login is available after the setup checks pass.",
   });
 
   return steps;
@@ -420,6 +437,24 @@ function buildNextAction(
     };
   }
 
+  if (phase === "initial-data-missing") {
+    return {
+      label: "Complete guided setup",
+      description:
+        "Run the guided installer locally to select an operating model and create secure administrator access.",
+      command: "seqdesk --reconfigure",
+    };
+  }
+
+  if (phase === "administrator-missing") {
+    return {
+      label: "Create administrator",
+      description:
+        "Re-run the guided installer locally and configure a secure administrator account.",
+      command: "seqdesk --reconfigure",
+    };
+  }
+
   if (phase === "seed-failed") {
     return {
       label: "Run seed",
@@ -454,6 +489,9 @@ export function buildSetupStatusResponse(
   return {
     exists: status.exists,
     configured: status.configured,
+    ...(status.hasAdministrator !== undefined
+      ? { hasAdministrator: status.hasAdministrator }
+      : {}),
     ...(error ? { error } : {}),
     phase,
     steps: buildSteps(status, phase, database, install, options.seedError),

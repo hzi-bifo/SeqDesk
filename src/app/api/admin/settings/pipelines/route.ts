@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   listInstalledManagedPipelineStatuses,
   PipelineManagementError,
@@ -23,15 +25,79 @@ function toLegacyPipelineSettingsResponse(
   };
 }
 
+function toRunnablePipelineResponse(pipeline: ManagedPipelineStatus) {
+  const properties = Object.fromEntries(
+    Object.entries(pipeline.configSchema.properties).filter(([key, property]) => {
+      const ui = property["x-seqdesk"];
+      if (ui?.placement === "admin" || ui?.placement === "hidden") return false;
+      if (
+        ui?.hideWhenServerConfigured &&
+        Object.prototype.hasOwnProperty.call(pipeline.config, key)
+      ) {
+        return false;
+      }
+      return true;
+    })
+  );
+  const allowedKeys = new Set(Object.keys(properties));
+  const filterConfig = (config: Record<string, unknown>) =>
+    Object.fromEntries(
+      Object.entries(config).filter(([key]) => allowedKeys.has(key))
+    );
+
+  return {
+    pipelineId: pipeline.pipelineId,
+    name: pipeline.name,
+    description: pipeline.description,
+    category: pipeline.category,
+    version: pipeline.version,
+    icon: pipeline.icon,
+    enabled: pipeline.enabled,
+    targets: pipeline.targets.length > 0 ? { supported: pipeline.targets } : null,
+    config: filterConfig(pipeline.config),
+    defaultConfig: filterConfig(pipeline.defaultConfig),
+    configSchema: {
+      ...pipeline.configSchema,
+      properties,
+      required: pipeline.configSchema.required?.filter((key) => allowedKeys.has(key)),
+    },
+    input: pipeline.input,
+    sampleResult: pipeline.sampleResult,
+    visibility: pipeline.visibility,
+    requires: pipeline.requires,
+    outputs: pipeline.outputs,
+    executionPolicy: {
+      mode: pipeline.executionPolicy.mode,
+      source: pipeline.executionPolicy.source,
+    },
+    runtimeWarnings: [],
+  };
+}
+
 // GET - List all installed pipeline configurations.
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);
+    const profile = getServerDeploymentProfile();
+    const managementAccess = decideCapability(
+      session,
+      "system.pipelines.manage",
+      profile
+    );
+    const runAccess = decideCapability(session, "analysis.run", profile);
+    const enabledOnly = searchParams.get("enabled") === "true";
+    if (!managementAccess.allowed && (!runAccess.allowed || !enabledOnly)) {
+      return NextResponse.json(
+        { error: runAccess.status === 404 ? "Not found" : "Forbidden" },
+        { status: runAccess.status === 404 ? 404 : 403 }
+      );
+    }
+
     const catalog = parsePipelineCatalog(searchParams.get("catalog"));
     if (!catalog) {
       return NextResponse.json(
@@ -42,10 +108,12 @@ export async function GET(request: NextRequest) {
 
     const pipelines = await listInstalledManagedPipelineStatuses({
       catalog,
-      enabledOnly: searchParams.get("enabled") === "true",
+      enabledOnly,
     });
     return NextResponse.json({
-      pipelines: pipelines.map(toLegacyPipelineSettingsResponse),
+      pipelines: managementAccess.allowed
+        ? pipelines.map(toLegacyPipelineSettingsResponse)
+        : pipelines.map(toRunnablePipelineResponse),
     });
   } catch (error) {
     console.error("[Pipelines API] Error:", error);
@@ -60,8 +128,19 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const decision = decideCapability(
+      session,
+      "system.pipelines.manage",
+      getServerDeploymentProfile()
+    );
+    if (!decision.allowed) {
+      return NextResponse.json(
+        { error: decision.status === 404 ? "Not found" : "Forbidden" },
+        { status: decision.status === 404 ? 404 : 403 }
+      );
     }
 
     let body: {

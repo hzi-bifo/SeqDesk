@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
     siteSettings: {
       findUnique: vi.fn(),
     },
+    user: {
+      count: vi.fn(),
+    },
   },
 }));
 
@@ -24,6 +27,7 @@ describe("checkDatabaseStatus", () => {
     vi.clearAllMocks();
     delete process.env.DATABASE_URL;
     delete process.env.DIRECT_URL;
+    mocks.db.user.count.mockResolvedValue(1);
   });
 
   it("returns a configuration error before touching Prisma when DATABASE_URL is missing", async () => {
@@ -64,6 +68,21 @@ describe("checkDatabaseStatus", () => {
     expect(result).toEqual({
       exists: true,
       configured: true,
+      hasAdministrator: true,
+      reason: "configured",
+    });
+  });
+
+  it("reports when settings exist but no administrator can sign in", async () => {
+    process.env.DATABASE_URL =
+      "postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk?schema=public";
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ id: "singleton" });
+    mocks.db.user.count.mockResolvedValue(0);
+
+    await expect(checkDatabaseStatus()).resolves.toMatchObject({
+      exists: true,
+      configured: true,
+      hasAdministrator: false,
       reason: "configured",
     });
   });

@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   validatePipelineMetadata: vi.fn(),
   mergePipelineDerivedConfig: vi.fn(),
   isDemoSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   spawn: vi.fn(),
   exec: vi.fn(),
   fsAccess: vi.fn(),
@@ -118,6 +119,10 @@ vi.mock("@/lib/demo/server", () => ({
   isDemoSession: mocks.isDemoSession,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 // Mock child_process. exec needs to work with promisify.
 vi.mock("child_process", () => ({
   spawn: mocks.spawn,
@@ -197,6 +202,12 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      experience: "sequencing",
+      domains: ["core", "facility-intake", "sample-catalog", "sequencing-operations", "analysis", "publishing"],
+    });
+
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "FACILITY_ADMIN" },
     });
@@ -252,12 +263,12 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     mocks.spawn.mockImplementation(() => makeChildProcess());
   });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     const response = await POST(makeRequest(), { params: baseParams });
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
     const body = await response.json();
     expect(body.error).toBe("Unauthorized");
   });
@@ -270,6 +281,21 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     const response = await POST(makeRequest(), { params: baseParams });
 
     expect(response.status).toBe(403);
+  });
+
+  it("allows a Shared Lab member to start a shared run", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "shared-lab",
+      experience: "sequencing",
+      domains: ["core", "facility-intake", "sample-catalog", "sequencing-operations", "analysis", "publishing"],
+    });
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
   });
 
   it("returns 403 for demo sessions", async () => {
