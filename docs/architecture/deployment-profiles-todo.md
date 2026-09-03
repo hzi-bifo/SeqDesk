@@ -98,8 +98,9 @@ Likely areas:
 - [x] Deprecate, but initially support, `NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY`.
 - [x] Ensure authorization reads only the server-resolved profile, never a client-controlled or `NEXT_PUBLIC_*` value.
 - [x] Validate profile identifiers and reject unknown values instead of falling back to a broader profile.
-- [ ] Add a compatibility validator for profile x domain x module dependencies and conflicts.
-- [ ] Run compatibility validation during install, hosted-profile reload, startup, and settings updates.
+- [x] Add a compatibility validator for profile x domain x module dependencies and conflicts.
+- [x] Fail closed on structural profile incompatibilities during server profile resolution/startup.
+- [ ] Run compatibility validation during install-plan construction, hosted-profile reload, and settings updates.
 - [x] Pass a sanitized profile descriptor from the dashboard layout to client navigation/components.
 - [x] Keep `sequencing-center` as the default for every existing installation.
 

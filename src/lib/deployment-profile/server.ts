@@ -1,9 +1,7 @@
 import { loadConfig } from "@/lib/config/loader";
 
-import {
-  isDeploymentProfileId,
-  resolveDeploymentProfile,
-} from "./resolve";
+import { assertDeploymentProfileCompatible } from "./compatibility";
+import { isDeploymentProfileId, resolveDeploymentProfile } from "./resolve";
 import type { DeploymentProfileDefinition } from "./types";
 
 /**
@@ -26,10 +24,16 @@ export function getServerDeploymentProfile(): DeploymentProfileDefinition {
     );
   }
 
-  return resolveDeploymentProfile({
+  const profile = resolveDeploymentProfile({
     configuredProfile,
     legacyPublicSurface: process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE,
     legacyServerSurface: process.env.SEQDESK_APP_SURFACE,
     legacyWorkbenchOnly: process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY,
   });
+
+  assertDeploymentProfileCompatible(profile, {
+    pipelinesEnabled: resolvedConfig.config.pipelines?.enabled === true,
+  });
+
+  return profile;
 }
