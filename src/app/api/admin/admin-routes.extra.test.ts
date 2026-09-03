@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   getResolvedDataBasePath: vi.fn(),
   getExecutionSettings: vi.fn(),
+  loadConfig: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   quickPrerequisiteCheck: vi.fn(),
   checkAllPrerequisites: vi.fn(),
   checkForUpdates: vi.fn(),
@@ -35,6 +37,14 @@ vi.mock("@/lib/files/data-base-path", () => ({
 
 vi.mock("@/lib/pipelines/execution-settings", () => ({
   getExecutionSettings: mocks.getExecutionSettings,
+}));
+
+vi.mock("@/lib/config/loader", () => ({
+  loadConfig: mocks.loadConfig,
+}));
+
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
 }));
 
 vi.mock("@/lib/pipelines/prerequisite-check", () => ({
@@ -99,6 +109,13 @@ describe("admin route coverage quick wins", () => {
       condaPath: "/opt/conda",
       pipelineRunDir: "/runs",
       weblogUrl: "https://weblog.example",
+    });
+    mocks.loadConfig.mockReturnValue({
+      config: { pipelines: { enabled: true } },
+    });
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      experience: "sequencing",
     });
     mocks.quickPrerequisiteCheck.mockResolvedValue({
       ready: true,

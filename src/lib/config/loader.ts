@@ -24,6 +24,7 @@ const CONFIG_FILE_NAMES = [
 const DEFAULT_CONFIG: SeqDeskConfig = {
   deployment: {
     profile: 'sequencing-center',
+    onboardingVersion: 0,
   },
   site: {
     name: 'SeqDesk',

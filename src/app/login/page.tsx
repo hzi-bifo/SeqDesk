@@ -85,7 +85,7 @@ export default function LoginPage() {
       if (result?.error) {
         setError("Invalid email or password");
       } else if (result?.ok) {
-        router.push("/dashboard");
+        router.push("/post-login");
         router.refresh();
       }
     } catch {

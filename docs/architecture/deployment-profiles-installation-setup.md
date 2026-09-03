@@ -42,8 +42,12 @@ That is not yet the finished installer architecture. Before the three profiles
 are advertised as fully supported, the remaining high-priority work is hosted
 lock/source fidelity in the plan, strict no-temporary-file preview handling for
 remote configuration, mount/capacity and executor-specific preflight,
-actionable existing/partial-install journeys, resumable checkpoints, and
-authenticated profile onboarding.
+reconfiguration diffs, and resumable apply checkpoints. Existing targets are
+now classified before the fresh-install questions and routed to update,
+reconfigure, diagnosis, or safe refusal. New installs opt into a versioned,
+administrator-only onboarding checklist; legacy installs are not unexpectedly
+blocked, and ordinary members see a safe setup-in-progress state until required
+onboarding is complete.
 
 ## Current behavior worth preserving
 

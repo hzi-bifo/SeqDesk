@@ -108,6 +108,7 @@ SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
 SEQDESK_YES="${SEQDESK_YES:-}"
 SEQDESK_INTERACTIVE="${SEQDESK_INTERACTIVE:-}"
 SEQDESK_DEPLOYMENT_PROFILE="${SEQDESK_DEPLOYMENT_PROFILE:-}"
+SEQDESK_ONBOARDING_VERSION="${SEQDESK_ONBOARDING_VERSION:-}"
 SEQDESK_USER_CLI_PATH=""
 SEQDESK_USER_CLI_BIN_DIR=""
 SEQDESK_USER_CLI_NEEDS_PATH="false"
@@ -197,6 +198,8 @@ SEQDESK_PREFETCHED_VERSION_INFO=""
 SEQDESK_ADDITIONAL_SETTINGS_FILE="${SEQDESK_ADDITIONAL_SETTINGS_FILE:-}"
 SEQDESK_ADDITIONAL_SETTINGS=()
 SEQDESK_RECONFIGURE="${SEQDESK_RECONFIGURE:-}"
+SEQDESK_UPDATE_EXISTING="${SEQDESK_UPDATE_EXISTING:-}"
+SEQDESK_EMPTY_TARGET="false"
 SEQDESK_OVERWRITE_EXISTING="${SEQDESK_OVERWRITE_EXISTING:-}"
 SEQDESK_RESEED_DB="${SEQDESK_RESEED_DB:-}"
 SEQDESK_REQUIRE_CHECKSUM="${SEQDESK_REQUIRE_CHECKSUM:-}"
@@ -260,6 +263,7 @@ INSTALL_STARTED_AT=$(date '+%Y-%m-%d %H:%M:%S %Z')
 TOTAL_STEPS=9
 CURRENT_STEP=0
 RESTORE_BACKUP_PATH=""
+RESTORE_CURRENT_LINK_TARGET=""
 INSTALL_PHASE="init"
 # What the installer can actually say about the release tarball it unpacked.
 # Surfaced in the final summary, because "SUCCESS" next to an unverified
@@ -3763,6 +3767,8 @@ interactive_test_database() {
 interactive_wizard_enabled() {
     is_truthy "$SEQDESK_INTERACTIVE" || return 1
     is_truthy "$SEQDESK_YES" && return 1
+    is_truthy "${SEQDESK_RECONFIGURE:-}" && return 1
+    is_truthy "${SEQDESK_UPDATE_EXISTING:-}" && return 1
     [ -z "${SEQDESK_CONFIG:-}" ] || return 1
     [ -z "${SEQDESK_PROFILE:-}" ] || return 1
     return 0
@@ -4214,7 +4220,7 @@ normalize_storage_layout() {
         SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-${SEQDESK_DATA_PATH%/}/pipeline-runs}"
         SEQDESK_PIPELINE_DATABASE_DIR="${SEQDESK_PIPELINE_DATABASE_DIR:-${SEQDESK_DATA_PATH%/}/pipeline-databases}"
     fi
-    if is_truthy "${SEQDESK_RECONFIGURE:-}"; then
+    if is_truthy "${SEQDESK_RECONFIGURE:-}" || is_truthy "${SEQDESK_UPDATE_EXISTING:-}"; then
         SEQDESK_STORAGE_ALLOW_INSTALL_OVERLAP="true" validate_guided_storage_layout
     else
         validate_guided_storage_layout
@@ -4376,7 +4382,7 @@ run_interactive_wizard_accounts() {
 # get a generated one shown exactly once in the final summary. Reconfigure never
 # creates an account or changes credentials.
 ensure_secure_bootstrap_accounts() {
-    if is_truthy "$SEQDESK_RECONFIGURE"; then
+    if is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_UPDATE_EXISTING"; then
         return 0
     fi
 
@@ -4440,8 +4446,8 @@ Options:
   --additional-settings-file <path>
                               JSON overrides applied after --profile/--config
   --dir <path>                 Install directory
-  --overwrite-existing         With -y, back up an existing install dir (<dir>.backup.<ts>) and
-                               replace it. Install directory only -- no database is backed up or reset
+  --overwrite-existing         With -y, update a valid SeqDesk install in place. A partial or
+                               unrelated target is backed up before replacement; its database is untouched
   --version <version>          Release version (default: latest)
   --with-pipelines             Install optional Conda/Nextflow pipeline support
   --without-pipelines          Install the core app only (default)
@@ -5732,6 +5738,12 @@ if (!port && nextAuthUrl) {
 }
 const dataPath = trimString(config?.site?.dataBasePath);
 const deploymentProfile = trimString(config?.deployment?.profile);
+let bindHost;
+try {
+  bindHost = trimString(fs.readFileSync(path.join(installDir, ".seqdesk-bind-host"), "utf8"));
+} catch {
+  bindHost = undefined;
+}
 const runDir = trimString(config?.pipelines?.execution?.runDirectory);
 const pipelineDatabaseDir = trimString(config?.pipelines?.databaseDirectory);
 const condaPath =
@@ -5746,6 +5758,7 @@ if (typeof config?.pipelines?.enabled === "boolean") {
 
 const out = {};
 if (deploymentProfile) out.SEQDESK_EXISTING_DEPLOYMENT_PROFILE = deploymentProfile;
+if (bindHost) out.SEQDESK_EXISTING_BIND_HOST = bindHost;
 if (port) out.SEQDESK_EXISTING_PORT = port;
 if (nextAuthUrl) out.SEQDESK_EXISTING_NEXTAUTH_URL = nextAuthUrl;
 if (nextAuthSecret) out.SEQDESK_EXISTING_NEXTAUTH_SECRET = nextAuthSecret;
@@ -5773,8 +5786,17 @@ NODE
     source "$temp_env"
     rm -f "$temp_env"
 
+    if [ -n "${SEQDESK_DEPLOYMENT_PROFILE:-}" ] && \
+        [ -n "${SEQDESK_EXISTING_DEPLOYMENT_PROFILE:-}" ] && \
+        [ "$SEQDESK_DEPLOYMENT_PROFILE" != "$SEQDESK_EXISTING_DEPLOYMENT_PROFILE" ]; then
+        print_error "This installation uses deployment profile '$SEQDESK_EXISTING_DEPLOYMENT_PROFILE'; '$SEQDESK_DEPLOYMENT_PROFILE' was requested."
+        print_info "Update and reconfigure preserve the profile. A profile change requires a future explicit migration command."
+        exit 1
+    fi
+
     apply_config_value SEQDESK_PORT SEQDESK_EXISTING_PORT
     apply_config_value SEQDESK_DEPLOYMENT_PROFILE SEQDESK_EXISTING_DEPLOYMENT_PROFILE
+    apply_config_value SEQDESK_BIND_HOST SEQDESK_EXISTING_BIND_HOST
     apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_URL
     apply_config_value SEQDESK_NEXTAUTH_SECRET SEQDESK_EXISTING_NEXTAUTH_SECRET
     apply_config_value SEQDESK_DATABASE_URL SEQDESK_EXISTING_DATABASE_URL
@@ -5785,7 +5807,13 @@ NODE
     apply_config_value SEQDESK_EXEC_CONDA_PATH SEQDESK_EXISTING_CONDA_PATH
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_EXISTING_WITH_PIPELINES
 
-    unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_SECRET
+    if { is_truthy "${SEQDESK_RECONFIGURE:-}" || is_truthy "${SEQDESK_UPDATE_EXISTING:-}"; } && \
+        [ -n "$SEQDESK_DEPLOYMENT_PROFILE" ]; then
+        print_info "Current deployment profile: $(deployment_profile_label "$SEQDESK_DEPLOYMENT_PROFILE") (preserved; read-only during maintenance)"
+    fi
+
+    unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_BIND_HOST
+    unset SEQDESK_EXISTING_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_SECRET
     unset SEQDESK_EXISTING_DEPLOYMENT_PROFILE
     unset SEQDESK_EXISTING_DATABASE_URL SEQDESK_EXISTING_DATABASE_DIRECT_URL SEQDESK_EXISTING_DATA_PATH
     unset SEQDESK_EXISTING_RUN_DIR SEQDESK_EXISTING_PIPELINE_DATABASE_DIR SEQDESK_EXISTING_CONDA_PATH
@@ -5921,34 +5949,6 @@ print_install_dir_only_scope() {
     echo "  different one with --database-url."
 }
 
-validate_or_confirm_install_target() {
-    if is_truthy "$SEQDESK_RECONFIGURE" || [ ! -e "$SEQDESK_DIR" ]; then
-        return 0
-    fi
-
-    if is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
-        print_warning "Target path already exists and will be backed up before replacement: $SEQDESK_DIR"
-        print_install_dir_only_scope
-        return 0
-    fi
-
-    if is_truthy "$SEQDESK_YES"; then
-        print_error "Target path $SEQDESK_DIR already exists. Choose a new --dir, use --reconfigure for an installed instance, or pass --overwrite-existing to back up the directory and replace it."
-        print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-target-exists-is-not-writable-or-has-too-little-space"
-        exit 1
-    fi
-
-    print_warning "Target path already exists: $SEQDESK_DIR"
-    print_install_dir_only_scope
-    local response
-    response=$(read_input "Back up and replace the install directory? (y/N): ")
-    if [[ ! "$response" =~ ^[Yy]$ ]]; then
-        echo "Installation cancelled."
-        exit 0
-    fi
-    SEQDESK_OVERWRITE_EXISTING="1"
-}
-
 classify_install_target() {
     if [ ! -e "$SEQDESK_DIR" ]; then
         printf '%s' "new"
@@ -5963,6 +5963,92 @@ classify_install_target() {
     else
         printf '%s' "unrelated-existing"
     fi
+}
+
+print_existing_install_diagnosis() {
+    print_info "No installation changes were made. Diagnose this target with:"
+    printf '  npx -y seqdesk@latest doctor --dir %s\n' "$(shell_quote "$SEQDESK_DIR")"
+    print_info "If an interrupted installer reported a backup path, preserve both directories before retrying."
+}
+
+resolve_install_operation() {
+    local classification
+    classification="$(classify_install_target)"
+
+    if is_truthy "$SEQDESK_RECONFIGURE"; then
+        if [ "$classification" != "existing-seqdesk" ]; then
+            print_error "Reconfigure requires a valid existing SeqDesk installation (found: $classification)."
+            print_existing_install_diagnosis
+            exit 1
+        fi
+        return 0
+    fi
+
+    case "$classification" in
+        new)
+            return 0
+            ;;
+        empty-directory)
+            SEQDESK_EMPTY_TARGET="true"
+            return 0
+            ;;
+        existing-seqdesk)
+            if is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
+                SEQDESK_UPDATE_EXISTING="1"
+                return 0
+            fi
+            if is_truthy "$SEQDESK_YES"; then
+                print_error "A SeqDesk installation already exists at $SEQDESK_DIR."
+                print_info "Choose --reconfigure, or pass --overwrite-existing to update it in place."
+                exit 1
+            fi
+            print_header "Existing SeqDesk installation"
+            echo "  1) Update — install the selected release, preserve profile/configuration/data, and run migrations"
+            echo "  2) Reconfigure — keep the installed release and change supported settings"
+            echo "  3) Diagnose — make no changes and print the health-check command"
+            echo "  4) Cancel"
+            local existing_choice
+            existing_choice=$(read_input "  Choose [4]: ")
+            existing_choice=${existing_choice:-4}
+            case "$existing_choice" in
+                1|update)
+                    SEQDESK_UPDATE_EXISTING="1"
+                    SEQDESK_OVERWRITE_EXISTING="1"
+                    ;;
+                2|reconfigure)
+                    SEQDESK_RECONFIGURE="1"
+                    ;;
+                3|diagnose)
+                    print_existing_install_diagnosis
+                    exit 0
+                    ;;
+                *)
+                    echo "Installation cancelled."
+                    exit 0
+                    ;;
+            esac
+            ;;
+        partial-seqdesk)
+            if is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
+                print_warning "A partial SeqDesk target will be backed up before a fresh install."
+                return 0
+            fi
+            print_error "A partial or interrupted SeqDesk installation was detected at $SEQDESK_DIR."
+            print_existing_install_diagnosis
+            print_info "After diagnosis, pass --overwrite-existing to back it up and start over."
+            exit 1
+            ;;
+        unrelated-existing)
+            if is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
+                print_warning "The unrelated target will be backed up before replacement: $SEQDESK_DIR"
+                print_install_dir_only_scope
+                return 0
+            fi
+            print_error "The target exists but is not a SeqDesk installation: $SEQDESK_DIR"
+            print_info "Choose another --dir, or pass --overwrite-existing to back up and replace this directory."
+            exit 1
+            ;;
+    esac
 }
 
 resolve_release_metadata_for_plan() {
@@ -6033,8 +6119,9 @@ build_install_plan_json() {
     local executor="local"
     local admin_name="${SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME:-} ${SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME:-}"
     is_truthy "$SEQDESK_RECONFIGURE" && operation="reconfigure"
+    is_truthy "$SEQDESK_UPDATE_EXISTING" && operation="update"
     uses_local_postgres_target || database_mode="existing"
-    if is_truthy "$SEQDESK_RECONFIGURE"; then
+    if is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_UPDATE_EXISTING"; then
         password_ref="not-applicable"
     elif [ -n "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH" ]; then
         password_ref="configured-password-hash"
@@ -6892,6 +6979,7 @@ write_config() {
 
     SEQDESK_INSTALL_DATA_PATH="$data_path" \
     SEQDESK_INSTALL_DEPLOYMENT_PROFILE="${SEQDESK_DEPLOYMENT_PROFILE:-}" \
+    SEQDESK_INSTALL_ONBOARDING_VERSION="${SEQDESK_ONBOARDING_VERSION:-}" \
     SEQDESK_INSTALL_RUN_DIR="$run_dir" \
     SEQDESK_INSTALL_PIPELINE_DATABASE_DIR="${SEQDESK_PIPELINE_DATABASE_DIR:-}" \
     SEQDESK_INSTALL_PIPELINES_ENABLED="$pipelines_enabled" \
@@ -6932,6 +7020,7 @@ const fs = require('fs');
 
 const dataPath = process.env.SEQDESK_INSTALL_DATA_PATH || '';
 const deploymentProfile = process.env.SEQDESK_INSTALL_DEPLOYMENT_PROFILE || '';
+const onboardingVersionRaw = process.env.SEQDESK_INSTALL_ONBOARDING_VERSION || '';
 const runDir = process.env.SEQDESK_INSTALL_RUN_DIR || '';
 const pipelineDatabaseDir = process.env.SEQDESK_INSTALL_PIPELINE_DATABASE_DIR || '';
 const pipelinesEnabled = process.env.SEQDESK_INSTALL_PIPELINES_ENABLED || '';
@@ -7078,6 +7167,13 @@ if (deploymentProfile) {
     ? config.deployment
     : {};
   config.deployment.profile = deploymentProfile;
+}
+const onboardingVersion = toOptionalPositiveInt(onboardingVersionRaw);
+if (onboardingVersion !== undefined) {
+  config.deployment = config.deployment && typeof config.deployment === 'object'
+    ? config.deployment
+    : {};
+  config.deployment.onboardingVersion = onboardingVersion;
 }
 
 const installProfile = buildInstallProfileConfig(profileConfigFile);
@@ -7406,6 +7502,8 @@ on_error() {
     local failed_command="${BASH_COMMAND:-}"
     local failed_at
     local elapsed
+    local local_restore_link
+    local restore_current_path
     set +e
 
     # errtrace also propagates this trap into subshells: command substitutions,
@@ -7445,6 +7543,27 @@ on_error() {
         fi
     fi
 
+    # A versioned update switches only the current symlink. If a later apply
+    # step fails, restore the previously active release atomically. Database
+    # migrations are forward-only, so the failure text below still directs the
+    # operator to the log/recovery path rather than claiming a database rollback.
+    restore_current_path="${RESTORE_CURRENT_LINK_TARGET:-}"
+    if [ -n "$restore_current_path" ] && [[ "$restore_current_path" != /* ]]; then
+        restore_current_path="$SEQDESK_DIR/$restore_current_path"
+    fi
+    if [ -n "${RESTORE_CURRENT_LINK_TARGET:-}" ] && [ -d "$restore_current_path" ]; then
+        local_restore_link="$SEQDESK_DIR/.current-restore-$$"
+        rm -f "$local_restore_link" 2>/dev/null || true
+        if ln -s "$RESTORE_CURRENT_LINK_TARGET" "$local_restore_link" 2>/dev/null && \
+            mv -f "$local_restore_link" "$SEQDESK_DIR/current" 2>/dev/null; then
+            print_warning "Restored the previously active application release: $RESTORE_CURRENT_LINK_TARGET"
+            print_warning "Any database migrations already applied were not rolled back."
+        else
+            rm -f "$local_restore_link" 2>/dev/null || true
+            print_error "Could not restore the previous current release link ($RESTORE_CURRENT_LINK_TARGET)."
+        fi
+    fi
+
     echo ""
     print_error "Install failed after $(format_elapsed "$elapsed")."
     print_info "Command: ${failed_command}"
@@ -7478,8 +7597,8 @@ print_login_summary() {
 
     print_header "Login"
 
-    if is_truthy "$SEQDESK_RECONFIGURE"; then
-        echo "  Existing user accounts are unchanged (reconfigure mode)."
+    if is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_UPDATE_EXISTING"; then
+        echo "  Existing user accounts and passwords are unchanged."
     elif [ "${SEQDESK_BOOTSTRAP_ADMIN_EXISTED:-false}" = "true" ] || \
         [ "${SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED:-false}" = "true" ]; then
         # This database already had one or both bootstrap accounts, so the seed
@@ -7900,15 +8019,21 @@ fi
 SEQDESK_DIR="${SEQDESK_DIR/#\~/$HOME}"
 SEQDESK_DIR="$(resolve_absolute_dir "$SEQDESK_DIR")"
 
+if ! is_truthy "$SEQDESK_PLAN_ONLY"; then
+    resolve_install_operation
+fi
+
 if is_truthy "$SEQDESK_RECONFIGURE" && [ ! -d "$SEQDESK_DIR" ]; then
     print_error "Reconfigure mode requires an existing installation directory: $SEQDESK_DIR"
     print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-target-exists-is-not-writable-or-has-too-little-space"
     exit 1
 fi
 
-if { is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_PREPARE_POSTGRES"; } && [ -d "$SEQDESK_DIR" ]; then
+if { is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_UPDATE_EXISTING" || is_truthy "$SEQDESK_PREPARE_POSTGRES"; } && [ -d "$SEQDESK_DIR" ]; then
     if is_truthy "$SEQDESK_RECONFIGURE"; then
         print_info "Reconfigure mode: loading defaults from existing installation"
+    elif is_truthy "$SEQDESK_UPDATE_EXISTING"; then
+        print_info "Update mode: preserving defaults from the existing installation"
     elif is_truthy "$SEQDESK_PREPARE_POSTGRES"; then
         print_info "PostgreSQL setup mode: loading defaults from existing installation"
     fi
@@ -7931,12 +8056,6 @@ if is_truthy "$SEQDESK_PREPARE_POSTGRES"; then
     prepare_postgres_and_exit
 fi
 
-# Reject or confirm an existing fresh-install target before asking wizard
-# questions, installing Conda, or downloading the release package.
-if ! is_truthy "$SEQDESK_PLAN_ONLY"; then
-    validate_or_confirm_install_target
-fi
-
 resolve_conda_runtime
 
 # Guided setup wizard (opt-in via --interactive), first half. Runs after
@@ -7945,6 +8064,10 @@ resolve_conda_runtime
 # preflight below has to do.
 run_interactive_wizard_database
 validate_deployment_profile
+if ! is_truthy "$SEQDESK_RECONFIGURE" && ! is_truthy "$SEQDESK_UPDATE_EXISTING" && \
+    [ -z "$SEQDESK_ONBOARDING_VERSION" ]; then
+    SEQDESK_ONBOARDING_VERSION="1"
+fi
 if ! normalize_access_topology; then
     exit 1
 fi
@@ -8264,8 +8387,43 @@ if is_truthy "$SEQDESK_RECONFIGURE"; then
             print_info "Start the SeqDesk PostgreSQL instance yourself before the app, or reinstall to adopt the current layout."
         fi
     fi
+elif is_truthy "$SEQDESK_UPDATE_EXISTING"; then
+    # Versioned updates stay inside the existing installation root. Shared
+    # configuration, data, installed pipelines and previous releases therefore
+    # remain in place; only a newly extracted release and the atomic `current`
+    # link are changed. This matches the in-app updater's release layout.
+    if [ -L "$SEQDESK_DIR/current" ]; then
+        RESTORE_CURRENT_LINK_TARGET="$(readlink "$SEQDESK_DIR/current" 2>/dev/null || true)"
+    else
+        print_warning "This is a legacy flat installation; old application files remain in place, but automatic link rollback is unavailable for this first update."
+    fi
+
+    RELEASE_DIR="$SEQDESK_DIR/releases/$LATEST_VERSION"
+    if [ -e "$RELEASE_DIR" ]; then
+        current_target="$(readlink "$SEQDESK_DIR/current" 2>/dev/null || true)"
+        if [ "$current_target" = "releases/$LATEST_VERSION" ]; then
+            print_info "SeqDesk v$LATEST_VERSION is already active; reusing the installed release."
+            rm -f "$TEMP_FILE"
+            APP_DIR="$SEQDESK_DIR/current"
+            RESTORE_CURRENT_LINK_TARGET=""
+        else
+            print_error "Release directory already exists but is not active: $RELEASE_DIR"
+            print_info "Run the update repair/diagnostic flow before retrying; the installer will not overwrite a staged or previous release."
+            exit 1
+        fi
+    else
+        mkdir -p "$RELEASE_DIR"
+        run_with_spinner "Package extraction" tar -xzf "$TEMP_FILE" -C "$RELEASE_DIR" --strip-components=1
+        rm "$TEMP_FILE"
+        sync_release_shared_paths "$RELEASE_DIR"
+        write_root_start_wrapper
+        activate_current_release "$LATEST_VERSION"
+        link_root_release_metadata
+        APP_DIR="$SEQDESK_DIR/current"
+        print_success "Activated SeqDesk v$LATEST_VERSION; shared configuration and data were preserved."
+    fi
 else
-    if [ -e "$SEQDESK_DIR" ]; then
+    if [ -e "$SEQDESK_DIR" ] && [ "$SEQDESK_EMPTY_TARGET" != "true" ]; then
         if ! is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
             print_error "Target path changed after preflight and now exists: $SEQDESK_DIR"
             rm -f "$TEMP_FILE"
@@ -8323,6 +8481,8 @@ else
         INSTALL_PHASE="backup_moved"
         print_success "Moved existing install directory to $existing_backup_path"
         print_info "The PostgreSQL database was not moved, copied or reset; this install reuses it."
+    elif [ "$SEQDESK_EMPTY_TARGET" = "true" ]; then
+        print_success "Using existing empty target directory: $SEQDESK_DIR"
     fi
 
     RELEASE_DIR="$SEQDESK_DIR/releases/$LATEST_VERSION"
@@ -8412,6 +8572,7 @@ export SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED
 # Initialize database
 SEED_OK="false"
 DB_INIT_SKIPPED="false"
+DB_MIGRATED_ONLY="false"
 if is_truthy "$SEQDESK_RECONFIGURE" && ! is_truthy "$SEQDESK_RESEED_DB"; then
     DB_INIT_SKIPPED="true"
     print_info "Reconfigure mode: skipping database migrations/seed to preserve existing data."
@@ -8441,6 +8602,10 @@ else
         print_postgres_setup_instructions
         exit 1
     fi
+    if is_truthy "$SEQDESK_UPDATE_EXISTING"; then
+        DB_MIGRATED_ONLY="true"
+        print_info "Update mode: migrations applied; seed data and user accounts were left unchanged."
+    else
     # The migrations have run, so the User table is there to look at, and the
     # seed has not run yet. This is the only point where the installer can still
     # tell whether the credentials it is holding will actually be applied.
@@ -8460,10 +8625,13 @@ else
             SEED_OK="true"
         fi
     fi
+    fi
 fi
 
 if [ "$DB_INIT_SKIPPED" = "true" ]; then
     print_info "Database unchanged."
+elif [ "$DB_MIGRATED_ONLY" = "true" ]; then
+    print_success "Database schema updated; existing data, seed state, and user accounts preserved"
 elif [ "$SEED_OK" = "true" ]; then
     # "Database initialized" used to print either way, so a reviewer whose
     # printed credentials were inert had nothing on screen to tell them the
@@ -8570,14 +8738,14 @@ fi
 print_step "Configure process manager"
 
 if [ -z "$SEQDESK_USE_PM2" ]; then
-    if is_truthy "$SEQDESK_RECONFIGURE"; then
+    if is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_UPDATE_EXISTING"; then
         if resolve_pm2_bin && pm2_exec describe seqdesk >/dev/null 2>&1; then
             PM2_PROCESS_EXISTS="true"
             SEQDESK_USE_PM2="1"
             print_info "Detected existing PM2 process 'seqdesk'; it will be restarted."
         else
             SEQDESK_USE_PM2="0"
-            print_info "Reconfigure mode: PM2 not detected, skipping process manager changes."
+            print_info "Maintenance mode: PM2 not detected, skipping process manager changes."
         fi
     else
         prompt_yes_no SEQDESK_USE_PM2 "Start SeqDesk with PM2 for auto-restart? (recommended)" "y"
@@ -8660,6 +8828,8 @@ if [ -n "$SEQDESK_PROFILE" ]; then
 fi
 if is_truthy "$SEQDESK_RECONFIGURE"; then
     print_kv "Mode" "reconfigure existing install"
+elif is_truthy "$SEQDESK_UPDATE_EXISTING"; then
+    print_kv "Mode" "update existing install"
 fi
 print_kv "Directory" "$SEQDESK_DIR"
 if [ -n "$SEQDESK_USER_CLI_PATH" ]; then

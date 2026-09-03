@@ -20,11 +20,12 @@ This checklist implements the agreed model:
 Current branch checkpoint: the profile/configuration foundation, central
 capability model, secure single-administrator bootstrap, Shared Lab account
 flow, profile-aware navigation, guarded Workbench APIs, local file upload, and
-real ENA FASTQ import are implemented. The installer now explains and requires
-the guided profile choice and recommends pipeline setup per profile. The
-versioned `InstallPlan`, advanced storage/network preflight, authenticated
-onboarding, full API migration, and full release matrix remain intentionally
-open below.
+real ENA FASTQ import are implemented. The installer now uses a versioned,
+redacted `InstallPlan`; explains profile, access, database, storage, and workflow
+choices; classifies existing targets; and preserves the selected profile during
+maintenance. Authenticated first-login onboarding and profile-aware operational
+readiness are implemented. A unified question engine, resumable apply
+checkpoints, remaining API migration, and the full release matrix remain open.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -87,7 +88,7 @@ Likely areas:
 - [ ] If profile-specific install URLs or commands are added, make them thin wrappers that call the canonical installer; do not copy the installer logic.
 - [x] Treat the selected profile as installation-wide and fixed at runtime; do not add a per-user profile/view switch.
 - [x] Do not expose profile switching in the initial web UI.
-- [ ] Preserve the selected profile across update and rollback operations.
+- [x] Preserve the selected profile across update and rollback operations.
 - [x] Use one database schema and migration chain for all profiles.
 - [ ] Install/download large optional pipeline packages, databases, instrument integrations, and import tools only when required by the selected profile/modules.
 - [x] Map legacy `lab` to `sequencing-center` and legacy `workbench` to `research-workbench`.
@@ -124,11 +125,11 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 
 ### Existing-target classification
 
-- [ ] Detect new install, valid existing install, partial/failed install, and unrelated non-empty target before asking setup questions.
-- [ ] For an existing install, offer Update, Reconfigure, Diagnose/Resume, or Cancel rather than the fresh-install wizard.
-- [ ] Preserve/show the current deployment profile as read-only for update/reconfigure; reject a conflicting `--deployment-profile` unless a future explicit migration command is used.
+- [x] Detect new install, valid existing install, partial/failed install, and unrelated non-empty target before asking setup questions.
+- [x] For an existing install, offer Update, Reconfigure, Diagnose/Resume, or Cancel rather than the fresh-install wizard.
+- [x] Preserve/show the current deployment profile as read-only for update/reconfigure; reject a conflicting `--deployment-profile` unless a future explicit migration command is used.
 - [ ] Load current values and show a redacted diff during reconfiguration.
-- [ ] Never seed generic accounts or overwrite existing passwords during update/reconfigure/database adoption.
+- [x] Never seed generic accounts or overwrite existing passwords during update/reconfigure/database adoption.
 
 ### Guided question flow
 
@@ -146,7 +147,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Keep local PostgreSQL versus existing/managed PostgreSQL as the primary database choice and explain the operational tradeoff.
 - [ ] Verify the selected database before requesting/generating account passwords.
 - [x] Offer recommended managed storage locations first; show only the selected profile's labels and paths.
-- [ ] Validate storage existence/creation, writability, free space, mount availability, symlink resolution, dangerous roots, and overlapping/nested roots.
+- [x] Validate storage existence/creation, writability, free space, mount availability, symlink resolution, dangerous roots, and overlapping/nested roots.
 - [x] Ask about workflow execution with profile-aware guidance: optional for Sequencing Center, recommended for Shared Lab, and required for full Workbench operational readiness.
 - [ ] Keep local versus Slurm executor details and package/runtime downloads behind the workflow choice; show estimated sizes.
 - [x] Create exactly one initial administrator with an entered or generated strong password; remove the generic “also create a researcher” question.
@@ -173,11 +174,11 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Make `/api/setup/status` a read-only non-secret `GET`; remove account creation, seeding, hosted-profile application, and other mutations from anonymous polling.
 - [x] Move bootstrap seeding into the installer or an explicit protected/idempotent startup operation.
 - [x] Let public setup status report only database/schema, valid deployment profile, enrollment policy, and existence of an active administrator.
-- [ ] Add an authenticated, administrator-only, versioned onboarding checklist with explicit completion actor/time.
-- [ ] Separate base application readiness from profile operational readiness; do not equate a `SiteSettings` row with completed setup.
-- [ ] Route the first administrator login to incomplete critical onboarding and keep the checklist reopenable.
-- [ ] Show ordinary members a clear administrator-is-finishing-setup state when critical operational setup is incomplete.
-- [ ] Compose onboarding by profile: facility intake/instruments for Sequencing Center, shared storage/members/limits for Shared Lab, and storage/importers/runtime/first workspace for Workbench.
+- [x] Add an authenticated, administrator-only, versioned onboarding checklist with explicit completion actor/time.
+- [x] Separate base application readiness from profile operational readiness; do not equate a `SiteSettings` row with completed setup.
+- [x] Route the first administrator login to incomplete critical onboarding and keep the checklist reopenable.
+- [x] Show ordinary members a clear administrator-is-finishing-setup state when critical operational setup is incomplete.
+- [x] Compose onboarding by profile: facility intake/instruments for Sequencing Center, shared storage/members/limits for Shared Lab, and storage/importers/runtime/first workspace for Workbench.
 
 Acceptance:
 
@@ -190,7 +191,7 @@ Acceptance:
 - [ ] Update/reconfigure preserve the deployment profile, accounts, and scientific data.
 - [x] No anonymous setup-status request can create an account or change configuration.
 - [x] No packaged fresh install uses known default credentials or creates a generic second account.
-- [ ] First login, onboarding, completion summary, and next steps use the selected profile's terminology and journey.
+- [x] First login, onboarding, completion summary, and next steps use the selected profile's terminology and journey.
 
 ## Milestone 2 — Principal, capabilities, and scopes
 

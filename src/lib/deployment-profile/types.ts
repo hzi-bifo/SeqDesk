@@ -60,4 +60,6 @@ export interface DeploymentProfileDefinition {
 export interface DeploymentProfileConfig {
   /** Installation-wide operating model. A change requires an application restart. */
   profile?: DeploymentProfileId;
+  /** Version of the authenticated administrator onboarding required by this install. */
+  onboardingVersion?: number;
 }

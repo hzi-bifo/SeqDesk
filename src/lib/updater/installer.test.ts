@@ -152,6 +152,9 @@ async function seedInstallDir(): Promise<void> {
     path.join(tempDir, "seqdesk.config.json"),
     JSON.stringify(
       {
+        deployment: {
+          profile: "shared-lab",
+        },
         runtime: {
           databaseUrl: "postgresql://preserved.example/seqdesk",
         },
@@ -444,6 +447,9 @@ describe("installer", () => {
     await expect(
       fs.readFile(path.join(tempDir, "seqdesk.config.json"), "utf8")
     ).resolves.toContain("preserved.example");
+    await expect(
+      fs.readFile(path.join(tempDir, "seqdesk.config.json"), "utf8")
+    ).resolves.toContain('"profile": "shared-lab"');
     await expect(fs.readFile(path.join(releaseDir, "seqdesk.config.json"), "utf8")).resolves.toContain(
       "preserved.example"
     );
@@ -639,6 +645,9 @@ describe("installer", () => {
     });
 
     await expect(fs.readlink(path.join(tempDir, "current"))).resolves.toBe("releases/1.1.80");
+    await expect(
+      fs.readFile(path.join(tempDir, "seqdesk.config.json"), "utf8")
+    ).resolves.toContain('"profile": "shared-lab"');
     expect(progress).toEqual(["checking:5", "extracting:60", "complete:100", "restarting:100"]);
     expect(patchUpdateStateMock).toHaveBeenCalledWith(
       expect.objectContaining({

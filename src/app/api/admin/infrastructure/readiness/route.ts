@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getResolvedDataBasePath } from "@/lib/files/data-base-path";
 import { getExecutionSettings } from "@/lib/pipelines/execution-settings";
+import { loadConfig } from "@/lib/config/loader";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 
 interface ReadinessResponse {
   ready: boolean;
@@ -25,6 +27,10 @@ const REQUIRED_CHECKS = {
   runDir: {
     label: "Pipeline run directory",
     href: "/admin/pipeline-runtime#required-runtime",
+  },
+  workflowExecution: {
+    label: "Workflow execution",
+    href: "/admin/settings/pipelines",
   },
 } as const;
 
@@ -56,6 +62,8 @@ export async function GET() {
       } satisfies ReadinessResponse);
     }
 
+    const deploymentProfile = getServerDeploymentProfile();
+    const pipelinesEnabled = loadConfig().config.pipelines?.enabled === true;
     const [resolvedDataBasePath, executionSettings] = await Promise.all([
       getResolvedDataBasePath(),
       getExecutionSettings(),
@@ -80,7 +88,17 @@ export async function GET() {
       });
     }
 
-    if (!pipelineRunDir || pipelineRunDir === "/") {
+    if (deploymentProfile.experience === "workbench" && !pipelinesEnabled) {
+      requiredMissing.push(REQUIRED_CHECKS.workflowExecution.label);
+      missingItems.push({
+        key: "workflowExecution",
+        label: REQUIRED_CHECKS.workflowExecution.label,
+        href: REQUIRED_CHECKS.workflowExecution.href,
+        severity: "required",
+      });
+    }
+
+    if (pipelinesEnabled && (!pipelineRunDir || pipelineRunDir === "/")) {
       requiredMissing.push(REQUIRED_CHECKS.runDir.label);
       missingItems.push({
         key: "runDir",
@@ -90,7 +108,7 @@ export async function GET() {
       });
     }
 
-    if (!condaPath) {
+    if (pipelinesEnabled && !condaPath) {
       recommendedMissing.push(RECOMMENDED_CHECKS.condaPath.label);
       missingItems.push({
         key: "condaPath",
@@ -100,7 +118,7 @@ export async function GET() {
       });
     }
 
-    if (!weblogUrl) {
+    if (pipelinesEnabled && !weblogUrl) {
       recommendedMissing.push(RECOMMENDED_CHECKS.weblogUrl.label);
       missingItems.push({
         key: "weblogUrl",
@@ -111,15 +129,9 @@ export async function GET() {
     }
 
     const firstMissingHref =
-      requiredMissing.length > 0
-        ? !dataBasePath
-          ? REQUIRED_CHECKS.dataPath.href
-          : REQUIRED_CHECKS.runDir.href
-        : !condaPath
-        ? RECOMMENDED_CHECKS.condaPath.href
-        : !weblogUrl
-        ? RECOMMENDED_CHECKS.weblogUrl.href
-        : "/admin/data-compute";
+      missingItems.find((item) => item.severity === "required")?.href ||
+      missingItems[0]?.href ||
+      "/admin/data-compute";
 
     const response: ReadinessResponse = {
       ready: requiredMissing.length === 0,

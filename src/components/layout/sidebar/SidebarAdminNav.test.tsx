@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ModuleProvider } from "@/lib/modules";
+import { DeploymentProfileProvider } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 const fetchMock = vi.fn();
 
@@ -155,6 +157,42 @@ describe("SidebarAdminNav", () => {
 
     // The settings section is active because the path is a config page.
     expect(screen.getByRole("link", { name: "Sequencing Order Form" }).className).toContain("bg-secondary");
+  });
+
+  it("shows shared administration without sequencing-center configuration in Workbench", async () => {
+    mocks.usePathname.mockReturnValue("/admin/onboarding");
+
+    render(
+      <DeploymentProfileProvider
+        profile={getDeploymentProfileDefinition("research-workbench")}
+      >
+        <SidebarAdminNav collapsed={false} unreadMessages={0} />
+      </DeploymentProfileProvider>
+    );
+
+    expect(screen.getByRole("link", { name: "Setup checklist" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Modules" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Pipelines" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Sequencing Order Form" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Study Forms" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "MIxS Checklists" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Sequencers" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "MinKNOW Stream" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Data Upload" })).toBeNull();
+  });
+
+  it("uses the setup checklist as the collapsed Workbench settings destination", () => {
+    render(
+      <DeploymentProfileProvider
+        profile={getDeploymentProfileDefinition("research-workbench")}
+      >
+        <SidebarAdminNav collapsed unreadMessages={0} />
+      </DeploymentProfileProvider>
+    );
+
+    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe(
+      "/admin/onboarding"
+    );
   });
 
   it("shows the unread support badge and toggles the accounts section", () => {

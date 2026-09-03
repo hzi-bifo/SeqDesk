@@ -8,6 +8,7 @@ import {
   Settings,
   ChevronRight,
   AlertTriangle,
+  ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { startVisiblePolling } from "@/lib/polling";
@@ -30,6 +31,10 @@ export function SidebarAdminNav({
   const router = useRouter();
   const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
   const deploymentProfile = useDeploymentProfile();
+  const usesSequencingExperience = deploymentProfile.experience === "sequencing";
+  const settingsLanding = usesSequencingExperience
+    ? "/admin/form-builder"
+    : "/admin/onboarding";
 
   const isAccountsPage = (path: string) =>
     path.startsWith("/admin/users") ||
@@ -225,7 +230,7 @@ export function SidebarAdminNav({
 
       {/* Settings section */}
       {collapsed ? (
-        <Link href="/admin/form-builder" className={navItemClass("/admin/form-builder")} title="Settings">
+        <Link href={settingsLanding} className={navItemClass(settingsLanding)} title="Settings">
           <Settings className={navIconClass} />
         </Link>
       ) : (
@@ -259,29 +264,42 @@ export function SidebarAdminNav({
               adminExpanded ? "max-h-[28rem] opacity-100 mt-1" : "max-h-0 opacity-0"
             )}
           >
-            <Link href="/admin/form-builder" className={adminSubItemClass("/admin/form-builder")}>
-              Sequencing Order Form
+            <Link href="/admin/onboarding" className={adminSubItemClass("/admin/onboarding")}>
+              <span className="flex items-center gap-2">
+                <ClipboardCheck className="h-3.5 w-3.5" /> Setup checklist
+              </span>
             </Link>
-            <Link
-              href={dynamicStudiesEnabled ? "/admin/study-definitions" : "/admin/study-form-builder"}
-              className={adminSubItemClass(
-                dynamicStudiesEnabled ? "/admin/study-definitions" : "/admin/study-form-builder"
-              )}
-            >
-              {dynamicStudiesEnabled ? "Define Studies" : "Study Forms"}
-            </Link>
-            <Link href="/admin/mixs-checklists" className={adminSubItemClass("/admin/mixs-checklists")}>
-              MIxS Checklists
-            </Link>
+            {usesSequencingExperience && (
+              <>
+                <Link href="/admin/form-builder" className={adminSubItemClass("/admin/form-builder")}>
+                  Sequencing Order Form
+                </Link>
+                <Link
+                  href={dynamicStudiesEnabled ? "/admin/study-definitions" : "/admin/study-form-builder"}
+                  className={adminSubItemClass(
+                    dynamicStudiesEnabled ? "/admin/study-definitions" : "/admin/study-form-builder"
+                  )}
+                >
+                  {dynamicStudiesEnabled ? "Define Studies" : "Study Forms"}
+                </Link>
+                <Link href="/admin/mixs-checklists" className={adminSubItemClass("/admin/mixs-checklists")}>
+                  MIxS Checklists
+                </Link>
+              </>
+            )}
             <Link href="/admin/modules" className={adminSubItemClass("/admin/modules")}>
               Modules
             </Link>
-            <Link href="/admin/sequencing-tech" className={adminSubItemClass("/admin/sequencing-tech")}>
-              Sequencers
-            </Link>
-            <Link href="/admin/minknow-stream" className={adminSubItemClass("/admin/minknow-stream")}>
-              MinKNOW Stream
-            </Link>
+            {usesSequencingExperience && (
+              <>
+                <Link href="/admin/sequencing-tech" className={adminSubItemClass("/admin/sequencing-tech")}>
+                  Sequencers
+                </Link>
+                <Link href="/admin/minknow-stream" className={adminSubItemClass("/admin/minknow-stream")}>
+                  MinKNOW Stream
+                </Link>
+              </>
+            )}
             <div
               className={cn(
                 adminSubItemClass("/admin/data-compute"),
@@ -362,9 +380,11 @@ export function SidebarAdminNav({
             <Link href="/admin/admin-accounts" className={adminSubItemClass("/admin/admin-accounts")}>
               Accounts
             </Link>
-            <Link href="/admin/ena" className={adminSubItemClass("/admin/ena")}>
-              Data Upload
-            </Link>
+            {usesSequencingExperience && (
+              <Link href="/admin/ena" className={adminSubItemClass("/admin/ena")}>
+                Data Upload
+              </Link>
+            )}
             <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
               Pipelines
             </Link>

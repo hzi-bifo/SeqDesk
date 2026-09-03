@@ -87,7 +87,14 @@ reset_state() {
     SEQDESK_GENERATED_RESEARCHER_PASSWORD=""
     SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED=""
     SEQDESK_RECONFIGURE=""
+    SEQDESK_RESEED_DB=""
+    SEQDESK_UPDATE_EXISTING=""
+    SEQDESK_OVERWRITE_EXISTING=""
+    SEQDESK_EMPTY_TARGET="false"
+    SEQDESK_PREFLIGHT_READ_ONLY="false"
+    SEQDESK_ONBOARDING_VERSION=""
     SEQDESK_WITH_PIPELINES=""
+    PIPELINES_ENABLED="false"
 }
 
 OUT="$(mktemp)"
@@ -343,6 +350,141 @@ assert_contains "plan CLI classifies the existing installation" \
 assert_not_contains "plan CLI redacts settings-file credentials" \
     "fixture-secret" <(printf '%s\n' "$plan_cli_json")
 assert_eq "plan CLI does not rewrite existing files" "$before_plan_hash" "$after_plan_hash"
+
+echo ""
+echo "== Case 2g: existing target classification selects a safe maintenance journey =="
+TARGET_NEW="$TEST_TMP_DIR/target-new"
+TARGET_EMPTY="$TEST_TMP_DIR/target-empty"
+TARGET_VALID="$TEST_TMP_DIR/target-valid"
+TARGET_PARTIAL="$TEST_TMP_DIR/target-partial"
+TARGET_UNRELATED="$TEST_TMP_DIR/target-unrelated"
+mkdir -p "$TARGET_EMPTY" "$TARGET_VALID/current" "$TARGET_PARTIAL/releases" "$TARGET_UNRELATED"
+printf '{"name":"seqdesk","version":"1.2.3"}\n' > "$TARGET_VALID/current/package.json"
+printf 'keep me\n' > "$TARGET_UNRELATED/research-notes.txt"
+
+SEQDESK_DIR="$TARGET_NEW"
+assert_eq "a missing path is a new install" "new" "$(classify_install_target)"
+SEQDESK_DIR="$TARGET_EMPTY"
+assert_eq "an existing empty directory is safe for a fresh install" \
+    "empty-directory" "$(classify_install_target)"
+SEQDESK_DIR="$TARGET_VALID"
+assert_eq "a versioned SeqDesk install is recognized" \
+    "existing-seqdesk" "$(classify_install_target)"
+SEQDESK_DIR="$TARGET_PARTIAL"
+assert_eq "an interrupted release layout is recognized" \
+    "partial-seqdesk" "$(classify_install_target)"
+SEQDESK_DIR="$TARGET_UNRELATED"
+assert_eq "unrelated files are not mistaken for SeqDesk" \
+    "unrelated-existing" "$(classify_install_target)"
+
+maintenance_result="$(
+    (
+        reset_state
+        SEQDESK_DIR="$TARGET_VALID"
+        resolve_install_operation <<'EOF'
+1
+EOF
+        printf 'update=%s\noverwrite=%s\n' "$SEQDESK_UPDATE_EXISTING" "$SEQDESK_OVERWRITE_EXISTING"
+    ) 2>&1
+)"
+assert_contains "existing install offers and selects update" \
+    "update=1" <(printf '%s\n' "$maintenance_result")
+assert_contains "guided update authorizes only the update operation" \
+    "overwrite=1" <(printf '%s\n' "$maintenance_result")
+
+maintenance_result="$(
+    (
+        reset_state
+        SEQDESK_DIR="$TARGET_VALID"
+        resolve_install_operation <<'EOF'
+2
+EOF
+        printf 'reconfigure=%s\n' "$SEQDESK_RECONFIGURE"
+    ) 2>&1
+)"
+assert_contains "existing install can select reconfigure" \
+    "reconfigure=1" <(printf '%s\n' "$maintenance_result")
+
+if ( reset_state; SEQDESK_DIR="$TARGET_PARTIAL"; resolve_install_operation ) >"$OUT" 2>&1; then
+    echo "FAIL: partial target entered a fresh install without explicit overwrite" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: partial target stops before setup questions"
+fi
+assert_contains "partial target receives diagnosis guidance" \
+    "doctor --dir" "$OUT"
+
+if ( reset_state; SEQDESK_DIR="$TARGET_UNRELATED"; resolve_install_operation ) >"$OUT" 2>&1; then
+    echo "FAIL: unrelated target entered a fresh install without explicit overwrite" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: unrelated target stops before setup questions"
+fi
+assert_contains "unrelated target is described honestly" \
+    "is not a SeqDesk installation" "$OUT"
+
+echo ""
+echo "== Case 2h: update/reconfigure preserve the installed deployment profile =="
+cat >"$TARGET_VALID/settings.json" <<'EOF'
+{
+  "deployment": {"profile": "shared-lab"},
+  "runtime": {"databaseUrl": "postgresql://seqdesk:secret@localhost/seqdesk"}
+}
+EOF
+if (
+    reset_state
+    SEQDESK_DIR="$TARGET_VALID"
+    SEQDESK_DEPLOYMENT_PROFILE="research-workbench"
+    load_existing_install_values "$TARGET_VALID"
+) >"$OUT" 2>&1; then
+    echo "FAIL: maintenance accepted a conflicting deployment profile" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: maintenance rejects a profile switch"
+fi
+assert_contains "profile conflict requires a future migration command" \
+    "profile change requires a future explicit migration command" "$OUT"
+
+reset_state
+SEQDESK_DIR="$TARGET_VALID"
+load_existing_install_values "$TARGET_VALID" >"$OUT" 2>&1
+assert_eq "maintenance loads the installed profile" "shared-lab" "$SEQDESK_DEPLOYMENT_PROFILE"
+SEQDESK_UPDATE_EXISTING="1"
+PIPELINES_ENABLED="false"
+PLAN_RELEASE_VERSION="1.2.4"
+PLAN_RELEASE_CHECKSUM="sha256:abcdef"
+PLAN_RELEASE_SIZE="123"
+update_plan_json="$(build_install_plan_json)"
+assert_contains "update plan has no bootstrap credential operation" \
+    '"passwordRef": "not-applicable"' <(printf '%s\n' "$update_plan_json")
+
+echo ""
+echo "== Case 2i: versioned update layout preserves shared profile and scientific state =="
+UPDATE_LAYOUT="$TEST_TMP_DIR/update-layout"
+UPDATE_RELEASE="$UPDATE_LAYOUT/releases/1.2.4"
+mkdir -p "$UPDATE_LAYOUT/data" "$UPDATE_LAYOUT/pipelines/private-package" \
+    "$UPDATE_LAYOUT/pipeline_runs" "$UPDATE_RELEASE/data" "$UPDATE_RELEASE/pipelines/public-package"
+printf '{"deployment":{"profile":"shared-lab"}}\n' > "$UPDATE_LAYOUT/settings.json"
+printf 'scientific-data\n' > "$UPDATE_LAYOUT/data/existing.fastq"
+printf 'private-pipeline\n' > "$UPDATE_LAYOUT/pipelines/private-package/manifest.json"
+printf '{"deployment":{"profile":"sequencing-center"}}\n' > "$UPDATE_RELEASE/settings.json"
+printf 'bundled-data\n' > "$UPDATE_RELEASE/data/bundled.txt"
+printf 'public-pipeline\n' > "$UPDATE_RELEASE/pipelines/public-package/manifest.json"
+SEQDESK_DIR="$UPDATE_LAYOUT"
+sync_release_shared_paths "$UPDATE_RELEASE"
+activate_current_release "1.2.4"
+assert_contains "shared deployment profile survives release staging" \
+    '"profile":"shared-lab"' "$UPDATE_LAYOUT/settings.json"
+assert_contains "existing scientific data survives release staging" \
+    "scientific-data" "$UPDATE_LAYOUT/data/existing.fastq"
+assert_contains "installed private pipeline survives release staging" \
+    "private-pipeline" "$UPDATE_LAYOUT/pipelines/private-package/manifest.json"
+assert_eq "new release reads the shared settings file" \
+    "../../settings.json" "$(readlink "$UPDATE_RELEASE/settings.json")"
+assert_eq "new release reads the shared data directory" \
+    "../../data" "$(readlink "$UPDATE_RELEASE/data")"
+assert_eq "activation uses the versioned release" \
+    "releases/1.2.4" "$(readlink "$UPDATE_LAYOUT/current")"
 
 echo ""
 echo "== Case 3: wizard is a no-op under -y (unattended must be untouched) =="

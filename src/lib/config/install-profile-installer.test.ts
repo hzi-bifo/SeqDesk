@@ -74,6 +74,7 @@ function processEnvironment(
 interface GeneratedInstallConfig {
   deployment?: {
     profile?: string;
+    onboardingVersion?: number;
   };
   pipelines: {
     execution: {
@@ -111,7 +112,8 @@ function runWriteConfigScript(
   installer: string,
   useSlurm?: boolean,
   updateServer?: string,
-  deploymentProfile?: string
+  deploymentProfile?: string,
+  onboardingVersion?: string
 ): GeneratedInstallConfig {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "seqdesk-write-config-"));
   try {
@@ -129,6 +131,9 @@ function runWriteConfigScript(
           : {}),
         ...(deploymentProfile
           ? { SEQDESK_INSTALL_DEPLOYMENT_PROFILE: deploymentProfile }
+          : {}),
+        ...(onboardingVersion
+          ? { SEQDESK_INSTALL_ONBOARDING_VERSION: onboardingVersion }
           : {}),
       }),
       stdio: "pipe",
@@ -309,10 +314,12 @@ describe("install profile installer wiring", () => {
       installDist,
       undefined,
       undefined,
-      "research-workbench"
+      "research-workbench",
+      "1"
     );
 
     expect(config.deployment?.profile).toBe("research-workbench");
+    expect(config.deployment?.onboardingVersion).toBe(1);
   });
 
   it("protects hosted profile access codes from insecure registry transports", () => {

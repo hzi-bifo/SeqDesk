@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   getResolvedDataBasePath: vi.fn(),
   getExecutionSettings: vi.fn(),
+  loadConfig: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -22,6 +24,14 @@ vi.mock("@/lib/pipelines/execution-settings", () => ({
   getExecutionSettings: mocks.getExecutionSettings,
 }));
 
+vi.mock("@/lib/config/loader", () => ({
+  loadConfig: mocks.loadConfig,
+}));
+
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 import { GET } from "./route";
 
 describe("GET /api/admin/infrastructure/readiness", () => {
@@ -37,6 +47,13 @@ describe("GET /api/admin/infrastructure/readiness", () => {
       pipelineRunDir: "/data/runs",
       condaPath: "/opt/conda",
       weblogUrl: "https://weblog.example.com",
+    });
+    mocks.loadConfig.mockReturnValue({
+      config: { pipelines: { enabled: true } },
+    });
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "sequencing-center",
+      experience: "sequencing",
     });
   });
 
@@ -76,6 +93,8 @@ describe("GET /api/admin/infrastructure/readiness", () => {
     });
     expect(mocks.getResolvedDataBasePath).not.toHaveBeenCalled();
     expect(mocks.getExecutionSettings).not.toHaveBeenCalled();
+    expect(mocks.loadConfig).not.toHaveBeenCalled();
+    expect(mocks.getServerDeploymentProfile).not.toHaveBeenCalled();
   });
 
   it("reports missing required settings when dataBasePath is empty", async () => {
@@ -89,6 +108,42 @@ describe("GET /api/admin/infrastructure/readiness", () => {
     expect(response.status).toBe(200);
     expect(body.ready).toBe(false);
     expect(body.requiredMissing).toContain("Data storage path");
+  });
+
+  it("does not require a workflow runtime when pipelines are disabled for a sequencing profile", async () => {
+    mocks.loadConfig.mockReturnValue({
+      config: { pipelines: { enabled: false } },
+    });
+    mocks.getExecutionSettings.mockResolvedValue({
+      pipelineRunDir: "",
+      condaPath: "",
+      weblogUrl: "",
+    });
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(body.ready).toBe(true);
+    expect(body.requiredMissing).toEqual([]);
+    expect(body.recommendedMissing).toEqual([]);
+  });
+
+  it("requires workflow execution for an operational Research Workbench", async () => {
+    mocks.loadConfig.mockReturnValue({
+      config: { pipelines: { enabled: false } },
+    });
+    mocks.getServerDeploymentProfile.mockReturnValue({
+      id: "research-workbench",
+      experience: "workbench",
+    });
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(body.ready).toBe(false);
+    expect(body.requiredMissing).toEqual(["Workflow execution"]);
+    expect(body.firstMissingHref).toBe("/admin/settings/pipelines");
+    expect(body.recommendedMissing).toEqual([]);
   });
 
   it("returns 500 when an unexpected error occurs", async () => {

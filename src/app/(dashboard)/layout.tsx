@@ -6,6 +6,8 @@ import { DashboardShell } from "@/components/layout/DashboardShell";
 import { getCurrentVersion } from "@/lib/updater";
 import { isPublicDemoEnabled } from "@/lib/demo/config";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+import { getOnboardingStatus } from "@/lib/onboarding/server";
+import { OperationalSetupPending } from "@/components/onboarding/OperationalSetupPending";
 
 export default async function DashboardLayout({
   children,
@@ -26,6 +28,27 @@ export default async function DashboardLayout({
 
   const version = getCurrentVersion();
   const deploymentProfile = getServerDeploymentProfile();
+
+  let pendingOnboarding: Awaited<ReturnType<typeof getOnboardingStatus>> | null = null;
+  if (session.user.role !== "FACILITY_ADMIN" && !session.user.isDemo) {
+    try {
+      const onboarding = await getOnboardingStatus();
+      if (onboarding.required && !onboarding.complete) {
+        pendingOnboarding = onboarding;
+      }
+    } catch (error) {
+      console.error("[Dashboard] Could not evaluate onboarding status:", error);
+    }
+  }
+  if (pendingOnboarding) {
+    return (
+      <OperationalSetupPending
+        profile={pendingOnboarding.profile}
+        completedCount={pendingOnboarding.completedCount}
+        totalCount={pendingOnboarding.totalCount}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
