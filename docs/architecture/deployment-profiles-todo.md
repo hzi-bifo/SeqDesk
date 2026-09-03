@@ -60,7 +60,9 @@ Lab members see installation-wide work, and the facility sidebar returns `404`
 in Workbench. The support desk is now its own Sequencing-Center-only domain:
 requesters use their own tickets, facility operators manage all tickets, and
 Shared Lab/Workbench administrators do not inherit access from their system
-role.
+role. Assembly listing and order-form operational fields also use centralized
+read/process scopes, so Shared Lab members get the intended shared workflow
+without being treated as system administrators.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 

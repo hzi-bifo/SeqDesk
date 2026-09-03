@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -31,17 +32,25 @@ vi.mock("@/lib/demo/server", () => ({
   isDemoSession: mocks.isDemoSession,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/pipelines/assembly-selection", () => ({
   getAvailableAssemblies: mocks.getAvailableAssemblies,
   resolveAssemblySelection: mocks.resolveAssemblySelection,
 }));
 
 import { GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 describe("GET /api/assemblies", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isDemoSession.mockReturnValue(false);
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -144,5 +153,26 @@ describe("GET /api/assemblies", () => {
     const body = await response.json();
     expect(body.assemblies).toHaveLength(0);
     expect(body.total).toBe(0);
+  });
+
+  it("treats assemblies as shared operational data in Shared Lab", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      extraSettings: JSON.stringify({ allowUserAssemblyDownload: false }),
+    });
+    mocks.db.sample.findMany.mockResolvedValue([]);
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.sample.findMany.mock.calls[0][0].where).toEqual({
+      studyId: { not: null },
+      assemblies: { some: { assemblyFile: { not: null } } },
+    });
   });
 });

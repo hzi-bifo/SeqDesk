@@ -8,6 +8,10 @@ import {
   resolveAssemblySelection,
 } from "@/lib/pipelines/assembly-selection";
 import { isDemoSession } from "@/lib/demo/server";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 function fileNameFromPath(filePath: string | null): string | null {
   if (!filePath) return null;
@@ -21,18 +25,23 @@ function fileNameFromPath(filePath: string | null): string | null {
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const readAccess = decideServerCapability(session, "studies.read");
+    if (!readAccess.allowed) {
+      return authorizationErrorResponse(readAccess);
     }
 
-    if (isDemoSession(session)) {
+    if (isDemoSession(session!)) {
       return NextResponse.json(
         { error: "Assemblies are disabled in the public demo." },
         { status: 403 }
       );
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const userId = readAccess.principal!.id;
+    const canReadAllStudies = decideServerCapability(
+      session,
+      "studies.read_all"
+    ).allowed;
     const siteSettings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
       select: { extraSettings: true },
@@ -48,7 +57,7 @@ export async function GET() {
     const allowUserAssemblyDownload =
       extraSettings.allowUserAssemblyDownload === true;
 
-    if (!isFacilityAdmin && !allowUserAssemblyDownload) {
+    if (!canReadAllStudies && !allowUserAssemblyDownload) {
       return NextResponse.json(
         { error: "Assembly downloads are disabled by the facility administrator." },
         { status: 403 }
@@ -63,10 +72,10 @@ export async function GET() {
             assemblyFile: { not: null },
           },
         },
-        ...(isFacilityAdmin
+        ...(canReadAllStudies
           ? {}
           : {
-              study: { userId: session.user.id },
+              study: { userId },
               order: { status: "COMPLETED" },
             }),
       },

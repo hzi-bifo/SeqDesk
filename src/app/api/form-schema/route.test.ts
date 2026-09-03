@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     orderFormConfig: {
       findUnique: vi.fn(),
@@ -24,15 +25,23 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 import { GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 describe("GET /api/form-schema", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "user-1",
-        role: "USER",
+        role: "RESEARCHER",
       },
     });
     mocks.db.orderFormConfig.findUnique.mockResolvedValue(null);
@@ -179,6 +188,45 @@ describe("GET /api/form-schema", () => {
           id: "per-sample-field",
           perSample: true,
         }),
+      ])
+    );
+  });
+
+  it("includes operational fields for Shared Lab members", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.db.orderFormConfig.findUnique.mockResolvedValue({
+      id: "singleton",
+      version: 1,
+      schema: JSON.stringify({
+        fields: [
+          {
+            id: "operational-field",
+            type: "text",
+            label: "Operational note",
+            name: "operational_note",
+            required: false,
+            visible: true,
+            order: 1,
+            adminOnly: true,
+          },
+        ],
+        groups: [],
+        moduleDefaultsVersion: 3,
+      }),
+    });
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "operational-field" }),
       ])
     );
   });
