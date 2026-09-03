@@ -25,7 +25,10 @@ redacted `InstallPlan`; explains profile, access, database, storage, and workflo
 choices; classifies existing targets; and preserves the selected profile during
 maintenance. Authenticated first-login onboarding and profile-aware operational
 readiness are implemented. A unified question engine, resumable apply
-checkpoints, remaining API migration, and the full release matrix remain open.
+checkpoints, remaining action-level capability migration, and the full release
+matrix remain open. A central server route map now returns `404` for unavailable
+Workbench/sequencing/support domains, so hidden navigation is not the only
+profile boundary.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -238,7 +241,7 @@ Acceptance:
 
 Convert APIs before relying on capability-based UI.
 
-- [ ] Treat a disabled domain as unavailable on the server even if its code is present in the shared artifact.
+- [x] Treat a disabled domain as unavailable on the server even if its code is present in the shared artifact.
 - [ ] Apply profile and capability checks to API routes, server-rendered route layouts, background-job entry points, and resource queries.
 - [ ] Deny access when the profile or permission cannot be resolved; do not fall back to the broadest profile.
 
@@ -378,7 +381,7 @@ Acceptance:
 - [x] Replace `isWorkbenchAppSurface()` branches in the root page, dashboard shell, sidebar, and Workbench layout with the canonical profile context.
 - [x] Build sidebar navigation from enabled domains plus capabilities.
 - [x] Build page titles and default landing routes from profile definitions.
-- [ ] Gate facility, sequencing, publishing, Workbench, and admin route groups on the server.
+- [x] Gate facility, sequencing, publishing, Workbench, and admin route groups on the server.
 - [ ] Make terminology a profile concern instead of adding page-level ternaries.
 - [ ] Keep route names, API fields, exported manifests, and automation contracts stable when only UI terminology changes.
 - [x] Ensure Workbench and primary sequencing direct URLs cannot bypass profile availability or permissions; continue the API migration for remaining domains.

@@ -108,10 +108,55 @@ export function isModuleEnabled(
 const SEQUENCING_EXPERIENCE_PATHS = [
   "/analysis",
   "/assemblies",
-  "/messages",
   "/orders",
   "/studies",
   "/submissions",
+] as const;
+
+const MODULE_PATHS: ReadonlyArray<{
+  prefix: string;
+  module: DeploymentProfileDefinition["modules"][number];
+}> = [
+  { prefix: "/messages", module: "support" },
+  { prefix: "/api/tickets", module: "support" },
+  { prefix: "/api/orders", module: "orders" },
+  { prefix: "/api/form-schema", module: "orders" },
+  { prefix: "/api/studies", module: "studies" },
+  { prefix: "/api/study-form-schema", module: "studies" },
+  { prefix: "/api/samples", module: "orders" },
+  { prefix: "/api/files", module: "sequencing-data" },
+  { prefix: "/api/assemblies", module: "studies" },
+  { prefix: "/api/sidebar", module: "orders" },
+  { prefix: "/api/notes/mentions", module: "orders" },
+  { prefix: "/api/sequencing-tech", module: "sequencing-data" },
+  { prefix: "/api/mixs-checklists", module: "studies" },
+  { prefix: "/api/mixs-templates", module: "studies" },
+  { prefix: "/api/admin/form-config", module: "orders" },
+  { prefix: "/api/admin/field-templates", module: "orders" },
+  { prefix: "/api/admin/study-definitions", module: "studies" },
+  { prefix: "/api/admin/study-form-config", module: "studies" },
+  { prefix: "/api/admin/mixs-checklists", module: "studies" },
+  { prefix: "/api/admin/sequencing-run-form-config", module: "sequencing-data" },
+  { prefix: "/api/admin/sequencing-tech", module: "sequencing-data" },
+  { prefix: "/api/admin/minknow", module: "sequencing-data" },
+  { prefix: "/api/admin/settings/minknow", module: "sequencing-data" },
+  { prefix: "/api/admin/settings/sequencing-files", module: "sequencing-data" },
+  { prefix: "/api/admin/settings/ena", module: "archive-submissions" },
+  { prefix: "/api/admin/submissions", module: "archive-submissions" },
+  { prefix: "/api/admin/seed/dummy-data", module: "orders" },
+  { prefix: "/admin/form-builder", module: "orders" },
+  { prefix: "/admin/study-form-builder", module: "studies" },
+  { prefix: "/admin/study-definitions", module: "studies" },
+  { prefix: "/admin/mixs-checklists", module: "studies" },
+  { prefix: "/admin/sequencing-tech", module: "sequencing-data" },
+  { prefix: "/admin/minknow-stream", module: "sequencing-data" },
+  { prefix: "/admin/ena", module: "archive-submissions" },
+];
+
+const SEQUENCING_CENTER_ONLY_PATHS = [
+  "/admin/departments",
+  "/api/admin/departments",
+  "/api/departments",
 ] as const;
 
 function matchesPathPrefix(pathname: string, prefix: string): boolean {
@@ -127,8 +172,28 @@ export function isRouteAvailableInDeploymentProfile(
   profile: DeploymentProfileDefinition,
   pathname: string
 ): boolean {
-  if (pathname === "/workbench" || pathname.startsWith("/workbench/")) {
+  if (
+    pathname === "/workbench" ||
+    pathname.startsWith("/workbench/") ||
+    pathname === "/api/workbench" ||
+    pathname.startsWith("/api/workbench/")
+  ) {
     return profile.experience === "workbench";
+  }
+
+  if (
+    SEQUENCING_CENTER_ONLY_PATHS.some((prefix) =>
+      matchesPathPrefix(pathname, prefix)
+    )
+  ) {
+    return profile.id === "sequencing-center";
+  }
+
+  const moduleRule = MODULE_PATHS.find(({ prefix }) =>
+    matchesPathPrefix(pathname, prefix)
+  );
+  if (moduleRule) {
+    return profile.modules.includes(moduleRule.module);
   }
 
   if (
