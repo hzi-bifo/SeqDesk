@@ -96,6 +96,9 @@ reset_state() {
     SEQDESK_RUN_DOCTOR=""
     SEQDESK_USE_PM2=""
     SEQDESK_TELEMETRY_ENABLED=""
+    SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA=""
+    SEQDESK_OPTIONAL_EXAMPLE_DATA_SOURCE=""
+    SEQDESK_OPTIONAL_TELEMETRY_SOURCE=""
     SEQDESK_WITH_PIPELINES=""
     SEQDESK_EXEC_USE_SLURM=""
     PIPELINES_ENABLED="false"
@@ -417,6 +420,35 @@ assert_contains "plan records telemetry as disabled" \
     '"telemetry": false' <(printf '%s\n' "$privacy_plan_json")
 assert_contains "telemetry choice explains excluded scientific data" \
     "projects, samples, files, or analysis results" "$OUT"
+
+reset_state
+SEQDESK_DEPLOYMENT_PROFILE="shared-lab"
+SEQDESK_ACCESS_AUDIENCE="local"
+resolve_optional_content_for_plan >"$OUT" 2>&1 <<'EOF'
+y
+n
+EOF
+assert_eq "guided local evaluation can opt into deterministic example data" \
+    "true" "$SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA"
+assert_eq "example-data choice does not imply telemetry consent" \
+    "false" "$SEQDESK_TELEMETRY_ENABLED"
+example_plan_json="$(build_install_plan_json)"
+assert_contains "plan records the example-data choice" \
+    '"exampleData": true' <(printf '%s\n' "$example_plan_json")
+assert_contains "example data is clearly labelled synthetic" \
+    "small synthetic FASTQ files" "$OUT"
+
+reset_state
+SEQDESK_DEPLOYMENT_PROFILE="sequencing-center"
+SEQDESK_ACCESS_AUDIENCE="team-server"
+resolve_optional_content_for_plan >"$OUT" 2>&1 <<'EOF'
+
+
+EOF
+assert_eq "team-server example data defaults off" \
+    "false" "$SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA"
+assert_contains "team-server example-data default is explained" \
+    "Team-server installations default to no example data" "$OUT"
 
 echo ""
 echo "== Case 2f: --plan --json leaves an existing installation unchanged =="

@@ -84,6 +84,9 @@ interface GeneratedInstallConfig {
   runtime?: {
     updateServer?: string;
   };
+  bootstrap?: {
+    includeDummyData?: boolean;
+  };
 }
 
 function extractWriteConfigScript(installer: string): string {
@@ -113,7 +116,8 @@ function runWriteConfigScript(
   useSlurm?: boolean,
   updateServer?: string,
   deploymentProfile?: string,
-  onboardingVersion?: string
+  onboardingVersion?: string,
+  includeDummyData?: boolean
 ): GeneratedInstallConfig {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "seqdesk-write-config-"));
   try {
@@ -135,6 +139,12 @@ function runWriteConfigScript(
         ...(onboardingVersion
           ? { SEQDESK_INSTALL_ONBOARDING_VERSION: onboardingVersion }
           : {}),
+        ...(includeDummyData === undefined
+          ? {}
+          : {
+              SEQDESK_INSTALL_BOOTSTRAP_INCLUDE_DUMMY_DATA:
+                String(includeDummyData),
+            }),
       }),
       stdio: "pipe",
     });
@@ -320,6 +330,31 @@ describe("install profile installer wiring", () => {
 
     expect(config.deployment?.profile).toBe("research-workbench");
     expect(config.deployment?.onboardingVersion).toBe(1);
+  });
+
+  it("persists the reviewed example-data choice for deterministic bootstrap", () => {
+    const config = runWriteConfigScript(
+      installDist,
+      undefined,
+      undefined,
+      "shared-lab",
+      "1",
+      true
+    );
+
+    expect(config.bootstrap?.includeDummyData).toBe(true);
+  });
+
+  it("reads example-data intent from unattended and hosted configuration", () => {
+    const result = parseInstallProfileConfig({
+      deployment: { profile: "shared-lab" },
+      bootstrap: { includeDummyData: true },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      'SEQDESK_CFG_BOOTSTRAP_INCLUDE_DUMMY_DATA="true"'
+    );
   });
 
   it("protects hosted profile access codes from insecure registry transports", () => {

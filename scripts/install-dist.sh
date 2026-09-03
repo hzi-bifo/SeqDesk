@@ -185,6 +185,9 @@ SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME="${SEQDESK_BOOTSTRAP_RESEARCHER_LAST_NAME
 SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION="${SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION:-}"
 SEQDESK_BOOTSTRAP_RESEARCHER_ROLE="${SEQDESK_BOOTSTRAP_RESEARCHER_ROLE:-}"
 SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}"
+SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA="${SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA:-}"
+SEQDESK_OPTIONAL_EXAMPLE_DATA_SOURCE=""
+SEQDESK_OPTIONAL_TELEMETRY_SOURCE=""
 SEQDESK_LOG="${SEQDESK_LOG:-}"
 SEQDESK_USE_PM2="${SEQDESK_USE_PM2:-}"
 SEQDESK_RUN_DOCTOR="${SEQDESK_RUN_DOCTOR:-}"
@@ -3988,21 +3991,59 @@ resolve_service_mode_for_plan() {
 }
 
 resolve_optional_content_for_plan() {
-    if [ -n "${SEQDESK_TELEMETRY_ENABLED:-}" ]; then
-        return 0
-    fi
+    local entry_source
+    entry_source="$(install_plan_entry_source)"
 
     if interactive_wizard_enabled; then
-        print_info "Privacy — optional operational telemetry"
-        echo "  If enabled, SeqDesk sends version, platform, uptime, and health status to seqdesk.org."
-        echo "  It does not send names, email addresses, projects, samples, files, or analysis results."
-        echo "  This is off by default and can be changed later in Admin settings."
-        prompt_yes_no SEQDESK_TELEMETRY_ENABLED "  Enable optional telemetry?" "n"
+        if [ -z "${SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA:-}" ]; then
+            if [ "$SEQDESK_DEPLOYMENT_PROFILE" = "research-workbench" ]; then
+                # The existing deterministic fixture models facility orders and
+                # studies. Offering it in Workbench would teach the wrong first
+                # journey; Workbench onboarding uses upload/import instead.
+                SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA="false"
+                SEQDESK_OPTIONAL_EXAMPLE_DATA_SOURCE="default"
+            else
+                print_info "Evaluation content — optional synthetic example data"
+                echo "  This creates clearly labelled example orders, studies, samples, and small synthetic FASTQ files."
+                echo "  It is for evaluating the selected workflow, not for production use, and can be removed later."
+                if [ "$SEQDESK_ACCESS_AUDIENCE" = "team-server" ]; then
+                    echo "  Team-server installations default to no example data."
+                fi
+                prompt_yes_no SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA \
+                    "  Install deterministic example data?" "n"
+                SEQDESK_OPTIONAL_EXAMPLE_DATA_SOURCE="answer"
+            fi
+        else
+            SEQDESK_OPTIONAL_EXAMPLE_DATA_SOURCE="$entry_source"
+        fi
+
+        if [ -z "${SEQDESK_TELEMETRY_ENABLED:-}" ]; then
+            print_info "Privacy — optional operational telemetry"
+            echo "  If enabled, SeqDesk sends version, platform, uptime, and health status to seqdesk.org."
+            echo "  It does not send names, email addresses, projects, samples, files, or analysis results."
+            echo "  This is off by default and can be changed later in Admin settings."
+            prompt_yes_no SEQDESK_TELEMETRY_ENABLED "  Enable optional telemetry?" "n"
+            SEQDESK_OPTIONAL_TELEMETRY_SOURCE="answer"
+        else
+            SEQDESK_OPTIONAL_TELEMETRY_SOURCE="$entry_source"
+        fi
         return 0
     fi
 
-    # Absence of an explicit automated/hosted value is consent to nothing.
-    SEQDESK_TELEMETRY_ENABLED="false"
+    # Absence of an explicit automated/hosted value is consent to nothing and
+    # does not populate an evaluation dataset.
+    if [ -z "${SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA:-}" ]; then
+        SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA="false"
+        SEQDESK_OPTIONAL_EXAMPLE_DATA_SOURCE="default"
+    else
+        SEQDESK_OPTIONAL_EXAMPLE_DATA_SOURCE="$entry_source"
+    fi
+    if [ -z "${SEQDESK_TELEMETRY_ENABLED:-}" ]; then
+        SEQDESK_TELEMETRY_ENABLED="false"
+        SEQDESK_OPTIONAL_TELEMETRY_SOURCE="default"
+    else
+        SEQDESK_OPTIONAL_TELEMETRY_SOURCE="$entry_source"
+    fi
 }
 
 deployment_profile_storage_label() {
@@ -5487,6 +5528,7 @@ const values = {
     firstDefined(root.metaxpathSha256, root.metaxpathPackageSha256, metaxpath?.sha256)
   ),
   telemetryEnabled: toOptionalBoolean(telemetry?.enabled),
+  includeDummyData: toOptionalBoolean(bootstrap?.includeDummyData),
   telemetryEndpoint: toOptionalString(telemetry?.endpoint),
   telemetryIntervalHours: toOptionalInt(telemetry?.intervalHours),
   notificationsEnabled: toOptionalBoolean(notifications?.enabled),
@@ -5579,6 +5621,9 @@ if (values.studyFormSettings) {
 }
 if (values.telemetryEnabled !== undefined) {
   out.SEQDESK_CFG_TELEMETRY_ENABLED = values.telemetryEnabled ? "true" : "false";
+}
+if (values.includeDummyData !== undefined) {
+  out.SEQDESK_CFG_BOOTSTRAP_INCLUDE_DUMMY_DATA = values.includeDummyData ? "true" : "false";
 }
 if (values.telemetryEndpoint) {
   out.SEQDESK_CFG_TELEMETRY_ENDPOINT = values.telemetryEndpoint;
@@ -5681,6 +5726,7 @@ NODE
     apply_config_value SEQDESK_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENABLED
     apply_config_value SEQDESK_TELEMETRY_ENDPOINT SEQDESK_CFG_TELEMETRY_ENDPOINT
     apply_config_value SEQDESK_TELEMETRY_INTERVAL_HOURS SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS
+    apply_config_value SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA SEQDESK_CFG_BOOTSTRAP_INCLUDE_DUMMY_DATA
     apply_config_value SEQDESK_NOTIFICATIONS_ENABLED SEQDESK_CFG_NOTIFICATIONS_ENABLED
     apply_config_value SEQDESK_NOTIFICATION_PROVIDER SEQDESK_CFG_NOTIFICATION_PROVIDER
     apply_config_value SEQDESK_NOTIFICATION_RELAY_URL SEQDESK_CFG_NOTIFICATION_RELAY_URL
@@ -5728,6 +5774,7 @@ NODE
     unset SEQDESK_CFG_ORDER_FORM_SETTINGS SEQDESK_CFG_STUDY_FORM_SETTINGS
     unset SEQDESK_CFG_TELEMETRY_ENABLED SEQDESK_CFG_TELEMETRY_ENDPOINT
     unset SEQDESK_CFG_TELEMETRY_INTERVAL_HOURS
+    unset SEQDESK_CFG_BOOTSTRAP_INCLUDE_DUMMY_DATA
     unset SEQDESK_CFG_NOTIFICATIONS_ENABLED SEQDESK_CFG_NOTIFICATION_PROVIDER
     unset SEQDESK_CFG_NOTIFICATION_RELAY_URL SEQDESK_CFG_NOTIFICATION_RELAY_TOKEN
     unset SEQDESK_CFG_EXEC_USE_SLURM SEQDESK_CFG_EXEC_SLURM_QUEUE
@@ -6300,6 +6347,9 @@ build_install_plan_json() {
     SEQDESK_RUN_DIR="$SEQDESK_RUN_DIR" \
     SEQDESK_PIPELINE_DATABASE_DIR="$SEQDESK_PIPELINE_DATABASE_DIR" \
     SEQDESK_TELEMETRY_ENABLED="$SEQDESK_TELEMETRY_ENABLED" \
+    SEQDESK_PLAN_EXAMPLE_DATA="$SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA" \
+    SEQDESK_PLAN_EXAMPLE_DATA_SOURCE="${SEQDESK_OPTIONAL_EXAMPLE_DATA_SOURCE:-default}" \
+    SEQDESK_PLAN_TELEMETRY_SOURCE="${SEQDESK_OPTIONAL_TELEMETRY_SOURCE:-default}" \
     SEQDESK_BOOTSTRAP_ADMIN_EMAIL="$SEQDESK_BOOTSTRAP_ADMIN_EMAIL" \
     SEQDESK_PLAN_RELEASE_VERSION="${PLAN_RELEASE_VERSION:-${SEQDESK_VERSION:-latest}}" \
     SEQDESK_PLAN_RELEASE_SOURCE="${SEQDESK_API%/}/version" \
@@ -6412,7 +6462,7 @@ const plan = {
     passwordRef: process.env.SEQDESK_PLAN_PASSWORD_REF,
   },
   optional: {
-    exampleData: false,
+    exampleData: truthy(process.env.SEQDESK_PLAN_EXAMPLE_DATA),
     telemetry: truthy(process.env.SEQDESK_TELEMETRY_ENABLED),
   },
   sources: {
@@ -6424,8 +6474,8 @@ const plan = {
     service: entrySource,
     enrollment: "default",
     bootstrap: entrySource,
-    "optional.exampleData": "default",
-    "optional.telemetry": entrySource,
+    "optional.exampleData": process.env.SEQDESK_PLAN_EXAMPLE_DATA_SOURCE,
+    "optional.telemetry": process.env.SEQDESK_PLAN_TELEMETRY_SOURCE,
     release: process.env.SEQDESK_VERSION ? "cli" : "default",
   },
   lockedPaths: [],
@@ -6703,6 +6753,9 @@ reset_guided_plan_answers() {
     SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="0"
     SEQDESK_USE_PM2=""
     SEQDESK_TELEMETRY_ENABLED=""
+    SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA=""
+    SEQDESK_OPTIONAL_EXAMPLE_DATA_SOURCE=""
+    SEQDESK_OPTIONAL_TELEMETRY_SOURCE=""
 }
 
 rebuild_guided_plan_after_back() {
@@ -7369,6 +7422,7 @@ write_config() {
     SEQDESK_INSTALL_TELEMETRY_ENABLED="${SEQDESK_TELEMETRY_ENABLED:-}" \
     SEQDESK_INSTALL_TELEMETRY_ENDPOINT="${SEQDESK_TELEMETRY_ENDPOINT:-}" \
     SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS="${SEQDESK_TELEMETRY_INTERVAL_HOURS:-}" \
+    SEQDESK_INSTALL_BOOTSTRAP_INCLUDE_DUMMY_DATA="${SEQDESK_BOOTSTRAP_INCLUDE_DUMMY_DATA:-}" \
     SEQDESK_INSTALL_NOTIFICATIONS_ENABLED="${SEQDESK_NOTIFICATIONS_ENABLED:-}" \
     SEQDESK_INSTALL_NOTIFICATION_PROVIDER="${SEQDESK_NOTIFICATION_PROVIDER:-}" \
     SEQDESK_INSTALL_NOTIFICATION_RELAY_URL="${SEQDESK_NOTIFICATION_RELAY_URL:-}" \
@@ -7410,6 +7464,7 @@ const updateServer = process.env.SEQDESK_INSTALL_UPDATE_SERVER || '';
 const telemetryEnabledRaw = process.env.SEQDESK_INSTALL_TELEMETRY_ENABLED || '';
 const telemetryEndpoint = process.env.SEQDESK_INSTALL_TELEMETRY_ENDPOINT || '';
 const telemetryIntervalHoursRaw = process.env.SEQDESK_INSTALL_TELEMETRY_INTERVAL_HOURS || '';
+const includeDummyDataRaw = process.env.SEQDESK_INSTALL_BOOTSTRAP_INCLUDE_DUMMY_DATA || '';
 const notificationsEnabledRaw = process.env.SEQDESK_INSTALL_NOTIFICATIONS_ENABLED || '';
 const notificationProvider = process.env.SEQDESK_INSTALL_NOTIFICATION_PROVIDER || '';
 const notificationRelayUrl = process.env.SEQDESK_INSTALL_NOTIFICATION_RELAY_URL || '';
@@ -7616,20 +7671,26 @@ if (
 const adminBootstrap = buildBootstrapUserConfig(bootstrapEnv.admin);
 const researcherBootstrap = buildBootstrapUserConfig(bootstrapEnv.researcher);
 const researcherEnabled = toOptionalBoolean(researcherEnabledRaw);
-if (adminBootstrap || researcherBootstrap || researcherEnabled === false) {
+const includeDummyData = toOptionalBoolean(includeDummyDataRaw);
+if (adminBootstrap || researcherBootstrap || researcherEnabled === false || includeDummyData !== undefined) {
   config.bootstrap = config.bootstrap && typeof config.bootstrap === 'object' ? config.bootstrap : {};
-  const users = config.bootstrap.users && typeof config.bootstrap.users === 'object'
-    ? config.bootstrap.users
-    : {};
-  if (adminBootstrap) users.admin = adminBootstrap;
-  if (researcherEnabled === false) {
-    users.researcher = false;
-  } else if (researcherBootstrap) {
-    users.researcher = researcherBootstrap;
-  } else if (researcherEnabled === true && users.researcher === false) {
-    delete users.researcher;
+  if (adminBootstrap || researcherBootstrap || researcherEnabled !== undefined) {
+    const users = config.bootstrap.users && typeof config.bootstrap.users === 'object'
+      ? config.bootstrap.users
+      : {};
+    if (adminBootstrap) users.admin = adminBootstrap;
+    if (researcherEnabled === false) {
+      users.researcher = false;
+    } else if (researcherBootstrap) {
+      users.researcher = researcherBootstrap;
+    } else if (researcherEnabled === true && users.researcher === false) {
+      delete users.researcher;
+    }
+    config.bootstrap.users = users;
   }
-  config.bootstrap.users = users;
+  if (includeDummyData !== undefined) {
+    config.bootstrap.includeDummyData = includeDummyData;
+  }
 }
 
 fs.writeFileSync(configTarget, JSON.stringify(config, null, 2));

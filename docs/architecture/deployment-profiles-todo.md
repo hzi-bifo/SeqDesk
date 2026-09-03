@@ -194,7 +194,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Create exactly one initial administrator with an entered or generated strong password; remove the generic “also create a researcher” question.
 - [x] Apply the profile's enrollment default and explain it: Sequencing Center researcher self-registration by default; Shared Lab and Workbench invite-only by default.
 - [x] Defer extra users, SMTP/OIDC, instruments, ENA/repository credentials, and detailed module configuration to authenticated onboarding unless a hosted profile provides them.
-- [ ] Offer deterministic example data only as a clearly labelled evaluation option; default it off on team servers.
+- [x] Offer deterministic facility example data only as a clearly labelled evaluation option for Sequencing Center and Shared Lab; default it off everywhere and call out the team-server default. Workbench uses its upload/import first journey instead of facility-shaped demo data.
 - [x] Keep telemetry separately consented and off by default.
 
 ### Review, apply, and verify
