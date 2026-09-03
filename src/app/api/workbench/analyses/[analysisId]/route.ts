@@ -7,6 +7,7 @@ import {
   updateWorkbenchAnalysis,
 } from "@/lib/workbench/analyses";
 import { workbenchCanvasSchema } from "@/lib/workbench/canvas";
+import { authorizeWorkbenchRequest } from "@/lib/workbench/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,12 +17,11 @@ export async function GET(
   { params }: { params: Promise<{ analysisId: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = authorizeWorkbenchRequest(session);
+  if (!access.allowed) return access.response;
 
   const { analysisId } = await params;
-  const analysis = await getWorkbenchAnalysisForUser(session.user.id, analysisId);
+  const analysis = await getWorkbenchAnalysisForUser(access.userId, analysisId);
   if (!analysis) {
     return NextResponse.json({ error: "Workbench analysis not found" }, { status: 404 });
   }
@@ -33,9 +33,8 @@ export async function PATCH(
   { params }: { params: Promise<{ analysisId: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = authorizeWorkbenchRequest(session, "workbench.run");
+  if (!access.allowed) return access.response;
 
   try {
     const { analysisId } = await params;
@@ -46,7 +45,7 @@ export async function PATCH(
     }
 
     const result = await updateWorkbenchAnalysis({
-      userId: session.user.id,
+      userId: access.userId,
       analysisId,
       revision,
       name: typeof body?.name === "string" ? body.name : undefined,

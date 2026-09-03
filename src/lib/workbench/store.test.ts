@@ -95,7 +95,32 @@ describe("workbench store", () => {
       state: "missing",
       message: "Not installed",
     });
-    expect(item.status.details).toContain("conda");
+    expect(item.status.details).toContain("Conda");
+  });
+
+  it("does not expose managed tool or install-log paths in Store responses", async () => {
+    const jobsDir = path.join(tempDir, "workbench", "store", "jobs");
+    await fs.mkdir(jobsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(jobsDir, "ncbi-datasets-cli.json"),
+      JSON.stringify({
+        itemId: "ncbi-datasets-cli",
+        state: "error",
+        startedAt: "2026-05-20T10:00:00.000Z",
+        finishedAt: "2026-05-20T10:01:00.000Z",
+        error: "install failed",
+        logPath: "/private/seqdesk/store/install.log",
+        managedPath: "/private/seqdesk/tools/ncbi",
+      })
+    );
+
+    const [item] = await listWorkbenchStoreItems();
+
+    expect(item.installJob).toMatchObject({ state: "error", error: "install failed" });
+    expect(item.installJob).not.toHaveProperty("logPath");
+    expect(item.installJob).not.toHaveProperty("managedPath");
+    expect(item.status).not.toHaveProperty("managedPath");
+    expect(JSON.stringify(item)).not.toContain("/private/seqdesk");
   });
 
   it("fails safely when starting setup without Conda", async () => {

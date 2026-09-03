@@ -20,6 +20,20 @@ export interface WorkbenchGenomePreviewItem {
   totalSequenceLength?: number;
 }
 
+export interface WorkbenchFilePreviewItem {
+  runAccession: string;
+  sampleAccession?: string;
+  studyAccession?: string;
+  scientificName?: string;
+  instrumentPlatform?: string;
+  instrumentModel?: string;
+  libraryLayout?: string;
+  url: string;
+  filename: string;
+  md5?: string;
+  bytes?: number;
+}
+
 export interface WorkbenchImportPreview {
   providerId: string;
   summary: {
@@ -32,6 +46,7 @@ export interface WorkbenchImportPreview {
     hardMax: number;
   };
   genomes: WorkbenchGenomePreviewItem[];
+  files?: WorkbenchFilePreviewItem[];
   warnings?: string[];
 }
 

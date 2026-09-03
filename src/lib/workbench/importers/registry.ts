@@ -1,7 +1,11 @@
 import { ncbiGenomesTaxonImporter } from "./ncbi-genomes-taxon";
+import { enaFastqAccessionImporter } from "./ena-fastq-accession";
 import type { WorkbenchImporterProvider } from "./types";
 
-const providers = [ncbiGenomesTaxonImporter] as const satisfies readonly WorkbenchImporterProvider[];
+const providers = [
+  enaFastqAccessionImporter,
+  ncbiGenomesTaxonImporter,
+] as const satisfies readonly WorkbenchImporterProvider[];
 
 export function listWorkbenchImporters(): WorkbenchImporterProvider[] {
   return [...providers];

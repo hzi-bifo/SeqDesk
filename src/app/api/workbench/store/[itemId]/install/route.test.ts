@@ -26,6 +26,7 @@ function params(itemId = "ncbi-datasets-cli") {
 describe("POST /api/workbench/store/[itemId]/install", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
     mocks.getServerSession.mockResolvedValue({
       user: { id: "admin-a", role: "FACILITY_ADMIN" },
     });

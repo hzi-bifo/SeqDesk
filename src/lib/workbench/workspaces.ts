@@ -7,7 +7,6 @@ export interface SerializedWorkbenchDataset {
   description: string | null;
   sourceType: string;
   sourceMetadata: unknown;
-  storagePath: string | null;
   sizeBytes: number | null;
   checksumSha256: string | null;
   genomeCount: number | null;
@@ -25,8 +24,6 @@ export interface SerializedWorkbenchImportJob {
   request: unknown;
   preview: unknown;
   progress: number | null;
-  logPath: string | null;
-  targetPath: string | null;
   error: string | null;
   resultDatasetId: string | null;
   analysisId: string | null;
@@ -94,7 +91,6 @@ export function serializeWorkbenchDatasetLink(link: {
     description: link.dataset.description,
     sourceType: link.dataset.sourceType,
     sourceMetadata: parseJson(link.dataset.sourceMetadata),
-    storagePath: link.dataset.storagePath,
     sizeBytes: bigintToNumber(link.dataset.sizeBytes),
     checksumSha256: link.dataset.checksumSha256,
     genomeCount: link.dataset.genomeCount,
@@ -132,8 +128,6 @@ export function serializeWorkbenchImportJob(job: {
     request: parseJson(job.request),
     preview: parseJson(job.preview),
     progress: job.progress,
-    logPath: job.logPath,
-    targetPath: job.targetPath,
     error: job.error,
     resultDatasetId: job.resultDatasetId,
     analysisId: job.analysisId,

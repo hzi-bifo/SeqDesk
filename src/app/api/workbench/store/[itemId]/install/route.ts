@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { startWorkbenchStoreInstall } from "@/lib/workbench/store";
+import { authorizeWorkbenchRequest } from "@/lib/workbench/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,15 +12,8 @@ export async function POST(
   { params }: { params: Promise<{ itemId: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  if (session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json(
-      { error: "Facility admin permissions are required for server tool setup." },
-      { status: 403 }
-    );
-  }
+  const access = authorizeWorkbenchRequest(session, "system.pipelines.manage");
+  if (!access.allowed) return access.response;
 
   try {
     const { itemId } = await params;

@@ -6,24 +6,23 @@ import { getWorkbenchImporter } from "@/lib/workbench/importers/registry";
 import { createWorkbenchImportJob, runWorkbenchImportJob } from "@/lib/workbench/import-jobs";
 import { resolveWorkbenchStorageBase } from "@/lib/workbench/storage";
 import { listWorkbenchImportJobs } from "@/lib/workbench/workspaces";
+import { authorizeWorkbenchRequest } from "@/lib/workbench/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = authorizeWorkbenchRequest(session);
+  if (!access.allowed) return access.response;
 
-  return NextResponse.json({ jobs: await listWorkbenchImportJobs(session.user.id) });
+  return NextResponse.json({ jobs: await listWorkbenchImportJobs(access.userId) });
 }
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = authorizeWorkbenchRequest(session, "workbench.import");
+  if (!access.allowed) return access.response;
 
   try {
     const body = await request.json();
@@ -57,15 +56,15 @@ export async function POST(request: NextRequest) {
 
     const input = provider.inputSchema.parse(body.input ?? {});
     const preview = await provider.preview(input);
-    if (preview.genomes.length === 0) {
+    if (preview.summary.selectedCount === 0) {
       return NextResponse.json(
-        { error: "Preview did not return any genomes to import." },
+        { error: "Preview did not return any data to import." },
         { status: 400 }
       );
     }
 
     const { job } = await createWorkbenchImportJob({
-      userId: session.user.id,
+      userId: access.userId,
       providerId,
       input,
       preview,

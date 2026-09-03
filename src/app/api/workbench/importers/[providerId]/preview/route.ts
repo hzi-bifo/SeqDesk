@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { ZodError } from "zod";
 import { authOptions } from "@/lib/auth";
 import { getWorkbenchImporter } from "@/lib/workbench/importers/registry";
+import { authorizeWorkbenchRequest } from "@/lib/workbench/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,9 +13,8 @@ export async function POST(
   { params }: { params: Promise<{ providerId: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = authorizeWorkbenchRequest(session, "workbench.import");
+  if (!access.allowed) return access.response;
 
   const { providerId } = await params;
   const provider = getWorkbenchImporter(providerId);

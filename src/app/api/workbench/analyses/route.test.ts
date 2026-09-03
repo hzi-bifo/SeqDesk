@@ -25,7 +25,8 @@ import { GET, POST } from "./route";
 describe("/api/workbench/analyses", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1" } });
+    process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
+    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1", role: "RESEARCHER" } });
     mocks.listWorkbenchAnalyses.mockResolvedValue([{ id: "analysis-1" }]);
     mocks.createWorkbenchAnalysis.mockResolvedValue({ id: "analysis-2" });
   });

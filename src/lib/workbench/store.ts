@@ -50,12 +50,19 @@ export interface WorkbenchStoreItemStatus {
   version?: string;
   message: string;
   details?: string;
-  managedPath?: string;
+}
+
+export interface SerializedWorkbenchStoreInstallJob {
+  itemId: string;
+  state: WorkbenchStoreInstallState;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
 }
 
 export interface SerializedWorkbenchStoreItem extends WorkbenchStoreItem {
   status: WorkbenchStoreItemStatus;
-  installJob: WorkbenchStoreInstallJob | null;
+  installJob: SerializedWorkbenchStoreInstallJob | null;
 }
 
 interface WorkbenchStorePaths extends WorkbenchStorageBase {
@@ -232,9 +239,8 @@ async function getStoreItemStatus(item: WorkbenchStoreItem): Promise<WorkbenchSt
       state: "installed",
       source: "managed",
       version: managedVersions.find(Boolean),
-      managedPath: managedPath || undefined,
       message: "Installed by SeqDesk Store",
-      details: managedPath ? `Managed prefix: ${managedPath}` : undefined,
+      details: managedPath ? "Installed in the SeqDesk-managed tool directory." : undefined,
     };
   }
 
@@ -244,7 +250,6 @@ async function getStoreItemStatus(item: WorkbenchStoreItem): Promise<WorkbenchSt
       state: "installed",
       source: "system",
       version: systemVersions.find(Boolean),
-      managedPath: managedPath || undefined,
       message: "Available on server PATH",
       details: "SeqDesk will use the server-installed command.",
     };
@@ -254,7 +259,6 @@ async function getStoreItemStatus(item: WorkbenchStoreItem): Promise<WorkbenchSt
   if (!condaBinary) {
     return {
       state: "setup-needed",
-      managedPath: managedPath || undefined,
       message: "Conda is required for managed setup",
       details:
         "Configure Conda in Admin > Pipeline Runtime, or install the required command manually on the server PATH.",
@@ -263,19 +267,29 @@ async function getStoreItemStatus(item: WorkbenchStoreItem): Promise<WorkbenchSt
 
   return {
     state: "missing",
-    managedPath: managedPath || undefined,
     message: "Not installed",
-    details: `SeqDesk Store can install this with ${condaBinary}.`,
+    details: "SeqDesk Store can install this with the configured Conda runtime.",
   };
 }
 
 export async function listWorkbenchStoreItems(): Promise<SerializedWorkbenchStoreItem[]> {
   return Promise.all(
-    WORKBENCH_STORE_ITEMS.map(async (item) => ({
-      ...item,
-      status: await getStoreItemStatus(item),
-      installJob: await readInstallJob(item.id),
-    }))
+    WORKBENCH_STORE_ITEMS.map(async (item) => {
+      const job = await readInstallJob(item.id);
+      return {
+        ...item,
+        status: await getStoreItemStatus(item),
+        installJob: job
+          ? {
+              itemId: job.itemId,
+              state: job.state,
+              startedAt: job.startedAt,
+              finishedAt: job.finishedAt,
+              error: job.error,
+            }
+          : null,
+      };
+    })
   );
 }
 

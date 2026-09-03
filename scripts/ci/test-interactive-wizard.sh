@@ -79,6 +79,7 @@ reset_state() {
     SEQDESK_GENERATED_RESEARCHER_PASSWORD=""
     SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED=""
     SEQDESK_RECONFIGURE=""
+    SEQDESK_WITH_PIPELINES=""
 }
 
 OUT="$(mktemp)"
@@ -103,6 +104,7 @@ not-a-url
 postgresql://u:secret@db.example.com:5432/seqdesk
 y
 
+n
 admin@lab.org
 longpassword1
 longpassword1
@@ -116,6 +118,7 @@ assert_eq "admin email captured" "admin@lab.org" "$SEQDESK_BOOTSTRAP_ADMIN_EMAIL
 assert_eq "admin password captured" "longpassword1" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD"
 assert_eq "generic researcher is disabled" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
 assert_eq "researcher email is not captured" "" "$SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL"
+assert_eq "sequencing center can defer pipeline setup" "0" "$SEQDESK_WITH_PIPELINES"
 assert_contains "rejected non-postgres URL" "does not look like a postgresql" "$OUT"
 assert_contains "warned on unreachable host" "Could not reach" "$OUT"
 assert_eq "an operator-supplied password is not flagged as generated" \
@@ -133,6 +136,7 @@ TEST_DB_REACHABLE=1
 run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
 1
 1
+n
 
 password123
 password123
@@ -142,18 +146,22 @@ assert_eq "admin email defaulted" "admin@example.com" "$SEQDESK_BOOTSTRAP_ADMIN_
 assert_eq "admin password captured" "password123" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD"
 assert_eq "researcher skipped (no email)" "" "$SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL"
 assert_eq "researcher disabled" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
+assert_eq "sequencing center pipeline default was explicitly declined" "0" "$SEQDESK_WITH_PIPELINES"
 
 echo ""
 echo "== Case 2b: Workbench explains the choice and creates only the first admin =="
 reset_state
 TEST_DB_REACHABLE=1
 run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
+
 3
 1
+
 admin@workbench.test
 
 EOF
 assert_eq "workbench profile captured" "research-workbench" "$SEQDESK_DEPLOYMENT_PROFILE"
+assert_eq "workbench enables the recommended pipeline runtime" "1" "$SEQDESK_WITH_PIPELINES"
 assert_eq "workbench creates no bootstrap researcher" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
 assert_eq "generated admin password is flagged for the final summary" \
     "true" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED"
@@ -167,6 +175,10 @@ assert_nonempty "the summary copy survives the plaintext wipe" \
     "$SEQDESK_GENERATED_ADMIN_PASSWORD"
 assert_contains "wizard explains one shared application" \
     "does not install a separate edition" "$OUT"
+assert_contains "wizard requires an explicit profile choice" \
+    "Choose 1, 2, or 3" "$OUT"
+assert_contains "wizard explains how to choose a profile" \
+    "External requesters" "$OUT"
 assert_contains "workbench defers member creation to onboarding" \
     "Additional accounts are invited" "$OUT"
 

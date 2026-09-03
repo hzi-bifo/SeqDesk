@@ -3745,6 +3745,14 @@ deployment_profile_label() {
     esac
 }
 
+deployment_profile_enrollment_label() {
+    case "${1:-}" in
+        sequencing-center) printf '%s' "researcher self-registration" ;;
+        shared-lab|research-workbench) printf '%s' "invite-only" ;;
+        *) printf '%s' "unknown" ;;
+    esac
+}
+
 validate_deployment_profile() {
     if [ -z "$SEQDESK_DEPLOYMENT_PROFILE" ]; then
         local legacy_surface="${NEXT_PUBLIC_SEQDESK_APP_SURFACE:-${SEQDESK_APP_SURFACE:-}}"
@@ -3753,6 +3761,10 @@ validate_deployment_profile() {
             print_info "Migrating legacy Workbench mode to deployment.profile=research-workbench."
         else
             SEQDESK_DEPLOYMENT_PROFILE="sequencing-center"
+            if is_truthy "${SEQDESK_YES:-}" && ! is_truthy "${SEQDESK_RECONFIGURE:-}"; then
+                print_warning "No deployment profile was supplied; using Sequencing center for backward compatibility."
+                print_info "New automated installs should pass --deployment-profile explicitly."
+            fi
         fi
     fi
 
@@ -3781,19 +3793,22 @@ prompt_deployment_profile() {
 
     print_info "Operating model — how will this SeqDesk installation be used?"
     echo "    1) Sequencing center"
-    echo "       Choose this when outside researchers submit requests and facility staff deliver data."
+    echo "       People request sequencing work and facility staff receive, process, and deliver it."
+    echo "       Select this when requesters and sequencing operators are different groups."
     echo "    2) Shared lab"
-    echo "       Choose this when one team shares projects and every member may operate sequencing."
-    echo "       Administrators still protect system settings, credentials, updates, and pipeline installs."
+    echo "       One team shares sequencing projects, samples, runs, and analyses."
+    echo "       Everyone can do normal lab work; administrators additionally configure SeqDesk."
     echo "    3) Research workbench"
-    echo "       Choose this when people upload or import existing data and run approved workflows."
-    echo "       Sequencing orders are hidden; data belongs to personal or explicitly shared workspaces."
-    echo "       This selects one view of the same application; it does not install a separate edition."
+    echo "       Researchers upload or import existing data and run analyses in private workspaces."
+    echo "       Select this when sequencing orders and facility handoffs should not organize the UI."
+    echo ""
+    echo "  Not sure? External requesters -> 1. One shared lab team -> 2. Existing-data analysis -> 3."
+    echo "  This selects one view of the same application; it does not install a separate edition."
+    echo "  Changing it later requires a reviewed migration, not a view switch."
 
     local profile_choice
     while true; do
-        profile_choice=$(read_input "  Choose [1]: ")
-        profile_choice=${profile_choice:-1}
+        profile_choice=$(read_input "  Choose 1, 2, or 3 (required): ")
         case "$profile_choice" in
             1|sequencing-center)
                 SEQDESK_DEPLOYMENT_PROFILE="sequencing-center"
@@ -3814,6 +3829,44 @@ prompt_deployment_profile() {
     done
 
     print_success "  Selected $(deployment_profile_label "$SEQDESK_DEPLOYMENT_PROFILE")."
+}
+
+prompt_profile_pipeline_support() {
+    [ -z "${SEQDESK_WITH_PIPELINES:-}" ] || return 0
+
+    local default_answer="n"
+    case "$SEQDESK_DEPLOYMENT_PROFILE" in
+        sequencing-center)
+            print_info "Workflow execution is optional for a Sequencing center."
+            echo "  Order, sample, and sequencing tracking work without installing Conda and Nextflow now."
+            ;;
+        shared-lab)
+            default_answer="y"
+            print_info "Workflow execution is recommended for a Shared lab."
+            echo "  Enable it now if members should run approved analysis pipelines after setup."
+            ;;
+        research-workbench)
+            default_answer="y"
+            print_info "Workflow execution is recommended for a Research workbench."
+            echo "  Uploads and imports work without it, but analyses need Conda and Nextflow."
+            ;;
+    esac
+
+    local answer
+    if [ "$default_answer" = "y" ]; then
+        answer=$(read_input "  Prepare workflow execution now? (Y/n): ")
+        answer=${answer:-y}
+    else
+        answer=$(read_input "  Prepare workflow execution now? (y/N): ")
+        answer=${answer:-n}
+    fi
+    if is_truthy "$answer"; then
+        SEQDESK_WITH_PIPELINES="1"
+        print_success "  Workflow execution will be prepared."
+    else
+        SEQDESK_WITH_PIPELINES="0"
+        print_info "  Pipeline runtime setup is deferred; an administrator can configure it later."
+    fi
 }
 
 # The wizard is split so the database dependency can be verified between its two
@@ -3886,8 +3939,24 @@ run_interactive_wizard_database() {
 run_interactive_wizard_accounts() {
     interactive_wizard_enabled || return 0
 
-    # 2) Accounts
-    print_info "Accounts — the initial users to create"
+    prompt_profile_pipeline_support
+
+    # Accounts
+    print_info "Accounts — create exactly one initial administrator"
+    case "$SEQDESK_DEPLOYMENT_PROFILE" in
+        sequencing-center)
+            echo "  The administrator configures SeqDesk and may also perform facility work."
+            echo "  Researcher self-registration is enabled by default; invitations remain available."
+            ;;
+        shared-lab)
+            echo "  Administrators can do normal lab work and additionally manage settings and accounts."
+            echo "  Lab members join by invitation by default."
+            ;;
+        research-workbench)
+            echo "  Administrators manage the installation but do not automatically enter private workspaces."
+            echo "  Workbench members join by invitation by default."
+            ;;
+    esac
     interactive_prompt_email "  Admin email" "admin@example.com"
     SEQDESK_BOOTSTRAP_ADMIN_EMAIL="$INTERACTIVE_RESULT"
     interactive_prompt_password "  Admin password"
@@ -5582,6 +5651,7 @@ print_config_summary() {
 
     print_header "Configuration summary"
     print_kv "Deployment profile" "$(deployment_profile_label "$SEQDESK_DEPLOYMENT_PROFILE")"
+    print_kv "Enrollment" "$(deployment_profile_enrollment_label "$SEQDESK_DEPLOYMENT_PROFILE")"
     print_kv "Pipelines" "$pipeline_label"
     print_kv "Data path" "${SEQDESK_DATA_PATH:-configure after install with seqdesk storage configure}"
     if [ "$PIPELINES_ENABLED" = "true" ]; then
@@ -6064,6 +6134,7 @@ run_wizard() {
     wizard_out=$(mktemp)
     SEQDESK_WIZARD_OUT="$wizard_out" \
     SEQDESK_WIZARD_PIPELINES_ENABLED="$PIPELINES_ENABLED" \
+    SEQDESK_WIZARD_DEPLOYMENT_PROFILE="$SEQDESK_DEPLOYMENT_PROFILE" \
     SEQDESK_WIZARD_DEFAULT_PORT="${SEQDESK_PORT:-8000}" \
     SEQDESK_YES="${SEQDESK_YES:-}" \
     SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}" \

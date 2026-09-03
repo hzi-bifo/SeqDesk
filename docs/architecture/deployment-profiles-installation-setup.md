@@ -1,6 +1,6 @@
 # Profile-aware installation and setup journey
 
-Status: proposed
+Status: in progress on `codex/modular-deployment-modes`
 
 Companion to:
 
@@ -23,6 +23,22 @@ existing config ----+
 
 This avoids implementing three installers or allowing the interactive wizard, hosted profiles, and automation to drift into different behavior.
 
+## Current branch checkpoint
+
+The branch already keeps one release and one canonical installer, requires an
+explained profile choice in a fresh guided install, recommends workflow-runtime
+setup based on that choice, creates one secure administrator, disables the
+generic second account, shows the profile and enrollment policy in the review,
+and prints profile-specific next steps. Unattended installs still default to
+Sequencing Center only as a compatibility fallback and warn operators to pass
+`--deployment-profile` explicitly.
+
+That is a safe first slice, not the finished installer architecture. Before the
+three profiles are advertised as fully supported, the remaining high-priority
+work is the normalized/redacted `InstallPlan`, pre-mutation access and storage
+questions, storage overlap/free-space validation, existing/partial-install
+classification, resumable checkpoints, and authenticated profile onboarding.
+
 ## Current behavior worth preserving
 
 The existing installer already contains useful safety patterns:
@@ -35,19 +51,13 @@ The existing installer already contains useful safety patterns:
 - it backs up an existing target during deliberate replacement and prints recovery information after failure;
 - it has `seqdesk doctor`, setup status, hosted install profiles, and non-interactive configuration paths.
 
-## Current experience gaps
+## Remaining experience gaps
 
 The profile work should fix these gaps rather than layering another question onto the current flow:
 
 - The interactive experience is split between shell prompts for database/accounts and `scripts/install-wizard.mjs` for port/configuration review.
-- The deployment profile is not selected before profile-specific dependencies, accounts, storage, and next steps are derived.
-- The current “also create a researcher” prompt is wrong for Shared Lab and Workbench.
-- Plain installation can still describe built-in `admin`/`user` credentials; supported packaged installs must never create known default passwords.
-- The storage prompt and final next steps assume sequencing-center concepts even when Workbench is active.
-- The browser `/setup` page primarily reports database/schema/seed state; it does not represent profile-specific operational readiness.
-- The unauthenticated setup-status request currently participates in automatic seeding. A public `GET` should report state, not cause account/configuration mutations.
-- The login page and root page contain sequencing-order copy and redirects that can disagree with the selected profile.
-- Existing hosted install profile, deployment profile, and Nextflow profile terminology can be confused.
+- The installer still defers most storage configuration instead of collecting and validating profile-aware managed roots before installation.
+- The browser `/setup` page reports base database/schema/account readiness but does not yet represent profile-specific operational readiness.
 - There is no side-effect-free way to preview the final resolved installation plan before applying it.
 
 ## Installation entry points

@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Database,
   Download,
+  Globe2,
   Loader2,
   PackageCheck,
   PackagePlus,
@@ -60,6 +61,19 @@ interface ImportPreview {
   warnings?: string[];
 }
 
+interface EnaImportPreview {
+  summary: ImportPreview["summary"];
+  files: Array<{
+    runAccession: string;
+    sampleAccession?: string;
+    scientificName?: string;
+    libraryLayout?: string;
+    filename: string;
+    bytes?: number;
+  }>;
+  warnings?: string[];
+}
+
 interface ImportJob {
   id: string;
   providerId: string;
@@ -67,7 +81,6 @@ interface ImportJob {
   phase: string | null;
   progress: number | null;
   error: string | null;
-  targetPath: string | null;
   resultDatasetId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -79,8 +92,6 @@ interface StoreInstallJob {
   startedAt: string;
   finishedAt?: string;
   error?: string;
-  logPath: string;
-  managedPath: string;
 }
 
 interface StoreItem {
@@ -97,12 +108,12 @@ interface StoreItem {
     version?: string;
     message: string;
     details?: string;
-    managedPath?: string;
   };
   installJob: StoreInstallJob | null;
 }
 
 const providerId = "ncbi-genomes-taxon";
+const enaProviderId = "ena-fastq-accession";
 const storeItemId = "ncbi-datasets-cli";
 const assemblyLevels = ["complete", "chromosome", "scaffold", "contig"] as const;
 
@@ -153,6 +164,12 @@ export function WorkbenchImportsClient({
   const [referenceOnly, setReferenceOnly] = useState(false);
   const [selectedLevels, setSelectedLevels] = useState<string[]>(["complete", "chromosome"]);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [enaAccession, setEnaAccession] = useState("");
+  const [enaMaxFiles, setEnaMaxFiles] = useState(20);
+  const [enaPreview, setEnaPreview] = useState<EnaImportPreview | null>(null);
+  const [enaError, setEnaError] = useState<string | null>(null);
+  const [enaLoadingPreview, setEnaLoadingPreview] = useState(false);
+  const [enaStarting, setEnaStarting] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -160,6 +177,7 @@ export function WorkbenchImportsClient({
   const [installingItemId, setInstallingItemId] = useState<string | null>(null);
 
   const ncbiImporter = importers.find((importer) => importer.id === providerId);
+  const enaImporter = importers.find((importer) => importer.id === enaProviderId);
   const referenceStoreItem = storeItems.find((item) => item.id === storeItemId);
   const referenceInstallRunning =
     installingItemId === storeItemId || referenceStoreItem?.installJob?.state === "running";
@@ -312,6 +330,49 @@ export function WorkbenchImportsClient({
     );
   };
 
+  const runEnaPreview = async () => {
+    setEnaLoadingPreview(true);
+    setEnaError(null);
+    setEnaPreview(null);
+    try {
+      const response = await fetch(`/api/workbench/importers/${enaProviderId}/preview`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accession: enaAccession, maxFiles: enaMaxFiles }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "ENA preview failed");
+      setEnaPreview(payload.preview);
+    } catch (err) {
+      setEnaError(err instanceof Error ? err.message : "ENA preview failed");
+    } finally {
+      setEnaLoadingPreview(false);
+    }
+  };
+
+  const startEnaImport = async () => {
+    setEnaStarting(true);
+    setEnaError(null);
+    try {
+      const response = await fetch("/api/workbench/imports", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          providerId: enaProviderId,
+          input: { accession: enaAccession, maxFiles: enaMaxFiles },
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Failed to start ENA import");
+      setEnaPreview(null);
+      await refreshJobs();
+    } catch (err) {
+      setEnaError(err instanceof Error ? err.message : "Failed to start ENA import");
+    } finally {
+      setEnaStarting(false);
+    }
+  };
+
   const referenceActionLabel = referenceInstallRunning
     ? "Installing"
     : referenceInstalled && ncbiImporter?.preflight?.ok === false
@@ -349,6 +410,102 @@ export function WorkbenchImportsClient({
             <Store className="h-4 w-4" />
             Store
           </Button>
+        </div>
+
+        <div className="border-b border-border p-4">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.9fr)]">
+            <div className="space-y-4">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Globe2 className="h-4 w-4 text-teal-700" />
+                  <h3 className="text-base font-semibold text-foreground">
+                    {enaImporter?.label || "ENA FASTQ by accession"}
+                  </h3>
+                  <WorkbenchStatusBadge tone="accent">No local tool required</WorkbenchStatusBadge>
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Enter a public ENA, SRA, or DRA run, sample, or project accession. SeqDesk
+                  previews the real archive files before downloading them into this workspace.
+                </p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
+                <label className="space-y-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">Accession</span>
+                  <Input
+                    value={enaAccession}
+                    onChange={(event) => setEnaAccession(event.target.value.toUpperCase())}
+                    placeholder="ERR…, SRR…, DRR…, ERS…, or PRJEB…"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-medium text-muted-foreground">Max files</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={enaMaxFiles}
+                    onChange={(event) => setEnaMaxFiles(Number(event.target.value))}
+                  />
+                </label>
+              </div>
+              {enaError && (
+                <div className="flex gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{enaError}</span>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  onClick={() => void runEnaPreview()}
+                  disabled={enaLoadingPreview || !enaAccession.trim()}
+                >
+                  {enaLoadingPreview ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                  Preview files
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void startEnaImport()}
+                  disabled={!enaPreview || enaStarting}
+                >
+                  {enaStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  Download to workspace
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border bg-background p-4">
+              {enaPreview ? (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-foreground">
+                    {enaPreview.summary.selectedCount} FASTQ file(s) selected
+                  </p>
+                  {enaPreview.warnings?.map((warning) => (
+                    <p key={warning} className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      {warning}
+                    </p>
+                  ))}
+                  <div className="max-h-48 space-y-2 overflow-auto">
+                    {enaPreview.files.map((file) => (
+                      <div key={`${file.runAccession}:${file.filename}`} className="rounded border border-border px-3 py-2">
+                        <p className="truncate text-sm font-medium">{file.filename}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {file.runAccession}
+                          {file.scientificName ? ` · ${file.scientificName}` : ""}
+                          {file.libraryLayout ? ` · ${file.libraryLayout}` : ""}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-36 items-center justify-center text-center text-sm text-muted-foreground">
+                  Preview archive metadata and file counts before any data is downloaded.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {storeOpen && (
@@ -437,9 +594,10 @@ export function WorkbenchImportsClient({
             <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-secondary text-muted-foreground">
               <Store className="h-5 w-5" />
             </span>
-            <h3 className="text-base font-semibold text-foreground">No import capability selected</h3>
+            <h3 className="text-base font-semibold text-foreground">Reference genome import not selected</h3>
             <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-              Open the Store to install or enable Workbench import capabilities for this server.
+              Public ENA FASTQ imports above work without a local tool. Open the Store when you
+              also want taxon-based NCBI reference genome packages.
             </p>
           </div>
         )}
@@ -670,7 +828,7 @@ export function WorkbenchImportsClient({
                   {typeof job.progress === "number" ? ` · ${job.progress}%` : ""}
                 </div>
                 <div className={cn("truncate text-sm", job.error ? "text-destructive" : "text-muted-foreground")}>
-                  {job.error || job.targetPath || "Waiting"}
+                  {job.error || (job.resultDatasetId ? "Dataset ready" : "Waiting")}
                 </div>
               </div>
             ))}

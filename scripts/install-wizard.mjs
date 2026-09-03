@@ -24,6 +24,26 @@ if (!outPath) {
 
 const pipelinesEnabled = isTruthy(process.env.SEQDESK_WIZARD_PIPELINES_ENABLED);
 const defaultPort = process.env.SEQDESK_WIZARD_DEFAULT_PORT || "8000";
+const deploymentProfile = process.env.SEQDESK_WIZARD_DEPLOYMENT_PROFILE || "sequencing-center";
+
+const profileGuidance = {
+  "sequencing-center": {
+    label: "Sequencing center",
+    storageLabel: "Sequencing data",
+    next: "After login: confirm sequencing storage and instruments, then invite researchers/operators.",
+  },
+  "shared-lab": {
+    label: "Shared lab",
+    storageLabel: "Shared sequencing and analysis data",
+    next: "After login: confirm shared storage and runtime, then invite lab members.",
+  },
+  "research-workbench": {
+    label: "Research workbench",
+    storageLabel: "Managed datasets",
+    next: "After login: confirm upload/import storage and runtime, then invite Workbench members.",
+  },
+};
+const selectedProfile = profileGuidance[deploymentProfile] || profileGuidance["sequencing-center"];
 
 const defaults = {
   dataPath: process.env.SEQDESK_DATA_PATH || "",
@@ -60,8 +80,12 @@ async function runClackWizard(clack) {
 
   intro("SeqDesk Setup Wizard");
   note(
-    "Minimal setup mode: configure data storage later with `seqdesk storage configure` or in Admin settings.",
-    "Configuration"
+    [
+      `Selected profile: ${selectedProfile.label}`,
+      `${selectedProfile.storageLabel}: ${defaults.dataPath || "configure after installation"}`,
+      selectedProfile.next,
+    ].join("\n"),
+    "Configuration and next steps"
   );
 
   const useRecommendedPort = await confirm({
@@ -91,8 +115,9 @@ async function runClackWizard(clack) {
   note(
     [
       `Port:      ${port || defaults.port}`,
+      `Profile:   ${selectedProfile.label}`,
       `NEXTAUTH_URL: ${nextAuthUrl}`,
-      `Data path: ${defaults.dataPath || "configure later with seqdesk storage configure"}`,
+      `${selectedProfile.storageLabel}: ${defaults.dataPath || "configure later with seqdesk storage configure"}`,
       `Run dir:   ${
         pipelinesEnabled
           ? defaults.runDir || "configure later in Admin > Pipeline Runtime"
@@ -133,7 +158,7 @@ async function runReadlineWizard() {
     clearScreen();
     printHeader("SeqDesk Setup Wizard");
     printLine(
-      "Minimal setup mode. Configure data storage later with seqdesk storage configure or in Admin settings."
+      `Selected profile: ${selectedProfile.label}. ${selectedProfile.next}`
     );
     printLine("");
 
@@ -148,6 +173,7 @@ async function runReadlineWizard() {
 
     const summary = {
       port,
+      profile: selectedProfile.label,
       nextAuthUrl,
       dataPath: defaults.dataPath || "configure later with seqdesk storage configure",
       runDir: pipelinesEnabled
@@ -159,8 +185,9 @@ async function runReadlineWizard() {
     printLine("");
     printHeader("Review");
     printLine(`Port:      ${summary.port}`);
+    printLine(`Profile:   ${summary.profile}`);
     printLine(`NEXTAUTH_URL: ${summary.nextAuthUrl}`);
-    printLine(`Data path: ${summary.dataPath}`);
+    printLine(`${selectedProfile.storageLabel}: ${summary.dataPath}`);
     printLine(`Run dir:   ${summary.runDir}`);
     printLine(`DATABASE_URL: ${summary.databaseUrl}`);
     printLine("");

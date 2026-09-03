@@ -62,6 +62,87 @@ describe("WorkbenchImportsClient", () => {
     expect(intervalSpy.mock.calls.filter(([, delay]) => delay === 5000)).toHaveLength(0);
   });
 
+  it("previews and starts a real ENA accession import", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url === "/api/workbench/importers") {
+        return jsonResponse({
+          importers: [
+            {
+              id: "ena-fastq-accession",
+              label: "ENA FASTQ by accession",
+              description: "Download public FASTQ files.",
+              category: "Public sequencing reads",
+              preflight: { ok: true },
+            },
+          ],
+        });
+      }
+      if (url === "/api/workbench/imports" && init?.method === "POST") {
+        return jsonResponse({ job: { id: "job-ena", status: "queued" } }, { status: 202 });
+      }
+      if (url === "/api/workbench/imports") return jsonResponse({ jobs: [] });
+      if (url === "/api/workbench/store") return jsonResponse({ items: [] });
+      if (url === "/api/workbench/importers/ena-fastq-accession/preview") {
+        return jsonResponse({
+          preview: {
+            summary: {
+              label: "ENA FASTQ ERR164407",
+              totalFound: 2,
+              selectedCount: 2,
+              capped: false,
+              cap: 20,
+              hardMax: 100,
+            },
+            files: [
+              {
+                runAccession: "ERR164407",
+                scientificName: "Escherichia coli",
+                libraryLayout: "PAIRED",
+                filename: "ERR164407_1.fastq.gz",
+                bytes: 1024,
+              },
+              {
+                runAccession: "ERR164407",
+                scientificName: "Escherichia coli",
+                libraryLayout: "PAIRED",
+                filename: "ERR164407_2.fastq.gz",
+                bytes: 1024,
+              },
+            ],
+          },
+        });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<WorkbenchImportsClient enablePolling={false} />);
+
+    await screen.findByText("ENA FASTQ by accession");
+    fireEvent.change(screen.getByPlaceholderText(/ERR…/i), {
+      target: { value: "err164407" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Preview files/i }));
+
+    expect(await screen.findByText("2 FASTQ file(s) selected")).toBeTruthy();
+    expect(screen.getByText("ERR164407_1.fastq.gz")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Download to workspace/i }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/workbench/imports",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            providerId: "ena-fastq-accession",
+            input: { accession: "ERR164407", maxFiles: 20 },
+          }),
+        })
+      )
+    );
+  });
+
   it("keeps imports empty by default, then opens installed Reference genomes from the Store", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
@@ -88,7 +169,6 @@ describe("WorkbenchImportsClient", () => {
               phase: "downloading",
               progress: 10,
               error: null,
-              targetPath: "/data/workbench/cache",
               resultDatasetId: null,
               createdAt: "2026-05-20T10:00:00.000Z",
               updatedAt: "2026-05-20T10:00:00.000Z",
@@ -100,7 +180,6 @@ describe("WorkbenchImportsClient", () => {
               phase: "complete",
               progress: 100,
               error: null,
-              targetPath: "/data/workbench/cache/ready",
               resultDatasetId: "dataset-1",
               createdAt: "2026-05-20T10:01:00.000Z",
               updatedAt: "2026-05-20T10:01:00.000Z",
@@ -112,7 +191,6 @@ describe("WorkbenchImportsClient", () => {
               phase: "failed",
               progress: 20,
               error: "NCBI request failed",
-              targetPath: null,
               resultDatasetId: null,
               createdAt: "2026-05-20T10:02:00.000Z",
               updatedAt: "2026-05-20T10:02:00.000Z",
@@ -124,7 +202,6 @@ describe("WorkbenchImportsClient", () => {
               phase: "queued",
               progress: 0,
               error: null,
-              targetPath: null,
               resultDatasetId: null,
               createdAt: "2026-05-20T10:03:00.000Z",
               updatedAt: "2026-05-20T10:03:00.000Z",
@@ -141,8 +218,8 @@ describe("WorkbenchImportsClient", () => {
 
     render(<WorkbenchImportsClient />);
 
-    expect(await screen.findByText("No import capability selected")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Preview/i })).toBeNull();
+    expect(await screen.findByText("ENA FASTQ by accession")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Preview files/i })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /^Store$/i }));
     expect(await screen.findByRole("button", { name: /Open importer/i })).toBeTruthy();
@@ -150,7 +227,7 @@ describe("WorkbenchImportsClient", () => {
 
     expect(await screen.findByText("NCBI Genomes by Taxon")).toBeTruthy();
     expect(screen.getByText("Ready")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Preview/i }).hasAttribute("disabled")).toBe(
+    expect(screen.getByRole("button", { name: /^Preview$/i }).hasAttribute("disabled")).toBe(
       false
     );
     expect(screen.getByText("Import jobs")).toBeTruthy();
@@ -203,7 +280,7 @@ describe("WorkbenchImportsClient", () => {
 
     render(<WorkbenchImportsClient />);
 
-    expect(await screen.findByText("No import capability selected")).toBeTruthy();
+    expect(await screen.findByText("ENA FASTQ by accession")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^Store$/i }));
 
     expect((await screen.findAllByText("Setup needed")).length).toBeGreaterThan(0);
@@ -211,7 +288,7 @@ describe("WorkbenchImportsClient", () => {
     expect(screen.getByRole("button", { name: /Setup needed/i }).hasAttribute("disabled")).toBe(
       true
     );
-    expect(screen.queryByRole("button", { name: /Preview/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Preview$/i })).toBeNull();
   });
 
   it("starts Store installation for Reference genomes", async () => {
@@ -254,7 +331,7 @@ describe("WorkbenchImportsClient", () => {
 
     render(<WorkbenchImportsClient />);
 
-    expect(await screen.findByText("No import capability selected")).toBeTruthy();
+    expect(await screen.findByText("ENA FASTQ by accession")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^Store$/i }));
     fireEvent.click(await screen.findByRole("button", { name: /^Install$/i }));
 

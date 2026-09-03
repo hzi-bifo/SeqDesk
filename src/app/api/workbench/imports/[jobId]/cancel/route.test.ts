@@ -38,7 +38,8 @@ function params(jobId = "job-a") {
 describe("POST /api/workbench/imports/[jobId]/cancel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getServerSession.mockResolvedValue({ user: { id: "user-a" } });
+    process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
+    mocks.getServerSession.mockResolvedValue({ user: { id: "user-a", role: "RESEARCHER" } });
     mocks.getOrCreateDefaultWorkbenchWorkspace.mockResolvedValue({
       id: "workspace-a",
       ownerId: "user-a",

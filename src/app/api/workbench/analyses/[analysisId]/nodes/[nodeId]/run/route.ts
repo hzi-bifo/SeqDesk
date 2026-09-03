@@ -6,6 +6,7 @@ import { getWorkbenchAnalysisForUser } from "@/lib/workbench/analyses";
 import { createWorkbenchImportJob, runWorkbenchImportJob } from "@/lib/workbench/import-jobs";
 import { getWorkbenchImporter } from "@/lib/workbench/importers/registry";
 import { resolveWorkbenchStorageBase } from "@/lib/workbench/storage";
+import { authorizeWorkbenchRequest } from "@/lib/workbench/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,13 +16,12 @@ export async function POST(
   { params }: { params: Promise<{ analysisId: string; nodeId: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = authorizeWorkbenchRequest(session, "workbench.run");
+  if (!access.allowed) return access.response;
 
   try {
     const { analysisId, nodeId } = await params;
-    const analysis = await getWorkbenchAnalysisForUser(session.user.id, analysisId);
+    const analysis = await getWorkbenchAnalysisForUser(access.userId, analysisId);
     if (!analysis) {
       return NextResponse.json({ error: "Workbench analysis not found" }, { status: 404 });
     }
@@ -66,15 +66,15 @@ export async function POST(
 
     const input = provider.inputSchema.parse(node.data.config ?? {});
     const preview = await provider.preview(input);
-    if (preview.genomes.length === 0) {
+    if (preview.summary.selectedCount === 0) {
       return NextResponse.json(
-        { error: "Preview did not return any genomes to import." },
+        { error: "Preview did not return any data to import." },
         { status: 400 }
       );
     }
 
     const { job } = await createWorkbenchImportJob({
-      userId: session.user.id,
+      userId: access.userId,
       providerId: provider.id,
       input,
       preview,

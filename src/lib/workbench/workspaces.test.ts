@@ -114,6 +114,9 @@ describe("workbench workspace helpers", () => {
     });
 
     expect(dataset.sizeBytes).toBe(1024);
+    expect(dataset).not.toHaveProperty("storagePath");
+    expect(job).not.toHaveProperty("logPath");
+    expect(job).not.toHaveProperty("targetPath");
     expect(JSON.stringify(dataset)).toContain("dataset-a");
     expect(JSON.stringify(job)).toContain("job-a");
   });

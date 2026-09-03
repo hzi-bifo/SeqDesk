@@ -5,15 +5,15 @@ import {
   listWorkbenchImporters,
   serializeWorkbenchImporter,
 } from "@/lib/workbench/importers/registry";
+import { authorizeWorkbenchRequest } from "@/lib/workbench/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = authorizeWorkbenchRequest(session, "workbench.import");
+  if (!access.allowed) return access.response;
 
   const importers = await Promise.all(
     listWorkbenchImporters().map(async (provider) => {

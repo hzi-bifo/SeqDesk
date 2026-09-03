@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Database } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Database, Loader2, Upload } from "lucide-react";
 import { WorkbenchEmptyPanel, WorkbenchStatusBadge } from "@/components/workbench/WorkbenchPageShell";
+import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/toast";
 
 interface WorkbenchDataset {
   id: string;
@@ -10,7 +12,6 @@ interface WorkbenchDataset {
   name: string;
   description: string | null;
   sourceMetadata: unknown;
-  storagePath: string | null;
   sizeBytes: number | null;
   checksumSha256: string | null;
   genomeCount: number | null;
@@ -38,15 +39,22 @@ function formatDate(value?: string) {
 export function WorkbenchDataClient() {
   const [datasets, setDatasets] = useState<WorkbenchDataset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [uploadLabel, setUploadLabel] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const refreshDatasets = useCallback(async () => {
+    const response = await fetch("/api/workbench/data", { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = (await response.json()) as { datasets?: WorkbenchDataset[] };
+    setDatasets(Array.isArray(payload.datasets) ? payload.datasets : []);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const response = await fetch("/api/workbench/data", { cache: "no-store" });
-        if (!response.ok) return;
-        const payload = (await response.json()) as { datasets?: WorkbenchDataset[] };
-        if (!cancelled) setDatasets(Array.isArray(payload.datasets) ? payload.datasets : []);
+        if (!cancelled) await refreshDatasets();
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -54,21 +62,89 @@ export function WorkbenchDataClient() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshDatasets]);
+
+  const uploadFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    setUploading(true);
+    try {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files.item(index);
+        if (!file) continue;
+        setUploadLabel(`Uploading ${index + 1} of ${files.length}: ${file.name}`);
+        const response = await fetch("/api/workbench/uploads", {
+          method: "POST",
+          headers: {
+            "content-type": file.type || "application/octet-stream",
+            "x-seqdesk-filename": encodeURIComponent(file.name),
+          },
+          body: file,
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        if (!response.ok) {
+          throw new Error(payload?.error || `Failed to upload ${file.name}`);
+        }
+      }
+      await refreshDatasets();
+      toast.success(`${files.length} file${files.length === 1 ? "" : "s"} uploaded`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setUploading(false);
+      setUploadLabel("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   if (!loading && datasets.length === 0) {
     return (
-      <WorkbenchEmptyPanel
-        title="No workspace datasets yet"
-        description="Imported reference genomes, archives, and derived output datasets will appear here after Workbench imports complete."
-        icon={Database}
-        columns={["Dataset", "Type", "Size", "Checksum"]}
-      />
+      <div className="space-y-4">
+        <div className="flex justify-end">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            accept=".fastq,.fq,.fastq.gz,.fq.gz,.fasta,.fa,.fna,.fasta.gz,.fa.gz,.fna.gz,.bam,.cram,.vcf,.vcf.gz,.bcf,.csv,.tsv,.txt"
+            onChange={(event) => void uploadFiles(event.target.files)}
+          />
+          <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+            {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+            {uploading ? uploadLabel : "Upload data"}
+          </Button>
+        </div>
+        <WorkbenchEmptyPanel
+          title="No workspace datasets yet"
+          description="Upload sequencing files from this computer or use Imports to download public repository data."
+          icon={Database}
+          columns={["Dataset", "Type", "Size", "Checksum"]}
+        />
+      </div>
     );
   }
 
   return (
-    <section className="overflow-hidden rounded-lg border border-border bg-card">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Upload local sequencing files or add public data through Imports.
+        </p>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          accept=".fastq,.fq,.fastq.gz,.fq.gz,.fasta,.fa,.fna,.fasta.gz,.fa.gz,.fna.gz,.bam,.cram,.vcf,.vcf.gz,.bcf,.csv,.tsv,.txt"
+          onChange={(event) => void uploadFiles(event.target.files)}
+        />
+        <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+          {uploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+          {uploading ? uploadLabel : "Upload data"}
+        </Button>
+      </div>
+      <section className="overflow-hidden rounded-lg border border-border bg-card">
       <div className="grid border-b border-border bg-secondary/30 px-4 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground md:grid-cols-[2fr_1fr_1fr_1fr]">
         <div>Dataset</div>
         <div className="hidden md:block">Provider</div>
@@ -92,7 +168,7 @@ export function WorkbenchDataClient() {
                   </WorkbenchStatusBadge>
                 </div>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                  {dataset.description || dataset.storagePath || "Workbench dataset"}
+                  {dataset.description || "Workbench dataset"}
                 </p>
                 {dataset.checksumSha256 && (
                   <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
@@ -110,6 +186,7 @@ export function WorkbenchDataClient() {
           ))}
         </div>
       )}
-    </section>
+      </section>
+    </div>
   );
 }

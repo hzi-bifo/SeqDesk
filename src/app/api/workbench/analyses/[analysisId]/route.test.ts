@@ -27,7 +27,8 @@ const params = { params: Promise.resolve({ analysisId: "analysis-1" }) };
 describe("/api/workbench/analyses/[analysisId]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1" } });
+    process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
+    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1", role: "RESEARCHER" } });
     mocks.getWorkbenchAnalysisForUser.mockResolvedValue({ id: "analysis-1" });
     mocks.updateWorkbenchAnalysis.mockResolvedValue({
       ok: true,

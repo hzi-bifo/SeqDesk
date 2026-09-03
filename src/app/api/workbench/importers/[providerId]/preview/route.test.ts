@@ -36,7 +36,8 @@ function request(body: unknown) {
 describe("POST /api/workbench/importers/[providerId]/preview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1" } });
+    process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
+    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1", role: "RESEARCHER" } });
     mocks.getWorkbenchImporter.mockReturnValue(mocks.provider);
     mocks.provider.inputSchema.parse.mockImplementation((value) => value);
     mocks.provider.preflight.mockResolvedValue({ ok: true });

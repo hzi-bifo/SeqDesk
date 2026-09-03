@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getOrCreateDefaultWorkbenchWorkspace, serializeWorkbenchImportJob } from "@/lib/workbench/workspaces";
+import { authorizeWorkbenchRequest } from "@/lib/workbench/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,11 +13,10 @@ export async function POST(
   { params }: { params: Promise<{ jobId: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const access = authorizeWorkbenchRequest(session, "workbench.import");
+  if (!access.allowed) return access.response;
 
-  const workspace = await getOrCreateDefaultWorkbenchWorkspace(session.user.id);
+  const workspace = await getOrCreateDefaultWorkbenchWorkspace(access.userId);
   const { jobId } = await params;
   const job = await db.workbenchImportJob.findFirst({
     where: { id: jobId, workspaceId: workspace.id },
