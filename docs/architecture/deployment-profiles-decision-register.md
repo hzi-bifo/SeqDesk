@@ -12,6 +12,7 @@ This register captures choices that are easy to hide inside implementation detai
 ## Priority legend
 
 - **Foundation gate**: decide before Milestones 1-2 or the first schema/API contracts.
+- **Installation gate**: decide before exposing a new profile in the guided, unattended, or hosted installer.
 - **Shared Lab gate**: decide before exposing Shared Lab to users.
 - **Workbench gate**: decide before generalizing Workbench data/imports.
 - **Deferred**: preserve an extension point, but do not implement it in the first release.
@@ -29,6 +30,14 @@ This register captures choices that are easy to hide inside implementation detai
 | F-07 | Foundation | The deployment profile is locally configured and restart-required; it is not initially editable in the database/UI. |
 | F-08 | Foundation | Model human and machine principals separately; do not reuse a human admin account for automation. |
 | F-09 | Foundation | Ship local credentials first while keeping authorization independent of the login provider; defer OIDC/LDAP. |
+| I-01 | Installation | Fresh guided installs require an explicit, explained deployment-profile choice. |
+| I-02 | Installation | Guided, unattended, hosted, and reconfigure paths resolve to one versioned `InstallPlan`. |
+| I-03 | Installation | Ask local-only versus team-server access before exposing host/port/proxy details. |
+| I-04 | Installation | Create one secure administrator, never known default credentials or a generic second account. |
+| I-05 | Installation | Keep public setup status read-only; perform profile-aware onboarding after authenticated admin login. |
+| I-06 | Installation | Verify base readiness automatically and report incomplete profile-specific operational readiness honestly. |
+| I-07 | Installation | Updates preserve the profile; reconfigure previews a diff; profile changes use a separate future migration. |
+| I-08 | Installation | Add a redacted, zero-mutation `--plan` mode before applying changes. |
 | S-01 | Shared Lab | Use optimistic concurrency for shared edits and return a visible conflict instead of silently overwriting. |
 | S-02 | Shared Lab | Keep shared scientific data after account deactivation; archive is reversible and shared purge is administrator-only. |
 | W-01 | Workbench | Allow multiple private workspaces per user in the first release; add collaborative sharing later. |
@@ -143,6 +152,44 @@ Do not reuse a human administrator's password/session or a global bootstrap/admi
 Recommendation: ship local email/password accounts for the first profile release, but make capabilities and resource membership depend on the internal principal, not on the credential provider. Defer OIDC/LDAP until there is a concrete deployment that needs them.
 
 Schema/API work should avoid assuming every future user has a local password, but the profile project should not expand into a full authentication-provider rewrite.
+
+## Installation and setup decisions
+
+The detailed operator journey, question copy, readiness split, failure behavior, and acceptance matrix are defined in `docs/architecture/deployment-profiles-installation-setup.md`.
+
+### I-01 — Require an explained choice on fresh guided installs
+
+Recommendation: do not preselect a deployment profile in a fresh interactive wizard. Show three short workflow-based descriptions and require a choice. Existing installations keep their resolved profile without being asked again. During a compatibility window, fresh unattended installs without a value may default to Sequencing Center with a warning; new hosted configurations should specify it explicitly.
+
+### I-02 — Normalize every entry point into one InstallPlan
+
+Recommendation: interactive answers, CLI/JSON input, hosted install profiles, and existing configuration all resolve into the same versioned and validated `InstallPlan`. The review screen and application engine consume that plan rather than implementing their own merging/default logic.
+
+This is the installation equivalent of keeping one application artifact: one validation/application path prevents a solo developer from maintaining several subtly different installers.
+
+### I-03 — Ask about audience before network details
+
+Recommendation: lead with “Only on this computer” versus “On a team server.” Derive safe URL/bind/service defaults, while keeping browser URL, bind address, and local health URL distinct. Loopback is the default; a non-loopback listener requires explicit acknowledgement, and a network deployment is not called production-ready without HTTPS/proxy, firewall/VPN, backup, and monitoring responsibilities being stated.
+
+### I-04 — Bootstrap one real administrator securely
+
+Recommendation: a normal guided install creates exactly one administrator, using an operator-entered or generated strong password. Do not create a generic researcher/member account and never use known packaged credentials. Generated passwords are shown once, after successful account creation, outside logs/saved plans; the local reset command is always provided.
+
+### I-05 — Separate public setup health from authenticated onboarding
+
+Recommendation: the anonymous `/setup` surface reports only non-secret base readiness and performs no mutations. Move seeding/account creation out of the unauthenticated status `GET`. After the administrator signs in, use a reopenable profile-aware onboarding checklist for storage, runtime, invitations, instruments/importers, optional modules, and a first test journey.
+
+### I-06 — Distinguish installed from operationally ready
+
+Recommendation: verify application/database/profile/admin readiness automatically, then report profile-specific operational gaps separately. For example, a Workbench can be installed and allow administrator login while still reporting that managed storage or its pipeline runtime must be completed before analyses can run. Do not print generic success when an expected service fails its health check.
+
+### I-07 — Give existing installations a different journey
+
+Recommendation: detect Update, Reconfigure, Diagnose/Resume, and Fresh Install before asking questions. Update preserves profile/configuration and never reopens onboarding. Reconfigure loads existing values, respects hosted locks, shows a diff, and never seeds generic accounts. Deployment-profile changes remain a separate future migration with backup/preflight.
+
+### I-08 — Provide a no-write plan preview
+
+Recommendation: add `--plan` (plus redacted JSON output) to resolve sources/defaults/locks, validate compatibility and paths, show expected downloads/resources, and exit before filesystem, database, or service changes. “Save sanitized plan” in the guided wizard uses the same representation and excludes secret values.
 
 ## Shared Lab decisions
 
@@ -333,6 +380,10 @@ Before implementation begins, explicitly confirm or amend the recommended defaul
 - [ ] F-04 invite/self-registration defaults
 - [ ] F-07 local/restart-required deployment-profile configuration
 - [ ] F-08 service-principal extension point
+- [ ] I-01 explicit deployment-profile choice in fresh guided installs
+- [ ] I-04 one secure bootstrap administrator and no packaged default accounts
+- [ ] I-05 read-only public setup status plus authenticated onboarding
+- [ ] I-08 redacted, zero-mutation install-plan preview
 - [ ] W-01 multiple private workspaces, collaboration deferred
 - [ ] W-04 managed-copy default for imports
 - [ ] W-07 provider launch order and arbitrary-URL deferral

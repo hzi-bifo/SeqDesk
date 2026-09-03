@@ -4,6 +4,8 @@ Companion to `docs/architecture/deployment-profiles-plan.md`.
 
 Decision gates and their recommended defaults are in `docs/architecture/deployment-profiles-decision-register.md`.
 
+The guided installer, first-login onboarding, recovery states, and install test matrix are specified in `docs/architecture/deployment-profiles-installation-setup.md`.
+
 This checklist implements the agreed model:
 
 - SeqDesk remains one application with one release artifact, one npm launcher, one updater, and one canonical installer.
@@ -24,6 +26,10 @@ Do these milestones in order. Do not expose a profile in production setup until 
 - [ ] Confirm Shared Lab and Workbench are invite-only by default after bootstrap.
 - [ ] Confirm the deployment profile is local/restart-required rather than database/UI-editable initially.
 - [ ] Confirm the authorization principal has a future service-account extension point without implementing service tokens now.
+- [ ] Confirm fresh guided installs require an explicit explained profile choice while existing installs preserve their profile.
+- [ ] Confirm all install entry points normalize to one versioned `InstallPlan` with a zero-mutation preview.
+- [ ] Confirm the installer creates one secure administrator only and moves additional accounts/settings to authenticated onboarding.
+- [ ] Confirm public setup status is read-only and cannot trigger seeding/account creation.
 - [ ] Confirm the first Workbench supports multiple private workspaces per researcher and defers collaboration.
 - [ ] Confirm imports copy into managed storage by default; approved-path linking is explicit and read-only.
 - [ ] Confirm browser upload, ENA/SRA, and generalized NCBI are ahead of arbitrary URL import.
@@ -93,6 +99,89 @@ Acceptance:
 - [ ] Server routes, APIs, landing redirects, and client navigation agree on the active profile.
 - [ ] Profile resolution and legacy aliases have focused tests.
 - [ ] Invalid or incomplete profile/module combinations fail closed with actionable diagnostics.
+
+## Milestone 1A — Unified guided installation and setup
+
+Implement the detailed journey in `docs/architecture/deployment-profiles-installation-setup.md` before exposing Shared Lab or Research Workbench as supported installation choices.
+
+### One plan and one engine
+
+- [ ] Define a versioned, typed `InstallPlan` covering operation, release, deployment profile, access topology, database, storage, execution, enrollment, bootstrap administrator, optional content, value sources, and hosted locks.
+- [ ] Normalize guided answers, CLI/JSON configuration, hosted install profiles, and existing installation configuration into the same plan.
+- [ ] Use one validator/default resolver and one application engine for every entry point.
+- [ ] Keep secret values behind protected references; never serialize them into saved/sanitized plans.
+- [ ] Add `--plan` and `--plan --json` modes that resolve/validate/redact the plan and perform zero filesystem, database, or service mutations.
+- [ ] Generate the interactive review screen and unattended plan output from the same normalized representation.
+
+### Existing-target classification
+
+- [ ] Detect new install, valid existing install, partial/failed install, and unrelated non-empty target before asking setup questions.
+- [ ] For an existing install, offer Update, Reconfigure, Diagnose/Resume, or Cancel rather than the fresh-install wizard.
+- [ ] Preserve/show the current deployment profile as read-only for update/reconfigure; reject a conflicting `--deployment-profile` unless a future explicit migration command is used.
+- [ ] Load current values and show a redacted diff during reconfiguration.
+- [ ] Never seed generic accounts or overwrite existing passwords during update/reconfigure/database adoption.
+
+### Guided question flow
+
+- [ ] Run a read-only basic prerequisite check before collecting configuration so unsupported runtime/host/tool/target conditions fail before the user completes the wizard.
+- [ ] Replace the current split shell and Node prompt logic with one question schema/state machine, even if execution is internally divided around preflight.
+- [ ] Require an explicit deployment-profile selection on a fresh guided install; do not preselect Sequencing Center.
+- [ ] Present the three short descriptions verbatim or from a single shared copy source:
+  - [ ] Sequencing Center — people request sequencing and facility staff process/deliver it.
+  - [ ] Shared Lab — one team shares sequencing/analysis work; administrators additionally configure SeqDesk.
+  - [ ] Research Workbench — researchers import/upload existing data and run analyses in workspaces without sequencing-order handoffs.
+- [ ] Include the “Not sure?” helper based on external requesters, one shared lab team, or analysis of existing data.
+- [ ] Explain that this is one SeqDesk build and that changing the choice later requires a reviewed migration.
+- [ ] Ask “Only on this computer,” “On a team server,” or “Advanced/custom” before asking technical network questions.
+- [ ] Keep loopback binding as the default, distinguish browser URL/bind host/local health URL, require explicit non-loopback acknowledgement, and validate HTTPS expectations for team-server use.
+- [ ] Keep local PostgreSQL versus existing/managed PostgreSQL as the primary database choice and explain the operational tradeoff.
+- [ ] Verify the selected database before requesting/generating account passwords.
+- [ ] Offer recommended managed storage locations first; show only the selected profile's labels and paths.
+- [ ] Validate storage existence/creation, writability, free space, mount availability, symlink resolution, dangerous roots, and overlapping/nested roots.
+- [ ] Ask about workflow execution only when relevant: optional for Sequencing Center, recommended for Shared Lab, and required for full Workbench operational readiness.
+- [ ] Keep local versus Slurm executor details and package/runtime downloads behind the workflow choice; show estimated sizes.
+- [ ] Create exactly one initial administrator with an entered or generated strong password; remove the generic “also create a researcher” question.
+- [ ] Apply the profile's enrollment default and explain it: Sequencing Center researcher self-registration by default; Shared Lab and Workbench invite-only by default.
+- [ ] Defer extra users, SMTP/OIDC, instruments, ENA/repository credentials, and detailed module configuration to authenticated onboarding unless a hosted profile provides them.
+- [ ] Offer deterministic example data only as a clearly labelled evaluation option; default it off on team servers.
+- [ ] Keep telemetry separately consented and off by default.
+
+### Review, apply, and verify
+
+- [ ] Show a final redacted review with the deployment profile/workflow, network exposure, database mode, storage roots/free space, runtime/executor, downloads, administrator email, enrollment, service manager, optional content, value sources/locks, and warnings.
+- [ ] Allow Back, Save sanitized plan, Install, and Cancel before mutations begin.
+- [ ] After confirmation, ask no new product/configuration questions; display stable pending/running/done/failed stages.
+- [ ] Run all detectable preflight before material changes and use an install lock/idempotent checkpoints during apply.
+- [ ] Verify persisted profile, database/migrations, intended administrator, application version/profile response, storage writability, and selected runtime/smoke test.
+- [ ] Run the equivalent of `seqdesk doctor` automatically when the guided installer starts a persistent service.
+- [ ] Distinguish “installed and verified,” “installed; manual start required,” “installed; optional/operational setup remains,” and restored/preserved failure states.
+- [ ] Show a generated administrator password exactly once only after successful account creation, outside logs, plus the local reset command.
+- [ ] Never create or advertise known `admin`/`user` packaged passwords in a supported release install.
+- [ ] Print profile-specific next steps and the correct first landing route rather than sequencing-center instructions for every install.
+
+### Public setup status and authenticated onboarding
+
+- [ ] Make `/api/setup/status` a read-only non-secret `GET`; remove account creation, seeding, hosted-profile application, and other mutations from anonymous polling.
+- [ ] Move bootstrap seeding into the installer or an explicit protected/idempotent startup operation.
+- [ ] Let public setup status report only database/schema, valid deployment profile, and existence of an active administrator.
+- [ ] Add an authenticated, administrator-only, versioned onboarding checklist with explicit completion actor/time.
+- [ ] Separate base application readiness from profile operational readiness; do not equate a `SiteSettings` row with completed setup.
+- [ ] Route the first administrator login to incomplete critical onboarding and keep the checklist reopenable.
+- [ ] Show ordinary members a clear administrator-is-finishing-setup state when critical operational setup is incomplete.
+- [ ] Compose onboarding by profile: facility intake/instruments for Sequencing Center, shared storage/members/limits for Shared Lab, and storage/importers/runtime/first workspace for Workbench.
+
+Acceptance:
+
+- [ ] Fresh guided, unattended JSON, and hosted installs for all three profiles resolve through the same plan/validator and use the same release artifact.
+- [ ] Irrelevant questions are absent for each profile and advanced questions stay optional.
+- [ ] Cancellation before confirmation produces no material mutations.
+- [ ] `--plan` is redacted and produces no material mutations.
+- [ ] Local-only/team-server URL and bind combinations are validated.
+- [ ] Failure injection covers download, checksum, database, migration, storage, account creation, runtime, service start, and health verification with safe retry/recovery output.
+- [ ] Update/reconfigure preserve the deployment profile, accounts, and scientific data.
+- [ ] No anonymous setup-status request can create an account or change configuration.
+- [ ] No packaged fresh install uses known default credentials or creates a generic second account.
+- [ ] First login, onboarding, completion summary, and next steps use the selected profile's terminology and journey.
 
 ## Milestone 2 — Principal, capabilities, and scopes
 

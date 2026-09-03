@@ -6,7 +6,7 @@ Branch: `codex/modular-deployment-modes`
 
 Scope: application architecture and phased implementation plan; no production behavior is changed by this document.
 
-Pre-implementation choices and recommended defaults are tracked in `docs/architecture/deployment-profiles-decision-register.md`.
+Pre-implementation choices and recommended defaults are tracked in `docs/architecture/deployment-profiles-decision-register.md`. The complete guided installer and first-login journey is defined in `docs/architecture/deployment-profiles-installation-setup.md`.
 
 ## Decision summary
 
@@ -52,6 +52,20 @@ This is the recommended approach for a solo developer because fixes, migrations,
 Profile-specific large assets remain optional. For example, pipeline packages, reference databases, instrument integrations, and import tools should be downloaded or configured only when the selected profile/modules require them. This preserves one application artifact without forcing every installation to provision every operational dependency.
 
 Separate artifacts should be reconsidered only if a future hard requirement demands different operating-system dependencies, independent release schedules, legally incompatible distribution, or a high-assurance deployment that cannot contain dormant code. None of the three current experiences requires that complexity.
+
+### Installation experience decision: one plan, profile-aware guidance
+
+The installer should not merely add a three-value prompt to the current flow. Guided answers, unattended JSON/CLI values, hosted install profiles, and existing configuration should all resolve into one versioned, validated `InstallPlan`. That plan drives the review screen, preflight, mutations, verification, reconfiguration diff, and sanitized `--plan` output.
+
+A fresh guided install explicitly asks how the team works and describes the three choices:
+
+- **Sequencing Center**: external/internal researchers request work and facility staff process/deliver it;
+- **Shared Lab**: one team shares sequencing and analysis work, while administrators additionally configure the installation;
+- **Research Workbench**: researchers bring existing data into private workspaces and run analyses without sequencing orders organizing the experience.
+
+The wizard then asks local-only versus team-server access, database, profile-aware storage, relevant workflow runtime, one initial administrator, enrollment policy, and optional content. It hides irrelevant/advanced questions, validates the complete plan before material writes, never creates packaged default passwords or a generic second user, and ends with a profile-specific first successful journey.
+
+Public `/setup` remains a small read-only readiness/status surface. It must not choose a profile, create accounts, seed configuration, or apply settings in response to an unauthenticated `GET`. Profile-specific configuration continues after secure administrator login through a reopenable onboarding checklist. “Installed,” “base application ready,” and “profile operationally ready” are separate states so the installer never claims more than it verified.
 
 ## Why this separation is needed
 
@@ -330,11 +344,15 @@ Importers should create immutable provenance records and materialize datasets th
 
 ### 8. Profile-aware setup, registration, and language
 
-The setup flow should ask for the deployment profile before profile-specific configuration.
+The setup flow should ask for the deployment profile before profile-specific configuration. A fresh guided install requires an explicit selection; existing installs preserve and display their current selection. Unattended and hosted installs provide the same field to the normalized install plan.
 
 - Sequencing Center: facility identity, first facility administrator, researcher registration/invites, intake forms, sequencing storage and instruments.
 - Shared Lab: lab identity, first administrator, member invitations/registration, shared data scope, sequencing storage and instruments.
 - Research Workbench: workspace identity, first administrator, data/import storage, pipeline runtime; no facility name or sequencing-order copy.
+
+Create only the first administrator in the installer. Additional accounts, invitations, instruments, repository credentials, and optional modules belong in authenticated first-login onboarding. The public setup-status endpoint remains read-only and reports base readiness without exposing account addresses or changing state.
+
+The current split shell/Node prompt flow should converge on one question schema and one normalized install-plan validator. Add a redacted `--plan` preview, run preflight before material changes, show a final review, apply without asking new questions, verify the selected profile and critical dependencies, and print profile-specific next steps. The detailed journey and acceptance matrix live in `docs/architecture/deployment-profiles-installation-setup.md`.
 
 Copy should come from profile/domain terminology where meaning differs. Do not scatter ternaries across pages. Keep underlying entity names stable during the first implementation phase; introduce display labels through the profile definition.
 
@@ -384,7 +402,9 @@ Exit condition: the current application behavior can be refactored without relyi
 - Add `deployment.profile` to application and install-profile configuration coverage.
 - Map legacy `lab` and `workbench` environment values.
 - Centralize landing-route selection, page-title selection, sidebar selection, and route-group guards.
-- Keep one release artifact and teach the existing installer to select/persist a profile interactively or through hosted configuration.
+- Introduce the versioned normalized install-plan contract shared by guided, unattended, hosted, and reconfigure paths.
+- Keep one release artifact and teach the existing installer to explain/select/persist a profile interactively or through hosted configuration.
+- Add the redacted zero-mutation plan preview and keep the public setup-status endpoint read-only.
 - Keep `sequencing-center` as the default.
 
 Exit condition: one canonical profile drives server and client behavior; existing lab and Workbench surfaces still behave as before.
@@ -507,6 +527,9 @@ Additionally require:
 - cross-user/workspace isolation tests;
 - legacy configuration and existing-installation migration tests;
 - clean-install tests for one install profile per deployment profile;
+- guided-install tests for each profile, including local-only/team-server choices, relevant-question filtering, cancellation, and profile-specific summaries;
+- install-plan parity tests proving guided, unattended, and hosted inputs resolve to the same validated shape and that `--plan` performs no mutations;
+- tests proving packaged installs create one secure administrator, no known default credentials/generic second account, and no account through an anonymous setup-status request;
 - pipeline runtime tests proving facility and Workbench adapters produce equivalent execution inputs where appropriate.
 
 ## Product decisions before Phase 3/4
