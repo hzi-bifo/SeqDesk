@@ -5,6 +5,7 @@ import type {
 
 export const CAPABILITIES = [
   "system.settings.manage",
+  "system.facility.manage",
   "system.catalog.manage",
   "system.users.manage",
   "system.updates.manage",
@@ -70,6 +71,7 @@ export interface CapabilityDecision {
 
 export const CAPABILITY_DOMAINS: Readonly<Record<Capability, DeploymentDomainId>> = {
   "system.settings.manage": "core",
+  "system.facility.manage": "facility-intake",
   "system.catalog.manage": "sample-catalog",
   "system.users.manage": "core",
   "system.updates.manage": "core",

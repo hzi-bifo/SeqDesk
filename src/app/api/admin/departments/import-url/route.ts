@@ -2,13 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 // GET - retrieve saved import URL
 export async function GET() {
   const session = await getServerSession(authOptions);
-
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.facility.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {
@@ -34,9 +38,9 @@ export async function GET() {
 // POST - save import URL
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.facility.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {

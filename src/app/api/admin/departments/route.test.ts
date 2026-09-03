@@ -41,13 +41,13 @@ describe("GET /api/admin/departments", () => {
     expect(await res.json()).toEqual(deps);
   });
 
-  it("returns 401 for non-admin", async () => {
+  it("returns 403 for an authenticated member", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "u1", role: "RESEARCHER" },
     });
 
     const res = await GET();
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("returns 401 when no session", async () => {

@@ -59,7 +59,7 @@ describe("POST /api/admin/departments/extract", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns 401 when user is not FACILITY_ADMIN", async () => {
+  it("returns 403 when an authenticated member lacks facility administration", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -71,7 +71,7 @@ describe("POST /api/admin/departments/extract", () => {
     });
 
     const response = await POST(request);
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 400 when URL is missing", async () => {

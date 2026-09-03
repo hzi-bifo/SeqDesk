@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 // GET single department
 export async function GET(
@@ -10,9 +14,9 @@ export async function GET(
 ) {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const access = decideServerCapability(session, "system.facility.manage");
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const { id } = await params;
@@ -50,9 +54,9 @@ export async function PUT(
 ) {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const access = decideServerCapability(session, "system.facility.manage");
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const { id } = await params;
@@ -112,9 +116,9 @@ export async function DELETE(
 ) {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const access = decideServerCapability(session, "system.facility.manage");
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const { id } = await params;

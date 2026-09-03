@@ -40,11 +40,11 @@ describe("GET /api/admin/departments/import-url", () => {
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
-  it("returns 401 when user is not admin", async () => {
+  it("returns 403 when an authenticated member is not an administrator", async () => {
     mocks.getServerSession.mockResolvedValue(userSession);
     const res = await GET();
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Forbidden" });
   });
 
   it("returns null url when no settings exist", async () => {
@@ -115,7 +115,7 @@ describe("POST /api/admin/departments/import-url", () => {
     expect(await res.json()).toEqual({ error: "Unauthorized" });
   });
 
-  it("returns 401 when user is not admin", async () => {
+  it("returns 403 when an authenticated member is not an administrator", async () => {
     mocks.getServerSession.mockResolvedValue(userSession);
     const req = new NextRequest(
       "http://localhost/api/admin/departments/import-url",
@@ -126,8 +126,8 @@ describe("POST /api/admin/departments/import-url", () => {
     );
 
     const res = await POST(req);
-    expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Unauthorized" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Forbidden" });
   });
 
   it("saves URL and returns success when settings exist", async () => {

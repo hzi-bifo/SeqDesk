@@ -43,7 +43,10 @@ protected by explicit system-management capabilities rather than account-role
 comparisons. Administrative activity/log access, masked effective-config
 status, infrastructure readiness/import, and hosted-profile reload now use the
 same installation-settings capability, preserving 401/403 semantics across all
-three profiles. Sequencing registries, run forms, file-discovery settings,
+three profiles. Department administration and AI-assisted department import
+now require a Sequencing-Center-only `system.facility.manage` capability, so
+the legacy organizational structure cannot be reached by Shared Lab or
+Workbench administrators through a direct API call. Sequencing registries, run forms, file-discovery settings,
 simulation tools, and MinKNOW connectivity now use a separate
 `system.sequencing.manage` grant, so Shared Lab members can operate sequencing
 work without being able to change installation-wide instrument configuration;
@@ -233,6 +236,7 @@ Acceptance:
 - [x] Treat `createdBy` as immutable provenance, not as the universal access-control owner: Shared Lab records are installation-scoped and Workbench records are workspace-scoped.
 - [x] Define the initial capability catalog:
   - [x] `system.settings.manage`
+  - [x] `system.facility.manage`
   - [x] `system.catalog.manage`
   - [x] `system.users.manage`
   - [x] `system.updates.manage`

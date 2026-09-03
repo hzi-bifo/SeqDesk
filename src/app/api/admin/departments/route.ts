@@ -2,14 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 // GET all departments (with user count)
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const access = decideServerCapability(session, "system.facility.manage");
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const departments = await db.department.findMany({
@@ -35,9 +39,9 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const access = decideServerCapability(session, "system.facility.manage");
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const body = await request.json();

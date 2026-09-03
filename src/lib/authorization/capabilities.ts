@@ -103,6 +103,9 @@ function grantedCapabilities(
   }
 
   if (profile.id === "sequencing-center") {
+    if (principal.accountLevel === "admin") {
+      capabilities.add("system.facility.manage");
+    }
     const grants =
       principal.facilityWorkflowRole === "operator"
         ? SEQUENCING_OPERATOR_CAPABILITIES
