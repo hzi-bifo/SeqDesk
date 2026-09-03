@@ -1,8 +1,8 @@
 # SeqDesk
 
-**Sequencing facility management — from order submission to data publishing.** SeqDesk handles
-sequencing orders, samples, studies, sequencing files, and bioinformatics pipeline execution, and
-runs self-hosted on your own infrastructure.
+**Self-hosted sequencing and bioinformatics work management.** SeqDesk supports sequencing-center
+request/delivery workflows, shared-lab sequencing and analysis, and researcher-first analysis of
+uploaded or imported data, all from one application and one release.
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21806366.svg)](https://doi.org/10.5281/zenodo.21806366)
 
@@ -132,10 +132,19 @@ curl -fsSLo /tmp/seqdesk-install.sh https://seqdesk.org/install.sh &&
 bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"
 ```
 
+The wizard asks how the team works and explains three choices: **Sequencing
+Center** for requester-to-facility handoffs, **Shared Lab** for one team sharing
+sequencing and analysis work, or **Research Workbench** for importing/uploading
+existing data into private analysis workspaces. These are deployment profiles
+of the same application—not separate installers. It then recommends only the
+storage, workflow-runtime, enrollment, and onboarding choices relevant to the
+selected profile and shows a redacted plan before applying anything.
+
 ### Configure Data Storage after installation
 
-Choose the existing absolute directory that SeqDesk should scan for sequencing
-files. The installer creates a writable starting directory under the install:
+The guided installer chooses and validates a managed data root outside the
+application directory. Verify that path after installation, or deliberately
+replace it with an existing absolute directory:
 
 ```bash
 seqdesk storage configure "$HOME/seqdesk/data"
