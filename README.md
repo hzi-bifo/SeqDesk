@@ -140,6 +140,24 @@ of the same application—not separate installers. It then recommends only the
 storage, workflow-runtime, enrollment, and onboarding choices relevant to the
 selected profile and shows a redacted plan before applying anything.
 
+Use this quick rule when selecting the mode:
+
+- Choose **Sequencing Center** when outside researchers submit work to a
+  separate sequencing team.
+- Choose **Shared Lab** when the same lab members create samples, operate
+  sequencing, and run analyses; administrators additionally manage accounts,
+  storage, workflows, credentials, and updates.
+- Choose **Research Workbench** when the normal starting point is an upload or
+  public-repository import and private workspace analysis, not a sequencing
+  request.
+
+The guided sequence is profile → access scope → PostgreSQL → workflow/runtime
+needs → managed storage → first administrator → optional content → redacted
+review. PostgreSQL/Conda provisioning, release installation, migrations, and
+service changes begin only after the user confirms that review. Existing
+installations are sent to Update, Reconfigure, Diagnose, or recovery instead of
+being asked to choose a new mode.
+
 ### Configure Data Storage after installation
 
 The guided installer chooses and validates a managed data root outside the
@@ -308,11 +326,12 @@ another user: SeqDesk will not send generated credentials to an endpoint it does
 not own, so it warns, skips that socket, and provisions its own private cluster
 instead. Pass `--database-url` in that case only if you want that server used.
 
-Fresh installs now default to the smaller core application. Add
-`--with-pipelines` only on a Linux host that should also provision
-Conda, Java, and Nextflow during the initial install. You can leave it off and
-provision the same managed runtime later with
-`seqdesk pipelines install <name> --runtime`.
+The guided installer explains whether workflow execution is optional
+(Sequencing Center) or recommended (Shared Lab and Research Workbench) and asks
+whether to prepare it now. For an unattended install, add `--with-pipelines`
+when this Linux host should also provision Conda, Java, and Nextflow. You can
+leave it off and provision the same managed runtime later with `seqdesk
+pipelines install <name> --runtime`.
 
 Near the end the installer asks `Start SeqDesk with PM2 for auto-restart?
 (recommended)`. Accepting it starts the app, saves the PM2 process list, and
@@ -326,12 +345,15 @@ launching the app — the private cluster is deliberately not a systemd service,
 so after a reboot PM2 resurrects the app and the app starts its own database.
 Installs that reuse an existing PostgreSQL server get no such snippet.
 
-If you left an account password blank, the installer generated a strong one and
-prints it exactly once, in the **Login** block near the end of the run. It is
-deliberately kept out of the install log, so copy it before closing the
-terminal. A generated password applies to an account the install actually
-creates; on a database that already holds that account, the account's existing
-password stays in force — see
+If you left the administrator password blank, the installer generates a strong
+one and prints it exactly once, in the **Login** block near the end of the run.
+It is deliberately kept out of the install log and is disclosed only after a
+database check confirms the intended administrator role and that the generated
+password matches the stored hash. Copy it before closing the terminal. The
+summary also prints the local `reset-password` recovery command. A normal fresh
+install creates no generic researcher/member login; additional accounts are
+invited after the first administrator signs in. On a database that already
+holds the requested account, its existing password stays in force — see
 [Reinstalling on a host that already ran SeqDesk](#reinstalling-on-a-host-that-already-ran-seqdesk).
 
 When installation finishes, verify the instance and open
@@ -389,10 +411,11 @@ refuses to run as root, and the installer will report stale root services,
 ownership problems, port conflicts, and the relevant Homebrew log path with
 repair commands.
 
-Fresh installs default to the smaller core application. Add `--with-pipelines`
-only when this Mac should also provision Conda/Nextflow workflows. If
-`~/seqdesk` already exists, use a different directory or follow the
-reconfiguration guide—do not overwrite it casually.
+The guided installer recommends workflow execution for Shared Lab and Research
+Workbench and leaves it optional for Sequencing Center. For an unattended
+install, add `--with-pipelines` when this Mac should also provision
+Conda/Nextflow workflows. If `~/seqdesk` already exists, use a different
+directory or follow the reconfiguration guide—do not overwrite it casually.
 
 The PM2 prompt and the one-time display of any generated account password work
 exactly as described in the Linux quick start above.
@@ -613,8 +636,8 @@ green.
 The Ubuntu install workflow additionally runs the downloaded installer once
 under PM2; its npm-launcher and source-install jobs start the app directly.
 Every reviewer installation-matrix job that installs SeqDesk, required and
-extended alike, also authenticates the seeded administrator and researcher
-against the running app. The one exception is the extended native-Windows job:
+extended alike, also authenticates the configured bootstrap accounts against
+the running app. The one exception is the extended native-Windows job:
 it installs the launcher only, to confirm that it refuses to run and points at
 WSL.
 
@@ -641,11 +664,12 @@ instance must stay on its last SQLite-compatible release until it is migrated to
 PostgreSQL.
 
 **How do I log in the first time?** Browse to the URL printed by the installer
-and use the administrator account chosen or generated by the guided wizard. That
-holds for a first install, which starts from an empty database. Unattended
-installs that do not supply bootstrap users fall back to `admin@example.com` /
-`admin` and `user@example.com` / `user`; **change or remove them immediately**
-before allowing other users to connect.
+and use the administrator account chosen by the guided wizard. If its password
+was generated, it appears once only after the installed account is verified;
+the local reset command appears beside it. Unattended installs also create one
+administrator with a generated strong password when no bootstrap credential is
+supplied. Supported packaged installs do not create a generic second account or
+activate the development-only `admin`/`user` passwords.
 
 **I installed again and the credentials from the new run are rejected.** The
 install reused a database that already contained those accounts, so their
