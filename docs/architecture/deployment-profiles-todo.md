@@ -54,6 +54,10 @@ those endpoints remain unavailable in Research Workbench. Existing
 order/study-based demo and example-data loaders now require catalog
 administration and are unavailable in Workbench; a future Workbench evaluation
 option must create workspace-owned data instead of leaking the facility model.
+Sidebar counts, entity search, and recent activity now derive their queries from
+capability scopes: Sequencing Center requesters see their own records, Shared
+Lab members see installation-wide work, and the facility sidebar returns `404`
+in Workbench.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -286,7 +290,7 @@ Convert APIs before relying on capability-based UI.
 - [x] Convert study list/detail/create/update/delete and publishing access.
 - [x] Convert sample CRUD, sample-study assignment, and table/export access.
 - [x] Convert sequencing discovery, upload, run assignment, streaming, visibility, and delivery operations.
-- [ ] Convert sidebar entity/count queries to use centralized resource scopes.
+- [x] Convert sidebar entity/count queries to use centralized resource scopes.
 - [ ] Convert tickets/notes/mentions and make the domain optional outside Sequencing Center.
 
 ### Analysis

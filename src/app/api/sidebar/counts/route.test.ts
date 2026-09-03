@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     order: { count: vi.fn() },
     study: { count: vi.fn() },
@@ -23,11 +24,19 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 import { GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 describe("GET /api/sidebar/counts", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
   it("returns 401 when no session", async () => {
@@ -86,5 +95,48 @@ describe("GET /api/sidebar/counts", () => {
       submissions: 7,
       analysis: 2,
     });
+  });
+
+  it("returns installation-wide operational counts for a Shared Lab member", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER", isDemo: false },
+    });
+    mocks.db.order.count.mockResolvedValue(10);
+    mocks.db.study.count.mockResolvedValue(5);
+    mocks.db.read.count.mockResolvedValue(100);
+    mocks.db.submission.count.mockResolvedValue(7);
+    mocks.db.pipelineRun.count.mockResolvedValue(2);
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      orders: 10,
+      studies: 5,
+      files: 100,
+      submissions: 7,
+      analysis: 2,
+    });
+    expect(mocks.db.order.count).toHaveBeenCalledWith({ where: {} });
+    expect(mocks.db.pipelineRun.count).toHaveBeenCalledWith({
+      where: { status: { in: ["pending", "queued", "running"] } },
+    });
+  });
+
+  it("returns 404 for the facility sidebar in Research Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER", isDemo: false },
+    });
+
+    const response = await GET();
+
+    expect(response.status).toBe(404);
+    expect(mocks.db.order.count).not.toHaveBeenCalled();
   });
 });

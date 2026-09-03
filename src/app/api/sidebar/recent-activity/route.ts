@@ -4,25 +4,37 @@ import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { PIPELINE_REGISTRY } from "@/lib/pipelines";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ordersAccess = decideServerCapability(session, "orders.read");
+  if (!ordersAccess.allowed) {
+    return authorizationErrorResponse(ordersAccess);
   }
 
   try {
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    const userId = session.user.id;
-    const isDemoUser = session.user.isDemo === true;
+    const userId = ordersAccess.principal!.id;
+    const isDemoUser = ordersAccess.principal?.isDemo === true;
+    const canReadAllAnalysis = decideServerCapability(
+      session,
+      "analysis.read_all"
+    ).allowed;
+    const canReadOwnAnalysis = decideServerCapability(
+      session,
+      "analysis.read_own"
+    ).allowed;
+    const canSubmit = decideServerCapability(session, "publishing.submit").allowed;
     const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
     const [runs, submissions] = await Promise.all([
-      isDemoUser
+      isDemoUser || !canReadOwnAnalysis
         ? Promise.resolve([])
         : db.pipelineRun.findMany({
-            where: isFacilityAdmin ? {} : { study: { userId } },
+            where: canReadAllAnalysis ? {} : { study: { userId } },
             select: {
               id: true,
               runNumber: true,
@@ -39,7 +51,7 @@ export async function GET() {
             orderBy: { createdAt: "desc" },
             take: 3,
           }),
-      isFacilityAdmin
+      canSubmit
         ? (demoWsUserIds
             ? []
             : db.submission.findMany({

@@ -3,18 +3,29 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 // GET /api/sidebar/entities - Get recent orders and studies for the entity switcher
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const ordersAccess = decideServerCapability(session, "orders.read");
+  if (!ordersAccess.allowed) {
+    return authorizationErrorResponse(ordersAccess);
   }
 
   try {
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
-    const userId = session.user.id;
+    const userId = ordersAccess.principal!.id;
+    const canReadAllOrders = decideServerCapability(
+      session,
+      "orders.read_all"
+    ).allowed;
+    const canReadAllStudies = decideServerCapability(
+      session,
+      "studies.read_all"
+    ).allowed;
     const demoWsUserIds = await getDemoFacilityWorkspaceUserIds(session);
 
     const url = new URL(request.url);
@@ -23,7 +34,7 @@ export async function GET(request: Request) {
     // Fetch recent orders
     const orders = await db.order.findMany({
       where: {
-        ...(isFacilityAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId }),
+        ...(canReadAllOrders ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId }),
         ...(search
           ? {
               OR: [
@@ -46,7 +57,7 @@ export async function GET(request: Request) {
     // Fetch recent studies
     const studies = await db.study.findMany({
       where: {
-        ...(isFacilityAdmin ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId }),
+        ...(canReadAllStudies ? (demoWsUserIds ? { userId: { in: demoWsUserIds } } : {}) : { userId }),
         ...(search
           ? {
               OR: [

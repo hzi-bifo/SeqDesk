@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     order: { findMany: vi.fn() },
     study: { findMany: vi.fn() },
@@ -21,11 +22,19 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 import { GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 describe("GET /api/sidebar/entities", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
   it("returns 401 when no session", async () => {
@@ -96,5 +105,21 @@ describe("GET /api/sidebar/entities", () => {
     const orderCall = mocks.db.order.findMany.mock.calls[0][0];
     expect(orderCall.where.OR).toBeDefined();
     expect(orderCall.where.OR[0].name.contains).toBe("mysearch");
+  });
+
+  it("does not add an owner filter for a Shared Lab member", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.db.order.findMany.mockResolvedValue([]);
+    mocks.db.study.findMany.mockResolvedValue([]);
+
+    await GET(new NextRequest("http://localhost:3000/api/sidebar/entities"));
+
+    expect(mocks.db.order.findMany.mock.calls[0][0].where).toEqual({});
+    expect(mocks.db.study.findMany.mock.calls[0][0].where).toEqual({});
   });
 });

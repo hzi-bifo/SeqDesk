@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     pipelineRun: { findMany: vi.fn() },
     submission: { findMany: vi.fn() },
@@ -22,6 +23,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/pipelines", () => ({
   PIPELINE_REGISTRY: {
     fastqc: { name: "FastQC" },
@@ -29,10 +34,14 @@ vi.mock("@/lib/pipelines", () => ({
 }));
 
 import { GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 describe("GET /api/sidebar/recent-activity", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
   it("returns 401 when no session", async () => {
@@ -103,5 +112,22 @@ describe("GET /api/sidebar/recent-activity", () => {
     const body = await response.json();
     expect(body.pipelineRuns).toEqual([]);
     expect(body.archiveUploads).toEqual([]);
+  });
+
+  it("shows installation-wide activity to a Shared Lab member", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER", isDemo: false },
+    });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([]);
+    mocks.db.submission.findMany.mockResolvedValue([]);
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    expect(mocks.db.pipelineRun.findMany.mock.calls[0][0].where).toEqual({});
+    expect(mocks.db.submission.findMany).toHaveBeenCalledTimes(1);
   });
 });
