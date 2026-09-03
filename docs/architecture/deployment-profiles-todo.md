@@ -4,11 +4,14 @@ Companion to `docs/architecture/deployment-profiles-plan.md`.
 
 This checklist implements the agreed model:
 
+- SeqDesk remains one application with one release artifact, one npm launcher, one updater, and one canonical installer.
+- The installer selects one of three profiles; the profiles are not separately maintained installers or builds.
 - Sequencing Center has researchers, facility operators, and administrators.
 - Shared Lab has members and one or more administrators. All members can perform ordinary scientific and sequencing work.
 - Research Workbench has members and one or more administrators. Members work in their own or explicitly shared workspaces.
 - Every profile uses the same sign-in mechanism. Account permissions, not separate login forms, determine access.
 - Administrators can configure the installation. Administrative status does not replace resource ownership or automatically expose private Workbench data.
+- A profile is a server-enforced runtime policy, not merely a different sidebar or cosmetic view.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -39,6 +42,15 @@ Likely areas:
 - [ ] Add database merge/save handling in `src/lib/config/database-merge.ts` if profile editing is supported after installation.
 - [ ] Add install-profile coverage in `src/lib/install-profile/coverage.ts` and the installer apply code.
 - [ ] Add the selected profile to `seqdesk.config.example.json`.
+- [ ] Keep one application version and one release tarball for all profiles.
+- [ ] Keep `scripts/install-dist.sh` as the single canonical installer implementation.
+- [ ] Add an interactive installer question for `sequencing-center`, `shared-lab`, or `research-workbench`.
+- [ ] Add one non-interactive installer option, for example `--profile <id>`, for automation.
+- [ ] Allow hosted install profiles to preselect the deployment profile through the same canonical configuration field.
+- [ ] If profile-specific install URLs or commands are added, make them thin wrappers that call the canonical installer; do not copy the installer logic.
+- [ ] Preserve the selected profile across update and rollback operations.
+- [ ] Use one database schema and migration chain for all profiles.
+- [ ] Install/download large optional pipeline packages, databases, instrument integrations, and import tools only when required by the selected profile/modules.
 - [ ] Map legacy `lab` to `sequencing-center` and legacy `workbench` to `research-workbench`.
 - [ ] Deprecate, but initially support, `NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY`.
 - [ ] Ensure authorization reads only the server-resolved profile, never a client-controlled or `NEXT_PUBLIC_*` value.
@@ -48,6 +60,9 @@ Likely areas:
 Acceptance:
 
 - [ ] Existing installations behave exactly as before without configuration changes.
+- [ ] The same release artifact can be installed successfully as each of the three profiles.
+- [ ] No profile uses a copied or independently versioned installer.
+- [ ] Updating an installation changes the application version without changing its selected profile.
 - [ ] Server routes, APIs, landing redirects, and client navigation agree on the active profile.
 - [ ] Profile resolution and legacy aliases have focused tests.
 
@@ -85,6 +100,10 @@ Acceptance:
 ## Milestone 3 — Convert authorization call sites
 
 Convert APIs before relying on capability-based UI.
+
+- [ ] Treat a disabled domain as unavailable on the server even if its code is present in the shared artifact.
+- [ ] Apply profile and capability checks to API routes, server-rendered route layouts, background-job entry points, and resource queries.
+- [ ] Deny access when the profile or permission cannot be resolved; do not fall back to the broadest profile.
 
 ### System administration
 
@@ -249,6 +268,9 @@ Acceptance journey:
 ## Milestone 10 — Release readiness and cleanup
 
 - [ ] Add one clean-install profile fixture for each deployment profile.
+- [ ] Run those three fixtures against the exact same release tarball.
+- [ ] Verify one checksum, one update feed, and one rollback path for the shared artifact.
+- [ ] Verify profile-specific optional dependencies are installed only when selected.
 - [ ] Add the three mandatory end-to-end journeys to release gates.
 - [ ] Test supported profile transitions and rollback behavior.
 - [ ] Confirm profile changes never delete hidden-domain data or silently broaden access.

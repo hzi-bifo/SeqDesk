@@ -18,6 +18,37 @@ A deployment profile is not another feature flag. It selects the product's workf
 
 The recommended implementation is incremental. Keep the current order/study workflow working, centralize profile and authorization decisions first, then complete the existing Workbench domain and connect it to the pipeline engine through a generic run-target boundary. Avoid a big-bang rewrite of the current data model or route tree.
 
+### Packaging decision: one application and one installer
+
+SeqDesk should remain **one application with one codebase, one version, one release tarball, one npm launcher, one updater, and one canonical installer**. The installer selects and persists one of the three deployment profiles; it must not install three separately maintained application variants.
+
+The three profiles are installation presets and runtime policies, not separate products:
+
+```text
+one SeqDesk release artifact
+        |
+        +-- profile: sequencing-center
+        +-- profile: shared-lab
+        +-- profile: research-workbench
+```
+
+The interactive installer should ask which profile to use. Automated and hosted-profile installations should pass the same choice non-interactively. All paths must invoke the same installer and consume the same signed/checksummed release artifact. Convenience links or commands may preselect a profile, but they must be thin entry points into the canonical installer rather than copied installer scripts.
+
+This is the recommended approach for a solo developer because fixes, migrations, dependency updates, security patches, release verification, and rollback behavior stay unified. Three installers or build flavors would multiply paths that can drift and require every release problem to be diagnosed across several artifacts.
+
+“One application” does not mean “only change what the browser displays.” A profile must be enforced on the server:
+
+- page layouts and API routes reject disabled domains;
+- capability checks authorize every protected operation;
+- database queries apply the profile's ownership scope;
+- background jobs verify the initiating principal and target;
+- navigation and terminology reflect the same server-resolved profile;
+- administrators cannot enable a hidden client control to bypass a disabled domain.
+
+Profile-specific large assets remain optional. For example, pipeline packages, reference databases, instrument integrations, and import tools should be downloaded or configured only when the selected profile/modules require them. This preserves one application artifact without forcing every installation to provision every operational dependency.
+
+Separate artifacts should be reconsidered only if a future hard requirement demands different operating-system dependencies, independent release schedules, legally incompatible distribution, or a high-assurance deployment that cannot contain dormant code. None of the three current experiences requires that complexity.
+
 ## Why this separation is needed
 
 The current application has the beginnings of the desired split, but the boundaries are incomplete:
@@ -125,6 +156,8 @@ For the migration period, translate the existing values as follows:
 - `NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY` -> deprecated compatibility alias.
 
 The profile should be restart-required initially. Changing profiles on an installation with existing data can hide workflows or change access scope, so an unrestricted settings toggle is unsafe. A future migration wizard can support deliberate transitions.
+
+The installer and updater remain profile-neutral. Installation writes the selected profile into canonical configuration, and the application resolves it at runtime. Updating SeqDesk replaces the shared application release while preserving the installation's selected profile and profile-managed settings.
 
 ### 2. Separate profiles, domains, feature modules, and capabilities
 
@@ -308,6 +341,7 @@ Exit condition: the current application behavior can be refactored without relyi
 - Add `deployment.profile` to application and install-profile configuration coverage.
 - Map legacy `lab` and `workbench` environment values.
 - Centralize landing-route selection, page-title selection, sidebar selection, and route-group guards.
+- Keep one release artifact and teach the existing installer to select/persist a profile interactively or through hosted configuration.
 - Keep `sequencing-center` as the default.
 
 Exit condition: one canonical profile drives server and client behavior; existing lab and Workbench surfaces still behave as before.
@@ -382,6 +416,7 @@ The second slice should introduce the capability API and convert one complete ve
 ## Migration and compatibility
 
 - Existing installations resolve to `sequencing-center` unless explicitly configured otherwise.
+- Existing installations and all three profiles use the same release artifact, installer, database migration chain, updater, and rollback mechanism.
 - No order, study, sample, sequencing, or pipeline-run data is rewritten merely by introducing profiles.
 - Legacy environment settings continue to resolve with a deprecation warning.
 - Profile changes are recorded with actor, timestamp, previous profile, and new profile.
@@ -434,6 +469,7 @@ Recommended initial answers are: shared-by-default Shared Lab work, keep stored 
 ## Explicit non-goals for the first milestones
 
 - Rewriting all existing pages or renaming all database models.
+- Creating separate application builds, tarballs, npm packages, installer copies, or updater channels for the three profiles.
 - Making every Shared Lab user an installation administrator.
 - Faking Workbench datasets as sequencing orders.
 - Supporting arbitrary local filesystem paths supplied by a browser.
