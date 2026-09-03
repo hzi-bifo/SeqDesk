@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
@@ -90,10 +91,18 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    if (session.user.role !== "FACILITY_ADMIN") {
+    const access = decideCapability(session, "sequencing.files.manage");
+    if (!access.allowed) {
       return NextResponse.json(
-        { error: "Only facility admins can access the file browser" },
-        { status: 403 }
+        {
+          error:
+            access.status === 404
+              ? "Not found"
+              : access.status === 401
+                ? "Unauthorized"
+                : "Forbidden",
+        },
+        { status: access.status }
       );
     }
 

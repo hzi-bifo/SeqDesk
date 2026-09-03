@@ -116,12 +116,18 @@ describe("sequencing delivery", () => {
   });
 
   it("applies customer and facility access rules for reads and artifacts", () => {
-    const owner = { id: "owner-1", role: "RESEARCHER" };
-    const otherUser = { id: "other-user", role: "RESEARCHER" };
-    const facilityAdmin = { id: "admin-1", role: "FACILITY_ADMIN" };
+    const owner = { id: "owner-1" };
+    const otherUser = { id: "other-user" };
+    const installationOperator = { id: "admin-1" };
 
     expect(canUserAccessDeliveryRead(owner, makeRead())).toBe(true);
-    expect(canUserAccessDeliveryRead(facilityAdmin, makeRead({ dataClass: "raw" }))).toBe(true);
+    expect(
+      canUserAccessDeliveryRead(
+        installationOperator,
+        makeRead({ dataClass: "raw" }),
+        { accessScope: "installation" }
+      )
+    ).toBe(true);
     expect(canUserAccessDeliveryRead(otherUser, makeRead())).toBe(false);
     expect(
       canUserAccessDeliveryRead(
@@ -143,8 +149,9 @@ describe("sequencing delivery", () => {
     expect(canUserAccessDeliveryArtifact(owner, makeArtifact())).toBe(true);
     expect(
       canUserAccessDeliveryArtifact(
-        facilityAdmin,
-        makeArtifact({ visibility: FACILITY_SEQUENCING_ARTIFACT_VISIBILITY })
+        installationOperator,
+        makeArtifact({ visibility: FACILITY_SEQUENCING_ARTIFACT_VISIBILITY }),
+        { accessScope: "installation" }
       )
     ).toBe(true);
     expect(canUserAccessDeliveryArtifact(otherUser, makeArtifact())).toBe(false);
@@ -256,7 +263,7 @@ describe("sequencing delivery", () => {
   it("checks order delivery access and publication state", async () => {
     mocks.db.order.findUnique.mockResolvedValueOnce(null);
     await expect(
-      assertSequencingDeliveryAccess("missing", { id: "owner-1", role: "RESEARCHER" })
+      assertSequencingDeliveryAccess("missing", { id: "owner-1" })
     ).resolves.toEqual({ status: 404, body: { error: "Sequencing Order not found" } });
 
     mocks.db.order.findUnique.mockResolvedValueOnce({
@@ -265,7 +272,7 @@ describe("sequencing delivery", () => {
       sequencingFilesPublishedAt: null,
     });
     await expect(
-      assertSequencingDeliveryAccess("order-1", { id: "owner-1", role: "RESEARCHER" })
+      assertSequencingDeliveryAccess("order-1", { id: "owner-1" })
     ).resolves.toEqual({
       status: 403,
       body: { error: "Sequencing files are not available for this sequencing order" },
@@ -277,7 +284,11 @@ describe("sequencing delivery", () => {
       sequencingFilesPublishedAt: null,
     });
     await expect(
-      assertSequencingDeliveryAccess("order-1", { id: "admin-1", role: "FACILITY_ADMIN" })
+      assertSequencingDeliveryAccess(
+        "order-1",
+        { id: "admin-1" },
+        { accessScope: "installation" }
+      )
     ).resolves.toBeNull();
 
     mocks.db.order.findUnique.mockResolvedValueOnce({
@@ -286,7 +297,7 @@ describe("sequencing delivery", () => {
       sequencingFilesPublishedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
     await expect(
-      assertSequencingDeliveryAccess("order-1", { id: "owner-1", role: "RESEARCHER" })
+      assertSequencingDeliveryAccess("order-1", { id: "owner-1" })
     ).resolves.toBeNull();
 
     mocks.db.order.findUnique.mockResolvedValueOnce({
@@ -295,7 +306,7 @@ describe("sequencing delivery", () => {
       sequencingFilesPublishedAt: new Date("2026-01-01T00:00:00.000Z"),
     });
     await expect(
-      assertSequencingDeliveryAccess("order-1", { id: "other-user", role: "RESEARCHER" })
+      assertSequencingDeliveryAccess("order-1", { id: "other-user" })
     ).resolves.toEqual({ status: 403, body: { error: "Forbidden" } });
   });
 

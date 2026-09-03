@@ -7,6 +7,7 @@ import path from "path";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   getSequencingFilesConfig: vi.fn(),
   scanDirectory: vi.fn(),
   db: {
@@ -29,6 +30,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/files/sequencing-config", () => ({
   getSequencingFilesConfig: mocks.getSequencingFilesConfig,
 }));
@@ -38,6 +43,7 @@ vi.mock("@/lib/files", () => ({
 }));
 
 import { GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 describe("GET /api/files", () => {
   const tempDirs: string[] = [];
@@ -48,6 +54,9 @@ describe("GET /api/files", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "admin-1",
@@ -76,11 +85,11 @@ describe("GET /api/files", () => {
     expect(await response.json()).toEqual({ error: "Unauthorized" });
   });
 
-  it("rejects non-admin requests", async () => {
+  it("rejects requests without sequencing file-management capability", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "user-1",
-        role: "USER",
+        role: "RESEARCHER",
       },
     });
 
@@ -88,8 +97,47 @@ describe("GET /api/files", () => {
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({
-      error: "Only facility admins can access the file browser",
+      error: "Forbidden",
     });
+  });
+
+  it("allows a Shared Lab member to use the installation file browser", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    mocks.getSequencingFilesConfig.mockResolvedValue({
+      dataBasePath: null,
+      config: {
+        allowedExtensions: [".fastq"],
+        scanDepth: 3,
+        ignorePatterns: [],
+      },
+    });
+
+    const response = await GET(new NextRequest("http://localhost:3000/api/files"));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      files: [],
+      error: "Data base path not configured",
+    });
+  });
+
+  it("returns not found when the sequencing-data module is unavailable", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await GET(new NextRequest("http://localhost:3000/api/files"));
+
+    expect(response.status).toBe(404);
+    expect(mocks.scanDirectory).not.toHaveBeenCalled();
   });
 
   it("returns an empty payload when the base path is not configured", async () => {

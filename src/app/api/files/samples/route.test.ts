@@ -72,7 +72,7 @@ describe("GET /api/files/samples", () => {
     expect(data.error).toBe("Unauthorized");
   });
 
-  it("returns 403 when user is not FACILITY_ADMIN", async () => {
+  it("returns 403 without sequencing file-management capability", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -82,7 +82,7 @@ describe("GET /api/files/samples", () => {
 
     expect(response.status).toBe(403);
     const data = await response.json();
-    expect(data.error).toBe("Only facility admins can access this");
+    expect(data.error).toBe("Forbidden");
   });
 
   it("filters samples needing R1 files", async () => {

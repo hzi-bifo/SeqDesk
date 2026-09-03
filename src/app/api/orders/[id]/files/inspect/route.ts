@@ -6,6 +6,7 @@ import path from "path";
 import readline from "readline";
 import { createGunzip } from "zlib";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
 import { hasAllowedExtension, safeJoin } from "@/lib/files/paths";
@@ -155,7 +156,13 @@ export async function GET(
       );
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+    const manageFiles = decideCapability(session, "sequencing.files.manage");
+    if (!manageFiles.allowed && manageFiles.status !== 403) {
+      return NextResponse.json(
+        { error: manageFiles.status === 404 ? "Not found" : "Unauthorized" },
+        { status: manageFiles.status }
+      );
+    }
 
     const read = await db.read.findFirst({
       where: {
@@ -192,7 +199,10 @@ export async function GET(
       },
     });
 
-    if (!read || (!isFacilityAdmin && !canUserAccessDeliveryRead(session.user, read))) {
+    if (
+      !read ||
+      (!manageFiles.allowed && !canUserAccessDeliveryRead(session.user, read))
+    ) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 

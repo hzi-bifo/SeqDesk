@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { safeJoin, hasAllowedExtension } from "@/lib/files/paths";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
@@ -39,6 +40,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const manageFiles = decideCapability(session, "sequencing.files.manage");
+    if (!manageFiles.allowed && manageFiles.status !== 403) {
+      return NextResponse.json(
+        { error: manageFiles.status === 404 ? "Not found" : "Unauthorized" },
+        { status: manageFiles.status }
+      );
+    }
+
     const filePath = request.nextUrl.searchParams.get("path");
     if (!filePath) {
       return NextResponse.json(
@@ -67,7 +76,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
     const [readRecord, assemblyRecord, artifactRecord] = await Promise.all([
       db.read.findFirst({
         where: {
@@ -159,7 +167,7 @@ export async function GET(request: NextRequest) {
       ? hasAllowedExtension(filePath, ALLOWED_ASSEMBLY_EXTENSIONS)
       : isRegisteredArtifactFile
         ? hasAllowedExtension(filePath, CUSTOMER_ARTIFACT_EXTENSIONS)
-        : isFacilityAdmin && hasAllowedExtension(filePath, CUSTOMER_ARTIFACT_EXTENSIONS)
+        : manageFiles.allowed && hasAllowedExtension(filePath, CUSTOMER_ARTIFACT_EXTENSIONS)
           ? true
           : hasAllowedExtension(filePath, config.allowedExtensions);
 
@@ -186,7 +194,7 @@ export async function GET(request: NextRequest) {
     const allowUserAssemblyDownload =
       extraSettings.allowUserAssemblyDownload === true;
 
-    if (!isFacilityAdmin) {
+    if (!manageFiles.allowed) {
       if (assemblyRecord && !allowUserAssemblyDownload) {
         return NextResponse.json(
           { error: "Assembly downloads are disabled by the facility administrator." },

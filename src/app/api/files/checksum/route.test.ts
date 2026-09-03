@@ -52,7 +52,7 @@ describe("POST /api/files/checksum", () => {
     mocks.db.read.update.mockResolvedValue(null);
   });
 
-  it("rejects unauthenticated and non-admin requests", async () => {
+  it("rejects unauthenticated requests and callers without file-management capability", async () => {
     mocks.getServerSession.mockResolvedValueOnce(null);
 
     const unauthorized = await POST(
@@ -66,7 +66,7 @@ describe("POST /api/files/checksum", () => {
     mocks.getServerSession.mockResolvedValueOnce({
       user: {
         id: "user-1",
-        role: "USER",
+        role: "RESEARCHER",
       },
     });
 
@@ -78,7 +78,7 @@ describe("POST /api/files/checksum", () => {
     );
     expect(forbidden.status).toBe(403);
     expect(await forbidden.json()).toEqual({
-      error: "Only facility admins can calculate checksums",
+      error: "Forbidden",
     });
   });
 

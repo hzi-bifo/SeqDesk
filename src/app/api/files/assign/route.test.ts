@@ -104,7 +104,7 @@ describe("POST /api/files/assign", () => {
     mocks.getServerSession.mockResolvedValueOnce({
       user: {
         id: "user-1",
-        role: "USER",
+        role: "RESEARCHER",
       },
     });
 

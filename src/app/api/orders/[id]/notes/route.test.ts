@@ -3,6 +3,8 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
+  notifyOrderUpdatedInApp: vi.fn(),
   db: {
     order: {
       findUnique: vi.fn(),
@@ -26,11 +28,23 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
+vi.mock("@/lib/notifications/in-app", () => ({
+  notifyOrderUpdatedInApp: mocks.notifyOrderUpdatedInApp,
+}));
+
 import { GET, PUT } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 describe("/api/orders/[id]/notes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       extraSettings: JSON.stringify({
         orderNotesEnabled: true,
@@ -102,6 +116,74 @@ describe("/api/orders/[id]/notes", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: "Forbidden",
     });
+  });
+
+  it("lets a Shared Lab member read and update another member's project notes", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "member-2",
+        role: "RESEARCHER",
+      },
+    });
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      userId: "member-1",
+      notes: "Shared note",
+      notesEditedAt: null,
+      notesEditedById: null,
+      notesEditedBy: null,
+    });
+    mocks.db.order.update.mockResolvedValue({
+      notes: "Updated together",
+      notesEditedAt: new Date("2026-03-12T11:00:00.000Z"),
+      notesEditedById: "member-2",
+      notesEditedBy: null,
+    });
+
+    const readResponse = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1/notes"),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+    expect(readResponse.status).toBe(200);
+
+    const updateResponse = await PUT(
+      new NextRequest("http://localhost:3000/api/orders/order-1/notes", {
+        method: "PUT",
+        body: JSON.stringify({ notes: "Updated together" }),
+        headers: { "Content-Type": "application/json" },
+      }),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(updateResponse.status).toBe(200);
+    expect(mocks.db.order.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          notes: "Updated together",
+          notesEditedById: "member-2",
+        }),
+      })
+    );
+  });
+
+  it("returns not found for notes when facility intake is unavailable", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await GET(
+      new NextRequest("http://localhost:3000/api/orders/order-1/notes"),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(404);
+    expect(mocks.db.order.findUnique).not.toHaveBeenCalled();
   });
 
   it("updates notes for an accessible order", async () => {

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability, type CapabilityDecision } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { notifyOrderUpdatedInApp } from "@/lib/notifications/in-app";
 
 function parseExtraSettings(raw: string | null | undefined): Record<string, unknown> {
@@ -74,12 +76,6 @@ async function fetchOrderWithoutNotes(orderId: string) {
 
 type OrderWithNotes = NonNullable<Awaited<ReturnType<typeof fetchOrderWithNotes>>>;
 type OrderWithoutNotes = NonNullable<Awaited<ReturnType<typeof fetchOrderWithoutNotes>>>;
-type OrderAccessSession = {
-  user?: {
-    id?: string | null;
-    role?: string | null;
-  };
-} | null;
 
 async function resolveOrderWithNotesState(orderId: string): Promise<{
   order: OrderWithNotes | OrderWithoutNotes | null;
@@ -98,8 +94,34 @@ async function resolveOrderWithNotesState(orderId: string): Promise<{
   }
 }
 
-function canAccessOrder(session: OrderAccessSession, orderUserId: string) {
-  return session?.user?.role === "FACILITY_ADMIN" || session?.user?.id === orderUserId;
+function decideOrderReadAccess(
+  session: Parameters<typeof decideCapability>[0]
+): CapabilityDecision {
+  const profile = getServerDeploymentProfile();
+  const readAll = decideCapability(session, "orders.read_all", profile);
+  return readAll.allowed
+    ? readAll
+    : decideCapability(session, "orders.read", profile);
+}
+
+function deniedOrderResponse(decision: CapabilityDecision) {
+  const error =
+    decision.status === 404
+      ? "Not found"
+      : decision.status === 401
+        ? "Unauthorized"
+        : "Forbidden";
+  return NextResponse.json({ error }, { status: decision.status });
+}
+
+function canAccessOrder(decision: CapabilityDecision, orderUserId: string) {
+  return Boolean(
+    decision.allowed &&
+      decision.grant &&
+      decision.principal &&
+      (decision.grant.scope === "installation" ||
+        decision.principal.id === orderUserId)
+  );
 }
 
 async function getOrderNotesEnabled(): Promise<boolean> {
@@ -124,6 +146,10 @@ export async function GET(
     }
 
     const { id } = await params;
+    const access = decideOrderReadAccess(session);
+    if (!access.allowed || !access.grant || !access.principal) {
+      return deniedOrderResponse(access);
+    }
     const [{ order, notesSupported }, notesEnabled] = await Promise.all([
       resolveOrderWithNotesState(id),
       getOrderNotesEnabled(),
@@ -133,7 +159,7 @@ export async function GET(
       return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
-    if (!canAccessOrder(session, order.userId)) {
+    if (!canAccessOrder(access, order.userId)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -174,6 +200,10 @@ export async function PUT(
     }
 
     const { id } = await params;
+    const access = decideOrderReadAccess(session);
+    if (!access.allowed || !access.grant || !access.principal) {
+      return deniedOrderResponse(access);
+    }
     const body = await request.json();
     const { notes } = body as { notes?: unknown };
     const notesEnabled = await getOrderNotesEnabled();
@@ -191,7 +221,7 @@ export async function PUT(
       return NextResponse.json({ error: "Sequencing Order not found" }, { status: 404 });
     }
 
-    if (!canAccessOrder(session, order.userId)) {
+    if (!canAccessOrder(access, order.userId)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

@@ -28,9 +28,12 @@ readiness are implemented. A unified question engine, resumable apply
 checkpoints, remaining domain-by-domain capability migration, and the full
 release matrix remain open. The facility pipeline-run API/UI slice now uses
 separate capabilities for execution, global pipeline configuration, result
-resolution, own/all cancellation, and shared-data purge. A central server route
-map returns `404` for unavailable Workbench/sequencing/support domains, so
-hidden navigation is not the only profile boundary.
+resolution, own/all cancellation, and shared-data purge. Order/project CRUD,
+notes, sequencing operations, inspection, delivery, preview, and download paths
+now honor profile resource scopes, including installation-wide Shared Lab
+access. A central server route map returns `404` for unavailable
+Workbench/sequencing/support domains, so hidden navigation is not the only
+profile boundary.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -256,10 +259,10 @@ Convert APIs before relying on capability-based UI.
 
 ### Facility and sample operations
 
-- [ ] Convert order list/detail/create/update/delete access and visibility filters.
+- [x] Convert order list/detail/create/update/delete access and visibility filters.
 - [ ] Convert study list/detail/create/update/delete and publishing access.
 - [ ] Convert sample CRUD, sample-study assignment, and table/export access.
-- [ ] Convert sequencing discovery, upload, run assignment, streaming, visibility, and delivery operations.
+- [x] Convert sequencing discovery, upload, run assignment, streaming, visibility, and delivery operations.
 - [ ] Convert sidebar entity/count queries to use centralized resource scopes.
 - [ ] Convert tickets/notes/mentions and make the domain optional outside Sequencing Center.
 

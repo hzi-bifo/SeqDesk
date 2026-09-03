@@ -6,6 +6,7 @@ import path from "path";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   isDemoSession: vi.fn(),
   getSequencingFilesConfig: vi.fn(),
   hasAllowedExtension: vi.fn(),
@@ -30,6 +31,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/demo/server", () => ({
   isDemoSession: mocks.isDemoSession,
 }));
@@ -44,6 +49,7 @@ vi.mock("@/lib/files/paths", () => ({
 }));
 
 import { GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 describe("GET /api/orders/[id]/files/inspect", () => {
   const tempDirs: string[] = [];
@@ -54,6 +60,9 @@ describe("GET /api/orders/[id]/files/inspect", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.getServerSession.mockResolvedValue({
       user: {
         id: "admin-1",
@@ -232,6 +241,73 @@ describe("GET /api/orders/[id]/files/inspect", () => {
 
     expect(response.status).toBe(403);
     expect(await response.json()).toEqual({ error: "Access denied" });
+  });
+
+  it("lets a Shared Lab member inspect another member's unpublished raw reads", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "member-2",
+        role: "RESEARCHER",
+      },
+    });
+    mocks.db.read.findFirst.mockResolvedValue({
+      id: "read-1",
+      file1: "sample_R1.fastq",
+      file2: null,
+      checksum1: null,
+      checksum2: null,
+      readCount1: null,
+      readCount2: null,
+      dataClass: "raw",
+      dataClassSource: "manual",
+      isActive: true,
+      sample: {
+        id: "sample-1",
+        sampleId: "S1",
+        sampleTitle: null,
+        order: {
+          id: "order-1",
+          userId: "member-1",
+          sequencingFilesPublishedAt: null,
+        },
+      },
+    });
+    mocks.getSequencingFilesConfig.mockResolvedValue({
+      dataBasePath: null,
+      config: { allowedExtensions: [".fastq"] },
+    });
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost:3000/api/orders/order-1/files/inspect?path=sample_R1.fastq"
+      ),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Data base path not configured" });
+  });
+
+  it("returns not found when sequencing operations are unavailable", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost:3000/api/orders/order-1/files/inspect?path=sample_R1.fastq"
+      ),
+      { params: Promise.resolve({ id: "order-1" }) }
+    );
+
+    expect(response.status).toBe(404);
+    expect(mocks.db.read.findFirst).not.toHaveBeenCalled();
   });
 
   it("returns validation errors before touching the filesystem", async () => {

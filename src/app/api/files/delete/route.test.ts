@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     read: {
       findMany: vi.fn(),
@@ -27,6 +28,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/files/data-base-path", () => ({
   getResolvedDataBasePath: mocks.getResolvedDataBasePath,
 }));
@@ -41,6 +46,7 @@ vi.mock("fs/promises", () => ({
 }));
 
 import { POST } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 function makeRequest(body: unknown) {
   return new NextRequest("http://localhost:3000/api/files/delete", {
@@ -53,6 +59,9 @@ function makeRequest(body: unknown) {
 describe("POST /api/files/delete", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.getServerSession.mockResolvedValue({
       user: { id: "u1", role: "FACILITY_ADMIN" },
     });
@@ -72,6 +81,20 @@ describe("POST /api/files/delete", () => {
     const response = await POST(makeRequest({ filePaths: ["a.txt"] }));
 
     expect(response.status).toBe(401);
+  });
+
+  it("does not let a Shared Lab member permanently delete shared files", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+
+    const response = await POST(makeRequest({ filePaths: ["a.fastq"] }));
+
+    expect(response.status).toBe(403);
+    expect(mocks.rm).not.toHaveBeenCalled();
   });
 
   it("deletes files and returns count", async () => {

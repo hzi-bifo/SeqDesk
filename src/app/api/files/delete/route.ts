@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { getResolvedDataBasePath } from "@/lib/files/data-base-path";
 import { ensureWithinBase } from "@/lib/files";
@@ -11,8 +12,31 @@ import * as path from "path";
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
+  if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const fileAccess = decideCapability(session, "sequencing.files.manage");
+  if (!fileAccess.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          fileAccess.status === 404
+            ? "Not found"
+            : fileAccess.status === 401
+              ? "Unauthorized"
+              : "Forbidden",
+      },
+      { status: fileAccess.status }
+    );
+  }
+
+  const purgeAccess = decideCapability(session, "data.purge_shared");
+  if (!purgeAccess.allowed) {
+    return NextResponse.json(
+      { error: purgeAccess.status === 401 ? "Unauthorized" : "Forbidden" },
+      { status: purgeAccess.status }
+    );
   }
 
   try {

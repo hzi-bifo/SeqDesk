@@ -25,7 +25,10 @@ export const CUSTOMER_ARTIFACT_EXTENSIONS = [
 
 type DeliveryUser = {
   id: string;
-  role: string;
+};
+
+type DeliveryAccessOptions = {
+  accessScope?: "own" | "installation";
 };
 
 type DeliveryReadRecord = {
@@ -72,10 +75,6 @@ type DeliveryArtifactRecord = {
     sampleTitle: string | null;
   } | null;
 };
-
-function isFacilityAdmin(user: DeliveryUser): boolean {
-  return user.role === "FACILITY_ADMIN";
-}
 
 function isCleanedRead(read: { dataClass?: string | null; isActive?: boolean | null }): boolean {
   return read.isActive === true && (read.dataClass ?? "cleaned") === "cleaned";
@@ -147,9 +146,10 @@ function artifactFileSummary(
 
 export function canUserAccessDeliveryRead(
   user: DeliveryUser,
-  read: DeliveryReadRecord
+  read: DeliveryReadRecord,
+  options?: DeliveryAccessOptions
 ): boolean {
-  if (isFacilityAdmin(user)) return true;
+  if (options?.accessScope === "installation") return true;
   return (
     read.sample.order.userId === user.id &&
     read.sample.order.sequencingFilesPublishedAt !== null &&
@@ -159,9 +159,10 @@ export function canUserAccessDeliveryRead(
 
 export function canUserAccessDeliveryArtifact(
   user: DeliveryUser,
-  artifact: DeliveryArtifactRecord
+  artifact: DeliveryArtifactRecord,
+  options?: DeliveryAccessOptions
 ): boolean {
-  if (isFacilityAdmin(user)) return true;
+  if (options?.accessScope === "installation") return true;
   return (
     artifact.order.userId === user.id &&
     artifact.order.sequencingFilesPublishedAt !== null &&
@@ -394,7 +395,7 @@ export async function buildOrderSequencingDeliverySummary(
 export async function assertSequencingDeliveryAccess(
   orderId: string,
   user: DeliveryUser,
-  options?: { accessScope?: "own" | "installation" }
+  options?: DeliveryAccessOptions
 ) {
   const order = await db.order.findUnique({
     where: { id: orderId },
@@ -409,7 +410,7 @@ export async function assertSequencingDeliveryAccess(
     return { status: 404 as const, body: { error: "Sequencing Order not found" } };
   }
 
-  if (options?.accessScope === "installation" || isFacilityAdmin(user)) return null;
+  if (options?.accessScope === "installation") return null;
 
   if (order.userId !== user.id) {
     return { status: 403 as const, body: { error: "Forbidden" } };
