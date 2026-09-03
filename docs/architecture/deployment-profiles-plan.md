@@ -58,6 +58,28 @@ Those concepts happen to align in a large sequencing center, but they do not ali
 
 Making every user a `FACILITY_ADMIN` would be quick, but it would also expose infrastructure and secret-bearing settings. The capability model below avoids that.
 
+### Agreed account model
+
+All profiles use the same sign-in screen and account mechanism. “Login type” is not selected at sign-in; permissions are attached to the authenticated account.
+
+| Profile | Normal account | Elevated account | Scientific/operational behavior |
+| --- | --- | --- | --- |
+| Sequencing Center | Researcher | Facility Operator and Administrator | Researchers manage their requests; operators process facility work; administrators configure the installation |
+| Shared Lab | Member | Administrator | Every member can perform normal shared-lab sequencing and analysis work; administrators additionally configure the installation |
+| Research Workbench | Member | Administrator | Members operate on their own or shared workspaces; administrators configure the installation and do not automatically receive access to private research data |
+
+For Shared Lab specifically:
+
+- registration does not ask the user to choose “researcher” or “facility admin”;
+- the first account becomes an administrator;
+- administrators can promote or demote other accounts, so more than one administrator is supported;
+- the final administrator cannot be demoted or deleted until another administrator exists;
+- members can create and edit shared projects, samples, sequencing runs, data attachments, analyses, and workflow runs;
+- only administrators can manage accounts, installed/enabled pipeline packages, shared workflow catalog entries, instruments, storage roots, credentials, software updates, and global settings;
+- members may create personal workflows and select run parameters; “configure workflows” in the administrator sense means controlling the installation-wide approved catalog and defaults.
+
+The first implementation can map current roles through the capability layer (`RESEARCHER` -> member and `FACILITY_ADMIN` -> administrator/operator) without immediately rewriting stored users. An additive schema migration can later separate `systemRole` (`MEMBER` or `ADMIN`) from an optional facility workflow role (`REQUESTER` or `OPERATOR`).
+
 ## Architecture
 
 ### 1. Introduce a deployment-profile layer
