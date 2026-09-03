@@ -96,7 +96,9 @@ async function parseJson(response, context) {
 const args = parseArgs(process.argv.slice(2));
 const baseUrl = args["base-url"];
 const email = args.email;
-const password = args.password;
+// CI callers can keep credentials out of the process list. The command-line
+// option remains for local/manual compatibility.
+const password = args.password || process.env.SEQDESK_AUTH_E2E_PASSWORD;
 const expectedRole = args["expected-role"];
 const checkPath = args["check-path"] || "/orders";
 

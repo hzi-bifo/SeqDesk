@@ -12,8 +12,12 @@
     "url": "https://github.com/hzi-bifo/SeqDesk/issues"
   },
   "scripts": {
-    "sync-version": "node ./scripts/sync-version.js",
-    "prepublishOnly": "node ./scripts/sync-version.js",
+    "sync-version": "node ./scripts/sync-version.js && node ./scripts/sync-installer.js",
+    "check-version": "node ./scripts/sync-version.js --check",
+    "sync-installer": "node ./scripts/sync-installer.js",
+    "check-installer": "node ./scripts/sync-installer.js --check",
+    "prepack": "node ./scripts/sync-version.js --check && node ./scripts/sync-installer.js --check",
+    "prepublishOnly": "npm run sync-version && npm run check-installer",
     "release:check": "npm run sync-version && npm pack --dry-run",
     "release:publish": "npm run release:check && npm publish --access public"
   },
@@ -22,9 +26,11 @@
   },
   "files": [
     "bin/seqdesk.js",
+    "installer/install.sh",
     "README.md",
     "MANUAL_INSTALL.md",
-    "scripts/sync-version.js"
+    "scripts/sync-version.js",
+    "scripts/sync-installer.js"
   ],
   "engines": {
     "node": ">=22.13.0 <23 || >=24 <25"

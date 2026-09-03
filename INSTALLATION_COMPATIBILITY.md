@@ -69,7 +69,8 @@ Each job:
    PostgreSQL database;
 5. boots the packaged application and checks `/api/auth/providers` and
    `/api/setup/status`;
-6. authenticates the seeded facility administrator and researcher; and
+6. authenticates the single generated installation administrator and confirms
+   that no generic member account was created; and
 7. confirms that the installed version is exactly the candidate version.
 
 The pipeline job additionally lets the installer create its Conda environment,

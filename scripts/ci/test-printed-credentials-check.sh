@@ -34,7 +34,8 @@ const value = (name) => {
   return index === -1 ? null : args[index + 1];
 };
 const accepted = process.env.STUB_ACCEPTED_PASSWORD || "";
-if (value("password") === accepted) {
+const supplied = process.env.SEQDESK_AUTH_E2E_PASSWORD || value("password");
+if (supplied === accepted) {
   process.exit(0);
 }
 console.error(`Credentials login failed (401) for ${value("email")}`);

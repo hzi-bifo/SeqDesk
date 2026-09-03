@@ -22,6 +22,7 @@ interface SynchronizeOptions {
   rootPkgPath: string;
   citationPath: string;
   releaseDate: string;
+  check?: boolean;
   log: (message: string) => void;
 }
 
@@ -138,5 +139,24 @@ describe("release version synchronization", () => {
     expect(
       JSON.parse(readFileSync(fixture.launcherPkgPath, "utf8")).version,
     ).toBe("1.9.0");
+  });
+
+  it("fails a read-only release check without changing stale metadata", () => {
+    const fixture = makeFixture();
+
+    expect(() =>
+      synchronizeVersionMetadata({
+        ...fixture,
+        releaseDate: "2026-08-04",
+        check: true,
+        log: () => undefined,
+      }),
+    ).toThrow("Release version metadata is stale");
+    expect(
+      JSON.parse(readFileSync(fixture.launcherPkgPath, "utf8")).version,
+    ).toBe("1.9.0");
+    expect(readFileSync(fixture.citationPath, "utf8")).toContain(
+      "version: 1.9.0",
+    );
   });
 });

@@ -1431,6 +1431,53 @@ describe('seqdesk npm launcher demo-data dispatch', () => {
 });
 
 describe('seqdesk npm launcher installer dispatch', () => {
+  it('runs the version-matched bundled installer without downloading code', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seqdesk-launcher-bundled-'));
+    tempDirs.push(dir);
+    const packageDir = path.join(dir, 'package');
+    const fixtureLauncherPath = path.join(packageDir, 'bin', 'seqdesk.js');
+    const bundledInstallerPath = path.join(
+      packageDir,
+      'installer',
+      'install.sh'
+    );
+    const capturePath = path.join(dir, 'installer-capture.json');
+    fs.mkdirSync(path.dirname(fixtureLauncherPath), { recursive: true });
+    fs.mkdirSync(path.dirname(bundledInstallerPath), { recursive: true });
+    fs.copyFileSync(launcherPath, fixtureLauncherPath);
+    fs.copyFileSync(
+      path.resolve(process.cwd(), 'npm/seqdesk/package.json'),
+      path.join(packageDir, 'package.json')
+    );
+    fs.writeFileSync(
+      bundledInstallerPath,
+      [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        `node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify({script:process.argv[2],args:process.argv.slice(3)}))' ${JSON.stringify(capturePath)} "$0" "$@"`,
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    const childEnvironment = { ...process.env };
+    delete childEnvironment.SEQDESK_INSTALL_URL;
+
+    const result = spawnSync(
+      process.execPath,
+      [fixtureLauncherPath, '--without-pipelines', '--dir', path.join(dir, 'install')],
+      {
+        encoding: 'utf-8',
+        env: childEnvironment,
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(capturePath, 'utf8'))).toEqual({
+      script: fs.realpathSync(bundledInstallerPath),
+      args: ['--without-pipelines', '--dir', path.join(dir, 'install')],
+    });
+  });
+
   it.runIf(pythonPtyAvailable)(
     'preserves an interactive terminal after installer logging redirects stdout',
     () => {
@@ -1599,6 +1646,10 @@ describe('seqdesk npm launcher installer dispatch', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('--interactive');
     expect(result.stdout).toContain('-y, --yes');
+    expect(result.stdout).toContain('--deployment-profile <id>');
+    expect(result.stdout).toContain('sequencing-center, shared-lab, or research-workbench');
+    expect(result.stdout).toContain('Shared Lab and Research Workbench remain preview modes');
+    expect(result.stdout).toContain('--plan --json');
     expect(result.stdout).toContain('--without-pipelines');
   });
 });

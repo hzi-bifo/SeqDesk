@@ -182,6 +182,12 @@ describe("distribution installer user CLI", () => {
       'chmod 755 "${RELEASE_DIR}/scripts/seqdesk-launcher.js"'
     );
     expect(buildRelease).toContain(
+      'cp "${ROOT_DIR}/scripts/install-dist.sh" "${RELEASE_DIR}/installer/install.sh"'
+    );
+    expect(buildRelease).toContain(
+      'chmod 755 "${RELEASE_DIR}/installer/install.sh"'
+    );
+    expect(buildRelease).toContain(
       'cp "${ROOT_DIR}/scripts/configure-data-storage.mjs" "${RELEASE_DIR}/scripts/"'
     );
     expect(buildRelease).toContain(

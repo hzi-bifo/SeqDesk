@@ -183,6 +183,9 @@ NODE
 echo "Copying installed SeqDesk CLI launcher..."
 cp "${ROOT_DIR}/npm/seqdesk/bin/seqdesk.js" "${RELEASE_DIR}/scripts/seqdesk-launcher.js"
 chmod 755 "${RELEASE_DIR}/scripts/seqdesk-launcher.js"
+mkdir -p "${RELEASE_DIR}/installer"
+cp "${ROOT_DIR}/scripts/install-dist.sh" "${RELEASE_DIR}/installer/install.sh"
+chmod 755 "${RELEASE_DIR}/installer/install.sh"
 cp "${ROOT_DIR}/scripts/configure-data-storage.mjs" "${RELEASE_DIR}/scripts/"
 chmod 755 "${RELEASE_DIR}/scripts/configure-data-storage.mjs"
 

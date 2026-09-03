@@ -216,8 +216,6 @@ function verifyLogin(credential, baseUrl) {
     baseUrl,
     "--email",
     credential.email,
-    "--password",
-    credential.password,
   ];
   if (credential.expectedRole) {
     args.push("--expected-role", credential.expectedRole);
@@ -225,7 +223,10 @@ function verifyLogin(credential, baseUrl) {
   if (credential.checkPath) {
     args.push("--check-path", credential.checkPath);
   }
-  const run = spawnSync(process.execPath, args, { encoding: "utf8" });
+  const run = spawnSync(process.execPath, args, {
+    encoding: "utf8",
+    env: { ...process.env, SEQDESK_AUTH_E2E_PASSWORD: credential.password },
+  });
   return {
     ok: run.status === 0,
     output: [run.stdout, run.stderr].filter(Boolean).join("\n").trim(),

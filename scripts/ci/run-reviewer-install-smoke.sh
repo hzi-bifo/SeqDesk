@@ -18,6 +18,7 @@ DB_PASSWORD="${DB_PASSWORD:-seqdesk}"
 DB_NAME="${DB_NAME:-seqdesk_reviewer}"
 PIPELINE_SMOKE="${REVIEWER_PIPELINE_SMOKE:-false}"
 PIPELINE_CONDA_ENV="${REVIEWER_PIPELINE_CONDA_ENV:-seqdesk-pipelines}"
+INSTALL_STDOUT_SAFE="$OUTPUT_DIR/install-stdout.log"
 
 APP_PID=""
 MOCK_PID=""
@@ -25,6 +26,24 @@ CURRENT_STAGE="initialize"
 CANDIDATE_VERSION="unknown"
 
 mkdir -p "$OUTPUT_DIR"
+INSTALL_STDOUT_RAW="$(mktemp "$OUTPUT_DIR/install-stdout-sensitive.XXXXXX")"
+
+sanitize_install_stdout() {
+  [ -f "$INSTALL_STDOUT_RAW" ] || return 0
+  node -e '
+    const fs = require("node:fs");
+    const [source, target] = process.argv.slice(1);
+    let text = fs.readFileSync(source, "utf8");
+    const secrets = [];
+    for (const line of text.split(/\r?\n/)) {
+      const match = /^\s*(?:Admin|Researcher) password\s{2,}(\S+)\s*$/.exec(line);
+      if (match) secrets.push(match[1]);
+    }
+    for (const secret of secrets) text = text.split(secret).join("[REDACTED]");
+    fs.writeFileSync(target, text, { mode: 0o600 });
+  ' "$INSTALL_STDOUT_RAW" "$INSTALL_STDOUT_SAFE"
+  rm -f "$INSTALL_STDOUT_RAW"
+}
 
 finalize() {
   local exit_code=$?
@@ -39,6 +58,11 @@ finalize() {
     kill "$MOCK_PID" >/dev/null 2>&1 || true
     wait "$MOCK_PID" >/dev/null 2>&1 || true
   fi
+
+  # The one-time generated credential is captured only long enough to prove it
+  # authenticates. Every uploaded/debuggable copy is redacted, including when
+  # a later stage fails.
+  sanitize_install_stdout
 
   local result="failed"
   local report_exit=0
@@ -208,8 +232,8 @@ if [ "$PIPELINE_SMOKE" = "true" ]; then
 fi
 
 DATABASE_URL="postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?schema=public"
+set +e
 SEQDESK_API="http://127.0.0.1:${MOCK_PORT}/api" \
-SEQDESK_INSTALL_URL="http://127.0.0.1:${MOCK_PORT}/install.sh" \
 SEQDESK_LOG="$OUTPUT_DIR/install.log" \
 SEQDESK_CONDA_ENV="$PIPELINE_CONDA_ENV" \
 SEQDESK_EXEC_CONDA_ENV="$PIPELINE_CONDA_ENV" \
@@ -221,7 +245,14 @@ SEQDESK_EXEC_CONDA_ENV="$PIPELINE_CONDA_ENV" \
     --port "$APP_PORT" \
     --nextauth-url "http://127.0.0.1:${APP_PORT}" \
     --database-url "$DATABASE_URL" \
-    --database-direct-url "$DATABASE_URL" 2>&1 | tee "$OUTPUT_DIR/install-stdout.log"
+    --database-direct-url "$DATABASE_URL" >"$INSTALL_STDOUT_RAW" 2>&1
+INSTALL_STATUS=$?
+set -e
+if [ "$INSTALL_STATUS" -ne 0 ]; then
+  sanitize_install_stdout
+  tail -n 200 "$INSTALL_STDOUT_SAFE" >&2 || true
+  exit "$INSTALL_STATUS"
+fi
 
 # What the installer *prints* is part of the product: it is the only place a
 # generated credential is ever shown, and the only instruction telling an
@@ -229,10 +260,14 @@ SEQDESK_EXEC_CONDA_ENV="$PIPELINE_CONDA_ENV" \
 # credential labels with no values, and every existing check still passed
 # because none of them read this output.
 CURRENT_STAGE="verify-install-summary"
-SUMMARY="$OUTPUT_DIR/install-stdout.log"
+SUMMARY="$INSTALL_STDOUT_RAW"
 
-if ! grep -q "SUCCESS" "$SUMMARY"; then
-  echo "Install summary is missing its SUCCESS marker" >&2
+if ! grep -q "Install complete" "$SUMMARY"; then
+  echo "Install summary is missing its completion section" >&2
+  exit 1
+fi
+if ! grep -q "INSTALLED — MANUAL START REQUIRED" "$SUMMARY"; then
+  echo "Install summary does not distinguish manual start from readiness" >&2
   exit 1
 fi
 
@@ -264,6 +299,20 @@ if [ "$INSTALLED_VERSION" != "$CANDIDATE_VERSION" ]; then
   echo "Installed application reports $INSTALLED_VERSION, expected $CANDIDATE_VERSION" >&2
   exit 1
 fi
+
+CURRENT_STAGE="verify-secure-bootstrap-shape"
+BOOTSTRAP_COUNTS="$(PGCONNECT_TIMEOUT=10 PGPASSWORD="$DB_PASSWORD" psql \
+  -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -AtF $'\t' -c \
+  'SELECT COUNT(*),
+          COUNT(*) FILTER (WHERE email = '\''admin@example.com'\'' AND "systemRole" = '\''ADMIN'\'' AND "isActive" = true),
+          COUNT(*) FILTER (WHERE email = '\''user@example.com'\'')
+     FROM "User";')"
+IFS=$'\t' read -r BOOTSTRAP_TOTAL BOOTSTRAP_ADMINS GENERIC_MEMBERS <<<"$BOOTSTRAP_COUNTS"
+if [ "$BOOTSTRAP_TOTAL" != "1" ] || [ "$BOOTSTRAP_ADMINS" != "1" ] || [ "$GENERIC_MEMBERS" != "0" ]; then
+  echo "Fresh install bootstrap shape is unsafe: total=$BOOTSTRAP_TOTAL admins=$BOOTSTRAP_ADMINS generic-members=$GENERIC_MEMBERS" >&2
+  exit 1
+fi
+touch "$OUTPUT_DIR/bootstrap-account-shape.ok"
 
 CURRENT_STAGE="configure-data-storage-cli"
 STORAGE_DIR="$INSTALL_DIR/reviewer-sequencing-data"
@@ -534,22 +583,29 @@ node -e '
   }
 ' "$OUTPUT_DIR/providers.json" "$OUTPUT_DIR/setup.json"
 
-CURRENT_STAGE="authenticate-seeded-users"
+CURRENT_STAGE="authenticate-generated-administrator"
 : >"$OUTPUT_DIR/auth-admin.log"
-: >"$OUTPUT_DIR/auth-researcher.log"
-node "$WORKSPACE/scripts/run-auth-e2e.mjs" \
+node "$WORKSPACE/scripts/ci/assert-printed-credentials.mjs" \
+  --summary "$SUMMARY" \
   --base-url "http://127.0.0.1:${APP_PORT}" \
-  --email "admin@example.com" \
-  --password "admin" \
-  --expected-role "FACILITY_ADMIN" \
-  --check-path "/api/admin/users" 2>&1 | tee -a "$OUTPUT_DIR/auth-admin.log"
+  --label "reviewer clean install" \
+  --require-printed-password \
+  --result-file "$OUTPUT_DIR/auth-admin.json" 2>&1 | tee -a "$OUTPUT_DIR/auth-admin.log"
+node -e '
+  const fs = require("node:fs");
+  const result = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const printed = result.credentialsPrinted || [];
+  if (printed.length !== 1 || printed[0]?.role !== "admin" || printed[0]?.verified !== true) {
+    throw new Error(`Expected exactly one verified generated administrator: ${JSON.stringify(result)}`);
+  }
+  const researcher = (result.credentialsWithoutPassword || []).find((entry) => entry.role === "researcher");
+  if (!researcher || researcher.email !== null) {
+    throw new Error(`Installer unexpectedly advertised a researcher account: ${JSON.stringify(researcher)}`);
+  }
+' "$OUTPUT_DIR/auth-admin.json"
 touch "$OUTPUT_DIR/auth-admin.ok"
-node "$WORKSPACE/scripts/run-auth-e2e.mjs" \
-  --base-url "http://127.0.0.1:${APP_PORT}" \
-  --email "user@example.com" \
-  --password "user" \
-  --expected-role "RESEARCHER" 2>&1 | tee -a "$OUTPUT_DIR/auth-researcher.log"
-touch "$OUTPUT_DIR/auth-researcher.ok"
+sanitize_install_stdout
+cat "$INSTALL_STDOUT_SAFE"
 
 if [ "$PIPELINE_SMOKE" = "true" ]; then
   CURRENT_STAGE="packaged-fastq-checksum-pipeline"

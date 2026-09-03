@@ -11,7 +11,15 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { version } = require("../package.json");
 
-const INSTALL_URL = process.env.SEQDESK_INSTALL_URL || "https://seqdesk.org/install.sh";
+const DEFAULT_INSTALL_URL = "https://seqdesk.org/install.sh";
+const INSTALL_URL_OVERRIDE = process.env.SEQDESK_INSTALL_URL || null;
+const INSTALL_URL = INSTALL_URL_OVERRIDE || DEFAULT_INSTALL_URL;
+const BUNDLED_INSTALLER_PATH = path.resolve(
+  __dirname,
+  "..",
+  "installer",
+  "install.sh",
+);
 const DEFAULT_PROFILE_REGISTRY_URL = "https://seqdesk.org/api/install-profiles";
 const HOSTED_PROFILE_FETCH_TIMEOUT_MS = 30_000;
 const INSTALLER_FETCH_TIMEOUT_MS = 30_000;
@@ -77,7 +85,7 @@ const STORAGE_USAGE = `Usage:
   seqdesk storage status [--dir /path/to/seqdesk] [--json]
 
 Options:
-  <absolute-path>    Existing sequencing data directory to configure.
+  <absolute-path>    Existing managed scientific-data directory to configure.
   --dir, -d          Installed SeqDesk directory. Otherwise uses the configured/default install.
   --create           Allow the installed worker to create the data directory when it is missing.
   --yes, -y          Skip the confirmation prompt. Required with --json for configure.
@@ -86,8 +94,10 @@ Options:
 
 The older "seqdesk data-storage" spelling remains an alias.
 Status exits non-zero until the configured directory is ready.
-After configuration succeeds and the directory is writable, load the optional example dataset with
-"seqdesk demo-data install" or use Admin > Settings > Demo data.
+After configuration succeeds and the directory is writable, Sequencing Center
+and Shared Lab can load the optional facility-shaped example dataset with
+"seqdesk demo-data install" or Admin > Settings > Demo data. Research
+Workbench instead starts with an upload or repository import.
 Local shell access can launch order/study pipelines only through an active
 account with installation-scoped analysis permission in the selected mode.
 `;
@@ -3206,10 +3216,10 @@ async function runPipeline(argv, commandFamily) {
   }
 }
 
-async function downloadInstaller() {
+async function downloadInstaller(installUrl) {
   let response;
   try {
-    response = await fetch(INSTALL_URL, {
+    response = await fetch(installUrl, {
       redirect: "follow",
       signal: AbortSignal.timeout(INSTALLER_FETCH_TIMEOUT_MS),
       headers: {
@@ -3221,40 +3231,18 @@ async function downloadInstaller() {
       error?.name === "TimeoutError"
         ? `request timed out after ${INSTALLER_FETCH_TIMEOUT_MS / 1000} seconds`
         : error?.message || String(error);
-    throw new Error(`Could not download installer from ${INSTALL_URL}: ${detail}`);
+    throw new Error(`Could not download installer from ${installUrl}: ${detail}`);
   }
 
   if (!response.ok) {
-    throw new Error(`Could not download installer from ${INSTALL_URL}: HTTP ${response.status}`);
+    throw new Error(`Could not download installer from ${installUrl}: HTTP ${response.status}`);
   }
 
   return response.text();
 }
 
-function runInstaller(script) {
+function spawnInstaller(scriptPath, cleanup = () => undefined) {
   return new Promise((resolve, reject) => {
-    let tempDir;
-    let scriptPath;
-
-    try {
-      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "seqdesk-installer-"));
-      scriptPath = path.join(tempDir, "install.sh");
-      fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-    } catch (error) {
-      reject(new Error(`Could not prepare the installer: ${error.message}`));
-      return;
-    }
-
-    const cleanup = () => {
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch {
-        // Best effort: the operating system will eventually clear its temp dir.
-      }
-    };
-
-    // Run a real file instead of piping the script to `bash -s`. Piping consumes
-    // stdin and makes the installer's guided prompts believe no TTY is present.
     const bash = spawn("bash", [scriptPath, ...args], {
       env,
       stdio: "inherit",
@@ -3291,6 +3279,50 @@ function runInstaller(script) {
   });
 }
 
+function runDownloadedInstaller(script) {
+  let tempDir;
+  let scriptPath;
+
+  try {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "seqdesk-installer-"));
+    scriptPath = path.join(tempDir, "install.sh");
+    fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+  } catch (error) {
+    if (tempDir) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+    throw new Error(`Could not prepare the installer: ${error.message}`);
+  }
+
+  const cleanup = () => {
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Best effort: the operating system will eventually clear its temp dir.
+    }
+  };
+
+  // Run a real file instead of piping the script to `bash -s`. Piping consumes
+  // stdin and makes the installer's guided prompts believe no TTY is present.
+  return spawnInstaller(scriptPath, cleanup);
+}
+
+function runBundledInstaller() {
+  try {
+    const stat = fs.statSync(BUNDLED_INSTALLER_PATH);
+    if (!stat.isFile()) {
+      throw new Error("the packaged path is not a regular file");
+    }
+    fs.accessSync(BUNDLED_INSTALLER_PATH, fs.constants.R_OK);
+  } catch (error) {
+    throw new Error(
+      `The bundled installer is unavailable at ${BUNDLED_INSTALLER_PATH}: ${error.message}. ` +
+        "Reinstall the seqdesk npm package.",
+    );
+  }
+  return spawnInstaller(BUNDLED_INSTALLER_PATH);
+}
+
 async function main() {
   if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
     console.log(`seqdesk ${version}`);
@@ -3306,13 +3338,21 @@ async function main() {
     console.log("  seqdesk --version");
     console.log("");
     console.log("Common installer options:");
-    console.log("  --interactive        Guided database and bootstrap-account setup");
+    console.log("  --interactive        Guided profile, access, database, storage, workflow,");
+    console.log("                       and first-administrator setup");
     console.log("  -y, --yes            Non-interactive install using configured/default values");
+    console.log("  --deployment-profile <id>");
+    console.log("                       sequencing-center, shared-lab, or research-workbench");
     console.log("  --dir <path>         Explicit installation directory");
+    console.log("  --access <audience>  local, team-server, or advanced");
+    console.log("  --data-path <path>   Managed scientific-data directory");
     console.log("  --with-pipelines     Install optional Conda/Nextflow pipeline support");
     console.log("  --without-pipelines  Install the core application only (default)");
     console.log("  --config <path>      Read unattended installation settings from JSON");
+    console.log("  --plan --json        Validate and print a redacted plan without applying it");
     console.log("");
+    console.log("The guided installer explains which profile fits your team before asking you to choose.");
+    console.log("Shared Lab and Research Workbench remain preview modes until their packaged acceptance journeys pass.");
     console.log("Local-only binding: SEQDESK_BIND_HOST=127.0.0.1 seqdesk --interactive");
     console.log(`Full guide: ${DOCS_INSTALLATION_URL}`);
     return;
@@ -3361,8 +3401,9 @@ async function main() {
     process.exit(exitCode);
   }
 
-  const script = await downloadInstaller();
-  const exitCode = await runInstaller(script);
+  const exitCode = INSTALL_URL_OVERRIDE
+    ? await runDownloadedInstaller(await downloadInstaller(INSTALL_URL_OVERRIDE))
+    : await runBundledInstaller();
   process.exit(exitCode);
 }
 

@@ -11,10 +11,25 @@ npm i -g seqdesk@latest
 seqdesk --interactive
 ```
 
+The guided installer asks how the installation will be used and explains the
+three deployment profiles in the same application:
+
+- **Sequencing Center** when requesters hand sequencing work to a facility.
+- **Shared Lab** when one team shares sequencing and analysis work, with one or
+  more members additionally acting as administrators.
+- **Research Workbench** when researchers start from uploaded or imported data
+  and work in private analysis workspaces.
+
+Shared Lab and Research Workbench remain preview choices on this development
+branch until their packaged first-use acceptance journeys pass. The profile is
+an installation-wide operating model, not a separate edition or a per-user UI
+switch, and it cannot currently be changed by Reconfigure.
+
 Pass any installer flags directly:
 
 ```bash
 seqdesk -y --dir "$HOME/seqdesk"
+seqdesk -y --deployment-profile research-workbench --dir "$HOME/seqdesk"
 seqdesk -y --use-pm2 --config ./infrastructure-setup.json
 seqdesk -y --reconfigure --config ./infrastructure-setup.json
 seqdesk -y --dir "$HOME/seqdesk" --run-doctor
@@ -91,10 +106,10 @@ seqdesk assets apply --dir "$HOME/seqdesk" \
 This reuses the installed app and applies profile-declared pipeline database
 assets and seed fixtures without reinstalling SeqDesk.
 
-Configure and verify the sequencing-data directory from the server shell:
+Configure and verify the managed scientific-data directory from the server shell:
 
 ```bash
-seqdesk storage configure "$HOME/seqdesk/data"
+seqdesk storage configure "$HOME/seqdesk-data"
 seqdesk storage status
 ```
 
@@ -122,7 +137,7 @@ directory. The dataset is intended for demos and tests, not scientific use.
 
 `demo-data install` is idempotent: running it again reports the existing
 dataset instead of creating duplicates. When the database contains multiple
-facility administrators, pass `--user-email admin@example.org` to choose the
+administrators, pass `--user-email admin@example.org` to choose the
 owner. Mutating commands prompt before making changes; pass `--yes` for
 unattended use. Mutations require `--yes` when combined with `--json`, while
 `status --json` can be used on its own:
@@ -194,8 +209,10 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 
 ## Notes
 
-- The npm launcher remains a supported alternative to downloading
-  `https://seqdesk.org/install.sh` directly.
+- The npm launcher runs the canonical installer bundled inside that exact npm
+  package version. It does not fetch mutable installer code at runtime.
+- `SEQDESK_INSTALL_URL` is an explicit development/CI override that downloads a
+  replacement installer; normal users should leave it unset.
 - Fresh installs provision the core application only. Pass `--with-pipelines`
   to add the optional Conda/Nextflow runtime.
 - You normally do not need to set up PostgreSQL yourself. The installer reuses a
@@ -245,12 +262,10 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
 - `$HOME/seqdesk` is used above as a writable evaluation path. For a production
   system location, have an administrator prepare a parent owned by the
   non-root SeqDesk service account, then install into a new child directory.
-- The launcher downloads `https://seqdesk.org/install.sh` over HTTPS and
-  executes it with `bash` internally. Users normally do not need to call the
-  shell installer directly.
-- Publishing this npm package does not update the public curl installer. Changes
-  to the shell installer become visible at `https://seqdesk.org/install.sh`
-  only after the SeqDesk.com `public/install.sh` file is updated and deployed.
+- Publishing this npm package does not update the public curl installer. The npm
+  package carries its own version-matched copy; changes become visible at
+  `https://seqdesk.org/install.sh` only after the SeqDesk.com
+  `public/install.sh` file is separately updated and deployed.
 - By default it sets `SEQDESK_VERSION` to this package version (unless already set).
 - The installer creates its own log: a file only you can read, with an
   unpredictable name under `$TMPDIR` (or `/tmp` when `TMPDIR` is unset). Do not
@@ -298,7 +313,7 @@ For a full manual test flow, see [MANUAL_INSTALL.md](./MANUAL_INSTALL.md).
   `scripts/apply-install-profile-assets.mjs` script, and removes the temporary
   profile file after the command exits.
 - `seqdesk demo-data ...` dispatches to the installed release and operates on
-  the selected facility administrator's seeded dataset. It requires configured,
+  the selected administrator's facility-shaped seeded dataset. It requires configured,
   writable storage; `install` is idempotent and `remove` is owner-scoped.
 - `seqdesk pipeline ...` dispatches to the installed
   `scripts/pipeline-cli.js` script so CLI-started runs follow the same local

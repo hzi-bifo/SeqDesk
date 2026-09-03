@@ -7,6 +7,10 @@ import { pathToFileURL } from "url";
 import { describe, expect, it } from "vitest";
 
 import { FEATURE_MODULE_DOMAIN_REQUIREMENTS } from "@/lib/deployment-profile/compatibility";
+import {
+  INSTALL_PROFILE_COVERAGE,
+  INSTALL_PROFILE_SECTION_DISPOSITIONS,
+} from "@/lib/install-profile/coverage";
 import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 
 const repoRoot = process.cwd();
@@ -653,6 +657,289 @@ describe("install profile installer wiring", () => {
     expect(malformedStudies.stderr).toContain(
       "studies must be a JSON array"
     );
+  });
+
+  it("rejects unknown installer config fields with their exact paths and suggestions", () => {
+    const unknownRoot = parseInstallProfileConfig({
+      pipelinesEnabledd: true,
+    });
+    const unknownNested = parseInstallProfileConfig({
+      pipelines: {
+        execution: {
+          runDirecotry: "/srv/seqdesk-runs",
+        },
+      },
+    });
+
+    expect(unknownRoot.status).not.toBe(0);
+    expect(unknownRoot.stderr).toContain(
+      'Unknown installer config field "pipelinesEnabledd". Did you mean "pipelinesEnabled"?'
+    );
+    expect(unknownNested.status).not.toBe(0);
+    expect(unknownNested.stderr).toContain(
+      'Unknown installer config field "pipelines.execution.runDirecotry". Did you mean "pipelines.execution.runDirectory"?'
+    );
+  });
+
+  it("keeps documented legacy aliases and extensible profile payloads valid", () => {
+    const legacy = parseInstallProfileConfig({
+      appPort: 8123,
+      nextauthUrl: "http://localhost:8123",
+      pipelineEnabled: true,
+      sequencingDataPath: "/srv/seqdesk-data",
+      pipelines: {
+        execution: {
+          condaEnv: "seqdesk-pipelines",
+          pipelineDatabaseDir: "/srv/seqdesk-pipeline-databases",
+          overrides: {
+            mag: {
+              mode: "slurm",
+              slurm: { queue: "bigmem" },
+            },
+          },
+          pipelineOverrides: {
+            metaxpath: {
+              slurmQueue: "long",
+            },
+          },
+          slurm: { clusterOptions: "--qos=standard" },
+        },
+        "custom-workflow": {
+          config: { futureParameter: "kept-open" },
+        },
+        configs: {
+          "custom-workflow": { anotherFutureParameter: 42 },
+        },
+      },
+      forms: {
+        order: {
+          fields: [{ name: "custom_field", futureUiProperty: true }],
+        },
+        study: "/srv/seqdesk/study-form.json",
+      },
+    });
+
+    expect(legacy.status).toBe(0);
+    expect(legacy.stdout).toContain('SEQDESK_CFG_PORT="8123"');
+    expect(legacy.stdout).toContain(
+      'SEQDESK_CFG_NEXTAUTH_URL="http://localhost:8123"'
+    );
+    expect(legacy.stdout).toContain('SEQDESK_CFG_WITH_PIPELINES="1"');
+    expect(legacy.stdout).toContain(
+      'SEQDESK_CFG_DATA_PATH="/srv/seqdesk-data"'
+    );
+    expect(legacy.stdout).toContain(
+      'SEQDESK_CFG_PIPELINE_DATABASE_DIR="/srv/seqdesk-pipeline-databases"'
+    );
+    expect(legacy.stdout).toContain(
+      'SEQDESK_CFG_STUDY_FORM_SETTINGS="/srv/seqdesk/study-form.json"'
+    );
+  });
+
+  it("rejects malformed closed nested config objects instead of silently defaulting", () => {
+    const malformed = [
+      {
+        path: "pipelines.execution",
+        profile: { pipelines: { execution: "slurm" } },
+      },
+      {
+        path: "pipelines.execution.conda",
+        profile: { pipelines: { execution: { conda: [] } } },
+      },
+      {
+        path: "bootstrap.users",
+        profile: { bootstrap: { users: "admin" } },
+      },
+      {
+        path: "notifications.events",
+        profile: { notifications: { events: [] } },
+      },
+      {
+        path: "runtime.database",
+        profile: { runtime: { database: "auto" } },
+      },
+      {
+        path: "forms.runAssignment",
+        profile: { forms: { runAssignment: "run-form.json" } },
+      },
+    ];
+
+    for (const { path: configPath, profile } of malformed) {
+      const result = parseInstallProfileConfig(profile);
+      expect(result.status, configPath).not.toBe(0);
+      expect(result.stderr).toContain(
+        `${configPath} must be a JSON object.`
+      );
+    }
+  });
+
+  it("validates fields inside every supported per-pipeline execution override map", () => {
+    const mapPaths = [
+      { pipelines: { pipelineOverrides: { mag: { slrumQueue: "gpu" } } } },
+      { pipelines: { executionOverrides: { mag: { slrumQueue: "gpu" } } } },
+      {
+        pipelines: {
+          execution: {
+            pipelineOverrides: { mag: { slrumQueue: "gpu" } },
+          },
+        },
+      },
+      {
+        pipelines: {
+          execution: { overrides: { mag: { slrumQueue: "gpu" } } },
+        },
+      },
+    ];
+
+    for (const profile of mapPaths) {
+      const result = parseInstallProfileConfig(profile);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("slrumQueue");
+      expect(result.stderr).toContain("slurmQueue");
+    }
+
+    const nestedSlurmTypo = parseInstallProfileConfig({
+      pipelines: {
+        execution: {
+          pipelineOverrides: {
+            mag: { slurm: { queu: "gpu" } },
+          },
+        },
+      },
+    });
+    expect(nestedSlurmTypo.status).not.toBe(0);
+    expect(nestedSlurmTypo.stderr).toContain(
+      'Unknown installer config field "pipelines.execution.pipelineOverrides.mag.slurm.queu". Did you mean "pipelines.execution.pipelineOverrides.mag.slurm.queue"?'
+    );
+
+    const unsupportedOverrideConda = parseInstallProfileConfig({
+      pipelines: {
+        execution: {
+          pipelineOverrides: {
+            mag: { conda: { environment: "pipeline-specific" } },
+          },
+        },
+      },
+    });
+    expect(unsupportedOverrideConda.status).not.toBe(0);
+    expect(unsupportedOverrideConda.stderr).toContain(
+      'Unknown installer config field "pipelines.execution.pipelineOverrides.mag.conda"'
+    );
+
+    const directPipelineTypo = parseInstallProfileConfig({
+      pipelines: {
+        "custom-workflow": {
+          config: { futureParameter: "kept-open" },
+          execution: { slrumQueue: "gpu" },
+        },
+      },
+    });
+    expect(directPipelineTypo.status).not.toBe(0);
+    expect(directPipelineTypo.stderr).toContain(
+      'Unknown installer config field "pipelines.custom-workflow.execution.slrumQueue". Did you mean "pipelines.custom-workflow.execution.slurmQueue"?'
+    );
+
+    const malformedDirectRuntime = parseInstallProfileConfig({
+      pipelines: {
+        "custom-workflow": { runtime: "slurm" },
+      },
+    });
+    expect(malformedDirectRuntime.status).not.toBe(0);
+    expect(malformedDirectRuntime.stderr).toContain(
+      "pipelines.custom-workflow.runtime must be a JSON object."
+    );
+  });
+
+  it("accepts the repository's maintained installer and hosted-profile examples", () => {
+    const examples = [
+      "seqdesk.config.example.json",
+      "docs/infrastructure-setup.example.json",
+      ".github/fixtures/ci-install-profile.json",
+      "setups/twincore/infrastructure-setup.json",
+    ];
+
+    for (const example of examples) {
+      const profile = JSON.parse(
+        fs.readFileSync(path.join(repoRoot, example), "utf8")
+      ) as Record<string, unknown>;
+      const result = parseInstallProfileConfig(profile);
+
+      expect(result.status, `${example}: ${result.stderr}`).toBe(0);
+    }
+  });
+
+  it("keeps strict root fields aligned with the shared install-profile coverage catalog", () => {
+    const profile = Object.fromEntries(
+      INSTALL_PROFILE_SECTION_DISPOSITIONS.map(({ section, kind }) => {
+        if (kind === "structured") return [section, {}];
+        if (kind === "array") return [section, []];
+        if (section === "enabled" || section === "requiresAccessCode") {
+          return [section, true];
+        }
+        if (section === "minSeqDeskVersion" || section === "version") {
+          return [section, "1.0.0"];
+        }
+        return [section, "test"];
+      })
+    );
+    const result = parseInstallProfileConfig(profile);
+
+    expect(result.status, result.stderr).toBe(0);
+
+    const objectPaths = new Set([
+      "bootstrap.users",
+      "forms.order",
+      "forms.runAssignment",
+      "forms.study",
+      "hostedDatabase",
+      "minknowStream",
+      "moduleSettings.billing-info.pspPrefixRange",
+      "moduleSettings.billing-info.pspSuffixRange",
+      "modules",
+      "notifications.events",
+      "notifications.userDefaults",
+      "pipelineSmokeTests",
+      "pipelines.configs",
+      "pipelines.databases",
+      "pipelines.execution.pipelineOverrides",
+      "privatePipelines",
+      "seedData",
+      "sequencingTech.config",
+      "testing.runtimeSmoke",
+    ]);
+    const arrayPaths = new Set([
+      "moduleSettings.account-validation.allowedDomains",
+      "pipelines.enable",
+      "sequencingFiles.allowedExtensions",
+      "sequencingFiles.extensions",
+      "sequencingFiles.ignorePatterns",
+      "studies",
+    ]);
+
+    for (const { profilePath } of INSTALL_PROFILE_COVERAGE) {
+      const pathParts = profilePath.split(".");
+      const leaf = pathParts.at(-1) ?? "";
+      const coveredProfile: Record<string, unknown> = {};
+      let current = coveredProfile;
+      for (const part of pathParts.slice(0, -1)) {
+        current[part] = {};
+        current = current[part] as Record<string, unknown>;
+      }
+      current[leaf] =
+        profilePath === "app.port"
+          ? 8000
+          : objectPaths.has(profilePath)
+            ? {}
+            : arrayPaths.has(profilePath)
+              ? []
+              : "test";
+
+      const coveredResult = parseInstallProfileConfig(coveredProfile);
+      expect(
+        coveredResult.status,
+        `${profilePath}: ${coveredResult.stderr}`
+      ).toBe(0);
+    }
   });
 
   it("does not install a private MetaxPath package excluded by pipeline selection", () => {

@@ -42,6 +42,7 @@ function synchronizeVersionMetadata({
   rootPkgPath = defaultRootPkgPath,
   citationPath = defaultCitationPath,
   releaseDate = new Date().toISOString().slice(0, 10),
+  check = false,
   log = console.log,
 } = {}) {
   const launcherPkg = JSON.parse(fs.readFileSync(launcherPkgPath, "utf8"));
@@ -56,6 +57,24 @@ function synchronizeVersionMetadata({
   const citationReleaseDate = readSingleYamlScalar(citation, "date-released");
   const launcherUpdated = launcherPkg.version !== rootPkg.version;
   const citationUpdated = citationVersion !== rootPkg.version;
+
+  if (check) {
+    if (launcherUpdated || citationUpdated) {
+      throw new Error(
+        "[sync-version] Release version metadata is stale. " +
+          "Run `npm run sync-version` from npm/seqdesk before packing.",
+      );
+    }
+    log(
+      `[sync-version] npm/seqdesk and CITATION.cff match ${rootPkg.version}.`,
+    );
+    return {
+      version: rootPkg.version,
+      launcherUpdated: false,
+      citationUpdated: false,
+      citationReleaseDate,
+    };
+  }
 
   let nextCitation = citation;
   if (citationUpdated) {
@@ -108,7 +127,13 @@ function synchronizeVersionMetadata({
 
 if (require.main === module) {
   try {
-    synchronizeVersionMetadata();
+    const arguments_ = process.argv.slice(2);
+    if (arguments_.some((argument) => argument !== "--check")) {
+      throw new Error(
+        `[sync-version] Unknown option: ${arguments_.find((argument) => argument !== "--check")}`,
+      );
+    }
+    synchronizeVersionMetadata({ check: arguments_.includes("--check") });
   } catch (error) {
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;

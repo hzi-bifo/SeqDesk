@@ -102,10 +102,10 @@ const assertions = {
     !Array.isArray(providers.credentials),
   setupDatabaseExists: setup?.exists === true,
   setupConfigured: setup?.configured === true,
-  adminAuthentication: isRegularFile(path.join(outputDir, "auth-admin.ok")),
-  researcherAuthentication: isRegularFile(
-    path.join(outputDir, "auth-researcher.ok")
+  secureBootstrapShape: isRegularFile(
+    path.join(outputDir, "bootstrap-account-shape.ok")
   ),
+  adminAuthentication: isRegularFile(path.join(outputDir, "auth-admin.ok")),
   packagedFastqChecksum: pipelineSmoke
     ? isRegularFile(
         path.join(
@@ -125,8 +125,8 @@ const requiredAssertions = [
   "credentialsProvider",
   "setupDatabaseExists",
   "setupConfigured",
+  "secureBootstrapShape",
   "adminAuthentication",
-  "researcherAuthentication",
   ...(pipelineSmoke ? ["packagedFastqChecksum"] : []),
 ];
 const failedRequiredAssertions = requiredAssertions.filter(
@@ -234,8 +234,8 @@ const lines = [
   `| Credentials provider available | ${assertion(report.assertions.credentialsProvider)} |`,
   `| Database exists | ${assertion(report.assertions.setupDatabaseExists)} |`,
   `| Database configured | ${assertion(report.assertions.setupConfigured)} |`,
-  `| Facility administrator authenticated | ${assertion(report.assertions.adminAuthentication)} |`,
-  `| Researcher authenticated | ${assertion(report.assertions.researcherAuthentication)} |`,
+  `| Exactly one generated administrator; no generic member | ${assertion(report.assertions.secureBootstrapShape)} |`,
+  `| Generated administrator credential authenticated | ${assertion(report.assertions.adminAuthentication)} |`,
   `| Packaged FASTQ checksum pipeline | ${assertion(report.assertions.packagedFastqChecksum)} |`,
   "",
   `Pipeline statement: ${report.job.pipelineClaim}`,

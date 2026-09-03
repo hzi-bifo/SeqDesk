@@ -12,6 +12,10 @@ Companion to:
 
 A new operator should be able to install SeqDesk without already understanding its internal domains, configuration hierarchy, or historical “lab/workbench” terminology. The installer should explain the choice in terms of how the team works, recommend safe defaults, omit irrelevant questions, validate the complete plan before making changes, and end with profile-specific next steps.
 
+The presence of a profile in the development wizard is not itself a support
+claim. Shared Lab and Research Workbench remain explicitly labelled preview
+until the exact packaged acceptance journeys in this document pass.
+
 SeqDesk still has one release artifact and one canonical installation engine. Interactive, unattended, and hosted installs differ only in where their answers come from:
 
 ```text
@@ -22,6 +26,10 @@ existing config ----+
 ```
 
 This avoids implementing three installers or allowing the interactive wizard, hosted profiles, and automation to drift into different behavior.
+The npm launcher carries a version-matched generated copy of that canonical
+engine and refuses packaging when it drifts; the installed release carries the
+same copy for later reconfiguration. The public `install.sh` remains a separate
+deployment copy that must pass the same drift/release checks.
 
 ## Current branch checkpoint
 
@@ -37,25 +45,31 @@ release download, and application writes begin only after that review is
 confirmed. The service-manager/start behavior and separately consented,
 default-off telemetry choice are also selected and displayed before
 confirmation, so the apply phase asks no late configuration questions.
-The final handoff now distinguishes a verified running service, a required
-manual start, skipped/unavailable verification, and a health check that needs
-attention; it also states when profile-operational onboarding remains.
+The final handoff now distinguishes application installation/start state, the
+base service check, and profile-operational readiness. A healthy HTTP/database
+check is deliberately not presented as proof that storage, runtime, or the
+selected profile's first-use journey is ready.
 Generated administrator credentials are withheld until a post-seed database
 check confirms both the installation-level administrator role and, for a
 generated password, a successful comparison with the stored password hash. The
 credential is sent only to the terminal, cleared after the first summary, and
 the local recovery command is always shown.
-Unattended installs still default to Sequencing Center only as a
+The apply phase creates each selected storage root before saving it and runs a
+create/write/`fsync`/rename/delete probe as the service user; an unusable root
+now stops installation with corrective guidance instead of producing a green
+summary. Unattended installs still default to Sequencing Center only as a
 compatibility fallback and warn operators to pass `--deployment-profile`
 explicitly.
 
 That is not yet the finished installer architecture. Before the three profiles
 are advertised as fully supported, the remaining high-priority work is hosted
-lock/source fidelity in the plan, strict no-temporary-file preview handling for
-remote configuration, expected-mount/minimum-capacity and executor-specific
-installer preflight, installer post-apply use of the readiness checks, a real
-workflow smoke run, reconfiguration diffs, and automatic resume from recorded
-apply checkpoints.
+lock/source fidelity and schema-version negotiation, generated profile
+examples, bringing the legacy source installer onto the canonical engine,
+strict no-temporary-file preview handling for remote configuration,
+expected-mount/minimum-capacity and executor-specific installer preflight,
+installer post-apply use of the authenticated readiness checks, a real workflow
+smoke run, reconfiguration diffs, and automatic resume from recorded apply
+checkpoints.
 Existing targets are
 now classified before the fresh-install questions and routed to update,
 reconfigure, diagnosis, or safe refusal. New installs opt into a versioned,
@@ -94,11 +108,11 @@ The profile work should fix these gaps rather than layering another question ont
 
 - The interactive experience is split between shell prompts for database/accounts and `scripts/install-wizard.mjs` for port/configuration review.
 - The source/CI `scripts/install.sh` path still follows the older installer flow and has not yet joined the profile-aware normalized plan used by the packaged installer.
-- Installer JSON currently needs strict unknown-field rejection, protected secret-source and file-permission rules, and generated profile examples so a typo cannot silently select a fallback.
+- Installer JSON now rejects unknown fields with dotted-path diagnostics. It still needs hosted schema-version negotiation, protected secret-source and file-permission rules, and generated profile examples.
 - Existing/managed PostgreSQL is checked for endpoint reachability before account questions, but authenticated migration/write capability is not yet proven at that point on hosts without PostgreSQL client tools.
 - Release/toolchain download policy still needs mandatory hashes, HTTPS redirect revalidation, and pinned Miniconda/Nextflow/nf-core versions.
 - Workflow package registry metadata does not yet provide exact per-package download and expanded-size estimates for the review.
-- The public browser `/setup` page intentionally reports only base database/schema/account readiness. Profile-specific readiness is checked after authenticated administrator login, but the installer does not yet run the same checks as post-apply verification.
+- The public browser `/setup` page and installer doctor intentionally report only base database/schema/account readiness. Profile-specific readiness is checked after authenticated administrator login, but the installer does not yet invoke and record those same complete checks after apply.
 - Automatic managed-storage readiness measures current capacity but does not yet enforce a scientific-data minimum or prove that an expected network mount is mounted rather than its local fallback directory. Workflow-runtime readiness checks configured prerequisites and the run directory but does not submit a real workflow smoke run.
 - Hosted lock/source fidelity, reconfiguration diffs, and automatic resume from apply checkpoints remain incomplete.
 
@@ -141,9 +155,16 @@ Use “How will your team use SeqDesk?” rather than “Choose a product varian
 | **Shared Lab** | One lab shares sequencing projects, samples, runs, and analyses. Administrators additionally manage the installation. | The same team creates and performs the work, without a requester-to-facility handoff. |
 | **Research Workbench** | Researchers import or upload existing data, run workflows, and organize results in workspaces. | Analysis is primary; sequencing orders and facility handoffs should not organize the UI. |
 
+All three use one sign-in page. Sequencing Center separates requester,
+facility-operator, and installation-administrator responsibilities, although one
+account may hold more than one. Shared Lab members can do normal shared lab work
+while one or more administrators additionally manage infrastructure. Workbench
+members own private workspaces; administrators manage the installation but do
+not automatically see another member's workspace.
+
 Always show this note:
 
-> This choice changes workflows, permissions, navigation, and setup recommendations. It does not install a different SeqDesk build. Changing it later requires a reviewed migration, not a view switch.
+> This choice changes workflows, permissions, navigation, and setup recommendations. It does not install a different SeqDesk build. It cannot currently be changed in Settings or with Reconfigure; updates preserve it. Choose Back before installation if it is not the right mode.
 
 Add a concise “Not sure?” decision helper:
 
@@ -169,6 +190,11 @@ Keep two primary choices:
 
 - **Local PostgreSQL (recommended for evaluation or one-server installs)**: reuse a healthy compatible local service when safe, otherwise provision SeqDesk's private instance where supported.
 - **Existing/managed PostgreSQL**: accept runtime and direct migration URLs, redact them in all output, and test both the network endpoint and authenticated migration capability before continuing.
+
+Treat connection strings as secrets: do not echo them while typed. Re-prompt an
+invalid direct/migration URL instead of silently ignoring it. The normal guided
+flow must not offer “continue anyway” after an unreachable managed database;
+that exception belongs behind an explicit advanced/unattended control.
 
 Explain the tradeoff next to the choices:
 
@@ -200,6 +226,12 @@ Ask whether to prepare workflow execution now:
 - Shared Lab: recommended but optional if the team initially uses only sequencing tracking.
 - Research Workbench: recommended and required for full operational readiness, because analysis is the profile's purpose.
 
+Describe this choice precisely as preparing Conda, Java, and Nextflow runtime
+prerequisites. Approved workflow packages are selected after login unless the
+reviewed plan explicitly lists starter packages. If a Workbench operator defers
+the runtime, require acknowledgement that upload/import remains possible but
+analysis execution will be blocked.
+
 If enabled, ask:
 
 1. **Local execution** or **Slurm**;
@@ -229,9 +261,10 @@ Explain the administrator's role using profile-aware text:
 - Shared Lab: can do the same normal lab work as members and additionally manages accounts, storage, pipelines, credentials, and updates.
 - Research Workbench: manages the installation but does not automatically gain access to another member's private workspace.
 
-Recommended enrollment defaults:
+Enrollment defaults:
 
-- Sequencing Center: researcher self-registration enabled, with optional domain restriction/verification;
+- Sequencing Center on a local evaluation install: researcher self-registration enabled;
+- Sequencing Center on a team server: invite-only until an administrator deliberately enables a verified/restricted registration policy;
 - Shared Lab: invite-only;
 - Research Workbench: invite-only.
 
@@ -276,9 +309,9 @@ After confirmation, do not surprise the user with more choices. Display progress
 3. download and verify release;
 4. install runtime dependencies;
 5. configure and migrate PostgreSQL;
-6. write protected configuration;
-7. create the first administrator;
-8. prepare storage/runtime/optional assets;
+6. create and probe the selected storage roots;
+7. write protected configuration;
+8. create the first administrator and prepare runtime/optional assets;
 9. start the service when selected;
 10. verify readiness.
 
@@ -487,3 +520,8 @@ At minimum, automate these journeys against the same release artifact:
 16. First login and next steps use the selected profile's language and landing page.
 
 Release checks should also assert that `scripts/install-dist.sh`, the npm launcher/help, the public installer copy, hosted install-profile schema, `settings.json` example, and website setup documentation describe the same choices and defaults.
+
+Fully air-gapped installation is not currently supported. Until a checked
+offline bundle exists, the installer requires connected upstreams or an
+operator-managed HTTPS mirror; Workbench repository importers likewise require
+network access while local upload can remain available.

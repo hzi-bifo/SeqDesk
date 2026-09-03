@@ -24,7 +24,7 @@ This register captures choices that are easy to hide inside implementation detai
 | F-01 | Foundation | Keep “deployment profile,” “hosted install profile,” and “Nextflow execution profile” as distinct concepts and identifiers. |
 | F-02 | Foundation | One SeqDesk installation represents one organization/team and has one active deployment profile. |
 | F-03 | Foundation | Shared Lab and Workbench use peer `MEMBER`/`ADMIN` system roles; there is no special permanent `OWNER` role. |
-| F-04 | Foundation | Registration policy is profile configuration; Shared Lab and Workbench default to invite-only after secure administrator bootstrap. |
+| F-04 | Foundation | Registration policy is profile and access-topology configuration: local Sequencing Center evaluation may self-register, while team-server Sequencing Center, Shared Lab, and Workbench start invite-only after secure administrator bootstrap. |
 | F-05 | Foundation | Ownership follows the resource, not the creator: lab records are installation-owned and Workbench records are workspace-owned. |
 | F-06 | Foundation | Return `404` for a domain absent from the active deployment profile and `403` for an available action the principal lacks. |
 | F-07 | Foundation | The deployment profile is locally configured and restart-required; it is not initially editable in the database/UI. |
@@ -102,9 +102,10 @@ Recommended defaults:
 
 | Profile | Default after bootstrap | Optional administrator setting |
 | --- | --- | --- |
-| Sequencing Center | Researcher self-registration allowed | Invite-only, email-domain restriction, email verification |
+| Sequencing Center, local evaluation | Researcher self-registration allowed | Invite-only |
+| Sequencing Center, team server | Invite-only | Self-registration only when deliberately enabled with email verification/domain controls and durable rate limiting |
 | Shared Lab | Invite-only | Self-registration with domain restriction if deliberately enabled |
-| Research Workbench | Invite-only | Self-registration if the operator deliberately exposes a public instance |
+| Research Workbench | Invite-only | Self-registration only after a separate public-exposure/security review |
 
 All profiles still use the same login page. Do not add an authentication-free “single user” shortcut: a machine that begins as localhost-only is often exposed later through a proxy without revisiting its security assumptions.
 
@@ -445,22 +446,22 @@ The schema and authorization boundaries should not make these impossible, but no
 
 ## Confirmation checklist
 
-Before implementation begins, explicitly confirm or amend the recommended defaults for:
+Confirmed defaults for this branch:
 
-- [ ] F-02 single-organization installation boundary
-- [ ] F-03 no permanent `OWNER` system role
-- [ ] F-04 invite/self-registration defaults
-- [ ] F-07 local/restart-required deployment-profile configuration
-- [ ] F-08 service-principal extension point
-- [ ] I-01 explicit deployment-profile choice in fresh guided installs
-- [ ] I-04 one secure bootstrap administrator and no packaged default accounts
-- [ ] I-05 read-only public setup status plus authenticated onboarding
-- [ ] I-08 redacted, zero-mutation install-plan preview
-- [ ] I-11 strict installer inputs, protected secrets, and pinned/checksummed downloads
-- [ ] W-01 multiple private workspaces, collaboration deferred
-- [ ] W-04 managed-copy default for imports
-- [ ] W-07 provider launch order and arbitrary-URL deferral
-- [ ] W-08 sensitive-data support boundary
-- [ ] W-09 approved-workflow-only trust boundary
+- [x] F-02 single-organization installation boundary
+- [x] F-03 no permanent `OWNER` system role
+- [x] F-04 access-topology-aware invite/self-registration defaults
+- [x] F-07 local/restart-required deployment-profile configuration
+- [x] F-08 service-principal extension point
+- [x] I-01 explicit deployment-profile choice in fresh guided installs
+- [x] I-04 one secure bootstrap administrator and no packaged default accounts
+- [x] I-05 read-only public setup status plus authenticated onboarding
+- [x] I-08 redacted, zero-mutation install-plan preview
+- [x] I-11 strict installer inputs, protected secrets, and pinned/checksummed downloads
+- [x] W-01 multiple private workspaces, collaboration deferred
+- [x] W-04 managed-copy default for imports
+- [x] W-07 provider launch order and arbitrary-URL deferral
+- [x] W-08 sensitive-data support boundary
+- [x] W-09 approved-workflow-only trust boundary
 
 F-01 is a compatibility correction rather than an open product preference: the installer's existing `--profile` flag cannot safely be repurposed.

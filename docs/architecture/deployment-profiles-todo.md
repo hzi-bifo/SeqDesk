@@ -100,7 +100,7 @@ Do these milestones in order. Do not expose a profile in production setup until 
 
 - [x] Confirm one installation represents one organization/team and one deployment profile.
 - [x] Confirm peer `ADMIN` accounts with no permanent system `OWNER` role.
-- [x] Confirm Shared Lab and Workbench are invite-only by default after bootstrap.
+- [x] Confirm local Sequencing Center evaluation may self-register, while team-server Sequencing Center, Shared Lab, and Workbench start invite-only after bootstrap.
 - [x] Confirm the deployment profile is local/restart-required rather than database/UI-editable initially.
 - [x] Confirm the authorization principal has a future service-account extension point without implementing service tokens now.
 - [x] Confirm fresh guided installs require an explicit explained profile choice while existing installs preserve their profile.
@@ -182,18 +182,28 @@ Acceptance:
 
 Implement the detailed journey in `docs/architecture/deployment-profiles-installation-setup.md` before exposing Shared Lab or Research Workbench as supported installation choices.
 
+Until the exact packaged acceptance journeys below pass, Shared Lab and
+Research Workbench are preview modes on this branch. Installer and documentation
+copy must not imply that selecting a menu item alone makes either mode
+production-ready.
+
 ### One plan and one engine
 
 - [x] Define a versioned, typed `InstallPlan` covering operation, release, deployment profile, access topology, database, storage, execution, enrollment, bootstrap administrator, optional content, value sources, and hosted locks.
 - [x] Normalize guided answers, CLI/JSON configuration, hosted install profiles, and existing installation configuration into the same plan.
 - [ ] Use one validator/default resolver and one application engine for every entry point.
 - [ ] Bring the source/CI `scripts/install.sh` entry point onto the same deployment-profile plan as the canonical packaged `scripts/install-dist.sh`; until then it is not a supported way to exercise the three profile choices.
-- [ ] Make installer configuration schema-strict: reject unknown/misspelled fields instead of silently falling back, and generate the profile-neutral example plus three small profile overlays from that schema.
+- [x] Make the current installer configuration envelope schema-strict: reject unknown/misspelled fields with dotted-path diagnostics, including dynamic and direct per-pipeline execution overrides, while retaining every consumed legacy alias.
+- [ ] Add explicit schema/version negotiation for hosted profiles and generate the profile-neutral example plus three small profile overlays from that versioned schema.
 - [x] Keep secret values behind protected references; never serialize them into saved/sanitized plans.
 - [ ] Finish the secret-input contract: prefer protected files, environment injection, or secret references over command-line/JSON plaintext; reject or warn on unsafe local file permissions; require HTTPS for remote configuration except explicit localhost development.
 - [ ] Add `--plan` and `--plan --json` modes that resolve/validate/redact the plan and perform zero filesystem, database, or service mutations. The modes and no-target/database/service mutation test exist; remove temporary-file use while resolving remote/hosted configs before closing this item.
 - [x] Generate the interactive review screen and unattended plan output from the same normalized representation.
 - [ ] Require verified release/toolchain provenance: mandatory release checksums, HTTPS plus redirect revalidation, checksum-pinned Miniconda installers, and pinned supported Nextflow/nf-core versions rather than mutable `latest` or broad ranges.
+- [x] Bundle the version-matched canonical installer in the npm package and installed release; do not download mutable installer code at launcher runtime except through an explicit development override. The required reviewer install now exercises the default bundled dispatch rather than setting that override.
+- [x] State clearly that fully air-gapped installation is not currently supported and that connected upstreams or an operator-managed HTTPS mirror are required.
+- [ ] If air-gapped support becomes a requirement, define a versioned offline bundle containing the release, installer, dependency payloads, optional pipeline assets, and checksums, then test it with outbound networking and caches disabled.
+- [ ] Define and test the removal window for the legacy unattended fallback that chooses Sequencing Center when `--deployment-profile` is omitted; new production automation should require an explicit profile.
 
 ### Existing-target classification
 
@@ -219,12 +229,13 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Keep local PostgreSQL versus existing/managed PostgreSQL as the primary database choice and explain the operational tradeoff.
 - [ ] Verify the selected database before requesting/generating account passwords.
 - [x] Offer recommended managed storage locations first; show only the selected profile's labels and paths.
-- [ ] Complete storage preflight. Installer checks resolve symlinks, reject the most dangerous roots/application overlap, inspect an existing writable ancestor, and report filesystem free space. Authenticated onboarding now separately requires an explicit existing managed-storage directory and verifies read/search plus create, write, `fsync`, rename, and delete operations as the running SeqDesk service identity. The installer must still verify the expected mount rather than a fallback mount point, staging paths, minimum scientific-data capacity, every cross-root overlap, and successful directory creation before claiming install-time readiness.
+- [ ] Complete storage preflight. Installer checks resolve symlinks, reject the most dangerous roots/application overlap, inspect free space, create selected roots, and fail closed unless the service user passes create/write/`fsync`/rename/delete probes. Authenticated onboarding records equivalent versioned evidence. The installer must still verify the expected mount rather than an empty fallback mount point, import/upload staging paths, minimum scientific-data capacity, and every cross-root overlap before claiming profile readiness.
 - [x] Ask about workflow execution with profile-aware guidance: optional for Sequencing Center, recommended for Shared Lab, and required for full Workbench operational readiness.
 - [ ] Keep local versus Slurm executor details and package/runtime downloads behind the workflow choice; show estimated sizes. The executor choice and honest apply-time download-size status are shown only after workflow opt-in, but approved starter-package selection, package-specific estimates, Slurm connectivity/shared-mount preflight, runtime provisioning choice, and the optional smoke-test choice still need implementation.
 - [x] Create exactly one initial administrator with an entered or generated strong password; remove the generic “also create a researcher” question.
-- [x] Apply the profile's enrollment default and explain it: Sequencing Center researcher self-registration by default; Shared Lab and Workbench invite-only by default.
-- [ ] Decide the safer team-server Sequencing Center enrollment default before exposure. Recommended: invite-only unless the operator explicitly enables public registration with email verification/domain controls and durable rate limiting; keep local evaluation convenient.
+- [x] Apply and explain access-topology-aware enrollment defaults: local Sequencing Center evaluation may self-register; team-server Sequencing Center, Shared Lab, and Workbench start invite-only.
+- [ ] Before offering team-server self-registration as a supported choice, require deliberate enablement with email verification/domain controls and durable shared rate limiting. Until then the guided team-server path remains invite-only.
+- [ ] Enforce a non-placeholder administrator email for unattended and hosted team-server installs. The guided team-server path already omits the placeholder default and explains that this is the login identifier and that email recovery is unavailable until mail is configured.
 - [x] Defer extra users, SMTP/OIDC, instruments, ENA/repository credentials, and detailed module configuration to authenticated onboarding unless a hosted profile provides them.
 - [x] Offer deterministic facility example data only as a clearly labelled evaluation option for Sequencing Center and Shared Lab; default it off everywhere and call out the team-server default. Workbench uses its upload/import first journey instead of facility-shaped demo data.
 - [x] Keep telemetry separately consented and off by default.
@@ -236,10 +247,11 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] After confirmation, ask no new product/configuration questions; display stable pending/running/done/failed stages.
 - [x] Take an exclusive per-target apply lock and record schema-versioned, secret-free recovery checkpoints through material stages.
 - [ ] Run remaining detectable preflight before material changes and make recorded checkpoints automatically resumable/idempotent. Checkpoints are currently diagnostic only; recovery restarts from a safe path rather than resuming a recorded stage.
-- [ ] Add a mandatory backup/readiness gate for update and rollback: define the database/config/secrets/managed-data backup set, verify a restorable backup before schema migration where feasible, and block rollback when the installed database schema is not backward-compatible. Keep rollback documentation aligned with the versioned `releases/current` layout.
+- [ ] Add a mandatory backup/readiness gate for update and rollback: define the database/config/secrets/managed-data backup set, verify a restorable backup before schema migration where feasible, and block rollback when the installed database schema is not backward-compatible. Decide how managed-database snapshots are acknowledged. Block update while pipelines, uploads, imports, or sequencing streams are active unless a reviewed drain policy exists. Keep rollback documentation aligned with the versioned `releases/current` layout.
 - [ ] Verify persisted profile, database/migrations, intended administrator, application version/profile response, storage writability, and selected runtime/smoke test as part of installer post-apply verification. Authenticated onboarding now verifies current managed-storage access and, for Research Workbench, the configured runtime prerequisites; the installer does not yet invoke those checks or run a real workflow smoke test.
 - [x] Run the equivalent of `seqdesk doctor` automatically when the guided installer starts a persistent service.
 - [x] Distinguish “installed and verified,” “installed; manual start required,” “installed; optional/operational setup remains,” and restored/preserved failure states.
+- [x] Split completion reporting into explicit application/start state, base service check passed/failed/not run, and profile operational readiness pending/review-required. A green base health check is no longer labelled as full profile verification.
 - [x] Show a generated administrator password exactly once only after successful account creation, outside logs, plus the local reset command. Post-seed verification requires the intended installation administrator role and confirms a generated password against the stored hash before disclosure.
 - [x] Never create or advertise known `admin`/`user` packaged passwords in a supported release install.
 - [x] Print profile-specific next steps and the correct first journey rather than sequencing-center instructions for every install.
@@ -253,6 +265,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Separate base application readiness from profile operational readiness, and classify onboarding items as required versus recommended so optional manual acknowledgements never block members.
 - [x] Replace required manual onboarding confirmations with automated storage/runtime verifiers: managed storage is checked for every profile and workflow-runtime readiness is additionally checked for Research Workbench. Required items cannot be toggled manually, and versioned, fingerprint-bound evidence is invalidated by relevant configured-path or runtime-setting changes. Normal status requests avoid storage I/O, and the Nextflow readiness probe is offline. Backup, retention, enrollment, integrations, and first-journey decisions remain clearly labelled non-blocking human confirmations.
 - [x] Route the first administrator login to incomplete required onboarding and keep the checklist reopenable without requiring optional backup/retention acknowledgements to unlock ordinary work.
+- [ ] Define how a newer onboarding/checklist schema affects existing installations: which new checks reopen for administrators, which can block profile work, and which stay advisory without interrupting members.
 - [x] Show ordinary members a clear administrator-is-finishing-setup state only while required operational items are incomplete; optional recommendations do not globally block members.
 - [x] Compose onboarding by profile: facility intake/instruments for Sequencing Center, shared storage/members/limits for Shared Lab, and storage/importers/runtime/first workspace for Workbench.
 
@@ -270,6 +283,7 @@ Acceptance:
 - [x] First login, onboarding, completion summary, and next steps use the selected profile's terminology and journey.
 - [ ] Audit public README/npm/help/example copy: use profile-neutral `--data-path` wording, include `deployment.profile`, avoid plain-HTTP team-server examples, and distinguish installed, base-ready, and operationally-ready states.
 - [ ] Add non-blocking continuous health monitoring/alerts for storage and runtime drift; do not put potentially stalled mount/process probes on login or ordinary dashboard requests, and do not treat point-in-time onboarding evidence as ongoing health.
+- [ ] Replace stale release/manual-install documentation that still advertises generic `admin/admin` and `user/user` accounts, a network-wide bind, retired domains, or an obsolete flat rollback layout.
 
 ## Milestone 2 — Principal, capabilities, and scopes
 
@@ -365,7 +379,7 @@ Acceptance:
 - [x] Use one registration page and one login page.
 - [x] Remove the researcher/facility-admin choice from Shared Lab registration.
 - [x] Label ordinary accounts using profile terminology rather than always “Researcher.”
-- [x] Default Shared Lab and Research Workbench to invite-only enrollment after bootstrap; keep self-registration an explicit administrator setting and retain configurable researcher self-registration for Sequencing Center.
+- [x] Default team-server Sequencing Center, Shared Lab, and Research Workbench to invite-only enrollment after bootstrap; retain local Sequencing Center self-registration and explicit configuration overrides for compatibility.
 - [x] Keep all profiles authenticated; do not add a no-login “single-user” shortcut.
 - [x] Make the initial account on a new installation an administrator through the secure bootstrap flow.
 - [x] Create the first administrator through locally supplied installer credentials; the public registration endpoint refuses all registration until an active administrator exists and has no first-user-wins path.
@@ -387,7 +401,7 @@ Acceptance:
 - [ ] Require explicit transfer, export, retention, or purge handling before deleting the owner of a private Workbench workspace.
 - [ ] Prevent user removal from cascade-deleting a Workbench workspace or research history unexpectedly.
 - [ ] Preserve immutable creator/actor provenance when operational ownership changes.
-- [ ] Add a local, audited administrator-recovery command for an operator with filesystem/database access.
+- [ ] Extend the local `reset-password` recovery command into an audited administrator-recovery flow that can deliberately reactivate or promote one account when necessary and invalidate its existing sessions; never expose it through an unauthenticated browser endpoint.
 - [ ] Ensure administrator recovery cannot be invoked through an unauthenticated browser endpoint.
 - [ ] Keep capability/resource authorization independent of the credential provider so OIDC/LDAP can be added later without implementing them in this milestone.
 - [ ] Keep profile selection install-time only for the first release; if transitions are added later, expose them through a guarded administrative migration command rather than a casual settings toggle.
@@ -546,7 +560,7 @@ Acceptance journey:
 - [ ] If profile migration is added later, require preflight/backup, show visibility and permission changes, and block migration while incompatible jobs or sequencing streams are active.
 - [ ] Test upgrades and rollbacks with stale sessions to prove permission changes remain enforced.
 - [ ] Add the three mandatory end-to-end journeys to release gates.
-- [ ] Test supported profile transitions and rollback behavior.
+- [ ] Until a migration command exists, test that every attempted deployment-profile change is refused and preserves data/configuration. When transitions are implemented later, add an explicit supported-transition and rollback matrix.
 - [ ] Confirm profile changes never delete hidden-domain data or silently broaden access.
 - [ ] Update installer documentation and configuration examples.
 - [ ] Update demo experiences and screenshots where appropriate.

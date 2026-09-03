@@ -106,9 +106,11 @@ before each release through the in-app updater._
 
 SeqDesk is designed to run inside a closed, trusted network, for example behind a VPN or restricted
 to an internal/institutional intranet. It should not be exposed directly to the public internet.
-Access should be limited to authorized users on the protected network. Convenience-oriented
-defaults, including open self-registration and bootstrap accounts, assume this trusted-network
-context; deploying SeqDesk on a publicly reachable host is not a supported or secure configuration.
+Access should be limited to authorized users on the protected network. A local Sequencing Center
+evaluation can allow researcher self-registration; team-server installs and the Shared Lab and
+Research Workbench profiles start invite-only. Every supported fresh install creates one generated
+administrator and no known generic member account. Deploying SeqDesk on a publicly reachable host
+is not a supported or secure configuration.
 
 The public demo at [demo.seqdesk.org](https://demo.seqdesk.org) is the intentional exception. It is
 a sandbox for exploring the UI. Open `https://demo.seqdesk.org/demo` for the researcher view or
@@ -140,6 +142,10 @@ of the same application—not separate installers. It then recommends only the
 storage, workflow-runtime, enrollment, and onboarding choices relevant to the
 selected profile and shows a redacted plan before applying anything.
 
+Shared Lab and Research Workbench are preview modes on this development branch
+until their complete first-use journeys pass the packaged release gates. Use
+Sequencing Center for an existing production deployment in the meantime.
+
 Use this quick rule when selecting the mode:
 
 - Choose **Sequencing Center** when outside researchers submit work to a
@@ -165,7 +171,7 @@ application directory. Verify that path after installation, or deliberately
 replace it with an existing absolute directory:
 
 ```bash
-seqdesk storage configure "$HOME/seqdesk/data"
+seqdesk storage configure "$HOME/seqdesk-data"
 seqdesk storage status
 ```
 
@@ -180,11 +186,12 @@ environment variable instead.
 See the [Data Storage guide](https://seqdesk.org/docs/administration/data-storage)
 for path ownership, automation, service overrides, and discovery behavior.
 
-### Load demo data
+### Load facility demo data
 
-After storage is configured and writable by the SeqDesk service, a facility
-administrator can create the example dataset from **Admin → Settings → Demo
-data** or from the server shell:
+On Sequencing Center and Shared Lab installations, after storage is configured
+and writable by the SeqDesk service, an administrator can create the facility-
+shaped example dataset from **Admin → Settings → Demo data** or from the
+server shell:
 
 ```bash
 seqdesk demo-data status
@@ -225,6 +232,9 @@ If folder deletion fails after row cleanup, SeqDesk retains the original path
 as pending cleanup so a later `remove` retries the same folder. Restore the path
 and run `remove` again. `seqdesk install dummy_data` remains available as a
 compatibility alias for `seqdesk demo-data install`.
+
+Research Workbench does not use this order/study fixture. Its first-use journey
+starts in **Workbench Data** with a local upload or public-repository import.
 
 ### Add pipelines after installation
 
@@ -627,11 +637,11 @@ green.
 | Method | Command | Best for | CI coverage |
 | --- | --- | --- | --- |
 | Downloaded guided installer (recommended) | Download `install.sh`, then run `bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"` | Almost everyone — no global npm package required; Node.js and npm are still prerequisites | Required Ubuntu |
-| npm launcher | `npm i -g seqdesk@latest` then `seqdesk --interactive` | Equivalent launcher-based install | Required Ubuntu and macOS ARM64; private AlmaLinux |
+| npm launcher | `npm i -g seqdesk@latest` then `seqdesk --interactive` | Runs the canonical installer bundled with that exact npm version | Required Ubuntu and macOS ARM64; private AlmaLinux |
 | Linux | `SEQDESK_BIND_HOST=127.0.0.1 bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"` | Local Linux workstation / evaluation install; prepare an owned service directory separately for production | Required Ubuntu; extended Debian, Rocky Linux, and ARM64; private AlmaLinux |
 | macOS (Homebrew) | `SEQDESK_BIND_HOST=127.0.0.1 bash /tmp/seqdesk-install.sh --interactive --dir "$HOME/seqdesk"` | Local Mac workstation / evaluation installs | Required macOS ARM64; extended Intel x64 weekly/manual |
 | Unattended | `seqdesk -y --config ./infrastructure-setup.json` | Fleet or scripted deployments; reapply configuration with `--reconfigure` | Required Ubuntu |
-| From source | `bash scripts/install.sh` | Developers / CI building a specific branch | Ubuntu; private AlmaLinux |
+| From source (legacy adapter work remains) | `bash scripts/install.sh` | Developers / CI building a specific branch; not yet a support claim for all three profiles | Ubuntu; private AlmaLinux |
 
 The Ubuntu install workflow additionally runs the downloaded installer once
 under PM2; its npm-launcher and source-install jobs start the app directly.

@@ -93,9 +93,23 @@ direct URL equal to `SEQDESK_DATABASE_URL`.
 
 ## 2. Install Without Hosted Profile
 
+Choose the installation-wide operating model explicitly for a repeatable test:
+
+```bash
+export SEQDESK_DEPLOYMENT_PROFILE="sequencing-center"
+```
+
+Use `sequencing-center` when requesters hand work to facility staff,
+`shared-lab` when one team shares sequencing and analysis work, or
+`research-workbench` when users start from uploaded/imported data and private
+analysis workspaces. Shared Lab and Research Workbench remain preview modes on
+this development branch until their packaged first-use acceptance journeys
+pass. All choices install the same application and use the same login page.
+
 ```bash
 curl -fsSLo /tmp/seqdesk-install.sh https://seqdesk.org/install.sh
 bash /tmp/seqdesk-install.sh -y \
+    --deployment-profile "$SEQDESK_DEPLOYMENT_PROFILE" \
     --dir "$SEQDESK_INSTALL_DIR" \
     --port 8000 \
     --database-url "$SEQDESK_DATABASE_URL" \
@@ -109,6 +123,7 @@ Equivalent npm launcher path:
 ```bash
 npm i -g seqdesk@latest
 seqdesk -y \
+  --deployment-profile "$SEQDESK_DEPLOYMENT_PROFILE" \
   --dir "$SEQDESK_INSTALL_DIR" \
   --port 8000 \
   --database-url "$SEQDESK_DATABASE_URL" \
@@ -166,21 +181,18 @@ curl -fsS http://127.0.0.1:8000/api/auth/providers
 curl -fsS http://127.0.0.1:8000/api/setup/status
 ```
 
-Because these commands are unattended and do not provide bootstrap users, they
-seed the fallback development accounts into an empty database:
+Every supported fresh install creates exactly one administrator. When the
+unattended command does not provide bootstrap credentials, the installer
+generates a strong password and prints it once after it verifies the account;
+it never creates a generic member account or a known packaged password. Save
+that terminal-only value immediately. It is excluded from the install log,
+saved plan, and runtime configuration. Use `seqdesk reset-password` (step 8) if
+it is lost.
 
-- `admin@example.com` / `admin`
-- `user@example.com` / `user`
-
-If the database was not empty and already carried those accounts, they are left
-exactly as they are — their existing passwords apply, not the ones listed here.
-If nobody has those passwords, set a new one for a single account with
-`seqdesk reset-password` (step 8). Change or remove both immediately. SeqDesk
-binds `0.0.0.0` (every interface) by
-default, so the instance — and these default credentials — are reachable from
-the network as soon as it starts. To keep a test install local-only, set
-`SEQDESK_BIND_HOST=127.0.0.1` at install time (it is persisted in
-`$SEQDESK_INSTALL_DIR/.seqdesk-bind-host`) or export it before `./start.sh`.
+An existing database keeps its existing accounts and passwords. Adoption or
+reconfiguration must not replace them. SeqDesk binds to loopback by default;
+network access should go through a deliberately configured HTTPS reverse proxy,
+firewall, or VPN rather than exposing the application directly.
 
 ## 5. Run Doctor
 
@@ -229,7 +241,8 @@ except that one known socket false positive on launcher 1.1.122.
 
 ## 6. Demo Data Check
 
-With writable data storage configured, verify the example dataset lifecycle:
+Run this section only for Sequencing Center or Shared Lab. With writable data
+storage configured, verify the facility-shaped example dataset lifecycle:
 
 ```bash
 seqdesk demo-data status --dir "$SEQDESK_CI_INSTALL_DIR"
@@ -243,7 +256,7 @@ path. These files are runnable fixtures for demos and smoke tests, not
 scientific data. A second `demo-data install` is idempotent and reports the
 existing fixture instead of adding duplicates.
 
-On a database with multiple facility administrators, add
+On a database with multiple administrators, add
 `--user-email admin@example.org`. To finish the lifecycle check, remove only
 that owner's fixture:
 
@@ -262,6 +275,11 @@ tickets are preserved, but fixture links on those tickets are cleared and
 reported.
 
 `seqdesk install dummy_data` remains an install alias.
+
+For Research Workbench, skip this fixture. Sign in, create the first private
+workspace, upload a small local file or import a public accession, and complete
+a small approved workflow run instead. Until that exact packaged journey is in
+the release gate, Research Workbench remains a preview mode.
 
 ## 7. Hosted Profile Checks
 

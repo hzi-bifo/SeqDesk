@@ -19,10 +19,29 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck disable=SC1091
 SEQDESK_INSTALL_LIB_ONLY=1 source "$REPO_ROOT/scripts/install-dist.sh"
 
-# Deterministic, tty-independent input + controllable reachability.
-read_input() { local r; IFS= read -r r || true; printf '%s' "$r"; }
-read_secret() { local r; IFS= read -r r || true; printf '%s' "$r"; }
-db_tcp_reachable() { [ "${TEST_DB_REACHABLE:-0}" = "1" ]; }
+# Deterministic, tty-independent input + controllable reachability. Prompts are
+# retained on stderr so the test can verify guidance without ever echoing an
+# entered value. TEST_DB_REACHABLE_HOST supports one failed managed-database
+# URL followed by a reachable replacement without touching the network.
+read_input() {
+    local r
+    printf '%s' "${1:-}" >&2
+    IFS= read -r r || true
+    printf '%s' "$r"
+}
+read_secret() {
+    local r
+    printf '%s' "${1:-}" >&2
+    IFS= read -r r || true
+    printf '%s' "$r"
+}
+db_tcp_reachable() {
+    if [ -n "${TEST_DB_REACHABLE_HOST:-}" ]; then
+        [ "${1:-}" = "$TEST_DB_REACHABLE_HOST" ]
+    else
+        [ "${TEST_DB_REACHABLE:-0}" = "1" ]
+    fi
+}
 
 FAILURES=0
 assert_eq() {
@@ -60,6 +79,8 @@ assert_not_contains() {
 }
 
 reset_state() {
+    TEST_DB_REACHABLE=0
+    TEST_DB_REACHABLE_HOST=""
     SEQDESK_INTERACTIVE=1
     SEQDESK_YES=""
     SEQDESK_CONFIG=""
@@ -122,9 +143,10 @@ trap 'rm -f "$OUT"; rm -rf "$TEST_TMP_DIR"' EXIT
 # Individual cases stub provision_private_postgres, but this is the backstop.
 export SEQDESK_PG_HOME="$TEST_TMP_DIR/pg"
 
-echo "== Case 1: managed DB (unreachable -> use anyway), validation re-prompts, accounts =="
+echo "== Case 1: managed DB validation re-prompts until a reachable, secret-safe URL =="
 reset_state
 TEST_DB_REACHABLE=0
+TEST_DB_REACHABLE_HOST="db-ready.example.com"
 # Input order matches the wizard's reads: deployment profile; local access/port;
 # database; pipeline support; storage; then the initial administrator.
 run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
@@ -133,9 +155,10 @@ run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
 
 2
 not-a-url
-postgresql://u:secret@db.example.com:5432/seqdesk
-y
-
+postgresql://u:unreachable-secret@db-unreachable.example.com:5432/seqdesk
+postgresql://u:managed-secret@db-ready.example.com:5432/seqdesk
+mysql://owner:bad-direct-secret@db-ready.example.com:5432/seqdesk
+postgresql://owner:direct-secret@db-ready.example.com:5432/seqdesk
 n
 
 Ada
@@ -146,7 +169,10 @@ longpassword1
 EOF
 
 assert_eq "managed DATABASE_URL captured" \
-    "postgresql://u:secret@db.example.com:5432/seqdesk" "$SEQDESK_DATABASE_URL"
+    "postgresql://u:managed-secret@db-ready.example.com:5432/seqdesk" "$SEQDESK_DATABASE_URL"
+assert_eq "valid direct migration URL captured after invalid input" \
+    "postgresql://owner:direct-secret@db-ready.example.com:5432/seqdesk" \
+    "$SEQDESK_DATABASE_DIRECT_URL"
 assert_eq "sequencing center profile captured" \
     "sequencing-center" "$SEQDESK_DEPLOYMENT_PROFILE"
 assert_eq "admin first name captured" "Ada" "$SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME"
@@ -162,6 +188,18 @@ assert_eq "guided storage stays outside the app directory" \
     "$TEST_TMP_DIR/install-data" "$SEQDESK_DATA_PATH"
 assert_contains "rejected non-postgres URL" "does not look like a postgresql" "$OUT"
 assert_contains "warned on unreachable host" "Could not reach" "$OUT"
+assert_contains "unreachable managed database requires a replacement" \
+    "Enter a reachable URL" "$OUT"
+assert_contains "invalid direct migration URL is rejected" \
+    "direct migration URL must start with postgresql://" "$OUT"
+assert_not_contains "unreachable database password is not echoed" \
+    "unreachable-secret" "$OUT"
+assert_not_contains "accepted database password is not echoed" \
+    "managed-secret" "$OUT"
+assert_not_contains "direct migration password is not echoed" \
+    "direct-secret" "$OUT"
+assert_not_contains "invalid direct migration password is not echoed" \
+    "bad-direct-secret" "$OUT"
 assert_eq "an operator-supplied password is not flagged as generated" \
     "false" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED"
 assert_eq "an operator-supplied password is never copied for display" \
@@ -260,13 +298,51 @@ assert_contains "wizard requires an explicit profile choice" \
     "Choose 1, 2, or 3" "$OUT"
 assert_contains "wizard explains how to choose a profile" \
     "External requesters" "$OUT"
+assert_contains "Shared Lab is identified as preview before selection" \
+    "Preview on this branch until the packaged Shared Lab acceptance journey passes" "$OUT"
+assert_contains "Workbench is identified as preview before selection" \
+    "Preview on this branch until the packaged Workbench acceptance journey passes" "$OUT"
+assert_contains "wizard explains profile persistence" \
+    "cannot currently be changed in Settings or with Reconfigure" "$OUT"
+assert_contains "workbench explains administrator privacy boundaries" \
+    "do not automatically see another member's private workspace" "$OUT"
 assert_contains "workbench defers member creation to onboarding" \
     "Additional accounts are invited" "$OUT"
 assert_contains "executor choice is explained only after workflows are enabled" \
     "where should analysis jobs run" "$OUT"
+assert_contains "wizard distinguishes runtime preparation from package selection" \
+    "Approved workflow packages are selected after the administrator signs in" "$OUT"
 
 echo ""
-echo "== Case 2b.1: guided workflow setup can target an existing Slurm cluster =="
+echo "== Case 2b.1: Workbench workflow deferral needs explicit acknowledgement =="
+reset_state
+SEQDESK_DEPLOYMENT_PROFILE="research-workbench"
+prompt_profile_pipeline_support >"$OUT" 2>&1 <<'EOF'
+n
+n
+EOF
+assert_eq "declining without acknowledgement keeps Workbench runtime selected" \
+    "1" "$SEQDESK_WITH_PIPELINES"
+assert_contains "Workbench explains the consequence of runtime deferral" \
+    "analysis execution will remain blocked" "$OUT"
+assert_contains "Workbench asks for explicit deferral acknowledgement" \
+    "Continue with workflow runtime deferred?" "$OUT"
+assert_contains "unacknowledged deferral restores the recommended selection" \
+    "Workflow runtime preparation remains selected" "$OUT"
+
+reset_state
+SEQDESK_DEPLOYMENT_PROFILE="research-workbench"
+prompt_profile_pipeline_support >"$OUT" 2>&1 <<'EOF'
+n
+y
+EOF
+assert_eq "acknowledged Workbench runtime deferral is retained" \
+    "0" "$SEQDESK_WITH_PIPELINES"
+assert_contains "acknowledged Workbench deferral is reported honestly" \
+    "Pipeline runtime setup is deferred" "$OUT"
+
+echo ""
+echo "== Case 2b.2: guided workflow setup can target an existing Slurm cluster =="
 reset_state
 SEQDESK_DEPLOYMENT_PROFILE="shared-lab"
 SEQDESK_WITH_PIPELINES="1"
@@ -278,6 +354,8 @@ assert_contains "Slurm choice does not claim to provision a cluster" \
     "does not install or administer the cluster" "$OUT"
 assert_contains "Slurm advanced settings are deferred" \
     "Queue and resource defaults are optional" "$OUT"
+assert_contains "Slurm remains pending until compute-node storage verification" \
+    "compute-node smoke job verifies the selected storage paths" "$OUT"
 
 echo ""
 echo "== Case 2c: team-server access requires HTTPS and keeps the app on loopback =="
@@ -314,6 +392,34 @@ assert_contains "non-loopback listener explains TLS responsibility" \
     "installer does not configure TLS" "$OUT"
 
 echo ""
+echo "== Case 2c.2: team-server setup requires a real administrator email =="
+reset_state
+SEQDESK_DEPLOYMENT_PROFILE="sequencing-center"
+SEQDESK_ACCESS_AUDIENCE="team-server"
+SEQDESK_BIND_HOST="127.0.0.1"
+SEQDESK_PORT="8000"
+SEQDESK_NEXTAUTH_URL="https://seqdesk.lab.example"
+SEQDESK_WITH_PIPELINES="0"
+SEQDESK_DATA_PATH="$TEST_TMP_DIR/team-server-data"
+run_interactive_wizard_accounts >"$OUT" 2>&1 <<'EOF'
+Team
+Admin
+
+admin@team.example
+
+EOF
+assert_eq "team-server setup captures the explicitly entered administrator email" \
+    "admin@team.example" "$SEQDESK_BOOTSTRAP_ADMIN_EMAIL"
+assert_contains "blank team-server email is rejected instead of defaulted" \
+    "'' is not a valid email address" "$OUT"
+assert_not_contains "team-server setup does not offer a placeholder email default" \
+    "admin@example.com" "$OUT"
+assert_contains "team-server Sequencing Center starts invite-only" \
+    "Team-facing installations start invite-only" "$OUT"
+assert_contains "team-server setup explains login and recovery consequences" \
+    "Password recovery by email is unavailable until mail is configured" "$OUT"
+
+echo ""
 echo "== Case 2d: guided storage rejects application-directory overlap =="
 reset_state
 SEQDESK_DEPLOYMENT_PROFILE="research-workbench"
@@ -338,6 +444,52 @@ if validate_guided_storage_layout >"$OUT" 2>&1; then
 else
     echo "FAIL: dedicated sibling storage was rejected" >&2
     FAILURES=$((FAILURES + 1))
+fi
+
+echo ""
+echo "== Case 2d.1: apply-time storage probes fail closed and clean up =="
+PREPARED_STORAGE="$TEST_TMP_DIR/prepared-storage/nested"
+if prepare_storage_directory "Managed data directory" "$PREPARED_STORAGE" >"$OUT" 2>&1; then
+    echo "ok: storage preparation creates and probes a usable directory"
+else
+    echo "FAIL: usable storage directory failed preparation" >&2
+    FAILURES=$((FAILURES + 1))
+fi
+assert_eq "storage preparation creates the requested directory" \
+    "present" "$([ -d "$PREPARED_STORAGE" ] && printf present || printf absent)"
+assert_eq "successful storage probe leaves no probe artifacts" \
+    "" "$(find "$PREPARED_STORAGE" -name '.seqdesk-install-probe-*' -print -quit)"
+assert_contains "successful storage probe reports write/rename/delete coverage" \
+    "write/rename/delete probe passed" "$OUT"
+
+STORAGE_FILE="$TEST_TMP_DIR/storage-is-a-file"
+printf 'not a directory\n' >"$STORAGE_FILE"
+if prepare_storage_directory "Managed data directory" "$STORAGE_FILE" >"$OUT" 2>&1; then
+    echo "FAIL: storage preparation accepted a regular file" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: storage preparation rejects a regular file"
+fi
+assert_contains "file-path storage rejection names the problem" \
+    "exists but is not a directory" "$OUT"
+
+UNWRITABLE_STORAGE="$TEST_TMP_DIR/unwritable-storage"
+mkdir -p "$UNWRITABLE_STORAGE"
+if [ "$(id -u)" -eq 0 ]; then
+    echo "ok: unwritable-directory storage check skipped for root"
+else
+    chmod 500 "$UNWRITABLE_STORAGE"
+    if prepare_storage_directory "Managed data directory" "$UNWRITABLE_STORAGE" >"$OUT" 2>&1; then
+        echo "FAIL: storage preparation accepted an unwritable directory" >&2
+        FAILURES=$((FAILURES + 1))
+    else
+        echo "ok: storage preparation rejects an unwritable directory"
+    fi
+    chmod 700 "$UNWRITABLE_STORAGE"
+    assert_contains "unwritable storage rejection identifies service-user usability" \
+        "is not usable by the SeqDesk service user" "$OUT"
+    assert_eq "failed storage probe leaves no probe artifacts" \
+        "" "$(find "$UNWRITABLE_STORAGE" -name '.seqdesk-install-probe-*' -print -quit)"
 fi
 
 echo ""
@@ -385,6 +537,41 @@ assert_not_contains "plan omits the migration password" \
     "direct-secret" <(printf '%s\n' "$plan_json")
 assert_not_contains "plan omits the administrator password" \
     "account-secret" <(printf '%s\n' "$plan_json")
+assert_contains "Workbench plan uses invitation enrollment" \
+    '"policy": "invite-only"' <(printf '%s\n' "$plan_json")
+assert_contains "Workbench plan carries its preview readiness warning" \
+    "research-workbench is a preview until its exact packaged first-use journey passes the release gate" \
+    <(printf '%s\n' "$plan_json")
+
+shared_lab_plan_json="$({
+    SEQDESK_DEPLOYMENT_PROFILE="shared-lab"
+    build_install_plan_json
+})"
+assert_contains "Shared Lab plan uses invitation enrollment" \
+    '"policy": "invite-only"' <(printf '%s\n' "$shared_lab_plan_json")
+assert_contains "Shared Lab plan carries its preview readiness warning" \
+    "shared-lab is a preview until its exact packaged first-use journey passes the release gate" \
+    <(printf '%s\n' "$shared_lab_plan_json")
+
+center_local_plan_json="$({
+    SEQDESK_DEPLOYMENT_PROFILE="sequencing-center"
+    SEQDESK_ACCESS_AUDIENCE="local"
+    SEQDESK_NEXTAUTH_URL="http://localhost:8443"
+    build_install_plan_json
+})"
+assert_contains "local Sequencing Center plan permits researcher self-registration" \
+    '"policy": "self-registration"' <(printf '%s\n' "$center_local_plan_json")
+
+center_team_plan_json="$({
+    SEQDESK_DEPLOYMENT_PROFILE="sequencing-center"
+    SEQDESK_ACCESS_AUDIENCE="team-server"
+    SEQDESK_NEXTAUTH_URL="https://seqdesk.lab.example"
+    build_install_plan_json
+})"
+assert_contains "team-server Sequencing Center plan starts invite-only" \
+    '"policy": "invite-only"' <(printf '%s\n' "$center_team_plan_json")
+assert_not_contains "team-server Sequencing Center plan does not open registration" \
+    '"policy": "self-registration"' <(printf '%s\n' "$center_team_plan_json")
 
 render_install_plan_human "$plan_json" >"$OUT"
 assert_contains "review explains the selected profile behavior" \
@@ -1382,6 +1569,7 @@ summary_out="$(
         SEQDESK_DIR="/opt/seqdesk-test"
         INSTALLED_VERSION="9.9.9"
         PM2_CONFIGURED="false"
+        SEQDESK_VERIFICATION_STATUS="not-run"
         SEQDESK_PORT="8000"
         SEQDESK_BIND_HOST="127.0.0.1"
         SEQDESK_BOOTSTRAP_ADMIN_EMAIL="admin@lab.org"
@@ -1408,6 +1596,13 @@ assert_contains "the researcher password is rendered, not blank" \
     "BBBBgeneratedResearcherBBBB" <(printf '%s\n' "$summary_out")
 assert_contains "the summary reports that a manual start is still required" \
     "INSTALLED — MANUAL START REQUIRED" <(printf '%s\n' "$summary_out")
+assert_contains "the summary reports the base service check separately" \
+    "Base service check   not run; start the application first" <(printf '%s\n' "$summary_out")
+assert_contains "the summary keeps profile readiness pending" \
+    "Profile readiness: pending" <(printf '%s\n' "$summary_out")
+assert_contains "the summary does not equate base health with profile readiness" \
+    "base service check does not replace profile storage, runtime, or first-use verification" \
+    <(printf '%s\n' "$summary_out")
 assert_contains "the start command is an absolute path" \
     "/opt/seqdesk-test/start.sh" <(printf '%s\n' "$summary_out")
 assert_contains "the URL to open is shown" \
@@ -1415,7 +1610,7 @@ assert_contains "the URL to open is shown" \
 assert_contains "the success report hands off to next steps" \
     "What's next" <(printf '%s\n' "$summary_out")
 assert_contains "the next steps show the Data Storage CLI command" \
-    "$summary_cli storage configure /opt/seqdesk-test/data" <(printf '%s\n' "$summary_out")
+    "$summary_cli storage configure /opt/seqdesk-test-data" <(printf '%s\n' "$summary_out")
 assert_contains "the next steps show Data Storage verification" \
     "$summary_cli storage status" <(printf '%s\n' "$summary_out")
 assert_contains "the next steps link the Data Storage guide" \
@@ -1501,7 +1696,7 @@ configured_storage_out="$(
 assert_contains "configured storage is checked with status" \
     "$summary_cli storage status" <(printf '%s\n' "$configured_storage_out")
 assert_not_contains "configured storage is not replaced with the install default" \
-    "storage configure /opt/seqdesk-test/data" <(printf '%s\n' "$configured_storage_out")
+    "storage configure /opt/seqdesk-test-data" <(printf '%s\n' "$configured_storage_out")
 assert_contains "configured storage still offers the optional demo dataset" \
     "$summary_cli demo-data install" <(printf '%s\n' "$configured_storage_out")
 

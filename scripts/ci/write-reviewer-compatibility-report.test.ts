@@ -46,8 +46,8 @@ function writeRequiredApplicationEvidence(directory: string) {
     path.join(directory, "setup.json"),
     `${JSON.stringify({ exists: true, configured: true })}\n`
   );
+  fs.writeFileSync(path.join(directory, "bootstrap-account-shape.ok"), "");
   fs.writeFileSync(path.join(directory, "auth-admin.ok"), "");
-  fs.writeFileSync(path.join(directory, "auth-researcher.ok"), "");
 }
 
 function runReport(
@@ -119,14 +119,14 @@ describe("reviewer compatibility report", () => {
   it("turns a requested PASS into FAIL and exits non-zero when evidence is missing", () => {
     const directory = createOutputDir();
     writeRequiredApplicationEvidence(directory);
-    fs.rmSync(path.join(directory, "auth-researcher.ok"));
+    fs.rmSync(path.join(directory, "bootstrap-account-shape.ok"));
 
     const result = runReport(directory);
     const report = readReport(directory);
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(
-      "requested PASS without required evidence: researcherAuthentication"
+      "requested PASS without required evidence: secureBootstrapShape"
     );
     expect(report).toMatchObject({
       result: "failed",
@@ -134,7 +134,7 @@ describe("reviewer compatibility report", () => {
       failureStage: "validate-report-evidence",
       evidence: {
         complete: false,
-        failedRequiredAssertions: ["researcherAuthentication"],
+        failedRequiredAssertions: ["secureBootstrapShape"],
       },
     });
     expect(
@@ -237,5 +237,18 @@ describe("reviewer compatibility report", () => {
     );
     expect(smokeSource).toContain('exit_code="$report_exit"');
     expect(smokeSource).toContain('exit "$exit_code"');
+  });
+
+  it("authenticates the generated administrator without retaining its password", () => {
+    const smokeSource = fs.readFileSync(smokeScript, "utf8");
+
+    expect(smokeSource).toContain("install-stdout-sensitive.XXXXXX");
+    expect(smokeSource).toContain("sanitize_install_stdout");
+    expect(smokeSource).toContain("assert-printed-credentials.mjs");
+    expect(smokeSource).toContain("bootstrap-account-shape.ok");
+    expect(smokeSource).not.toContain("SEQDESK_INSTALL_URL=");
+    expect(smokeSource).not.toContain('--password "admin"');
+    expect(smokeSource).not.toContain('--password "user"');
+    expect(smokeSource).not.toContain("auth-researcher.ok");
   });
 });

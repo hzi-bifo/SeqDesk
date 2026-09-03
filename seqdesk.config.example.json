@@ -1,5 +1,5 @@
 {
-  "_comment": "Repository-development example. Copy to seqdesk.config.json; installed releases use settings.json and default to port 8000. deployment.profile selects one operating model in the same application: sequencing-center, shared-lab, or research-workbench.",
+  "_comment": "Profile-neutral repository-development base. Copy to seqdesk.config.json, choose deployment.profile, and configure profile-specific operations after login. Installed releases use settings.json and default to port 8000.",
 
   "app": {
     "port": 3000,
@@ -11,9 +11,9 @@
   },
 
   "site": {
-    "name": "My Sequencing Facility",
-    "dataBasePath": "./data/sequencing",
-    "contactEmail": "sequencing@example.com"
+    "name": "My SeqDesk",
+    "dataBasePath": "./data/managed",
+    "contactEmail": "admin@example.com"
   },
 
   "pipelines": {
@@ -33,31 +33,7 @@
         "timeLimit": 12,
         "options": ""
       }
-    },
-    "mag": {
-      "enabled": true,
-      "version": "3.4.0",
-      "stubMode": false,
-      "skipProkka": true,
-      "skipConcoct": true
     }
-  },
-
-  "ena": {
-    "testMode": true,
-    "centerName": "My Center"
-  },
-
-  "sequencingFiles": {
-    "extensions": [".fastq.gz", ".fq.gz", ".fastq", ".fq"],
-    "scanDepth": 2,
-    "ignorePatterns": ["**/tmp/**", "**/undetermined/**"],
-    "simulationMode": "auto",
-    "simulationTemplateDir": "_simulation_templates/mag"
-  },
-
-  "auth": {
-    "allowRegistration": true
   },
 
   "telemetry": {
@@ -70,22 +46,7 @@
     "enabled": false,
     "provider": "seqdesk-relay",
     "relayUrl": "https://seqdesk.org/api/notifications/relay",
-    "relayToken": "",
-    "events": {
-      "order": {
-        "submitted": true,
-        "statusChanged": true,
-        "samplesSent": true
-      },
-      "ticket": {
-        "created": true,
-        "reply": true
-      }
-    },
-    "userDefaults": {
-      "orders": true,
-      "support": true
-    }
+    "relayToken": ""
   },
 
   "runtime": {
