@@ -160,7 +160,7 @@ describe("POST /api/admin/settings/pipelines/install", () => {
     delete process.env[PIPELINE_INSTALL_E2E_FAULT_ENV];
     global.fetch = mocks.fetch as typeof global.fetch;
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.pipelineConfigUpsert.mockResolvedValue({
       pipelineId: "test-pipeline",
@@ -719,7 +719,7 @@ describe("POST /api/admin/settings/pipelines/install", () => {
     expect(json.details).toContain("checksum verification failed");
   });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     const response = await POST(
@@ -730,12 +730,12 @@ describe("POST /api/admin/settings/pipelines/install", () => {
       })
     );
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
   });
 
   it("returns 403 when user is not FACILITY_ADMIN", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "RESEARCHER" },
+      user: { id: "member-1", role: "RESEARCHER" },
     });
 
     const response = await POST(

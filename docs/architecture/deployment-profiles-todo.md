@@ -36,7 +36,11 @@ Workbench/sequencing/support domains, so hidden navigation is not the only
 profile boundary. Study list/detail/edit/form views and ENA publishing now use
 the same capability model: Shared Lab members can work across the shared study
 catalog and submit through installation-managed ENA credentials, while only
-administrators can configure credentials or delete submission history.
+administrators can configure credentials or delete submission history. Host
+pipeline installation, package import, reference-database downloads, execution
+defaults, worker control, updates, telemetry, and instrument settings are now
+protected by explicit system-management capabilities rather than account-role
+comparisons.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -257,7 +261,7 @@ Convert APIs before relying on capability-based UI.
 ### System administration
 
 - [ ] Convert `/api/admin/users`, invites, departments, modules, form configuration, and settings routes.
-- [ ] Convert pipeline install/configuration, database download, execution defaults, workers, updates, telemetry, ENA credentials, and MinKNOW settings.
+- [x] Convert pipeline install/configuration, database download, execution defaults, workers, updates, telemetry, ENA credentials, and MinKNOW settings.
 - [ ] Ensure secret-bearing responses remain administrator-only.
 
 ### Facility and sample operations
@@ -275,7 +279,7 @@ Convert APIs before relying on capability-based UI.
 - [x] Convert log, weblog, artifact, output resolution, result selection, and cleaned-read routes.
 - [x] Allow `analysis.run` independently of system pipeline configuration.
 - [x] Keep pipeline installation and global defaults behind `system.pipelines.manage`.
-- [ ] Treat installation of a pipeline/package as privileged host code installation; never infer it from permission to run an approved pipeline.
+- [x] Treat installation of a pipeline/package as privileged host code installation; never infer it from permission to run an approved pipeline.
 - [ ] Apply configured compute/concurrency limits to member-launched runs.
 
 ### Workbench

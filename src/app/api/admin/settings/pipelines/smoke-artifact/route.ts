@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { inspectSmokeArtifactZip } from "@/lib/pipelines/smoke-artifact";
 
 export const runtime = "nodejs";
@@ -9,8 +13,9 @@ const MAX_SMOKE_ARTIFACT_BYTES = 50 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  const access = decideServerCapability(session, "system.pipelines.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {

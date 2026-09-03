@@ -6,6 +6,10 @@ import path from "path";
 import os from "os";
 import fs from "fs/promises";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { db } from "@/lib/db";
 import { clearPackageCache } from "@/lib/pipelines/package-loader";
 import { clearRegistryCache } from "@/lib/pipelines/registry";
@@ -131,8 +135,9 @@ async function installSnapshotFromClone(cloneDir: string, ref: string, commit: s
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  const access = decideServerCapability(session, "system.pipelines.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   let body: GitHubImportRequest;

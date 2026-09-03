@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from '@/lib/authorization/api';
 import { db } from '@/lib/db';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
@@ -322,8 +326,9 @@ async function installDatabaseIfNeeded(
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
 
-  if (!session || session.user.role !== 'FACILITY_ADMIN') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+  const access = decideServerCapability(session, 'system.pipelines.manage');
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {

@@ -29,7 +29,7 @@ describe("GET /api/admin/settings/pipelines/[pipelineId]/lint", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.getPackage.mockReturnValue({
       id: "metaxpath",
@@ -47,7 +47,7 @@ describe("GET /api/admin/settings/pipelines/[pipelineId]/lint", () => {
 
   it("requires facility admin access", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "RESEARCHER" },
+      user: { id: "member-1", role: "RESEARCHER" },
     });
 
     const response = await GET(

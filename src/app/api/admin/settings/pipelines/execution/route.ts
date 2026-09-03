@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from '@/lib/authorization/api';
+import {
   DEFAULT_EXECUTION_SETTINGS,
   getExecutionSettings,
   normalizePipelineExecutionOverrides,
@@ -36,8 +40,9 @@ export async function GET() {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || session.user.role !== 'FACILITY_ADMIN') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    const access = decideServerCapability(session, 'system.pipelines.manage');
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const settings = await getExecutionSettings();
@@ -57,8 +62,9 @@ export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || session.user.role !== 'FACILITY_ADMIN') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    const access = decideServerCapability(session, 'system.pipelines.manage');
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const body = await request.json();

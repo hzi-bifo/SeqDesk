@@ -123,7 +123,7 @@ describe("POST /api/admin/settings/pipelines/metaxpath/github", () => {
     });
   });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     const request = new NextRequest("http://localhost:3000/api/admin/settings/pipelines/metaxpath/github", {
@@ -133,7 +133,7 @@ describe("POST /api/admin/settings/pipelines/metaxpath/github", () => {
     });
 
     const response = await POST(request);
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
   });
 
   it("returns 403 when user is not FACILITY_ADMIN", async () => {

@@ -35,21 +35,21 @@ describe("GET /api/admin/settings/pipelines/store", () => {
     }
   });
 
-  it("rejects non-admin requests", async () => {
+  it("rejects unauthenticated requests", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     const response = await GET(
       new NextRequest("http://localhost/api/admin/settings/pipelines/store")
     );
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
   });
 
   it("aggregates multiple registries and preserves source metadata", async () => {
     process.env.SEQDESK_PIPELINE_REGISTRY_URLS =
       "https://seqdesk.org/api/registry,https://example.org/api/registry";
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
 
     mocks.fetch
@@ -134,7 +134,7 @@ describe("GET /api/admin/settings/pipelines/store", () => {
     process.env.SEQDESK_PIPELINE_REGISTRY_URLS =
       "https://seqdesk.org/api/registry,https://unreachable.example/api/registry";
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
 
     mocks.fetch
@@ -190,7 +190,7 @@ describe("GET /api/admin/settings/pipelines/store", () => {
     process.env.SEQDESK_PIPELINE_REGISTRY_URLS =
       "https://seqdesk.org/api/registry,https://malformed.example/api/registry";
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.fetch
       .mockResolvedValueOnce({
@@ -239,7 +239,7 @@ describe("GET /api/admin/settings/pipelines/store", () => {
     process.env.SEQDESK_PIPELINE_REGISTRY_URLS =
       "https://seqdesk.org/api/registry";
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.fetch.mockResolvedValue({
       ok: true,
@@ -288,7 +288,7 @@ describe("GET /api/admin/settings/pipelines/store", () => {
     process.env.SEQDESK_PIPELINE_REGISTRY_URLS =
       "https://seqdesk.org/api/registry";
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.fetch.mockResolvedValue({
       ok: true,
@@ -331,7 +331,7 @@ describe("GET /api/admin/settings/pipelines/store", () => {
     process.env.SEQDESK_PIPELINE_REGISTRY_URLS =
       "https://seqdesk.org/api/registry,https://slow.example/api/registry";
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     let slowSignal: AbortSignal | undefined;
 
@@ -398,7 +398,7 @@ describe("GET /api/admin/settings/pipelines/store", () => {
     process.env.SEQDESK_PIPELINE_REGISTRY_URLS =
       "https://first.example/api/registry,https://second.example/api/registry";
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.fetch
       .mockRejectedValueOnce(new Error("first unavailable"))

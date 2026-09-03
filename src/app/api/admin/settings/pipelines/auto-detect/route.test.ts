@@ -36,7 +36,7 @@ describe("GET /api/admin/settings/pipelines/auto-detect", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     // Default: no conda available
     mocks.execAsync.mockRejectedValue(new Error("command not found"));
@@ -51,18 +51,18 @@ describe("GET /api/admin/settings/pipelines/auto-detect", () => {
 
   it("returns 403 for non-admin users", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "RESEARCHER" },
+      user: { id: "member-1", role: "RESEARCHER" },
     });
 
     const response = await GET();
     expect(response.status).toBe(403);
   });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     const response = await GET();
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
   });
 
   it("returns detected=false when conda is not installed", async () => {

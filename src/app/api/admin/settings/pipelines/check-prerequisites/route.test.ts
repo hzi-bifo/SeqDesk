@@ -58,14 +58,14 @@ describe("GET /api/admin/settings/pipelines/check-prerequisites", () => {
     expect(response.status).toBe(403);
   });
 
-  it("returns 403 when no session", async () => {
+  it("returns 401 when no session", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     const request = new Request(
       "http://localhost:3000/api/admin/settings/pipelines/check-prerequisites"
     );
     const response = await GET(request);
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
   });
 
   it("runs quick check when quick=true", async () => {

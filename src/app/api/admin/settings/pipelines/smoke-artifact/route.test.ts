@@ -38,7 +38,7 @@ describe("POST /api/admin/settings/pipelines/smoke-artifact", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.inspectSmokeArtifactZip.mockReturnValue({
       summary: {
@@ -69,7 +69,7 @@ describe("POST /api/admin/settings/pipelines/smoke-artifact", () => {
 
   it("requires facility admin access", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "RESEARCHER" },
+      user: { id: "member-1", role: "RESEARCHER" },
     });
 
     const response = await POST(makeMultipartRequest());

@@ -25,6 +25,20 @@ vi.mock("@/lib/auth", () => ({
   authOptions: {},
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: () => ({
+    id: "sequencing-center",
+    domains: [
+      "core",
+      "facility-intake",
+      "sample-catalog",
+      "sequencing-operations",
+      "analysis",
+      "publishing",
+    ],
+  }),
+}));
+
 vi.mock("@/lib/pipelines/package-loader", () => ({
   getPackageManifest: mocks.getPackageManifest,
 }));
@@ -160,11 +174,11 @@ describe("POST /api/admin/settings/pipelines/download", () => {
     );
   });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
     const response = await POST(makeRequest({ pipelineId: "mag" }));
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
   });
 
   it("returns 403 for non-admin users", async () => {

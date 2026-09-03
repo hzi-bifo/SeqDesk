@@ -90,12 +90,12 @@ describe("POST /api/admin/settings/pipelines/download-db/preflight", () => {
     mocks.fsStat.mockRejectedValue(new Error("ENOENT"));
   });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     const response = await POST(makeRequest({ pipelineId: "metaxpath", databaseId: "core-nt" }));
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "Unauthorized" });
   });
 
