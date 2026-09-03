@@ -35,6 +35,7 @@
 #   SEQDESK_USE_PM2=1             - Start with PM2 for auto-restart (recommended)
 #   SEQDESK_RUN_DOCTOR=1          - Run seqdesk doctor after install when the CLI is available
 #   SEQDESK_CONFIG=/path/or/url    - Optional infra JSON (flat or nested keys)
+#   SEQDESK_DEPLOYMENT_PROFILE=sequencing-center - Installation operating model
 #   SEQDESK_PROFILE=twincore       - Hosted install profile id
 #   SEQDESK_PROFILE_CODE=...       - Access code for hosted install profile
 #   SEQDESK_PROFILE_REGISTRY_URL=https://seqdesk.org/api/install-profiles
@@ -104,6 +105,7 @@ SEQDESK_WITH_CONDA="${SEQDESK_WITH_CONDA:-}"
 SEQDESK_SKIP_DEPS="${SEQDESK_SKIP_DEPS:-}"
 SEQDESK_YES="${SEQDESK_YES:-}"
 SEQDESK_INTERACTIVE="${SEQDESK_INTERACTIVE:-}"
+SEQDESK_DEPLOYMENT_PROFILE="${SEQDESK_DEPLOYMENT_PROFILE:-}"
 SEQDESK_USER_CLI_PATH=""
 SEQDESK_USER_CLI_BIN_DIR=""
 SEQDESK_USER_CLI_NEEDS_PATH="false"
@@ -3734,6 +3736,81 @@ interactive_wizard_enabled() {
     return 0
 }
 
+deployment_profile_label() {
+    case "${1:-}" in
+        sequencing-center) printf '%s' "Sequencing center" ;;
+        shared-lab) printf '%s' "Shared lab" ;;
+        research-workbench) printf '%s' "Research workbench" ;;
+        *) printf '%s' "Unknown" ;;
+    esac
+}
+
+validate_deployment_profile() {
+    if [ -z "$SEQDESK_DEPLOYMENT_PROFILE" ]; then
+        local legacy_surface="${NEXT_PUBLIC_SEQDESK_APP_SURFACE:-${SEQDESK_APP_SURFACE:-}}"
+        if [ "$legacy_surface" = "workbench" ] || is_truthy "${NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY:-}"; then
+            SEQDESK_DEPLOYMENT_PROFILE="research-workbench"
+            print_info "Migrating legacy Workbench mode to deployment.profile=research-workbench."
+        else
+            SEQDESK_DEPLOYMENT_PROFILE="sequencing-center"
+        fi
+    fi
+
+    case "$SEQDESK_DEPLOYMENT_PROFILE" in
+        sequencing-center|shared-lab|research-workbench)
+            return 0
+            ;;
+        *)
+            print_error "Unknown deployment profile: $SEQDESK_DEPLOYMENT_PROFILE"
+            print_info "Choose sequencing-center, shared-lab, or research-workbench."
+            exit 1
+            ;;
+    esac
+}
+
+prompt_deployment_profile() {
+    if [ -n "$SEQDESK_DEPLOYMENT_PROFILE" ]; then
+        validate_deployment_profile
+        return 0
+    fi
+
+    if is_truthy "$SEQDESK_YES"; then
+        SEQDESK_DEPLOYMENT_PROFILE="sequencing-center"
+        return 0
+    fi
+
+    print_info "Operating model — how will this SeqDesk installation be used?"
+    echo "    1) Sequencing center   — researchers request sequencing; facility staff manage delivery"
+    echo "    2) Shared lab          — one lab shares sequencing work; admins configure the system"
+    echo "    3) Research workbench  — researchers import/upload data and run analysis workflows"
+    echo "       This selects one view of the same application; it does not install a separate edition."
+
+    local profile_choice
+    while true; do
+        profile_choice=$(read_input "  Choose [1]: ")
+        profile_choice=${profile_choice:-1}
+        case "$profile_choice" in
+            1|sequencing-center)
+                SEQDESK_DEPLOYMENT_PROFILE="sequencing-center"
+                break
+                ;;
+            2|shared-lab)
+                SEQDESK_DEPLOYMENT_PROFILE="shared-lab"
+                break
+                ;;
+            3|research-workbench)
+                SEQDESK_DEPLOYMENT_PROFILE="research-workbench"
+                break
+                ;;
+            *)
+                print_error "  Choose 1, 2, or 3."
+                ;;
+        esac
+    done
+
+    print_success "  Selected $(deployment_profile_label "$SEQDESK_DEPLOYMENT_PROFILE")."
+}
+
 # The wizard is split so the database dependency can be verified between its two
 # halves. Asking for accounts first meant a reviewer chose a password, was shown
 # a generated one to "save now", and then watched the install abort on a
@@ -3750,7 +3827,10 @@ run_interactive_wizard_database() {
 
     print_header "Guided setup"
 
-    # 1) Database
+    # The operating model determines the questions and onboarding that follow.
+    prompt_deployment_profile
+
+    # Database
     print_info "Database — where should SeqDesk store its data?"
     if [ "${OS:-}" = "macos" ]; then
         echo "    1) Local PostgreSQL  — installed/started with Homebrew as your login user"
@@ -3812,6 +3892,17 @@ run_interactive_wizard_accounts() {
         SEQDESK_GENERATED_ADMIN_PASSWORD="$INTERACTIVE_RESULT"
     fi
 
+    # Shared Lab and Workbench use one initial administrator. Additional members
+    # belong in authenticated onboarding, where invitation and enrollment policy
+    # can be applied safely. Keep the center's optional researcher account for
+    # compatibility until its onboarding flow replaces this prompt too.
+    if [ "$SEQDESK_DEPLOYMENT_PROFILE" != "sequencing-center" ]; then
+        SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="0"
+        print_info "  Additional accounts are configured after the first administrator signs in."
+        print_success "Guided setup captured. Continuing the installation..."
+        return 0
+    fi
+
     local make_researcher
     make_researcher=$(read_input "  Also create a researcher (non-admin) account? (Y/n): ")
     make_researcher=${make_researcher:-Y}
@@ -3860,6 +3951,8 @@ Options:
   --verbose                    Print the diagnostic detail that normally goes
                                only to the install log
   --config <path-or-url>       Infrastructure JSON file (local path or https URL)
+  --deployment-profile <id>   Operating model: sequencing-center (default),
+                              shared-lab, or research-workbench
   --profile <id>               Hosted install profile id (for example: twincore)
   --profile-code <code>        Access code for --profile
   --setting <id>               Alias for --profile
@@ -3905,6 +3998,7 @@ Pipeline environment:
 
 Examples:
   npx -y seqdesk@latest -y
+  npx -y seqdesk@latest -y --deployment-profile research-workbench
   npx -y seqdesk@latest -y --profile twincore --profile-code "$TWINCORE_SETUP_CODE"
   seqdesk -y --profile dev --profile-code "$SEQDESK_DEV_SETUP_CODE" --additional-settings-file /etc/seqdesk/install-overrides.json
   seqdesk -y --config https://example.org/infrastructure-setup.json
@@ -3935,6 +4029,14 @@ parse_args() {
                     exit 1
                 fi
                 SEQDESK_CONFIG="$2"
+                shift
+                ;;
+            --deployment-profile|--deployment_profile)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --deployment-profile"
+                    exit 1
+                fi
+                SEQDESK_DEPLOYMENT_PROFILE="$2"
                 shift
                 ;;
             --profile|--setting)
@@ -4184,6 +4286,7 @@ const allowedRoots = new Set([
   "app",
   "auth",
   "bootstrap",
+  "deployment",
   "ena",
   "forms",
   "install",
@@ -4522,6 +4625,7 @@ const structuredSections = [
   "app",
   "auth",
   "bootstrap",
+  "deployment",
   "ena",
   "forms",
   "hostedDatabase",
@@ -4586,6 +4690,7 @@ if (
 }
 
 const app = toRecord(root.app);
+const deployment = toRecord(root.deployment);
 const install = toRecord(root.install);
 const site = toRecord(root.site);
 const pipelines = toRecord(root.pipelines);
@@ -4617,6 +4722,9 @@ if (useSlurm === undefined) {
 }
 
 const values = {
+  deploymentProfile: toOptionalString(
+    firstDefined(root.deploymentProfile, deployment?.profile)
+  ),
   installDir: toOptionalString(
     firstDefined(root.installDir, root.seqdeskDir, root.dir, install?.dir, install?.installDir)
   ),
@@ -4826,6 +4934,9 @@ if (withPipelines === undefined) {
 }
 
 const out = {};
+if (values.deploymentProfile) {
+  out.SEQDESK_CFG_DEPLOYMENT_PROFILE = values.deploymentProfile;
+}
 if (values.installDir) out.SEQDESK_CFG_DIR = values.installDir;
 if (values.usePm2 !== undefined) out.SEQDESK_CFG_USE_PM2 = values.usePm2 ? "1" : "0";
 if (values.port !== undefined && values.port > 0) out.SEQDESK_CFG_PORT = String(values.port);
@@ -4933,6 +5044,7 @@ NODE
     fi
 
     apply_config_value SEQDESK_DIR SEQDESK_CFG_DIR
+    apply_config_value SEQDESK_DEPLOYMENT_PROFILE SEQDESK_CFG_DEPLOYMENT_PROFILE
     apply_config_value SEQDESK_USE_PM2 SEQDESK_CFG_USE_PM2
     apply_config_value SEQDESK_PORT SEQDESK_CFG_PORT
     apply_config_value SEQDESK_PROFILE_MIN_VERSION SEQDESK_CFG_PROFILE_MIN_VERSION
@@ -4986,7 +5098,7 @@ NODE
     apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION SEQDESK_CFG_BOOTSTRAP_RESEARCHER_INSTITUTION
     apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_ROLE SEQDESK_CFG_BOOTSTRAP_RESEARCHER_ROLE
 
-    unset SEQDESK_CFG_DIR SEQDESK_CFG_USE_PM2
+    unset SEQDESK_CFG_DIR SEQDESK_CFG_USE_PM2 SEQDESK_CFG_DEPLOYMENT_PROFILE
     unset SEQDESK_CFG_PORT SEQDESK_CFG_PROFILE_MIN_VERSION
     unset SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
     unset SEQDESK_CFG_PIPELINE_DATABASE_DIR
@@ -5106,6 +5218,7 @@ if (!port && nextAuthUrl) {
   }
 }
 const dataPath = trimString(config?.site?.dataBasePath);
+const deploymentProfile = trimString(config?.deployment?.profile);
 const runDir = trimString(config?.pipelines?.execution?.runDirectory);
 const pipelineDatabaseDir = trimString(config?.pipelines?.databaseDirectory);
 const condaPath =
@@ -5119,6 +5232,7 @@ if (typeof config?.pipelines?.enabled === "boolean") {
 }
 
 const out = {};
+if (deploymentProfile) out.SEQDESK_EXISTING_DEPLOYMENT_PROFILE = deploymentProfile;
 if (port) out.SEQDESK_EXISTING_PORT = port;
 if (nextAuthUrl) out.SEQDESK_EXISTING_NEXTAUTH_URL = nextAuthUrl;
 if (nextAuthSecret) out.SEQDESK_EXISTING_NEXTAUTH_SECRET = nextAuthSecret;
@@ -5147,6 +5261,7 @@ NODE
     rm -f "$temp_env"
 
     apply_config_value SEQDESK_PORT SEQDESK_EXISTING_PORT
+    apply_config_value SEQDESK_DEPLOYMENT_PROFILE SEQDESK_EXISTING_DEPLOYMENT_PROFILE
     apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_URL
     apply_config_value SEQDESK_NEXTAUTH_SECRET SEQDESK_EXISTING_NEXTAUTH_SECRET
     apply_config_value SEQDESK_DATABASE_URL SEQDESK_EXISTING_DATABASE_URL
@@ -5158,6 +5273,7 @@ NODE
     apply_config_value SEQDESK_WITH_PIPELINES SEQDESK_EXISTING_WITH_PIPELINES
 
     unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_SECRET
+    unset SEQDESK_EXISTING_DEPLOYMENT_PROFILE
     unset SEQDESK_EXISTING_DATABASE_URL SEQDESK_EXISTING_DATABASE_DIRECT_URL SEQDESK_EXISTING_DATA_PATH
     unset SEQDESK_EXISTING_RUN_DIR SEQDESK_EXISTING_PIPELINE_DATABASE_DIR SEQDESK_EXISTING_CONDA_PATH
     unset SEQDESK_EXISTING_WITH_PIPELINES
@@ -5454,6 +5570,7 @@ print_config_summary() {
     fi
 
     print_header "Configuration summary"
+    print_kv "Deployment profile" "$(deployment_profile_label "$SEQDESK_DEPLOYMENT_PROFILE")"
     print_kv "Pipelines" "$pipeline_label"
     print_kv "Data path" "${SEQDESK_DATA_PATH:-configure after install with seqdesk storage configure}"
     if [ "$PIPELINES_ENABLED" = "true" ]; then
@@ -6052,6 +6169,7 @@ write_config() {
     fi
 
     SEQDESK_INSTALL_DATA_PATH="$data_path" \
+    SEQDESK_INSTALL_DEPLOYMENT_PROFILE="${SEQDESK_DEPLOYMENT_PROFILE:-}" \
     SEQDESK_INSTALL_RUN_DIR="$run_dir" \
     SEQDESK_INSTALL_PIPELINE_DATABASE_DIR="${SEQDESK_PIPELINE_DATABASE_DIR:-}" \
     SEQDESK_INSTALL_PIPELINES_ENABLED="$pipelines_enabled" \
@@ -6091,6 +6209,7 @@ write_config() {
 const fs = require('fs');
 
 const dataPath = process.env.SEQDESK_INSTALL_DATA_PATH || '';
+const deploymentProfile = process.env.SEQDESK_INSTALL_DEPLOYMENT_PROFILE || '';
 const runDir = process.env.SEQDESK_INSTALL_RUN_DIR || '';
 const pipelineDatabaseDir = process.env.SEQDESK_INSTALL_PIPELINE_DATABASE_DIR || '';
 const pipelinesEnabled = process.env.SEQDESK_INSTALL_PIPELINES_ENABLED || '';
@@ -6231,6 +6350,13 @@ const CONFIG_FILE_NAMES = ['settings.json', 'seqdesk.config.json'];
 const configTarget = CONFIG_FILE_NAMES.find((name) => fs.existsSync(name)) || 'settings.json';
 
 const config = readJson(configTarget) || {};
+
+if (deploymentProfile) {
+  config.deployment = config.deployment && typeof config.deployment === 'object'
+    ? config.deployment
+    : {};
+  config.deployment.profile = deploymentProfile;
+}
 
 const installProfile = buildInstallProfileConfig(profileConfigFile);
 if (installProfile) {
@@ -6764,6 +6890,31 @@ print_next_steps() {
     else
         echo "  1. Start $SEQDESK_DIR/start.sh, then open $(browser_app_url) and log in as admin."
     fi
+
+    if [ "$SEQDESK_DEPLOYMENT_PROFILE" = "research-workbench" ]; then
+        echo "  2. In Admin settings, verify data storage and the pipeline runtime."
+        echo "  3. Configure researcher access, then open Workbench Data to upload files or configure an importer."
+        echo "  4. Install at least one pipeline and complete a small test run before production use."
+        echo "     Guide: https://seqdesk.org/docs"
+        echo "  5. Before production, configure HTTPS, backups, monitoring, and retention."
+        echo ""
+        echo "  Use the Browser URL for login. Use the Local health URL for curl/doctor checks."
+        echo ""
+        return 0
+    fi
+
+    if [ "$SEQDESK_DEPLOYMENT_PROFILE" = "shared-lab" ]; then
+        echo "  2. Verify shared sequencing storage and pipeline runtime in Admin settings."
+        echo "  3. Configure lab-member access; keep system configuration limited to administrators."
+        echo "  4. Complete one shared project from samples through a pipeline result."
+        echo "     Guide: https://seqdesk.org/docs"
+        echo "  5. Before production, configure HTTPS, backups, monitoring, and retention."
+        echo ""
+        echo "  Use the Browser URL for login. Use the Local health URL for curl/doctor checks."
+        echo ""
+        return 0
+    fi
+
     if [ -n "${SEQDESK_USER_CLI_PATH:-}" ] && [ -x "$SEQDESK_USER_CLI_PATH" ]; then
         pipeline_cli="$SEQDESK_USER_CLI_PATH"
         if [ -n "${SEQDESK_DATA_PATH:-}" ]; then
@@ -7015,6 +7166,12 @@ if { is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_PREPARE_POSTGRES"; 
     load_existing_install_values "$SEQDESK_DIR"
 fi
 
+# Non-interactive, hosted, and reconfigure flows have selected all of their
+# inputs by this point. Guided setup deliberately waits for its explained choice.
+if ! interactive_wizard_enabled; then
+    validate_deployment_profile
+fi
+
 SEQDESK_DATA_PATH="$(expand_home_relative_path "$SEQDESK_DATA_PATH")"
 SEQDESK_RUN_DIR="$(expand_home_relative_path "$SEQDESK_RUN_DIR")"
 SEQDESK_PIPELINE_DATABASE_DIR="$(expand_home_relative_path "$SEQDESK_PIPELINE_DATABASE_DIR")"
@@ -7036,6 +7193,7 @@ resolve_conda_runtime
 # Only the database question is asked here, because the answer decides what the
 # preflight below has to do.
 run_interactive_wizard_database
+validate_deployment_profile
 
 # On macOS, provision or validate the selected local PostgreSQL server before
 # downloading the release or creating the install directory. A clean reviewer
@@ -7764,6 +7922,7 @@ if [ "$PIPELINES_ENABLED" = "true" ]; then
     PIPELINES_LABEL="enabled"
 fi
 print_kv "Pipelines" "$PIPELINES_LABEL"
+print_kv "Deployment profile" "$(deployment_profile_label "$SEQDESK_DEPLOYMENT_PROFILE")"
 if [ -n "$SEQDESK_DATA_PATH" ]; then
     print_kv "Data path" "$SEQDESK_DATA_PATH"
 fi

@@ -34,6 +34,7 @@ export const INSTALL_PROFILE_SECTION_DISPOSITIONS: InstallProfileSectionDisposit
   { section: "auth", kind: "structured", reload: "reload-safe" },
   { section: "bootstrap", kind: "structured", reload: "install-only" },
   { section: "capabilities", kind: "array", reload: "metadata-only" },
+  { section: "deployment", kind: "structured", reload: "install-only" },
   { section: "ena", kind: "structured", reload: "reload-safe" },
   { section: "enabled", kind: "scalar", reload: "metadata-only" },
   { section: "environment", kind: "scalar", reload: "metadata-only" },
@@ -67,6 +68,7 @@ export const INSTALL_PROFILE_SECTION_DISPOSITIONS: InstallProfileSectionDisposit
 ];
 
 export const INSTALL_PROFILE_COVERAGE: InstallProfileCoverageEntry[] = [
+  entry("deployment.profile", "deployment.profile", "settings.json deployment.profile", "install-only", "install-only", "profile-managed"),
   entry("site.name", "site.name", "SiteSettings.siteName", "reload-safe", "reload-safe", "profile-managed"),
   entry("site.dataBasePath", "site.dataBasePath", "SiteSettings.dataBasePath", "reload-safe", "reload-safe", "profile-managed"),
   entry("site.contactEmail", "site.contactEmail", "SiteSettings.contactEmail", "reload-safe", "reload-safe", "profile-managed"),

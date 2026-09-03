@@ -59,36 +59,36 @@ Likely areas:
 ## Milestone 1 — Canonical deployment profile
 
 - [ ] Treat one SeqDesk installation as one organization/team with one active deployment profile; do not add per-user or multi-tenant profile switching.
-- [ ] Create `src/lib/deployment-profile/types.ts` with `sequencing-center`, `shared-lab`, and `research-workbench` identifiers.
+- [x] Create `src/lib/deployment-profile/types.ts` with `sequencing-center`, `shared-lab`, and `research-workbench` identifiers.
 - [ ] Create profile definitions containing enabled domains, landing route, terminology, ownership scope, and default capability grants.
-- [ ] Create a server-side resolver using the existing configuration precedence.
-- [ ] Add `deployment.profile` to `SeqDeskConfig` in `src/lib/config/types.ts`.
-- [ ] Add defaults and environment/file parsing in `src/lib/config/loader.ts`.
-- [ ] Keep the deployment profile in local canonical configuration and restart-required; do not make it database/UI-editable in the first release.
-- [ ] Add install-profile coverage in `src/lib/install-profile/coverage.ts` and the installer apply code.
-- [ ] Add the selected profile to `seqdesk.config.example.json`.
+- [x] Create a server-side resolver using the existing configuration precedence.
+- [x] Add `deployment.profile` to `SeqDeskConfig` in `src/lib/config/types.ts`.
+- [x] Add defaults and environment/file parsing in `src/lib/config/loader.ts`.
+- [x] Keep the deployment profile in local canonical configuration and restart-required; do not make it database/UI-editable in the first release.
+- [x] Add install-profile coverage in `src/lib/install-profile/coverage.ts` and the installer apply code.
+- [x] Add the selected profile to `seqdesk.config.example.json`.
 - [ ] Keep one application version and one release tarball for all profiles.
-- [ ] Keep `scripts/install-dist.sh` as the single canonical installer implementation.
-- [ ] Add an interactive installer question for `sequencing-center`, `shared-lab`, or `research-workbench`.
-- [ ] Add `--deployment-profile <id>` as the non-interactive application-mode option.
-- [ ] Preserve the existing `--profile <id>` option for hosted install profiles; do not repurpose it for deployment profiles.
-- [ ] Keep deployment profile, hosted install profile, and Nextflow execution profile names/types distinct throughout code and UI.
-- [ ] Allow hosted install profiles to preselect the deployment profile through the same canonical configuration field.
+- [x] Keep `scripts/install-dist.sh` as the single canonical installer implementation.
+- [x] Add an interactive installer question for `sequencing-center`, `shared-lab`, or `research-workbench`.
+- [x] Add `--deployment-profile <id>` as the non-interactive application-mode option.
+- [x] Preserve the existing `--profile <id>` option for hosted install profiles; do not repurpose it for deployment profiles.
+- [x] Keep deployment profile, hosted install profile, and Nextflow execution profile names/types distinct throughout code and UI.
+- [x] Allow hosted install profiles to preselect the deployment profile through the same canonical configuration field.
 - [ ] Mark hosted-profile-managed settings as read-only and show their source; distinguish overridable profile defaults from non-overridable compatibility/security constraints.
 - [ ] If profile-specific install URLs or commands are added, make them thin wrappers that call the canonical installer; do not copy the installer logic.
-- [ ] Treat the selected profile as installation-wide and fixed at runtime; do not add a per-user profile/view switch.
-- [ ] Do not expose profile switching in the initial web UI.
+- [x] Treat the selected profile as installation-wide and fixed at runtime; do not add a per-user profile/view switch.
+- [x] Do not expose profile switching in the initial web UI.
 - [ ] Preserve the selected profile across update and rollback operations.
 - [ ] Use one database schema and migration chain for all profiles.
 - [ ] Install/download large optional pipeline packages, databases, instrument integrations, and import tools only when required by the selected profile/modules.
-- [ ] Map legacy `lab` to `sequencing-center` and legacy `workbench` to `research-workbench`.
-- [ ] Deprecate, but initially support, `NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY`.
+- [x] Map legacy `lab` to `sequencing-center` and legacy `workbench` to `research-workbench`.
+- [x] Deprecate, but initially support, `NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY`.
 - [ ] Ensure authorization reads only the server-resolved profile, never a client-controlled or `NEXT_PUBLIC_*` value.
-- [ ] Validate profile identifiers and reject unknown values instead of falling back to a broader profile.
+- [x] Validate profile identifiers and reject unknown values instead of falling back to a broader profile.
 - [ ] Add a compatibility validator for profile x domain x module dependencies and conflicts.
 - [ ] Run compatibility validation during install, hosted-profile reload, startup, and settings updates.
-- [ ] Pass a sanitized profile descriptor from the dashboard layout to client navigation/components.
-- [ ] Keep `sequencing-center` as the default for every existing installation.
+- [x] Pass a sanitized profile descriptor from the dashboard layout to client navigation/components.
+- [x] Keep `sequencing-center` as the default for every existing installation.
 
 Acceptance:
 
@@ -97,7 +97,7 @@ Acceptance:
 - [ ] No profile uses a copied or independently versioned installer.
 - [ ] Updating an installation changes the application version without changing its selected profile.
 - [ ] Server routes, APIs, landing redirects, and client navigation agree on the active profile.
-- [ ] Profile resolution and legacy aliases have focused tests.
+- [x] Profile resolution and legacy aliases have focused tests.
 - [ ] Invalid or incomplete profile/module combinations fail closed with actionable diagnostics.
 
 ## Milestone 1A — Unified guided installation and setup

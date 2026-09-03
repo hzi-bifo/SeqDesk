@@ -7,6 +7,8 @@
  * 3. Database settings (lowest priority, but UI-editable)
  */
 
+import type { DeploymentProfileConfig } from "@/lib/deployment-profile/types";
+
 export interface SiteConfig {
   /** Display name of the facility */
   name?: string;
@@ -245,6 +247,7 @@ export interface InstallProfileConfig {
  * Complete SeqDesk configuration schema
  */
 export interface SeqDeskConfig {
+  deployment?: DeploymentProfileConfig;
   app?: AppConfig;
   installProfile?: InstallProfileConfig;
   site?: SiteConfig;

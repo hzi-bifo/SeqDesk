@@ -1,3 +1,5 @@
+import { resolveDeploymentProfile } from "@/lib/deployment-profile";
+
 export type SeqDeskAppSurface = "lab" | "workbench";
 
 function normalizeSurface(value: string | undefined): SeqDeskAppSurface | null {
@@ -9,11 +11,18 @@ function normalizeSurface(value: string | undefined): SeqDeskAppSurface | null {
 }
 
 export function getSeqDeskAppSurface(): SeqDeskAppSurface {
-  return (
+  const legacySurface =
     normalizeSurface(process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE) ??
-    normalizeSurface(process.env.SEQDESK_APP_SURFACE) ??
-    (process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY === "1" ? "workbench" : "lab")
-  );
+    normalizeSurface(process.env.SEQDESK_APP_SURFACE);
+  const profile = resolveDeploymentProfile({
+    configuredProfile:
+      process.env.NEXT_PUBLIC_SEQDESK_DEPLOYMENT_PROFILE ??
+      process.env.SEQDESK_DEPLOYMENT_PROFILE,
+    legacyPublicSurface: legacySurface,
+    legacyWorkbenchOnly: process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY,
+  });
+
+  return profile.experience === "workbench" ? "workbench" : "lab";
 }
 
 export function isWorkbenchAppSurface(): boolean {

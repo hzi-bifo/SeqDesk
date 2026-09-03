@@ -8,8 +8,108 @@ import {
   ArrowRight,
   Loader2,
 } from "lucide-react";
-import { isWorkbenchAppSurface } from "@/lib/app-surface";
 import { isPublicDemoEnabledClient } from "@/lib/demo/client";
+import {
+  normalizeDeploymentProfileId,
+  type DeploymentProfileId,
+} from "@/lib/deployment-profile";
+
+const HOME_COPY: Record<
+  DeploymentProfileId,
+  {
+    title: string;
+    description: string;
+    firstSection: { title: string; items: string[] };
+    secondSection: { title: string; items: string[] };
+    features: Array<{ title: string; subtitle: string }>;
+    signInDescription: string;
+  }
+> = {
+  "sequencing-center": {
+    title: "Sequencing Order Management",
+    description:
+      "Manage sequencing requests, track samples, and coordinate delivery and archive submissions.",
+    firstSection: {
+      title: "For Researchers",
+      items: [
+        "Create sequencing orders with sample metadata",
+        "Track orders from submission to delivery",
+        "Download sequencing files, assemblies, and accessions",
+      ],
+    },
+    secondSection: {
+      title: "For Sequencing Facilities",
+      items: [
+        "Receive and manage incoming sequencing orders",
+        "Update order status throughout the workflow",
+        "Run pipelines and manage archive submissions",
+      ],
+    },
+    features: [
+      { title: "MIxS Standards", subtitle: "Environmental checklists" },
+      { title: "Archive Submissions", subtitle: "ENA-ready workflow" },
+      { title: "Assemblies", subtitle: "Final assembly downloads" },
+      { title: "Order Tracking", subtitle: "Status from request to delivery" },
+    ],
+    signInDescription: "Access your sequencing orders",
+  },
+  "shared-lab": {
+    title: "Shared Sequencing Workspace",
+    description:
+      "One laboratory can coordinate samples, sequencing, workflows, and results without an artificial requester-to-facility handoff.",
+    firstSection: {
+      title: "For Lab Members",
+      items: [
+        "Create and update shared sequencing work",
+        "Manage samples and sequencing data together",
+        "Launch workflows and review shared results",
+      ],
+    },
+    secondSection: {
+      title: "For Administrators",
+      items: [
+        "Configure accounts, storage, and workflows",
+        "Manage infrastructure credentials and updates",
+        "Set team-wide operational defaults",
+      ],
+    },
+    features: [
+      { title: "Shared Projects", subtitle: "One collaborative lab view" },
+      { title: "Sample Tracking", subtitle: "From material to read files" },
+      { title: "Pipelines", subtitle: "Team analysis workflows" },
+      { title: "Administration", subtitle: "Protected system configuration" },
+    ],
+    signInDescription: "Access your lab workspace",
+  },
+  "research-workbench": {
+    title: "Research Analysis Workbench",
+    description:
+      "Bring sequencing data from disk or public repositories into a private workspace, run workflows, and review results.",
+    firstSection: {
+      title: "For Researchers",
+      items: [
+        "Upload local sequencing files",
+        "Import datasets from supported public repositories",
+        "Run pipelines and organize results",
+      ],
+    },
+    secondSection: {
+      title: "For Administrators",
+      items: [
+        "Configure storage and execution runtimes",
+        "Manage users and installation-wide workflows",
+        "Maintain credentials, updates, and limits",
+      ],
+    },
+    features: [
+      { title: "Data Imports", subtitle: "Disk and public repositories" },
+      { title: "Private Workspaces", subtitle: "Researcher-scoped data" },
+      { title: "Pipelines", subtitle: "Reusable analysis workflows" },
+      { title: "Runs & Results", subtitle: "Traceable execution history" },
+    ],
+    signInDescription: "Access your research workbench",
+  },
+};
 
 export default function HomePage() {
   const router = useRouter();
@@ -19,6 +119,9 @@ export default function HomePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [checkingDb, setCheckingDb] = useState(true);
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [deploymentProfileId, setDeploymentProfileId] =
+    useState<DeploymentProfileId>("sequencing-center");
+  const pageCopy = HOME_COPY[deploymentProfileId];
 
   useEffect(() => {
     if (isPublicDemoEnabledClient()) {
@@ -33,6 +136,12 @@ export default function HomePage() {
           throw new Error("Failed to load setup status");
         }
         const status = await res.json();
+        const resolvedProfile = normalizeDeploymentProfileId(
+          status.deploymentProfile?.id
+        );
+        if (resolvedProfile) {
+          setDeploymentProfileId(resolvedProfile);
+        }
         if (!status.exists || !status.configured) {
           router.replace("/setup");
           return;
@@ -75,7 +184,7 @@ export default function HomePage() {
       if (result?.error) {
         setError("Invalid email or password");
       } else if (result?.ok) {
-        router.push(isWorkbenchAppSurface() ? "/workbench/data" : "/orders");
+        router.push("/dashboard");
         router.refresh();
       }
     } catch {
@@ -118,10 +227,10 @@ export default function HomePage() {
               className="text-3xl font-semibold mb-4"
               style={{ color: '#171717', letterSpacing: '-0.02em' }}
             >
-              Sequencing Order Management
+              {pageCopy.title}
             </h1>
             <p className="text-base mb-10" style={{ color: '#525252', lineHeight: '1.6' }}>
-              A platform for managing sequencing orders, tracking samples, and coordinating archive submissions.
+              {pageCopy.description}
             </p>
 
             <div className="mb-8">
@@ -129,14 +238,10 @@ export default function HomePage() {
                 className="text-xs font-medium uppercase mb-4"
                 style={{ color: '#a3a3a3', letterSpacing: '0.1em' }}
               >
-                For Researchers
+                {pageCopy.firstSection.title}
               </h2>
               <ul className="space-y-2">
-                {[
-                  "Create sequencing orders with sample metadata",
-                  "Track sequencing order status from submission to delivery",
-                  "Download sequencing files, final assemblies, and archive accession numbers",
-                ].map((item, i) => (
+                {pageCopy.firstSection.items.map((item, i) => (
                   <li key={i} className="text-sm" style={{ color: '#525252' }}>
                     {item}
                   </li>
@@ -149,14 +254,10 @@ export default function HomePage() {
                 className="text-xs font-medium uppercase mb-4"
                 style={{ color: '#a3a3a3', letterSpacing: '0.1em' }}
               >
-                For Sequencing Facilities
+                {pageCopy.secondSection.title}
               </h2>
               <ul className="space-y-2">
-                {[
-                  "Receive and manage incoming sequencing orders",
-                  "Update sequencing order status throughout the workflow",
-                  "Run pipelines, publish final assemblies, and manage archive submissions",
-                ].map((item, i) => (
+                {pageCopy.secondSection.items.map((item, i) => (
                   <li key={i} className="text-sm" style={{ color: '#525252' }}>
                     {item}
                   </li>
@@ -165,12 +266,7 @@ export default function HomePage() {
             </div>
 
             <div className="grid grid-cols-2 gap-x-8 gap-y-4">
-              {[
-                { title: "MIxS Standards", subtitle: "17 environmental checklists" },
-                { title: "Archive Submissions", subtitle: "ENA-ready upload workflow" },
-                { title: "Assemblies", subtitle: "Final assembly downloads" },
-                { title: "Sequencing Order Tracking", subtitle: "Real-time status updates" },
-              ].map((feature, i) => (
+              {pageCopy.features.map((feature, i) => (
                 <div key={i}>
                   <h3 className="font-medium text-sm" style={{ color: '#171717' }}>
                     {feature.title}
@@ -220,7 +316,7 @@ export default function HomePage() {
                 Sign In
               </h2>
               <p className="text-sm" style={{ color: '#525252' }}>
-                Access your sequencing orders
+                {pageCopy.signInDescription}
               </p>
             </div>
 

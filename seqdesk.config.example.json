@@ -5,6 +5,10 @@
     "port": 3000
   },
 
+  "deployment": {
+    "profile": "sequencing-center"
+  },
+
   "site": {
     "name": "My Sequencing Facility",
     "dataBasePath": "./data/sequencing",

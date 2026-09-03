@@ -29,7 +29,7 @@ import { SidebarFieldHelp } from "./SidebarFieldHelp";
 import { SidebarAdminNav } from "./SidebarAdminNav";
 import { SidebarSupportNav } from "./SidebarSupportNav";
 import { SidebarUserMenu } from "./SidebarUserMenu";
-import { isWorkbenchAppSurface } from "@/lib/app-surface";
+import type { DeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 interface SidebarProps {
   user: {
@@ -40,9 +40,10 @@ interface SidebarProps {
     demoExperience?: "researcher" | "facility";
   };
   version?: string;
+  deploymentProfile: DeploymentProfileDefinition;
 }
 
-export function Sidebar({ user, version }: SidebarProps) {
+export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
   const pathname = usePathname();
   const {
     collapsed,
@@ -55,13 +56,13 @@ export function Sidebar({ user, version }: SidebarProps) {
   const { focusedField } = useFieldHelp();
   const entityContext = useSidebarEntity();
   const [isResizing, setIsResizing] = useState(false);
-  const workbenchAppMode = isWorkbenchAppSurface();
+  const workbenchAppMode = deploymentProfile.experience === "workbench";
 
   const isFacilityAdmin = user.role === "FACILITY_ADMIN";
   const isDemoUser = user.isDemo === true;
-  const showAdminControls = isFacilityAdmin && !workbenchAppMode;
+  const showAdminControls = isFacilityAdmin;
 
-  const isAdminPage = !workbenchAppMode && (pathname.startsWith("/admin") || pathname.startsWith("/messages"));
+  const isAdminPage = pathname.startsWith("/admin") || pathname.startsWith("/messages");
   const suppressSidebarFieldHelp =
     pathname === "/orders/new" ||
     /^\/orders\/[^/]+\/edit$/.test(pathname) ||
@@ -197,7 +198,7 @@ export function Sidebar({ user, version }: SidebarProps) {
           {/* Admin mode: back button */}
           <div className={cn("px-3 pb-2", collapsed && "px-2")}>
             <Link
-              href="/orders"
+              href={deploymentProfile.defaultRoute}
               className={cn(
                 "flex items-center gap-2 w-full rounded-lg transition-colors text-sm",
                 "border border-border hover:bg-secondary/50",

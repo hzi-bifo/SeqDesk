@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { DashboardShell } from "@/components/layout/DashboardShell";
 import { getCurrentVersion } from "@/lib/updater";
 import { isPublicDemoEnabled } from "@/lib/demo/config";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 
 export default async function DashboardLayout({
   children,
@@ -24,10 +25,15 @@ export default async function DashboardLayout({
   }
 
   const version = getCurrentVersion();
+  const deploymentProfile = getServerDeploymentProfile();
 
   return (
     <div className="min-h-screen bg-background">
-      <DashboardShell user={session.user} version={version}>
+      <DashboardShell
+        user={session.user}
+        version={version}
+        deploymentProfile={deploymentProfile}
+      >
         {children}
       </DashboardShell>
     </div>

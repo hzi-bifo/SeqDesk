@@ -61,6 +61,10 @@ import {
 import { Sidebar } from "./Sidebar";
 import { SidebarSupportNav } from "./SidebarSupportNav";
 import { SidebarUserMenu } from "./SidebarUserMenu";
+import { DEPLOYMENT_PROFILES } from "@/lib/deployment-profile";
+
+const sequencingCenterProfile = DEPLOYMENT_PROFILES["sequencing-center"];
+const workbenchProfile = DEPLOYMENT_PROFILES["research-workbench"];
 
 function sidebarValue(collapsed: boolean, sidebarWidth = SIDEBAR_DEFAULT_WIDTH) {
   return {
@@ -195,6 +199,7 @@ describe("sidebar shell quick wins", () => {
             isDemo: true,
             demoExperience: "facility",
           }}
+          deploymentProfile={sequencingCenterProfile}
         />
       </SidebarContext.Provider>
     );
@@ -251,7 +256,10 @@ describe("sidebar shell quick wins", () => {
 
     const { rerender, container } = render(
       <SidebarContext.Provider value={expandedValue}>
-        <Sidebar user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }} />
+        <Sidebar
+          user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }}
+          deploymentProfile={sequencingCenterProfile}
+        />
       </SidebarContext.Provider>
     );
 
@@ -262,7 +270,10 @@ describe("sidebar shell quick wins", () => {
 
     rerender(
       <SidebarContext.Provider value={collapsedValue}>
-        <Sidebar user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }} />
+        <Sidebar
+          user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }}
+          deploymentProfile={sequencingCenterProfile}
+        />
       </SidebarContext.Provider>
     );
 
@@ -275,7 +286,10 @@ describe("sidebar shell quick wins", () => {
 
     render(
       <SidebarContext.Provider value={sidebarValue(false, 300)}>
-        <Sidebar user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }} />
+        <Sidebar
+          user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }}
+          deploymentProfile={sequencingCenterProfile}
+        />
       </SidebarContext.Provider>
     );
 
@@ -284,13 +298,15 @@ describe("sidebar shell quick wins", () => {
     expect(screen.queryByRole("link", { name: /Canvas/i })).toBeNull();
   });
 
-  it("hides lab and admin navigation in Workbench app mode", () => {
-    process.env.SEQDESK_APP_SURFACE = "workbench";
+  it("hides sequencing navigation but keeps admin settings in Workbench mode", () => {
     mocks.usePathname.mockReturnValue("/orders");
 
     render(
       <SidebarContext.Provider value={sidebarValue(false, 300)}>
-        <Sidebar user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }} />
+        <Sidebar
+          user={{ name: "Ada Admin", role: "FACILITY_ADMIN" }}
+          deploymentProfile={workbenchProfile}
+        />
       </SidebarContext.Provider>
     );
 
@@ -299,6 +315,8 @@ describe("sidebar shell quick wins", () => {
       "/workbench/data"
     );
     expect(screen.queryByRole("link", { name: /Lab/i })).toBeNull();
-    expect(screen.queryByRole("link", { name: /Application Settings/i })).toBeNull();
+    expect(
+      screen.getByRole("link", { name: /Application Settings/i }).getAttribute("href")
+    ).toBe("/admin/settings");
   });
 });

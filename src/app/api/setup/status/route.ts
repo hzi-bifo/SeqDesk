@@ -7,6 +7,7 @@ import type {
 } from "@/lib/auto-seed";
 import { checkDatabaseStatus } from "@/lib/db-status";
 import { buildSetupStatusResponse } from "@/lib/setup-status";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -41,6 +42,7 @@ function toPublicBootstrapAccounts(
 }
 
 export async function GET() {
+  const deploymentProfile = getServerDeploymentProfile();
   let status = await checkDatabaseStatus();
   let seedError: string | undefined;
   let seedInProgress = false;
@@ -75,6 +77,11 @@ export async function GET() {
         ...(seedError ? { seedError } : {}),
         ...(seedInProgress ? { seedInProgress } : {}),
       }),
+      deploymentProfile: {
+        id: deploymentProfile.id,
+        label: deploymentProfile.label,
+        description: deploymentProfile.description,
+      },
       // Only present when a seed pass ran. `existing` means the account was
       // already in this database and its stored password was left untouched;
       // `refused` means it was not created because it would have received the

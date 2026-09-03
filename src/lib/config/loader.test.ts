@@ -12,6 +12,7 @@ import {
 } from "./loader";
 
 const ENV_KEYS = [
+  "SEQDESK_DEPLOYMENT_PROFILE",
   "SEQDESK_SITE_NAME",
   "SEQDESK_DATA_PATH",
   "SEQDESK_PIPELINES_ENABLED",
@@ -75,6 +76,7 @@ describe("config loader", () => {
     const resolved = loadConfig(true);
 
     expect(resolved.filePath).toBeUndefined();
+    expect(resolved.config.deployment?.profile).toBe("sequencing-center");
     expect(resolved.config.site?.name).toBe("SeqDesk");
     expect(resolved.config.sequencingFiles?.scanDepth).toBe(2);
     expect(resolved.config.notifications?.inApp?.enabled).toBe(true);
@@ -107,6 +109,7 @@ describe("config loader", () => {
     });
 
     process.env.SEQDESK_SITE_NAME = "From Env";
+    process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
     process.env.SEQDESK_PIPELINES_ENABLED = "true";
     process.env.SEQDESK_FILES_SCAN_DEPTH = "6";
     process.env.SEQDESK_FILES_EXTENSIONS = ".fq.gz, .fastq";
@@ -116,12 +119,14 @@ describe("config loader", () => {
     const resolved = loadConfig(true);
 
     expect(resolved.config.site?.name).toBe("From Env");
+    expect(resolved.config.deployment?.profile).toBe("research-workbench");
     expect(resolved.config.pipelines?.enabled).toBe(true);
     expect(resolved.config.sequencingFiles?.scanDepth).toBe(6);
     expect(resolved.config.sequencingFiles?.extensions).toEqual([".fq.gz", ".fastq"]);
     expect(resolved.config.auth?.sessionTimeout).toBe(48);
     expect(resolved.config.ena?.testMode).toBe(false);
     expect(resolved.sources["site.name"]).toBe("env");
+    expect(resolved.sources["deployment.profile"]).toBe("env");
     expect(resolved.sources["sequencingFiles.scanDepth"]).toBe("env");
   });
 
@@ -175,6 +180,7 @@ describe("config loader", () => {
 
   it("validateConfig reports invalid values", () => {
     const invalid = validateConfig({
+      deployment: { profile: "unknown" },
       site: { dataBasePath: 42 },
       pipelines: { execution: { mode: "invalid-mode" } },
       ena: { testMode: "yes" },
@@ -184,6 +190,9 @@ describe("config loader", () => {
 
     expect(invalid.valid).toBe(false);
     expect(invalid.errors).toContain("site.dataBasePath must be a string");
+    expect(
+      invalid.errors.some((e) => e.includes("deployment.profile must be one of"))
+    ).toBe(true);
     expect(
       invalid.errors.some((e) => e.includes("pipelines.execution.mode must be one of"))
     ).toBe(true);

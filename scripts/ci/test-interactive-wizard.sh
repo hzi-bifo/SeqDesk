@@ -64,6 +64,7 @@ reset_state() {
     SEQDESK_YES=""
     SEQDESK_CONFIG=""
     SEQDESK_PROFILE=""
+    SEQDESK_DEPLOYMENT_PROFILE=""
     SEQDESK_DATABASE_URL=""
     SEQDESK_DATABASE_DIRECT_URL=""
     SEQDESK_BOOTSTRAP_ADMIN_EMAIL=""
@@ -86,10 +87,11 @@ echo "== Case 1: managed DB (unreachable -> use anyway), validation re-prompts, 
 reset_state
 TEST_DB_REACHABLE=0
 # Input order matches the wizard's reads:
-#  db choice; bad url; valid url; "use anyway" y; direct (blank);
+#  deployment profile; db choice; bad url; valid url; "use anyway" y; direct (blank);
 #  admin email; admin pw; admin pw confirm; create researcher? Y;
 #  researcher email; researcher pw (blank -> generated)
 run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
+1
 2
 not-a-url
 postgresql://u:secret@db.example.com:5432/seqdesk
@@ -105,6 +107,8 @@ EOF
 
 assert_eq "managed DATABASE_URL captured" \
     "postgresql://u:secret@db.example.com:5432/seqdesk" "$SEQDESK_DATABASE_URL"
+assert_eq "sequencing center profile captured" \
+    "sequencing-center" "$SEQDESK_DEPLOYMENT_PROFILE"
 assert_eq "admin email captured" "admin@lab.org" "$SEQDESK_BOOTSTRAP_ADMIN_EMAIL"
 assert_eq "admin password captured" "longpassword1" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD"
 assert_eq "researcher email captured" "r@lab.org" "$SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL"
@@ -135,8 +139,9 @@ echo ""
 echo "== Case 2: local DB choice, no researcher, reachable managed not used =="
 reset_state
 TEST_DB_REACHABLE=1
-# db choice 1 (local); admin email (blank -> default); admin pw; confirm; researcher? n
+# deployment profile 1; db choice 1 (local); admin email (blank -> default); admin pw; confirm; researcher? n
 run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
+1
 1
 
 password123
@@ -148,6 +153,24 @@ assert_eq "admin email defaulted" "admin@example.com" "$SEQDESK_BOOTSTRAP_ADMIN_
 assert_eq "admin password captured" "password123" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD"
 assert_eq "researcher skipped (no email)" "" "$SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL"
 assert_eq "researcher disabled" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
+
+echo ""
+echo "== Case 2b: Workbench explains the choice and creates only the first admin =="
+reset_state
+TEST_DB_REACHABLE=1
+run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
+3
+1
+admin@workbench.test
+password123
+password123
+EOF
+assert_eq "workbench profile captured" "research-workbench" "$SEQDESK_DEPLOYMENT_PROFILE"
+assert_eq "workbench creates no bootstrap researcher" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
+assert_contains "wizard explains one shared application" \
+    "does not install a separate edition" "$OUT"
+assert_contains "workbench defers member creation to onboarding" \
+    "Additional accounts are configured" "$OUT"
 
 echo ""
 echo "== Case 3: wizard is a no-op under -y (unattended must be untouched) =="

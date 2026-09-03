@@ -129,6 +129,7 @@ describe("install profile coverage matrix", () => {
       "auth",
       "bootstrap",
       "capabilities",
+      "deployment",
       "ena",
       "enabled",
       "environment",

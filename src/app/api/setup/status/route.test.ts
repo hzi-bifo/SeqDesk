@@ -47,6 +47,10 @@ describe("GET /api/setup/status", () => {
       exists: true,
       configured: true,
       phase: "ready",
+      deploymentProfile: {
+        id: "sequencing-center",
+        label: "Sequencing center",
+      },
       nextAction: {
         href: "/login",
       },

@@ -63,6 +63,11 @@ type SetupStatus = {
       source: "database" | "config";
     };
   };
+  deploymentProfile: {
+    id: "sequencing-center" | "shared-lab" | "research-workbench";
+    label: string;
+    description: string;
+  };
 };
 
 function makeStatus(overrides: Partial<SetupStatus> = {}): SetupStatus {
@@ -111,6 +116,11 @@ function makeStatus(overrides: Partial<SetupStatus> = {}): SetupStatus {
       mode: "self-hosted",
       usesDefaultBootstrapCredentials: true,
     },
+    deploymentProfile: {
+      id: "sequencing-center",
+      label: "Sequencing center",
+      description: "A service facility for sequencing requests.",
+    },
     ...overrides,
   };
 }
@@ -136,7 +146,7 @@ describe("SetupPage", () => {
     vi.useRealTimers();
   });
 
-  it("shows ready state and default credentials for plain self-hosted installs", async () => {
+  it("shows the operating model and never advertises packaged default credentials", async () => {
     fetchMock.mockResolvedValue(jsonResponse(makeStatus()));
 
     render(<SetupPage />);
@@ -144,8 +154,10 @@ describe("SetupPage", () => {
     expect(await screen.findByText("SeqDesk is ready")).toBeTruthy();
     expect(screen.getByText("Self-hosted install")).toBeTruthy();
     expect(screen.getByText("Continue to login")).toBeTruthy();
-    expect(screen.getByText("Default Login Credentials")).toBeTruthy();
-    expect(screen.getByText("admin@example.com")).toBeTruthy();
+    expect(screen.getAllByText("Sequencing center").length).toBeGreaterThan(0);
+    expect(screen.getByText("Operating model")).toBeTruthy();
+    expect(screen.getByText("Administrator credentials required")).toBeTruthy();
+    expect(screen.queryByText("admin@example.com")).toBeNull();
   });
 
   it("stops checking the database after setup reports ready", async () => {

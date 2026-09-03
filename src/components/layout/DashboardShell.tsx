@@ -18,7 +18,10 @@ import { DEMO_READY_MESSAGE, isEmbeddedFrame, postDemoFrameMessage } from "@/lib
 import { StudySelector } from "./StudySelector";
 import { OrderSelector } from "./OrderSelector";
 import { useSidebarEntity } from "./sidebar/useSidebarEntity";
-import { isWorkbenchAppSurface } from "@/lib/app-surface";
+import {
+  isRouteAvailableInDeploymentProfile,
+  type DeploymentProfileDefinition,
+} from "@/lib/deployment-profile";
 
 interface DashboardShellProps {
   children: ReactNode;
@@ -30,6 +33,7 @@ interface DashboardShellProps {
     demoExperience?: "researcher" | "facility";
   };
   version?: string;
+  deploymentProfile: DeploymentProfileDefinition;
 }
 
 const subscribeToEmbedState = () => () => {};
@@ -84,6 +88,7 @@ function DashboardContent({
   children,
   user,
   version,
+  deploymentProfile,
   embeddedMode,
 }: DashboardShellProps & { embeddedMode: boolean }) {
   const { collapsed, mobileOpen, setMobileOpen, sidebarWidth } = useSidebar();
@@ -91,11 +96,11 @@ function DashboardContent({
   const router = useRouter();
   const searchParams = useSearchParams();
   const entityContext = useSidebarEntity();
-  const workbenchAppMode = isWorkbenchAppSurface();
+  const workbenchAppMode = deploymentProfile.experience === "workbench";
 
   const isOrdersView = pathname.startsWith("/orders");
   const isStudiesView = pathname.startsWith("/studies");
-  const isAdminView = !workbenchAppMode && (pathname.startsWith("/admin") || pathname.startsWith("/messages"));
+  const isAdminView = pathname.startsWith("/admin") || pathname.startsWith("/messages");
   const appMode = workbenchAppMode ? "workbench" : "lab";
   const isWorkbenchMode = appMode === "workbench";
   const currentStudyId = entityContext.entityType === "study" ? entityContext.entityId : null;
@@ -114,11 +119,11 @@ function DashboardContent({
   const sidebarOffset = collapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
 
   useEffect(() => {
-    if (!workbenchAppMode || pathname.startsWith("/workbench")) {
+    if (isRouteAvailableInDeploymentProfile(deploymentProfile, pathname)) {
       return;
     }
-    router.replace("/workbench/data");
-  }, [pathname, router, workbenchAppMode]);
+    router.replace(deploymentProfile.defaultRoute);
+  }, [deploymentProfile, pathname, router]);
 
   // In embedded demo mode, reclaim the session cookie when the iframe becomes
   // visible again.  The other demo tab may have overwritten the shared
@@ -151,7 +156,11 @@ function DashboardContent({
 
   return (
     <>
-      <Sidebar user={user} version={version} />
+      <Sidebar
+        user={user}
+        version={version}
+        deploymentProfile={deploymentProfile}
+      />
 
       {/* Mobile backdrop */}
       {mobileOpen && (
@@ -236,7 +245,7 @@ function DashboardContent({
           </div>
         )}
 
-        {!user.isDemo && !workbenchAppMode ? <UpdateBanner /> : null}
+        {!user.isDemo ? <UpdateBanner /> : null}
         {user.isDemo && !embeddedMode ? (
           <DemoBanner
             embeddedMode={false}
@@ -255,7 +264,12 @@ function DashboardContent({
   );
 }
 
-export function DashboardShell({ children, user, version }: DashboardShellProps) {
+export function DashboardShell({
+  children,
+  user,
+  version,
+  deploymentProfile,
+}: DashboardShellProps) {
   const pathname = usePathname();
   const isEmbedded = useSyncExternalStore(subscribeToEmbedState, isEmbeddedFrame, () => false);
   const embeddedMode = Boolean(user.isDemo) && isEmbedded;
@@ -286,6 +300,7 @@ export function DashboardShell({ children, user, version }: DashboardShellProps)
         <DashboardContent
           user={user}
           version={version}
+          deploymentProfile={deploymentProfile}
           embeddedMode={embeddedMode}
         >
           {children}

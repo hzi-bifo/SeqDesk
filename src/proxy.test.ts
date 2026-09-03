@@ -38,4 +38,13 @@ describe("runtime app surface proxy", () => {
     expect(response.status).toBe(307);
     expect(response.headers.get("location")).toBe("http://localhost/workbench/data");
   });
+
+  it("keeps administrator settings available in Workbench mode", () => {
+    process.env.SEQDESK_APP_SURFACE = "workbench";
+
+    const response = proxy(request("/admin/settings"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
 });

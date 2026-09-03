@@ -71,6 +71,11 @@ type SetupStatus = {
       source: "database" | "config";
     };
   };
+  deploymentProfile: {
+    id: "sequencing-center" | "shared-lab" | "research-workbench";
+    label: string;
+    description: string;
+  };
 };
 
 const PHASE_COPY: Record<
@@ -289,42 +294,14 @@ function CredentialPanel({ status }: { status: SetupStatus }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <KeyRound className="h-4 w-4" />
-          Default Login Credentials
+          Administrator credentials required
         </CardTitle>
         <CardDescription>
-          These are shown only for plain installs using the default bootstrap users.
+          No secure bootstrap account was configured. SeqDesk does not create or
+          display a packaged default password. Re-run the guided installer or
+          reconfigure this installation with an administrator email and password.
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-lg border border-border bg-secondary/50 p-3">
-            <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
-              Admin Account
-            </p>
-            <p className="text-sm">
-              <span className="text-muted-foreground">Email:</span>{" "}
-              <code>admin@example.com</code>
-            </p>
-            <p className="text-sm">
-              <span className="text-muted-foreground">Password:</span>{" "}
-              <code>admin</code>
-            </p>
-          </div>
-          <div className="rounded-lg border border-border bg-secondary/50 p-3">
-            <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
-              Researcher Account
-            </p>
-            <p className="text-sm">
-              <span className="text-muted-foreground">Email:</span>{" "}
-              <code>user@example.com</code>
-            </p>
-            <p className="text-sm">
-              <span className="text-muted-foreground">Password:</span>{" "}
-              <code>user</code>
-            </p>
-          </div>
-        </div>
-      </CardContent>
     </Card>
   );
 }
@@ -379,6 +356,9 @@ export default function SetupPage() {
               </Badge>
               {status?.install.profile?.version ? (
                 <Badge variant="outline">Profile {status.install.profile.version}</Badge>
+              ) : null}
+              {status?.deploymentProfile ? (
+                <Badge variant="outline">{status.deploymentProfile.label}</Badge>
               ) : null}
               {statusBadge}
             </div>
@@ -447,6 +427,24 @@ export default function SetupPage() {
 
           <aside className="space-y-4">
             {status ? <ActionPanel status={status} /> : null}
+            {status?.deploymentProfile ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Server className="h-4 w-4" />
+                    Operating model
+                  </CardTitle>
+                  <CardDescription>
+                    {status.deploymentProfile.description}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="text-xs text-muted-foreground">
+                  Selected during installation as{" "}
+                  <code>{status.deploymentProfile.id}</code>. Changing it requires
+                  reconfiguration and an application restart.
+                </CardContent>
+              </Card>
+            ) : null}
             {status ? (
               <Card>
                 <CardHeader>

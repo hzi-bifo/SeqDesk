@@ -7,6 +7,8 @@ describe("app surface", () => {
     delete process.env.SEQDESK_APP_SURFACE;
     delete process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE;
     delete process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY;
+    delete process.env.NEXT_PUBLIC_SEQDESK_DEPLOYMENT_PROFILE;
+    delete process.env.SEQDESK_DEPLOYMENT_PROFILE;
   });
 
   it("defaults to the Lab app surface", () => {
@@ -31,6 +33,12 @@ describe("app surface", () => {
 
   it("keeps the legacy Workbench-only flag as a fallback", () => {
     process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY = "1";
+
+    expect(getSeqDeskAppSurface()).toBe("workbench");
+  });
+
+  it("maps the canonical public deployment profile for compatibility callers", () => {
+    process.env.NEXT_PUBLIC_SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
 
     expect(getSeqDeskAppSurface()).toBe("workbench");
   });

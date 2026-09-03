@@ -22,6 +22,9 @@ const CONFIG_FILE_NAMES = [
 
 // Default configuration values
 const DEFAULT_CONFIG: SeqDeskConfig = {
+  deployment: {
+    profile: 'sequencing-center',
+  },
   site: {
     name: 'SeqDesk',
     dataBasePath: './data',
@@ -115,6 +118,9 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
  * Maps SEQDESK_* env vars to config paths
  */
 const ENV_MAPPINGS: Record<string, string> = {
+  // Deployment profile
+  SEQDESK_DEPLOYMENT_PROFILE: 'deployment.profile',
+
   // Site
   SEQDESK_SITE_NAME: 'site.name',
   SEQDESK_DATA_PATH: 'site.dataBasePath',
@@ -449,6 +455,19 @@ export function validateConfig(config: unknown): {
   }
 
   const cfg = config as SeqDeskConfig;
+
+  if (cfg.deployment?.profile) {
+    const validProfiles = [
+      'sequencing-center',
+      'shared-lab',
+      'research-workbench',
+    ];
+    if (!validProfiles.includes(cfg.deployment.profile)) {
+      errors.push(
+        `deployment.profile must be one of: ${validProfiles.join(', ')}`
+      );
+    }
+  }
 
   // Validate site config
   if (cfg.site?.dataBasePath && typeof cfg.site.dataBasePath !== 'string') {

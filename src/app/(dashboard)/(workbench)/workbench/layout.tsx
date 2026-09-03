@@ -1,9 +1,9 @@
 import { notFound } from "next/navigation";
 
-import { isWorkbenchAppSurface } from "@/lib/app-surface";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 
 export default function WorkbenchLayout({ children }: { children: React.ReactNode }) {
-  if (!isWorkbenchAppSurface()) {
+  if (getServerDeploymentProfile().experience !== "workbench") {
     notFound();
   }
 

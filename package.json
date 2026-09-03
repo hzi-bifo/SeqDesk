@@ -18,8 +18,8 @@
   },
   "scripts": {
     "dev": "next dev",
-    "lab": "SEQDESK_APP_SURFACE=lab npm run dev:mac -- --restart",
-    "workbench": "SEQDESK_APP_SURFACE=workbench npm run dev:mac -- --restart",
+    "lab": "SEQDESK_DEPLOYMENT_PROFILE=sequencing-center npm run dev:mac -- --restart",
+    "workbench": "SEQDESK_DEPLOYMENT_PROFILE=research-workbench npm run dev:mac -- --restart",
     "dev:workbench": "npm run workbench",
     "dev:mac": "node scripts/dev-mac.mjs",
     "build": "node scripts/run-prisma.mjs generate && next build",

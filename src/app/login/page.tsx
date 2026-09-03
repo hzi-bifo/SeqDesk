@@ -9,6 +9,16 @@ import {
   Loader2,
 } from "lucide-react";
 import { isPublicDemoEnabledClient } from "@/lib/demo/client";
+import {
+  normalizeDeploymentProfileId,
+  type DeploymentProfileId,
+} from "@/lib/deployment-profile";
+
+const LOGIN_DESCRIPTION: Record<DeploymentProfileId, string> = {
+  "sequencing-center": "Sign in to access your sequencing orders",
+  "shared-lab": "Sign in to access your shared lab workspace",
+  "research-workbench": "Sign in to access your research workbench",
+};
 
 export default function LoginPage() {
   const router = useRouter();
@@ -18,6 +28,8 @@ export default function LoginPage() {
   const [notice, setNotice] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [checkingDb, setCheckingDb] = useState(true);
+  const [deploymentProfileId, setDeploymentProfileId] =
+    useState<DeploymentProfileId>("sequencing-center");
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -39,6 +51,12 @@ export default function LoginPage() {
           throw new Error("Failed to load setup status");
         }
         const status = await res.json();
+        const resolvedProfile = normalizeDeploymentProfileId(
+          status.deploymentProfile?.id
+        );
+        if (resolvedProfile) {
+          setDeploymentProfileId(resolvedProfile);
+        }
         if (!status.exists || !status.configured) {
           router.replace("/setup");
           return;
@@ -67,7 +85,7 @@ export default function LoginPage() {
       if (result?.error) {
         setError("Invalid email or password");
       } else if (result?.ok) {
-        router.push("/orders");
+        router.push("/dashboard");
         router.refresh();
       }
     } catch {
@@ -127,7 +145,7 @@ export default function LoginPage() {
                 Welcome back
               </h1>
               <p style={{ color: '#525252', fontSize: '0.9375rem' }}>
-                Sign in to access your sequencing orders
+                {LOGIN_DESCRIPTION[deploymentProfileId]}
               </p>
             </div>
 

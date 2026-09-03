@@ -72,6 +72,9 @@ function processEnvironment(
 }
 
 interface GeneratedInstallConfig {
+  deployment?: {
+    profile?: string;
+  };
   pipelines: {
     execution: {
       mode?: string;
@@ -107,7 +110,8 @@ function extractShellFunction(installer: string, name: string): string {
 function runWriteConfigScript(
   installer: string,
   useSlurm?: boolean,
-  updateServer?: string
+  updateServer?: string,
+  deploymentProfile?: string
 ): GeneratedInstallConfig {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "seqdesk-write-config-"));
   try {
@@ -122,6 +126,9 @@ function runWriteConfigScript(
           : { SEQDESK_INSTALL_EXEC_USE_SLURM: String(useSlurm) }),
         ...(updateServer
           ? { SEQDESK_INSTALL_UPDATE_SERVER: updateServer }
+          : {}),
+        ...(deploymentProfile
+          ? { SEQDESK_INSTALL_DEPLOYMENT_PROFILE: deploymentProfile }
           : {}),
       }),
       stdio: "pipe",
@@ -261,6 +268,7 @@ describe("install profile installer wiring", () => {
   );
 
   it("adds hosted profile flags and aliases to the distribution installer", () => {
+    expect(installDist).toContain("--deployment-profile <id>");
     expect(installDist).toContain("--profile <id>");
     expect(installDist).toContain("--profile-code <code>");
     expect(installDist).toContain("--setting <id>");
@@ -273,6 +281,7 @@ describe("install profile installer wiring", () => {
     expect(installDist).toContain("apply_additional_settings_to_config_path");
     expect(installDist).toContain("Applied additional installer settings");
     expect(installDist).toContain("allowedRoots");
+    expect(installDist).toContain('"deployment",');
     expect(installDist).toContain('"pipelineSmokeTests",');
     expect(installDist).toContain('"seedData",');
     expect(installDist).toContain("__proto__");
@@ -293,6 +302,17 @@ describe("install profile installer wiring", () => {
     expect(installDist).toContain("buildInstallProfileConfig");
     expect(installDist).toContain("config.installProfile = installProfile");
     expect(installDist).not.toContain("safeProfile.relayToken");
+  });
+
+  it("persists the deployment profile in the canonical runtime config", () => {
+    const config = runWriteConfigScript(
+      installDist,
+      undefined,
+      undefined,
+      "research-workbench"
+    );
+
+    expect(config.deployment?.profile).toBe("research-workbench");
   });
 
   it("protects hosted profile access codes from insecure registry transports", () => {
@@ -345,6 +365,7 @@ describe("install profile installer wiring", () => {
       {
         id: "production",
         minSeqDeskVersion: "1.4.2",
+        deployment: { profile: "shared-lab" },
         app: { port: 8080 },
         runtime: { updateServer: "https://updates.example.test" },
         studies: [],
@@ -354,6 +375,9 @@ describe("install profile installer wiring", () => {
 
     expect(valid.status).toBe(0);
     expect(valid.stdout).toContain('SEQDESK_CFG_PORT="8080"');
+    expect(valid.stdout).toContain(
+      'SEQDESK_CFG_DEPLOYMENT_PROFILE="shared-lab"'
+    );
     expect(valid.stdout).toContain(
       'SEQDESK_CFG_PROFILE_MIN_VERSION="1.4.2"'
     );
@@ -419,6 +443,7 @@ describe("install profile installer wiring", () => {
     const accepted = applyAdditionalSettings({
       access: { publicReadOnly: true },
       auth: { allowRegistration: false },
+      deployment: { profile: "shared-lab" },
       moduleSettings: { reports: { enabled: true } },
       sequencingFiles: { scanDepth: 4 },
       studies: [{ alias: "pilot" }],
@@ -428,6 +453,7 @@ describe("install profile installer wiring", () => {
     expect(accepted.config).toMatchObject({
       access: { publicReadOnly: true },
       auth: { allowRegistration: false },
+      deployment: { profile: "shared-lab" },
       moduleSettings: { reports: { enabled: true } },
       sequencingFiles: { scanDepth: 4 },
       studies: [{ alias: "pilot" }],

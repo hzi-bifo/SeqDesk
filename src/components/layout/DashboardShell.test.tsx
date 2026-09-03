@@ -83,6 +83,10 @@ vi.mock("@/lib/demo/client", () => ({
 }));
 
 import { DashboardShell } from "./DashboardShell";
+import { DEPLOYMENT_PROFILES } from "@/lib/deployment-profile";
+
+const sequencingCenterProfile = DEPLOYMENT_PROFILES["sequencing-center"];
+const workbenchProfile = DEPLOYMENT_PROFILES["research-workbench"];
 
 describe("DashboardShell", () => {
   beforeEach(() => {
@@ -126,6 +130,7 @@ describe("DashboardShell", () => {
       <DashboardShell
         user={{ name: "Ada", role: "FACILITY_ADMIN", isDemo: false }}
         version="1.2.3"
+        deploymentProfile={sequencingCenterProfile}
       >
         <div>content</div>
       </DashboardShell>
@@ -150,6 +155,7 @@ describe("DashboardShell", () => {
     render(
       <DashboardShell
         user={{ name: "Ada", role: "USER", isDemo: true, demoExperience: "facility" }}
+        deploymentProfile={sequencingCenterProfile}
       >
         <div>content</div>
       </DashboardShell>
@@ -176,6 +182,7 @@ describe("DashboardShell", () => {
     const { container } = render(
       <DashboardShell
         user={{ name: "Ada", role: "FACILITY_ADMIN", isDemo: false }}
+        deploymentProfile={sequencingCenterProfile}
       >
         <div>content</div>
       </DashboardShell>
@@ -204,6 +211,7 @@ describe("DashboardShell", () => {
     render(
       <DashboardShell
         user={{ name: "Ada", role: "FACILITY_ADMIN", isDemo: false }}
+        deploymentProfile={sequencingCenterProfile}
       >
         <div>content</div>
       </DashboardShell>
@@ -214,12 +222,12 @@ describe("DashboardShell", () => {
   });
 
   it("renders Workbench pages without the lab entity selector", () => {
-    process.env.SEQDESK_APP_SURFACE = "workbench";
     mocks.usePathname.mockReturnValue("/workbench/data");
 
     render(
       <DashboardShell
         user={{ name: "Ada", role: "FACILITY_ADMIN", isDemo: false }}
+        deploymentProfile={workbenchProfile}
       >
         <div>content</div>
       </DashboardShell>
@@ -230,8 +238,7 @@ describe("DashboardShell", () => {
     expect(screen.queryByTestId("study-selector")).toBeNull();
   });
 
-  it("redirects dashboard routes to Workbench in Workbench app mode", () => {
-    process.env.SEQDESK_APP_SURFACE = "workbench";
+  it("redirects sequencing routes to Workbench in Workbench app mode", () => {
     const replace = vi.fn();
     mocks.useRouter.mockReturnValue({ replace });
     mocks.usePathname.mockReturnValue("/orders");
@@ -239,13 +246,14 @@ describe("DashboardShell", () => {
     render(
       <DashboardShell
         user={{ name: "Ada", role: "FACILITY_ADMIN", isDemo: false }}
+        deploymentProfile={workbenchProfile}
       >
         <div>content</div>
       </DashboardShell>
     );
 
     expect(replace).toHaveBeenCalledWith("/workbench/data");
-    expect(screen.queryByTestId("update-banner")).toBeNull();
+    expect(screen.getByTestId("update-banner")).toBeTruthy();
     expect(screen.queryByTestId("order-selector")).toBeNull();
     expect(screen.queryByTestId("study-selector")).toBeNull();
   });
