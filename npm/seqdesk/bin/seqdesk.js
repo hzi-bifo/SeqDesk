@@ -98,7 +98,7 @@ const DEMO_DATA_USAGE = `Usage:
 
 Options:
   --dir, -d          Installed SeqDesk directory. Otherwise uses the configured/default install.
-  --user-email       FACILITY_ADMIN account that owns the demo dataset.
+  --user-email       Administrator account that owns the example dataset.
   --yes, -y          Skip the confirmation prompt for install or remove.
   --json             Print one machine-readable JSON document.
   --help, -h         Show this help.

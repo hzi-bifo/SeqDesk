@@ -188,18 +188,23 @@ function parseCredentials(lines) {
   return credentials;
 }
 
-// Wording-independent: a disclosure has to talk about accounts/credentials that
-// already exist. Pinning an exact sentence would make this check a spelling
-// test that breaks on the first reword.
+// Wording-independent: a disclosure either explains that credentials already
+// exist and were preserved, or explicitly says that no usable credentials were
+// configured. Pinning an exact sentence would make this check a spelling test
+// that breaks on the first reword.
 function findDisclosure(lines) {
   for (const line of lines) {
-    if (!/\b(already|existing|unchanged|pre-existing)\b/i.test(line)) {
-      continue;
+    const namesCredentials =
+      /\b(account|accounts|user|users|credential|credentials|password|passwords|login)\b/i.test(
+        line
+      );
+    if (!namesCredentials) continue;
+    if (/\b(already|existing|unchanged|pre-existing)\b/i.test(line)) {
+      return line.trim();
     }
-    if (!/\b(account|accounts|user|users|credential|credentials|password|passwords|login)\b/i.test(line)) {
-      continue;
+    if (/\bno\b.*\b(configured|created|available)\b/i.test(line)) {
+      return line.trim();
     }
-    return line.trim();
   }
   return null;
 }

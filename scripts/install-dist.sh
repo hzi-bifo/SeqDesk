@@ -135,12 +135,15 @@ SEQDESK_GENERATED_RESEARCHER_PASSWORD=""
 SEQDESK_DB_ADOPTED="false"
 SEQDESK_BOOTSTRAP_ADMIN_EXISTED="false"
 SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED="false"
+# A generated administrator password is disclosed only after a database probe
+# confirms that the intended administrator row exists with system access.
+SEQDESK_BOOTSTRAP_ADMIN_VERIFIED="false"
 # Number of User rows the target database held before this install seeded it.
 # Empty means "not established" and must never be read as zero: only a measured
 # 0 entitles the installer to call the database new and empty.
 SEQDESK_DB_USER_COUNT=""
-# True when the database could not be inspected at all. The installer then still
-# generates and prints credentials, so it has to say that they are unverified.
+# True when the database could not be inspected at all. Generated credentials
+# are withheld unless the later post-seed verification proves they are usable.
 SEQDESK_DB_PROBE_FAILED="false"
 INTERACTIVE_RESULT=""
 SEQDESK_DATA_PATH="${SEQDESK_DATA_PATH:-}"
@@ -1475,6 +1478,49 @@ NODE
     return 0
 }
 
+verify_bootstrap_administrator_created() {
+    command_exists node || return 1
+    [ -n "${DATABASE_URL:-}" ] || return 1
+    [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || return 1
+
+    SEQDESK_VERIFY_ADMIN_EMAIL="$SEQDESK_BOOTSTRAP_ADMIN_EMAIL" \
+    SEQDESK_VERIFY_ADMIN_PASSWORD="${SEQDESK_GENERATED_ADMIN_PASSWORD:-}" \
+    node --no-warnings >/dev/null 2>&1 <<'NODE'
+let PrismaClient;
+try {
+  ({ PrismaClient } = require("@prisma/client"));
+} catch {
+  process.exit(1);
+}
+
+const email = (process.env.SEQDESK_VERIFY_ADMIN_EMAIL || "").trim();
+const expectedPassword = process.env.SEQDESK_VERIFY_ADMIN_PASSWORD || "";
+const prisma = new PrismaClient();
+prisma.user
+  .findUnique({ where: { email }, select: { systemRole: true, password: true } })
+  .then(async (user) => {
+    if (!user || user.systemRole !== "ADMIN") {
+      process.exitCode = 1;
+      return;
+    }
+    if (expectedPassword) {
+      let compare;
+      try {
+        ({ compare } = require("bcryptjs"));
+      } catch {
+        process.exitCode = 1;
+        return;
+      }
+      if (!(await compare(expectedPassword, user.password))) process.exitCode = 1;
+    }
+  })
+  .catch(() => {
+    process.exitCode = 1;
+  })
+  .then(() => prisma.$disconnect().catch(() => {}));
+NODE
+}
+
 # The honest report for a database that already holds SeqDesk accounts.
 #
 # Printed instead of -- never next to -- bootstrap credentials. Overwriting the
@@ -1668,20 +1714,18 @@ adopt_existing_bootstrap_accounts() {
             SEQDESK_DB_USER_COUNT="$(probe_database_user_count)" || SEQDESK_DB_USER_COUNT=""
             ;;
         *)
-            # Visible, not just logged: this install is about to generate, store
-            # and print bootstrap credentials without having been able to check
-            # whether the accounts they belong to already exist. If they do, the
-            # seed leaves them untouched and everything printed later is inert --
-            # the exact failure this whole path exists to prevent. detail() alone
-            # put that only in the log file, which nobody reads before logging in.
+            # Visible, not just logged: this install cannot yet know whether the
+            # seed will create the requested accounts or leave existing rows
+            # untouched. The final summary therefore withholds generated
+            # credentials unless a post-seed probe proves the administrator and
+            # password are usable.
             SEQDESK_DB_PROBE_FAILED="true"
             print_warning "Could not verify whether this database already contains SeqDesk accounts."
             if [ -n "${DATABASE_URL:-}" ]; then
                 print_info "Database: $(redact_database_url "$DATABASE_URL")"
             fi
-            echo "  If it does, the seed leaves those accounts exactly as they are and any"
-            echo "  password shown at the end of this install will not sign in -- use the"
-            echo "  credentials this database was set up with."
+            echo "  If it does, the seed leaves those accounts exactly as they are. The final"
+            echo "  summary will show a generated password only after verifying that it works."
             ;;
     esac
 }
@@ -3732,8 +3776,8 @@ interactive_prompt_password() {
             # Deliberately not printed here. A generated password shown mid-wizard
             # scrolls away behind the rest of the install (or behind a failure
             # that means the account was never created). It is printed once at
-            # the end, next to the URL it is used on.
-            print_info "  A strong password was generated; it is shown when the install finishes."
+            # the end, next to the URL, only after the account is verified.
+            print_info "  A strong password was generated; it is shown after its administrator account is verified."
             INTERACTIVE_RESULT="$pw"
             INTERACTIVE_RESULT_GENERATED="true"
             return 0
@@ -4519,8 +4563,9 @@ run_interactive_wizard_accounts() {
 
 # Turn every supported fresh install into the same secure bootstrap operation.
 # Guided installs may collect a chosen password; unattended/configured installs
-# get a generated one shown exactly once in the final summary. Reconfigure never
-# creates an account or changes credentials.
+# get a generated one shown exactly once in the final summary after it is
+# verified against the created account. Reconfigure never creates an account or
+# changes credentials.
 ensure_secure_bootstrap_accounts() {
     if is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_UPDATE_EXISTING"; then
         return 0
@@ -4545,7 +4590,7 @@ ensure_secure_bootstrap_accounts() {
         SEQDESK_BOOTSTRAP_ADMIN_PASSWORD="$generated_password"
         SEQDESK_GENERATED_ADMIN_PASSWORD="$generated_password"
         SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="true"
-        print_info "Generated a strong password for the initial administrator; it will be shown once after successful setup."
+        print_info "Generated a strong password for the initial administrator; it will be shown once after the account is verified."
     fi
 }
 
@@ -6749,6 +6794,7 @@ reset_guided_plan_answers() {
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD=""
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH=""
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="false"
+    SEQDESK_BOOTSTRAP_ADMIN_VERIFIED="false"
     SEQDESK_GENERATED_ADMIN_PASSWORD=""
     SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="0"
     SEQDESK_USE_PM2=""
@@ -8138,13 +8184,21 @@ print_login_summary() {
         # that does not open this installation.
         if [ "${SEQDESK_BOOTSTRAP_ADMIN_EXISTED:-false}" = "true" ]; then
             print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / existing password (unchanged)"
-        elif [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ]; then
+        elif [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] && \
+            [ "${SEQDESK_BOOTSTRAP_ADMIN_VERIFIED:-false}" = "true" ]; then
             print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}"
             print_secret_kv "Admin password" "${SEQDESK_GENERATED_ADMIN_PASSWORD}"
-        elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ]; then
+        elif [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ]; then
+            print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / creation not verified"
+            print_warning "The generated administrator password is not shown because its account was not verified."
+        elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] && \
+            [ "${SEQDESK_BOOTSTRAP_ADMIN_VERIFIED:-false}" = "true" ]; then
             print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL} / configured password"
+        elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ]; then
+            print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL} / creation not verified"
+            print_warning "Administrator account creation was not verified; use the local reset command after startup."
         else
-            print_kv "Admin" "admin@example.com / admin"
+            print_kv "Admin" "not configured by this install"
         fi
         if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED:-false}" = "true" ]; then
             print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-user@example.com} / existing password (unchanged)"
@@ -8156,7 +8210,7 @@ print_login_summary() {
         elif [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ]; then
             print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL} / configured password"
         else
-            print_kv "Researcher" "user@example.com / user (default; change after first login)"
+            print_kv "Additional members" "invite after login"
         fi
         # Name the accounts the sentence is about. With one of the two adopted
         # and the other freshly created, an unqualified "no password was
@@ -8182,19 +8236,31 @@ print_login_summary() {
         echo "  $unchanged_governs."
         echo "  To set a new one for a single account, without editing the database by hand:"
         echo "    npx -y seqdesk@latest reset-password ${unchanged_reset_email:-admin@example.com} --dir $(shell_quote "$SEQDESK_DIR")"
-        if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] || \
+        if { [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] && \
+            [ "${SEQDESK_BOOTSTRAP_ADMIN_VERIFIED:-false}" = "true" ]; } || \
             [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
-            echo "  Save the generated password above — it is not stored anywhere else."
+            echo "  Save each generated password shown above — it is not stored anywhere else."
         fi
     elif [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] || [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ] || [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
         # A password the installer generated is shown exactly once, here, next to the
         # URL it is used on — and via print_secret_kv, so it is not written to the
         # install log. A password the operator chose is never echoed back.
-        if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ]; then
+        if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] && \
+            [ "${SEQDESK_BOOTSTRAP_ADMIN_VERIFIED:-false}" = "true" ]; then
             print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com}"
             print_secret_kv "Admin password" "${SEQDESK_GENERATED_ADMIN_PASSWORD}"
-        else
+        elif [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ]; then
+            print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / creation not verified"
+            print_warning "The generated administrator password is not shown because its account was not verified."
+            echo "  Start SeqDesk after resolving the database/seed issue, then use the local"
+            echo "  reset command below to choose a known password."
+        elif [ "${SEQDESK_BOOTSTRAP_ADMIN_VERIFIED:-false}" = "true" ]; then
             print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / configured profile password"
+        else
+            print_kv "Admin" "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} / creation not verified"
+            print_warning "Administrator account creation was not verified."
+            echo "  Start SeqDesk after resolving the database/seed issue, then use the local"
+            echo "  reset command below to choose a known password."
         fi
         if [ "${SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED:-}" = "0" ]; then
             print_kv "Additional members" "invite after login"
@@ -8206,28 +8272,37 @@ print_login_summary() {
                 print_kv "Researcher" "${SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL} / configured profile password"
             fi
         else
-            print_kv "Researcher" "user@example.com / user (default; change after first login)"
+            print_kv "Additional members" "invite after login"
         fi
-        if [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] || \
+        if { [ "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED:-false}" = "true" ] && \
+            [ "${SEQDESK_BOOTSTRAP_ADMIN_VERIFIED:-false}" = "true" ]; } || \
             [ "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED:-false}" = "true" ]; then
-            echo "  Save the generated passwords now — they are not stored anywhere else."
+            echo "  Save each generated password shown above — it is not stored anywhere else."
         fi
+        echo "  To replace the administrator password later from this server:"
+        echo "    npx -y seqdesk@latest reset-password ${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-admin@example.com} --dir $(shell_quote "$SEQDESK_DIR")"
     else
         print_warning "No bootstrap administrator credentials were configured."
         echo "  Re-run the guided installer locally to create secure administrator access."
     fi
 
     # Everything above assumes the database was inspected. When it could not be,
-    # the credentials printed are the ones this install generated, not
-    # necessarily the ones that open it -- an account that was already there
-    # keeps its own password, and the seed does not touch it. Said here because
-    # this block is what the reader actually acts on; the warning at probe time
-    # has long scrolled away by now.
+    # an account that was already there keeps its own password, and the seed does
+    # not touch it. Said here because this block is what the reader actually acts
+    # on; the warning at probe time has long scrolled away by now.
     if [ "$SEQDESK_DB_PROBE_FAILED" = "true" ] && [ "$SEQDESK_DB_ADOPTED" != "true" ]; then
         echo "  Unverified: this install could not check whether the database already had"
-        echo "  SeqDesk accounts. If it did, they were left unchanged and the credentials"
-        echo "  above do not apply -- sign in with the ones that database was set up with."
+        echo "  SeqDesk accounts. If it did, they were left unchanged. Use the credentials"
+        echo "  that database was set up with, or the local reset command above."
     fi
+
+    # Prevent a second call in the same shell from disclosing a generated
+    # credential again. Normal installs exit shortly after this summary, but
+    # the single-use property should not depend on that control flow.
+    SEQDESK_GENERATED_ADMIN_PASSWORD=""
+    SEQDESK_GENERATED_RESEARCHER_PASSWORD=""
+    SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="false"
+    SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="false"
 }
 
 print_success_footer() {
@@ -9195,6 +9270,11 @@ else
             SEED_OK="true"
         fi
     fi
+    if [ "$SEQDESK_BOOTSTRAP_ADMIN_EXISTED" != "true" ] && \
+        verify_bootstrap_administrator_created; then
+        SEQDESK_BOOTSTRAP_ADMIN_VERIFIED="true"
+        detail "verified bootstrap administrator ${SEQDESK_BOOTSTRAP_ADMIN_EMAIL}"
+    fi
     fi
 fi
 
@@ -9370,6 +9450,17 @@ fi
 
 print_step "Install user CLI"
 install_user_cli
+
+# A failed seed can still be completed by startup auto-seeding. Retry after a
+# managed service has started, but never infer account creation merely from a
+# successful process-manager command.
+if ! is_truthy "$SEQDESK_RECONFIGURE" && ! is_truthy "$SEQDESK_UPDATE_EXISTING" && \
+    [ "$SEQDESK_BOOTSTRAP_ADMIN_EXISTED" != "true" ] && \
+    [ "$SEQDESK_BOOTSTRAP_ADMIN_VERIFIED" != "true" ] && \
+    verify_bootstrap_administrator_created; then
+    SEQDESK_BOOTSTRAP_ADMIN_VERIFIED="true"
+    detail "verified bootstrap administrator after application startup"
+fi
 write_install_checkpoint "complete" "Application, configuration, database, runtime, and service setup completed"
 complete_install_checkpoint
 

@@ -40,6 +40,11 @@ confirmation, so the apply phase asks no late configuration questions.
 The final handoff now distinguishes a verified running service, a required
 manual start, skipped/unavailable verification, and a health check that needs
 attention; it also states when profile-operational onboarding remains.
+Generated administrator credentials are withheld until a post-seed database
+check confirms both the installation-level administrator role and, for a
+generated password, a successful comparison with the stored password hash. The
+credential is sent only to the terminal, cleared after the first summary, and
+the local recovery command is always shown.
 Unattended installs still default to Sequencing Center only as a
 compatibility fallback and warn operators to pass `--deployment-profile`
 explicitly.
@@ -64,7 +69,7 @@ The existing installer already contains useful safety patterns:
 - it checks the install target, supported runtime, disk space, release integrity, and PostgreSQL availability;
 - it asks account questions only after the selected database can be checked;
 - it redacts database credentials in summaries;
-- it can generate a strong bootstrap password and displays it only after successful account creation;
+- it can generate a strong bootstrap password and displays it only after the administrator account and password have been verified;
 - it backs up an existing target during deliberate replacement and prints recovery information after failure;
 - it has `seqdesk doctor`, setup status, hosted install profiles, and non-interactive configuration paths.
 
@@ -73,9 +78,10 @@ The existing installer already contains useful safety patterns:
 The profile work should fix these gaps rather than layering another question onto the current flow:
 
 - The interactive experience is split between shell prompts for database/accounts and `scripts/install-wizard.mjs` for port/configuration review.
-- The installer still defers most storage configuration instead of collecting and validating profile-aware managed roots before installation.
+- Existing/managed PostgreSQL is checked for endpoint reachability before account questions, but authenticated migration/write capability is not yet proven at that point on hosts without PostgreSQL client tools.
+- Workflow package registry metadata does not yet provide exact per-package download and expanded-size estimates for the review.
 - The browser `/setup` page reports base database/schema/account readiness but does not yet represent profile-specific operational readiness.
-- There is no side-effect-free way to preview the final resolved installation plan before applying it.
+- Hosted lock/source fidelity, reconfiguration diffs, and automatic resume from apply checkpoints remain incomplete.
 
 ## Installation entry points
 

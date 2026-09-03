@@ -79,6 +79,7 @@ reset_state() {
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD=""
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH=""
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="false"
+    SEQDESK_BOOTSTRAP_ADMIN_VERIFIED="false"
     SEQDESK_GENERATED_ADMIN_PASSWORD=""
     SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL=""
     SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD=""
@@ -1255,6 +1256,7 @@ summary_out="$(
         SEQDESK_BIND_HOST="127.0.0.1"
         SEQDESK_BOOTSTRAP_ADMIN_EMAIL="admin@lab.org"
         SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="true"
+        SEQDESK_BOOTSTRAP_ADMIN_VERIFIED="true"
         SEQDESK_GENERATED_ADMIN_PASSWORD="AAAAgeneratedAdminAAAA"
         SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="1"
         SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL="r@lab.org"
@@ -1270,6 +1272,8 @@ summary_out="$(
 )"
 assert_contains "the admin password is rendered, not blank" \
     "AAAAgeneratedAdminAAAA" <(printf '%s\n' "$summary_out")
+assert_contains "the login summary includes local administrator recovery" \
+    "reset-password admin@lab.org --dir /opt/seqdesk-test" <(printf '%s\n' "$summary_out")
 assert_contains "the researcher password is rendered, not blank" \
     "BBBBgeneratedResearcherBBBB" <(printf '%s\n' "$summary_out")
 assert_contains "the summary reports that a manual start is still required" \
@@ -1304,6 +1308,27 @@ assert_contains "the next steps link the detailed pipeline guide" \
 # Guard the general shape: any "<label> password" line must carry a value.
 empty_secret_lines="$(printf '%s\n' "$summary_out" | grep -cE '^[[:space:]]+[A-Za-z]+ password[[:space:]]*$' || true)"
 assert_eq "no password line is label-only" "0" "$empty_secret_lines"
+
+one_time_summary_out="$(
+    (
+        SEQDESK_LOG_ENABLED="false"
+        SEQDESK_RECONFIGURE=""
+        SEQDESK_DIR="/opt/seqdesk-test"
+        SEQDESK_BOOTSTRAP_ADMIN_EMAIL="admin@lab.org"
+        SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="true"
+        SEQDESK_BOOTSTRAP_ADMIN_VERIFIED="true"
+        SEQDESK_GENERATED_ADMIN_PASSWORD="ONE_TIME_ADMIN_SECRET"
+        SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED="0"
+        print_login_summary
+        print_login_summary
+    ) 2>&1
+)"
+one_time_secret_count="$(printf '%s\n' "$one_time_summary_out" | grep -cF 'ONE_TIME_ADMIN_SECRET' || true)"
+one_time_empty_secret_lines="$(printf '%s\n' "$one_time_summary_out" | grep -cE '^[[:space:]]+[A-Za-z]+ password[[:space:]]*$' || true)"
+assert_eq "the generated administrator password is disclosed exactly once" \
+    "1" "$one_time_secret_count"
+assert_eq "a repeated summary does not print an empty password field" \
+    "0" "$one_time_empty_secret_lines"
 
 echo ""
 echo "== Case 12d: next steps do not advertise a missing local pipeline CLI =="

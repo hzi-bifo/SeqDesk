@@ -246,6 +246,7 @@ render_login_summary() {
         SEQDESK_INSTALL_LIB_ONLY=1 source "$1/scripts/install-dist.sh"
         SEQDESK_BOOTSTRAP_ADMIN_EMAIL="${RENDER_ADMIN_EMAIL:-}"
         SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="${RENDER_ADMIN_GENERATED:-false}"
+        SEQDESK_BOOTSTRAP_ADMIN_VERIFIED="${RENDER_ADMIN_VERIFIED:-false}"
         SEQDESK_GENERATED_ADMIN_PASSWORD="${RENDER_ADMIN_PASSWORD:-}"
         SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL="${RENDER_RESEARCHER_EMAIL:-}"
         SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_GENERATED="${RENDER_RESEARCHER_GENERATED:-false}"
@@ -257,6 +258,7 @@ render_login_summary() {
 render_login_summary "$TEST_TMP_DIR/rendered-generated.log" \
     RENDER_ADMIN_EMAIL="admin@example.com" \
     RENDER_ADMIN_GENERATED="true" \
+    RENDER_ADMIN_VERIFIED="true" \
     RENDER_ADMIN_PASSWORD="rendered-admin-secret" \
     RENDER_RESEARCHER_EMAIL="user@example.com" \
     RENDER_RESEARCHER_GENERATED="true" \
@@ -268,14 +270,32 @@ STUB_ACCEPTED_PASSWORD="rendered-admin-secret" \
         --label "first install" \
         --require-printed-password
 
+render_login_summary "$TEST_TMP_DIR/rendered-unverified.log" \
+    RENDER_ADMIN_EMAIL="admin@example.com" \
+    RENDER_ADMIN_GENERATED="true" \
+    RENDER_ADMIN_PASSWORD="must-not-be-disclosed"
+if grep -qF "must-not-be-disclosed" "$TEST_TMP_DIR/rendered-unverified.log"; then
+    echo "FAIL: an unverified administrator password reached the summary" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: an unverified administrator password is withheld"
+fi
+if grep -qF "reset-password admin@example.com" "$TEST_TMP_DIR/rendered-unverified.log"; then
+    echo "ok: an unverified administrator gets a local recovery command"
+else
+    echo "FAIL: the unverified administrator summary lacks a recovery command" >&2
+    FAILURES=$((FAILURES + 1))
+fi
+
 render_login_summary "$TEST_TMP_DIR/rendered-defaults.log"
 STUB_ACCEPTED_PASSWORD="admin" \
-    run_checker 1 "the installer's default-credential block is parsed" \
+    run_checker 0 "the installer does not resurrect packaged default credentials" \
         --summary "$TEST_TMP_DIR/rendered-defaults.log" \
         --base-url "$BASE_URL" \
-        --label "second install"
-assert_output_contains "the default researcher credential is verified too" \
-    "does not work (user@example.com)"
+        --label "second install" \
+        --require-disclosure
+assert_output_contains "the missing-bootstrap state is explained" \
+    "disclosed the pre-existing accounts"
 
 echo "== Case 12: the installer's own adopted-database output is accepted =="
 # The honest outcome, rendered by the installer rather than transcribed: an

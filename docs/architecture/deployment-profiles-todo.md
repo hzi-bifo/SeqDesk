@@ -212,8 +212,8 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [ ] Verify persisted profile, database/migrations, intended administrator, application version/profile response, storage writability, and selected runtime/smoke test.
 - [x] Run the equivalent of `seqdesk doctor` automatically when the guided installer starts a persistent service.
 - [x] Distinguish “installed and verified,” “installed; manual start required,” “installed; optional/operational setup remains,” and restored/preserved failure states.
-- [ ] Show a generated administrator password exactly once only after successful account creation, outside logs, plus the local reset command.
-- [ ] Never create or advertise known `admin`/`user` packaged passwords in a supported release install.
+- [x] Show a generated administrator password exactly once only after successful account creation, outside logs, plus the local reset command. Post-seed verification requires the intended installation administrator role and confirms a generated password against the stored hash before disclosure.
+- [x] Never create or advertise known `admin`/`user` packaged passwords in a supported release install.
 - [x] Print profile-specific next steps and the correct first journey rather than sequencing-center instructions for every install.
 
 ### Public setup status and authenticated onboarding
