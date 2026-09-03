@@ -40,7 +40,10 @@ administrators can configure credentials or delete submission history. Host
 pipeline installation, package import, reference-database downloads, execution
 defaults, worker control, updates, telemetry, and instrument settings are now
 protected by explicit system-management capabilities rather than account-role
-comparisons. Sequencing registries, run forms, file-discovery settings,
+comparisons. Administrative activity/log access, masked effective-config
+status, infrastructure readiness/import, and hosted-profile reload now use the
+same installation-settings capability, preserving 401/403 semantics across all
+three profiles. Sequencing registries, run forms, file-discovery settings,
 simulation tools, and MinKNOW connectivity now use a separate
 `system.sequencing.manage` grant, so Shared Lab members can operate sequencing
 work without being able to change installation-wide instrument configuration;

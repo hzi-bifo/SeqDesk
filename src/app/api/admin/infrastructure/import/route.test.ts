@@ -138,7 +138,7 @@ describe("POST /api/admin/infrastructure/import", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for authenticated members", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -146,7 +146,7 @@ describe("POST /api/admin/infrastructure/import", () => {
       makeRequest({ config: { pipelineRunDir: "/data/runs" } })
     );
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 400 when config is not an object", async () => {

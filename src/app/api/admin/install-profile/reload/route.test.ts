@@ -120,14 +120,14 @@ describe("/api/admin/install-profile/reload", () => {
     expect(body.profileCodeEnvName).toBe("LOCAL_DEV_SETUP_CODE");
   });
 
-  it("rejects non-admin users", async () => {
+  it("rejects authenticated members", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
 
     const response = await GET();
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("reloads the applied profile with the submitted setup code", async () => {

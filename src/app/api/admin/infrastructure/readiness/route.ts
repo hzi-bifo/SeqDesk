@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { getResolvedDataBasePath } from "@/lib/files/data-base-path";
 import { getExecutionSettings } from "@/lib/pipelines/execution-settings";
 import { loadConfig } from "@/lib/config/loader";
@@ -48,11 +52,11 @@ const RECOMMENDED_CHECKS = {
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
-
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const access = decideServerCapability(session, "system.settings.manage");
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
-    if (session.user.isDemo) {
+    if (access.principal?.isDemo) {
       return NextResponse.json({
         ready: true,
         requiredMissing: [],

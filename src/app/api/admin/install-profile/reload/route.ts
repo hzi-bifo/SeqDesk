@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { updateAdminActivityJob } from "@/lib/admin/activity";
 import { checkDatabaseStatus } from "@/lib/db-status";
 import { readInstallProfileFromConfig } from "@/lib/setup-status";
@@ -14,9 +18,9 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function requireAdmin() {
+async function requireSystemSettingsAccess() {
   const session = await getServerSession(authOptions);
-  return Boolean(session && session.user.role === "FACILITY_ADMIN");
+  return decideServerCapability(session, "system.settings.manage");
 }
 
 function readString(value: unknown): string | undefined {
@@ -31,8 +35,9 @@ async function getAppliedProfile() {
 }
 
 export async function GET() {
-  if (!(await requireAdmin())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await requireSystemSettingsAccess();
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const profile = await getAppliedProfile();
@@ -50,8 +55,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  if (!(await requireAdmin())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await requireSystemSettingsAccess();
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;

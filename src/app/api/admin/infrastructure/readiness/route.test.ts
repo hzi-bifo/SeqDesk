@@ -54,6 +54,14 @@ describe("GET /api/admin/infrastructure/readiness", () => {
     mocks.getServerDeploymentProfile.mockReturnValue({
       id: "sequencing-center",
       experience: "sequencing",
+      domains: [
+        "core",
+        "facility-intake",
+        "sample-catalog",
+        "sequencing-operations",
+        "analysis",
+        "publishing",
+      ],
     });
   });
 
@@ -67,13 +75,13 @@ describe("GET /api/admin/infrastructure/readiness", () => {
     expect(body.recommendedMissing).toHaveLength(0);
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for authenticated members", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
 
     const response = await GET();
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns static readiness for demo admins without querying settings", async () => {
@@ -94,7 +102,7 @@ describe("GET /api/admin/infrastructure/readiness", () => {
     expect(mocks.getResolvedDataBasePath).not.toHaveBeenCalled();
     expect(mocks.getExecutionSettings).not.toHaveBeenCalled();
     expect(mocks.loadConfig).not.toHaveBeenCalled();
-    expect(mocks.getServerDeploymentProfile).not.toHaveBeenCalled();
+    expect(mocks.getServerDeploymentProfile).toHaveBeenCalledTimes(1);
   });
 
   it("reports missing required settings when dataBasePath is empty", async () => {
@@ -135,6 +143,7 @@ describe("GET /api/admin/infrastructure/readiness", () => {
     mocks.getServerDeploymentProfile.mockReturnValue({
       id: "research-workbench",
       experience: "workbench",
+      domains: ["core", "workbench", "analysis", "publishing"],
     });
 
     const response = await GET();

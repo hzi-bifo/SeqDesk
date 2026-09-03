@@ -1,13 +1,17 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from '@/lib/authorization/api';
 import { getEffectiveConfig } from '@/lib/config';
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-
-  if (!session || session.user.role !== 'FACILITY_ADMIN') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const access = decideServerCapability(session, 'system.settings.manage');
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {

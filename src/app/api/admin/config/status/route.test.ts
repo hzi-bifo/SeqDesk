@@ -56,13 +56,13 @@ describe("GET /api/admin/config/status", () => {
     expect(body.sources).toEqual({ ena: "file", runtime: "env" });
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for authenticated members", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
 
     const res = await GET();
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("returns 401 when not authenticated", async () => {
