@@ -87,7 +87,7 @@ describe("PUT /api/admin/modules/billing", () => {
     expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for users without settings access", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -99,7 +99,7 @@ describe("PUT /api/admin/modules/billing", () => {
     });
 
     const response = await PUT(request);
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 400 when settings are missing", async () => {

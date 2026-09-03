@@ -77,14 +77,14 @@ describe("POST /api/admin/updates/install", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns 401 when user is not FACILITY_ADMIN", async () => {
+  it("returns 403 when the user cannot manage updates", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "u1", role: "RESEARCHER" },
     });
 
     const response = await POST(makeInstallRequest());
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("starts update when available", async () => {

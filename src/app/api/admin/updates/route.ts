@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from '@/lib/authorization/api';
 import { checkForUpdates, getCurrentVersion, getInstalledVersion } from '@/lib/updater';
 
 /**
@@ -11,9 +15,10 @@ import { checkForUpdates, getCurrentVersion, getInstalledVersion } from '@/lib/u
  */
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions);
+  const access = decideServerCapability(session, 'system.updates.manage');
 
-  if (!session || session.user.role !== 'FACILITY_ADMIN') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const { searchParams } = new URL(request.url);

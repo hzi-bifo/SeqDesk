@@ -3,22 +3,19 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { authOptions } from "@/lib/auth";
 import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
+import {
   getOnboardingStatus,
   setOnboardingItemCompletion,
 } from "@/lib/onboarding/server";
 
-async function requireAdministrator() {
-  const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return null;
-  }
-  return session;
-}
-
 export async function GET() {
-  const session = await requireAdministrator();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const session = await getServerSession(authOptions);
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {
@@ -33,11 +30,12 @@ export async function GET() {
 }
 
 export async function PATCH(request: NextRequest) {
-  const session = await requireAdministrator();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const session = await getServerSession(authOptions);
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
-  if (session.user.isDemo) {
+  if (access.principal?.isDemo) {
     return NextResponse.json(
       { error: "Demo mode is read-only." },
       { status: 403 }
@@ -67,7 +65,7 @@ export async function PATCH(request: NextRequest) {
     const status = await setOnboardingItemCompletion({
       itemId: (body as { itemId: string }).itemId,
       complete: (body as { complete: boolean }).complete,
-      actorUserId: session.user.id,
+      actorUserId: access.principal!.id,
     });
     return NextResponse.json(status);
   } catch (error) {

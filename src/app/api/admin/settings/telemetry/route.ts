@@ -1,16 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { getTelemetrySettings, saveTelemetrySettings } from "@/lib/telemetry";
 
-async function requireFacilityAdmin() {
+async function requireSettingsManager() {
   const session = await getServerSession(authOptions);
-  return session?.user?.role === "FACILITY_ADMIN";
+  return decideServerCapability(session, "system.settings.manage");
 }
 
 export async function GET() {
-  if (!(await requireFacilityAdmin())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await requireSettingsManager();
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {
@@ -24,8 +29,9 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  if (!(await requireFacilityAdmin())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await requireSettingsManager();
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {

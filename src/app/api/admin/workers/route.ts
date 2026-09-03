@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { visibleWorkers } from "@/lib/workers/registry";
 import { reconcileWorker } from "@/lib/workers/process";
 import { listPausedWorkers } from "@/lib/workers/pause";
@@ -11,10 +15,11 @@ const PIPELINE_LOAD_ERROR = "Pipeline load could not be loaded.";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.pipelines.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
-  if (session.user.isDemo) {
+  if (access.principal?.isDemo) {
     return NextResponse.json({ workers: [], pipelineLoad: null });
   }
 

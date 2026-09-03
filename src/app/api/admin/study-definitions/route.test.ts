@@ -37,12 +37,12 @@ describe("GET /api/admin/study-definitions", () => {
     });
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for users without settings access", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "u", role: "RESEARCHER" },
     });
     const res = await GET();
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("maps studies to sampleCount and hasFormConfig and drops the raw relation", async () => {
@@ -89,12 +89,12 @@ describe("POST /api/admin/study-definitions", () => {
     mocks.seedStudyFormConfig.mockResolvedValue({});
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for users without settings access", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "u", role: "RESEARCHER" },
     });
     const res = await POST(postReq({ title: "X" }));
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
     expect(mocks.db.study.create).not.toHaveBeenCalled();
   });
 

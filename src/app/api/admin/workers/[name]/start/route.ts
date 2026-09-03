@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { db } from "@/lib/db";
 import { getWorkerSpec } from "@/lib/workers/registry";
 import { isProcessAlive, startWorker } from "@/lib/workers/process";
@@ -10,8 +14,9 @@ export async function POST(
   { params }: { params: Promise<{ name: string }> },
 ) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.pipelines.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const { name } = await params;
@@ -43,7 +48,7 @@ export async function POST(
   }
 
   try {
-    const row = await startWorker(spec, { startedById: session.user.id });
+    const row = await startWorker(spec, { startedById: access.principal!.id });
     return NextResponse.json({ ok: true, id: row.id, pid: row.pid, logPath: row.logPath }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

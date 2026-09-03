@@ -4,14 +4,19 @@ import { spawn } from "child_process";
 import path from "path";
 import { existsSync } from "fs";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { getWorkerSpec } from "@/lib/workers/registry";
 
 export const runtime = "nodejs";
 
 export async function POST() {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.pipelines.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const events: string[] = [];

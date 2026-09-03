@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { notifyAppUpdateProgressInApp } from "@/lib/notifications/in-app";
 import { getCurrentVersion, getInstalledVersion } from "@/lib/updater";
 import {
@@ -13,9 +17,10 @@ import {
 
 export async function GET() {
   const session = await getServerSession(authOptions);
+  const access = decideServerCapability(session, "system.updates.manage");
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const status = await readUpdateStatus();
@@ -85,9 +90,10 @@ export async function GET() {
 
 export async function DELETE() {
   const session = await getServerSession(authOptions);
+  const access = decideServerCapability(session, "system.updates.manage");
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const status = await readUpdateStatus();

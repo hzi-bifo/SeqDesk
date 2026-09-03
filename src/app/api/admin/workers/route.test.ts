@@ -77,14 +77,14 @@ describe("GET /api/admin/workers", () => {
     });
   });
 
-  it("returns 401 for non-admin sessions", async () => {
+  it("returns 403 for users without pipeline-management access", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
 
     const response = await GET();
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
     expect(mocks.getPipelineLoadSummary).not.toHaveBeenCalled();
   });
 

@@ -25,7 +25,7 @@ describe("admin telemetry settings API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.getTelemetrySettings.mockResolvedValue({
       enabled: false,
@@ -53,12 +53,14 @@ describe("admin telemetry settings API", () => {
     }));
   });
 
-  it("requires a facility admin", async () => {
-    mocks.getServerSession.mockResolvedValueOnce({ user: { role: "RESEARCHER" } });
+  it("requires settings-management access", async () => {
+    mocks.getServerSession.mockResolvedValueOnce({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
 
     const response = await GET();
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns sanitized telemetry settings", async () => {

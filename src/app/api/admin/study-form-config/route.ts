@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
 import { STUDY_FORM_DEFAULTS_VERSION } from "@/lib/modules/default-form-fields";
 import {
@@ -19,9 +23,10 @@ import {
 // `?studyId=` is provided and the dynamic-studies module is in use)
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
+  const access = decideServerCapability(session, "system.settings.manage");
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {
@@ -53,9 +58,10 @@ export async function GET(request: NextRequest) {
 // PUT - update study form configuration
 export async function PUT(request: NextRequest) {
   const session = await getServerSession(authOptions);
+  const access = decideServerCapability(session, "system.settings.manage");
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {

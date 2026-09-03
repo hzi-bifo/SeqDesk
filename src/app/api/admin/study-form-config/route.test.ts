@@ -74,7 +74,7 @@ describe("GET /api/admin/study-form-config", () => {
     expect(body.groups).toHaveLength(1);
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for users without settings access", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -82,7 +82,7 @@ describe("GET /api/admin/study-form-config", () => {
     const response = await GET(
       new NextRequest("http://localhost/api/admin/study-form-config")
     );
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns fallback when schema loading fails", async () => {
@@ -166,7 +166,7 @@ describe("PUT /api/admin/study-form-config", () => {
     expect(mocks.db.siteSettings.upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for users without settings access", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -181,7 +181,7 @@ describe("PUT /api/admin/study-form-config", () => {
     );
 
     const response = await PUT(request);
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 500 when db save fails", async () => {

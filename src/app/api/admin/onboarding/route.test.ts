@@ -49,7 +49,7 @@ describe("/api/admin/onboarding", () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "member-1", role: "RESEARCHER" },
     });
-    expect((await GET()).status).toBe(401);
+    expect((await GET()).status).toBe(403);
   });
 
   it("records the authenticated administrator as the completion actor", async () => {

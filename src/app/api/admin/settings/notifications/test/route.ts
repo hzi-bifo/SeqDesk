@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { db } from "@/lib/db";
 import { getNotificationSettings } from "@/lib/notifications/settings";
 import { getRecipientName } from "@/lib/notifications/recipients";
@@ -8,8 +12,9 @@ import { sendTestNotification } from "@/lib/notifications/dispatcher";
 
 export async function POST() {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const settings = await getNotificationSettings();
@@ -27,7 +32,7 @@ export async function POST() {
   }
 
   const user = await db.user.findUnique({
-    where: { id: session.user.id },
+    where: { id: access.principal!.id },
     select: {
       email: true,
       firstName: true,

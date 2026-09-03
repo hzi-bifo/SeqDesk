@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import fs from "fs";
 import path from "path";
 
@@ -41,9 +45,10 @@ export interface FieldTemplate {
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
+    const access = decideServerCapability(session, "system.settings.manage");
 
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const templatesDir = path.join(process.cwd(), "data", "field-templates");

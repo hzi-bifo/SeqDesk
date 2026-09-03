@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
+import {
   DEFAULT_NOTIFICATION_EVENTS,
   DEFAULT_USER_NOTIFICATION_PREFERENCES,
   getAdminNotificationSettings,
@@ -11,8 +15,9 @@ import type { NotificationEventSettings, NotificationUserPreferences } from "@/l
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   return NextResponse.json(await getAdminNotificationSettings());
@@ -20,8 +25,9 @@ export async function GET() {
 
 export async function PUT(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const body = await request.json().catch(() => ({}));

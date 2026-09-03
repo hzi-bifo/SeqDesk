@@ -64,14 +64,14 @@ describe("GET /api/admin/updates/progress", () => {
     expect(await response.json()).toEqual({ error: "Unauthorized" });
   });
 
-  it("returns 401 when user is not FACILITY_ADMIN", async () => {
+  it("returns 403 when the user cannot manage updates", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "u1", role: "RESEARCHER" },
     });
 
     const response = await GET();
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns null status when no update is in progress", async () => {

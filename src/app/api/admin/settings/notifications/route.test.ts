@@ -83,7 +83,7 @@ describe("/api/admin/settings/notifications", () => {
 
     const response = await GET();
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
     expect(mocks.getAdminNotificationSettings).not.toHaveBeenCalled();
   });
 

@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 function parseExtraSettings(raw: string | null | undefined): Record<string, unknown> {
   if (!raw) {
@@ -23,7 +27,10 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const isFacilityAdmin = session.user.role === "FACILITY_ADMIN";
+  const canManageSettings = decideServerCapability(
+    session,
+    "system.settings.manage"
+  ).allowed;
 
   try {
     const settings = await db.siteSettings.findUnique({
@@ -33,7 +40,7 @@ export async function GET() {
 
     const extra = parseExtraSettings(settings?.extraSettings);
 
-    if (!isFacilityAdmin) {
+    if (!canManageSettings) {
       return NextResponse.json({
         allowUserAssemblyDownload: extra.allowUserAssemblyDownload ?? false,
       });
@@ -47,7 +54,7 @@ export async function GET() {
       postSubmissionInstructions: settings?.postSubmissionInstructions ?? null,
     });
   } catch {
-    if (!isFacilityAdmin) {
+    if (!canManageSettings) {
       return NextResponse.json({
         allowUserAssemblyDownload: false,
       });
@@ -66,9 +73,10 @@ export async function GET() {
 // PUT - update access settings
 export async function PUT(request: NextRequest) {
   const session = await getServerSession(authOptions);
+  const access = decideServerCapability(session, "system.settings.manage");
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {

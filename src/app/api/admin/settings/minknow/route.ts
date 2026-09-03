@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
+import {
   DEFAULT_MINKNOW_CONFIG,
   loadMinknowConfig,
   saveMinknowConfig,
@@ -32,8 +36,9 @@ function sanitize(input: unknown): MinknowStreamConfig {
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {
@@ -47,8 +52,9 @@ export async function GET() {
 
 export async function PUT(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {

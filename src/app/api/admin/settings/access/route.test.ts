@@ -124,8 +124,8 @@ describe("/api/admin/settings/access", () => {
         }),
       );
 
-      expect(response.status).toBe(401);
-      await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
       expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
     });
 

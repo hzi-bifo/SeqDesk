@@ -2,14 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { seedStudyFormConfig } from "@/lib/studies/per-study-config";
 
 // GET - list studies for the admin "Define Studies" surface, with sample counts
 // and whether each study has its own questionnaire (StudyFormConfig).
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {
@@ -47,8 +52,9 @@ export async function GET() {
 // POST - create a new study and seed its questionnaire (blank or cloned).
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {
@@ -67,7 +73,7 @@ export async function POST(request: NextRequest) {
     }
 
     const study = await db.study.create({
-      data: { title: title.trim(), userId: session.user.id },
+      data: { title: title.trim(), userId: access.principal!.id },
     });
 
     const seed =

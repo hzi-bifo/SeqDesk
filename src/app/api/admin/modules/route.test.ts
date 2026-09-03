@@ -85,14 +85,14 @@ describe("PUT /api/admin/modules", () => {
     mocks.db.siteSettings.upsert.mockResolvedValue({});
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for users without settings access", async () => {
     mocks.getServerSession.mockResolvedValue(userSession);
     const req = new NextRequest("http://localhost/api/admin/modules", {
       method: "PUT",
       body: JSON.stringify({ moduleId: "ai-validation", enabled: false }),
     });
     const res = await PUT(req);
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("updates individual module state", async () => {
