@@ -1,6 +1,8 @@
 import type { DeploymentProfileId } from "@/lib/deployment-profile";
 import { getOnboardingItems, ONBOARDING_SCHEMA_VERSION } from "./definitions";
 import type {
+  OnboardingAutomaticCheck,
+  OnboardingAutomaticVerification,
   OnboardingCompletion,
   OnboardingStatus,
   StoredOnboardingState,
@@ -8,6 +10,28 @@ import type {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readAutomaticVerification(
+  value: unknown
+): OnboardingAutomaticVerification | undefined {
+  const completion = readCompletion(value);
+  if (
+    !completion ||
+    !isRecord(value) ||
+    typeof value.verifierVersion !== "number" ||
+    !Number.isInteger(value.verifierVersion) ||
+    value.verifierVersion < 1 ||
+    typeof value.configurationFingerprint !== "string" ||
+    !value.configurationFingerprint
+  ) {
+    return undefined;
+  }
+  return {
+    ...completion,
+    verifierVersion: value.verifierVersion,
+    configurationFingerprint: value.configurationFingerprint,
+  };
 }
 
 function readCompletion(value: unknown): OnboardingCompletion | undefined {
@@ -33,11 +57,25 @@ export function parseStoredOnboardingState(
       .map(([id, completion]) => [id, readCompletion(completion)] as const)
       .filter((entry): entry is [string, OnboardingCompletion] => Boolean(entry[1]))
   );
+  const automaticVerifications = isRecord(value.automaticVerifications)
+    ? Object.fromEntries(
+        Object.entries(value.automaticVerifications)
+          .map(
+            ([id, verification]) =>
+              [id, readAutomaticVerification(verification)] as const
+          )
+          .filter(
+            (entry): entry is [string, OnboardingAutomaticVerification] =>
+              Boolean(entry[1])
+          )
+      )
+    : {};
   return {
     schemaVersion:
       typeof value.schemaVersion === "number" ? value.schemaVersion : ONBOARDING_SCHEMA_VERSION,
     profile,
     items,
+    automaticVerifications,
     ...(typeof value.completedAt === "string" ? { completedAt: value.completedAt } : {}),
     ...(typeof value.completedByUserId === "string"
       ? { completedByUserId: value.completedByUserId }
@@ -49,14 +87,30 @@ export function buildOnboardingStatus(args: {
   profile: DeploymentProfileId;
   requiredVersion: number;
   stored?: StoredOnboardingState;
+  automaticChecks?: Partial<Record<string, OnboardingAutomaticCheck>>;
 }): OnboardingStatus {
   const definitions = getOnboardingItems(args.profile);
   const storedItems = args.stored?.items ?? {};
-  const items = definitions.map((item) => ({
-    ...item,
-    complete: Boolean(storedItems[item.id]),
-    ...(storedItems[item.id] ? { completion: storedItems[item.id] } : {}),
-  }));
+  const items = definitions.map((item) => {
+    const completionMode: "manual" | "automatic" =
+      item.completionMode ?? "manual";
+    const automaticCheck = args.automaticChecks?.[item.id];
+    const completion = storedItems[item.id];
+    return {
+      ...item,
+      completionMode,
+      complete:
+        completionMode === "automatic"
+          ? automaticCheck?.status === "verified"
+          : Boolean(completion),
+      ...(completionMode === "manual" && completion
+        ? { completion }
+        : {}),
+      ...(completionMode === "automatic" && automaticCheck
+        ? { automaticCheck }
+        : {}),
+    };
+  });
   const completedCount = items.filter((item) => item.complete).length;
   const requiredItems = items.filter((item) => item.requirement === "required");
   const recommendedItems = items.filter(

@@ -22,6 +22,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { InfrastructureSetupStatus } from "@/components/admin/infrastructure/InfrastructureSetupStatus";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 
 interface SequencingFilesConfig {
   allowedExtensions: string[];
@@ -42,6 +43,14 @@ interface PathTestResult {
 }
 
 export default function DataStoragePage() {
+  const deploymentProfile = useDeploymentProfile();
+  const usesSequencingStorage = deploymentProfile.experience === "sequencing";
+  const storageLabel =
+    deploymentProfile.id === "research-workbench"
+      ? "Managed Dataset Directory"
+      : deploymentProfile.id === "shared-lab"
+        ? "Shared Data Directory"
+        : "Sequencing Data Directory";
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -108,6 +117,7 @@ export default function DataStoragePage() {
         body: JSON.stringify({
           basePath: dataBasePath,
           allowedExtensions: seqFilesConfig.allowedExtensions,
+          scanForSequencingFiles: usesSequencingStorage,
         }),
       });
       const result = await res.json();
@@ -132,17 +142,19 @@ export default function DataStoragePage() {
     setSaved(false);
 
     try {
-      const configToSave = {
-        ...seqFilesConfig,
-        allowSingleEnd: true,
-      };
+      const configToSave = usesSequencingStorage
+        ? {
+            ...seqFilesConfig,
+            allowSingleEnd: true,
+          }
+        : undefined;
 
       const res = await fetch("/api/admin/settings/sequencing-files", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(dataBasePathIsOperatorManaged ? {} : { dataBasePath }),
-          config: configToSave,
+          ...(configToSave ? { config: configToSave } : {}),
         }),
       });
 
@@ -180,7 +192,9 @@ export default function DataStoragePage() {
         <div className="mb-4">
           <h1 className="text-xl font-semibold">Data Storage</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Configure where sequencing files are discovered and how they are matched
+            {usesSequencingStorage
+              ? "Configure where sequencing files are discovered and how they are matched"
+              : "Configure the managed location used for uploaded, imported, and derived datasets"}
           </p>
         </div>
 
@@ -204,14 +218,16 @@ export default function DataStoragePage() {
               >
                 Required
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="bg-white"
-                onClick={() => jumpToSection("advanced-data-storage")}
-              >
-                Advanced
-              </Button>
+              {usesSequencingStorage && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="bg-white"
+                  onClick={() => jumpToSection("advanced-data-storage")}
+                >
+                  Advanced
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -234,17 +250,21 @@ export default function DataStoragePage() {
             <Badge variant="secondary">Required</Badge>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
-            Define the server directory used for sequencing file discovery and verify access.
+            {usesSequencingStorage
+              ? "Define the server directory used for sequencing file discovery and verify access."
+              : "Define the server directory used for managed Workbench data and verify access."}
           </p>
 
           <GlassCard className="p-6">
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="data-base-path" className="text-base font-medium">
-                  Sequencing Data Directory
+                  {storageLabel}
                 </Label>
                 <p className="text-sm text-muted-foreground">
-                  Absolute path to the directory where sequencing files are stored (for example: /data/sequencing)
+                  {usesSequencingStorage
+                    ? "Absolute path to the directory where sequencing files are stored (for example: /data/sequencing)"
+                    : "Absolute path to a dedicated directory where SeqDesk manages datasets (for example: /data/seqdesk)"}
                 </p>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
@@ -258,7 +278,11 @@ export default function DataStoragePage() {
                         setDataBasePathIsImplicit(false);
                         setPathTestResult(null);
                       }}
-                      placeholder="/data/sequencing"
+                      placeholder={
+                        usesSequencingStorage
+                          ? "/data/sequencing"
+                          : "/data/seqdesk"
+                      }
                       className="pl-10"
                       disabled={saving || dataBasePathIsOperatorManaged}
                     />
@@ -296,7 +320,7 @@ export default function DataStoragePage() {
                         This path is managed by the installed settings file. Change it on the
                         SeqDesk host with{" "}
                         <span className="font-mono">
-                          seqdesk storage configure /absolute/path/to/sequencing-data
+                          seqdesk storage configure /absolute/path/to/managed-data
                         </span>
                         .
                       </>
@@ -328,8 +352,8 @@ export default function DataStoragePage() {
                           )}
                           {pathTestResult.writable === false && (
                             <p className="text-xs mt-1">
-                              Read access works, but this directory is not writable. File
-                              discovery can work; uploads and pipeline write-back will not.
+                              Read access works, but this directory is not writable. Uploads,
+                              imports, and pipeline write-back will not work.
                             </p>
                           )}
                         </>
@@ -344,62 +368,69 @@ export default function DataStoragePage() {
           </GlassCard>
         </div>
 
-        <div id="advanced-data-storage" className="scroll-mt-28">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-semibold">Advanced Configuration</h2>
-              <Badge variant="outline">Optional</Badge>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="bg-white"
-              onClick={() => setShowAdvanced((prev) => !prev)}
-            >
-              {showAdvanced ? (
-                <>
-                  <ChevronUp className="h-4 w-4 mr-1" />
-                  Hide
-                </>
-              ) : (
-                <>
-                  <ChevronDown className="h-4 w-4 mr-1" />
-                  Show
-                </>
-              )}
-            </Button>
-          </div>
-
-          {showAdvanced && (
-            <GlassCard className="p-6">
-              <div className="space-y-2">
-                <Label className="text-base font-medium">Allowed File Extensions</Label>
-                <p className="text-sm text-muted-foreground">
-                  Comma-separated list used for matching sequencing files (for example: .fastq.gz, .fq.gz)
-                </p>
-                <Input
-                  value={seqFilesConfig.allowedExtensions.join(", ")}
-                  onChange={(e) =>
-                    setSeqFilesConfig({
-                      ...seqFilesConfig,
-                      allowedExtensions: Array.from(
-                        new Set(
-                          e.target.value
-                            .split(",")
-                            .map((s) => s.trim())
-                            .filter((s) => s.length > 0)
-                            .map((ext) => (ext.startsWith(".") ? ext : `.${ext}`))
-                        )
-                      ),
-                    })
-                  }
-                  placeholder=".fastq.gz, .fq.gz, .fastq, .fq"
-                  disabled={saving}
-                />
+        {usesSequencingStorage && (
+          <div id="advanced-data-storage" className="scroll-mt-28">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-semibold">Advanced Configuration</h2>
+                <Badge variant="outline">Optional</Badge>
               </div>
-            </GlassCard>
-          )}
-        </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="bg-white"
+                onClick={() => setShowAdvanced((prev) => !prev)}
+              >
+                {showAdvanced ? (
+                  <>
+                    <ChevronUp className="h-4 w-4 mr-1" />
+                    Hide
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="h-4 w-4 mr-1" />
+                    Show
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {showAdvanced && (
+              <GlassCard className="p-6">
+                <div className="space-y-2">
+                  <Label className="text-base font-medium">
+                    Allowed File Extensions
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Comma-separated list used for matching sequencing files
+                    (for example: .fastq.gz, .fq.gz)
+                  </p>
+                  <Input
+                    value={seqFilesConfig.allowedExtensions.join(", ")}
+                    onChange={(e) =>
+                      setSeqFilesConfig({
+                        ...seqFilesConfig,
+                        allowedExtensions: Array.from(
+                          new Set(
+                            e.target.value
+                              .split(",")
+                              .map((s) => s.trim())
+                              .filter((s) => s.length > 0)
+                              .map((ext) =>
+                                ext.startsWith(".") ? ext : `.${ext}`
+                              )
+                          )
+                        ),
+                      })
+                    }
+                    placeholder=".fastq.gz, .fq.gz, .fastq, .fq"
+                    disabled={saving}
+                  />
+                </div>
+              </GlassCard>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center gap-3 pt-2">
           <Button

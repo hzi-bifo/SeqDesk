@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Loader2, AlertCircle, CheckCircle2, RotateCw } from "lucide-react";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 
 type StatusKey = "dataPath" | "runDir" | "conda" | "weblog";
 
@@ -62,6 +63,9 @@ export function InfrastructureSetupStatus({
 }: {
   fixLinks?: Partial<Record<StatusKey, string>>;
 }) {
+  const deploymentProfile = useDeploymentProfile();
+  const scanForSequencingFiles =
+    deploymentProfile.experience === "sequencing";
   const [items, setItems] = useState<StatusItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -156,6 +160,7 @@ export function InfrastructureSetupStatus({
         body: JSON.stringify({
           basePath: dataBasePath,
           allowedExtensions,
+          scanForSequencingFiles,
         }),
       });
       const testData = await readJson<PathTestResponse | { error?: string }>(testRes);
@@ -252,7 +257,7 @@ export function InfrastructureSetupStatus({
     ];
 
     setItems(nextItems);
-  }, [mergedFixLinks, testPipelineSetting]);
+  }, [mergedFixLinks, scanForSequencingFiles, testPipelineSetting]);
 
   const refreshStatuses = useCallback(async () => {
     setRefreshing(true);

@@ -41,6 +41,7 @@ This register captures choices that are easy to hide inside implementation detai
 | I-08 | Installation | Add a redacted, zero-mutation `--plan` mode before applying changes. |
 | I-09 | Installation | Gate members only on required operational readiness; keep recommendations visible and reopenable without blocking work. |
 | I-10 | Installation | Treat database/config/data backup and schema-compatible rollback as release gates, not optional post-install advice. |
+| I-11 | Installation | Treat installer inputs and downloaded executables as a supply-chain boundary: strict schemas, protected secret sources, HTTPS, hashes, and pinned tool versions. |
 | S-01 | Shared Lab | Use optimistic concurrency for shared edits and return a visible conflict instead of silently overwriting. |
 | S-02 | Shared Lab | Keep shared scientific data after account deactivation; archive is reversible and shared purge is administrator-only. |
 | W-01 | Workbench | Allow multiple private workspaces per user in the first release; add collaborative sharing later. |
@@ -208,6 +209,13 @@ Recommendation: the anonymous `/setup` surface reports only non-secret base read
 
 Recommendation: verify application/database/profile/admin readiness automatically, then report profile-specific operational gaps separately. For example, a Workbench can be installed and allow administrator login while still reporting that managed storage or its pipeline runtime must be completed before analyses can run. Do not print generic success when an expected service fails its health check.
 
+Current branch implementation: public setup status remains base-readiness only.
+After administrator login, every profile automatically verifies current managed
+storage with a service-identity write lifecycle probe, and Research Workbench
+also verifies its configured workflow prerequisites and writable run directory.
+This does not yet replace installer post-apply verification, expected-mount or
+minimum-capacity policy, or a real workflow smoke run.
+
 ### I-07 — Give existing installations a different journey
 
 Recommendation: detect Update, Reconfigure, Diagnose/Resume, and Fresh Install before asking questions. Update preserves profile/configuration and never reopens onboarding. Reconfigure loads existing values, respects hosted locks, shows a diff, and never seeds generic accounts. Deployment-profile changes remain a separate future migration with backup/preflight.
@@ -226,6 +234,13 @@ review, optional integrations, and first test journeys remain recommended.
 Replace manual confirmations with automatic storage/runtime verifiers where
 feasible, and never present an acknowledgement as an independent verification.
 
+Current branch implementation: both required item types are automatic and
+cannot be manually toggled. Successful evidence is versioned and tied to a
+non-secret configuration fingerprint, so a relevant configured path or runtime
+setting change makes the item incomplete until an administrator reruns the
+checks. The point-in-time evidence is not a replacement for continuous health
+monitoring. Human confirmations remain recommended and non-blocking.
+
 ### I-10 — Make backup and rollback compatibility release gates
 
 Recommendation: define one coherent backup set covering PostgreSQL, canonical
@@ -234,6 +249,19 @@ Before a schema-changing update, verify or explicitly acknowledge a restorable
 backup. Code rollback must check database-schema compatibility and refuse when
 the prior release cannot safely read the migrated schema. Recovery documentation
 and tests must follow the versioned release layout used by the real installer.
+
+### I-11 — Make installer inputs and downloads an explicit trust boundary
+
+Recommendation: reject unknown configuration fields; show every default and
+source in the normalized plan; keep secrets in protected files, environment
+injection, or secret references rather than serialized plans or command-line
+arguments; and warn or fail when local secret-bearing files have unsafe
+permissions. Remote configuration and release/tool downloads use HTTPS except
+for explicit localhost development, revalidate redirects, and require hashes.
+Pin Miniconda, Nextflow, nf-core, and other executable toolchain versions to a
+reviewed compatibility set instead of mutable `latest` endpoints or broad
+ranges. The source/CI and packaged installer entry points must consume this same
+contract before all three profiles are called supported.
 
 ## Shared Lab decisions
 
@@ -428,6 +456,7 @@ Before implementation begins, explicitly confirm or amend the recommended defaul
 - [ ] I-04 one secure bootstrap administrator and no packaged default accounts
 - [ ] I-05 read-only public setup status plus authenticated onboarding
 - [ ] I-08 redacted, zero-mutation install-plan preview
+- [ ] I-11 strict installer inputs, protected secrets, and pinned/checksummed downloads
 - [ ] W-01 multiple private workspaces, collaboration deferred
 - [ ] W-04 managed-copy default for imports
 - [ ] W-07 provider launch order and arbitrary-URL deferral

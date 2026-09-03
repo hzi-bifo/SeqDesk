@@ -1,8 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, CheckCircle2, ClipboardCheck, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertCircle,
+  ArrowRight,
+  CheckCircle2,
+  ClipboardCheck,
+  Loader2,
+  RotateCw,
+} from "lucide-react";
 
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
@@ -33,6 +40,8 @@ export default function OnboardingPage() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loadError, setLoadError] = useState("");
   const [updatingItemId, setUpdatingItemId] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const automaticVerificationStarted = useRef(false);
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -49,6 +58,46 @@ export default function OnboardingPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const verifyAutomaticItems = useCallback(async () => {
+    setVerifying(true);
+    setLoadError("");
+    try {
+      const response = await fetch("/api/admin/onboarding", {
+        method: "POST",
+        cache: "no-store",
+      });
+      const body = (await response.json()) as OnboardingStatus & {
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.error || "Could not verify operational readiness.");
+      }
+      setStatus(body);
+    } catch (error) {
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Could not verify operational readiness."
+      );
+    } finally {
+      setVerifying(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      !status ||
+      automaticVerificationStarted.current ||
+      !status.items.some(
+        (item) => item.completionMode === "automatic" && !item.complete
+      )
+    ) {
+      return;
+    }
+    automaticVerificationStarted.current = true;
+    void verifyAutomaticItems();
+  }, [status, verifyAutomaticItems]);
 
   const progress = useMemo(
     () => (status ? Math.round((status.completedCount / status.totalCount) * 100) : 0),
@@ -116,7 +165,7 @@ export default function OnboardingPage() {
               checklist remains available under Settings after required setup is complete.
             </p>
           </div>
-          <div className="min-w-48">
+          <div className="min-w-48 space-y-3">
             <div className="mb-2 flex justify-between text-sm">
               <span>{status.completedCount} of {status.totalCount} complete</span>
               <span className="text-muted-foreground">{progress}%</span>
@@ -127,6 +176,24 @@ export default function OnboardingPage() {
                 style={{ width: `${progress}%` }}
               />
             </div>
+            {status.items.some(
+              (item) => item.completionMode === "automatic"
+            ) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => void verifyAutomaticItems()}
+                disabled={verifying}
+              >
+                {verifying ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <RotateCw className="mr-2 h-4 w-4" />
+                )}
+                {verifying ? "Checking…" : "Run checks again"}
+              </Button>
+            )}
           </div>
         </div>
 
@@ -152,43 +219,95 @@ export default function OnboardingPage() {
         )}
 
         <div className="space-y-3">
-          {status.items.map((item) => (
-            <Card key={item.id} className={item.complete ? "border-emerald-200 bg-emerald-50/30" : ""}>
-              <CardContent className="flex flex-col gap-4 p-0 sm:flex-row sm:items-start">
-                <Checkbox
-                  id={item.id}
-                  checked={item.complete}
-                  disabled={updatingItemId !== null}
-                  onCheckedChange={(checked) => void setItem(item.id, checked === true)}
-                  aria-label={`Mark ${item.label} ${item.complete ? "incomplete" : "complete"}`}
-                  className="mt-1"
-                />
-                <label htmlFor={item.id} className="min-w-0 flex-1 cursor-pointer">
+          {status.items.map((item) => {
+            const automatic = item.completionMode === "automatic";
+            return (
+              <Card
+                key={item.id}
+                className={
+                  item.complete ? "border-emerald-200 bg-emerald-50/30" : ""
+                }
+              >
+                <CardContent className="flex flex-col gap-4 p-0 sm:flex-row sm:items-start">
+                  {automatic ? (
+                    item.complete ? (
+                      <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" />
+                    ) : (
+                      <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+                    )
+                  ) : (
+                    <Checkbox
+                      id={item.id}
+                      checked={item.complete}
+                      disabled={updatingItemId !== null}
+                      onCheckedChange={(checked) =>
+                        void setItem(item.id, checked === true)
+                      }
+                      aria-label={`Mark ${item.label} ${item.complete ? "incomplete" : "complete"}`}
+                      className="mt-1"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-2 font-medium">
                     {item.label}
                     <Badge variant={item.requirement === "required" ? "default" : "secondary"}>
                       {item.requirement === "required" ? "Required" : "Recommended"}
                     </Badge>
+                    {automatic && <Badge variant="outline">Automatically checked</Badge>}
                   </span>
                   <span className="mt-1 block text-sm leading-6 text-muted-foreground">
                     {item.description}
                   </span>
-                  {item.completion && (
+                  {!automatic && item.completion && (
                     <span className="mt-2 block text-xs text-muted-foreground">
                       Confirmed {new Date(item.completion.completedAt).toLocaleString()}
                     </span>
                   )}
-                </label>
-                {item.href && item.actionLabel && (
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href={item.href}>
-                      {item.actionLabel} <ArrowRight className="ml-2 h-3.5 w-3.5" />
-                    </Link>
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          ))}
+                    {automatic && item.automaticCheck && (
+                      <div className="mt-3 space-y-2 text-sm">
+                        <p
+                          className={
+                            item.complete
+                              ? "text-emerald-800"
+                              : "text-amber-800"
+                          }
+                        >
+                          {item.automaticCheck.summary}
+                        </p>
+                        {item.automaticCheck.checks &&
+                          item.automaticCheck.checks.length > 0 && (
+                            <ul className="space-y-1 text-xs text-muted-foreground">
+                              {item.automaticCheck.checks.map((check) => (
+                                <li key={check.id}>
+                                  <span className="font-medium">{check.label}:</span>{" "}
+                                  {check.message}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        {item.automaticCheck.checkedAt && (
+                          <p className="text-xs text-muted-foreground">
+                            Checked{" "}
+                            {new Date(
+                              item.automaticCheck.checkedAt
+                            ).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {item.href && item.actionLabel && (
+                    <Button variant="outline" size="sm" asChild>
+                      <Link href={item.href}>
+                        {item.actionLabel}{" "}
+                        <ArrowRight className="ml-2 h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
 
         {status.complete && (

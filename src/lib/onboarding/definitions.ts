@@ -5,6 +5,8 @@ export const ONBOARDING_SCHEMA_VERSION = 1 as const;
 export type OnboardingItem = {
   id: string;
   requirement: "required" | "recommended";
+  /** Omitted items are deliberate human confirmations. */
+  completionMode?: "automatic";
   label: string;
   description: string;
   href?: string;
@@ -24,9 +26,10 @@ const COMMON_ITEMS: readonly OnboardingItem[] = [
   {
     id: "verify-storage",
     requirement: "required",
+    completionMode: "automatic",
     label: "Verify managed storage",
     description:
-      "Confirm that the selected data location is mounted, writable, backed up as intended, and large enough for real work.",
+      "SeqDesk checks that the selected managed-data location exists and can safely create and remove files. Backup responsibility remains a separate recommendation.",
     href: "/admin/data-storage",
     actionLabel: "Check storage",
   },
@@ -139,8 +142,10 @@ const PROFILE_ITEMS: Readonly<Record<DeploymentProfileId, readonly OnboardingIte
     {
       id: "verify-workflow-runtime",
       requirement: "required",
+      completionMode: "automatic",
       label: "Verify the workflow runtime",
-      description: "Confirm the local or Slurm executor, run directory, Conda, and Nextflow readiness.",
+      description:
+        "SeqDesk checks the selected local or Slurm executor, writable run directory, Conda environment, Java, and Nextflow runtime.",
       href: "/admin/pipeline-runtime",
       actionLabel: "Check runtime",
     },

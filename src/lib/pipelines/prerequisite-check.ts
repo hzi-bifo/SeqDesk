@@ -43,6 +43,11 @@ interface ExecutionSettings {
   weblogSecret?: string;
 }
 
+export interface PipelineRuntimePrerequisiteOptions {
+  /** Prevent a Nextflow launcher from downloading/bootstrapping itself. */
+  nextflowOffline?: boolean;
+}
+
 const PIPELINE_RUNTIME_PREREQUISITE_TTL_MS = 15_000;
 const pipelineRuntimePrerequisiteCache = new Map<
   string,
@@ -53,7 +58,8 @@ const pipelineRuntimePrerequisiteCache = new Map<
 >();
 
 function getPipelineRuntimePrerequisiteCacheKey(
-  executionSettings: ExecutionSettings
+  executionSettings: ExecutionSettings,
+  options: PipelineRuntimePrerequisiteOptions
 ): string {
   return JSON.stringify({
     mode: executionSettings.useSlurm ? 'slurm' : 'local',
@@ -62,7 +68,14 @@ function getPipelineRuntimePrerequisiteCacheKey(
       : '',
     condaPath: executionSettings.condaPath?.trim() || '',
     condaEnv: resolveCondaEnvName(executionSettings.condaEnv),
+    nextflowOffline: options.nextflowOffline === true,
   });
+}
+
+function nextflowExecEnvironment(
+  offline: boolean
+): NodeJS.ProcessEnv | undefined {
+  return offline ? { ...process.env, NXF_OFFLINE: 'true' } : undefined;
 }
 
 function resolveCondaEnvName(condaEnv?: string): string {
@@ -367,7 +380,7 @@ async function checkCondaPlatform(
 /**
  * Check if Nextflow is installed and get version
  */
-async function checkNextflow(): Promise<PrerequisiteCheck> {
+async function checkNextflow(offline = false): Promise<PrerequisiteCheck> {
   const check: PrerequisiteCheck = {
     id: 'nextflow',
     name: 'Nextflow',
@@ -378,7 +391,10 @@ async function checkNextflow(): Promise<PrerequisiteCheck> {
   };
 
   try {
-    const { stdout, stderr } = await execAsync('nextflow -version', { timeout: 10000 });
+    const { stdout, stderr } = await execAsync('nextflow -version', {
+      timeout: 10000,
+      ...(offline ? { env: nextflowExecEnvironment(true) } : {}),
+    });
     const output = stdout || stderr;
 
     // Parse version from output like "nextflow version 24.04.2.5914"
@@ -1223,7 +1239,8 @@ export async function checkAllPrerequisites(
  * launches the Nextflow process on the application/scheduler host.
  */
 async function runPipelineRuntimePrerequisiteChecks(
-  executionSettings: ExecutionSettings
+  executionSettings: ExecutionSettings,
+  options: PipelineRuntimePrerequisiteOptions
 ): Promise<PrerequisiteCheck[]> {
   const runtimeCheckPromises: Promise<PrerequisiteCheck>[] = [];
   if (executionSettings.useSlurm) {
@@ -1240,7 +1257,11 @@ async function runPipelineRuntimePrerequisiteChecks(
   );
 
   const [nextflowCheck, javaCheck, ...runtimeChecks] = await Promise.all([
-    checkNextflowInConda(executionSettings.condaPath, executionSettings.condaEnv),
+    checkNextflowInConda(
+      executionSettings.condaPath,
+      executionSettings.condaEnv,
+      options.nextflowOffline === true
+    ),
     checkJava(executionSettings.condaPath, executionSettings.condaEnv),
     ...runtimeCheckPromises,
   ]);
@@ -1253,16 +1274,23 @@ export function clearPipelineRuntimePrerequisiteCache(): void {
 }
 
 export async function checkPipelineRuntimePrerequisites(
-  executionSettings: ExecutionSettings
+  executionSettings: ExecutionSettings,
+  options: PipelineRuntimePrerequisiteOptions = {}
 ): Promise<PrerequisiteCheck[]> {
-  const cacheKey = getPipelineRuntimePrerequisiteCacheKey(executionSettings);
+  const cacheKey = getPipelineRuntimePrerequisiteCacheKey(
+    executionSettings,
+    options
+  );
   const now = Date.now();
   const cached = pipelineRuntimePrerequisiteCache.get(cacheKey);
   if (cached && cached.expiresAt > now) {
     return cached.promise;
   }
 
-  const promise = runPipelineRuntimePrerequisiteChecks(executionSettings);
+  const promise = runPipelineRuntimePrerequisiteChecks(
+    executionSettings,
+    options
+  );
   pipelineRuntimePrerequisiteCache.set(cacheKey, {
     // Keep the in-flight probe shared even when a slow command exceeds the
     // eventual TTL. The real expiry is assigned after the probe settles.
@@ -1289,7 +1317,11 @@ export async function checkPipelineRuntimePrerequisites(
 /**
  * Check if Nextflow is available in conda environment
  */
-async function checkNextflowInConda(condaPath?: string, condaEnv?: string): Promise<PrerequisiteCheck> {
+async function checkNextflowInConda(
+  condaPath?: string,
+  condaEnv?: string,
+  offline = false
+): Promise<PrerequisiteCheck> {
   const check: PrerequisiteCheck = {
     id: 'nextflow',
     name: 'Nextflow',
@@ -1344,7 +1376,10 @@ async function checkNextflowInConda(condaPath?: string, condaEnv?: string): Prom
               'nextflow',
               '-version',
             ])} 2>&1`,
-            { timeout: 30000 }
+            {
+              timeout: 30000,
+              ...(offline ? { env: nextflowExecEnvironment(true) } : {}),
+            }
           );
           const output = stdout || stderr;
           const versionMatch = output.match(/version\s+(\d+\.\d+\.\d+)/i);
@@ -1372,7 +1407,7 @@ async function checkNextflowInConda(condaPath?: string, condaEnv?: string): Prom
   }
 
   // Fall back to system PATH
-  return checkNextflow();
+  return checkNextflow(offline);
 }
 
 /**

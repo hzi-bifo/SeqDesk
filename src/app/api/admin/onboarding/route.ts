@@ -9,6 +9,7 @@ import {
 import {
   getOnboardingStatus,
   setOnboardingItemCompletion,
+  verifyAutomaticOnboarding,
 } from "@/lib/onboarding/server";
 
 export async function GET() {
@@ -69,12 +70,46 @@ export async function PATCH(request: NextRequest) {
     });
     return NextResponse.json(status);
   } catch (error) {
-    if (error instanceof Error && error.message === "Unknown onboarding item.") {
+    if (
+      error instanceof Error &&
+      (error.message === "Unknown onboarding item." ||
+        error.message ===
+          "Automatic onboarding items cannot be changed manually.")
+    ) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     console.error("[Onboarding] Could not update status:", error);
     return NextResponse.json(
       { error: "Could not update onboarding status." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST() {
+  const session = await getServerSession(authOptions);
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
+  }
+  if (access.principal?.isDemo) {
+    return NextResponse.json(
+      { error: "Demo mode is read-only." },
+      { status: 403 }
+    );
+  }
+
+  try {
+    return NextResponse.json(
+      await verifyAutomaticOnboarding({
+        actorUserId: access.principal!.id,
+      }),
+      { headers: { "Cache-Control": "no-store" } }
+    );
+  } catch (error) {
+    console.error("[Onboarding] Could not verify automatic checks:", error);
+    return NextResponse.json(
+      { error: "Could not verify operational readiness." },
       { status: 500 }
     );
   }

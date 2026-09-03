@@ -11,14 +11,18 @@ import { inspectDataStoragePath } from "@/lib/files/data-storage-path-validation
 // POST - test if a path is accessible and list file counts
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  const access = decideServerCapability(session, "system.sequencing.manage");
+  const access = decideServerCapability(session, "system.settings.manage");
   if (!access.allowed) {
     return authorizationErrorResponse(access);
   }
 
   try {
     const body = await request.json();
-    const { basePath, allowedExtensions = [".fastq.gz", ".fq.gz"] } = body;
+    const {
+      basePath,
+      allowedExtensions = [".fastq.gz", ".fq.gz"],
+      scanForSequencingFiles = true,
+    } = body;
 
     if (!basePath) {
       return NextResponse.json({
@@ -35,6 +39,28 @@ export async function POST(request: NextRequest) {
       });
     }
     const resolvedPath = inspection.resolvedPath;
+
+    if (scanForSequencingFiles === false) {
+      if (!inspection.writable) {
+        return NextResponse.json({
+          valid: false,
+          configuredPath: inspection.configuredPath,
+          resolvedPath,
+          readable: inspection.readable,
+          writable: false,
+          error:
+            "Directory is readable but not writable by the SeqDesk service.",
+        });
+      }
+      return NextResponse.json({
+        valid: true,
+        configuredPath: inspection.configuredPath,
+        resolvedPath,
+        readable: inspection.readable,
+        writable: inspection.writable,
+        message: "Directory is accessible and writable",
+      });
+    }
 
     // Count files with matching extensions (non-recursive for quick test)
     let totalFiles = 0;

@@ -24,13 +24,25 @@ real ENA FASTQ import are implemented. The installer now uses a versioned,
 redacted `InstallPlan`; explains profile, access, database, storage, and workflow
 choices; classifies existing targets; and preserves the selected profile during
 maintenance. An authenticated, profile-aware first-login checklist is
-implemented with required gates separated from non-blocking recommendations;
-replacing the remaining manual confirmations with automated storage/runtime
-checks remains open. Invitations now carry explicit system and facility grants,
-redeem atomically, and are revoked when their creating administrator is
-demoted or deactivated. Accounts can be deactivated without deleting scientific
-history, invalidated sessions are rejected centrally, and only an inactive,
-unreferenced account can enter the separately confirmed hard-delete path.
+implemented with required gates separated from non-blocking recommendations.
+Its required infrastructure gates are automatic rather than administrator
+checkboxes: every profile probes the effective managed-storage root using the
+SeqDesk service identity, and Research Workbench also runs the canonical
+workflow-runtime prerequisites and run-directory check. Successful evidence is
+versioned and bound to a configuration fingerprint, so a configured storage
+path or runtime setting change makes the item incomplete until it is checked
+again. Normal status requests do not touch the storage filesystem; real I/O is
+limited to the administrator-triggered check. Workbench
+administrators can configure and test the shared managed-data root through
+profile-neutral storage administration routes; its UI uses the generic path
+test without scanning for sequencing files, and sequencing-only simulation
+remains unavailable there. Expected-mount validation, minimum-capacity policy,
+a real workflow smoke run, and installer post-apply use of these checks remain
+open. Invitations now carry explicit system and facility grants, redeem
+atomically, and are revoked when their creating administrator is demoted or
+deactivated. Accounts can be deactivated without deleting scientific history,
+invalidated sessions are rejected centrally, and only an inactive, unreferenced
+account can enter the separately confirmed hard-delete path.
 Feature-module defaults are resolved against the selected profile and
 incompatible combinations are rejected before installer, hosted-reload, or
 administrator-setting writes. A unified question engine, automatically
@@ -175,9 +187,13 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Define a versioned, typed `InstallPlan` covering operation, release, deployment profile, access topology, database, storage, execution, enrollment, bootstrap administrator, optional content, value sources, and hosted locks.
 - [x] Normalize guided answers, CLI/JSON configuration, hosted install profiles, and existing installation configuration into the same plan.
 - [ ] Use one validator/default resolver and one application engine for every entry point.
+- [ ] Bring the source/CI `scripts/install.sh` entry point onto the same deployment-profile plan as the canonical packaged `scripts/install-dist.sh`; until then it is not a supported way to exercise the three profile choices.
+- [ ] Make installer configuration schema-strict: reject unknown/misspelled fields instead of silently falling back, and generate the profile-neutral example plus three small profile overlays from that schema.
 - [x] Keep secret values behind protected references; never serialize them into saved/sanitized plans.
+- [ ] Finish the secret-input contract: prefer protected files, environment injection, or secret references over command-line/JSON plaintext; reject or warn on unsafe local file permissions; require HTTPS for remote configuration except explicit localhost development.
 - [ ] Add `--plan` and `--plan --json` modes that resolve/validate/redact the plan and perform zero filesystem, database, or service mutations. The modes and no-target/database/service mutation test exist; remove temporary-file use while resolving remote/hosted configs before closing this item.
 - [x] Generate the interactive review screen and unattended plan output from the same normalized representation.
+- [ ] Require verified release/toolchain provenance: mandatory release checksums, HTTPS plus redirect revalidation, checksum-pinned Miniconda installers, and pinned supported Nextflow/nf-core versions rather than mutable `latest` or broad ranges.
 
 ### Existing-target classification
 
@@ -203,11 +219,12 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Keep local PostgreSQL versus existing/managed PostgreSQL as the primary database choice and explain the operational tradeoff.
 - [ ] Verify the selected database before requesting/generating account passwords.
 - [x] Offer recommended managed storage locations first; show only the selected profile's labels and paths.
-- [ ] Complete storage preflight. Current checks resolve symlinks, reject the most dangerous roots/application overlap, inspect an existing writable ancestor, and report filesystem free space; still verify selected mounts, service-identity writes, staging paths, minimum scientific-data capacity, every cross-root overlap, and successful directory creation before claiming readiness.
+- [ ] Complete storage preflight. Installer checks resolve symlinks, reject the most dangerous roots/application overlap, inspect an existing writable ancestor, and report filesystem free space. Authenticated onboarding now separately requires an explicit existing managed-storage directory and verifies read/search plus create, write, `fsync`, rename, and delete operations as the running SeqDesk service identity. The installer must still verify the expected mount rather than a fallback mount point, staging paths, minimum scientific-data capacity, every cross-root overlap, and successful directory creation before claiming install-time readiness.
 - [x] Ask about workflow execution with profile-aware guidance: optional for Sequencing Center, recommended for Shared Lab, and required for full Workbench operational readiness.
 - [ ] Keep local versus Slurm executor details and package/runtime downloads behind the workflow choice; show estimated sizes. The executor choice and honest apply-time download-size status are shown only after workflow opt-in, but approved starter-package selection, package-specific estimates, Slurm connectivity/shared-mount preflight, runtime provisioning choice, and the optional smoke-test choice still need implementation.
 - [x] Create exactly one initial administrator with an entered or generated strong password; remove the generic “also create a researcher” question.
 - [x] Apply the profile's enrollment default and explain it: Sequencing Center researcher self-registration by default; Shared Lab and Workbench invite-only by default.
+- [ ] Decide the safer team-server Sequencing Center enrollment default before exposure. Recommended: invite-only unless the operator explicitly enables public registration with email verification/domain controls and durable rate limiting; keep local evaluation convenient.
 - [x] Defer extra users, SMTP/OIDC, instruments, ENA/repository credentials, and detailed module configuration to authenticated onboarding unless a hosted profile provides them.
 - [x] Offer deterministic facility example data only as a clearly labelled evaluation option for Sequencing Center and Shared Lab; default it off everywhere and call out the team-server default. Workbench uses its upload/import first journey instead of facility-shaped demo data.
 - [x] Keep telemetry separately consented and off by default.
@@ -220,7 +237,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Take an exclusive per-target apply lock and record schema-versioned, secret-free recovery checkpoints through material stages.
 - [ ] Run remaining detectable preflight before material changes and make recorded checkpoints automatically resumable/idempotent. Checkpoints are currently diagnostic only; recovery restarts from a safe path rather than resuming a recorded stage.
 - [ ] Add a mandatory backup/readiness gate for update and rollback: define the database/config/secrets/managed-data backup set, verify a restorable backup before schema migration where feasible, and block rollback when the installed database schema is not backward-compatible. Keep rollback documentation aligned with the versioned `releases/current` layout.
-- [ ] Verify persisted profile, database/migrations, intended administrator, application version/profile response, storage writability, and selected runtime/smoke test.
+- [ ] Verify persisted profile, database/migrations, intended administrator, application version/profile response, storage writability, and selected runtime/smoke test as part of installer post-apply verification. Authenticated onboarding now verifies current managed-storage access and, for Research Workbench, the configured runtime prerequisites; the installer does not yet invoke those checks or run a real workflow smoke test.
 - [x] Run the equivalent of `seqdesk doctor` automatically when the guided installer starts a persistent service.
 - [x] Distinguish “installed and verified,” “installed; manual start required,” “installed; optional/operational setup remains,” and restored/preserved failure states.
 - [x] Show a generated administrator password exactly once only after successful account creation, outside logs, plus the local reset command. Post-seed verification requires the intended installation administrator role and confirms a generated password against the stored hash before disclosure.
@@ -234,7 +251,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Let public setup status report only database/schema, valid deployment profile, enrollment policy, and existence of an active administrator.
 - [x] Add an authenticated, administrator-only, versioned onboarding checklist with explicit completion actor/time.
 - [x] Separate base application readiness from profile operational readiness, and classify onboarding items as required versus recommended so optional manual acknowledgements never block members.
-- [ ] Replace required manual onboarding confirmations with automated storage/runtime verifiers where feasible; do not present an acknowledgement as independent infrastructure verification.
+- [x] Replace required manual onboarding confirmations with automated storage/runtime verifiers: managed storage is checked for every profile and workflow-runtime readiness is additionally checked for Research Workbench. Required items cannot be toggled manually, and versioned, fingerprint-bound evidence is invalidated by relevant configured-path or runtime-setting changes. Normal status requests avoid storage I/O, and the Nextflow readiness probe is offline. Backup, retention, enrollment, integrations, and first-journey decisions remain clearly labelled non-blocking human confirmations.
 - [x] Route the first administrator login to incomplete required onboarding and keep the checklist reopenable without requiring optional backup/retention acknowledgements to unlock ordinary work.
 - [x] Show ordinary members a clear administrator-is-finishing-setup state only while required operational items are incomplete; optional recommendations do not globally block members.
 - [x] Compose onboarding by profile: facility intake/instruments for Sequencing Center, shared storage/members/limits for Shared Lab, and storage/importers/runtime/first workspace for Workbench.
@@ -251,6 +268,8 @@ Acceptance:
 - [x] No anonymous setup-status request can create an account or change configuration.
 - [x] No packaged fresh install uses known default credentials or creates a generic second account.
 - [x] First login, onboarding, completion summary, and next steps use the selected profile's terminology and journey.
+- [ ] Audit public README/npm/help/example copy: use profile-neutral `--data-path` wording, include `deployment.profile`, avoid plain-HTTP team-server examples, and distinguish installed, base-ready, and operationally-ready states.
+- [ ] Add non-blocking continuous health monitoring/alerts for storage and runtime drift; do not put potentially stalled mount/process probes on login or ordinary dashboard requests, and do not treat point-in-time onboarding evidence as ongoing health.
 
 ## Milestone 2 — Principal, capabilities, and scopes
 

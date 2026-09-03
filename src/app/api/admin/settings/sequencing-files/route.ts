@@ -34,7 +34,7 @@ const DEFAULT_CONFIG: SequencingFilesConfig = {
 export async function GET() {
   const session = await getServerSession(authOptions);
 
-  const access = decideServerCapability(session, "system.sequencing.manage");
+  const access = decideServerCapability(session, "system.settings.manage");
   if (!access.allowed) {
     return authorizationErrorResponse(access);
   }
@@ -85,7 +85,7 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   const session = await getServerSession(authOptions);
 
-  const access = decideServerCapability(session, "system.sequencing.manage");
+  const access = decideServerCapability(session, "system.settings.manage");
   if (!access.allowed) {
     return authorizationErrorResponse(access);
   }

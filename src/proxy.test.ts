@@ -104,4 +104,29 @@ describe("runtime app surface proxy", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-middleware-next")).toBe("1");
   });
+
+  it("keeps profile-neutral storage settings available in Workbench", async () => {
+    process.env.SEQDESK_APP_SURFACE = "workbench";
+
+    for (const path of [
+      "/admin/data-storage",
+      "/api/admin/settings/sequencing-files",
+      "/api/admin/settings/sequencing-files/test",
+    ]) {
+      const response = proxy(request(path));
+      expect(response.status, path).toBe(200);
+      expect(response.headers.get("x-middleware-next"), path).toBe("1");
+    }
+
+    const simulation = proxy(
+      request("/api/admin/settings/sequencing-files/simulate")
+    );
+    expect(simulation.status).toBe(404);
+    expect(await simulation.json()).toEqual({ error: "Not found" });
+
+    const futureSequencingEndpoint = proxy(
+      request("/api/admin/settings/sequencing-files/future-endpoint")
+    );
+    expect(futureSequencingEndpoint.status).toBe(404);
+  });
 });

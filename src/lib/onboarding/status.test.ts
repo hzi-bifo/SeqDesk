@@ -49,10 +49,64 @@ describe("profile onboarding status", () => {
       profile: "research-workbench",
       requiredVersion: 1,
       stored,
+      automaticChecks: {
+        [requiredDefinitions[0].id]: {
+          status: "verified",
+          summary: "Automatically verified.",
+          checkedAt: completedAt,
+        },
+      },
     });
     expect(status.required).toBe(true);
     expect(status.complete).toBe(false);
     expect(status.requiredCompletedCount).toBe(status.requiredTotalCount - 1);
+  });
+
+  it("uses automatic evidence instead of a stored checkbox for required checks", () => {
+    const completedAt = "2026-09-03T12:00:00.000Z";
+    const stored = {
+      schemaVersion: ONBOARDING_SCHEMA_VERSION,
+      profile: "research-workbench" as const,
+      items: {
+        "verify-storage": { completedAt, completedByUserId: "admin-1" },
+        "verify-workflow-runtime": {
+          completedAt,
+          completedByUserId: "admin-1",
+        },
+      },
+    };
+
+    const unchecked = buildOnboardingStatus({
+      profile: "research-workbench",
+      requiredVersion: 1,
+      stored,
+    });
+    expect(unchecked.complete).toBe(false);
+    expect(unchecked.requiredCompletedCount).toBe(0);
+    expect(
+      unchecked.items.find((item) => item.id === "verify-storage")
+        ?.completionMode
+    ).toBe("automatic");
+
+    const verified = buildOnboardingStatus({
+      profile: "research-workbench",
+      requiredVersion: 1,
+      stored,
+      automaticChecks: {
+        "verify-storage": {
+          status: "verified",
+          summary: "Managed storage is writable.",
+          checkedAt: completedAt,
+        },
+        "verify-workflow-runtime": {
+          status: "verified",
+          summary: "Workflow runtime is ready.",
+          checkedAt: completedAt,
+        },
+      },
+    });
+    expect(verified.complete).toBe(true);
+    expect(verified.requiredCompletedCount).toBe(2);
   });
 
   it("does not block members on unfinished recommendations", () => {
@@ -77,6 +131,13 @@ describe("profile onboarding status", () => {
       profile: "shared-lab",
       requiredVersion: 1,
       stored,
+      automaticChecks: {
+        "verify-storage": {
+          status: "verified",
+          summary: "Managed storage is writable.",
+          checkedAt: completedAt,
+        },
+      },
     });
 
     expect(status.complete).toBe(true);
@@ -101,5 +162,39 @@ describe("profile onboarding status", () => {
         "shared-lab"
       )
     ).toBeUndefined();
+  });
+
+  it("parses only valid automatic verification evidence", () => {
+    const stored = parseStoredOnboardingState(
+      {
+        schemaVersion: 1,
+        profile: "shared-lab",
+        items: {},
+        automaticVerifications: {
+          "verify-storage": {
+            completedAt: "2026-09-03T12:00:00.000Z",
+            completedByUserId: "admin-1",
+            verifierVersion: 1,
+            configurationFingerprint: "fingerprint",
+          },
+          invalid: {
+            completedAt: "2026-09-03T12:00:00.000Z",
+            completedByUserId: "admin-1",
+            verifierVersion: 0,
+            configurationFingerprint: "",
+          },
+        },
+      },
+      "shared-lab"
+    );
+
+    expect(stored?.automaticVerifications).toEqual({
+      "verify-storage": {
+        completedAt: "2026-09-03T12:00:00.000Z",
+        completedByUserId: "admin-1",
+        verifierVersion: 1,
+        configurationFingerprint: "fingerprint",
+      },
+    });
   });
 });

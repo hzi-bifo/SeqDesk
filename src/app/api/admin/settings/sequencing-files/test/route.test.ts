@@ -125,6 +125,53 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
     expect(data.message).toMatch(/empty/i);
   });
 
+  it("supports a profile-neutral storage check without scanning sequencing files", async () => {
+    const response = await POST(
+      makeRequest({
+        basePath: "/data",
+        scanForSequencingFiles: false,
+      })
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data).toEqual(
+      expect.objectContaining({
+        valid: true,
+        writable: true,
+        message: "Directory is accessible and writable",
+      })
+    );
+    expect(mocks.readdir).not.toHaveBeenCalled();
+  });
+
+  it("fails a profile-neutral storage check when the service cannot write", async () => {
+    mocks.inspectDataStoragePath.mockResolvedValue({
+      valid: true,
+      configuredPath: "/data",
+      resolvedPath: "/data",
+      readable: true,
+      writable: false,
+    });
+
+    const response = await POST(
+      makeRequest({
+        basePath: "/data",
+        scanForSequencingFiles: false,
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        valid: false,
+        writable: false,
+        error: expect.stringMatching(/not writable/i),
+      })
+    );
+    expect(mocks.readdir).not.toHaveBeenCalled();
+  });
+
   it("returns valid with matching files count", async () => {
     mocks.readdir.mockResolvedValue([
       { name: "sample_R1.fastq.gz", isFile: () => true },

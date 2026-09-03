@@ -52,15 +52,29 @@ explicitly.
 That is not yet the finished installer architecture. Before the three profiles
 are advertised as fully supported, the remaining high-priority work is hosted
 lock/source fidelity in the plan, strict no-temporary-file preview handling for
-remote configuration, mount/capacity and executor-specific preflight,
-reconfiguration diffs, and automatic resume from recorded apply checkpoints.
+remote configuration, expected-mount/minimum-capacity and executor-specific
+installer preflight, installer post-apply use of the readiness checks, a real
+workflow smoke run, reconfiguration diffs, and automatic resume from recorded
+apply checkpoints.
 Existing targets are
 now classified before the fresh-install questions and routed to update,
 reconfigure, diagnosis, or safe refusal. New installs opt into a versioned,
 administrator-only onboarding checklist; legacy installs are not unexpectedly
 blocked, and ordinary members see a safe setup-in-progress state until required
-onboarding is complete. Recommended items remain visible but do not block
-members.
+onboarding is complete. Required onboarding is no longer satisfied by a manual
+checkbox. Every profile automatically verifies the effective managed-storage
+root with a service-identity read and create/write/`fsync`/rename/delete probe;
+Research Workbench additionally checks its configured local or Slurm runtime,
+writable pipeline-run directory, Conda environment, Java, and Nextflow.
+Successful checks store versioned evidence tied to a configuration fingerprint,
+so configured storage-path or runtime-setting changes require verification
+again. Normal login/dashboard requests compare only configuration and never
+touch a potentially stalled network mount; the administrator action performs
+the real I/O. Workbench's
+managed-storage configuration and generic path test are available through
+profile-neutral administration routes. Its UI does not request a sequencing-file
+scan, and sequencing-only simulation remains disabled in that profile.
+Recommended items remain visible but do not block members.
 
 ## Current behavior worth preserving
 
@@ -79,12 +93,13 @@ The existing installer already contains useful safety patterns:
 The profile work should fix these gaps rather than layering another question onto the current flow:
 
 - The interactive experience is split between shell prompts for database/accounts and `scripts/install-wizard.mjs` for port/configuration review.
+- The source/CI `scripts/install.sh` path still follows the older installer flow and has not yet joined the profile-aware normalized plan used by the packaged installer.
+- Installer JSON currently needs strict unknown-field rejection, protected secret-source and file-permission rules, and generated profile examples so a typo cannot silently select a fallback.
 - Existing/managed PostgreSQL is checked for endpoint reachability before account questions, but authenticated migration/write capability is not yet proven at that point on hosts without PostgreSQL client tools.
+- Release/toolchain download policy still needs mandatory hashes, HTTPS redirect revalidation, and pinned Miniconda/Nextflow/nf-core versions.
 - Workflow package registry metadata does not yet provide exact per-package download and expanded-size estimates for the review.
-- The browser `/setup` page reports base database/schema/account readiness but does not yet represent profile-specific operational readiness.
-- Required onboarding items are currently administrator confirmations. Replace
-  them with automatic storage/runtime checks where feasible so a checkbox is
-  not mistaken for infrastructure verification.
+- The public browser `/setup` page intentionally reports only base database/schema/account readiness. Profile-specific readiness is checked after authenticated administrator login, but the installer does not yet run the same checks as post-apply verification.
+- Automatic managed-storage readiness measures current capacity but does not yet enforce a scientific-data minimum or prove that an expected network mount is mounted rather than its local fallback directory. Workflow-runtime readiness checks configured prerequisites and the run directory but does not submit a real workflow smoke run.
 - Hosted lock/source fidelity, reconfiguration diffs, and automatic resume from apply checkpoints remain incomplete.
 
 ## Installation entry points
@@ -375,9 +390,26 @@ ordinary members only when the selected profile cannot perform its normal work
 without them: managed storage for all profiles, plus workflow-runtime readiness
 for Research Workbench. Identity review, enrollment review, backup/retention
 documentation, optional credentials, and test journeys remain recommended and
-reopenable; they must not globally lock out a small lab. A completed checkbox is
-an administrator acknowledgement until an automatic verifier is implemented,
-and the UI must not describe it as an independently verified check.
+reopenable; they must not globally lock out a small lab.
+
+The required items use automatic checks and cannot be completed manually. The
+storage verifier requires an explicit existing absolute directory, rejects the
+filesystem root and implicit development fallback, measures available capacity
+when supported, checks service read/search access, and proves service write
+access by creating a private temporary directory, writing and syncing a file,
+renaming it, and removing all probe artifacts. The Research Workbench runtime
+verifier uses the configured local or Slurm executor and the canonical runtime
+prerequisite checks, including its writable run directory, Conda environment,
+Java, and Nextflow. The Nextflow probe runs in offline mode so verification
+cannot bootstrap or download the runtime. Successful evidence records the
+verifier version, actor, time, and a non-secret configuration fingerprint; a
+changed verifier or configured path/runtime setting returns the item to
+unverified.
+The checks report current capacity but do not enforce a minimum, cannot prove an
+expected network mount is the one present, and do not execute a complete
+workflow. This is point-in-time setup evidence, not continuous infrastructure
+health monitoring. Recommended decisions remain explicit administrator
+acknowledgements and are never described as infrastructure verification.
 
 Profile additions:
 

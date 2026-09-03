@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   getOnboardingStatus: vi.fn(),
   setOnboardingItemCompletion: vi.fn(),
+  verifyAutomaticOnboarding: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({ getServerSession: mocks.getServerSession }));
@@ -11,9 +12,10 @@ vi.mock("@/lib/auth", () => ({ authOptions: {} }));
 vi.mock("@/lib/onboarding/server", () => ({
   getOnboardingStatus: mocks.getOnboardingStatus,
   setOnboardingItemCompletion: mocks.setOnboardingItemCompletion,
+  verifyAutomaticOnboarding: mocks.verifyAutomaticOnboarding,
 }));
 
-import { GET, PATCH } from "./route";
+import { GET, PATCH, POST } from "./route";
 
 const status = {
   schemaVersion: 1,
@@ -37,6 +39,10 @@ describe("/api/admin/onboarding", () => {
       ...status,
       completedCount: 1,
     });
+    mocks.verifyAutomaticOnboarding.mockResolvedValue({
+      ...status,
+      completedCount: 1,
+    });
   });
 
   it("returns the administrator checklist", async () => {
@@ -56,12 +62,15 @@ describe("/api/admin/onboarding", () => {
     const request = new Request("http://localhost/api/admin/onboarding", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ itemId: "verify-storage", complete: true }),
+      body: JSON.stringify({
+        itemId: "acknowledge-backups",
+        complete: true,
+      }),
     });
     const response = await PATCH(request as never);
     expect(response.status).toBe(200);
     expect(mocks.setOnboardingItemCompletion).toHaveBeenCalledWith({
-      itemId: "verify-storage",
+      itemId: "acknowledge-backups",
       complete: true,
       actorUserId: "admin-1",
     });
@@ -77,5 +86,41 @@ describe("/api/admin/onboarding", () => {
     });
     expect((await PATCH(request as never)).status).toBe(403);
     expect(mocks.setOnboardingItemCompletion).not.toHaveBeenCalled();
+  });
+
+  it("runs automatic readiness checks as the authenticated administrator", async () => {
+    const response = await POST();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(mocks.verifyAutomaticOnboarding).toHaveBeenCalledWith({
+      actorUserId: "admin-1",
+    });
+  });
+
+  it("does not let a manual PATCH bypass an automatic check", async () => {
+    mocks.setOnboardingItemCompletion.mockRejectedValue(
+      new Error("Automatic onboarding items cannot be changed manually.")
+    );
+    const request = new Request("http://localhost/api/admin/onboarding", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ itemId: "verify-storage", complete: true }),
+    });
+    const response = await PATCH(request as never);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: "Automatic onboarding items cannot be changed manually.",
+    });
+  });
+
+  it("does not run automatic checks for demo administrators", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "demo-1", role: "FACILITY_ADMIN", isDemo: true },
+    });
+
+    expect((await POST()).status).toBe(403);
+    expect(mocks.verifyAutomaticOnboarding).not.toHaveBeenCalled();
   });
 });

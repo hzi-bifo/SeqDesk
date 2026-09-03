@@ -156,6 +156,14 @@ const MODULE_PATHS: ReadonlyArray<{
   { prefix: "/admin/ena", module: "archive-submissions" },
 ];
 
+// These legacy route names now host profile-neutral managed-storage controls.
+// Match exact routes before the broader sequencing namespace so any future
+// child endpoint fails closed in Workbench unless it is explicitly reviewed.
+const PROFILE_NEUTRAL_EXACT_PATHS = [
+  "/api/admin/settings/sequencing-files",
+  "/api/admin/settings/sequencing-files/test",
+] as const;
+
 const SEQUENCING_CENTER_ONLY_PATHS = [
   "/admin/departments",
   "/api/admin/departments",
@@ -190,6 +198,14 @@ export function isRouteAvailableInDeploymentProfile(
     )
   ) {
     return profile.id === "sequencing-center";
+  }
+
+  if (
+    PROFILE_NEUTRAL_EXACT_PATHS.some(
+      (profileNeutralPath) => pathname === profileNeutralPath
+    )
+  ) {
+    return true;
   }
 
   const moduleRule = MODULE_PATHS.find(({ prefix }) =>

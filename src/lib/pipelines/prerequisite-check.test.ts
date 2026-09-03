@@ -279,6 +279,48 @@ describe("prerequisite-check", () => {
     );
   });
 
+  it("can inspect Nextflow without allowing launcher bootstrap downloads", async () => {
+    execResponder = (command: string) => {
+      if (command === "which conda") {
+        return { stdout: "/usr/bin/conda\n" };
+      }
+      if (command === "conda env list") {
+        return {
+          stdout:
+            "base * /opt/conda\nseqdesk-pipelines /opt/conda/envs/seqdesk-pipelines\n",
+        };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines nextflow -version")) {
+        return { stdout: "nextflow version 24.10.0.5934\n" };
+      }
+      if (command.includes("conda run -n seqdesk-pipelines java -version")) {
+        return { stderr: 'openjdk version "17.0.9"\n' };
+      }
+      if (command === "conda --version") {
+        return { stdout: "conda 24.9.1\n" };
+      }
+      return { error: createExecError(`Unhandled command: ${command}`) };
+    };
+
+    await checkPipelineRuntimePrerequisites(
+      {
+        useSlurm: false,
+        pipelineRunDir: "/tmp/seqdesk-runs",
+        condaEnv: "seqdesk-pipelines",
+      },
+      { nextflowOffline: true }
+    );
+
+    const nextflowCall = execMock.mock.calls.find(([command]) =>
+      String(command).includes("nextflow -version")
+    );
+    expect(nextflowCall?.[1]).toEqual(
+      expect.objectContaining({
+        env: expect.objectContaining({ NXF_OFFLINE: "true" }),
+      })
+    );
+  });
+
   it("blocks local readiness when run.sh would activate a missing Conda environment", async () => {
     execResponder = (command: string) => {
       if (command === "/opt/conda/condabin/conda --version") {
