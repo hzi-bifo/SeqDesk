@@ -1659,7 +1659,7 @@ fi
 
 # Next production server reads HOSTNAME as the bind address. Shells often populate
 # HOSTNAME with the machine name, so bind all interfaces unless explicitly set.
-export HOSTNAME="${SEQDESK_BIND_HOST:-0.0.0.0}"
+export HOSTNAME="${SEQDESK_BIND_HOST:-127.0.0.1}"
 
 CONFIG_FILE=""
 for f in settings.json seqdesk.config.json; do
@@ -2945,7 +2945,7 @@ fi
 echo "App directory: $SEQDESK_DIR"
 echo "Browser URL: ${SEQDESK_NEXTAUTH_URL:-http://127.0.0.1:${SEQDESK_PORT:-8000}}"
 echo "Local health URL: http://127.0.0.1:${SEQDESK_PORT:-8000}"
-echo "Bind host: ${SEQDESK_BIND_HOST:-0.0.0.0}"
+echo "Bind host: ${SEQDESK_BIND_HOST:-127.0.0.1}"
 if [ -n "$EXISTING_BACKUP_PATH" ]; then
     echo "Previous install backup: $EXISTING_BACKUP_PATH"
 fi

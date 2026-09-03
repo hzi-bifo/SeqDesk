@@ -115,12 +115,12 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 
 ### One plan and one engine
 
-- [ ] Define a versioned, typed `InstallPlan` covering operation, release, deployment profile, access topology, database, storage, execution, enrollment, bootstrap administrator, optional content, value sources, and hosted locks.
-- [ ] Normalize guided answers, CLI/JSON configuration, hosted install profiles, and existing installation configuration into the same plan.
+- [x] Define a versioned, typed `InstallPlan` covering operation, release, deployment profile, access topology, database, storage, execution, enrollment, bootstrap administrator, optional content, value sources, and hosted locks.
+- [x] Normalize guided answers, CLI/JSON configuration, hosted install profiles, and existing installation configuration into the same plan.
 - [ ] Use one validator/default resolver and one application engine for every entry point.
-- [ ] Keep secret values behind protected references; never serialize them into saved/sanitized plans.
-- [ ] Add `--plan` and `--plan --json` modes that resolve/validate/redact the plan and perform zero filesystem, database, or service mutations.
-- [ ] Generate the interactive review screen and unattended plan output from the same normalized representation.
+- [x] Keep secret values behind protected references; never serialize them into saved/sanitized plans.
+- [ ] Add `--plan` and `--plan --json` modes that resolve/validate/redact the plan and perform zero filesystem, database, or service mutations. The modes and no-target/database/service mutation test exist; remove temporary-file use while resolving remote/hosted configs before closing this item.
+- [x] Generate the interactive review screen and unattended plan output from the same normalized representation.
 
 ### Existing-target classification
 
@@ -141,11 +141,11 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
   - [x] Research Workbench — researchers import/upload existing data and run analyses in workspaces without sequencing-order handoffs.
 - [x] Include the “Not sure?” helper based on external requesters, one shared lab team, or analysis of existing data.
 - [x] Explain that this is one SeqDesk build and that changing the choice later requires a reviewed migration.
-- [ ] Ask “Only on this computer,” “On a team server,” or “Advanced/custom” before asking technical network questions.
-- [ ] Keep loopback binding as the default, distinguish browser URL/bind host/local health URL, require explicit non-loopback acknowledgement, and validate HTTPS expectations for team-server use.
-- [ ] Keep local PostgreSQL versus existing/managed PostgreSQL as the primary database choice and explain the operational tradeoff.
+- [x] Ask “Only on this computer,” “On a team server,” or “Advanced/custom” before asking technical network questions.
+- [x] Keep loopback binding as the default, distinguish browser URL/bind host/local health URL, require explicit non-loopback acknowledgement, and validate HTTPS expectations for team-server use.
+- [x] Keep local PostgreSQL versus existing/managed PostgreSQL as the primary database choice and explain the operational tradeoff.
 - [ ] Verify the selected database before requesting/generating account passwords.
-- [ ] Offer recommended managed storage locations first; show only the selected profile's labels and paths.
+- [x] Offer recommended managed storage locations first; show only the selected profile's labels and paths.
 - [ ] Validate storage existence/creation, writability, free space, mount availability, symlink resolution, dangerous roots, and overlapping/nested roots.
 - [x] Ask about workflow execution with profile-aware guidance: optional for Sequencing Center, recommended for Shared Lab, and required for full Workbench operational readiness.
 - [ ] Keep local versus Slurm executor details and package/runtime downloads behind the workflow choice; show estimated sizes.
@@ -159,7 +159,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 
 - [ ] Expand the current redacted review (which now includes profile, administrator, enrollment, database, paths, and pipeline enablement) with access topology, free-space results, executor/download estimates, optional content, value sources/locks, and warnings.
 - [ ] Allow Back, Save sanitized plan, Install, and Cancel before mutations begin.
-- [ ] After confirmation, ask no new product/configuration questions; display stable pending/running/done/failed stages.
+- [x] After confirmation, ask no new product/configuration questions; display stable pending/running/done/failed stages.
 - [ ] Run all detectable preflight before material changes and use an install lock/idempotent checkpoints during apply.
 - [ ] Verify persisted profile, database/migrations, intended administrator, application version/profile response, storage writability, and selected runtime/smoke test.
 - [ ] Run the equivalent of `seqdesk doctor` automatically when the guided installer starts a persistent service.
@@ -185,7 +185,7 @@ Acceptance:
 - [ ] Irrelevant questions are absent for each profile and advanced questions stay optional.
 - [ ] Cancellation before confirmation produces no material mutations.
 - [ ] `--plan` is redacted and produces no material mutations.
-- [ ] Local-only/team-server URL and bind combinations are validated.
+- [x] Local-only/team-server URL and bind combinations are validated.
 - [ ] Failure injection covers download, checksum, database, migration, storage, account creation, runtime, service start, and health verification with safe retry/recovery output.
 - [ ] Update/reconfigure preserve the deployment profile, accounts, and scientific data.
 - [x] No anonymous setup-status request can create an account or change configuration.

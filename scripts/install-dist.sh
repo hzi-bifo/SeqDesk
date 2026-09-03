@@ -21,7 +21,8 @@
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
 #   SEQDESK_PIPELINE_DATABASE_DIR=/data/pipeline-dbs - Optional pipeline DB directory override
 #   SEQDESK_PORT=8000              - App port (default: 8000)
-#   SEQDESK_BIND_HOST=0.0.0.0      - Optional standalone server bind host
+#   SEQDESK_ACCESS_AUDIENCE=local  - local, team-server, or advanced
+#   SEQDESK_BIND_HOST=127.0.0.1    - Standalone server bind host (loopback by default)
 #   SEQDESK_NEXTAUTH_URL=https://  - Optional NextAuth URL override
 #   SEQDESK_NEXTAUTH_SECRET=...    - Optional NextAuth secret override
 #   SEQDESK_DATABASE_URL=postgresql://... - Optional database URL
@@ -53,6 +54,7 @@
 #   SEQDESK_MINICONDA_BASE_URL=https://... - Miniconda download base (default: repo.anaconda.com)
 #   SEQDESK_MINICONDA_INSTALLER=Miniconda3-py312_24.9.2-0-Linux-x86_64.sh - Pin an exact installer
 #   SEQDESK_PREPARE_POSTGRES=1     - Prepare local PostgreSQL role/database, then exit
+#   SEQDESK_PLAN_ONLY=1             - Resolve and validate without applying changes
 #   SEQDESK_EXEC_USE_SLURM=true    - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_QUEUE=cpu   - Optional pipeline execution override
 #   SEQDESK_EXEC_SLURM_CORES=4     - Optional pipeline execution override
@@ -145,6 +147,10 @@ SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-}"
 SEQDESK_PORT="${SEQDESK_PORT:-}"
 SEQDESK_BIND_HOST="${SEQDESK_BIND_HOST:-}"
 SEQDESK_NEXTAUTH_URL="${SEQDESK_NEXTAUTH_URL:-}"
+# Human-facing access choice used by the guided installer and InstallPlan.
+# It is derived for unattended installs and does not change runtime behavior by
+# itself; bind host and NEXTAUTH_URL remain the canonical runtime values.
+SEQDESK_ACCESS_AUDIENCE="${SEQDESK_ACCESS_AUDIENCE:-}"
 SEQDESK_NEXTAUTH_SECRET="${SEQDESK_NEXTAUTH_SECRET:-}"
 SEQDESK_DATABASE_URL="${SEQDESK_DATABASE_URL:-}"
 SEQDESK_DATABASE_DIRECT_URL="${SEQDESK_DATABASE_DIRECT_URL:-}"
@@ -194,6 +200,7 @@ SEQDESK_RECONFIGURE="${SEQDESK_RECONFIGURE:-}"
 SEQDESK_OVERWRITE_EXISTING="${SEQDESK_OVERWRITE_EXISTING:-}"
 SEQDESK_RESEED_DB="${SEQDESK_RESEED_DB:-}"
 SEQDESK_REQUIRE_CHECKSUM="${SEQDESK_REQUIRE_CHECKSUM:-}"
+SEQDESK_PREFLIGHT_READ_ONLY="false"
 # Network policy for every download this installer performs. Previously no curl
 # invocation had a timeout at all, so a blackholed route or a captive
 # institutional proxy left the installer hanging indefinitely with nothing on
@@ -212,6 +219,8 @@ SEQDESK_CURL_RETRIES="${SEQDESK_CURL_RETRIES:-2}"
 SEQDESK_MINICONDA_BASE_URL="${SEQDESK_MINICONDA_BASE_URL:-https://repo.anaconda.com/miniconda}"
 SEQDESK_MINICONDA_INSTALLER="${SEQDESK_MINICONDA_INSTALLER:-}"
 SEQDESK_PREPARE_POSTGRES="${SEQDESK_PREPARE_POSTGRES:-}"
+SEQDESK_PLAN_ONLY="${SEQDESK_PLAN_ONLY:-}"
+SEQDESK_PLAN_JSON="${SEQDESK_PLAN_JSON:-}"
 SEQDESK_EXEC_USE_SLURM="${SEQDESK_EXEC_USE_SLURM:-}"
 SEQDESK_EXEC_SLURM_QUEUE="${SEQDESK_EXEC_SLURM_QUEUE:-}"
 SEQDESK_EXEC_SLURM_CORES="${SEQDESK_EXEC_SLURM_CORES:-}"
@@ -256,6 +265,10 @@ INSTALL_PHASE="init"
 # Surfaced in the final summary, because "SUCCESS" next to an unverified
 # download is the one line a reviewer must not have to take on trust.
 RELEASE_INTEGRITY="not applicable (no release downloaded)"
+PLAN_RELEASE_VERSION=""
+PLAN_RELEASE_CHECKSUM=""
+PLAN_RELEASE_SIZE=""
+PLAN_TARGET_CLASSIFICATION=""
 
 print_header() {
     echo ""
@@ -394,7 +407,7 @@ bind_host() {
         IFS= read -r persisted_bind_host < "$SEQDESK_DIR/.seqdesk-bind-host" || true
         persisted_bind_host="${persisted_bind_host%$'\r'}"
     fi
-    printf '%s' "${persisted_bind_host:-0.0.0.0}"
+    printf '%s' "${persisted_bind_host:-127.0.0.1}"
 }
 
 doctor_url() {
@@ -3056,6 +3069,25 @@ preflight_local_postgres() {
         1) return 1 ;;
     esac
 
+    # The guided review calls this once in read-only mode. At this point we
+    # have exhausted the non-mutating reuse checks; starting a service,
+    # installing server packages, or creating a private cluster belongs only
+    # to the post-confirmation apply phase.
+    if is_truthy "${SEQDESK_PREFLIGHT_READ_ONLY:-}"; then
+        if [ "$database_url_was_supplied" = "true" ]; then
+            print_info "The selected local PostgreSQL endpoint is not running yet; it will be prepared after confirmation."
+        else
+            print_info "No active local PostgreSQL was found; SeqDesk will prepare one after confirmation."
+        fi
+        if [ "${OS:-}" = "macos" ] && ! command_exists brew && \
+            [ -z "$(find_postgres_binary initdb 2>/dev/null || true)" ]; then
+            print_error "Homebrew or existing PostgreSQL server programs are required for the local database choice on macOS."
+            echo "  Install Homebrew from https://brew.sh, or choose Existing/managed PostgreSQL."
+            return 1
+        fi
+        return 0
+    fi
+
     if [ "$database_url_was_supplied" = "true" ]; then
         # On Linux an explicit URL that is unreachable right now has always been
         # recoverable further down, where ensure_local_postgres_database can
@@ -3869,6 +3901,368 @@ prompt_profile_pipeline_support() {
     fi
 }
 
+deployment_profile_storage_label() {
+    case "${1:-}" in
+        sequencing-center) printf '%s' "Sequencing data" ;;
+        shared-lab) printf '%s' "Shared sequencing and analysis data" ;;
+        research-workbench) printf '%s' "Managed datasets" ;;
+        *) printf '%s' "Managed data" ;;
+    esac
+}
+
+is_loopback_bind_host() {
+    case "${1:-}" in
+        127.0.0.1|localhost|::1|'[::1]') return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+is_loopback_browser_url() {
+    node -e '
+      try {
+        const hostname = new URL(process.argv[1]).hostname.toLowerCase();
+        const loopback = hostname === "localhost" || hostname.endsWith(".localhost") ||
+          hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+        process.exit(loopback ? 0 : 1);
+      } catch { process.exit(1); }
+    ' "${1:-}" >/dev/null 2>&1
+}
+
+is_valid_port() {
+    local value="${1:-}"
+    [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -ge 1 ] && [ "$value" -le 65535 ]
+}
+
+is_valid_http_url() {
+    node -e '
+      try {
+        const url = new URL(process.argv[1]);
+        const protocolOk = url.protocol === "http:" || url.protocol === "https:";
+        const isOrigin = (url.pathname === "" || url.pathname === "/") && !url.search && !url.hash;
+        const noCredentials = !url.username && !url.password;
+        process.exit(protocolOk && isOrigin && noCredentials ? 0 : 1);
+      } catch { process.exit(1); }
+    ' "${1:-}" >/dev/null 2>&1
+}
+
+is_https_url() {
+    node -e '
+      try { process.exit(new URL(process.argv[1]).protocol === "https:" ? 0 : 1); }
+      catch { process.exit(1); }
+    ' "${1:-}" >/dev/null 2>&1
+}
+
+interactive_prompt_port() {
+    local default_value="${1:-8000}" reply
+    while true; do
+        reply=$(read_input "  Internal app port [$default_value]: ")
+        reply=${reply:-$default_value}
+        if is_valid_port "$reply"; then
+            SEQDESK_PORT="$reply"
+            return 0
+        fi
+        print_error "  Enter a port number between 1 and 65535."
+    done
+}
+
+interactive_prompt_browser_url() {
+    local require_https="${1:-false}" default_value="${2:-}" reply
+    while true; do
+        reply=$(read_input "  Browser URL${default_value:+ [$default_value]}: ")
+        reply=${reply:-$default_value}
+        if ! is_valid_http_url "$reply"; then
+            print_error "  Enter a complete http:// or https:// URL."
+            continue
+        fi
+        if [ "$require_https" = "true" ] && ! is_https_url "$reply"; then
+            print_error "  Team-server access requires the canonical HTTPS URL."
+            echo "  Configure a reverse proxy/TLS endpoint first, or choose Advanced/custom."
+            continue
+        fi
+        SEQDESK_NEXTAUTH_URL="$reply"
+        return 0
+    done
+}
+
+confirm_non_loopback_bind() {
+    local answer
+    is_loopback_bind_host "$SEQDESK_BIND_HOST" && return 0
+    print_warning "  SeqDesk will listen beyond this computer on $SEQDESK_BIND_HOST."
+    echo "  Use a firewall and an HTTPS reverse proxy; the installer does not configure TLS."
+    answer=$(read_input "  Continue with network-accessible binding? (y/N): ")
+    is_truthy "$answer"
+}
+
+normalize_access_topology() {
+    SEQDESK_PORT="${SEQDESK_PORT:-8000}"
+    SEQDESK_BIND_HOST="${SEQDESK_BIND_HOST:-127.0.0.1}"
+
+    if [ -z "$SEQDESK_ACCESS_AUDIENCE" ]; then
+        if is_loopback_bind_host "$SEQDESK_BIND_HOST" && \
+            { [ -z "$SEQDESK_NEXTAUTH_URL" ] || is_loopback_browser_url "$SEQDESK_NEXTAUTH_URL"; }; then
+            SEQDESK_ACCESS_AUDIENCE="local"
+        else
+            SEQDESK_ACCESS_AUDIENCE="advanced"
+        fi
+    fi
+
+    if [ -z "$SEQDESK_NEXTAUTH_URL" ]; then
+        SEQDESK_NEXTAUTH_URL="http://localhost:${SEQDESK_PORT}"
+    fi
+
+    case "$SEQDESK_ACCESS_AUDIENCE" in
+        local|team-server|advanced) ;;
+        *)
+            print_error "Unknown access audience: $SEQDESK_ACCESS_AUDIENCE"
+            print_info "Choose local, team-server, or advanced."
+            return 1
+            ;;
+    esac
+    if ! is_valid_port "$SEQDESK_PORT"; then
+        print_error "App port must be between 1 and 65535."
+        return 1
+    fi
+    if ! is_valid_http_url "$SEQDESK_NEXTAUTH_URL"; then
+        print_error "Browser URL must be an http:// or https:// origin without credentials, path, query, or fragment."
+        return 1
+    fi
+    if [ "$SEQDESK_ACCESS_AUDIENCE" = "local" ]; then
+        if ! is_loopback_bind_host "$SEQDESK_BIND_HOST" || \
+            ! is_loopback_browser_url "$SEQDESK_NEXTAUTH_URL"; then
+            print_error "Local access requires both a loopback bind host and a localhost browser URL."
+            return 1
+        fi
+    elif [ "$SEQDESK_ACCESS_AUDIENCE" = "team-server" ]; then
+        if ! is_https_url "$SEQDESK_NEXTAUTH_URL" || is_loopback_browser_url "$SEQDESK_NEXTAUTH_URL"; then
+            print_error "Team-server access requires a non-local canonical HTTPS browser URL."
+            return 1
+        fi
+    fi
+}
+
+prompt_access_topology() {
+    if [ -n "$SEQDESK_ACCESS_AUDIENCE" ]; then
+        normalize_access_topology || return 1
+        if ! confirm_non_loopback_bind; then
+            print_error "  Network-accessible binding was not confirmed."
+            return 1
+        fi
+        return 0
+    fi
+
+    print_info "Access — where will people open SeqDesk?"
+    echo "    1) Only on this computer (recommended for evaluation or personal use)"
+    echo "    2) On a team server (requires your HTTPS reverse proxy)"
+    echo "    3) Advanced/custom"
+
+    local access_choice
+    while true; do
+        access_choice=$(read_input "  Choose [1]: ")
+        access_choice=${access_choice:-1}
+        case "$access_choice" in
+            1|local)
+                SEQDESK_ACCESS_AUDIENCE="local"
+                SEQDESK_BIND_HOST="127.0.0.1"
+                interactive_prompt_port "${SEQDESK_PORT:-8000}"
+                SEQDESK_NEXTAUTH_URL="http://localhost:${SEQDESK_PORT}"
+                break
+                ;;
+            2|team-server|team)
+                SEQDESK_ACCESS_AUDIENCE="team-server"
+                # A reverse proxy on this host can reach loopback, and keeping
+                # the application itself off the network is the safer default.
+                # Containers or remote proxies belong in Advanced/custom,
+                # where the non-loopback listener is acknowledged explicitly.
+                SEQDESK_BIND_HOST="127.0.0.1"
+                interactive_prompt_port "${SEQDESK_PORT:-8000}"
+                interactive_prompt_browser_url "true" "${SEQDESK_NEXTAUTH_URL:-}"
+                echo "  Keep SeqDesk behind an HTTPS reverse proxy on this host."
+                echo "  Configure firewall, backups, and monitoring before production use."
+                break
+                ;;
+            3|advanced)
+                SEQDESK_ACCESS_AUDIENCE="advanced"
+                local default_bind_host="${SEQDESK_BIND_HOST:-127.0.0.1}"
+                SEQDESK_BIND_HOST=$(read_input "  Bind host [$default_bind_host]: ")
+                SEQDESK_BIND_HOST=${SEQDESK_BIND_HOST:-$default_bind_host}
+                interactive_prompt_port "${SEQDESK_PORT:-8000}"
+                interactive_prompt_browser_url "false" "${SEQDESK_NEXTAUTH_URL:-http://localhost:${SEQDESK_PORT}}"
+                if confirm_non_loopback_bind; then
+                    break
+                fi
+                print_info "  Choose local access or confirm the non-loopback binding."
+                ;;
+            *)
+                print_error "  Choose 1, 2, or 3."
+                ;;
+        esac
+    done
+
+    normalize_access_topology || return 1
+    print_success "  Browser URL: $SEQDESK_NEXTAUTH_URL"
+    print_info "  Local health checks always use http://127.0.0.1:${SEQDESK_PORT}."
+}
+
+canonicalize_guided_path() {
+    node -e '
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const requested = path.resolve(process.argv[1]);
+      let existing = requested;
+      const suffix = [];
+      while (!fs.existsSync(existing)) {
+        const parent = path.dirname(existing);
+        if (parent === existing) break;
+        suffix.unshift(path.basename(existing));
+        existing = parent;
+      }
+      const base = fs.existsSync(existing) ? fs.realpathSync(existing) : existing;
+      process.stdout.write(path.join(base, ...suffix));
+    ' "$1"
+}
+
+path_relation() {
+    node -e '
+      const path = require("node:path");
+      const a = path.resolve(process.argv[1]);
+      const b = path.resolve(process.argv[2]);
+      const inside = (child, parent) => {
+        const rel = path.relative(parent, child);
+        return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+      };
+      process.stdout.write(a === b ? "equal" : inside(a, b) ? "inside" : inside(b, a) ? "contains" : "disjoint");
+    ' "$1" "$2"
+}
+
+nearest_existing_directory() {
+    local candidate="$1" parent
+    while [ ! -e "$candidate" ]; do
+        parent=$(dirname "$candidate")
+        [ "$parent" != "$candidate" ] || break
+        candidate="$parent"
+    done
+    [ -d "$candidate" ] || return 1
+    printf '%s' "$candidate"
+}
+
+validate_guided_storage_path() {
+    local label="$1" requested="$2" canonical relation ancestor
+    requested="$(expand_home_relative_path "$requested")"
+    canonical="$(canonicalize_guided_path "$requested" 2>/dev/null || true)"
+    if [ -z "$canonical" ] || [ "$canonical" = "/" ]; then
+        print_error "  $label cannot be the filesystem root."
+        return 1
+    fi
+
+    local canonical_home canonical_install
+    canonical_home="$(canonicalize_guided_path "$HOME" 2>/dev/null || printf '%s' "$HOME")"
+    canonical_install="$(canonicalize_guided_path "$SEQDESK_DIR" 2>/dev/null || printf '%s' "$SEQDESK_DIR")"
+    if [ "$canonical" = "$canonical_home" ]; then
+        print_error "  $label cannot be the home directory itself; choose a dedicated subdirectory."
+        return 1
+    fi
+    relation="$(path_relation "$canonical" "$canonical_install")"
+    if [ "$relation" != "disjoint" ]; then
+        if is_truthy "${SEQDESK_STORAGE_ALLOW_INSTALL_OVERLAP:-}"; then
+            print_warning "  $label uses a legacy path inside the existing application directory: $canonical"
+            echo "  It is preserved for reconfiguration; migrate it separately before changing this path."
+        else
+            print_error "  $label must be separate from the application directory $SEQDESK_DIR."
+            echo "  This keeps scientific data out of application update/rollback operations."
+            return 1
+        fi
+    fi
+    if [ -e "$canonical" ] && [ ! -d "$canonical" ]; then
+        print_error "  $label exists but is not a directory: $canonical"
+        return 1
+    fi
+    ancestor="$(nearest_existing_directory "$canonical" 2>/dev/null || true)"
+    if [ -z "$ancestor" ] || [ ! -w "$ancestor" ]; then
+        print_error "  $label cannot be created or written by the current user: $canonical"
+        return 1
+    fi
+
+    INTERACTIVE_RESULT="$canonical"
+    print_success "  $label: $canonical ($(get_disk_info "$ancestor"))"
+}
+
+validate_guided_storage_layout() {
+    local relation
+    validate_guided_storage_path "$(deployment_profile_storage_label "$SEQDESK_DEPLOYMENT_PROFILE")" "$SEQDESK_DATA_PATH" || return 1
+    SEQDESK_DATA_PATH="$INTERACTIVE_RESULT"
+
+    if is_truthy "$SEQDESK_WITH_PIPELINES"; then
+        validate_guided_storage_path "Pipeline run directory" "$SEQDESK_RUN_DIR" || return 1
+        SEQDESK_RUN_DIR="$INTERACTIVE_RESULT"
+        validate_guided_storage_path "Pipeline database/cache directory" "$SEQDESK_PIPELINE_DATABASE_DIR" || return 1
+        SEQDESK_PIPELINE_DATABASE_DIR="$INTERACTIVE_RESULT"
+        relation="$(path_relation "$SEQDESK_RUN_DIR" "$SEQDESK_PIPELINE_DATABASE_DIR")"
+        if [ "$relation" != "disjoint" ]; then
+            print_error "  Pipeline run and database/cache directories must not overlap."
+            return 1
+        fi
+    fi
+}
+
+normalize_storage_layout() {
+    if [ -z "$SEQDESK_DATA_PATH" ] && ! is_truthy "${SEQDESK_RECONFIGURE:-}"; then
+        SEQDESK_DATA_PATH="$(dirname "$SEQDESK_DIR")/$(basename "$SEQDESK_DIR")-data"
+    fi
+    [ -n "$SEQDESK_DATA_PATH" ] || return 0
+
+    if [ "${PIPELINES_ENABLED:-false}" = "true" ]; then
+        SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-${SEQDESK_DATA_PATH%/}/pipeline-runs}"
+        SEQDESK_PIPELINE_DATABASE_DIR="${SEQDESK_PIPELINE_DATABASE_DIR:-${SEQDESK_DATA_PATH%/}/pipeline-databases}"
+    fi
+    if is_truthy "${SEQDESK_RECONFIGURE:-}"; then
+        SEQDESK_STORAGE_ALLOW_INSTALL_OVERLAP="true" validate_guided_storage_layout
+    else
+        validate_guided_storage_layout
+    fi
+}
+
+prompt_profile_storage() {
+    local data_label default_root use_recommended custom_path
+    data_label="$(deployment_profile_storage_label "$SEQDESK_DEPLOYMENT_PROFILE")"
+    default_root="$(dirname "$SEQDESK_DIR")/$(basename "$SEQDESK_DIR")-data"
+
+    print_info "Storage — where should SeqDesk keep $data_label?"
+    if [ -z "$SEQDESK_DATA_PATH" ]; then
+        echo "  Recommended managed root: $default_root"
+        echo "  It is separate from the application directory so updates do not move scientific data."
+        use_recommended=$(read_input "  Use the recommended managed location? (Y/n): ")
+        case "$use_recommended" in
+            n|N|no|NO)
+                while true; do
+                    custom_path=$(read_input "  $data_label directory: ")
+                    if [ -n "$custom_path" ]; then
+                        SEQDESK_DATA_PATH="$custom_path"
+                        break
+                    fi
+                    print_error "  A storage directory is required."
+                done
+                ;;
+            *) SEQDESK_DATA_PATH="$default_root" ;;
+        esac
+    fi
+
+    if is_truthy "$SEQDESK_WITH_PIPELINES"; then
+        SEQDESK_RUN_DIR="${SEQDESK_RUN_DIR:-${SEQDESK_DATA_PATH%/}/pipeline-runs}"
+        SEQDESK_PIPELINE_DATABASE_DIR="${SEQDESK_PIPELINE_DATABASE_DIR:-${SEQDESK_DATA_PATH%/}/pipeline-databases}"
+    fi
+
+    while ! validate_guided_storage_layout; do
+        print_info "  Choose a different dedicated storage root."
+        SEQDESK_DATA_PATH=$(read_input "  $data_label directory: ")
+        SEQDESK_RUN_DIR=""
+        SEQDESK_PIPELINE_DATABASE_DIR=""
+        if is_truthy "$SEQDESK_WITH_PIPELINES" && [ -n "$SEQDESK_DATA_PATH" ]; then
+            SEQDESK_RUN_DIR="${SEQDESK_DATA_PATH%/}/pipeline-runs"
+            SEQDESK_PIPELINE_DATABASE_DIR="${SEQDESK_DATA_PATH%/}/pipeline-databases"
+        fi
+    done
+}
+
 # The wizard is split so the database dependency can be verified between its two
 # halves. Asking for accounts first meant a reviewer chose a password, was shown
 # a generated one to "save now", and then watched the install abort on a
@@ -3887,6 +4281,7 @@ run_interactive_wizard_database() {
 
     # The operating model determines the questions and onboarding that follow.
     prompt_deployment_profile
+    prompt_access_topology
 
     # Database
     print_info "Database — where should SeqDesk store its data?"
@@ -3940,6 +4335,7 @@ run_interactive_wizard_accounts() {
     interactive_wizard_enabled || return 0
 
     prompt_profile_pipeline_support
+    prompt_profile_storage
 
     # Accounts
     print_info "Accounts — create exactly one initial administrator"
@@ -4050,6 +4446,8 @@ Options:
   --with-pipelines             Install optional Conda/Nextflow pipeline support
   --without-pipelines          Install the core app only (default)
   --skip-deps                  Deprecated (ignored in distribution installer)
+  --access <audience>          local, team-server, or advanced
+  --bind-host <host>           App listener address (default: 127.0.0.1)
   --port <port>                App port
   --data-path <path>           Sequencing data directory
   --run-dir <path>             Pipeline run directory
@@ -4066,6 +4464,8 @@ Options:
   --use-pm2                    Enable PM2 auto-restart setup
   --no-pm2                     Disable PM2 setup
   --run-doctor                 Run seqdesk doctor after install when available
+  --plan                       Resolve, validate, and print a redacted plan only
+  --json                       With --plan, emit one machine-readable JSON document
   --reconfigure                Reconfigure an existing install in place
   --reseed-db                  Force DB push + seed (default off for --reconfigure)
   --prepare-postgres           Prepare local PostgreSQL role/database, then exit
@@ -4189,6 +4589,22 @@ parse_args() {
             --skip-deps)
                 SEQDESK_SKIP_DEPS="1"
                 ;;
+            --access|--access-audience)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --access"
+                    exit 1
+                fi
+                SEQDESK_ACCESS_AUDIENCE="$2"
+                shift
+                ;;
+            --bind-host)
+                if [ $# -lt 2 ]; then
+                    print_error "Missing value for --bind-host"
+                    exit 1
+                fi
+                SEQDESK_BIND_HOST="$2"
+                shift
+                ;;
             --port)
                 if [ $# -lt 2 ]; then
                     print_error "Missing value for --port"
@@ -4301,6 +4717,12 @@ parse_args() {
                 ;;
             --run-doctor)
                 SEQDESK_RUN_DOCTOR="1"
+                ;;
+            --plan)
+                SEQDESK_PLAN_ONLY="1"
+                ;;
+            --json)
+                SEQDESK_PLAN_JSON="1"
                 ;;
             --reconfigure)
                 SEQDESK_RECONFIGURE="1"
@@ -4805,6 +5227,12 @@ const values = {
   deploymentProfile: toOptionalString(
     firstDefined(root.deploymentProfile, deployment?.profile)
   ),
+  accessAudience: toOptionalString(
+    firstDefined(root.accessAudience, install?.accessAudience, app?.accessAudience)
+  ),
+  bindHost: toOptionalString(
+    firstDefined(root.bindHost, install?.bindHost, app?.bindHost)
+  ),
   installDir: toOptionalString(
     firstDefined(root.installDir, root.seqdeskDir, root.dir, install?.dir, install?.installDir)
   ),
@@ -5017,6 +5445,8 @@ const out = {};
 if (values.deploymentProfile) {
   out.SEQDESK_CFG_DEPLOYMENT_PROFILE = values.deploymentProfile;
 }
+if (values.accessAudience) out.SEQDESK_CFG_ACCESS_AUDIENCE = values.accessAudience;
+if (values.bindHost) out.SEQDESK_CFG_BIND_HOST = values.bindHost;
 if (values.installDir) out.SEQDESK_CFG_DIR = values.installDir;
 if (values.usePm2 !== undefined) out.SEQDESK_CFG_USE_PM2 = values.usePm2 ? "1" : "0";
 if (values.port !== undefined && values.port > 0) out.SEQDESK_CFG_PORT = String(values.port);
@@ -5125,6 +5555,8 @@ NODE
 
     apply_config_value SEQDESK_DIR SEQDESK_CFG_DIR
     apply_config_value SEQDESK_DEPLOYMENT_PROFILE SEQDESK_CFG_DEPLOYMENT_PROFILE
+    apply_config_value SEQDESK_ACCESS_AUDIENCE SEQDESK_CFG_ACCESS_AUDIENCE
+    apply_config_value SEQDESK_BIND_HOST SEQDESK_CFG_BIND_HOST
     apply_config_value SEQDESK_USE_PM2 SEQDESK_CFG_USE_PM2
     apply_config_value SEQDESK_PORT SEQDESK_CFG_PORT
     apply_config_value SEQDESK_PROFILE_MIN_VERSION SEQDESK_CFG_PROFILE_MIN_VERSION
@@ -5179,6 +5611,7 @@ NODE
     apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_ROLE SEQDESK_CFG_BOOTSTRAP_RESEARCHER_ROLE
 
     unset SEQDESK_CFG_DIR SEQDESK_CFG_USE_PM2 SEQDESK_CFG_DEPLOYMENT_PROFILE
+    unset SEQDESK_CFG_ACCESS_AUDIENCE SEQDESK_CFG_BIND_HOST
     unset SEQDESK_CFG_PORT SEQDESK_CFG_PROFILE_MIN_VERSION
     unset SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
     unset SEQDESK_CFG_PIPELINE_DATABASE_DIR
@@ -5516,6 +5949,257 @@ validate_or_confirm_install_target() {
     SEQDESK_OVERWRITE_EXISTING="1"
 }
 
+classify_install_target() {
+    if [ ! -e "$SEQDESK_DIR" ]; then
+        printf '%s' "new"
+    elif [ -f "$SEQDESK_DIR/current/package.json" ] || [ -f "$SEQDESK_DIR/package.json" ]; then
+        printf '%s' "existing-seqdesk"
+    elif [ -d "$SEQDESK_DIR" ] && \
+        { [ -d "$SEQDESK_DIR/releases" ] || [ -e "$SEQDESK_DIR/settings.json" ] || [ -e "$SEQDESK_DIR/start.sh" ]; }; then
+        printf '%s' "partial-seqdesk"
+    elif [ -d "$SEQDESK_DIR" ] && \
+        [ -z "$(find "$SEQDESK_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+        printf '%s' "empty-directory"
+    else
+        printf '%s' "unrelated-existing"
+    fi
+}
+
+resolve_release_metadata_for_plan() {
+    if is_truthy "$SEQDESK_RECONFIGURE"; then
+        PLAN_RELEASE_VERSION="$(read_installed_seqdesk_version "$SEQDESK_DIR" 2>/dev/null || true)"
+        PLAN_RELEASE_VERSION="${PLAN_RELEASE_VERSION:-unknown}"
+        PLAN_RELEASE_CHECKSUM=""
+        PLAN_RELEASE_SIZE=""
+        return 0
+    fi
+
+    local version_url="$SEQDESK_API/version"
+    local version_info="${SEQDESK_PREFETCHED_VERSION_INFO:-}"
+    local version_fields=""
+    local version_fields_end=""
+    local download_url=""
+    if [ -n "$SEQDESK_VERSION" ]; then
+        version_url="$SEQDESK_API/version?version=$SEQDESK_VERSION"
+    fi
+    if [ -z "$version_info" ]; then
+        if ! version_info="$(curl -fsS -L \
+            --connect-timeout "$SEQDESK_CURL_CONNECT_TIMEOUT" \
+            --max-time "$SEQDESK_CURL_MAX_TIME" \
+            --retry "$SEQDESK_CURL_RETRIES" \
+            --retry-delay 2 \
+            "$version_url")"; then
+            print_error "Could not resolve release metadata for the installation plan."
+            print_kv "URL" "$version_url"
+            print_network_failure_hints
+            return 1
+        fi
+        SEQDESK_PREFETCHED_VERSION_INFO="$version_info"
+    fi
+    if ! version_fields="$(parse_release_version_info "$version_info")"; then
+        print_error "Could not parse release metadata for the installation plan."
+        return 1
+    fi
+    IFS=$'\x1f' read -r PLAN_RELEASE_VERSION download_url PLAN_RELEASE_CHECKSUM \
+        PLAN_RELEASE_SIZE version_fields_end <<< "$version_fields"
+    if [ "$version_fields_end" != "__SEQDESK_VERSION_INFO_END__" ] || \
+        [ -z "$PLAN_RELEASE_VERSION" ] || [ -z "$download_url" ]; then
+        print_error "Release metadata is incomplete; a version and download URL are required."
+        return 1
+    fi
+    if is_truthy "$SEQDESK_REQUIRE_CHECKSUM" && [ -z "$PLAN_RELEASE_CHECKSUM" ]; then
+        print_error "The selected release has no published checksum and SEQDESK_REQUIRE_CHECKSUM is set."
+        return 1
+    fi
+}
+
+install_plan_entry_source() {
+    if [ -n "$SEQDESK_PROFILE" ]; then
+        printf '%s' "hosted"
+    elif [ -n "$SEQDESK_CONFIG" ]; then
+        printf '%s' "config"
+    elif interactive_wizard_enabled; then
+        printf '%s' "answer"
+    else
+        printf '%s' "cli"
+    fi
+}
+
+build_install_plan_json() {
+    local operation="install"
+    local database_mode="local"
+    local password_ref="generated-at-apply"
+    local entry_source
+    local executor="local"
+    local admin_name="${SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME:-} ${SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME:-}"
+    is_truthy "$SEQDESK_RECONFIGURE" && operation="reconfigure"
+    uses_local_postgres_target || database_mode="existing"
+    if is_truthy "$SEQDESK_RECONFIGURE"; then
+        password_ref="not-applicable"
+    elif [ -n "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH" ]; then
+        password_ref="configured-password-hash"
+    elif [ -n "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD" ] && \
+        [ "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED" != "true" ]; then
+        password_ref="protected-operator-input"
+    fi
+    is_truthy "${SEQDESK_EXEC_USE_SLURM:-}" && executor="slurm"
+    entry_source="$(install_plan_entry_source)"
+    PLAN_TARGET_CLASSIFICATION="$(classify_install_target)"
+
+    SEQDESK_PLAN_OPERATION="$operation" \
+    SEQDESK_DIR="$SEQDESK_DIR" \
+    SEQDESK_VERSION="$SEQDESK_VERSION" \
+    SEQDESK_DEPLOYMENT_PROFILE="$SEQDESK_DEPLOYMENT_PROFILE" \
+    SEQDESK_ACCESS_AUDIENCE="$SEQDESK_ACCESS_AUDIENCE" \
+    SEQDESK_NEXTAUTH_URL="$SEQDESK_NEXTAUTH_URL" \
+    SEQDESK_BIND_HOST="$SEQDESK_BIND_HOST" \
+    SEQDESK_PORT="$SEQDESK_PORT" \
+    SEQDESK_DATA_PATH="$SEQDESK_DATA_PATH" \
+    SEQDESK_RUN_DIR="$SEQDESK_RUN_DIR" \
+    SEQDESK_PIPELINE_DATABASE_DIR="$SEQDESK_PIPELINE_DATABASE_DIR" \
+    SEQDESK_TELEMETRY_ENABLED="$SEQDESK_TELEMETRY_ENABLED" \
+    SEQDESK_BOOTSTRAP_ADMIN_EMAIL="$SEQDESK_BOOTSTRAP_ADMIN_EMAIL" \
+    SEQDESK_PLAN_RELEASE_VERSION="${PLAN_RELEASE_VERSION:-${SEQDESK_VERSION:-latest}}" \
+    SEQDESK_PLAN_RELEASE_SOURCE="${SEQDESK_API%/}/version" \
+    SEQDESK_PLAN_RELEASE_CHECKSUM="$PLAN_RELEASE_CHECKSUM" \
+    SEQDESK_PLAN_RELEASE_SIZE="$PLAN_RELEASE_SIZE" \
+    SEQDESK_PLAN_TARGET_CLASSIFICATION="$PLAN_TARGET_CLASSIFICATION" \
+    SEQDESK_PLAN_DATABASE_MODE="$database_mode" \
+    SEQDESK_PLAN_DATABASE_RUNTIME_REF="$([ -n "$SEQDESK_DATABASE_URL" ] && printf '%s' 'protected-input:database-url' || printf '%s' 'generated-local')" \
+    SEQDESK_PLAN_DATABASE_DIRECT_REF="$([ -n "$SEQDESK_DATABASE_DIRECT_URL" ] && printf '%s' 'protected-input:database-direct-url' || printf '%s' '')" \
+    SEQDESK_PLAN_PASSWORD_REF="$password_ref" \
+    SEQDESK_PLAN_ADMIN_NAME="$admin_name" \
+    SEQDESK_PLAN_ENTRY_SOURCE="$entry_source" \
+    SEQDESK_PLAN_EXECUTOR="$executor" \
+    SEQDESK_PLAN_PIPELINES="$PIPELINES_ENABLED" \
+    node <<'NODE'
+const truthy = (value) => ["1", "true", "yes", "y", "on"].includes(String(value || "").toLowerCase());
+const optional = (value) => value || undefined;
+const size = Number(process.env.SEQDESK_PLAN_RELEASE_SIZE || "");
+const profile = process.env.SEQDESK_DEPLOYMENT_PROFILE;
+const pipelines = truthy(process.env.SEQDESK_PLAN_PIPELINES);
+const entrySource = process.env.SEQDESK_PLAN_ENTRY_SOURCE || "default";
+const warnings = [];
+if (profile === "research-workbench" && !pipelines) {
+  warnings.push("Workbench data import is available, but analyses remain operationally incomplete until workflow execution is configured.");
+}
+if (process.env.SEQDESK_ACCESS_AUDIENCE === "team-server") {
+  warnings.push("Production readiness still requires an HTTPS reverse proxy, firewall policy, backups, and monitoring.");
+}
+if (process.env.SEQDESK_PLAN_TARGET_CLASSIFICATION === "unrelated-existing") {
+  warnings.push("The target contains unrelated files and cannot be replaced without an explicit backup/overwrite choice.");
+}
+if (process.env.SEQDESK_PLAN_TARGET_CLASSIFICATION === "partial-seqdesk") {
+  warnings.push("A partial SeqDesk installation was detected; diagnose or resume it before a fresh replacement.");
+}
+
+const plan = {
+  schemaVersion: 1,
+  operation: process.env.SEQDESK_PLAN_OPERATION,
+  target: {
+    directory: process.env.SEQDESK_DIR,
+    classification: process.env.SEQDESK_PLAN_TARGET_CLASSIFICATION,
+  },
+  release: {
+    version: process.env.SEQDESK_PLAN_RELEASE_VERSION,
+    source: process.env.SEQDESK_PLAN_RELEASE_SOURCE,
+    checksum: optional(process.env.SEQDESK_PLAN_RELEASE_CHECKSUM),
+    estimatedDownloadBytes: Number.isFinite(size) && size > 0 ? size : undefined,
+  },
+  deployment: { profile },
+  access: {
+    audience: process.env.SEQDESK_ACCESS_AUDIENCE,
+    browserUrl: process.env.SEQDESK_NEXTAUTH_URL,
+    bindHost: process.env.SEQDESK_BIND_HOST,
+    port: Number(process.env.SEQDESK_PORT),
+    localHealthUrl: `http://127.0.0.1:${process.env.SEQDESK_PORT}`,
+  },
+  database: {
+    mode: process.env.SEQDESK_PLAN_DATABASE_MODE,
+    runtimeUrlRef: process.env.SEQDESK_PLAN_DATABASE_RUNTIME_REF,
+    directUrlRef: optional(process.env.SEQDESK_PLAN_DATABASE_DIRECT_REF),
+  },
+  storage: {
+    managedDataRoot: optional(process.env.SEQDESK_DATA_PATH),
+    runRoot: optional(process.env.SEQDESK_RUN_DIR),
+    cacheRoot: optional(process.env.SEQDESK_PIPELINE_DATABASE_DIR),
+  },
+  execution: {
+    prepareNow: pipelines,
+    executor: pipelines ? process.env.SEQDESK_PLAN_EXECUTOR : undefined,
+    starterPackages: [],
+    runSmokeTest: false,
+  },
+  enrollment: {
+    policy: profile === "sequencing-center" ? "self-registration" : "invite-only",
+  },
+  bootstrap: {
+    adminEmail: process.env.SEQDESK_BOOTSTRAP_ADMIN_EMAIL || "admin@example.com",
+    adminName: process.env.SEQDESK_PLAN_ADMIN_NAME.trim(),
+    passwordRef: process.env.SEQDESK_PLAN_PASSWORD_REF,
+  },
+  optional: {
+    exampleData: false,
+    telemetry: truthy(process.env.SEQDESK_TELEMETRY_ENABLED),
+  },
+  sources: {
+    "deployment.profile": entrySource,
+    access: entrySource,
+    database: entrySource,
+    storage: entrySource,
+    execution: entrySource,
+    enrollment: "default",
+    bootstrap: entrySource,
+    release: process.env.SEQDESK_VERSION ? "cli" : "default",
+  },
+  lockedPaths: [],
+  warnings,
+};
+
+process.stdout.write(JSON.stringify(plan, null, 2));
+NODE
+}
+
+render_install_plan_human() {
+    SEQDESK_INSTALL_PLAN_JSON="$1" node <<'NODE'
+const plan = JSON.parse(process.env.SEQDESK_INSTALL_PLAN_JSON);
+const line = (label, value) => console.log(`  ${label.padEnd(22)} ${value ?? "not configured"}`);
+console.log("\nInstallation plan");
+line("Operation", plan.operation);
+line("Target", `${plan.target.directory} (${plan.target.classification})`);
+line("Release", `v${plan.release.version}${plan.release.checksum ? ", checksum published" : ", no checksum published"}`);
+line("Deployment profile", plan.deployment.profile);
+line("Enrollment", plan.enrollment.policy);
+line("Access", plan.access.audience);
+line("Browser URL", plan.access.browserUrl);
+line("Bind host", plan.access.bindHost);
+line("Local health URL", plan.access.localHealthUrl);
+line("Database", `${plan.database.mode} (${plan.database.runtimeUrlRef})`);
+line("Managed data", plan.storage.managedDataRoot);
+line("Pipeline runs", plan.storage.runRoot);
+line("Pipeline cache", plan.storage.cacheRoot);
+line("Workflow execution", plan.execution.prepareNow ? plan.execution.executor : "deferred");
+line("Initial administrator", plan.bootstrap.adminEmail);
+line("Password", plan.bootstrap.passwordRef);
+line("Telemetry", plan.optional.telemetry ? "enabled" : "disabled");
+for (const warning of plan.warnings) console.log(`  WARNING: ${warning}`);
+NODE
+}
+
+emit_install_plan() {
+    local plan_json
+    plan_json="$(build_install_plan_json)"
+    if is_truthy "$SEQDESK_PLAN_JSON"; then
+        if [ -n "${SEQDESK_PLAN_STDOUT_FD:-}" ]; then
+            printf '%s\n' "$plan_json" >&4
+        else
+            printf '%s\n' "$plan_json"
+        fi
+    else
+        render_install_plan_human "$plan_json"
+    fi
+}
+
 gating_disk_kb() {
     # Print raw free kilobytes on the filesystem backing $1, or empty if unknown.
     local target="$1"
@@ -5634,51 +6318,9 @@ print_preflight_summary() {
 }
 
 print_config_summary() {
-    local config_status="will create"
-    local config_name="settings.json"
-    for f in settings.json seqdesk.config.json; do
-        if [ -f "$f" ]; then
-            config_name="$f"
-            config_status="exists (will update)"
-            break
-        fi
-    done
-
-    local pipeline_label="disabled"
-    if [ "$PIPELINES_ENABLED" = "true" ]; then
-        pipeline_label="enabled"
-    fi
-
-    print_header "Configuration summary"
-    print_kv "Deployment profile" "$(deployment_profile_label "$SEQDESK_DEPLOYMENT_PROFILE")"
-    print_kv "Enrollment" "$(deployment_profile_enrollment_label "$SEQDESK_DEPLOYMENT_PROFILE")"
-    print_kv "Pipelines" "$pipeline_label"
-    print_kv "Data path" "${SEQDESK_DATA_PATH:-configure after install with seqdesk storage configure}"
-    if [ "$PIPELINES_ENABLED" = "true" ]; then
-        print_kv "Run directory" "${SEQDESK_RUN_DIR:-configure later in Admin > Pipeline Runtime}"
-        if [ -n "${SEQDESK_PIPELINE_DATABASE_DIR:-}" ]; then
-            print_kv "Pipeline DB directory" "$SEQDESK_PIPELINE_DATABASE_DIR"
-        fi
-    else
-        print_kv "Run directory" "not used"
-    fi
-    print_kv "Port" "${SEQDESK_PORT:-8000}"
-    print_kv "NEXTAUTH_URL" "${SEQDESK_NEXTAUTH_URL:-http://localhost:${SEQDESK_PORT:-8000}}"
-    if [ -n "${SEQDESK_DATABASE_URL:-}" ]; then
-        print_kv "DATABASE_URL" "$(redact_database_url "$SEQDESK_DATABASE_URL")"
-    elif [ -n "${MACOS_POSTGRES_SOCKET_DIR:-}" ]; then
-        print_kv "DATABASE_URL" "generated local URL via Unix socket ${MACOS_POSTGRES_SOCKET_DIR}:5432"
-    else
-        print_kv "DATABASE_URL" "default local PostgreSQL URL"
-    fi
-    if [ -n "${SEQDESK_DATABASE_DIRECT_URL:-}" ] && [ "$SEQDESK_DATABASE_DIRECT_URL" != "$SEQDESK_DATABASE_URL" ]; then
-        print_kv "DIRECT_URL" "$(redact_database_url "$SEQDESK_DATABASE_DIRECT_URL")"
-    fi
-    if [ -n "${SEQDESK_BOOTSTRAP_ADMIN_EMAIL:-}" ]; then
-        print_kv "Admin account" "$SEQDESK_BOOTSTRAP_ADMIN_EMAIL"
-    fi
-    print_kv "Additional accounts" "invite after first administrator login"
-    print_kv "$config_name" "$config_status"
+    local plan_json
+    plan_json="$(build_install_plan_json)"
+    render_install_plan_human "$plan_json"
 }
 
 confirm_config() {
@@ -7047,14 +7689,42 @@ fi
 
 parse_args "$@"
 
+# Running the installer directly in a terminal is the beginner entry point.
+# Treat it as guided unless the operator selected automation/configuration or a
+# maintenance operation explicitly.
+if ! is_truthy "$SEQDESK_PLAN_ONLY" && ! is_truthy "$SEQDESK_YES" && \
+    ! is_truthy "$SEQDESK_INTERACTIVE" && [ -z "$SEQDESK_CONFIG" ] && \
+    [ -z "$SEQDESK_PROFILE" ] && ! is_truthy "$SEQDESK_RECONFIGURE" && \
+    ! is_truthy "$SEQDESK_PREPARE_POSTGRES" && [ -t 0 ] && [ -t 1 ]; then
+    SEQDESK_INTERACTIVE="1"
+fi
+
+if is_truthy "$SEQDESK_PLAN_JSON" && ! is_truthy "$SEQDESK_PLAN_ONLY"; then
+    print_error "--json is supported with --plan only."
+    exit 1
+fi
+
+# Keep JSON stdout machine-clean while normal diagnostics remain visible on
+# stderr. Plan mode intentionally does not create an install log.
+if is_truthy "$SEQDESK_PLAN_ONLY" && is_truthy "$SEQDESK_PLAN_JSON"; then
+    exec 4>&1
+    SEQDESK_PLAN_STDOUT_FD="4"
+    exec 1>&2
+fi
+
 trap on_error ERR
 trap cleanup_installer_temp_files EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-configure_install_log
+if is_truthy "$SEQDESK_PLAN_ONLY"; then
+    exec 3>&1 || true
+else
+    configure_install_log
+fi
 
-if [ -z "$SEQDESK_YES" ] && [ ! -t 0 ] && [ ! -t 1 ]; then
+if [ -z "$SEQDESK_YES" ] && [ ! -t 0 ] && [ ! -t 1 ] && \
+    { ! is_truthy "$SEQDESK_PLAN_ONLY" || is_truthy "$SEQDESK_INTERACTIVE"; }; then
     print_error "No interactive TTY detected. Use -y (or SEQDESK_YES=1) for automated installs."
     print_troubleshooting_url "https://seqdesk.org/docs/installation/quickstart#the-direct-shell-fallback-needs-explicit-input"
     exit 1
@@ -7263,7 +7933,9 @@ fi
 
 # Reject or confirm an existing fresh-install target before asking wizard
 # questions, installing Conda, or downloading the release package.
-validate_or_confirm_install_target
+if ! is_truthy "$SEQDESK_PLAN_ONLY"; then
+    validate_or_confirm_install_target
+fi
 
 resolve_conda_runtime
 
@@ -7273,21 +7945,22 @@ resolve_conda_runtime
 # preflight below has to do.
 run_interactive_wizard_database
 validate_deployment_profile
-
-# On macOS, provision or validate the selected local PostgreSQL server before
-# downloading the release or creating the install directory. A clean reviewer
-# machine gets a working PostgreSQL either way: a healthy local server is reused
-# untouched, and otherwise SeqDesk creates its own socket-only instance under
-# SEQDESK_PG_HOME. Managed/remote database URLs are untouched.
-#
-# This deliberately runs before the account prompts: everything that can fail
-# without the user having entered anything should fail first.
-if ! preflight_local_postgres; then
+if ! normalize_access_topology; then
     exit 1
 fi
 
-# Second half of the wizard: the account details and generated credentials,
-# asked only once the database they will be created in is known to work.
+# Run the database discovery ladder without starting services, installing
+# packages, or creating a cluster. This preserves the useful fail-fast checks
+# while keeping the host unchanged until the complete plan is confirmed.
+SEQDESK_PREFLIGHT_READ_ONLY="true"
+if ! preflight_local_postgres; then
+    exit 1
+fi
+SEQDESK_PREFLIGHT_READ_ONLY="false"
+
+# Second half of the wizard: storage, workflow support, and the one bootstrap
+# administrator. An absent local database has been established as preparable;
+# an existing database endpoint has already been probed.
 run_interactive_wizard_accounts
 ensure_secure_bootstrap_accounts
 
@@ -7295,6 +7968,15 @@ ensure_secure_bootstrap_accounts
 print_step "Configure pipeline support"
 
 resolve_pipeline_enablement
+
+# Guided answers have already passed the same validator in
+# prompt_profile_storage. Configured/unattended installs receive the matching
+# safe defaults and validation here so both routes converge before review.
+if ! interactive_wizard_enabled; then
+    if ! normalize_storage_layout; then
+        exit 1
+    fi
+fi
 
 HAS_CONDA="false"
 if [ "$CONDA_RESOLUTION" = "found" ]; then
@@ -7316,6 +7998,29 @@ if [ "$PIPELINES_ENABLED" = "true" ] && {
     [ "$CONDA_RESOLUTION" = "invalid-defaults" ];
 }; then
     print_unusable_conda_prefix_error
+    exit 1
+fi
+
+if ! resolve_release_metadata_for_plan; then
+    exit 1
+fi
+
+if is_truthy "$SEQDESK_PLAN_ONLY"; then
+    emit_install_plan
+    clear_bootstrap_plaintext_passwords
+    exit 0
+fi
+
+# This is the single product-configuration confirmation. Everything above is
+# read-only discovery or ephemeral input handling; service/package/filesystem
+# changes start below. The late in-release wizard is skipped for this path.
+print_config_summary
+confirm_config
+
+# Apply the selected PostgreSQL choice only after confirmation. A healthy
+# existing server remains untouched; otherwise the normal provisioning ladder
+# can now start/adopt a service or create SeqDesk's private cluster.
+if ! preflight_local_postgres; then
     exit 1
 fi
 
@@ -7666,28 +8371,9 @@ install_runtime_node_modules
 # Configure environment
 print_step "Configure environment"
 
-wizard_status=1
-if run_wizard; then
-    wizard_status=0
-else
-    wizard_status=$?
-fi
-if [ $wizard_status -eq 2 ]; then
-    print_error "Installation cancelled"
-    exit 1
-elif [ $wizard_status -ne 0 ]; then
-    prompt_app_port
-fi
-
-if [ -z "$SEQDESK_PORT" ]; then
-    SEQDESK_PORT="8000"
-fi
-if [ -z "$SEQDESK_NEXTAUTH_URL" ]; then
-    SEQDESK_NEXTAUTH_URL="http://localhost:${SEQDESK_PORT}"
-fi
-
-print_config_summary
-confirm_config
+# All product/configuration questions were resolved and confirmed before apply.
+# Reaching into the extracted release for a second wizard here caused settings
+# to change after confirmation and made cancellation unsafe.
 
 configure_postgres_urls
 
@@ -7708,7 +8394,7 @@ write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
 # seed both left settings.json pointing at directories that do not exist.
 # Warn-only: a privileged or network mount may need manual creation and must not
 # abort an otherwise successful install.
-for storage_dir in "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"; do
+for storage_dir in "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR" "$SEQDESK_PIPELINE_DATABASE_DIR"; do
     [ -n "$storage_dir" ] || continue
     [ -d "$storage_dir" ] && continue
     if mkdir -p "$storage_dir" 2>/dev/null; then

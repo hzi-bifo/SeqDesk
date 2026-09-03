@@ -65,6 +65,14 @@ reset_state() {
     SEQDESK_CONFIG=""
     SEQDESK_PROFILE=""
     SEQDESK_DEPLOYMENT_PROFILE=""
+    SEQDESK_ACCESS_AUDIENCE=""
+    SEQDESK_BIND_HOST=""
+    SEQDESK_PORT=""
+    SEQDESK_NEXTAUTH_URL=""
+    SEQDESK_DATA_PATH=""
+    SEQDESK_RUN_DIR=""
+    SEQDESK_PIPELINE_DATABASE_DIR=""
+    SEQDESK_DIR="$TEST_TMP_DIR/install"
     SEQDESK_DATABASE_URL=""
     SEQDESK_DATABASE_DIRECT_URL=""
     SEQDESK_BOOTSTRAP_ADMIN_EMAIL=""
@@ -84,6 +92,7 @@ reset_state() {
 
 OUT="$(mktemp)"
 TEST_TMP_DIR="$(mktemp -d)"
+TEST_TMP_DIR="$(cd "$TEST_TMP_DIR" && pwd -P)"
 trap 'rm -f "$OUT"; rm -rf "$TEST_TMP_DIR"' EXIT
 
 # Never let a test touch the real ~/.seqdesk: the preflight can provision a
@@ -94,17 +103,19 @@ export SEQDESK_PG_HOME="$TEST_TMP_DIR/pg"
 echo "== Case 1: managed DB (unreachable -> use anyway), validation re-prompts, accounts =="
 reset_state
 TEST_DB_REACHABLE=0
-# Input order matches the wizard's reads:
-#  deployment profile; db choice; bad url; valid url; "use anyway" y; direct (blank);
-#  admin email; admin pw; admin pw confirm. Additional users are invited later.
+# Input order matches the wizard's reads: deployment profile; local access/port;
+# database; pipeline support; storage; then the initial administrator.
 run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
 1
+
+
 2
 not-a-url
 postgresql://u:secret@db.example.com:5432/seqdesk
 y
 
 n
+
 admin@lab.org
 longpassword1
 longpassword1
@@ -119,6 +130,10 @@ assert_eq "admin password captured" "longpassword1" "$SEQDESK_BOOTSTRAP_ADMIN_PA
 assert_eq "generic researcher is disabled" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
 assert_eq "researcher email is not captured" "" "$SEQDESK_BOOTSTRAP_RESEARCHER_EMAIL"
 assert_eq "sequencing center can defer pipeline setup" "0" "$SEQDESK_WITH_PIPELINES"
+assert_eq "local access binds to loopback" "127.0.0.1" "$SEQDESK_BIND_HOST"
+assert_eq "local browser URL is safe by default" "http://localhost:8000" "$SEQDESK_NEXTAUTH_URL"
+assert_eq "guided storage stays outside the app directory" \
+    "$TEST_TMP_DIR/install-data" "$SEQDESK_DATA_PATH"
 assert_contains "rejected non-postgres URL" "does not look like a postgresql" "$OUT"
 assert_contains "warned on unreachable host" "Could not reach" "$OUT"
 assert_eq "an operator-supplied password is not flagged as generated" \
@@ -132,11 +147,15 @@ echo ""
 echo "== Case 2: local DB choice, no researcher, reachable managed not used =="
 reset_state
 TEST_DB_REACHABLE=1
-# deployment profile 1; db choice 1 (local); admin email (blank -> default); admin pw; confirm
+# deployment profile 1; local access/port; local DB; pipelines n; managed storage;
+# admin email (blank -> default); admin pw; confirm
 run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
 1
+
+
 1
 n
+
 
 password123
 password123
@@ -155,13 +174,20 @@ TEST_DB_REACHABLE=1
 run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
 
 3
+
+
 1
+
 
 admin@workbench.test
 
 EOF
 assert_eq "workbench profile captured" "research-workbench" "$SEQDESK_DEPLOYMENT_PROFILE"
 assert_eq "workbench enables the recommended pipeline runtime" "1" "$SEQDESK_WITH_PIPELINES"
+assert_eq "workbench run directory is isolated" \
+    "$TEST_TMP_DIR/install-data/pipeline-runs" "$SEQDESK_RUN_DIR"
+assert_eq "workbench database cache is isolated from runs" \
+    "$TEST_TMP_DIR/install-data/pipeline-databases" "$SEQDESK_PIPELINE_DATABASE_DIR"
 assert_eq "workbench creates no bootstrap researcher" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
 assert_eq "generated admin password is flagged for the final summary" \
     "true" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED"
@@ -181,6 +207,142 @@ assert_contains "wizard explains how to choose a profile" \
     "External requesters" "$OUT"
 assert_contains "workbench defers member creation to onboarding" \
     "Additional accounts are invited" "$OUT"
+
+echo ""
+echo "== Case 2c: team-server access requires HTTPS and keeps the app on loopback =="
+reset_state
+prompt_access_topology >"$OUT" 2>&1 <<'EOF'
+2
+
+http://seqdesk.lab.example
+https://user:secret@seqdesk.lab.example/private
+https://seqdesk.lab.example
+EOF
+assert_eq "team-server audience is captured" "team-server" "$SEQDESK_ACCESS_AUDIENCE"
+assert_eq "same-host reverse proxy keeps the app on loopback" "127.0.0.1" "$SEQDESK_BIND_HOST"
+assert_eq "team-server canonical URL is retained" \
+    "https://seqdesk.lab.example" "$SEQDESK_NEXTAUTH_URL"
+assert_contains "team-server rejects an unencrypted browser URL" \
+    "requires the canonical HTTPS URL" "$OUT"
+assert_contains "team-server explains the reverse-proxy boundary" \
+    "behind an HTTPS reverse proxy" "$OUT"
+
+echo ""
+echo "== Case 2c.1: advanced network listeners require explicit consent =="
+reset_state
+prompt_access_topology >"$OUT" 2>&1 <<'EOF'
+3
+0.0.0.0
+
+https://seqdesk.lab.example
+y
+EOF
+assert_eq "advanced audience is captured" "advanced" "$SEQDESK_ACCESS_AUDIENCE"
+assert_eq "confirmed advanced listener is retained" "0.0.0.0" "$SEQDESK_BIND_HOST"
+assert_contains "non-loopback listener explains TLS responsibility" \
+    "installer does not configure TLS" "$OUT"
+
+echo ""
+echo "== Case 2d: guided storage rejects application-directory overlap =="
+reset_state
+SEQDESK_DEPLOYMENT_PROFILE="research-workbench"
+SEQDESK_WITH_PIPELINES="1"
+SEQDESK_DATA_PATH="$SEQDESK_DIR/data"
+SEQDESK_RUN_DIR="$SEQDESK_DATA_PATH/pipeline-runs"
+SEQDESK_PIPELINE_DATABASE_DIR="$SEQDESK_DATA_PATH/pipeline-databases"
+if validate_guided_storage_layout >"$OUT" 2>&1; then
+    echo "FAIL: storage inside the application directory was accepted" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: storage inside the application directory is rejected"
+fi
+assert_contains "storage rejection explains update/rollback isolation" \
+    "out of application update/rollback operations" "$OUT"
+
+SEQDESK_DATA_PATH="$TEST_TMP_DIR/custom-data"
+SEQDESK_RUN_DIR="$SEQDESK_DATA_PATH/pipeline-runs"
+SEQDESK_PIPELINE_DATABASE_DIR="$SEQDESK_DATA_PATH/pipeline-databases"
+if validate_guided_storage_layout >"$OUT" 2>&1; then
+    echo "ok: dedicated sibling storage is accepted"
+else
+    echo "FAIL: dedicated sibling storage was rejected" >&2
+    FAILURES=$((FAILURES + 1))
+fi
+
+echo ""
+echo "== Case 2e: the normalized install plan is versioned and secret-free =="
+reset_state
+SEQDESK_DEPLOYMENT_PROFILE="research-workbench"
+SEQDESK_ACCESS_AUDIENCE="team-server"
+SEQDESK_BIND_HOST="127.0.0.1"
+SEQDESK_PORT="8443"
+SEQDESK_NEXTAUTH_URL="https://seqdesk.lab.example"
+SEQDESK_DATABASE_URL="postgresql://seqdesk:database-secret@db.example/seqdesk"
+SEQDESK_DATABASE_DIRECT_URL="postgresql://owner:direct-secret@db.example/seqdesk"
+SEQDESK_BOOTSTRAP_ADMIN_EMAIL="admin@lab.example"
+SEQDESK_BOOTSTRAP_ADMIN_PASSWORD="account-secret"
+SEQDESK_WITH_PIPELINES="1"
+PIPELINES_ENABLED="true"
+SEQDESK_DATA_PATH="$TEST_TMP_DIR/plan-data"
+SEQDESK_RUN_DIR="$SEQDESK_DATA_PATH/pipeline-runs"
+SEQDESK_PIPELINE_DATABASE_DIR="$SEQDESK_DATA_PATH/pipeline-databases"
+PLAN_RELEASE_VERSION="9.8.7"
+PLAN_RELEASE_CHECKSUM="sha256:abcdef"
+PLAN_RELEASE_SIZE="123456"
+plan_json="$(build_install_plan_json)"
+assert_contains "plan schema is versioned" '"schemaVersion": 1' <(printf '%s\n' "$plan_json")
+assert_contains "plan carries the selected profile" \
+    '"profile": "research-workbench"' <(printf '%s\n' "$plan_json")
+assert_contains "plan separates browser and bind values" \
+    '"bindHost": "127.0.0.1"' <(printf '%s\n' "$plan_json")
+assert_contains "plan contains a protected database reference" \
+    '"runtimeUrlRef": "protected-input:database-url"' <(printf '%s\n' "$plan_json")
+assert_contains "plan contains a protected password reference" \
+    '"passwordRef": "protected-operator-input"' <(printf '%s\n' "$plan_json")
+assert_not_contains "plan omits the database password" \
+    "database-secret" <(printf '%s\n' "$plan_json")
+assert_not_contains "plan omits the migration password" \
+    "direct-secret" <(printf '%s\n' "$plan_json")
+assert_not_contains "plan omits the administrator password" \
+    "account-secret" <(printf '%s\n' "$plan_json")
+
+echo ""
+echo "== Case 2f: --plan --json leaves an existing installation unchanged =="
+PLAN_FIXTURE_DIR="$TEST_TMP_DIR/existing-plan-install"
+mkdir -p "$PLAN_FIXTURE_DIR"
+cat >"$PLAN_FIXTURE_DIR/package.json" <<'EOF'
+{"name":"seqdesk","version":"9.8.7"}
+EOF
+cat >"$PLAN_FIXTURE_DIR/settings.json" <<EOF
+{
+  "deployment": {"profile": "shared-lab"},
+  "app": {"port": 8123},
+  "runtime": {
+    "nextAuthUrl": "https://seqdesk.lab.example",
+    "databaseUrl": "postgresql://seqdesk:fixture-secret@db.example/seqdesk"
+  },
+  "site": {"dataBasePath": "$TEST_TMP_DIR/existing-data"},
+  "pipelines": {"enabled": false}
+}
+EOF
+before_plan_hash="$(shasum -a 256 "$PLAN_FIXTURE_DIR/package.json" "$PLAN_FIXTURE_DIR/settings.json")"
+plan_cli_json="$(env -u SEQDESK_INSTALL_LIB_ONLY \
+    bash "$REPO_ROOT/scripts/install-dist.sh" --plan --json --reconfigure \
+    --dir "$PLAN_FIXTURE_DIR" --without-pipelines 2>"$OUT")"
+plan_cli_status=$?
+after_plan_hash="$(shasum -a 256 "$PLAN_FIXTURE_DIR/package.json" "$PLAN_FIXTURE_DIR/settings.json")"
+assert_eq "plan CLI exits successfully" "0" "$plan_cli_status"
+if printf '%s' "$plan_cli_json" | node -e 'JSON.parse(require("fs").readFileSync(0, "utf8"))'; then
+    echo "ok: plan CLI stdout is one JSON document"
+else
+    echo "FAIL: plan CLI stdout is not valid JSON" >&2
+    FAILURES=$((FAILURES + 1))
+fi
+assert_contains "plan CLI classifies the existing installation" \
+    '"classification": "existing-seqdesk"' <(printf '%s\n' "$plan_cli_json")
+assert_not_contains "plan CLI redacts settings-file credentials" \
+    "fixture-secret" <(printf '%s\n' "$plan_cli_json")
+assert_eq "plan CLI does not rewrite existing files" "$before_plan_hash" "$after_plan_hash"
 
 echo ""
 echo "== Case 3: wizard is a no-op under -y (unattended must be untouched) =="
@@ -313,6 +475,40 @@ assert_contains "an unavailable explicit socket is labeled as a socket" \
     <(printf '%s\n' "$alternate_socket_diagnosis")
 assert_not_contains "an explicit socket is not mislabeled as TCP" \
     "configured PostgreSQL TCP" <(printf '%s\n' "$alternate_socket_diagnosis")
+
+echo ""
+echo "== Case 5a: review-time PostgreSQL preflight performs no mutations =="
+readonly_preflight_result="$(
+    (
+        SEQDESK_DATABASE_URL=""
+        SEQDESK_DATABASE_DIRECT_URL=""
+        SEQDESK_PREFLIGHT_READ_ONLY="true"
+        postgres_server_ready() { return 1; }
+        try_reuse_local_postgres_socket() { return 2; }
+        find_postgres_binary() { printf '/mock/bin/initdb'; }
+        try_adopt_registered_brew_postgres() {
+            echo "UNEXPECTED service start"
+            return 0
+        }
+        install_postgres_packages_if_possible() {
+            echo "UNEXPECTED package install"
+            return 0
+        }
+        provision_private_postgres() {
+            echo "UNEXPECTED private provisioning"
+            return 0
+        }
+        preflight_local_postgres
+    )
+)"
+assert_contains "read-only preflight defers database preparation" \
+    "after confirmation" <(printf '%s\n' "$readonly_preflight_result")
+assert_not_contains "read-only preflight does not start a service" \
+    "UNEXPECTED service start" <(printf '%s\n' "$readonly_preflight_result")
+assert_not_contains "read-only preflight does not install a package" \
+    "UNEXPECTED package install" <(printf '%s\n' "$readonly_preflight_result")
+assert_not_contains "read-only preflight does not provision a cluster" \
+    "UNEXPECTED private provisioning" <(printf '%s\n' "$readonly_preflight_result")
 
 echo ""
 echo "== Case 5b: fresh macOS installs automatically reuse a healthy socket =="

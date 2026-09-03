@@ -782,10 +782,10 @@ describe("install profile installer wiring", () => {
     expect(sourceInstaller).toContain("Local health URL: http://127.0.0.1:${SEQDESK_PORT:-8000}");
   });
 
-  it("binds standalone releases to all interfaces unless explicitly overridden", () => {
-    expect(buildRelease).toContain('export HOSTNAME="${SEQDESK_BIND_HOST:-0.0.0.0}"');
-    expect(sourceInstaller).toContain('export HOSTNAME="${SEQDESK_BIND_HOST:-0.0.0.0}"');
-    expect(installDist).toContain("SEQDESK_BIND_HOST=0.0.0.0");
+  it("binds standalone releases to loopback unless explicitly overridden", () => {
+    expect(buildRelease).toContain('export HOSTNAME="${SEQDESK_BIND_HOST:-127.0.0.1}"');
+    expect(sourceInstaller).toContain('export HOSTNAME="${SEQDESK_BIND_HOST:-127.0.0.1}"');
+    expect(installDist).toContain("SEQDESK_BIND_HOST=127.0.0.1");
   });
 
   it("keeps the profile applicator scoped to settings upserts", () => {

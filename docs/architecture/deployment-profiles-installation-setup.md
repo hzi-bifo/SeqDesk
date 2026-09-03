@@ -26,18 +26,24 @@ This avoids implementing three installers or allowing the interactive wizard, ho
 ## Current branch checkpoint
 
 The branch already keeps one release and one canonical installer, requires an
-explained profile choice in a fresh guided install, recommends workflow-runtime
-setup based on that choice, creates one secure administrator, disables the
-generic second account, shows the profile and enrollment policy in the review,
-and prints profile-specific next steps. Unattended installs still default to
-Sequencing Center only as a compatibility fallback and warn operators to pass
-`--deployment-profile` explicitly.
+explained profile choice in a fresh guided install, collects a local/team/custom
+access topology, defaults the application listener to loopback, recommends and
+validates profile-aware storage outside the application tree, recommends
+workflow-runtime setup based on the profile, creates one secure administrator,
+and disables the generic second account. Guided and configured values now
+converge into a schema-versioned, redacted `InstallPlan`; the same plan renders
+the pre-apply review and `--plan --json`. PostgreSQL provisioning, Conda setup,
+release download, and application writes begin only after that review is
+confirmed. Unattended installs still default to Sequencing Center only as a
+compatibility fallback and warn operators to pass `--deployment-profile`
+explicitly.
 
-That is a safe first slice, not the finished installer architecture. Before the
-three profiles are advertised as fully supported, the remaining high-priority
-work is the normalized/redacted `InstallPlan`, pre-mutation access and storage
-questions, storage overlap/free-space validation, existing/partial-install
-classification, resumable checkpoints, and authenticated profile onboarding.
+That is not yet the finished installer architecture. Before the three profiles
+are advertised as fully supported, the remaining high-priority work is hosted
+lock/source fidelity in the plan, strict no-temporary-file preview handling for
+remote configuration, mount/capacity and executor-specific preflight,
+actionable existing/partial-install journeys, resumable checkpoints, and
+authenticated profile onboarding.
 
 ## Current behavior worth preserving
 

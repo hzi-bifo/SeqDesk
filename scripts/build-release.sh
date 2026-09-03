@@ -289,7 +289,7 @@ fi
 
 # Next standalone reads HOSTNAME as the bind address. Shells often populate
 # HOSTNAME with the machine name, so bind all interfaces unless explicitly set.
-export HOSTNAME="${SEQDESK_BIND_HOST:-0.0.0.0}"
+export HOSTNAME="${SEQDESK_BIND_HOST:-127.0.0.1}"
 
 if [[ -z "${PORT:-}" ]] && { [[ -f settings.json ]] || [[ -f seqdesk.config.json ]]; }; then
   CONFIG_PORT=$(node <<'NODE' 2>/dev/null || true

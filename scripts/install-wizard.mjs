@@ -45,6 +45,17 @@ const profileGuidance = {
 };
 const selectedProfile = profileGuidance[deploymentProfile] || profileGuidance["sequencing-center"];
 
+function redactDatabaseUrl(value) {
+  if (!value) return "(default local PostgreSQL URL)";
+  try {
+    const url = new URL(value);
+    const username = url.username ? `${decodeURIComponent(url.username)}@` : "";
+    return `${url.protocol}//${username}${url.host}${url.pathname || ""}`;
+  } catch {
+    return "(configured PostgreSQL URL)";
+  }
+}
+
 const defaults = {
   dataPath: process.env.SEQDESK_DATA_PATH || "",
   runDir: process.env.SEQDESK_RUN_DIR || "",
@@ -123,7 +134,7 @@ async function runClackWizard(clack) {
           ? defaults.runDir || "configure later in Admin > Pipeline Runtime"
           : "(pipelines disabled)"
       }`,
-      `DATABASE_URL: ${databaseUrl || "(default local PostgreSQL URL)"}`,
+      `DATABASE_URL: ${redactDatabaseUrl(databaseUrl)}`,
     ].join("\n"),
     "Review"
   );
@@ -179,7 +190,7 @@ async function runReadlineWizard() {
       runDir: pipelinesEnabled
         ? defaults.runDir || "configure later in Admin > Pipeline Runtime"
         : "(pipelines disabled)",
-      databaseUrl: databaseUrl || "(default local PostgreSQL URL)",
+      databaseUrl: redactDatabaseUrl(databaseUrl),
     };
 
     printLine("");
