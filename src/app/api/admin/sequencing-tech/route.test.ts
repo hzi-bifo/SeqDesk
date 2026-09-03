@@ -154,7 +154,7 @@ describe("PUT /api/admin/sequencing-tech", () => {
     mocks.withResolvedTechAssetUrls.mockImplementation((config) => config);
   });
 
-  it("returns 401 for non-admin user", async () => {
+  it("returns 403 for non-admin user", async () => {
     mocks.getServerSession.mockResolvedValue(researcherSession);
 
     const request = new NextRequest(
@@ -167,7 +167,7 @@ describe("PUT /api/admin/sequencing-tech", () => {
     );
 
     const response = await PUT(request);
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 400 when config is missing", async () => {
@@ -269,7 +269,7 @@ describe("POST /api/admin/sequencing-tech", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("returns 401 for non-admin user", async () => {
+  it("returns 403 for non-admin user", async () => {
     mocks.getServerSession.mockResolvedValue(researcherSession);
 
     const request = new NextRequest(
@@ -282,7 +282,7 @@ describe("POST /api/admin/sequencing-tech", () => {
     );
 
     const response = await POST(request);
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 400 for unknown action", async () => {

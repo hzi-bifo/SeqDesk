@@ -51,13 +51,13 @@ describe("POST /api/admin/settings/sequencing-files/test", () => {
     });
   });
 
-  it("returns 401 when not admin", async () => {
+  it("returns 403 when not admin", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
 
     const response = await POST(makeRequest({ basePath: "/data" }));
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns invalid when no basePath provided", async () => {

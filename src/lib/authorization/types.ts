@@ -5,9 +5,11 @@ import type {
 
 export const CAPABILITIES = [
   "system.settings.manage",
+  "system.catalog.manage",
   "system.users.manage",
   "system.updates.manage",
   "system.pipelines.manage",
+  "system.sequencing.manage",
   "system.workflows.publish",
   "system.quotas.manage",
   "system.retention.manage",
@@ -68,9 +70,11 @@ export interface CapabilityDecision {
 
 export const CAPABILITY_DOMAINS: Readonly<Record<Capability, DeploymentDomainId>> = {
   "system.settings.manage": "core",
+  "system.catalog.manage": "sample-catalog",
   "system.users.manage": "core",
   "system.updates.manage": "core",
   "system.pipelines.manage": "analysis",
+  "system.sequencing.manage": "sequencing-operations",
   "system.workflows.publish": "analysis",
   "system.quotas.manage": "core",
   "system.retention.manage": "core",

@@ -39,7 +39,7 @@ describe("GET /api/admin/settings/sequencing-files", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.resolveDataBasePathFromStoredValue.mockReturnValue({
@@ -49,13 +49,13 @@ describe("GET /api/admin/settings/sequencing-files", () => {
     });
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for non-admin users", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "RESEARCHER" },
+      user: { id: "member-1", role: "RESEARCHER" },
     });
 
     const response = await GET();
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 401 when not authenticated", async () => {
@@ -127,7 +127,7 @@ describe("PUT /api/admin/settings/sequencing-files", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "FACILITY_ADMIN" },
+      user: { id: "admin-1", role: "FACILITY_ADMIN" },
     });
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.db.siteSettings.upsert.mockResolvedValue({});
@@ -145,9 +145,9 @@ describe("PUT /api/admin/settings/sequencing-files", () => {
     }));
   });
 
-  it("returns 401 for non-admin users", async () => {
+  it("returns 403 for non-admin users", async () => {
     mocks.getServerSession.mockResolvedValue({
-      user: { role: "RESEARCHER" },
+      user: { id: "member-1", role: "RESEARCHER" },
     });
 
     const response = await PUT(
@@ -158,7 +158,7 @@ describe("PUT /api/admin/settings/sequencing-files", () => {
       })
     );
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("updates dataBasePath and config", async () => {

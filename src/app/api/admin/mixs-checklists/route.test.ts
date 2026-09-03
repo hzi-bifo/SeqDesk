@@ -163,11 +163,11 @@ describe("PUT /api/admin/mixs-checklists", () => {
       body: JSON.stringify(payload),
     });
 
-  it("returns 401 for non-admin user", async () => {
+  it("returns 403 for non-admin user", async () => {
     mocks.getServerSession.mockResolvedValue(researcherSession);
 
     const response = await PUT(makeRequest({ config: baseConfig }));
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 400 when config is missing", async () => {
@@ -285,11 +285,11 @@ describe("POST /api/admin/mixs-checklists", () => {
       body: JSON.stringify(payload),
     });
 
-  it("returns 401 for non-admin user", async () => {
+  it("returns 403 for non-admin user", async () => {
     mocks.getServerSession.mockResolvedValue(researcherSession);
 
     const response = await POST(makeRequest({ action: "reset" }));
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 400 for unknown action", async () => {

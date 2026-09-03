@@ -36,7 +36,7 @@ function sanitize(input: unknown): MinknowStreamConfig {
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  const access = decideServerCapability(session, "system.settings.manage");
+  const access = decideServerCapability(session, "system.sequencing.manage");
   if (!access.allowed) {
     return authorizationErrorResponse(access);
   }
@@ -52,7 +52,7 @@ export async function GET() {
 
 export async function PUT(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  const access = decideServerCapability(session, "system.settings.manage");
+  const access = decideServerCapability(session, "system.sequencing.manage");
   if (!access.allowed) {
     return authorizationErrorResponse(access);
   }

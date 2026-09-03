@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { db } from "@/lib/db";
 import { resolveDataBasePathFromStoredValue } from "@/lib/files/data-base-path";
 import { ensureWithinBase } from "@/lib/files";
@@ -38,9 +42,9 @@ function asRecord(value: unknown): Record<string, unknown> {
 // POST - create dummy sequencing files in the configured base path
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.sequencing.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {

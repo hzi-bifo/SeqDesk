@@ -297,7 +297,7 @@ describe("settings and misc route quick wins", () => {
   it("gets and saves execution settings with normalization and auth handling", async () => {
     mocks.getServerSession.mockResolvedValueOnce(null);
     const unauthorizedGet = await getExecutionSettingsRoute();
-    expect(unauthorizedGet.status).toBe(403);
+    expect(unauthorizedGet.status).toBe(401);
     expect(await unauthorizedGet.json()).toEqual({ error: "Unauthorized" });
 
     const successGet = await getExecutionSettingsRoute();
@@ -329,7 +329,7 @@ describe("settings and misc route quick wins", () => {
         body: JSON.stringify({}),
       }) as never
     );
-    expect(unauthorizedPost.status).toBe(403);
+    expect(unauthorizedPost.status).toBe(401);
     expect(await unauthorizedPost.json()).toEqual({ error: "Unauthorized" });
 
     const successPost = await postExecutionSettingsRoute(

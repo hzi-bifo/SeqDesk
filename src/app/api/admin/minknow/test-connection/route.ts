@@ -3,6 +3,10 @@ import { getServerSession } from "next-auth";
 import { promises as fs } from "fs";
 import net from "net";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 
 interface CheckResult {
   ok: boolean;
@@ -58,8 +62,9 @@ async function checkCertPath(path: string): Promise<CheckResult> {
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.sequencing.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   const body = await request.json().catch(() => ({}));

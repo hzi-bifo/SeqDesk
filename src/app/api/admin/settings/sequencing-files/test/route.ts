@@ -1,15 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import * as fs from "node:fs/promises";
 import { inspectDataStoragePath } from "@/lib/files/data-storage-path-validation";
 
 // POST - test if a path is accessible and list file counts
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.sequencing.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   try {

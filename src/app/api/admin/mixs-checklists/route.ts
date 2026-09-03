@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { db } from "@/lib/db";
 import { MixsChecklist, MixsConfig, MixsField } from "@/types/mixs-checklist";
 import {
@@ -248,8 +252,9 @@ export async function PUT(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const access = decideServerCapability(session, "system.catalog.manage");
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const body = await request.json();
@@ -301,8 +306,9 @@ export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const access = decideServerCapability(session, "system.catalog.manage");
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const body = await request.json();

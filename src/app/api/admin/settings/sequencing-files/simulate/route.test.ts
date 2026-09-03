@@ -108,7 +108,7 @@ describe("POST /api/admin/settings/sequencing-files/simulate", () => {
     expect(response.status).toBe(401);
   });
 
-  it("returns 401 when user is not FACILITY_ADMIN", async () => {
+  it("returns 403 when user cannot manage sequencing configuration", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -120,7 +120,7 @@ describe("POST /api/admin/settings/sequencing-files/simulate", () => {
     });
 
     const response = await POST(request);
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("returns 400 when data base path is not configured", async () => {

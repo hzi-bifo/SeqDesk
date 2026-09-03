@@ -10,9 +10,11 @@ import {
 
 const SYSTEM_ADMIN_CAPABILITIES = new Set<Capability>([
   "system.settings.manage",
+  "system.catalog.manage",
   "system.users.manage",
   "system.updates.manage",
   "system.pipelines.manage",
+  "system.sequencing.manage",
   "system.workflows.publish",
   "system.quotas.manage",
   "system.retention.manage",

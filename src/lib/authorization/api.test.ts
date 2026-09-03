@@ -59,4 +59,20 @@ describe("server capability API helpers", () => {
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "Not found" });
   });
+
+  it("keeps sequencing administration unavailable in Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+    const decision = decideServerCapability(
+      adminSession,
+      "system.sequencing.manage"
+    );
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      status: 404,
+      reason: "domain-unavailable",
+    });
+  });
 });

@@ -40,7 +40,11 @@ administrators can configure credentials or delete submission history. Host
 pipeline installation, package import, reference-database downloads, execution
 defaults, worker control, updates, telemetry, and instrument settings are now
 protected by explicit system-management capabilities rather than account-role
-comparisons.
+comparisons. Sequencing registries, run forms, file-discovery settings,
+simulation tools, and MinKNOW connectivity now use a separate
+`system.sequencing.manage` grant, so Shared Lab members can operate sequencing
+work without being able to change installation-wide instrument configuration;
+those endpoints remain unavailable in Research Workbench.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -226,9 +230,11 @@ Acceptance:
 - [x] Treat `createdBy` as immutable provenance, not as the universal access-control owner: Shared Lab records are installation-scoped and Workbench records are workspace-scoped.
 - [x] Define the initial capability catalog:
   - [x] `system.settings.manage`
+  - [x] `system.catalog.manage`
   - [x] `system.users.manage`
   - [x] `system.updates.manage`
   - [x] `system.pipelines.manage`
+  - [x] `system.sequencing.manage`
   - [x] `system.workflows.publish`
   - [x] `system.quotas.manage`, `system.retention.manage`
   - [x] `orders.create`, `orders.read`, `orders.read_all`, `orders.process`
