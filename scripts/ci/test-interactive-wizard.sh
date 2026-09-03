@@ -575,6 +575,22 @@ enable_doctor_for_persistent_service
 assert_eq "automation can explicitly opt out of automatic doctor" \
     "0" "$SEQDESK_RUN_DOCTOR"
 
+doctor_cli="$TEST_TMP_DIR/bin/seqdesk-doctor"
+mkdir -p "$(dirname "$doctor_cli")"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$doctor_cli"
+chmod 755 "$doctor_cli"
+SEQDESK_USER_CLI_PATH="$doctor_cli"
+SEQDESK_RUN_DOCTOR="1"
+run_doctor_if_requested >"$OUT" 2>&1
+assert_eq "a passing health check records verified status" \
+    "passed" "$SEQDESK_VERIFICATION_STATUS"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$doctor_cli"
+run_doctor_if_requested >"$OUT" 2>&1
+assert_eq "a failing health check records attention status" \
+    "failed" "$SEQDESK_VERIFICATION_STATUS"
+assert_contains "a failing health check is reported honestly" \
+    "Doctor reported issues" "$OUT"
+
 echo ""
 echo "== Case 3: wizard is a no-op under -y (unattended must be untouched) =="
 reset_state
@@ -1148,8 +1164,8 @@ assert_contains "the admin password is rendered, not blank" \
     "AAAAgeneratedAdminAAAA" <(printf '%s\n' "$summary_out")
 assert_contains "the researcher password is rendered, not blank" \
     "BBBBgeneratedResearcherBBBB" <(printf '%s\n' "$summary_out")
-assert_contains "the summary ends with a success marker" \
-    "SUCCESS" <(printf '%s\n' "$summary_out")
+assert_contains "the summary reports that a manual start is still required" \
+    "INSTALLED — MANUAL START REQUIRED" <(printf '%s\n' "$summary_out")
 assert_contains "the start command is an absolute path" \
     "/opt/seqdesk-test/start.sh" <(printf '%s\n' "$summary_out")
 assert_contains "the URL to open is shown" \

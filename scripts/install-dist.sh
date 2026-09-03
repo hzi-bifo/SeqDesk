@@ -247,6 +247,7 @@ PM2_STARTUP_ENABLED="false"
 PM2_PROCESS_EXISTS="false"
 PM2_BIN=""
 PM2_DISPLAY_CMD="pm2"
+SEQDESK_VERIFICATION_STATUS="not-run"
 CONDA_BIN_FROM_PATH=""
 CONDA_DISCOVERY_SOURCE=""
 CONDA_INSTALL_BASE=""
@@ -445,11 +446,13 @@ print_doctor_command() {
 run_doctor_if_requested() {
     local cli
     if ! is_truthy "$SEQDESK_RUN_DOCTOR"; then
+        SEQDESK_VERIFICATION_STATUS="skipped"
         return 0
     fi
 
     cli="$(seqdesk_cli_command 2>/dev/null || true)"
     if [ -z "$cli" ]; then
+        SEQDESK_VERIFICATION_STATUS="unavailable"
         print_warning "seqdesk CLI not found; skipping automatic doctor run."
         return 0
     fi
@@ -457,8 +460,10 @@ run_doctor_if_requested() {
     echo ""
     print_info "Running seqdesk doctor..."
     if "$cli" doctor --dir "$SEQDESK_DIR" --url "$(doctor_url)"; then
+        SEQDESK_VERIFICATION_STATUS="passed"
         print_success "Doctor checks completed"
     else
+        SEQDESK_VERIFICATION_STATUS="failed"
         print_warning "Doctor reported issues. Installation completed; review the checks above."
     fi
 }
@@ -7890,7 +7895,24 @@ print_success_footer() {
     # above is reference; this is the instruction. Under PM2 the app is already
     # running, so it is a link to open — otherwise it is the command to start it.
     echo ""
-    printf '%b  SUCCESS  SeqDesk v%s is installed.%b\n' "$GREEN$BOLD" "$INSTALLED_VERSION" "$NC"
+    if [ "$PM2_CONFIGURED" != "true" ]; then
+        printf '%b  INSTALLED — MANUAL START REQUIRED  SeqDesk v%s%b\n' "$YELLOW$BOLD" "$INSTALLED_VERSION" "$NC"
+    else
+        case "${SEQDESK_VERIFICATION_STATUS:-not-run}" in
+            passed)
+                printf '%b  INSTALLED AND VERIFIED  SeqDesk v%s%b\n' "$GREEN$BOLD" "$INSTALLED_VERSION" "$NC"
+                ;;
+            failed)
+                printf '%b  INSTALLED — VERIFICATION NEEDS ATTENTION  SeqDesk v%s%b\n' "$YELLOW$BOLD" "$INSTALLED_VERSION" "$NC"
+                ;;
+            unavailable)
+                printf '%b  INSTALLED — VERIFICATION TOOL UNAVAILABLE  SeqDesk v%s%b\n' "$YELLOW$BOLD" "$INSTALLED_VERSION" "$NC"
+                ;;
+            *)
+                printf '%b  INSTALLED — VERIFICATION NOT RUN  SeqDesk v%s%b\n' "$YELLOW$BOLD" "$INSTALLED_VERSION" "$NC"
+                ;;
+        esac
+    fi
     echo ""
     if [ "$PM2_CONFIGURED" = "true" ]; then
         echo "  Open SeqDesk:"
@@ -7901,6 +7923,12 @@ print_success_footer() {
         echo ""
         echo "  then open:"
         printf '  %b%s%b\n' "$CYAN$BOLD" "$(browser_app_url)" "$NC"
+    fi
+    if [ "$SEQDESK_DEPLOYMENT_PROFILE" = "research-workbench" ] && \
+        [ "$PIPELINES_ENABLED" != "true" ]; then
+        echo "  Operational setup remains: configure workflow execution before running analyses."
+    else
+        echo "  First-login onboarding remains: sign in as the administrator and complete the checklist."
     fi
     echo ""
 }

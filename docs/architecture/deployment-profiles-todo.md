@@ -181,7 +181,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [ ] Run remaining detectable preflight before material changes and make recorded checkpoints automatically resumable/idempotent.
 - [ ] Verify persisted profile, database/migrations, intended administrator, application version/profile response, storage writability, and selected runtime/smoke test.
 - [x] Run the equivalent of `seqdesk doctor` automatically when the guided installer starts a persistent service.
-- [ ] Distinguish “installed and verified,” “installed; manual start required,” “installed; optional/operational setup remains,” and restored/preserved failure states.
+- [x] Distinguish “installed and verified,” “installed; manual start required,” “installed; optional/operational setup remains,” and restored/preserved failure states.
 - [ ] Show a generated administrator password exactly once only after successful account creation, outside logs, plus the local reset command.
 - [ ] Never create or advertise known `admin`/`user` packaged passwords in a supported release install.
 - [x] Print profile-specific next steps and the correct first journey rather than sequencing-center instructions for every install.

@@ -37,6 +37,9 @@ release download, and application writes begin only after that review is
 confirmed. The service-manager/start behavior and separately consented,
 default-off telemetry choice are also selected and displayed before
 confirmation, so the apply phase asks no late configuration questions.
+The final handoff now distinguishes a verified running service, a required
+manual start, skipped/unavailable verification, and a health check that needs
+attention; it also states when profile-operational onboarding remains.
 Unattended installs still default to Sequencing Center only as a
 compatibility fallback and warn operators to pass `--deployment-profile`
 explicitly.
