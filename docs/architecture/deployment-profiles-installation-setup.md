@@ -34,8 +34,9 @@ and disables the generic second account. Guided and configured values now
 converge into a schema-versioned, redacted `InstallPlan`; the same plan renders
 the pre-apply review and `--plan --json`. PostgreSQL provisioning, Conda setup,
 release download, and application writes begin only after that review is
-confirmed. The service-manager/start behavior is also selected and displayed
-before confirmation, so the apply phase asks no late configuration questions.
+confirmed. The service-manager/start behavior and separately consented,
+default-off telemetry choice are also selected and displayed before
+confirmation, so the apply phase asks no late configuration questions.
 Unattended installs still default to Sequencing Center only as a
 compatibility fallback and warn operators to pass `--deployment-profile`
 explicitly.

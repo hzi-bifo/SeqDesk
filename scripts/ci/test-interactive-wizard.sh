@@ -95,6 +95,7 @@ reset_state() {
     SEQDESK_ONBOARDING_VERSION=""
     SEQDESK_RUN_DOCTOR=""
     SEQDESK_USE_PM2=""
+    SEQDESK_TELEMETRY_ENABLED=""
     SEQDESK_WITH_PIPELINES=""
     PIPELINES_ENABLED="false"
     PM2_CONFIGURED="false"
@@ -329,6 +330,17 @@ assert_contains "plan records the reviewed service manager" \
     '"manager": "pm2"' <(printf '%s\n' "$service_plan_json")
 assert_contains "guided service choice explains when manual startup fits" \
     "short evaluations" "$OUT"
+
+SEQDESK_TELEMETRY_ENABLED=""
+resolve_optional_content_for_plan >"$OUT" 2>&1 <<'EOF'
+
+EOF
+assert_eq "guided telemetry defaults off" "false" "$SEQDESK_TELEMETRY_ENABLED"
+privacy_plan_json="$(build_install_plan_json)"
+assert_contains "plan records telemetry as disabled" \
+    '"telemetry": false' <(printf '%s\n' "$privacy_plan_json")
+assert_contains "telemetry choice explains excluded scientific data" \
+    "projects, samples, files, or analysis results" "$OUT"
 
 echo ""
 echo "== Case 2f: --plan --json leaves an existing installation unchanged =="

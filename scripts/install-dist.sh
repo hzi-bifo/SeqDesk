@@ -3948,6 +3948,24 @@ resolve_service_mode_for_plan() {
     SEQDESK_USE_PM2="1"
 }
 
+resolve_optional_content_for_plan() {
+    if [ -n "${SEQDESK_TELEMETRY_ENABLED:-}" ]; then
+        return 0
+    fi
+
+    if interactive_wizard_enabled; then
+        print_info "Privacy — optional operational telemetry"
+        echo "  If enabled, SeqDesk sends version, platform, uptime, and health status to seqdesk.org."
+        echo "  It does not send names, email addresses, projects, samples, files, or analysis results."
+        echo "  This is off by default and can be changed later in Admin settings."
+        prompt_yes_no SEQDESK_TELEMETRY_ENABLED "  Enable optional telemetry?" "n"
+        return 0
+    fi
+
+    # Absence of an explicit automated/hosted value is consent to nothing.
+    SEQDESK_TELEMETRY_ENABLED="false"
+}
+
 deployment_profile_storage_label() {
     case "${1:-}" in
         sequencing-center) printf '%s' "Sequencing data" ;;
@@ -8285,6 +8303,7 @@ fi
 # Service lifecycle is part of the reviewed plan. No configuration question is
 # allowed after the operator confirms and the apply stages begin.
 resolve_service_mode_for_plan
+resolve_optional_content_for_plan
 
 print_preflight_summary
 
