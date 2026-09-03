@@ -97,6 +97,7 @@ reset_state() {
     SEQDESK_USE_PM2=""
     SEQDESK_TELEMETRY_ENABLED=""
     SEQDESK_WITH_PIPELINES=""
+    SEQDESK_EXEC_USE_SLURM=""
     PIPELINES_ENABLED="false"
     PM2_CONFIGURED="false"
     INSTALL_LOCK_DIR=""
@@ -193,11 +194,14 @@ run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
 1
 
 
+
 admin@workbench.test
 
 EOF
 assert_eq "workbench profile captured" "research-workbench" "$SEQDESK_DEPLOYMENT_PROFILE"
 assert_eq "workbench enables the recommended pipeline runtime" "1" "$SEQDESK_WITH_PIPELINES"
+assert_eq "workbench defaults workflow jobs to the local executor" \
+    "false" "$SEQDESK_EXEC_USE_SLURM"
 assert_eq "workbench run directory is isolated" \
     "$TEST_TMP_DIR/install-data/pipeline-runs" "$SEQDESK_RUN_DIR"
 assert_eq "workbench database cache is isolated from runs" \
@@ -221,6 +225,22 @@ assert_contains "wizard explains how to choose a profile" \
     "External requesters" "$OUT"
 assert_contains "workbench defers member creation to onboarding" \
     "Additional accounts are invited" "$OUT"
+assert_contains "executor choice is explained only after workflows are enabled" \
+    "where should analysis jobs run" "$OUT"
+
+echo ""
+echo "== Case 2b.1: guided workflow setup can target an existing Slurm cluster =="
+reset_state
+SEQDESK_DEPLOYMENT_PROFILE="shared-lab"
+SEQDESK_WITH_PIPELINES="1"
+prompt_pipeline_executor >"$OUT" 2>&1 <<'EOF'
+2
+EOF
+assert_eq "guided executor choice records Slurm" "true" "$SEQDESK_EXEC_USE_SLURM"
+assert_contains "Slurm choice does not claim to provision a cluster" \
+    "does not install or administer the cluster" "$OUT"
+assert_contains "Slurm advanced settings are deferred" \
+    "Queue and resource defaults are optional" "$OUT"
 
 echo ""
 echo "== Case 2c: team-server access requires HTTPS and keeps the app on loopback =="

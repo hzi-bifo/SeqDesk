@@ -190,7 +190,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Offer recommended managed storage locations first; show only the selected profile's labels and paths.
 - [x] Validate storage existence/creation, writability, free space, mount availability, symlink resolution, dangerous roots, and overlapping/nested roots.
 - [x] Ask about workflow execution with profile-aware guidance: optional for Sequencing Center, recommended for Shared Lab, and required for full Workbench operational readiness.
-- [ ] Keep local versus Slurm executor details and package/runtime downloads behind the workflow choice; show estimated sizes.
+- [ ] Keep local versus Slurm executor details and package/runtime downloads behind the workflow choice; show estimated sizes. The executor choice and honest apply-time download-size status are now shown only after workflow opt-in; package-specific estimates still need registry metadata.
 - [x] Create exactly one initial administrator with an entered or generated strong password; remove the generic “also create a researcher” question.
 - [x] Apply the profile's enrollment default and explain it: Sequencing Center researcher self-registration by default; Shared Lab and Workbench invite-only by default.
 - [x] Defer extra users, SMTP/OIDC, instruments, ENA/repository credentials, and detailed module configuration to authenticated onboarding unless a hosted profile provides them.

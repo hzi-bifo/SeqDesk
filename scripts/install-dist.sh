@@ -3921,6 +3921,40 @@ prompt_profile_pipeline_support() {
     fi
 }
 
+prompt_pipeline_executor() {
+    is_truthy "${SEQDESK_WITH_PIPELINES:-}" || return 0
+    [ -z "${SEQDESK_EXEC_USE_SLURM:-}" ] || return 0
+
+    print_info "Workflow executor — where should analysis jobs run?"
+    echo "    1) This computer (recommended for a workstation or small server)"
+    echo "       SeqDesk prepares the local Conda and Nextflow runtime."
+    echo "    2) An existing Slurm cluster"
+    echo "       SeqDesk submits to Slurm; it does not install or administer the cluster."
+    echo "  Runtime download size depends on the selected packages and is resolved before each package install."
+
+    local executor_choice
+    while true; do
+        executor_choice=$(read_input "  Choose [1]: ")
+        executor_choice=${executor_choice:-1}
+        case "$executor_choice" in
+            1|local)
+                SEQDESK_EXEC_USE_SLURM="false"
+                print_success "  Local workflow execution selected."
+                return 0
+                ;;
+            2|slurm)
+                SEQDESK_EXEC_USE_SLURM="true"
+                print_success "  Slurm workflow execution selected."
+                print_info "  Queue and resource defaults are optional and can be configured after sign-in."
+                return 0
+                ;;
+            *)
+                print_error "  Choose 1 or 2."
+                ;;
+        esac
+    done
+}
+
 # Resolve the service lifecycle before the plan is reviewed. Older installer
 # versions asked this after downloads, database setup, and application writes
 # had already started, which made the review incomplete and surprised guided
@@ -4405,6 +4439,7 @@ run_interactive_wizard_accounts() {
     interactive_wizard_enabled || return 0
 
     prompt_profile_pipeline_support
+    prompt_pipeline_executor
     prompt_profile_storage
 
     # Accounts
@@ -6656,6 +6691,7 @@ reset_guided_plan_answers() {
     SEQDESK_PRIVATE_POSTGRES="false"
     SEQDESK_WITH_PIPELINES=""
     PIPELINES_ENABLED="false"
+    SEQDESK_EXEC_USE_SLURM=""
     SEQDESK_DATA_PATH=""
     SEQDESK_RUN_DIR=""
     SEQDESK_PIPELINE_DATABASE_DIR=""
