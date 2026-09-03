@@ -3916,6 +3916,38 @@ prompt_profile_pipeline_support() {
     fi
 }
 
+# Resolve the service lifecycle before the plan is reviewed. Older installer
+# versions asked this after downloads, database setup, and application writes
+# had already started, which made the review incomplete and surprised guided
+# installs with a late product choice.
+resolve_service_mode_for_plan() {
+    [ -z "${SEQDESK_USE_PM2:-}" ] || return 0
+
+    if is_truthy "${SEQDESK_RECONFIGURE:-}" || is_truthy "${SEQDESK_UPDATE_EXISTING:-}"; then
+        if resolve_pm2_bin && pm2_exec describe seqdesk >/dev/null 2>&1; then
+            PM2_PROCESS_EXISTS="true"
+            SEQDESK_USE_PM2="1"
+            print_info "Detected the existing SeqDesk background service; it will be restarted."
+        else
+            SEQDESK_USE_PM2="0"
+            print_info "No existing SeqDesk background service was detected; service management is unchanged."
+        fi
+        return 0
+    fi
+
+    if interactive_wizard_enabled; then
+        print_info "Startup — should SeqDesk run as a background service?"
+        echo "  Recommended: PM2 starts SeqDesk now, restarts it after crashes, and can be enabled at boot."
+        echo "  Choose manual only for short evaluations or when your organization provides systemd/another service manager."
+        prompt_yes_no SEQDESK_USE_PM2 "  Start and manage SeqDesk with PM2?" "y"
+        return 0
+    fi
+
+    # Preserve the historical unattended default. Operators can select manual
+    # lifecycle explicitly with --no-pm2.
+    SEQDESK_USE_PM2="1"
+}
+
 deployment_profile_storage_label() {
     case "${1:-}" in
         sequencing-center) printf '%s' "Sequencing data" ;;
@@ -6190,12 +6222,14 @@ build_install_plan_json() {
     SEQDESK_PLAN_ENTRY_SOURCE="$entry_source" \
     SEQDESK_PLAN_EXECUTOR="$executor" \
     SEQDESK_PLAN_PIPELINES="$PIPELINES_ENABLED" \
+    SEQDESK_PLAN_USE_PM2="$SEQDESK_USE_PM2" \
     node <<'NODE'
 const truthy = (value) => ["1", "true", "yes", "y", "on"].includes(String(value || "").toLowerCase());
 const optional = (value) => value || undefined;
 const size = Number(process.env.SEQDESK_PLAN_RELEASE_SIZE || "");
 const profile = process.env.SEQDESK_DEPLOYMENT_PROFILE;
 const pipelines = truthy(process.env.SEQDESK_PLAN_PIPELINES);
+const usePm2 = truthy(process.env.SEQDESK_PLAN_USE_PM2);
 const entrySource = process.env.SEQDESK_PLAN_ENTRY_SOURCE || "default";
 const warnings = [];
 if (profile === "research-workbench" && !pipelines) {
@@ -6248,6 +6282,11 @@ const plan = {
     starterPackages: [],
     runSmokeTest: false,
   },
+  service: {
+    manager: usePm2 ? "pm2" : "manual",
+    startNow: usePm2,
+    startOnBootRequested: usePm2,
+  },
   enrollment: {
     policy: profile === "sequencing-center" ? "self-registration" : "invite-only",
   },
@@ -6266,6 +6305,7 @@ const plan = {
     database: entrySource,
     storage: entrySource,
     execution: entrySource,
+    service: entrySource,
     enrollment: "default",
     bootstrap: entrySource,
     release: process.env.SEQDESK_VERSION ? "cli" : "default",
@@ -6297,6 +6337,7 @@ line("Managed data", plan.storage.managedDataRoot);
 line("Pipeline runs", plan.storage.runRoot);
 line("Pipeline cache", plan.storage.cacheRoot);
 line("Workflow execution", plan.execution.prepareNow ? plan.execution.executor : "deferred");
+line("Service", plan.service.manager === "pm2" ? "PM2; start now and request boot startup" : "manual start");
 line("Initial administrator", plan.bootstrap.adminEmail);
 line("Password", plan.bootstrap.passwordRef);
 line("Telemetry", plan.optional.telemetry ? "enabled" : "disabled");
@@ -8241,6 +8282,10 @@ else
     print_info "Use --with-pipelines to install Conda and Nextflow support."
 fi
 
+# Service lifecycle is part of the reviewed plan. No configuration question is
+# allowed after the operator confirms and the apply stages begin.
+resolve_service_mode_for_plan
+
 print_preflight_summary
 
 if [ "$PIPELINES_ENABLED" = "true" ] && {
@@ -8873,21 +8918,6 @@ if [ -n "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
 fi
 
 print_step "Configure process manager"
-
-if [ -z "$SEQDESK_USE_PM2" ]; then
-    if is_truthy "$SEQDESK_RECONFIGURE" || is_truthy "$SEQDESK_UPDATE_EXISTING"; then
-        if resolve_pm2_bin && pm2_exec describe seqdesk >/dev/null 2>&1; then
-            PM2_PROCESS_EXISTS="true"
-            SEQDESK_USE_PM2="1"
-            print_info "Detected existing PM2 process 'seqdesk'; it will be restarted."
-        else
-            SEQDESK_USE_PM2="0"
-            print_info "Maintenance mode: PM2 not detected, skipping process manager changes."
-        fi
-    else
-        prompt_yes_no SEQDESK_USE_PM2 "Start SeqDesk with PM2 for auto-restart? (recommended)" "y"
-    fi
-fi
 
 if is_truthy "$SEQDESK_USE_PM2"; then
     if ! resolve_pm2_bin; then

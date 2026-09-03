@@ -75,6 +75,13 @@ export const installPlanSchema = z
         runSmokeTest: z.boolean(),
       })
       .strict(),
+    service: z
+      .object({
+        manager: z.enum(["pm2", "manual"]),
+        startNow: z.boolean(),
+        startOnBootRequested: z.boolean(),
+      })
+      .strict(),
     enrollment: z
       .object({
         policy: z.enum(["invite-only", "self-registration"]),
@@ -133,6 +140,17 @@ export const installPlanSchema = z
         code: "custom",
         path: ["execution", "executor"],
         message: "An executor is required exactly when workflow execution is prepared.",
+      });
+    }
+    if (
+      (plan.service.manager === "manual" &&
+        (plan.service.startNow || plan.service.startOnBootRequested)) ||
+      (plan.service.manager === "pm2" && !plan.service.startNow)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["service"],
+        message: "The selected service manager conflicts with its start behavior.",
       });
     }
   });

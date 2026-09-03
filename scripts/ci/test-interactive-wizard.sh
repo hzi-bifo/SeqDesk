@@ -94,6 +94,7 @@ reset_state() {
     SEQDESK_PREFLIGHT_READ_ONLY="false"
     SEQDESK_ONBOARDING_VERSION=""
     SEQDESK_RUN_DOCTOR=""
+    SEQDESK_USE_PM2=""
     SEQDESK_WITH_PIPELINES=""
     PIPELINES_ENABLED="false"
     PM2_CONFIGURED="false"
@@ -317,6 +318,17 @@ assert_not_contains "plan omits the migration password" \
     "direct-secret" <(printf '%s\n' "$plan_json")
 assert_not_contains "plan omits the administrator password" \
     "account-secret" <(printf '%s\n' "$plan_json")
+
+SEQDESK_USE_PM2=""
+resolve_service_mode_for_plan >"$OUT" 2>&1 <<'EOF'
+
+EOF
+assert_eq "guided service choice defaults to PM2 before review" "true" "$SEQDESK_USE_PM2"
+service_plan_json="$(build_install_plan_json)"
+assert_contains "plan records the reviewed service manager" \
+    '"manager": "pm2"' <(printf '%s\n' "$service_plan_json")
+assert_contains "guided service choice explains when manual startup fits" \
+    "short evaluations" "$OUT"
 
 echo ""
 echo "== Case 2f: --plan --json leaves an existing installation unchanged =="

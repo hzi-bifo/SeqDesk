@@ -37,6 +37,11 @@ function validPlan() {
       starterPackages: [],
       runSmokeTest: false,
     },
+    service: {
+      manager: "pm2",
+      startNow: true,
+      startOnBootRequested: true,
+    },
     enrollment: { policy: "invite-only" },
     bootstrap: {
       adminEmail: "admin@example.org",
@@ -97,5 +102,14 @@ describe("InstallPlan", () => {
     expect(() => parseInstallPlan({ ...validPlan(), databasePassword: "secret" })).toThrow(
       /unrecognized key/i
     );
+  });
+
+  it("rejects service behavior that conflicts with the selected manager", () => {
+    expect(() =>
+      parseInstallPlan({
+        ...validPlan(),
+        service: { manager: "manual", startNow: true, startOnBootRequested: false },
+      })
+    ).toThrow(/service manager conflicts/i);
   });
 });
