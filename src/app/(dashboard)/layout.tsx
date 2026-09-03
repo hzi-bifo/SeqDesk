@@ -8,6 +8,7 @@ import { isPublicDemoEnabled } from "@/lib/demo/config";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { getOnboardingStatus } from "@/lib/onboarding/server";
 import { OperationalSetupPending } from "@/components/onboarding/OperationalSetupPending";
+import { decideCapability } from "@/lib/authorization";
 
 export default async function DashboardLayout({
   children,
@@ -30,7 +31,12 @@ export default async function DashboardLayout({
   const deploymentProfile = getServerDeploymentProfile();
 
   let pendingOnboarding: Awaited<ReturnType<typeof getOnboardingStatus>> | null = null;
-  if (session.user.role !== "FACILITY_ADMIN" && !session.user.isDemo) {
+  const canManageSettings = decideCapability(
+    session,
+    "system.settings.manage",
+    deploymentProfile
+  ).allowed;
+  if (!canManageSettings && !session.user.isDemo) {
     try {
       const onboarding = await getOnboardingStatus();
       if (onboarding.required && !onboarding.complete) {

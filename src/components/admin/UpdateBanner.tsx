@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { ArrowUpCircle, X } from "lucide-react";
 import Link from "next/link";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { hasCapability, principalFromSession } from "@/lib/authorization";
 
 interface UpdateInfo {
   currentVersion: string;
@@ -22,12 +24,17 @@ interface UpdateInfo {
 
 export function UpdateBanner() {
   const { data: session } = useSession();
+  const deploymentProfile = useDeploymentProfile();
+  const principal = principalFromSession(session);
+  const canManageUpdates = Boolean(
+    principal &&
+      hasCapability(deploymentProfile, principal, "system.updates.manage")
+  );
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    // Only check for admins
-    if (session?.user?.role !== "FACILITY_ADMIN") return;
+    if (!canManageUpdates) return;
 
     // Check if already dismissed this session
     const dismissedVersion = sessionStorage.getItem("update-banner-dismissed");
@@ -50,7 +57,7 @@ export function UpdateBanner() {
     }
 
     checkUpdate();
-  }, [session]);
+  }, [canManageUpdates]);
 
   const handleDismiss = () => {
     if (updateInfo?.latest?.version) {
@@ -68,7 +75,7 @@ export function UpdateBanner() {
 
   // Don't show if not admin, no update, or dismissed
   if (
-    session?.user?.role !== "FACILITY_ADMIN" ||
+    !canManageUpdates ||
     !updateInfo?.updateAvailable ||
     updateInfo.databaseCompatible === false ||
     dismissed

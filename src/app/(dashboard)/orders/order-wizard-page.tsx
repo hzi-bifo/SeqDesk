@@ -90,6 +90,8 @@ import { InlineFieldError } from "@/components/ui/inline-field-error";
 import { InlineFieldHelp, hasInlineFieldHelpContent } from "@/components/ui/inline-field-help";
 import { PageNotice } from "@/components/ui/page-notice";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { hasCapability, principalFromSession } from "@/lib/authorization";
 
 // Extend TanStack Table meta types for the wizard
 declare module "@tanstack/react-table" {
@@ -667,7 +669,12 @@ export function OrderWizardPage({
 
   // Currently focused field for help panel (shared via context to sidebar)
   const { focusedField, setFocusedField } = useFieldHelp();
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const deploymentProfile = useDeploymentProfile();
+  const principal = principalFromSession(session);
+  const isFacilityAdmin = Boolean(
+    principal &&
+      hasCapability(deploymentProfile, principal, "orders.process")
+  );
 
   // Samples state for the samples step
   const [samples, setSamples] = useState<SampleRow[]>([]);

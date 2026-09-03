@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
+import { decideServerCapability } from "@/lib/authorization/api";
 
 export default async function LegacyOrderFilesPage({
   params,
@@ -14,7 +15,10 @@ export default async function LegacyOrderFilesPage({
     redirect("/login");
   }
 
-  if (session.user.role === "FACILITY_ADMIN" && !session.user.isDemo) {
+  if (
+    decideServerCapability(session, "sequencing.files.manage").allowed &&
+    !session.user.isDemo
+  ) {
     redirect(`/orders/${id}/sequencing`);
   }
 

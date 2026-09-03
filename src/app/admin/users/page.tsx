@@ -8,6 +8,7 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
 import { PageLoader } from "@/components/ui/page-loader";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { hasCapability, principalFromSession } from "@/lib/authorization";
 import {
   ChevronRight,
   Search,
@@ -52,6 +53,10 @@ export default function UsersPage() {
   const deploymentProfile = useDeploymentProfile();
   const memberLabel = deploymentProfile.terminology.member;
   const memberLabelPlural = `${memberLabel}s`;
+  const principal = principalFromSession(session);
+  const canManageUsers = Boolean(
+    principal && hasCapability(deploymentProfile, principal, "system.users.manage")
+  );
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -63,8 +68,8 @@ export default function UsersPage() {
 
   useEffect(() => {
     if (status === "loading") return;
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      router.push("/orders");
+    if (!canManageUsers) {
+      router.push(deploymentProfile.defaultRoute);
       return;
     }
 
@@ -85,7 +90,7 @@ export default function UsersPage() {
     };
 
     fetchUsers();
-  }, [session, status, router, memberLabelPlural]);
+  }, [canManageUsers, status, router, memberLabelPlural, deploymentProfile.defaultRoute]);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-US", {

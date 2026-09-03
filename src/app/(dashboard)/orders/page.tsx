@@ -33,6 +33,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { ErrorBanner } from "@/components/ui/error-banner";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { hasCapability, principalFromSession } from "@/lib/authorization";
 
 interface Order {
   id: string;
@@ -87,6 +89,7 @@ function renderOrderDeleteError(message: string): ReactNode {
 
 export default function OrdersPage() {
   const { data: session } = useSession();
+  const deploymentProfile = useDeploymentProfile();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -103,9 +106,14 @@ export default function OrdersPage() {
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
   const [bulkEditMode, setBulkEditMode] = useState(false);
 
-  const isResearcher = session?.user?.role === "RESEARCHER";
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
-  const canCreateOrder = isResearcher || isFacilityAdmin;
+  const principal = principalFromSession(session);
+  const canCreateOrder = Boolean(
+    principal && hasCapability(deploymentProfile, principal, "orders.create")
+  );
+  const isFacilityAdmin = Boolean(
+    principal && hasCapability(deploymentProfile, principal, "orders.process")
+  );
+  const isResearcher = canCreateOrder && !isFacilityAdmin;
 
   useEffect(() => {
     const fetchOrders = async () => {

@@ -62,7 +62,10 @@ requesters use their own tickets, facility operators manage all tickets, and
 Shared Lab/Workbench administrators do not inherit access from their system
 role. Assembly listing and order-form operational fields also use centralized
 read/process scopes, so Shared Lab members get the intended shared workflow
-without being treated as system administrators.
+without being treated as system administrators. Server layouts, post-login
+routing, legacy order-file redirects, and account-management pages now use the
+same capability model, and a repository test prevents new direct session-role
+authorization checks outside the compatibility adapter.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
@@ -268,7 +271,7 @@ Acceptance:
   - [x] `support.tickets.use`, `support.tickets.manage`
 - [x] Add table-driven tests for representative profile x account level x capability x scope combinations; expand to exhaustive catalog coverage before release.
 - [ ] Add tests proving an already signed-in administrator loses protected access immediately after demotion or deactivation.
-- [ ] Add a repository check that rejects new `session.user.role === ...` authorization outside the compatibility package.
+- [x] Add a repository check that rejects new `session.user.role === ...` authorization outside the compatibility package.
 
 Acceptance:
 

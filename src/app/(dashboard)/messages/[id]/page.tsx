@@ -30,6 +30,8 @@ import {
   Shield,
 } from "lucide-react";
 import { notifyPanel } from "@/lib/notifications/client";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { hasCapability, principalFromSession } from "@/lib/authorization";
 
 interface Message {
   id: string;
@@ -85,6 +87,7 @@ const PRIORITY_CONFIG: Record<string, { label: string; color: string }> = {
 export default function TicketDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: session } = useSession();
+  const deploymentProfile = useDeploymentProfile();
   const router = useRouter();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -96,7 +99,15 @@ export default function TicketDetailPage({ params }: { params: Promise<{ id: str
   const [selectedStatus, setSelectedStatus] = useState("");
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
-  const isAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const principal = principalFromSession(session);
+  const isAdmin = Boolean(
+    principal &&
+      hasCapability(
+        deploymentProfile,
+        principal,
+        "support.tickets.manage"
+      )
+  );
 
   useEffect(() => {
     const fetchTicket = async () => {

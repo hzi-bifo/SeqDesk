@@ -53,6 +53,8 @@ import {
 } from "@/lib/orders/facility-sections";
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
 import { DEFAULT_GROUPS, type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { hasCapability, principalFromSession } from "@/lib/authorization";
 
 const DATA_HANDLING_SETTINGS_HREF = "/admin/form-builder?tab=settings#data-handling";
 
@@ -385,7 +387,12 @@ export default function OrderDetailPage({
     useState<SequencingDeliverySummary | null>(null);
   const [sequencingDeliveryLoading, setSequencingDeliveryLoading] = useState(false);
 
-  const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const deploymentProfile = useDeploymentProfile();
+  const principal = principalFromSession(session);
+  const isFacilityAdmin = Boolean(
+    principal &&
+      hasCapability(deploymentProfile, principal, "orders.process")
+  );
   const isDemoUser = session?.user?.isDemo === true;
   const isOwner = order?.user.id === session?.user?.id;
   const canEditOrder = isFacilityAdmin || ((isOwner ?? false) && order?.status !== "COMPLETED");

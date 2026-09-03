@@ -9,6 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Loader2, Check, Mail } from "lucide-react";
 import { ErrorBanner } from "@/components/ui/error-banner";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { hasCapability, principalFromSession } from "@/lib/authorization";
 
 interface UserProfile {
   id: string;
@@ -22,6 +24,12 @@ interface UserProfile {
 
 export default function SettingsPage() {
   const { data: session, update: updateSession } = useSession();
+  const deploymentProfile = useDeploymentProfile();
+  const principal = principalFromSession(session);
+  const isAdministrator = Boolean(
+    principal &&
+      hasCapability(deploymentProfile, principal, "system.settings.manage")
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingNotifications, setSavingNotifications] = useState(false);
@@ -295,7 +303,11 @@ export default function SettingsPage() {
           <div className="flex justify-between">
             <span className="text-muted-foreground">Account Type</span>
             <span className="font-medium font-geist-pixel text-xs text-muted-foreground">
-              {session?.user?.role === "FACILITY_ADMIN" ? "Facility Admin" : "Researcher"}
+              {isAdministrator
+                ? deploymentProfile.id === "sequencing-center"
+                  ? "Facility administrator"
+                  : "Administrator"
+                : deploymentProfile.terminology.member}
             </span>
           </div>
           <div className="flex justify-between">

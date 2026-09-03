@@ -17,6 +17,8 @@ import {
   X,
 } from "lucide-react";
 import { ErrorBanner } from "@/components/ui/error-banner";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { hasCapability, principalFromSession } from "@/lib/authorization";
 
 interface Ticket {
   id: string;
@@ -69,6 +71,7 @@ const PRIORITY_ORDER = ["LOW", "NORMAL", "HIGH", "URGENT"];
 
 export default function MessagesPage() {
   const { data: session } = useSession();
+  const deploymentProfile = useDeploymentProfile();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -77,7 +80,15 @@ export default function MessagesPage() {
   const [sortField, setSortField] = useState<SortField>("updated");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
-  const isAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const principal = principalFromSession(session);
+  const isAdmin = Boolean(
+    principal &&
+      hasCapability(
+        deploymentProfile,
+        principal,
+        "support.tickets.manage"
+      )
+  );
 
   useEffect(() => {
     const fetchTickets = async () => {

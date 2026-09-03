@@ -46,6 +46,7 @@ import { notifyPanel } from "@/lib/notifications/client";
 import { toast } from "@/components/ui/toast";
 import { PageLoader } from "@/components/ui/page-loader";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { hasCapability, principalFromSession } from "@/lib/authorization";
 
 type InviteAccountRole = "RESEARCHER" | "FACILITY_ADMIN";
 
@@ -92,6 +93,10 @@ export default function AdminAccountsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const deploymentProfile = useDeploymentProfile();
+  const principal = principalFromSession(session);
+  const canManageUsers = Boolean(
+    principal && hasCapability(deploymentProfile, principal, "system.users.manage")
+  );
 
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -178,12 +183,12 @@ export default function AdminAccountsPage() {
 
   useEffect(() => {
     if (status === "loading") return;
-    if (!session || session.user.role !== "FACILITY_ADMIN") {
-      router.push("/orders");
+    if (!canManageUsers) {
+      router.push(deploymentProfile.defaultRoute);
       return;
     }
     void fetchData(true);
-  }, [session, status, router, fetchData]);
+  }, [canManageUsers, status, router, fetchData, deploymentProfile.defaultRoute]);
 
   const formatDate = (date: string) =>
     new Date(date).toLocaleDateString("en-US", {
@@ -362,7 +367,7 @@ export default function AdminAccountsPage() {
     return <PageLoader />;
   }
 
-  if (status !== "loading" && (!session || session.user.role !== "FACILITY_ADMIN")) {
+  if (status !== "loading" && !canManageUsers) {
     return null;
   }
 

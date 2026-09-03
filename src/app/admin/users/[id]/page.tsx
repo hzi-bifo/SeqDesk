@@ -7,6 +7,7 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { Badge } from "@/components/ui/badge";
 import { AccountAccessControl } from "@/components/admin/AccountAccessControl";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+import { decideCapability } from "@/lib/authorization";
 import {
   ArrowLeft,
   Mail,
@@ -30,7 +31,13 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
   const { id } = await params;
   const deploymentProfile = getServerDeploymentProfile();
 
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
+  if (
+    !decideCapability(
+      session,
+      "system.users.manage",
+      deploymentProfile
+    ).allowed
+  ) {
     redirect(deploymentProfile.defaultRoute);
   }
 

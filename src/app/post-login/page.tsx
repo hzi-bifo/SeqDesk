@@ -4,10 +4,12 @@ import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { getOnboardingStatus } from "@/lib/onboarding/server";
+import { decideCapability } from "@/lib/authorization";
 
 export default async function PostLoginPage() {
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
+  const deploymentProfile = getServerDeploymentProfile();
 
   let needsAdministratorOnboarding = false;
   if (!session.user.isDemo) {
@@ -16,7 +18,11 @@ export default async function PostLoginPage() {
       needsAdministratorOnboarding = Boolean(
         onboarding.required &&
         !onboarding.complete &&
-        session.user.role === "FACILITY_ADMIN"
+        decideCapability(
+          session,
+          "system.settings.manage",
+          deploymentProfile
+        ).allowed
       );
     } catch (error) {
       console.error("[Post login] Could not evaluate onboarding status:", error);
@@ -24,5 +30,5 @@ export default async function PostLoginPage() {
   }
   if (needsAdministratorOnboarding) redirect("/admin/onboarding");
 
-  redirect(getServerDeploymentProfile().defaultRoute);
+  redirect(deploymentProfile.defaultRoute);
 }

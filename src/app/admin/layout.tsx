@@ -6,6 +6,7 @@ import { AdminDemoReadOnlyWrapper } from "@/components/demo/AdminDemoReadOnlyWra
 import { getCurrentVersion } from "@/lib/updater";
 import { isPublicDemoEnabled } from "@/lib/demo/config";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+import { decideCapability } from "@/lib/authorization";
 
 export default async function AdminLayout({
   children,
@@ -20,7 +21,13 @@ export default async function AdminLayout({
 
   const deploymentProfile = getServerDeploymentProfile();
 
-  if (session.user.role !== "FACILITY_ADMIN") {
+  if (
+    !decideCapability(
+      session,
+      "system.settings.manage",
+      deploymentProfile
+    ).allowed
+  ) {
     redirect(deploymentProfile.defaultRoute);
   }
 
