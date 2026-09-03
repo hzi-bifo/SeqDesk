@@ -6611,17 +6611,85 @@ print_config_summary() {
     render_install_plan_human "$plan_json"
 }
 
+save_sanitized_install_plan() {
+    local plan_json="$1"
+    local destination="$2"
+    destination="$(expand_home_relative_path "$destination")"
+
+    SEQDESK_INSTALL_PLAN_JSON="$plan_json" \
+    SEQDESK_INSTALL_PLAN_DESTINATION="$destination" \
+    node <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const plan = JSON.parse(process.env.SEQDESK_INSTALL_PLAN_JSON);
+const destination = path.resolve(process.env.SEQDESK_INSTALL_PLAN_DESTINATION);
+const parent = path.dirname(destination);
+if (!fs.existsSync(parent) || !fs.statSync(parent).isDirectory()) {
+  throw new Error(`Parent directory does not exist: ${parent}`);
+}
+
+// "wx" prevents an accidental overwrite; 0600 keeps even the redacted
+// topology/account identifiers private from other local users.
+const file = fs.openSync(destination, "wx", 0o600);
+try {
+  fs.writeFileSync(file, `${JSON.stringify(plan, null, 2)}\n`, "utf8");
+} finally {
+  fs.closeSync(file);
+}
+process.stdout.write(destination);
+NODE
+}
+
 confirm_config() {
     if is_truthy "$SEQDESK_YES"; then
         return 0
     fi
+
+    local plan_json="${1:-}"
+    [ -n "$plan_json" ] || plan_json="$(build_install_plan_json)"
+
+    if interactive_wizard_enabled; then
+        local action destination saved_path
+        while true; do
+            echo ""
+            echo "  1) Install this plan"
+            echo "  2) Save a sanitized JSON copy, then return here"
+            echo "  3) Cancel without changing the system"
+            action=$(read_input "  Choose [1]: ")
+            action=${action:-1}
+            case "$action" in
+                1|install|continue)
+                    return 0
+                    ;;
+                2|save)
+                    destination=$(read_input "  Save as [./seqdesk-install-plan.json]: ")
+                    destination=${destination:-./seqdesk-install-plan.json}
+                    if saved_path="$(save_sanitized_install_plan "$plan_json" "$destination" 2>/dev/null)"; then
+                        print_success "Sanitized plan saved to $saved_path"
+                        print_info "The file contains no passwords, tokens, or database connection URLs."
+                    else
+                        print_warning "Could not save the plan to $destination. The parent must exist and an existing file will not be overwritten."
+                    fi
+                    ;;
+                3|cancel|quit|q)
+                    print_info "Installation cancelled before any application, database, or service changes."
+                    exit 0
+                    ;;
+                *)
+                    print_error "  Choose 1, 2, or 3."
+                    ;;
+            esac
+        done
+    fi
+
     local reply
     reply=$(read_input "Continue with these settings? (Y/n): ")
     reply=${reply:-Y}
     case "$reply" in
         n|N|no|NO)
-            print_error "Installation cancelled."
-            exit 1
+            print_info "Installation cancelled before any application, database, or service changes."
+            exit 0
             ;;
     esac
 }
@@ -8462,8 +8530,10 @@ fi
 # This is the single product-configuration confirmation. Everything above is
 # read-only discovery or ephemeral input handling; service/package/filesystem
 # changes start below. The late in-release wizard is skipped for this path.
-print_config_summary
-confirm_config
+review_plan_json="$(build_install_plan_json)"
+render_install_plan_human "$review_plan_json"
+confirm_config "$review_plan_json"
+unset review_plan_json
 if ! acquire_install_lock; then
     exit 1
 fi

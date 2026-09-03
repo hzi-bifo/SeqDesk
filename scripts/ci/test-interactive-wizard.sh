@@ -340,6 +340,25 @@ assert_contains "review shows value provenance" \
 assert_contains "review shows hosted lock state" \
     "Locked values          none" "$OUT"
 
+SAVED_PLAN="$TEST_TMP_DIR/saved-install-plan.json"
+confirm_config "$plan_json" >"$OUT" 2>&1 <<EOF
+2
+$SAVED_PLAN
+1
+EOF
+assert_contains "review offers a private sanitized plan export" \
+    "Sanitized plan saved" "$OUT"
+assert_contains "saved plan is the reviewed profile" \
+    '"profile": "research-workbench"' "$SAVED_PLAN"
+assert_not_contains "saved plan omits database secrets" \
+    "database-secret" "$SAVED_PLAN"
+if save_sanitized_install_plan "$plan_json" "$SAVED_PLAN" >"$OUT" 2>&1; then
+    echo "FAIL: saved plan unexpectedly overwrote an existing file" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: saved plan refuses to overwrite an existing file"
+fi
+
 SEQDESK_USE_PM2=""
 resolve_service_mode_for_plan >"$OUT" 2>&1 <<'EOF'
 

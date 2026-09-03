@@ -200,7 +200,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 ### Review, apply, and verify
 
 - [x] Expand the redacted review with profile behavior, measured free-space results and enforced install reserve, executor choice, published release size, honest apply-time workflow-download sizing, optional content, value sources/locks, and warnings.
-- [ ] Allow Back, Save sanitized plan, Install, and Cancel before mutations begin.
+- [ ] Allow Back, Save sanitized plan, Install, and Cancel before mutations begin. Save/Install/Cancel now share the reviewed plan and occur before mutation; Back still requires the planned question-state refactor.
 - [x] After confirmation, ask no new product/configuration questions; display stable pending/running/done/failed stages.
 - [x] Take an exclusive per-target apply lock and record schema-versioned, secret-free recovery checkpoints through material stages.
 - [ ] Run remaining detectable preflight before material changes and make recorded checkpoints automatically resumable/idempotent.
