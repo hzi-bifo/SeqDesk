@@ -42,7 +42,8 @@ That is not yet the finished installer architecture. Before the three profiles
 are advertised as fully supported, the remaining high-priority work is hosted
 lock/source fidelity in the plan, strict no-temporary-file preview handling for
 remote configuration, mount/capacity and executor-specific preflight,
-reconfiguration diffs, and resumable apply checkpoints. Existing targets are
+reconfiguration diffs, and automatic resume from recorded apply checkpoints.
+Existing targets are
 now classified before the fresh-install questions and routed to update,
 reconfigure, diagnosis, or safe refusal. New installs opt into a versioned,
 administrator-only onboarding checklist; legacy installs are not unexpectedly
@@ -380,6 +381,13 @@ Ordinary members who arrive before operational setup is complete should see a cl
 - Never recommend destructive cleanup as the generic retry path.
 - If generated credentials were not applied, do not display them as valid credentials.
 - If the database already contained an account, report that its password was preserved and provide the local reset command.
+
+The installer now takes an exclusive per-target apply lock after confirmation
+and records a schema-versioned, secret-free adjacent checkpoint through database,
+release, configuration, and migration stages. It removes both after success and
+keeps the checkpoint on failure for diagnosis. Automatic continuation from that
+checkpoint remains future work; current retry paths either reuse idempotent work
+or preserve a partial target before restarting setup.
 
 ## Documentation and copy rules
 

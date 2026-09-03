@@ -93,8 +93,13 @@ reset_state() {
     SEQDESK_EMPTY_TARGET="false"
     SEQDESK_PREFLIGHT_READ_ONLY="false"
     SEQDESK_ONBOARDING_VERSION=""
+    SEQDESK_RUN_DOCTOR=""
     SEQDESK_WITH_PIPELINES=""
     PIPELINES_ENABLED="false"
+    PM2_CONFIGURED="false"
+    INSTALL_LOCK_DIR=""
+    INSTALL_LOCK_HELD="false"
+    INSTALL_CHECKPOINT_PATH=""
 }
 
 OUT="$(mktemp)"
@@ -405,14 +410,30 @@ EOF
 assert_contains "existing install can select reconfigure" \
     "reconfigure=1" <(printf '%s\n' "$maintenance_result")
 
-if ( reset_state; SEQDESK_DIR="$TARGET_PARTIAL"; resolve_install_operation ) >"$OUT" 2>&1; then
-    echo "FAIL: partial target entered a fresh install without explicit overwrite" >&2
-    FAILURES=$((FAILURES + 1))
-else
-    echo "ok: partial target stops before setup questions"
-fi
+partial_recovery_result="$(
+    (
+        reset_state
+        SEQDESK_DIR="$TARGET_PARTIAL"
+        resolve_install_operation <<'EOF'
+2
+EOF
+        printf 'overwrite=%s\n' "$SEQDESK_OVERWRITE_EXISTING"
+    ) 2>&1
+)"
+assert_contains "partial target offers explicit backup-and-restart recovery" \
+    "overwrite=1" <(printf '%s\n' "$partial_recovery_result")
+
+partial_diagnosis_result="$(
+    (
+        reset_state
+        SEQDESK_DIR="$TARGET_PARTIAL"
+        resolve_install_operation <<'EOF'
+1
+EOF
+    ) 2>&1
+)"
 assert_contains "partial target receives diagnosis guidance" \
-    "doctor --dir" "$OUT"
+    "doctor --dir" <(printf '%s\n' "$partial_diagnosis_result")
 
 if ( reset_state; SEQDESK_DIR="$TARGET_UNRELATED"; resolve_install_operation ) >"$OUT" 2>&1; then
     echo "FAIL: unrelated target entered a fresh install without explicit overwrite" >&2
@@ -485,6 +506,50 @@ assert_eq "new release reads the shared data directory" \
     "../../data" "$(readlink "$UPDATE_RELEASE/data")"
 assert_eq "activation uses the versioned release" \
     "releases/1.2.4" "$(readlink "$UPDATE_LAYOUT/current")"
+
+echo ""
+echo "== Case 2j: apply lock and recovery checkpoint are safe and secret-free =="
+reset_state
+SEQDESK_DIR="$TEST_TMP_DIR/locked-install"
+SEQDESK_DEPLOYMENT_PROFILE="research-workbench"
+SEQDESK_DATABASE_URL="postgresql://seqdesk:CHECKPOINT_DB_SECRET@localhost/seqdesk"
+SEQDESK_BOOTSTRAP_ADMIN_PASSWORD="CHECKPOINT_ADMIN_SECRET"
+LATEST_VERSION="1.2.4"
+acquire_install_lock
+assert_eq "installer lock records the owning process" \
+    "$$" "$(cat "$INSTALL_LOCK_DIR/pid")"
+if acquire_install_lock >"$OUT" 2>&1; then
+    echo "FAIL: a second install operation acquired the same target lock" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: concurrent install operation is refused"
+fi
+assert_contains "lock conflict identifies the active process" \
+    "already running" "$OUT"
+write_install_checkpoint "database-ready" "Database target prepared and reachable"
+assert_contains "checkpoint records the selected profile" \
+    '"deploymentProfile": "research-workbench"' "$INSTALL_CHECKPOINT_PATH"
+assert_contains "checkpoint records the current apply phase" \
+    '"phase": "database-ready"' "$INSTALL_CHECKPOINT_PATH"
+assert_not_contains "checkpoint omits the database password" \
+    "CHECKPOINT_DB_SECRET" "$INSTALL_CHECKPOINT_PATH"
+assert_not_contains "checkpoint omits the administrator password" \
+    "CHECKPOINT_ADMIN_SECRET" "$INSTALL_CHECKPOINT_PATH"
+complete_install_checkpoint
+assert_eq "successful completion removes the lock" \
+    "absent" "$([ -e "$INSTALL_LOCK_DIR" ] && printf present || printf absent)"
+assert_eq "successful completion removes the checkpoint" \
+    "absent" "$([ -e "$INSTALL_CHECKPOINT_PATH" ] && printf present || printf absent)"
+
+reset_state
+PM2_CONFIGURED="true"
+enable_doctor_for_persistent_service
+assert_eq "persistent services enable automatic doctor verification" \
+    "1" "$SEQDESK_RUN_DOCTOR"
+SEQDESK_RUN_DOCTOR="0"
+enable_doctor_for_persistent_service
+assert_eq "automation can explicitly opt out of automatic doctor" \
+    "0" "$SEQDESK_RUN_DOCTOR"
 
 echo ""
 echo "== Case 3: wizard is a no-op under -y (unattended must be untouched) =="

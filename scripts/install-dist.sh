@@ -264,6 +264,9 @@ TOTAL_STEPS=9
 CURRENT_STEP=0
 RESTORE_BACKUP_PATH=""
 RESTORE_CURRENT_LINK_TARGET=""
+INSTALL_LOCK_DIR=""
+INSTALL_LOCK_HELD="false"
+INSTALL_CHECKPOINT_PATH=""
 INSTALL_PHASE="init"
 # What the installer can actually say about the release tarball it unpacked.
 # Surfaced in the final summary, because "SUCCESS" next to an unverified
@@ -457,6 +460,12 @@ run_doctor_if_requested() {
         print_success "Doctor checks completed"
     else
         print_warning "Doctor reported issues. Installation completed; review the checks above."
+    fi
+}
+
+enable_doctor_for_persistent_service() {
+    if [ "${PM2_CONFIGURED:-false}" = "true" ] && [ -z "${SEQDESK_RUN_DOCTOR:-}" ]; then
+        SEQDESK_RUN_DOCTOR="1"
     fi
 }
 
@@ -6034,9 +6043,31 @@ resolve_install_operation() {
                 return 0
             fi
             print_error "A partial or interrupted SeqDesk installation was detected at $SEQDESK_DIR."
-            print_existing_install_diagnosis
-            print_info "After diagnosis, pass --overwrite-existing to back it up and start over."
-            exit 1
+            if is_truthy "$SEQDESK_YES"; then
+                print_existing_install_diagnosis
+                print_info "After diagnosis, pass --overwrite-existing to back it up and start over."
+                exit 1
+            fi
+            echo "  1) Diagnose — make no changes and print the health-check command"
+            echo "  2) Recover — preserve the partial directory as a backup and restart setup"
+            echo "  3) Cancel"
+            local partial_choice
+            partial_choice=$(read_input "  Choose [3]: ")
+            partial_choice=${partial_choice:-3}
+            case "$partial_choice" in
+                1|diagnose)
+                    print_existing_install_diagnosis
+                    exit 0
+                    ;;
+                2|recover|resume)
+                    SEQDESK_OVERWRITE_EXISTING="1"
+                    print_warning "The partial target will be preserved as a timestamped backup before setup restarts."
+                    ;;
+                *)
+                    echo "Installation cancelled."
+                    exit 0
+                    ;;
+            esac
             ;;
         unrelated-existing)
             if is_truthy "$SEQDESK_OVERWRITE_EXISTING"; then
@@ -7494,6 +7525,95 @@ main().catch((error) => {
 NODE
 }
 
+install_operation_label() {
+    if is_truthy "${SEQDESK_RECONFIGURE:-}"; then
+        printf '%s' "reconfigure"
+    elif is_truthy "${SEQDESK_UPDATE_EXISTING:-}"; then
+        printf '%s' "update"
+    else
+        printf '%s' "install"
+    fi
+}
+
+release_install_lock() {
+    if [ "$INSTALL_LOCK_HELD" != "true" ] || [ -z "$INSTALL_LOCK_DIR" ]; then
+        return 0
+    fi
+    rm -f "$INSTALL_LOCK_DIR/pid" "$INSTALL_LOCK_DIR/started-at" 2>/dev/null || true
+    rmdir "$INSTALL_LOCK_DIR" 2>/dev/null || true
+    INSTALL_LOCK_HELD="false"
+}
+
+acquire_install_lock() {
+    INSTALL_LOCK_DIR="${SEQDESK_DIR}.install.lock"
+    local existing_pid=""
+
+    if mkdir "$INSTALL_LOCK_DIR" 2>/dev/null; then
+        INSTALL_LOCK_HELD="true"
+    elif [ -f "$INSTALL_LOCK_DIR/pid" ]; then
+        IFS= read -r existing_pid < "$INSTALL_LOCK_DIR/pid" || true
+        if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
+            print_error "Another SeqDesk install operation is already running for $SEQDESK_DIR (process $existing_pid)."
+            return 1
+        fi
+        print_warning "Removing a stale installer lock for $SEQDESK_DIR."
+        rm -f "$INSTALL_LOCK_DIR/pid" "$INSTALL_LOCK_DIR/started-at" 2>/dev/null || true
+        rmdir "$INSTALL_LOCK_DIR" 2>/dev/null || true
+        if mkdir "$INSTALL_LOCK_DIR" 2>/dev/null; then
+            INSTALL_LOCK_HELD="true"
+        fi
+    fi
+
+    if [ "$INSTALL_LOCK_HELD" != "true" ]; then
+        print_error "Could not acquire the installer lock: $INSTALL_LOCK_DIR"
+        print_info "If no installer is running, inspect that directory and preserve it before removing a stale lock."
+        return 1
+    fi
+
+    printf '%s\n' "$$" > "$INSTALL_LOCK_DIR/pid"
+    printf '%s\n' "$INSTALL_STARTED_AT" > "$INSTALL_LOCK_DIR/started-at"
+    chmod 600 "$INSTALL_LOCK_DIR/pid" "$INSTALL_LOCK_DIR/started-at" 2>/dev/null || true
+}
+
+write_install_checkpoint() {
+    local phase="$1"
+    local detail="${2:-}"
+    INSTALL_PHASE="$phase"
+    INSTALL_CHECKPOINT_PATH="${SEQDESK_DIR}.install-state.json"
+
+    SEQDESK_CHECKPOINT_PATH="$INSTALL_CHECKPOINT_PATH" \
+    SEQDESK_CHECKPOINT_PHASE="$phase" \
+    SEQDESK_CHECKPOINT_DETAIL="$detail" \
+    SEQDESK_CHECKPOINT_OPERATION="$(install_operation_label)" \
+    SEQDESK_CHECKPOINT_TARGET="$SEQDESK_DIR" \
+    SEQDESK_CHECKPOINT_VERSION="${LATEST_VERSION:-${SEQDESK_VERSION:-latest}}" \
+    SEQDESK_CHECKPOINT_PROFILE="${SEQDESK_DEPLOYMENT_PROFILE:-}" \
+    node <<'NODE'
+const fs = require("fs");
+const checkpointPath = process.env.SEQDESK_CHECKPOINT_PATH;
+const tempPath = `${checkpointPath}.${process.pid}.tmp`;
+const checkpoint = {
+  schemaVersion: 1,
+  operation: process.env.SEQDESK_CHECKPOINT_OPERATION,
+  phase: process.env.SEQDESK_CHECKPOINT_PHASE,
+  detail: process.env.SEQDESK_CHECKPOINT_DETAIL || undefined,
+  targetDirectory: process.env.SEQDESK_CHECKPOINT_TARGET,
+  releaseVersion: process.env.SEQDESK_CHECKPOINT_VERSION,
+  deploymentProfile: process.env.SEQDESK_CHECKPOINT_PROFILE || undefined,
+  updatedAt: new Date().toISOString(),
+};
+fs.writeFileSync(tempPath, `${JSON.stringify(checkpoint, null, 2)}\n`, { mode: 0o600 });
+fs.renameSync(tempPath, checkpointPath);
+NODE
+}
+
+complete_install_checkpoint() {
+    if [ -n "$INSTALL_CHECKPOINT_PATH" ]; then
+        rm -f "$INSTALL_CHECKPOINT_PATH" 2>/dev/null || true
+    fi
+    release_install_lock
+}
+
 on_error() {
     local exit_code=$?
     # Captured before anything else runs: BASH_COMMAND is overwritten as soon as
@@ -7564,6 +7684,12 @@ on_error() {
         fi
     fi
 
+    if [ -n "${INSTALL_CHECKPOINT_PATH:-}" ] && [ -f "$INSTALL_CHECKPOINT_PATH" ]; then
+        print_warning "Recovery checkpoint preserved at: $INSTALL_CHECKPOINT_PATH"
+        print_info "It contains no passwords or database connection strings. Re-run the installer with the same --dir after correcting the reported problem."
+    fi
+    release_install_lock
+
     echo ""
     print_error "Install failed after $(format_elapsed "$elapsed")."
     print_info "Command: ${failed_command}"
@@ -7585,6 +7711,7 @@ cleanup_installer_temp_files() {
     if [ -n "${SEQDESK_PROFILE_CONFIG_FILE:-}" ] && [ -f "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
         rm -f "$SEQDESK_PROFILE_CONFIG_FILE"
     fi
+    release_install_lock
 }
 
 print_login_summary() {
@@ -8139,6 +8266,10 @@ fi
 # changes start below. The late in-release wizard is skipped for this path.
 print_config_summary
 confirm_config
+if ! acquire_install_lock; then
+    exit 1
+fi
+write_install_checkpoint "confirmed" "Configuration reviewed; apply may begin"
 
 # Apply the selected PostgreSQL choice only after confirmation. A healthy
 # existing server remains untouched; otherwise the normal provisioning ladder
@@ -8146,6 +8277,7 @@ confirm_config
 if ! preflight_local_postgres; then
     exit 1
 fi
+write_install_checkpoint "database-ready" "Database target prepared and reachable"
 
 if [ "$PIPELINES_ENABLED" = "true" ] && [ "$HAS_CONDA" != "true" ]; then
     print_header "Install Miniconda"
@@ -8354,6 +8486,8 @@ else
     fi
 fi
 
+write_install_checkpoint "release-ready" "Release metadata resolved and package download verified when a checksum was available"
+
 # Extract
 print_step "Extract package"
 
@@ -8501,6 +8635,7 @@ else
 fi
 
 cd "$APP_DIR"
+write_install_checkpoint "release-activated" "Application release prepared and selected"
 
 INSTALLED_VERSION="$LATEST_VERSION"
 if command_exists node && [ -f package.json ]; then
@@ -8543,6 +8678,7 @@ if [ -z "$SEQDESK_NEXTAUTH_SECRET" ]; then
 fi
 
 write_config "$PIPELINES_ENABLED" "$SEQDESK_DATA_PATH" "$SEQDESK_RUN_DIR"
+write_install_checkpoint "configuration-written" "Runtime configuration persisted"
 
 # Materialize the storage directories captured during configuration. The config
 # now points at these paths, but only the default $SEQDESK_DIR/data is created
@@ -8672,6 +8808,7 @@ else
         print_info "The configured administrator will be created on first launch; no default member account is enabled."
     fi
 fi
+write_install_checkpoint "database-applied" "Database migration/seed policy completed"
 
 if [ -n "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
     if [ ! -f "scripts/apply-install-profile.mjs" ]; then
@@ -8814,6 +8951,8 @@ fi
 
 print_step "Install user CLI"
 install_user_cli
+write_install_checkpoint "complete" "Application, configuration, database, runtime, and service setup completed"
+complete_install_checkpoint
 
 # Done
 INSTALL_END_TS=$(date +%s)
@@ -8961,6 +9100,11 @@ fi
 print_login_summary
 
 print_header "Diagnose"
+
+# A persistent service can be checked immediately and should not make a new
+# operator discover the verification flag. SEQDESK_RUN_DOCTOR=0 remains an
+# explicit opt-out for automation that performs its own health check.
+enable_doctor_for_persistent_service
 
 if seqdesk_cli_command >/dev/null 2>&1; then
     if [ "$PM2_CONFIGURED" = "true" ]; then

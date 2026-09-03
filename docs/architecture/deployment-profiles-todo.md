@@ -104,8 +104,8 @@ Acceptance:
 
 - [ ] Existing installations behave exactly as before without configuration changes.
 - [ ] The same release artifact can be installed successfully as each of the three profiles.
-- [ ] No profile uses a copied or independently versioned installer.
-- [ ] Updating an installation changes the application version without changing its selected profile.
+- [x] No profile uses a copied or independently versioned installer.
+- [x] Updating an installation changes the application version without changing its selected profile.
 - [ ] Server routes, APIs, landing redirects, and client navigation agree on the active profile.
 - [x] Profile resolution and legacy aliases have focused tests.
 - [ ] Invalid or incomplete profile/module combinations fail closed with actionable diagnostics.
@@ -133,7 +133,7 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 
 ### Guided question flow
 
-- [ ] Run a read-only basic prerequisite check before collecting configuration so unsupported runtime/host/tool/target conditions fail before the user completes the wizard.
+- [x] Run a read-only basic prerequisite check before collecting configuration so unsupported runtime/host/tool/target conditions fail before the user completes the wizard.
 - [ ] Replace the current split shell and Node prompt logic with one question schema/state machine, even if execution is internally divided around preflight.
 - [x] Require an explicit deployment-profile selection on a fresh guided install; do not preselect Sequencing Center.
 - [x] Present the three short workflow-based descriptions in the guided installer:
@@ -161,9 +161,10 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [ ] Expand the current redacted review (which now includes profile, administrator, enrollment, database, paths, and pipeline enablement) with access topology, free-space results, executor/download estimates, optional content, value sources/locks, and warnings.
 - [ ] Allow Back, Save sanitized plan, Install, and Cancel before mutations begin.
 - [x] After confirmation, ask no new product/configuration questions; display stable pending/running/done/failed stages.
-- [ ] Run all detectable preflight before material changes and use an install lock/idempotent checkpoints during apply.
+- [x] Take an exclusive per-target apply lock and record schema-versioned, secret-free recovery checkpoints through material stages.
+- [ ] Run remaining detectable preflight before material changes and make recorded checkpoints automatically resumable/idempotent.
 - [ ] Verify persisted profile, database/migrations, intended administrator, application version/profile response, storage writability, and selected runtime/smoke test.
-- [ ] Run the equivalent of `seqdesk doctor` automatically when the guided installer starts a persistent service.
+- [x] Run the equivalent of `seqdesk doctor` automatically when the guided installer starts a persistent service.
 - [ ] Distinguish “installed and verified,” “installed; manual start required,” “installed; optional/operational setup remains,” and restored/preserved failure states.
 - [ ] Show a generated administrator password exactly once only after successful account creation, outside logs, plus the local reset command.
 - [ ] Never create or advertise known `admin`/`user` packaged passwords in a supported release install.
@@ -188,7 +189,7 @@ Acceptance:
 - [ ] `--plan` is redacted and produces no material mutations.
 - [x] Local-only/team-server URL and bind combinations are validated.
 - [ ] Failure injection covers download, checksum, database, migration, storage, account creation, runtime, service start, and health verification with safe retry/recovery output.
-- [ ] Update/reconfigure preserve the deployment profile, accounts, and scientific data.
+- [x] Update/reconfigure preserve the deployment profile, accounts, and scientific data.
 - [x] No anonymous setup-status request can create an account or change configuration.
 - [x] No packaged fresh install uses known default credentials or creates a generic second account.
 - [x] First login, onboarding, completion summary, and next steps use the selected profile's terminology and journey.
