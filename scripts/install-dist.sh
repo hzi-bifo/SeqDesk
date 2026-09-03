@@ -16,7 +16,7 @@
 #   SEQDESK_WITH_CONDA=1           - Legacy: install Miniconda + pipeline env
 #   SEQDESK_SKIP_DEPS=1            - Deprecated (ignored in distribution installer)
 #   SEQDESK_YES=1                  - Non-interactive; accept defaults
-#   SEQDESK_INTERACTIVE=1          - Guided setup wizard (database choice + accounts)
+#   SEQDESK_INTERACTIVE=1          - Guided profile, infrastructure, and account setup
 #   SEQDESK_DATA_PATH=/data        - Optional sequencing data base path override
 #   SEQDESK_RUN_DIR=/data/runs     - Optional pipeline run directory override
 #   SEQDESK_PIPELINE_DATABASE_DIR=/data/pipeline-dbs - Optional pipeline DB directory override
@@ -136,7 +136,8 @@ SEQDESK_DB_ADOPTED="false"
 SEQDESK_BOOTSTRAP_ADMIN_EXISTED="false"
 SEQDESK_BOOTSTRAP_RESEARCHER_EXISTED="false"
 # A generated administrator password is disclosed only after a database probe
-# confirms that the intended administrator row exists with system access.
+# confirms that the intended administrator row exists, is active, and has
+# system access.
 SEQDESK_BOOTSTRAP_ADMIN_VERIFIED="false"
 # Number of User rows the target database held before this install seeded it.
 # Empty means "not established" and must never be read as zero: only a measured
@@ -200,6 +201,10 @@ SEQDESK_PROFILE_CODE="${SEQDESK_PROFILE_CODE:-${SEQDESK_KEY:-}}"
 SEQDESK_PROFILE_REGISTRY_URL="${SEQDESK_PROFILE_REGISTRY_URL:-https://seqdesk.org/api/install-profiles}"
 SEQDESK_PROFILE_CONFIG_FILE=""
 SEQDESK_PROFILE_MIN_VERSION=""
+# Normalized boolean feature-module switches loaded from --config or a hosted
+# install profile. Keeping only this non-secret JSON lets the InstallPlan show
+# and validate the exact module selection after temporary config files are gone.
+SEQDESK_FEATURE_MODULES_JSON="${SEQDESK_FEATURE_MODULES_JSON:-}"
 SEQDESK_PREFETCHED_VERSION_INFO=""
 SEQDESK_ADDITIONAL_SETTINGS_FILE="${SEQDESK_ADDITIONAL_SETTINGS_FILE:-}"
 SEQDESK_ADDITIONAL_SETTINGS=()
@@ -1497,9 +1502,12 @@ const email = (process.env.SEQDESK_VERIFY_ADMIN_EMAIL || "").trim();
 const expectedPassword = process.env.SEQDESK_VERIFY_ADMIN_PASSWORD || "";
 const prisma = new PrismaClient();
 prisma.user
-  .findUnique({ where: { email }, select: { systemRole: true, password: true } })
+  .findUnique({
+    where: { email },
+    select: { systemRole: true, isActive: true, password: true },
+  })
   .then(async (user) => {
-    if (!user || user.systemRole !== "ADMIN") {
+    if (!user || user.systemRole !== "ADMIN" || user.isActive !== true) {
       process.exitCode = 1;
       return;
     }
@@ -3735,6 +3743,34 @@ is_valid_email() {
     [[ "${1:-}" =~ $re ]]
 }
 
+# bcrypt ignores bytes after the first 72. Count bytes rather than shell
+# characters so multi-byte passwords cannot slip through and become silently
+# truncated credentials.
+bcrypt_plaintext_password_is_supported() {
+    local password="${1-}" byte_count
+    byte_count="$(printf '%s' "$password" | wc -c)"
+    byte_count="${byte_count//[[:space:]]/}"
+    [[ "$byte_count" =~ ^[0-9]+$ ]] && [ "$byte_count" -le 72 ]
+}
+
+validate_bootstrap_plaintext_passwords() {
+    if [ -n "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD:-}" ] && \
+        [ -z "${SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH:-}" ] && \
+        ! bcrypt_plaintext_password_is_supported "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD"; then
+        print_error "Initial administrator password exceeds bcrypt's 72-byte UTF-8 limit. Choose a shorter password."
+        return 1
+    fi
+
+    if [ -n "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD:-}" ] && \
+        [ -z "${SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD_HASH:-}" ] && \
+        ! bcrypt_plaintext_password_is_supported "$SEQDESK_BOOTSTRAP_RESEARCHER_PASSWORD"; then
+        print_error "Initial researcher password exceeds bcrypt's 72-byte UTF-8 limit. Choose a shorter password."
+        return 1
+    fi
+
+    return 0
+}
+
 # Read a secret without echoing it. Prompt goes to the terminal; the value is
 # printed to stdout for capture via $(...).
 read_secret() {
@@ -3762,6 +3798,19 @@ interactive_prompt_email() {
     done
 }
 
+interactive_prompt_name() {
+    local label="$1" default_value="$2" reply
+    while true; do
+        reply=$(read_input "$label [$default_value]: ")
+        reply=${reply:-$default_value}
+        if [ -n "${reply//[[:space:]]/}" ] && [ "${#reply}" -le 100 ]; then
+            INTERACTIVE_RESULT="$reply"
+            return 0
+        fi
+        print_error "  Enter a name between 1 and 100 characters."
+    done
+}
+
 interactive_prompt_password() {
     local label="$1" pw pw2
     INTERACTIVE_RESULT_GENERATED="false"
@@ -3784,6 +3833,10 @@ interactive_prompt_password() {
         fi
         if [ "${#pw}" -lt 8 ]; then
             print_error "  Password must be at least 8 characters. Try again."
+            continue
+        fi
+        if ! bcrypt_plaintext_password_is_supported "$pw"; then
+            print_error "  Password must be at most 72 UTF-8 bytes for bcrypt. Try again."
             continue
         fi
         pw2=$(read_secret "  Confirm password: ")
@@ -3879,6 +3932,149 @@ validate_deployment_profile() {
     esac
 }
 
+# Validate the smaller feature-module switches against the deployment profile
+# while the normalized InstallPlan is still read-only. This bootstrap copy of
+# the compatibility table intentionally mirrors
+# src/lib/deployment-profile/compatibility.ts: the public installer is a
+# standalone artifact and cannot import application TypeScript before the
+# release has been downloaded.
+validate_install_plan_profile_compatibility() {
+    local configured_modules="${SEQDESK_FEATURE_MODULES_JSON:-}"
+    [ -n "$configured_modules" ] || configured_modules="{}"
+    SEQDESK_PLAN_COMPATIBILITY_PROFILE="$SEQDESK_DEPLOYMENT_PROFILE" \
+    SEQDESK_PLAN_COMPATIBILITY_MODULES="$configured_modules" \
+    node <<'NODE'
+const profiles = {
+  "sequencing-center": {
+    label: "Sequencing center",
+    domains: [
+      "core",
+      "facility-intake",
+      "sample-catalog",
+      "sequencing-operations",
+      "analysis",
+      "publishing",
+      "support",
+    ],
+  },
+  "shared-lab": {
+    label: "Shared lab",
+    domains: [
+      "core",
+      "facility-intake",
+      "sample-catalog",
+      "sequencing-operations",
+      "analysis",
+      "publishing",
+    ],
+  },
+  "research-workbench": {
+    label: "Research workbench",
+    domains: ["core", "analysis", "publishing", "workbench"],
+  },
+};
+const requirements = {
+  "ai-validation": ["facility-intake"],
+  "mixs-metadata": ["sample-catalog"],
+  "account-validation": ["core"],
+  "funding-info": ["facility-intake"],
+  "billing-info": ["facility-intake"],
+  "ena-sample-fields": ["sample-catalog", "publishing"],
+  "sequencing-tech": ["sequencing-operations"],
+  "dynamic-studies": ["sample-catalog"],
+  "notifications": ["core"],
+};
+const alwaysEnabled = new Set(["sequencing-tech"]);
+const defaultStates = {
+  "ai-validation": true,
+  "mixs-metadata": true,
+  "account-validation": false,
+  "funding-info": false,
+  "billing-info": false,
+  "ena-sample-fields": true,
+  "sequencing-tech": true,
+  "dynamic-studies": false,
+  "notifications": false,
+};
+const profileId = process.env.SEQDESK_PLAN_COMPATIBILITY_PROFILE;
+const profile = profiles[profileId];
+if (!profile) {
+  console.error(
+    `Install-plan compatibility check failed: unknown deployment profile ${JSON.stringify(profileId)}. Choose sequencing-center, shared-lab, or research-workbench.`
+  );
+  process.exit(1);
+}
+
+let modules;
+try {
+  modules = JSON.parse(process.env.SEQDESK_PLAN_COMPATIBILITY_MODULES || "{}");
+} catch {
+  console.error(
+    "Install-plan compatibility check failed: configured feature modules are not valid JSON. Reload the installer configuration and try again."
+  );
+  process.exit(1);
+}
+if (!modules || typeof modules !== "object" || Array.isArray(modules)) {
+  console.error(
+    "Install-plan compatibility check failed: modules must be an object of module-id: true/false switches."
+  );
+  process.exit(1);
+}
+
+const domains = new Set(profile.domains);
+const explicitModuleIds = new Set(Object.keys(modules));
+const effectiveDefaults = Object.fromEntries(
+  Object.entries(requirements).map(([moduleId, requiredDomains]) => [
+    moduleId,
+    requiredDomains.every((domain) => domains.has(domain))
+      ? (alwaysEnabled.has(moduleId) || defaultStates[moduleId] === true)
+      : false,
+  ])
+);
+const completeModules = { ...effectiveDefaults, ...modules };
+const errors = [];
+for (const [moduleId, enabled] of Object.entries(completeModules)) {
+  const requiredDomains = requirements[moduleId];
+  if (!requiredDomains) {
+    errors.push(
+      `modules.${moduleId} is not a recognized SeqDesk feature module. Remove it or update SeqDesk to a release that declares it.`
+    );
+    continue;
+  }
+  if (typeof enabled !== "boolean") {
+    errors.push(`modules.${moduleId} must be true or false.`);
+    continue;
+  }
+  const missingDomains = requiredDomains.filter((domain) => !domains.has(domain));
+  if (!enabled) {
+    if (
+      alwaysEnabled.has(moduleId) &&
+      missingDomains.length === 0 &&
+      explicitModuleIds.has(moduleId)
+    ) {
+      errors.push(
+        `modules.${moduleId} cannot be disabled because SeqDesk currently treats it as always enabled. Remove this override; the deployment profile controls whether its domain is available.`
+      );
+    }
+    continue;
+  }
+  if (missingDomains.length > 0) {
+    errors.push(
+      `${profile.label} cannot enable modules.${moduleId}: it requires ${missingDomains.join(
+        " and "
+      )}, which this deployment profile does not provide. Disable modules.${moduleId} or choose a compatible deployment profile.`
+    );
+  }
+}
+
+if (errors.length > 0) {
+  console.error(`Install plan is incompatible with ${profile.label}:`);
+  for (const error of errors) console.error(`  - ${error}`);
+  process.exit(1);
+}
+NODE
+}
+
 prompt_deployment_profile() {
     if [ -n "$SEQDESK_DEPLOYMENT_PROFILE" ]; then
         validate_deployment_profile
@@ -3902,7 +4098,8 @@ prompt_deployment_profile() {
     echo "       Select this when sequencing orders and facility handoffs should not organize the UI."
     echo ""
     echo "  Not sure? External requesters -> 1. One shared lab team -> 2. Existing-data analysis -> 3."
-    echo "  This selects one view of the same application; it does not install a separate edition."
+    echo "  This selects one operating mode in the same application; it does not install a separate edition."
+    echo "  The mode changes workflows, permissions, navigation, and setup guidance."
     echo "  Changing it later requires a reviewed migration, not a view switch."
 
     local profile_choice
@@ -4187,9 +4384,18 @@ normalize_access_topology() {
     SEQDESK_BIND_HOST="${SEQDESK_BIND_HOST:-127.0.0.1}"
 
     if [ -z "$SEQDESK_ACCESS_AUDIENCE" ]; then
-        if is_loopback_bind_host "$SEQDESK_BIND_HOST" && \
-            { [ -z "$SEQDESK_NEXTAUTH_URL" ] || is_loopback_browser_url "$SEQDESK_NEXTAUTH_URL"; }; then
-            SEQDESK_ACCESS_AUDIENCE="local"
+        if is_loopback_bind_host "$SEQDESK_BIND_HOST"; then
+            if [ -z "$SEQDESK_NEXTAUTH_URL" ] || is_loopback_browser_url "$SEQDESK_NEXTAUTH_URL"; then
+                SEQDESK_ACCESS_AUDIENCE="local"
+            elif is_https_url "$SEQDESK_NEXTAUTH_URL"; then
+                # The normal team-server topology keeps SeqDesk itself on
+                # loopback and exposes only an HTTPS reverse proxy. Older
+                # settings files did not persist the human-facing audience, so
+                # infer it without rewriting the preserved URL or bind host.
+                SEQDESK_ACCESS_AUDIENCE="team-server"
+            else
+                SEQDESK_ACCESS_AUDIENCE="advanced"
+            fi
         else
             SEQDESK_ACCESS_AUDIENCE="advanced"
         fi
@@ -4466,11 +4672,54 @@ run_interactive_wizard_database() {
         return 0
     fi
 
-    print_header "Guided setup"
+    if is_truthy "${SEQDESK_UPDATE_EXISTING:-}"; then
+        print_header "Update existing SeqDesk installation"
+        print_info "The deployment profile, access URL/bind, database, storage, accounts, and workflow settings are preserved."
+        print_info "If this release requires a new choice, SeqDesk will show it as an onboarding/readiness item after the update."
+        return 0
+    fi
+
+    if is_truthy "${SEQDESK_RECONFIGURE:-}"; then
+        print_header "Reconfigure existing SeqDesk installation"
+    else
+        print_header "Guided setup"
+    fi
 
     # The operating model determines the questions and onboarding that follow.
     prompt_deployment_profile
-    prompt_access_topology
+    if is_truthy "${SEQDESK_RECONFIGURE:-}"; then
+        normalize_access_topology || return 1
+        print_info "Access — current settings"
+        echo "  Browser URL: $SEQDESK_NEXTAUTH_URL"
+        echo "  Bind host: $SEQDESK_BIND_HOST"
+        local change_access
+        change_access=$(read_input "  Change access settings? (y/N): ")
+        if is_truthy "$change_access"; then
+            SEQDESK_ACCESS_AUDIENCE=""
+            prompt_access_topology || return 1
+        else
+            print_info "  Existing access settings will be preserved."
+        fi
+    else
+        prompt_access_topology
+    fi
+
+    if is_truthy "${SEQDESK_RECONFIGURE:-}" && [ -n "$SEQDESK_DATABASE_URL" ]; then
+        print_info "Database — current connection"
+        echo "  $(redact_database_url "$SEQDESK_DATABASE_URL")"
+        echo "  Reconfiguration does not copy or migrate database contents."
+        local change_database
+        change_database=$(read_input "  Change the database connection? (y/N): ")
+        if ! is_truthy "$change_database"; then
+            print_info "  Existing database connection will be preserved."
+            return 0
+        fi
+        print_warning "  A different database is a separate data set. SeqDesk will not move accounts or scientific records."
+        SEQDESK_DATABASE_URL=""
+        SEQDESK_DATABASE_DIRECT_URL=""
+        MACOS_POSTGRES_SOCKET_DIR=""
+        SEQDESK_PRIVATE_POSTGRES="false"
+    fi
 
     # Database
     print_info "Database — where should SeqDesk store its data?"
@@ -4543,6 +4792,12 @@ run_interactive_wizard_accounts() {
             echo "  Workbench members join by invitation by default."
             ;;
     esac
+    interactive_prompt_name \
+        "  Admin first name" "${SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME:-Admin}"
+    SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME="$INTERACTIVE_RESULT"
+    interactive_prompt_name \
+        "  Admin last name" "${SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME:-User}"
+    SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME="$INTERACTIVE_RESULT"
     interactive_prompt_email "  Admin email" "admin@example.com"
     SEQDESK_BOOTSTRAP_ADMIN_EMAIL="$INTERACTIVE_RESULT"
     interactive_prompt_password "  Admin password"
@@ -4592,6 +4847,8 @@ ensure_secure_bootstrap_accounts() {
         SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED="true"
         print_info "Generated a strong password for the initial administrator; it will be shown once after the account is verified."
     fi
+
+    validate_bootstrap_plaintext_passwords
 }
 
 # Kept as a single entry point for callers (and tests) that drive the whole
@@ -4612,9 +4869,9 @@ Usage:
 
 Options:
   -y, --yes                    Non-interactive mode (accept defaults)
-  --interactive                Guided setup wizard: choose the database and
-                               create one secure administrator account, with a
-                               live database reachability check
+  --interactive                Guided setup wizard: choose the application mode,
+                               access, database, storage, workflow runtime, and
+                               one secure administrator account
   --verbose                    Print the diagnostic detail that normally goes
                                only to the install log
   --config <path-or-url>       Infrastructure JSON file (local path or https URL)
@@ -5393,6 +5650,7 @@ const slurm = toRecord(execution?.slurm);
 const runtime = toRecord(root.runtime);
 const telemetry = toRecord(root.telemetry);
 const notifications = toRecord(root.notifications);
+const modules = toRecord(root.modules);
 const bootstrap = toRecord(root.bootstrap);
 const bootstrapUsers = toRecord(bootstrap?.users);
 const bootstrapAdmin = toRecord(bootstrapUsers?.admin);
@@ -5400,6 +5658,15 @@ const bootstrapResearcher = toRecord(bootstrapUsers?.researcher);
 const forms = toRecord(root.forms);
 const privatePipelines = toRecord(root.privatePipelines);
 const metaxpath = toRecord(privatePipelines?.metaxpath);
+
+const featureModules = {};
+for (const [moduleId, rawEnabled] of Object.entries(modules || {})) {
+  const enabled = toOptionalBoolean(rawEnabled);
+  if (enabled === undefined) {
+    throw new Error(`modules.${moduleId} must be true or false.`);
+  }
+  featureModules[moduleId] = enabled;
+}
 
 const executionMode = toOptionalString(execution?.mode)?.toLowerCase();
 const explicitUseSlurm = toOptionalBoolean(
@@ -5634,6 +5901,7 @@ if (withPipelines === undefined) {
 }
 
 const out = {};
+out.SEQDESK_CFG_FEATURE_MODULES_JSON = JSON.stringify(featureModules);
 if (values.deploymentProfile) {
   out.SEQDESK_CFG_DEPLOYMENT_PROFILE = values.deploymentProfile;
 }
@@ -5750,6 +6018,7 @@ NODE
 
     apply_config_value SEQDESK_DIR SEQDESK_CFG_DIR
     apply_config_value SEQDESK_DEPLOYMENT_PROFILE SEQDESK_CFG_DEPLOYMENT_PROFILE
+    apply_config_value SEQDESK_FEATURE_MODULES_JSON SEQDESK_CFG_FEATURE_MODULES_JSON
     apply_config_value SEQDESK_ACCESS_AUDIENCE SEQDESK_CFG_ACCESS_AUDIENCE
     apply_config_value SEQDESK_BIND_HOST SEQDESK_CFG_BIND_HOST
     apply_config_value SEQDESK_USE_PM2 SEQDESK_CFG_USE_PM2
@@ -5807,6 +6076,7 @@ NODE
     apply_config_value SEQDESK_BOOTSTRAP_RESEARCHER_ROLE SEQDESK_CFG_BOOTSTRAP_RESEARCHER_ROLE
 
     unset SEQDESK_CFG_DIR SEQDESK_CFG_USE_PM2 SEQDESK_CFG_DEPLOYMENT_PROFILE
+    unset SEQDESK_CFG_FEATURE_MODULES_JSON
     unset SEQDESK_CFG_ACCESS_AUDIENCE SEQDESK_CFG_BIND_HOST
     unset SEQDESK_CFG_PORT SEQDESK_CFG_PROFILE_MIN_VERSION
     unset SEQDESK_CFG_DATA_PATH SEQDESK_CFG_RUN_DIR
@@ -5929,6 +6199,7 @@ if (!port && nextAuthUrl) {
 }
 const dataPath = trimString(config?.site?.dataBasePath);
 const deploymentProfile = trimString(config?.deployment?.profile);
+const accessAudience = trimString(app?.accessAudience);
 let bindHost;
 try {
   bindHost = trimString(fs.readFileSync(path.join(installDir, ".seqdesk-bind-host"), "utf8"));
@@ -5949,6 +6220,7 @@ if (typeof config?.pipelines?.enabled === "boolean") {
 
 const out = {};
 if (deploymentProfile) out.SEQDESK_EXISTING_DEPLOYMENT_PROFILE = deploymentProfile;
+if (accessAudience) out.SEQDESK_EXISTING_ACCESS_AUDIENCE = accessAudience;
 if (bindHost) out.SEQDESK_EXISTING_BIND_HOST = bindHost;
 if (port) out.SEQDESK_EXISTING_PORT = port;
 if (nextAuthUrl) out.SEQDESK_EXISTING_NEXTAUTH_URL = nextAuthUrl;
@@ -5987,6 +6259,7 @@ NODE
 
     apply_config_value SEQDESK_PORT SEQDESK_EXISTING_PORT
     apply_config_value SEQDESK_DEPLOYMENT_PROFILE SEQDESK_EXISTING_DEPLOYMENT_PROFILE
+    apply_config_value SEQDESK_ACCESS_AUDIENCE SEQDESK_EXISTING_ACCESS_AUDIENCE
     apply_config_value SEQDESK_BIND_HOST SEQDESK_EXISTING_BIND_HOST
     apply_config_value SEQDESK_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_URL
     apply_config_value SEQDESK_NEXTAUTH_SECRET SEQDESK_EXISTING_NEXTAUTH_SECRET
@@ -6003,7 +6276,7 @@ NODE
         print_info "Current deployment profile: $(deployment_profile_label "$SEQDESK_DEPLOYMENT_PROFILE") (preserved; read-only during maintenance)"
     fi
 
-    unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_BIND_HOST
+    unset SEQDESK_EXISTING_PORT SEQDESK_EXISTING_ACCESS_AUDIENCE SEQDESK_EXISTING_BIND_HOST
     unset SEQDESK_EXISTING_NEXTAUTH_URL SEQDESK_EXISTING_NEXTAUTH_SECRET
     unset SEQDESK_EXISTING_DEPLOYMENT_PROFILE
     unset SEQDESK_EXISTING_DATABASE_URL SEQDESK_EXISTING_DATABASE_DIRECT_URL SEQDESK_EXISTING_DATA_PATH
@@ -6352,7 +6625,12 @@ build_install_plan_json() {
     local managed_data_available_bytes=""
     local run_available_bytes=""
     local cache_available_bytes=""
+    local feature_modules_json="${SEQDESK_FEATURE_MODULES_JSON:-}"
     local required_install_bytes=2147483648
+    [ -n "$feature_modules_json" ] || feature_modules_json="{}"
+    if ! validate_install_plan_profile_compatibility; then
+        return 1
+    fi
     is_truthy "$SEQDESK_RECONFIGURE" && operation="reconfigure"
     is_truthy "$SEQDESK_UPDATE_EXISTING" && operation="update"
     uses_local_postgres_target || database_mode="existing"
@@ -6415,6 +6693,7 @@ build_install_plan_json() {
     SEQDESK_PLAN_ENTRY_SOURCE="$entry_source" \
     SEQDESK_PLAN_EXECUTOR="$executor" \
     SEQDESK_PLAN_PIPELINES="$PIPELINES_ENABLED" \
+    SEQDESK_PLAN_FEATURE_MODULES="$feature_modules_json" \
     SEQDESK_PLAN_USE_PM2="$SEQDESK_USE_PM2" \
     node <<'NODE'
 const truthy = (value) => ["1", "true", "yes", "y", "on"].includes(String(value || "").toLowerCase());
@@ -6426,6 +6705,7 @@ const optionalBytes = (value) => {
 };
 const size = Number(process.env.SEQDESK_PLAN_RELEASE_SIZE || "");
 const profile = process.env.SEQDESK_DEPLOYMENT_PROFILE;
+const featureModules = JSON.parse(process.env.SEQDESK_PLAN_FEATURE_MODULES || "{}");
 const pipelines = truthy(process.env.SEQDESK_PLAN_PIPELINES);
 const usePm2 = truthy(process.env.SEQDESK_PLAN_USE_PM2);
 const entrySource = process.env.SEQDESK_PLAN_ENTRY_SOURCE || "default";
@@ -6466,7 +6746,7 @@ const plan = {
       pipelineCache: optionalBytes(process.env.SEQDESK_PLAN_CACHE_AVAILABLE_BYTES),
     },
   },
-  deployment: { profile },
+  deployment: { profile, featureModules },
   access: {
     audience: process.env.SEQDESK_ACCESS_AUDIENCE,
     browserUrl: process.env.SEQDESK_NEXTAUTH_URL,
@@ -6512,6 +6792,7 @@ const plan = {
   },
   sources: {
     "deployment.profile": entrySource,
+    "deployment.featureModules": Object.keys(featureModules).length > 0 ? entrySource : "default",
     access: entrySource,
     database: entrySource,
     storage: entrySource,
@@ -6568,6 +6849,24 @@ line("Install disk reserve", `${formatBytes(plan.preflight.installationRequiredB
 line("Target writable", plan.preflight.targetWritable ? "yes" : "no");
 line("Deployment profile", plan.deployment.profile);
 line("Profile behavior", profileSummary[plan.deployment.profile]);
+const configuredModules = Object.entries(plan.deployment.featureModules || {});
+const enabledModules = configuredModules
+  .filter(([, enabled]) => enabled)
+  .map(([moduleId]) => moduleId);
+const disabledModules = configuredModules
+  .filter(([, enabled]) => !enabled)
+  .map(([moduleId]) => moduleId);
+line(
+  "Requested enabled modules",
+  enabledModules.length > 0 ? enabledModules.join(", ") : "none selected by installer"
+);
+if (disabledModules.length > 0) line("Requested disabled modules", disabledModules.join(", "));
+if (configuredModules.length > 0) {
+  line(
+    "Module toggle scope",
+    "per-module requests; an existing global feature-module disable remains authoritative"
+  );
+}
 line("Enrollment", plan.enrollment.policy);
 line("Access", plan.access.audience);
 line("Browser URL", plan.access.browserUrl);
@@ -6606,7 +6905,9 @@ NODE
 
 emit_install_plan() {
     local plan_json
-    plan_json="$(build_install_plan_json)"
+    if ! plan_json="$(build_install_plan_json)"; then
+        return 1
+    fi
     if is_truthy "$SEQDESK_PLAN_JSON"; then
         if [ -n "${SEQDESK_PLAN_STDOUT_FD:-}" ]; then
             printf '%s\n' "$plan_json" >&4
@@ -6737,7 +7038,9 @@ print_preflight_summary() {
 
 print_config_summary() {
     local plan_json
-    plan_json="$(build_install_plan_json)"
+    if ! plan_json="$(build_install_plan_json)"; then
+        return 1
+    fi
     render_install_plan_human "$plan_json"
 }
 
@@ -6790,6 +7093,8 @@ reset_guided_plan_answers() {
     SEQDESK_DATA_PATH=""
     SEQDESK_RUN_DIR=""
     SEQDESK_PIPELINE_DATABASE_DIR=""
+    SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME=""
+    SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME=""
     SEQDESK_BOOTSTRAP_ADMIN_EMAIL=""
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD=""
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH=""
@@ -6841,7 +7146,9 @@ confirm_config() {
     fi
 
     local plan_json="${1:-}"
-    [ -n "$plan_json" ] || plan_json="$(build_install_plan_json)"
+    if [ -z "$plan_json" ] && ! plan_json="$(build_install_plan_json)"; then
+        return 1
+    fi
 
     if interactive_wizard_enabled; then
         local action destination saved_path
@@ -6863,7 +7170,10 @@ confirm_config() {
                         print_warning "The revised choices did not pass preflight; review the messages above and try again."
                         continue
                     fi
-                    plan_json="$(build_install_plan_json)"
+                    if ! plan_json="$(build_install_plan_json)"; then
+                        print_warning "The revised choices are incompatible; review the messages above and choose again."
+                        continue
+                    fi
                     render_install_plan_human "$plan_json"
                     ;;
                 3|save)
@@ -7453,6 +7763,7 @@ write_config() {
     SEQDESK_INSTALL_DATA_PATH="$data_path" \
     SEQDESK_INSTALL_DEPLOYMENT_PROFILE="${SEQDESK_DEPLOYMENT_PROFILE:-}" \
     SEQDESK_INSTALL_ONBOARDING_VERSION="${SEQDESK_ONBOARDING_VERSION:-}" \
+    SEQDESK_INSTALL_ACCESS_AUDIENCE="${SEQDESK_ACCESS_AUDIENCE:-}" \
     SEQDESK_INSTALL_RUN_DIR="$run_dir" \
     SEQDESK_INSTALL_PIPELINE_DATABASE_DIR="${SEQDESK_PIPELINE_DATABASE_DIR:-}" \
     SEQDESK_INSTALL_PIPELINES_ENABLED="$pipelines_enabled" \
@@ -7495,6 +7806,7 @@ const fs = require('fs');
 const dataPath = process.env.SEQDESK_INSTALL_DATA_PATH || '';
 const deploymentProfile = process.env.SEQDESK_INSTALL_DEPLOYMENT_PROFILE || '';
 const onboardingVersionRaw = process.env.SEQDESK_INSTALL_ONBOARDING_VERSION || '';
+const accessAudience = process.env.SEQDESK_INSTALL_ACCESS_AUDIENCE || '';
 const runDir = process.env.SEQDESK_INSTALL_RUN_DIR || '';
 const pipelineDatabaseDir = process.env.SEQDESK_INSTALL_PIPELINE_DATABASE_DIR || '';
 const pipelinesEnabled = process.env.SEQDESK_INSTALL_PIPELINES_ENABLED || '';
@@ -7587,6 +7899,9 @@ function hasAnyValue(record) {
 }
 
 function hashBootstrapPassword(password) {
+  if (Buffer.byteLength(password, 'utf8') > 72) {
+    throw new Error("Bootstrap plaintext password exceeds bcrypt's 72-byte UTF-8 limit");
+  }
   const { hashSync } = require('bcryptjs');
   return hashSync(password, 12);
 }
@@ -7673,9 +7988,10 @@ if (runDir || executionUseSlurm !== undefined) {
 }
 
 const appPort = toOptionalPort(appPortRaw);
-if (appPort !== undefined) {
+if (appPort !== undefined || accessAudience) {
   config.app = config.app && typeof config.app === 'object' ? config.app : {};
-  config.app.port = appPort;
+  if (appPort !== undefined) config.app.port = appPort;
+  if (accessAudience) config.app.accessAudience = accessAudience;
 }
 
 const runtime = config.runtime && typeof config.runtime === 'object' ? config.runtime : {};
@@ -8763,7 +9079,10 @@ if ! resolve_release_metadata_for_plan; then
 fi
 
 if is_truthy "$SEQDESK_PLAN_ONLY"; then
-    emit_install_plan
+    if ! emit_install_plan; then
+        clear_bootstrap_plaintext_passwords
+        exit 1
+    fi
     clear_bootstrap_plaintext_passwords
     exit 0
 fi
@@ -8771,9 +9090,15 @@ fi
 # This is the single product-configuration confirmation. Everything above is
 # read-only discovery or ephemeral input handling; service/package/filesystem
 # changes start below. The late in-release wizard is skipped for this path.
-review_plan_json="$(build_install_plan_json)"
+if ! review_plan_json="$(build_install_plan_json)"; then
+    clear_bootstrap_plaintext_passwords
+    exit 1
+fi
 render_install_plan_human "$review_plan_json"
-confirm_config "$review_plan_json"
+if ! confirm_config "$review_plan_json"; then
+    clear_bootstrap_plaintext_passwords
+    exit 1
+fi
 unset review_plan_json
 if ! acquire_install_lock; then
     exit 1
@@ -9331,6 +9656,21 @@ if [ -n "$SEQDESK_PROFILE_CONFIG_FILE" ]; then
     fi
 
     if ! run_with_spinner "Hosted install profile settings" node scripts/apply-install-profile.mjs --profile-config "$SEQDESK_PROFILE_CONFIG_FILE"; then
+        exit 1
+    fi
+elif [ -n "$SEQDESK_FEATURE_MODULES_JSON" ] && [ "$SEQDESK_FEATURE_MODULES_JSON" != "{}" ]; then
+    if [ ! -f "scripts/apply-install-profile.mjs" ]; then
+        print_error "Missing scripts/apply-install-profile.mjs; cannot apply configured feature modules."
+        exit 1
+    fi
+
+    # The normalized, non-secret module map has already passed InstallPlan
+    # compatibility validation. Apply it only for local/unattended config;
+    # hosted profiles must continue through the profile applicator above so
+    # their managed-setting and reload semantics remain intact.
+    if ! run_with_spinner "Configured feature modules" \
+        env SEQDESK_FEATURE_MODULES_JSON="$SEQDESK_FEATURE_MODULES_JSON" \
+        node scripts/apply-install-profile.mjs --feature-modules-from-env; then
         exit 1
     fi
 fi

@@ -24,6 +24,7 @@ vi.mock("@/lib/deployment-profile/server", () => ({
 }));
 
 import {
+  requireFacilityAdminSequencingReadSession,
   requireFacilityAdminSequencingSession,
   SequencingApiError,
 } from "./server";
@@ -49,6 +50,41 @@ describe("requireFacilityAdminSequencingSession", () => {
     mocks.getServerSession.mockResolvedValue(null);
 
     await expect(requireFacilityAdminSequencingSession()).rejects.toMatchObject({
+      status: 401,
+      message: "Unauthorized",
+    });
+  });
+
+  it("rejects an invalidated session before applying demo restrictions", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "disabled-demo",
+        role: "DISABLED",
+        authorizationValid: false,
+        isDemo: true,
+      },
+    });
+    mocks.isDemoSession.mockReturnValue(true);
+
+    await expect(requireFacilityAdminSequencingSession()).rejects.toMatchObject({
+      status: 401,
+      message: "Unauthorized",
+    });
+    expect(mocks.isDemoSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalidated session in the read-only guard", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "disabled-operator",
+        role: "DISABLED",
+        authorizationValid: false,
+      },
+    });
+
+    await expect(
+      requireFacilityAdminSequencingReadSession()
+    ).rejects.toMatchObject({
       status: 401,
       message: "Unauthorized",
     });

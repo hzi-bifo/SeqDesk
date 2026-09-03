@@ -2,7 +2,8 @@
   "_comment": "Repository-development example. Copy to seqdesk.config.json; installed releases use settings.json and default to port 8000. deployment.profile selects one operating model in the same application: sequencing-center, shared-lab, or research-workbench.",
 
   "app": {
-    "port": 3000
+    "port": 3000,
+    "accessAudience": "local"
   },
 
   "deployment": {

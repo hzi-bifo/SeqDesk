@@ -27,6 +27,11 @@ describe("GET /api/onboarding/status", () => {
       complete: false,
       completedCount: 2,
       totalCount: 8,
+      requiredCompletedCount: 1,
+      requiredTotalCount: 2,
+      recommendedCompletedCount: 1,
+      recommendedTotalCount: 6,
+      recommendationsComplete: false,
       items: [
         {
           id: "verify-storage",
@@ -52,6 +57,8 @@ describe("GET /api/onboarding/status", () => {
       profile: "research-workbench",
       completedCount: 2,
       totalCount: 8,
+      requiredCompletedCount: 1,
+      requiredTotalCount: 2,
     });
     expect(JSON.stringify(body)).not.toContain("admin-1");
   });

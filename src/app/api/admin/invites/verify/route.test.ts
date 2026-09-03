@@ -2,128 +2,132 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
-  db: {
-    adminInvite: {
-      findUnique: vi.fn(),
-    },
-  },
+  db: { adminInvite: { findUnique: vi.fn() } },
+  getServerDeploymentProfile: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
-  db: mocks.db,
+vi.mock("@/lib/db", () => ({ db: mocks.db }));
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
 }));
 
 import { POST } from "./route";
 
+function request(body: Record<string, unknown>) {
+  return new NextRequest("http://localhost/api/admin/invites/verify", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function activeInvite(overrides: Record<string, unknown> = {}) {
+  return {
+    code: "M-ABC123",
+    email: "private@example.com",
+    usedAt: null,
+    revokedAt: null,
+    expiresAt: new Date("2099-01-01"),
+    targetSystemRole: "MEMBER",
+    targetFacilityWorkflowRole: "REQUESTER",
+    createdBy: { systemRole: "ADMIN", isActive: true },
+    ...overrides,
+  };
+}
+
 describe("POST /api/admin/invites/verify", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue({ id: "sequencing-center" });
   });
 
-  it("returns 400 when no code provided", async () => {
-    const req = new NextRequest("http://localhost/api/admin/invites/verify", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
+  it("uses one generic error shape for malformed, missing, used, expired, revoked, or creator-invalid invitations", async () => {
+    const expected = {
+      valid: false,
+      error: "This invitation is invalid or no longer active",
+    };
 
-    const res = await POST(req);
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.valid).toBe(false);
-    expect(data.error).toBe("Invite code is required");
+    const malformed = await POST(request({}));
+
+    mocks.db.adminInvite.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(activeInvite({ usedAt: new Date() }))
+      .mockResolvedValueOnce(activeInvite({ expiresAt: new Date("2020-01-01") }))
+      .mockResolvedValueOnce(activeInvite({ revokedAt: new Date() }))
+      .mockResolvedValueOnce(
+        activeInvite({ createdBy: { systemRole: "ADMIN", isActive: false } })
+      )
+      .mockResolvedValueOnce(
+        activeInvite({ createdBy: { systemRole: "MEMBER", isActive: true } })
+      );
+
+    const responses = [
+      malformed,
+      await POST(request({ code: "missing" })),
+      await POST(request({ code: "used" })),
+      await POST(request({ code: "expired" })),
+      await POST(request({ code: "revoked" })),
+      await POST(request({ code: "inactive-creator" })),
+      await POST(request({ code: "demoted-creator" })),
+    ];
+
+    for (const response of responses) {
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual(expected);
+    }
   });
 
-  it("returns 404 when invite not found", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue(null);
+  it("returns only the explicit grant needed by registration", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue(
+      activeInvite({
+        targetSystemRole: "ADMIN",
+        targetFacilityWorkflowRole: "REQUESTER",
+      })
+    );
 
-    const req = new NextRequest("http://localhost/api/admin/invites/verify", {
-      method: "POST",
-      body: JSON.stringify({ code: "BADCODE" }),
+    const response = await POST(request({ code: "m-abc123" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      valid: true,
+      grant: {
+        systemRole: "ADMIN",
+        facilityWorkflowRole: "REQUESTER",
+      },
     });
-
-    const res = await POST(req);
-    expect(res.status).toBe(404);
-    const data = await res.json();
-    expect(data.valid).toBe(false);
-    expect(data.error).toBe("Invalid invite code");
-  });
-
-  it("returns 400 when invite already used", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue({
-      code: "ABC123",
-      email: "test@example.com",
-      usedAt: new Date("2024-01-01"),
-      expiresAt: new Date("2025-01-01"),
-    });
-
-    const req = new NextRequest("http://localhost/api/admin/invites/verify", {
-      method: "POST",
-      body: JSON.stringify({ code: "ABC123" }),
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.valid).toBe(false);
-    expect(data.error).toBe("This invite has already been used");
-  });
-
-  it("returns 400 when invite expired", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue({
-      code: "ABC123",
-      email: "test@example.com",
-      usedAt: null,
-      expiresAt: new Date("2020-01-01"),
-    });
-
-    const req = new NextRequest("http://localhost/api/admin/invites/verify", {
-      method: "POST",
-      body: JSON.stringify({ code: "ABC123" }),
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.valid).toBe(false);
-    expect(data.error).toBe("This invite has expired");
-  });
-
-  it("returns 200 with valid invite", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue({
-      code: "ABC123",
-      email: "test@example.com",
-      usedAt: null,
-      expiresAt: new Date("2099-01-01"),
-    });
-
-    const req = new NextRequest("http://localhost/api/admin/invites/verify", {
-      method: "POST",
-      body: JSON.stringify({ code: "abc123" }),
-    });
-
-    const res = await POST(req);
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.valid).toBe(true);
-    expect(data.email).toBe("test@example.com");
-    // Code should be uppercased for lookup
+    expect(body).not.toHaveProperty("email");
+    expect(body).not.toHaveProperty("accountRole");
     expect(mocks.db.adminInvite.findUnique).toHaveBeenCalledWith({
-      where: { code: "ABC123" },
+      where: { code: "M-ABC123" },
+      include: {
+        createdBy: { select: { systemRole: true, isActive: true } },
+      },
     });
   });
 
-  it("returns 500 on database error", async () => {
+  it("does not expose a stale operator grant outside Sequencing Center", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({ id: "shared-lab" });
+    mocks.db.adminInvite.findUnique.mockResolvedValue(
+      activeInvite({ targetFacilityWorkflowRole: "OPERATOR" })
+    );
+
+    const response = await POST(request({ code: "M-ABC123" }));
+
+    await expect(response.json()).resolves.toMatchObject({
+      grant: { facilityWorkflowRole: "REQUESTER" },
+    });
+  });
+
+  it("returns 500 on an unexpected database failure", async () => {
     mocks.db.adminInvite.findUnique.mockRejectedValue(new Error("DB error"));
 
-    const req = new NextRequest("http://localhost/api/admin/invites/verify", {
-      method: "POST",
-      body: JSON.stringify({ code: "ABC123" }),
-    });
+    const response = await POST(request({ code: "M-ABC123" }));
 
-    const res = await POST(req);
-    expect(res.status).toBe(500);
-    const data = await res.json();
-    expect(data.valid).toBe(false);
-    expect(data.error).toBe("Failed to verify invite");
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      valid: false,
+      error: "Failed to verify invite",
+    });
   });
 });

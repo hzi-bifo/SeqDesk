@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { db } from "@/lib/db";
 import { getExecutionSettings } from "@/lib/pipelines/execution-settings";
 import { authorizePipelineRunRead } from "@/lib/pipelines/run-visibility";
@@ -32,7 +33,7 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session) {
+    if (!isActiveSession(session)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

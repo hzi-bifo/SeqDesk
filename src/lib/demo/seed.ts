@@ -1,4 +1,6 @@
-import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
+import { resolveEffectiveFeatureModuleStates } from "@/lib/deployment-profile/compatibility";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile/definitions";
+import type { DeploymentProfileDefinition } from "@/lib/deployment-profile/types";
 import type { FormFieldDefinition, FormFieldGroup } from "@/types/form-config";
 
 export function getDemoProjectsField(): FormFieldDefinition {
@@ -62,7 +64,12 @@ export function addDemoProjectsFieldToSchema(schema: string): string {
   }
 }
 
-export function getDemoSiteSettingsUpdate(existingExtraSettings: string | null) {
+export function getDemoSiteSettingsUpdate(
+  existingExtraSettings: string | null,
+  profile: DeploymentProfileDefinition = getDeploymentProfileDefinition(
+    "sequencing-center"
+  )
+) {
   let parsedExtra: Record<string, unknown> = {};
 
   if (existingExtraSettings) {
@@ -76,6 +83,10 @@ export function getDemoSiteSettingsUpdate(existingExtraSettings: string | null) 
     }
   }
 
+  const moduleStates = resolveEffectiveFeatureModuleStates(profile, {
+    "dynamic-studies": true,
+  }).modules;
+
   return {
     siteName: "SeqDesk Demo",
     contactEmail: "demo@seqdesk.org",
@@ -85,7 +96,7 @@ export function getDemoSiteSettingsUpdate(existingExtraSettings: string | null) 
       // Enable the dynamic per-study questionnaire so the IBD study's custom
       // technical form (see ibd-study-form.ts) renders. Studies without their own
       // StudyFormConfig keep falling back to the global study form.
-      modules: { ...DEFAULT_MODULE_STATES, "dynamic-studies": true },
+      modules: moduleStates,
       globalDisabled: false,
     }),
     extraSettings: JSON.stringify({

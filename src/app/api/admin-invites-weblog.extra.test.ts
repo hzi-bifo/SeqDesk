@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
   randomBytes: vi.fn(),
   getExecutionSettings: vi.fn(),
   db: {
+    user: {
+      findUnique: vi.fn(),
+    },
     adminInvite: {
       findMany: vi.fn(),
       create: vi.fn(),
@@ -106,9 +109,14 @@ describe("admin invites and run weblog quick wins", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.db.user.findUnique.mockResolvedValue({
+      id: "admin-1",
+      systemRole: "ADMIN",
+      isActive: true,
+    });
     mocks.randomBytes
-      .mockReturnValueOnce(Buffer.from([0xab, 0xcd, 0xef, 0x01]))
-      .mockReturnValue(Buffer.from([0x12, 0x34, 0x56, 0x78]));
+      .mockReturnValueOnce(Buffer.alloc(24, 0xab))
+      .mockReturnValue(Buffer.alloc(24, 0x12));
     mocks.getExecutionSettings.mockResolvedValue({
       weblogSecret: "secret-token",
     });
@@ -126,10 +134,12 @@ describe("admin invites and run weblog quick wins", () => {
     ]);
     mocks.db.adminInvite.create.mockResolvedValue({
       id: "invite-1",
-      code: "A-ABCDEF01",
+      code: `A-${"AB".repeat(24)}`,
       email: "admin@example.test",
       expiresAt: new Date("2026-04-01T15:30:00.000Z"),
       createdById: "admin-1",
+      targetSystemRole: "ADMIN",
+      targetFacilityWorkflowRole: "REQUESTER",
       createdBy: {
         firstName: "Ada",
         lastName: "Admin",
@@ -209,6 +219,10 @@ describe("admin invites and run weblog quick wins", () => {
         id: "invite-1",
         code: "ABCDEF01",
         accountRole: "FACILITY_ADMIN",
+        grant: {
+          systemRole: "ADMIN",
+          facilityWorkflowRole: "OPERATOR",
+        },
         email: "admin@example.test",
         createdBy: {
           firstName: "Ada",
@@ -243,7 +257,7 @@ describe("admin invites and run weblog quick wins", () => {
     );
     expect(invalidDays.status).toBe(400);
     expect(await invalidDays.json()).toEqual({
-      error: "expiresInDays must be an integer between 1 and 30",
+      error: "Invalid invitation details",
     });
 
     const invalidEmail = await postAdminInvites(
@@ -253,7 +267,7 @@ describe("admin invites and run weblog quick wins", () => {
     );
     expect(invalidEmail.status).toBe(400);
     expect(await invalidEmail.json()).toEqual({
-      error: "Invalid invite email address",
+      error: "Invalid invitation details",
     });
   });
 
@@ -262,15 +276,19 @@ describe("admin invites and run weblog quick wins", () => {
       jsonRequest("/api/admin/invites", "POST", {
         email: " ADMIN@Example.TEST ",
         expiresInDays: "7",
+        systemRole: "ADMIN",
+        facilityWorkflowRole: "REQUESTER",
       })
     );
     expect(success.status).toBe(201);
     expect(mocks.db.adminInvite.create).toHaveBeenCalledWith({
       data: {
-        code: "A-ABCDEF01",
+        code: `A-${"AB".repeat(24)}`,
         email: "admin@example.test",
         expiresAt: daysFromNow(7),
         createdById: "admin-1",
+        targetSystemRole: "ADMIN",
+        targetFacilityWorkflowRole: "REQUESTER",
       },
       include: {
         createdBy: {
@@ -280,8 +298,14 @@ describe("admin invites and run weblog quick wins", () => {
     });
     expect(await success.json()).toEqual({
       id: "invite-1",
-      code: "A-ABCDEF01",
+      code: `A-${"AB".repeat(24)}`,
       accountRole: "FACILITY_ADMIN",
+      grant: {
+        systemRole: "ADMIN",
+        facilityWorkflowRole: "REQUESTER",
+      },
+      targetSystemRole: "ADMIN",
+      targetFacilityWorkflowRole: "REQUESTER",
       email: "admin@example.test",
       expiresAt: "2026-04-01T15:30:00.000Z",
       createdById: "admin-1",
@@ -293,17 +317,19 @@ describe("admin invites and run weblog quick wins", () => {
 
     mocks.randomBytes
       .mockReset()
-      .mockReturnValueOnce(Buffer.from([0xaa, 0xaa, 0xaa, 0xaa]))
-      .mockReturnValueOnce(Buffer.from([0xbb, 0xbb, 0xbb, 0xbb]));
+      .mockReturnValueOnce(Buffer.alloc(24, 0xaa))
+      .mockReturnValueOnce(Buffer.alloc(24, 0xbb));
     mocks.db.adminInvite.create
       .mockReset()
       .mockRejectedValueOnce(duplicateInviteError())
       .mockResolvedValueOnce({
         id: "invite-2",
-        code: "A-BBBBBBBB",
+        code: `M-${"BB".repeat(24)}`,
         email: null,
         expiresAt: new Date("2026-03-28T15:30:00.000Z"),
         createdById: "admin-1",
+        targetSystemRole: "MEMBER",
+        targetFacilityWorkflowRole: "REQUESTER",
         createdBy: {
           firstName: "Ada",
           lastName: "Admin",
@@ -317,10 +343,12 @@ describe("admin invites and run weblog quick wins", () => {
     expect(retried.status).toBe(201);
     expect(mocks.db.adminInvite.create).toHaveBeenNthCalledWith(1, {
       data: {
-        code: "A-AAAAAAAA",
+        code: `M-${"AA".repeat(24)}`,
         email: null,
         expiresAt: daysFromNow(3),
         createdById: "admin-1",
+        targetSystemRole: "MEMBER",
+        targetFacilityWorkflowRole: "REQUESTER",
       },
       include: {
         createdBy: {
@@ -330,10 +358,12 @@ describe("admin invites and run weblog quick wins", () => {
     });
     expect(mocks.db.adminInvite.create).toHaveBeenNthCalledWith(2, {
       data: {
-        code: "A-BBBBBBBB",
+        code: `M-${"BB".repeat(24)}`,
         email: null,
         expiresAt: daysFromNow(3),
         createdById: "admin-1",
+        targetSystemRole: "MEMBER",
+        targetFacilityWorkflowRole: "REQUESTER",
       },
       include: {
         createdBy: {
@@ -342,7 +372,7 @@ describe("admin invites and run weblog quick wins", () => {
       },
     });
 
-    mocks.randomBytes.mockReset().mockReturnValue(Buffer.from([0xcc, 0xcc, 0xcc, 0xcc]));
+    mocks.randomBytes.mockReset().mockReturnValue(Buffer.alloc(24, 0xcc));
     mocks.db.adminInvite.create.mockReset().mockRejectedValue(duplicateInviteError());
     const exhausted = await postAdminInvites(
       jsonRequest("/api/admin/invites", "POST", {

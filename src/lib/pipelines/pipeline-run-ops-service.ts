@@ -5,6 +5,8 @@ import path from 'path';
 import { promisify } from 'util';
 
 import { db } from '@/lib/db';
+import { getCapabilityGrant, principalFromSession } from '@/lib/authorization';
+import { getServerDeploymentProfile } from '@/lib/deployment-profile/server';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { findStepByProcess, getStepsForPipeline } from '@/lib/pipelines/definitions';
 import { getPipelineEnabled } from '@/lib/pipelines/enablement';
@@ -520,21 +522,49 @@ function formatCommandResult(result: CommandResult): string {
 }
 
 export async function resolvePipelineOperator(userEmail?: string): Promise<PipelineOpsResponse> {
-  const where = userEmail
-    ? { email: userEmail, role: 'FACILITY_ADMIN' }
-    : { role: 'FACILITY_ADMIN' };
-  const user = await db.user.findFirst({
-    where,
+  const profile = getServerDeploymentProfile();
+  if (profile.experience !== 'sequencing') {
+    return jsonResponse(
+      {
+        error:
+          'Order/study pipeline commands are not available in the Research Workbench deployment profile.',
+      },
+      404
+    );
+  }
+
+  const users = await db.user.findMany({
+    where: {
+      isActive: true,
+      ...(userEmail ? { email: userEmail } : {}),
+    },
     orderBy: { createdAt: 'asc' },
-    select: { id: true, email: true, firstName: true, lastName: true, role: true },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      role: true,
+      systemRole: true,
+      facilityWorkflowRole: true,
+    },
+  });
+  const user = users.find((candidate) => {
+    const principal = principalFromSession({ user: candidate });
+    const grant = principal && getCapabilityGrant(profile, principal, 'analysis.run');
+    return grant?.scope === 'installation';
   });
 
   if (!user) {
     return jsonResponse(
       userEmail
-        ? { error: `No FACILITY_ADMIN user found for ${userEmail}` }
-        : { error: 'No FACILITY_ADMIN user exists. Create an admin before running pipelines from the CLI.' },
-      400
+        ? {
+            error: `The active account ${userEmail} cannot run installation-scoped pipelines in ${profile.label}.`,
+          }
+        : {
+            error: `No active account can run installation-scoped pipelines in ${profile.label}.`,
+          },
+      userEmail ? 403 : 400
     );
   }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { db } from "@/lib/db";
 import {
   getNotificationSettings,
@@ -10,7 +11,7 @@ import {
 
 export async function GET() {
   const session = await getServerSession(authOptions);
-  if (!session) {
+  if (!isActiveSession(session)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -34,7 +35,7 @@ export async function GET() {
 
 export async function PUT(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session) {
+  if (!isActiveSession(session)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

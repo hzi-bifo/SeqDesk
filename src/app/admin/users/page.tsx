@@ -23,6 +23,7 @@ interface User {
   firstName: string;
   lastName: string;
   email: string;
+  isActive: boolean;
   researcherRole: string | null;
   createdAt: string;
   department: {
@@ -373,7 +374,14 @@ export default function UsersPage() {
                     <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
                       {user.firstName} {user.lastName}
                     </p>
-                    <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                      {!user.isActive && (
+                        <span className="rounded bg-stone-100 px-1.5 py-0.5 text-[10px] font-medium text-stone-600">
+                          Deactivated
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 

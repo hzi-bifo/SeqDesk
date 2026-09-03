@@ -83,12 +83,14 @@ export async function setOnboardingItemCompletion(args: {
       delete items[args.itemId];
     }
 
-    const allComplete = definitions.every((item) => Boolean(items[item.id]));
+    const allRequiredComplete = definitions
+      .filter((item) => item.requirement === "required")
+      .every((item) => Boolean(items[item.id]));
     const next: StoredOnboardingState = {
       schemaVersion: ONBOARDING_SCHEMA_VERSION,
       profile: profile.id,
       items,
-      ...(allComplete
+      ...(allRequiredComplete
         ? {
             completedAt: current?.completedAt ?? now,
             completedByUserId: current?.completedByUserId ?? args.actorUserId,

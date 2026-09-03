@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   ensureStudyModuleDefaultFields,
   STUDY_FORM_DEFAULTS_VERSION,
@@ -76,7 +77,10 @@ export async function loadStudyFormSchema(
     where: { id: "singleton" },
     select: { extraSettings: true, modulesConfig: true },
   });
-  const modulesConfig = parseStudyModulesConfig(settings?.modulesConfig ?? null);
+  const modulesConfig = parseStudyModulesConfig(
+    settings?.modulesConfig ?? null,
+    getServerDeploymentProfile()
+  );
   const fixedGroups = getFixedStudySections();
 
   let fields: FormFieldDefinition[] = [];

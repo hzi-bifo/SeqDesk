@@ -22,15 +22,10 @@ function parseExtraSettings(raw: string | null | undefined): Record<string, unkn
 // GET - retrieve access settings
 export async function GET() {
   const session = await getServerSession(authOptions);
-
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = decideServerCapability(session, "system.settings.manage");
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
-
-  const canManageSettings = decideServerCapability(
-    session,
-    "system.settings.manage"
-  ).allowed;
 
   try {
     const settings = await db.siteSettings.findUnique({
@@ -40,12 +35,6 @@ export async function GET() {
 
     const extra = parseExtraSettings(settings?.extraSettings);
 
-    if (!canManageSettings) {
-      return NextResponse.json({
-        allowUserAssemblyDownload: extra.allowUserAssemblyDownload ?? false,
-      });
-    }
-
     return NextResponse.json({
       departmentSharing: extra.departmentSharing ?? false,
       allowDeleteSubmittedOrders: extra.allowDeleteSubmittedOrders ?? false,
@@ -54,12 +43,6 @@ export async function GET() {
       postSubmissionInstructions: settings?.postSubmissionInstructions ?? null,
     });
   } catch {
-    if (!canManageSettings) {
-      return NextResponse.json({
-        allowUserAssemblyDownload: false,
-      });
-    }
-
     return NextResponse.json({
       departmentSharing: false,
       allowDeleteSubmittedOrders: false,

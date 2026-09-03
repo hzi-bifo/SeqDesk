@@ -153,7 +153,7 @@ describe("SetupPage", () => {
 
     render(<SetupPage />);
 
-    expect(await screen.findByText("SeqDesk is ready")).toBeTruthy();
+    expect(await screen.findByText("Base setup is ready")).toBeTruthy();
     expect(screen.getByText("Self-hosted install")).toBeTruthy();
     expect(screen.getByText("Continue to login")).toBeTruthy();
     expect(screen.getAllByText("Sequencing center").length).toBeGreaterThan(0);
@@ -172,7 +172,7 @@ describe("SetupPage", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByText("SeqDesk is ready")).toBeTruthy();
+    expect(screen.getByText("Base setup is ready")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await act(async () => {

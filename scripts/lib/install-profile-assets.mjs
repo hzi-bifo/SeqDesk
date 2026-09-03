@@ -1544,6 +1544,7 @@ async function ensureUser(prisma, role, fallback) {
       lastName: fallback.lastName,
       systemRole: role === "FACILITY_ADMIN" ? "ADMIN" : "MEMBER",
       role,
+      facilityWorkflowRole: role === "FACILITY_ADMIN" ? "OPERATOR" : "REQUESTER",
       ...(role === "FACILITY_ADMIN"
         ? { facilityName: fallback.facilityName || "SeqDesk Profile Smoke" }
         : { institution: fallback.institution || "SeqDesk Profile Smoke" }),

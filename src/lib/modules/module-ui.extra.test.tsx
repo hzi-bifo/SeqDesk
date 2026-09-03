@@ -24,6 +24,7 @@ describe("module UI helpers", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -41,6 +42,7 @@ describe("module UI helpers", () => {
             "funding-info": true,
           },
           globalDisabled: false,
+          incompatibleModules: [],
         })
       )
       .mockResolvedValueOnce(jsonResponse({ success: true }))
@@ -52,6 +54,7 @@ describe("module UI helpers", () => {
             "funding-info": false,
           },
           globalDisabled: false,
+          incompatibleModules: [],
         })
       );
 
@@ -101,7 +104,7 @@ describe("module UI helpers", () => {
     expect(result.current.moduleStates["funding-info"]).toBe(false);
   });
 
-  it("falls back to defaults and reverts optimistic updates when writes fail", async () => {
+  it("fails closed and reverts optimistic updates when requests fail", async () => {
     fetchMock
       .mockRejectedValueOnce(new Error("network down"))
       .mockResolvedValueOnce(jsonResponse({}, false))
@@ -113,8 +116,9 @@ describe("module UI helpers", () => {
       expect(result.current.loading).toBe(false);
     });
 
-    expect(result.current.moduleStates).toEqual(DEFAULT_MODULE_STATES);
+    expect(result.current.moduleStates).toEqual({});
     expect(result.current.globalDisabled).toBe(false);
+    expect(result.current.isModuleEnabled("ai-validation")).toBe(false);
 
     await act(async () => {
       await expect(
@@ -146,6 +150,7 @@ describe("module UI helpers", () => {
           "ai-validation": true,
         },
         globalDisabled: false,
+        incompatibleModules: [],
       })
     );
 
@@ -189,6 +194,31 @@ describe("module UI helpers", () => {
     expect(screen.getByText("This feature is not currently available.")).toBeTruthy();
     expect(screen.getByTestId("hook-probe").getAttribute("data-enabled")).toBe("true");
     expect(screen.getByTestId("hook-probe").textContent).toBe("ai-validation");
+  });
+
+  it("keeps profile-incompatible modules disabled even if a stale response says true", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        modules: {
+          ...DEFAULT_MODULE_STATES,
+          "ai-validation": true,
+          "sequencing-tech": true,
+          notifications: true,
+        },
+        globalDisabled: false,
+        incompatibleModules: ["ai-validation", "sequencing-tech"],
+      })
+    );
+
+    const { result } = renderHook(() => useModules(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.isModuleEnabled("ai-validation")).toBe(false);
+    expect(result.current.isModuleEnabled("sequencing-tech")).toBe(false);
+    expect(result.current.isModuleEnabled("notifications")).toBe(true);
   });
 });
 

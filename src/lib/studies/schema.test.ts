@@ -54,17 +54,29 @@ function makeField(overrides: Partial<FormFieldDefinition> = {}): FormFieldDefin
 describe("parseStudyModulesConfig", () => {
   it("returns defaults when configString is null", () => {
     const result = parseStudyModulesConfig(null);
-    expect(result).toEqual({ modules: DEFAULT_MODULE_STATES, globalDisabled: false });
+    expect(result).toEqual({
+      modules: DEFAULT_MODULE_STATES,
+      globalDisabled: false,
+      incompatibleModules: [],
+    });
   });
 
   it("returns defaults when configString is empty string", () => {
     const result = parseStudyModulesConfig("");
-    expect(result).toEqual({ modules: DEFAULT_MODULE_STATES, globalDisabled: false });
+    expect(result).toEqual({
+      modules: DEFAULT_MODULE_STATES,
+      globalDisabled: false,
+      incompatibleModules: [],
+    });
   });
 
   it("returns defaults when configString is invalid JSON", () => {
     const result = parseStudyModulesConfig("{not valid json}");
-    expect(result).toEqual({ modules: DEFAULT_MODULE_STATES, globalDisabled: false });
+    expect(result).toEqual({
+      modules: DEFAULT_MODULE_STATES,
+      globalDisabled: false,
+      incompatibleModules: [],
+    });
   });
 
   it("parses new format with modules object and globalDisabled", () => {
@@ -100,29 +112,53 @@ describe("parseStudyModulesConfig", () => {
 
 describe("isStudyModuleEnabled", () => {
   it("returns false when globalDisabled is true, regardless of module state", () => {
-    const config = { modules: { "funding-info": true }, globalDisabled: true };
+    const config = {
+      modules: { "funding-info": true },
+      globalDisabled: true,
+      incompatibleModules: [],
+    };
     expect(isStudyModuleEnabled(config, "funding-info")).toBe(false);
   });
 
   it("returns true when module is enabled and not globally disabled", () => {
-    const config = { modules: { "funding-info": true }, globalDisabled: false };
+    const config = {
+      modules: { "funding-info": true },
+      globalDisabled: false,
+      incompatibleModules: [],
+    };
     expect(isStudyModuleEnabled(config, "funding-info")).toBe(true);
   });
 
   it("returns false when module is explicitly disabled", () => {
-    const config = { modules: { "funding-info": false }, globalDisabled: false };
+    const config = {
+      modules: { "funding-info": false },
+      globalDisabled: false,
+      incompatibleModules: [],
+    };
     expect(isStudyModuleEnabled(config, "funding-info")).toBe(false);
   });
 
   it("returns false when module key does not exist", () => {
-    const config = { modules: {}, globalDisabled: false };
+    const config = {
+      modules: {},
+      globalDisabled: false,
+      incompatibleModules: [],
+    };
     expect(isStudyModuleEnabled(config, "nonexistent-module")).toBe(false);
   });
 });
 
 describe("filterStudyFieldsByModules", () => {
-  const enabledConfig = { modules: { "mixs-metadata": true, "funding-info": true }, globalDisabled: false };
-  const disabledConfig = { modules: { "mixs-metadata": false, "funding-info": false }, globalDisabled: false };
+  const enabledConfig = {
+    modules: { "mixs-metadata": true, "funding-info": true },
+    globalDisabled: false,
+    incompatibleModules: [],
+  };
+  const disabledConfig = {
+    modules: { "mixs-metadata": false, "funding-info": false },
+    globalDisabled: false,
+    incompatibleModules: [],
+  };
 
   it("keeps mixs fields when mixs-metadata module is enabled", () => {
     const fields = [makeField({ type: "mixs", name: "_mixs" })];
@@ -170,7 +206,11 @@ describe("filterStudyFieldsByModules", () => {
   });
 
   it("removes mixs and funding fields when globalDisabled is true", () => {
-    const globalDisabledConfig = { modules: { "mixs-metadata": true, "funding-info": true }, globalDisabled: true };
+    const globalDisabledConfig = {
+      modules: { "mixs-metadata": true, "funding-info": true },
+      globalDisabled: true,
+      incompatibleModules: [],
+    };
     const fields = [
       makeField({ type: "mixs", name: "_mixs" }),
       makeField({ type: "funding", name: "study_funding" }),

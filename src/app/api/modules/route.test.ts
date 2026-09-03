@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -21,7 +22,12 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 import { GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile/definitions";
 import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 
 describe("GET /api/modules", () => {
@@ -30,6 +36,9 @@ describe("GET /api/modules", () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
   it("returns 401 when no session", async () => {
@@ -61,6 +70,7 @@ describe("GET /api/modules", () => {
         "funding-info": true,
       },
       globalDisabled: false,
+      incompatibleModules: [],
     });
   });
 
@@ -75,6 +85,7 @@ describe("GET /api/modules", () => {
     await expect(response.json()).resolves.toEqual({
       modules: DEFAULT_MODULE_STATES,
       globalDisabled: false,
+      incompatibleModules: [],
     });
   });
 
@@ -96,6 +107,7 @@ describe("GET /api/modules", () => {
         "funding-info": true,
       },
       globalDisabled: true,
+      incompatibleModules: [],
     });
   });
 
@@ -114,6 +126,7 @@ describe("GET /api/modules", () => {
         "account-validation": true,
       },
       globalDisabled: false,
+      incompatibleModules: [],
     });
   });
 
@@ -127,7 +140,40 @@ describe("GET /api/modules", () => {
     await expect(response.json()).resolves.toEqual({
       modules: DEFAULT_MODULE_STATES,
       globalDisabled: false,
+      incompatibleModules: [],
     });
+  });
+
+  it("returns profile-constrained defaults in Research Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      modulesConfig: JSON.stringify({
+        modules: { "ai-validation": true, notifications: true },
+        globalDisabled: false,
+      }),
+    });
+
+    const response = await GET();
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.modules).toMatchObject({
+      "ai-validation": false,
+      "mixs-metadata": false,
+      "ena-sample-fields": false,
+      "sequencing-tech": false,
+      notifications: true,
+    });
+    expect(data.incompatibleModules).toEqual(
+      expect.arrayContaining([
+        "ai-validation",
+        "mixs-metadata",
+        "ena-sample-fields",
+        "sequencing-tech",
+      ])
+    );
   });
 
   it("returns 500 when the database read fails", async () => {

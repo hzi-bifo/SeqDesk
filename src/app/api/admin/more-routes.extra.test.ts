@@ -11,9 +11,12 @@ const mocks = vi.hoisted(() => ({
   detectVersions: vi.fn(),
   getExecutionSettings: vi.fn(),
   db: {
+    user: {
+      findUnique: vi.fn(),
+    },
     adminInvite: {
       findUnique: vi.fn(),
-      delete: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -71,6 +74,10 @@ describe("small admin route quick wins", () => {
         role: "FACILITY_ADMIN",
       },
     });
+    mocks.db.user.findUnique.mockResolvedValue({
+      systemRole: "ADMIN",
+      isActive: true,
+    });
     mocks.getEffectiveConfig.mockResolvedValue({
       config: {
         ena: { password: "secret" },
@@ -90,9 +97,13 @@ describe("small admin route quick wins", () => {
       code: "ABC123",
       email: "admin@example.test",
       usedAt: null,
+      revokedAt: null,
       expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+      targetSystemRole: "ADMIN",
+      targetFacilityWorkflowRole: "REQUESTER",
+      createdBy: { systemRole: "ADMIN", isActive: true },
     });
-    mocks.db.adminInvite.delete.mockResolvedValue(undefined);
+    mocks.db.adminInvite.updateMany.mockResolvedValue({ count: 1 });
     mocks.getPipelineDag.mockReturnValue({ nodes: [{ id: "start" }], edges: [] });
     mocks.getPipelineDefinition.mockReturnValue({
       pipeline: "fastqc",
@@ -178,10 +189,11 @@ describe("small admin route quick wins", () => {
       params: Promise.resolve({ id: "invite-1" }),
     });
     expect(success.status).toBe(200);
-    expect(mocks.db.adminInvite.delete).toHaveBeenCalledWith({
-      where: { id: "invite-1" },
+    expect(mocks.db.adminInvite.updateMany).toHaveBeenCalledWith({
+      where: { id: "invite-1", usedAt: null, revokedAt: null },
+      data: { revokedAt: expect.any(Date), revokedById: "admin-1" },
     });
-    expect(await success.json()).toEqual({ success: true });
+    expect(await success.json()).toMatchObject({ success: true });
 
     mocks.db.adminInvite.findUnique.mockRejectedValueOnce(new Error("db down"));
     const failed = await deleteInvite(new NextRequest("http://localhost"), {
@@ -201,7 +213,7 @@ describe("small admin route quick wins", () => {
     expect(missingCode.status).toBe(400);
     expect(await missingCode.json()).toEqual({
       valid: false,
-      error: "Invite code is required",
+      error: "This invitation is invalid or no longer active",
     });
 
     mocks.db.adminInvite.findUnique.mockResolvedValueOnce(null);
@@ -211,13 +223,16 @@ describe("small admin route quick wins", () => {
         body: JSON.stringify({ code: "abc123" }),
       }) as never
     );
-    expect(invalid.status).toBe(404);
+    expect(invalid.status).toBe(400);
     expect(mocks.db.adminInvite.findUnique).toHaveBeenCalledWith({
       where: { code: "ABC123" },
+      include: {
+        createdBy: { select: { systemRole: true, isActive: true } },
+      },
     });
     expect(await invalid.json()).toEqual({
       valid: false,
-      error: "Invalid invite code",
+      error: "This invitation is invalid or no longer active",
     });
 
     mocks.db.adminInvite.findUnique.mockResolvedValueOnce({
@@ -235,7 +250,7 @@ describe("small admin route quick wins", () => {
     expect(used.status).toBe(400);
     expect(await used.json()).toEqual({
       valid: false,
-      error: "This invite has already been used",
+      error: "This invitation is invalid or no longer active",
     });
 
     mocks.db.adminInvite.findUnique.mockResolvedValueOnce({
@@ -253,7 +268,7 @@ describe("small admin route quick wins", () => {
     expect(expired.status).toBe(400);
     expect(await expired.json()).toEqual({
       valid: false,
-      error: "This invite has expired",
+      error: "This invitation is invalid or no longer active",
     });
 
     const success = await verifyInvite(
@@ -265,7 +280,10 @@ describe("small admin route quick wins", () => {
     expect(success.status).toBe(200);
     expect(await success.json()).toEqual({
       valid: true,
-      email: "admin@example.test",
+      grant: {
+        systemRole: "ADMIN",
+        facilityWorkflowRole: "REQUESTER",
+      },
     });
 
     mocks.db.adminInvite.findUnique.mockRejectedValueOnce(new Error("db down"));
@@ -287,7 +305,7 @@ describe("small admin route quick wins", () => {
     const unauthorizedDag = await getPipelineDagRoute(new Request("http://localhost") as never, {
       params: Promise.resolve({ pipelineId: "fastqc" }),
     });
-    expect(unauthorizedDag.status).toBe(403);
+    expect(unauthorizedDag.status).toBe(401);
     expect(await unauthorizedDag.json()).toEqual({ error: "Unauthorized" });
 
     mocks.getPipelineDag.mockReturnValueOnce(null);
@@ -326,6 +344,17 @@ describe("small admin route quick wins", () => {
     );
     expect(unauthorizedDef.status).toBe(401);
     expect(await unauthorizedDef.json()).toEqual({ error: "Unauthorized" });
+
+    mocks.getServerSession.mockResolvedValueOnce({
+      user: { id: "member-1", role: "RESEARCHER" },
+    });
+    const forbiddenDef = await getPipelineDefinitionRoute(
+      new Request("http://localhost") as never,
+      { params: Promise.resolve({ pipelineId: "fastqc" }) }
+    );
+    expect(forbiddenDef.status).toBe(403);
+    expect(await forbiddenDef.json()).toEqual({ error: "Forbidden" });
+    expect(mocks.getPipelineDefinition).not.toHaveBeenCalled();
 
     mocks.getPipelineDefinition.mockReturnValueOnce(null);
     const missingDef = await getPipelineDefinitionRoute(
@@ -378,7 +407,7 @@ describe("small admin route quick wins", () => {
         body: JSON.stringify({ setting: "condaPath", value: "/opt/conda" }),
       }) as never
     );
-    expect(unauthorizedPost.status).toBe(403);
+    expect(unauthorizedPost.status).toBe(401);
     expect(await unauthorizedPost.json()).toEqual({ error: "Unauthorized" });
 
     const missingSetting = await postTestSetting(
@@ -412,7 +441,7 @@ describe("small admin route quick wins", () => {
 
     mocks.getServerSession.mockResolvedValueOnce(null);
     const unauthorizedGet = await getTestSettingVersions();
-    expect(unauthorizedGet.status).toBe(403);
+    expect(unauthorizedGet.status).toBe(401);
     expect(await unauthorizedGet.json()).toEqual({ error: "Unauthorized" });
 
     const successGet = await getTestSettingVersions();

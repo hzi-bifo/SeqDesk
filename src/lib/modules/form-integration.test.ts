@@ -6,6 +6,7 @@ import {
   isFieldAvailableForModules,
   parseModulesConfig,
 } from "./form-integration";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile/definitions";
 import type { FormFieldDefinition } from "@/types/form-config";
 
 const baseField = {
@@ -74,6 +75,36 @@ describe("form module integration", () => {
         name: "_sequencing_tech",
       }, config)
     ).toBe(true);
+  });
+
+  it("turns facility-only defaults and stored overrides off in Research Workbench", () => {
+    const config = parseModulesConfig(
+      JSON.stringify({
+        modules: {
+          "ai-validation": true,
+          "billing-info": true,
+          notifications: true,
+        },
+      }),
+      getDeploymentProfileDefinition("research-workbench")
+    );
+
+    expect(config.modules["ai-validation"]).toBe(false);
+    expect(config.modules["billing-info"]).toBe(false);
+    expect(config.modules["sequencing-tech"]).toBe(false);
+    expect(config.modules.notifications).toBe(true);
+    expect(config.incompatibleModules).toEqual(
+      expect.arrayContaining([
+        "ai-validation",
+        "billing-info",
+        "sequencing-tech",
+      ])
+    );
+    expect(isFieldAvailableForModules({
+      ...baseField,
+      type: "billing",
+      name: "_billing",
+    }, config)).toBe(false);
   });
 
   it("detects whether a module has fields in a form schema", () => {

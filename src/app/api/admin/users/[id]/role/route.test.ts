@@ -3,14 +3,19 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: { $transaction: vi.fn() },
 }));
 
 vi.mock("next-auth", () => ({ getServerSession: mocks.getServerSession }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
 vi.mock("@/lib/db", () => ({ db: mocks.db }));
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
 
 import { PATCH } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 const adminSession = {
   user: {
@@ -34,7 +39,12 @@ function params(id = "user-1") {
 }
 
 describe("PATCH /api/admin/users/[id]/role", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center"),
+    );
+  });
 
   it("requires administrator access", async () => {
     mocks.getServerSession.mockResolvedValue({
@@ -57,13 +67,17 @@ describe("PATCH /api/admin/users/[id]/role", () => {
           id: "user-1",
           role: "RESEARCHER",
           systemRole: "MEMBER",
+          facilityWorkflowRole: "REQUESTER",
+          isActive: true,
           email: "member@example.test",
         }),
         count: vi.fn(),
         update: vi.fn().mockResolvedValue({
           id: "user-1",
-          role: "RESEARCHER",
+          role: "FACILITY_ADMIN",
           systemRole: "ADMIN",
+          facilityWorkflowRole: "REQUESTER",
+          isActive: true,
           email: "member@example.test",
         }),
       },
@@ -74,9 +88,14 @@ describe("PATCH /api/admin/users/[id]/role", () => {
 
     expect(response.status).toBe(200);
     expect(tx.user.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { systemRole: "ADMIN" } })
+      expect.objectContaining({
+        data: {
+          systemRole: "ADMIN",
+          facilityWorkflowRole: "REQUESTER",
+          role: "FACILITY_ADMIN",
+        },
+      })
     );
-    expect(tx.user.update.mock.calls[0][0].data).not.toHaveProperty("role");
     expect(tx.user.count).not.toHaveBeenCalled();
     expect(mocks.db.$transaction.mock.calls[0][1]).toEqual({
       isolationLevel: "Serializable",
@@ -91,6 +110,8 @@ describe("PATCH /api/admin/users/[id]/role", () => {
           id: "admin-1",
           role: "FACILITY_ADMIN",
           systemRole: "ADMIN",
+          facilityWorkflowRole: "OPERATOR",
+          isActive: true,
           email: "admin@example.test",
         }),
         count: vi.fn().mockResolvedValue(1),
@@ -119,16 +140,21 @@ describe("PATCH /api/admin/users/[id]/role", () => {
           id: "admin-2",
           role: "FACILITY_ADMIN",
           systemRole: "ADMIN",
+          facilityWorkflowRole: "OPERATOR",
+          isActive: true,
           email: "admin2@example.test",
         }),
         count: vi.fn().mockResolvedValue(2),
         update: vi.fn().mockResolvedValue({
           id: "admin-2",
-          role: "FACILITY_ADMIN",
+          role: "RESEARCHER",
           systemRole: "MEMBER",
+          facilityWorkflowRole: "OPERATOR",
+          isActive: true,
           email: "admin2@example.test",
         }),
       },
+      adminInvite: { updateMany: vi.fn().mockResolvedValue({ count: 2 }) },
     };
     mocks.db.$transaction.mockImplementation(async (callback) => callback(tx));
 
@@ -138,8 +164,14 @@ describe("PATCH /api/admin/users/[id]/role", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(tx.user.count).toHaveBeenCalledWith({ where: { systemRole: "ADMIN" } });
+    expect(tx.user.count).toHaveBeenCalledWith({
+      where: { systemRole: "ADMIN", isActive: true },
+    });
     expect(tx.user.update).toHaveBeenCalled();
+    expect(tx.adminInvite.updateMany).toHaveBeenCalledWith({
+      where: { createdById: "admin-2", usedAt: null, revokedAt: null },
+      data: { revokedAt: expect.any(Date), revokedById: "admin-1" },
+    });
   });
 
   it("keeps system and legacy roles in sync for older callers", async () => {
@@ -150,6 +182,8 @@ describe("PATCH /api/admin/users/[id]/role", () => {
           id: "user-1",
           role: "RESEARCHER",
           systemRole: "MEMBER",
+          facilityWorkflowRole: "REQUESTER",
+          isActive: true,
           email: "member@example.test",
         }),
         count: vi.fn(),
@@ -157,6 +191,8 @@ describe("PATCH /api/admin/users/[id]/role", () => {
           id: "user-1",
           role: "FACILITY_ADMIN",
           systemRole: "ADMIN",
+          facilityWorkflowRole: "OPERATOR",
+          isActive: true,
           email: "member@example.test",
         }),
       },
@@ -168,7 +204,11 @@ describe("PATCH /api/admin/users/[id]/role", () => {
     expect(response.status).toBe(200);
     expect(tx.user.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { systemRole: "ADMIN", role: "FACILITY_ADMIN" },
+        data: {
+          systemRole: "ADMIN",
+          facilityWorkflowRole: "OPERATOR",
+          role: "FACILITY_ADMIN",
+        },
       })
     );
   });
@@ -192,8 +232,63 @@ describe("PATCH /api/admin/users/[id]/role", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({
-      error: expect.stringContaining("different account access"),
+      error: expect.stringContaining("conflict"),
     });
+    expect(mocks.db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("stores member/operator access independently with a conservative legacy mirror", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    const tx = {
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "user-1",
+          role: "RESEARCHER",
+          systemRole: "MEMBER",
+          facilityWorkflowRole: "REQUESTER",
+          isActive: true,
+          email: "member@example.test",
+        }),
+        count: vi.fn(),
+        update: vi.fn().mockImplementation(async ({ data }) => ({
+          id: "user-1",
+          email: "member@example.test",
+          isActive: true,
+          ...data,
+        })),
+      },
+    };
+    mocks.db.$transaction.mockImplementation(async (callback) => callback(tx));
+
+    const response = await PATCH(
+      request({ systemRole: "MEMBER", facilityWorkflowRole: "OPERATOR" }),
+      params()
+    );
+
+    expect(response.status).toBe(200);
+    expect(tx.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          systemRole: "MEMBER",
+          facilityWorkflowRole: "OPERATOR",
+          role: "RESEARCHER",
+        },
+      })
+    );
+  });
+
+  it("rejects facility-operator access outside Sequencing Center", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab"),
+    );
+
+    const response = await PATCH(
+      request({ facilityWorkflowRole: "OPERATOR" }),
+      params()
+    );
+
+    expect(response.status).toBe(400);
     expect(mocks.db.$transaction).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -19,9 +20,14 @@ vi.mock("@/lib/config/runtime-env", () => ({
   bootstrapRuntimeEnv: vi.fn(),
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 const originalFetch = globalThis.fetch;
 
 import { POST, GET } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile/definitions";
 
 describe("POST /api/ai/validate", () => {
   beforeEach(() => {
@@ -31,6 +37,9 @@ describe("POST /api/ai/validate", () => {
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       modulesConfig: JSON.stringify({ modules: { "ai-validation": true }, globalDisabled: false }),
     });
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     process.env.ANTHROPIC_API_KEY = "test-key";
   });
 
@@ -163,6 +172,9 @@ describe("GET /api/ai/validate", () => {
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       modulesConfig: JSON.stringify({ modules: { "ai-validation": true }, globalDisabled: false }),
     });
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     process.env.ANTHROPIC_API_KEY = "test-key";
   });
 
@@ -182,6 +194,19 @@ describe("GET /api/ai/validate", () => {
     const response = await GET();
     expect(response.status).toBe(200);
     const json = await response.json();
+    expect(json.configured).toBe(false);
+    expect(json.moduleDisabled).toBe(true);
+  });
+
+  it("treats the facility-only AI module as disabled in Research Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+
+    const response = await GET();
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
     expect(json.configured).toBe(false);
     expect(json.moduleDisabled).toBe(true);
   });

@@ -27,6 +27,14 @@ export async function DELETE(
   const { id } = await params;
 
   try {
+    const actor = await db.user.findUnique({
+      where: { id: decision.principal!.id },
+      select: { systemRole: true, isActive: true },
+    });
+    if (!actor?.isActive || actor.systemRole !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
     const invite = await db.adminInvite.findUnique({
       where: { id },
     });
@@ -35,7 +43,7 @@ export async function DELETE(
       return NextResponse.json({ error: "Invite not found" }, { status: 404 });
     }
 
-    // Can't delete used invites
+    // Used invitations are immutable audit history.
     if (invite.usedAt) {
       return NextResponse.json(
         { error: "Cannot revoke a used invite" },
@@ -43,11 +51,29 @@ export async function DELETE(
       );
     }
 
-    await db.adminInvite.delete({
-      where: { id },
-    });
+    if (invite.revokedAt) {
+      return NextResponse.json(
+        { error: "Invite has already been revoked" },
+        { status: 409 }
+      );
+    }
 
-    return NextResponse.json({ success: true });
+    const revokedAt = new Date();
+    const result = await db.adminInvite.updateMany({
+      where: { id, usedAt: null, revokedAt: null },
+      data: {
+        revokedAt,
+        revokedById: decision.principal!.id,
+      },
+    });
+    if (result.count !== 1) {
+      return NextResponse.json(
+        { error: "Invite was used or revoked concurrently" },
+        { status: 409 }
+      );
+    }
+
+    return NextResponse.json({ success: true, revokedAt });
   } catch (error) {
     console.error("Failed to delete invite:", error);
     return NextResponse.json(

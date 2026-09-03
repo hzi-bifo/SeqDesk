@@ -72,7 +72,7 @@ describe("checkDatabaseStatus", () => {
       reason: "configured",
     });
     expect(mocks.db.user.count).toHaveBeenCalledWith({
-      where: { systemRole: "ADMIN" },
+      where: { systemRole: "ADMIN", isActive: true },
     });
   });
 

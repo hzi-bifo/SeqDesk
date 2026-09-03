@@ -5,6 +5,7 @@ import type { Session } from "next-auth";
 import { encode } from "next-auth/jwt";
 import { autoSeedIfNeeded } from "@/lib/auto-seed";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   DEMO_SEED_VERSION,
   DEMO_SESSION_TTL_HOURS,
@@ -127,6 +128,8 @@ type DemoWorkspaceUser = {
   lastName: string;
   role: string;
   systemRole: string;
+  facilityWorkflowRole: string;
+  isActive: boolean;
   isDemo: boolean;
 };
 
@@ -137,6 +140,8 @@ export type DemoAuthUser = {
   lastName: string;
   role: string;
   systemRole: string;
+  facilityWorkflowRole: string;
+  isActive: boolean;
   isDemo: boolean;
   demoExperience: DemoExperience;
 };
@@ -265,6 +270,7 @@ function isWorkspaceReusable(workspace: DemoWorkspaceWithUsers | null): boolean 
 
 async function ensureDemoBaseState(): Promise<void> {
   await autoSeedIfNeeded();
+  const deploymentProfile = getServerDeploymentProfile();
 
   const currentSettings = await db.siteSettings.findUnique({
     where: { id: "singleton" },
@@ -272,14 +278,17 @@ async function ensureDemoBaseState(): Promise<void> {
   });
   await db.siteSettings.upsert({
     where: { id: "singleton" },
-    update: getDemoSiteSettingsUpdate(currentSettings?.extraSettings ?? null),
+    update: getDemoSiteSettingsUpdate(
+      currentSettings?.extraSettings ?? null,
+      deploymentProfile
+    ),
     create: {
       id: "singleton",
       primaryColor: "#3b82f6",
       secondaryColor: "#1e40af",
       postSubmissionInstructions:
         "This demo installation does not send real samples or contact external services.",
-      ...getDemoSiteSettingsUpdate(null),
+      ...getDemoSiteSettingsUpdate(null, deploymentProfile),
     },
   });
 
@@ -321,6 +330,7 @@ async function createDemoWorkspaceInternal(
         lastName: "Researcher",
         role: "RESEARCHER",
         systemRole: "MEMBER",
+        facilityWorkflowRole: "REQUESTER",
         isDemo: true,
         institution: "SeqDesk Demo Workspace",
         researcherRole: "POSTDOC",
@@ -335,6 +345,7 @@ async function createDemoWorkspaceInternal(
         lastName: "Admin",
         role: "FACILITY_ADMIN",
         systemRole: "ADMIN",
+        facilityWorkflowRole: "OPERATOR",
         isDemo: true,
         facilityName: "SeqDesk Demo Facility",
       },
@@ -1608,6 +1619,8 @@ async function findWorkspaceByToken(
           lastName: true,
           role: true,
           systemRole: true,
+          facilityWorkflowRole: true,
+          isActive: true,
           isDemo: true,
         },
       },
@@ -1619,6 +1632,8 @@ async function findWorkspaceByToken(
           lastName: true,
           role: true,
           systemRole: true,
+          facilityWorkflowRole: true,
+          isActive: true,
           isDemo: true,
         },
       },
@@ -1882,6 +1897,7 @@ export async function createDemoSessionToken(
       name: `${user.firstName} ${user.lastName}`.trim(),
       role: user.role,
       systemRole: user.systemRole,
+      facilityWorkflowRole: user.facilityWorkflowRole,
       isDemo: user.isDemo,
       demoExperience: user.demoExperience,
     },
@@ -1970,7 +1986,7 @@ export async function authorizeDemoWorkspaceToken(
     }
 
     const selectedUser = selectWorkspaceUser(workspace, demoExperience);
-    if (!selectedUser) {
+    if (!selectedUser || selectedUser.isActive === false) {
       return null;
     }
 

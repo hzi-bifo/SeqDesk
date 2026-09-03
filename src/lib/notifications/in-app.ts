@@ -1,4 +1,10 @@
 import { db } from "@/lib/db";
+import {
+  getCapabilityGrant,
+  principalFromSession,
+  type Capability,
+} from "@/lib/authorization";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { getInAppNotificationSettings } from "./settings";
 
 export type InAppNotificationSeverity = "info" | "success" | "warning" | "error";
@@ -26,12 +32,17 @@ export interface InAppNotificationList {
 interface Actor {
   id?: string | null;
   role?: string | null;
+  systemRole?: string | null;
+  facilityWorkflowRole?: string | null;
   email?: string | null;
   name?: string | null;
 }
 
 interface Recipient {
   id: string;
+  role?: string | null;
+  systemRole?: string | null;
+  facilityWorkflowRole?: string | null;
   firstName?: string | null;
   lastName?: string | null;
   email?: string | null;
@@ -126,10 +137,32 @@ function uniqueRecipients(recipients: Recipient[], actor?: Actor | null): Recipi
   return result;
 }
 
-async function loadFacilityAdmins(): Promise<Recipient[]> {
+async function loadSystemAdmins(): Promise<Recipient[]> {
   return db.user.findMany({
-    where: { systemRole: "ADMIN" },
+    where: { systemRole: "ADMIN", isActive: true },
     select: { id: true, firstName: true, lastName: true, email: true },
+  });
+}
+
+async function loadCapabilityRecipients(
+  capability: Capability
+): Promise<Recipient[]> {
+  const profile = getServerDeploymentProfile();
+  const candidates = await db.user.findMany({
+    where: { isActive: true },
+    select: {
+      id: true,
+      role: true,
+      systemRole: true,
+      facilityWorkflowRole: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+    },
+  });
+  return candidates.filter((candidate) => {
+    const principal = principalFromSession({ user: candidate });
+    return Boolean(principal && getCapabilityGrant(profile, principal, capability));
   });
 }
 
@@ -277,6 +310,7 @@ export async function notifyOrderCreatedInApp(
   actor?: Actor | null
 ): Promise<void> {
   await bestEffort("order.created", async () => {
+    if (getServerDeploymentProfile().id !== "sequencing-center") return;
     const order = await db.order.findUnique({
       where: { id: orderId },
       select: {
@@ -284,12 +318,22 @@ export async function notifyOrderCreatedInApp(
         orderNumber: true,
         name: true,
         generatedByE2E: true,
-        user: { select: { id: true, firstName: true, lastName: true, email: true } },
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
       },
     });
     if (!order || order.generatedByE2E) return;
 
-    const recipients = uniqueRecipients(await loadFacilityAdmins(), actor);
+    const recipients = uniqueRecipients(
+      await loadCapabilityRecipients("orders.process"),
+      actor
+    );
     await createNotifications(recipients, {
       eventType: "order.created",
       severity: "info",
@@ -309,6 +353,7 @@ export async function notifyOrderUpdatedInApp(
   summary?: string | null
 ): Promise<void> {
   await bestEffort("order.updated", async () => {
+    if (getServerDeploymentProfile().id !== "sequencing-center") return;
     const order = await db.order.findUnique({
       where: { id: orderId },
       select: {
@@ -317,13 +362,24 @@ export async function notifyOrderUpdatedInApp(
         name: true,
         status: true,
         generatedByE2E: true,
-        user: { select: { id: true, firstName: true, lastName: true, email: true } },
+        user: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            isActive: true,
+          },
+        },
       },
     });
     if (!order || order.generatedByE2E) return;
 
-    const admins = await loadFacilityAdmins();
-    const recipients = uniqueRecipients([order.user, ...admins], actor);
+    const operators = await loadCapabilityRecipients("orders.process");
+    const recipients = uniqueRecipients(
+      [...(order.user.isActive ? [order.user] : []), ...operators],
+      actor,
+    );
     const eventId = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
     await createNotifications(recipients, {
       eventType: "order.updated",
@@ -369,8 +425,12 @@ export async function notifyPipelineRunTerminalInApp(
     if (!run) return;
     if (run.order?.generatedByE2E || run.study?.generatedByE2E) return;
 
-    const admins = await loadFacilityAdmins();
-    const recipients = uniqueRecipients([run.user, ...admins]);
+    const profile = getServerDeploymentProfile();
+    const operators =
+      profile.id === "sequencing-center"
+        ? await loadCapabilityRecipients("orders.process")
+        : [];
+    const recipients = uniqueRecipients([run.user, ...operators]);
     const eventType = `pipeline.${normalizedNext}`;
     const targetLabel =
       run.order?.orderNumber ||
@@ -416,7 +476,7 @@ export async function notifyAppUpdateStartedInApp(options: {
   repair?: boolean;
 }): Promise<void> {
   await bestEffort("app.update.started", async () => {
-    const recipients = await loadFacilityAdmins();
+    const recipients = await loadSystemAdmins();
     const eventType = options.repair ? "app.update.repair_started" : "app.update.started";
     const sourceId = updateEventSourceId(options.targetVersion);
     const eventId = `${Date.now()}:${Math.random().toString(36).slice(2)}`;
@@ -442,7 +502,7 @@ export async function notifyAppUpdateProgressInApp(
   if (progress.status !== "complete" && progress.status !== "error") return;
 
   await bestEffort("app.update.progress", async () => {
-    const recipients = await loadFacilityAdmins();
+    const recipients = await loadSystemAdmins();
     const sourceId = updateEventSourceId(options.targetVersion);
     const failed = progress.status === "error";
     const eventType = failed ? "app.update.failed" : "app.update.completed";

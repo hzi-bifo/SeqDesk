@@ -7,7 +7,44 @@ import {
   AccountValidationSettings,
 } from "@/lib/modules/types";
 import { getServerEnrollmentPolicy } from "@/lib/deployment-profile/enrollment.server";
-import { getInviteAccountRole } from "@/lib/accounts/invite-role";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+import {
+  getInviteGrant,
+  legacyRoleForSystemRole,
+  type InviteGrant,
+} from "@/lib/accounts/invite-role";
+import { z } from "zod";
+
+const RESEARCHER_ROLES = [
+  "PI",
+  "POSTDOC",
+  "PHD_STUDENT",
+  "MASTER_STUDENT",
+  "TECHNICIAN",
+  "OTHER",
+] as const;
+
+const registrationSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().max(320),
+    password: z
+      .string()
+      .min(8)
+      .max(72)
+      .refine((value) => Buffer.byteLength(value, "utf8") <= 72),
+    firstName: z.string().trim().min(1).max(100),
+    lastName: z.string().trim().min(1).max(100),
+    researcherRole: z.enum(RESEARCHER_ROLES).optional(),
+    departmentId: z.string().trim().min(1).max(128).optional(),
+    institution: z.string().trim().max(300).optional(),
+    inviteCode: z.string().trim().min(1).max(128).optional(),
+    // Compatibility assertions only. Neither field can grant access.
+    role: z.enum(["RESEARCHER", "FACILITY_ADMIN"]).optional(),
+    facilityName: z.string().trim().max(300).optional(),
+  })
+  .strict();
+
+class InviteClaimError extends Error {}
 
 // Check if account validation module is enabled and get settings
 async function getAccountValidationConfig(): Promise<{
@@ -105,94 +142,132 @@ function validateEmailDomain(
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const parsed = registrationSchema.safeParse(
+      await request.json().catch(() => null)
+    );
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid registration details" },
+        { status: 400 }
+      );
+    }
+
     const {
       email,
       password,
       firstName,
       lastName,
-      role,
       researcherRole,
       departmentId,
       institution,
+      inviteCode,
+      role: legacyRoleAssertion,
       facilityName,
-      inviteCode, // For admin registration
-    } = body;
+    } = parsed.data;
 
-    // Validation
-    if (!email || !password || !firstName || !lastName || !role) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
-      );
-    }
-
-    if (role !== "RESEARCHER" && role !== "FACILITY_ADMIN") {
-      return NextResponse.json(
-        { error: "Invalid role" },
-        { status: 400 }
-      );
-    }
-
+    const profile = getServerDeploymentProfile();
     const enrollment = await getServerEnrollmentPolicy();
 
-    // Administrator registration always requires an invite. Shared Lab and
-    // Workbench members are invite-only by default; an administrator may
-    // deliberately enable self-registration through the existing auth policy.
-    let invite = null;
-    if (role === "FACILITY_ADMIN" || !enrollment.allowSelfRegistration) {
-      if (!inviteCode) {
-        return NextResponse.json(
-          {
-            error:
-              role === "FACILITY_ADMIN"
-                ? "Admin registration requires an invite code"
-                : "This SeqDesk installation is invite-only",
-            code: "INVITE_REQUIRED",
-          },
-          { status: 403 }
-        );
-      }
+    if (
+      profile.id !== "sequencing-center" &&
+      (researcherRole || departmentId || institution || facilityName)
+    ) {
+      return NextResponse.json(
+        { error: "Sequencing-center profile fields are unavailable in this deployment" },
+        { status: 400 }
+      );
+    }
 
+    const activeAdministratorCount = await db.user.count({
+      where: { systemRole: "ADMIN", isActive: true },
+    });
+    if (activeAdministratorCount === 0) {
+      return NextResponse.json(
+        {
+          error: "SeqDesk setup must create an administrator before registration opens",
+          code: "SETUP_INCOMPLETE",
+        },
+        { status: 503 }
+      );
+    }
+
+    let invite = null;
+    let grant: InviteGrant = {
+      systemRole: "MEMBER",
+      facilityWorkflowRole: "REQUESTER",
+    };
+
+    if (inviteCode) {
       invite = await db.adminInvite.findUnique({
         where: { code: inviteCode.toUpperCase() },
+        include: {
+          createdBy: {
+            select: { systemRole: true, isActive: true },
+          },
+        },
       });
 
       if (!invite) {
-        return NextResponse.json(
-          { error: "Invalid invite code" },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: "Invalid invite code" }, { status: 400 });
       }
-
       if (invite.usedAt) {
         return NextResponse.json(
           { error: "This invite has already been used" },
           { status: 400 }
         );
       }
-
+      if (invite.revokedAt) {
+        return NextResponse.json(
+          { error: "This invite has been revoked" },
+          { status: 400 }
+        );
+      }
       if (new Date() > invite.expiresAt) {
         return NextResponse.json(
           { error: "This invite has expired" },
           { status: 400 }
         );
       }
-
-      // If invite is restricted to specific email, check it
-      if (invite.email && invite.email.toLowerCase() !== email.toLowerCase()) {
+      if (
+        invite.createdBy.isActive !== true ||
+        invite.createdBy.systemRole !== "ADMIN"
+      ) {
+        return NextResponse.json(
+          { error: "This invite is no longer active" },
+          { status: 400 }
+        );
+      }
+      if (invite.email && invite.email.toLowerCase() !== email) {
         return NextResponse.json(
           { error: "This invite is for a different email address" },
           { status: 400 }
         );
       }
 
-      if (getInviteAccountRole(invite.code) !== role) {
-        return NextResponse.json(
-          { error: "This invite is for a different account type" },
-          { status: 403 }
-        );
+      grant = getInviteGrant(invite);
+      if (profile.id !== "sequencing-center") {
+        grant = { ...grant, facilityWorkflowRole: "REQUESTER" };
       }
+    } else if (!enrollment.allowSelfRegistration) {
+      return NextResponse.json(
+        {
+          error: "This SeqDesk installation is invite-only",
+          code: "INVITE_REQUIRED",
+        },
+        { status: 403 }
+      );
+    }
+
+    // Older forms sent a role. Treat it only as an assertion about the
+    // server-derived system grant; it can never create elevated access.
+    if (
+      legacyRoleAssertion &&
+      legacyRoleAssertion !== legacyRoleForSystemRole(grant.systemRole)
+    ) {
+      return NextResponse.json(
+        { error: "The requested account access is not granted by this invitation" },
+        { status: 403 }
+      );
     }
 
     // Check email domain validation
@@ -211,8 +286,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if user already exists
-    const existingUser = await db.user.findUnique({
-      where: { email },
+    const existingUser = await db.user.findFirst({
+      where: {
+        email: { equals: email, mode: "insensitive" },
+      },
     });
 
     if (existingUser) {
@@ -223,7 +300,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Verify department exists if provided
-    if (departmentId) {
+    if (profile.id === "sequencing-center" && departmentId) {
       const department = await db.department.findUnique({
         where: { id: departmentId },
       });
@@ -246,24 +323,50 @@ export async function POST(request: NextRequest) {
           password: hashedPassword,
           firstName,
           lastName,
-          systemRole: role === "FACILITY_ADMIN" ? "ADMIN" : "MEMBER",
-          role,
-          researcherRole: role === "RESEARCHER" ? researcherRole : null,
-          departmentId: role === "RESEARCHER" ? departmentId : null,
-          institution: role === "RESEARCHER" ? institution : null,
-          facilityName: role === "FACILITY_ADMIN" ? facilityName : null,
+          systemRole: grant.systemRole,
+          // Conservative mirror for older releases; workflow access is stored
+          // independently in facilityWorkflowRole.
+          role: legacyRoleForSystemRole(grant.systemRole),
+          facilityWorkflowRole: grant.facilityWorkflowRole,
+          researcherRole:
+            profile.id === "sequencing-center" &&
+            grant.facilityWorkflowRole === "REQUESTER"
+              ? researcherRole
+              : null,
+          departmentId:
+            profile.id === "sequencing-center" &&
+            grant.facilityWorkflowRole === "REQUESTER"
+              ? departmentId
+              : null,
+          institution:
+            profile.id === "sequencing-center" &&
+            grant.facilityWorkflowRole === "REQUESTER"
+              ? institution
+              : null,
+          facilityName: null,
         },
       });
 
-      // Mark invite as used
       if (invite) {
-        await tx.adminInvite.update({
-          where: { id: invite.id },
+        const claimedAt = new Date();
+        const claim = await tx.adminInvite.updateMany({
+          where: {
+            id: invite.id,
+            usedAt: null,
+            revokedAt: null,
+            expiresAt: { gt: claimedAt },
+            createdBy: {
+              is: { systemRole: "ADMIN", isActive: true },
+            },
+          },
           data: {
-            usedAt: new Date(),
+            usedAt: claimedAt,
             usedById: newUser.id,
           },
         });
+        if (claim.count !== 1) {
+          throw new InviteClaimError();
+        }
       }
 
       return newUser;
@@ -278,11 +381,19 @@ export async function POST(request: NextRequest) {
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
+          systemRole: user.systemRole,
+          facilityWorkflowRole: user.facilityWorkflowRole,
         }
       },
       { status: 201 }
     );
   } catch (error) {
+    if (error instanceof InviteClaimError) {
+      return NextResponse.json(
+        { error: "This invite was already used or revoked" },
+        { status: 409 }
+      );
+    }
     console.error("Registration error:", error);
     return NextResponse.json(
       { error: "Something went wrong" },

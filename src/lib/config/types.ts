@@ -211,6 +211,8 @@ export interface ModuleSettingsConfig {
 export interface AppConfig {
   /** App listen port for generated start scripts */
   port?: number;
+  /** Installer-selected access topology used when reviewing/reconfiguring an installation */
+  accessAudience?: "local" | "team-server" | "advanced";
 }
 
 export interface RuntimeConfig {

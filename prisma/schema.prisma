@@ -16,9 +16,13 @@ model User {
   lastName       String
   phone          String?
   /// Installation-level authorization. `role` remains as a rollback-compatible
-  /// facility-workflow/login field until every stored user and integration has migrated.
+  /// system-role mirror until every stored user and integration has migrated.
   systemRole     String          @default("MEMBER")
   role           String          @default("RESEARCHER")
+  /// Sequencing-center responsibility, independent from installation administration.
+  facilityWorkflowRole String     @default("REQUESTER")
+  isActive        Boolean         @default(true)
+  deactivatedAt   DateTime?
   isDemo         Boolean         @default(false)
   researcherRole String?
   institution    String?
@@ -31,6 +35,7 @@ model User {
   adminDemoWorkspace DemoWorkspace? @relation("DemoWorkspaceAdmin")
   usedInvite     AdminInvite?    @relation("InviteUser")
   createdInvites AdminInvite[]   @relation("InviteCreator")
+  revokedInvites AdminInvite[]   @relation("InviteRevoker")
   orders         Order[]
   orderNotesEdited Order[]       @relation("OrderNotesEditor")
   sequencingFilesPublishedOrders Order[] @relation("OrderSequencingFilesPublisher")
@@ -50,6 +55,7 @@ model User {
   department     Department?     @relation(fields: [departmentId], references: [id])
 
   @@index([systemRole])
+  @@index([systemRole, isActive])
 }
 
 model InAppNotification {
@@ -843,8 +849,15 @@ model AdminInvite {
   expiresAt   DateTime
   createdAt   DateTime  @default(now())
   createdById String
+  targetSystemRole String @default("MEMBER")
+  targetFacilityWorkflowRole String    @default("REQUESTER")
   usedAt      DateTime?
   usedById    String?   @unique
+  revokedAt   DateTime?
+  revokedById String?
   usedBy      User?     @relation("InviteUser", fields: [usedById], references: [id])
   createdBy   User      @relation("InviteCreator", fields: [createdById], references: [id])
+  revokedBy   User?     @relation("InviteRevoker", fields: [revokedById], references: [id], onDelete: SetNull)
+
+  @@index([createdById, usedAt, revokedAt])
 }

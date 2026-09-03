@@ -30,6 +30,7 @@ export default function LoginPage() {
   const [checkingDb, setCheckingDb] = useState(true);
   const [deploymentProfileId, setDeploymentProfileId] =
     useState<DeploymentProfileId>("sequencing-center");
+  const [inviteOnly, setInviteOnly] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -57,6 +58,7 @@ export default function LoginPage() {
         if (resolvedProfile) {
           setDeploymentProfileId(resolvedProfile);
         }
+        setInviteOnly(status.enrollment?.policy === "invite-only");
         if (!status.exists || !status.configured) {
           router.replace("/setup");
           return;
@@ -120,7 +122,7 @@ export default function LoginPage() {
             className="px-4 py-2 text-sm rounded-lg transition-colors no-underline"
             style={{ color: '#525252' }}
           >
-            Create account
+            {inviteOnly ? "Redeem invitation" : "Create account"}
           </Link>
         </nav>
       </header>
@@ -276,7 +278,7 @@ export default function LoginPage() {
                 className="font-medium no-underline transition-colors"
                 style={{ color: '#171717' }}
               >
-                Create account
+                {inviteOnly ? "Redeem invitation" : "Create account"}
               </Link>
             </p>
             <p>

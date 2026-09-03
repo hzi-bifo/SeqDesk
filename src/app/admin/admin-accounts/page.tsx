@@ -48,13 +48,15 @@ import { PageLoader } from "@/components/ui/page-loader";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 import { hasCapability, principalFromSession } from "@/lib/authorization";
 
-type InviteAccountRole = "RESEARCHER" | "FACILITY_ADMIN";
+type InviteSystemRole = "MEMBER" | "ADMIN";
+type InviteFacilityWorkflowRole = "REQUESTER" | "OPERATOR";
 
 interface Admin {
   id: string;
   firstName: string;
   lastName: string;
   email: string;
+  isActive: boolean;
   createdAt: string;
 }
 
@@ -67,7 +69,11 @@ interface Invite {
   usedAt: string | null;
   createdBy: { firstName: string; lastName: string };
   usedBy: { firstName: string; lastName: string; email: string } | null;
-  accountRole: InviteAccountRole;
+  revokedAt: string | null;
+  grant: {
+    systemRole: InviteSystemRole;
+    facilityWorkflowRole: InviteFacilityWorkflowRole;
+  };
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -109,9 +115,10 @@ export default function AdminAccountsPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteExpires, setInviteExpires] = useState("7");
-  const [inviteRole, setInviteRole] = useState<InviteAccountRole>(
-    deploymentProfile.id === "sequencing-center" ? "FACILITY_ADMIN" : "RESEARCHER"
-  );
+  const [inviteSystemRole, setInviteSystemRole] =
+    useState<InviteSystemRole>("MEMBER");
+  const [inviteFacilityRole, setInviteFacilityRole] =
+    useState<InviteFacilityWorkflowRole>("REQUESTER");
   const [creating, setCreating] = useState(false);
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -121,12 +128,20 @@ export default function AdminAccountsPage() {
   const isExpired = useCallback((date: string) => new Date() > new Date(date), []);
 
   const pendingInvites = useMemo(
-    () => invites.filter((invite) => !invite.usedAt && !isExpired(invite.expiresAt)),
+    () =>
+      invites.filter(
+        (invite) =>
+          !invite.usedAt && !invite.revokedAt && !isExpired(invite.expiresAt)
+      ),
     [invites, isExpired]
   );
 
   const usedOrExpiredInvites = useMemo(
-    () => invites.filter((invite) => invite.usedAt || isExpired(invite.expiresAt)),
+    () =>
+      invites.filter(
+        (invite) =>
+          Boolean(invite.usedAt || invite.revokedAt) || isExpired(invite.expiresAt)
+      ),
     [invites, isExpired]
   );
 
@@ -208,6 +223,10 @@ export default function AdminAccountsPage() {
 
   const handleCreateInvite = async () => {
     const trimmedEmail = inviteEmail.trim().toLowerCase();
+    if (inviteSystemRole === "ADMIN" && !trimmedEmail) {
+      toast.error("Administrator invitations must be restricted to an email address");
+      return;
+    }
     if (trimmedEmail && !EMAIL_PATTERN.test(trimmedEmail)) {
       toast.error("Please enter a valid email address");
       return;
@@ -227,7 +246,11 @@ export default function AdminAccountsPage() {
         body: JSON.stringify({
           email: trimmedEmail || null,
           expiresInDays,
-          accountRole: inviteRole,
+          systemRole: inviteSystemRole,
+          facilityWorkflowRole:
+            deploymentProfile.id === "sequencing-center"
+              ? inviteFacilityRole
+              : "REQUESTER",
         }),
       });
 
@@ -249,7 +272,7 @@ export default function AdminAccountsPage() {
       setInviteEmail("");
       setInviteExpires("7");
       toast.success(
-        `${inviteRole === "FACILITY_ADMIN" ? "Administrator" : deploymentProfile.terminology.member} invite created`
+        `${inviteSystemRole === "ADMIN" ? "Administrator" : deploymentProfile.terminology.member} invite created`
       );
     } catch (error) {
       toast.error(
@@ -277,7 +300,13 @@ export default function AdminAccountsPage() {
         throw new Error(payload?.error || "Failed to revoke invite");
       }
 
-      setInvites((prev) => prev.filter((invite) => invite.id !== inviteToDelete.id));
+      setInvites((prev) =>
+        prev.map((invite) =>
+          invite.id === inviteToDelete.id
+            ? { ...invite, revokedAt: new Date().toISOString() }
+            : invite
+        )
+      );
       setDeleteDialogOpen(false);
       setInviteToDelete(null);
       toast.success("Invite revoked");
@@ -289,7 +318,7 @@ export default function AdminAccountsPage() {
   };
 
   const copyInviteLink = async (code: string) => {
-    const link = `${window.location.origin}/register/admin?code=${code}`;
+    const link = `${window.location.origin}/register?code=${encodeURIComponent(code)}`;
     try {
       await navigator.clipboard.writeText(link);
       toast.success("Invite link copied");
@@ -489,7 +518,7 @@ export default function AdminAccountsPage() {
             <div>
               <h2 className="text-base font-semibold">Current Administrators</h2>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Accounts with full facility administration permissions
+                Accounts that can configure this SeqDesk installation
               </p>
             </div>
             <Badge variant="secondary">{admins.length}</Badge>
@@ -523,6 +552,7 @@ export default function AdminAccountsPage() {
                       {admin.id === session?.user?.id && (
                         <span className="text-xs text-muted-foreground">(You)</span>
                       )}
+                      {!admin.isActive && <Badge variant="outline">Deactivated</Badge>}
                     </div>
                     <div className="mt-1 flex flex-col gap-1 text-sm text-muted-foreground sm:flex-row sm:items-center sm:gap-4">
                       <span className="inline-flex items-center gap-1.5">
@@ -573,11 +603,18 @@ export default function AdminAccountsPage() {
                         <code className="text-xs font-mono font-semibold bg-secondary px-2 py-1 rounded">
                           {invite.code}
                         </code>
-                        <Badge variant={invite.accountRole === "FACILITY_ADMIN" ? "default" : "secondary"}>
-                          {invite.accountRole === "FACILITY_ADMIN"
+                        <Badge variant={invite.grant.systemRole === "ADMIN" ? "default" : "secondary"}>
+                          {invite.grant.systemRole === "ADMIN"
                             ? "Administrator"
                             : deploymentProfile.terminology.member}
                         </Badge>
+                        {deploymentProfile.id === "sequencing-center" && (
+                          <Badge variant="outline">
+                            {invite.grant.facilityWorkflowRole === "OPERATOR"
+                              ? "Facility operator"
+                              : "Requester"}
+                          </Badge>
+                        )}
                         {invite.email ? (
                           <span className="text-xs text-muted-foreground">
                             restricted to {invite.email}
@@ -674,13 +711,19 @@ export default function AdminAccountsPage() {
                         <p className="text-xs text-muted-foreground">
                           Used by {invite.usedBy.firstName} {invite.usedBy.lastName}
                         </p>
+                      ) : invite.revokedAt ? (
+                        <p className="text-xs text-muted-foreground">Revoked</p>
                       ) : (
                         <p className="text-xs text-muted-foreground">Expired unused</p>
                       )}
                     </div>
                   </div>
                   <span className="text-xs text-muted-foreground shrink-0">
-                    {invite.usedAt ? formatDate(invite.usedAt) : formatDate(invite.expiresAt)}
+                    {invite.usedAt
+                      ? formatDate(invite.usedAt)
+                      : invite.revokedAt
+                        ? formatDate(invite.revokedAt)
+                        : formatDate(invite.expiresAt)}
                   </span>
                 </div>
               ))}
@@ -696,11 +739,8 @@ export default function AdminAccountsPage() {
           if (!open) {
             setInviteEmail("");
             setInviteExpires("7");
-            setInviteRole(
-              deploymentProfile.id === "sequencing-center"
-                ? "FACILITY_ADMIN"
-                : "RESEARCHER"
-            );
+            setInviteSystemRole("MEMBER");
+            setInviteFacilityRole("REQUESTER");
           }
         }}
       >
@@ -714,19 +754,21 @@ export default function AdminAccountsPage() {
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="invite-role">Account access</Label>
+              <Label htmlFor="invite-system-role">System access</Label>
               <Select
-                value={inviteRole}
-                onValueChange={(value) => setInviteRole(value as InviteAccountRole)}
+                value={inviteSystemRole}
+                onValueChange={(value) =>
+                  setInviteSystemRole(value as InviteSystemRole)
+                }
               >
-                <SelectTrigger id="invite-role" className="bg-white">
+                <SelectTrigger id="invite-system-role" className="bg-white">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="RESEARCHER">
+                  <SelectItem value="MEMBER">
                     {deploymentProfile.terminology.member} — scientific work
                   </SelectItem>
-                  <SelectItem value="FACILITY_ADMIN">
+                  <SelectItem value="ADMIN">
                     Administrator — scientific work and system configuration
                   </SelectItem>
                 </SelectContent>
@@ -736,14 +778,44 @@ export default function AdminAccountsPage() {
               </p>
             </div>
 
+            {deploymentProfile.id === "sequencing-center" && (
+              <div className="space-y-2">
+                <Label htmlFor="invite-facility-role">Facility responsibility</Label>
+                <Select
+                  value={inviteFacilityRole}
+                  onValueChange={(value) =>
+                    setInviteFacilityRole(value as InviteFacilityWorkflowRole)
+                  }
+                >
+                  <SelectTrigger id="invite-facility-role" className="bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="REQUESTER">
+                      Requester — submits and manages own requests
+                    </SelectItem>
+                    <SelectItem value="OPERATOR">
+                      Facility operator — processes facility work
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Facility responsibility is independent from system administration.
+                </p>
+              </div>
+            )}
+
             <div className="space-y-2">
-              <Label htmlFor="invite-email">Email (optional)</Label>
+              <Label htmlFor="invite-email">
+                Email {inviteSystemRole === "ADMIN" ? "(required)" : "(optional)"}
+              </Label>
               <Input
                 id="invite-email"
                 type="email"
                 value={inviteEmail}
                 onChange={(event) => setInviteEmail(event.target.value)}
                 placeholder="Leave empty for any email"
+                required={inviteSystemRole === "ADMIN"}
               />
               <p className="text-xs text-muted-foreground">
                 If specified, only this email can redeem the invite.

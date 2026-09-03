@@ -201,9 +201,10 @@ const fetchRemoteConfig = async (syncUrl: string): Promise<SequencingTechConfig>
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
+    const access = decideServerCapability(session, "system.sequencing.manage");
 
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const settings = await db.siteSettings.findUnique({

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth';
+import { isActiveSession } from '@/lib/auth-session';
 import { isDemoSession } from '@/lib/demo/server';
 import {
   type DebugBundle,
@@ -18,7 +19,7 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session) {
+    if (!isActiveSession(session)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

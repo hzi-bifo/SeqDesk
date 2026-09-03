@@ -29,5 +29,10 @@ export type OnboardingStatus = {
   completedByUserId?: string;
   completedCount: number;
   totalCount: number;
+  requiredCompletedCount: number;
+  requiredTotalCount: number;
+  recommendedCompletedCount: number;
+  recommendedTotalCount: number;
+  recommendationsComplete: boolean;
   items: OnboardingStatusItem[];
 };

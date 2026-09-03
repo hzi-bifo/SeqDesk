@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import type { Session } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { decideCapability } from "@/lib/authorization";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { isDemoSession } from "@/lib/demo/server";
@@ -17,7 +18,7 @@ export class SequencingApiError extends Error {
 export async function requireFacilityAdminSequencingSession(): Promise<Session> {
   const session = await getServerSession(authOptions);
 
-  if (!session) {
+  if (!isActiveSession(session)) {
     throw new SequencingApiError(401, "Unauthorized");
   }
 
@@ -51,7 +52,7 @@ export async function requireFacilityAdminSequencingSession(): Promise<Session> 
 export async function requireFacilityAdminSequencingReadSession(): Promise<Session> {
   const session = await getServerSession(authOptions);
 
-  if (!session) {
+  if (!isActiveSession(session)) {
     throw new SequencingApiError(401, "Unauthorized");
   }
 

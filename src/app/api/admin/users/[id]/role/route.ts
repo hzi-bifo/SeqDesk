@@ -5,38 +5,29 @@ import { authOptions } from "@/lib/auth";
 import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
-
-type AccountRole = "RESEARCHER" | "FACILITY_ADMIN";
-type SystemRole = "MEMBER" | "ADMIN";
-
-class FinalAdministratorError extends Error {}
-
-function isAccountRole(value: unknown): value is AccountRole {
-  return value === "RESEARCHER" || value === "FACILITY_ADMIN";
-}
-
-function isSystemRole(value: unknown): value is SystemRole {
-  return value === "MEMBER" || value === "ADMIN";
-}
-
-function isTransactionConflict(error: unknown): boolean {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "P2034"
-  );
-}
+import {
+  assertCanRemoveActiveAdministrator,
+  FinalActiveAdministratorError,
+  isSerializableTransactionConflict,
+} from "@/lib/accounts/lifecycle";
+import {
+  grantFromLegacyAccountRole,
+  isFacilityWorkflowRole,
+  isInviteAccountRole,
+  isSystemRole,
+  legacyRoleForSystemRole,
+} from "@/lib/accounts/invite-role";
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
+  const profile = getServerDeploymentProfile();
   const decision = decideCapability(
     session,
     "system.users.manage",
-    getServerDeploymentProfile()
+    profile
   );
   if (!decision.allowed || decision.principal?.isDemo) {
     const status = decision.allowed ? 403 : decision.status;
@@ -49,10 +40,12 @@ export async function PATCH(
   const body = (await request.json().catch(() => ({}))) as {
     role?: unknown;
     systemRole?: unknown;
+    facilityWorkflowRole?: unknown;
   };
   const legacyRoleProvided = body.role !== undefined;
   const systemRoleProvided = body.systemRole !== undefined;
-  if (legacyRoleProvided && !isAccountRole(body.role)) {
+  const facilityWorkflowRoleProvided = body.facilityWorkflowRole !== undefined;
+  if (legacyRoleProvided && !isInviteAccountRole(body.role)) {
     return NextResponse.json(
       { error: "role must be RESEARCHER or FACILITY_ADMIN" },
       { status: 400 }
@@ -64,26 +57,43 @@ export async function PATCH(
       { status: 400 }
     );
   }
-
-  const legacyRole = isAccountRole(body.role) ? body.role : null;
-  const legacySystemRole =
-    legacyRole === "FACILITY_ADMIN"
-      ? "ADMIN"
-      : legacyRole === "RESEARCHER"
-        ? "MEMBER"
-        : null;
-  const systemRole = isSystemRole(body.systemRole)
-    ? body.systemRole
-    : legacySystemRole;
-  if (!systemRole) {
+  if (
+    facilityWorkflowRoleProvided &&
+    !isFacilityWorkflowRole(body.facilityWorkflowRole)
+  ) {
     return NextResponse.json(
-      { error: "systemRole must be MEMBER or ADMIN" },
+      { error: "facilityWorkflowRole must be REQUESTER or OPERATOR" },
       { status: 400 }
     );
   }
-  if (legacySystemRole && legacySystemRole !== systemRole) {
+  if (!legacyRoleProvided && !systemRoleProvided && !facilityWorkflowRoleProvided) {
     return NextResponse.json(
-      { error: "role and systemRole describe different account access" },
+      { error: "Provide systemRole or facilityWorkflowRole" },
+      { status: 400 }
+    );
+  }
+
+  const legacyGrant = isInviteAccountRole(body.role)
+    ? grantFromLegacyAccountRole(body.role)
+    : null;
+  if (
+    legacyGrant &&
+    ((isSystemRole(body.systemRole) &&
+      legacyGrant.systemRole !== body.systemRole) ||
+      (isFacilityWorkflowRole(body.facilityWorkflowRole) &&
+        legacyGrant.facilityWorkflowRole !== body.facilityWorkflowRole))
+  ) {
+    return NextResponse.json(
+      { error: "Legacy role and explicit access fields conflict" },
+      { status: 400 }
+    );
+  }
+  if (
+    profile.id !== "sequencing-center" &&
+    body.facilityWorkflowRole === "OPERATOR"
+  ) {
+    return NextResponse.json(
+      { error: "Facility workflow access is only available in Sequencing Center" },
       { status: 400 }
     );
   }
@@ -97,36 +107,78 @@ export async function PATCH(
           async (tx) => {
             const target = await tx.user.findUnique({
               where: { id },
-              select: { id: true, role: true, systemRole: true, email: true },
+              select: {
+                id: true,
+                role: true,
+                systemRole: true,
+                facilityWorkflowRole: true,
+                isActive: true,
+                email: true,
+              },
             });
             if (!target) return null;
+            const currentSystemRole = isSystemRole(target.systemRole)
+              ? target.systemRole
+              : "MEMBER";
+            const currentFacilityWorkflowRole = isFacilityWorkflowRole(
+              target.facilityWorkflowRole
+            )
+              ? target.facilityWorkflowRole
+              : "REQUESTER";
+            const systemRole = isSystemRole(body.systemRole)
+              ? body.systemRole
+              : legacyGrant?.systemRole ?? currentSystemRole;
+            const facilityWorkflowRole =
+              profile.id === "sequencing-center"
+                ? isFacilityWorkflowRole(body.facilityWorkflowRole)
+                  ? body.facilityWorkflowRole
+                  : legacyGrant?.facilityWorkflowRole ??
+                    currentFacilityWorkflowRole
+                : "REQUESTER";
+            const legacyRole = legacyRoleForSystemRole(systemRole);
             if (
               target.systemRole === systemRole &&
-              (!legacyRole || target.role === legacyRole)
+              target.facilityWorkflowRole === facilityWorkflowRole &&
+              target.role === legacyRole
             ) {
               return target;
             }
 
             if (target.systemRole === "ADMIN" && systemRole === "MEMBER") {
-              const administratorCount = await tx.user.count({
-                where: { systemRole: "ADMIN" },
-              });
-              if (administratorCount <= 1) {
-                throw new FinalAdministratorError();
-              }
+              await assertCanRemoveActiveAdministrator(tx, target);
             }
 
-            return tx.user.update({
+            const updated = await tx.user.update({
               where: { id },
               data: {
                 systemRole,
-                // Legacy callers still send `role`; keep both columns in sync
-                // for rollback compatibility. New callers change only the
-                // installation-level role.
-                ...(legacyRole ? { role: legacyRole } : {}),
+                facilityWorkflowRole,
+                // Older releases understand only this field. Mirror system
+                // access conservatively so a member operator never becomes an
+                // administrator after downgrade.
+                role: legacyRole,
               },
-              select: { id: true, role: true, systemRole: true, email: true },
+              select: {
+                id: true,
+                role: true,
+                systemRole: true,
+                facilityWorkflowRole: true,
+                isActive: true,
+                email: true,
+              },
             });
+
+            if (target.systemRole === "ADMIN" && systemRole === "MEMBER") {
+              await tx.adminInvite.updateMany({
+                where: { createdById: id, usedAt: null, revokedAt: null },
+                data: {
+                  revokedAt: new Date(),
+                  revokedById: decision.principal!.id,
+                },
+              });
+            }
+
+            return updated;
           },
           { isolationLevel: "Serializable" }
         );
@@ -139,11 +191,12 @@ export async function PATCH(
           actorId: decision.principal!.id,
           targetId: result.id,
           systemRole: result.systemRole,
+          facilityWorkflowRole: result.facilityWorkflowRole,
           legacyRole: result.role,
         });
         return NextResponse.json(result);
       } catch (error) {
-        if (error instanceof FinalAdministratorError) {
+        if (error instanceof FinalActiveAdministratorError) {
           return NextResponse.json(
             {
               error: "Create another administrator before demoting the final administrator",
@@ -152,7 +205,7 @@ export async function PATCH(
             { status: 409 }
           );
         }
-        if (isTransactionConflict(error) && attempt < 2) continue;
+        if (isSerializableTransactionConflict(error) && attempt < 2) continue;
         throw error;
       }
     }

@@ -1,6 +1,12 @@
 import { db } from "@/lib/db";
 import { getEffectiveConfig } from "@/lib/config";
 import {
+  getCapabilityGrant,
+  principalFromSession,
+  type Capability,
+} from "@/lib/authorization";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+import {
   getNotificationRelayCredentials,
   getNotificationSettings,
   isEventEnabled,
@@ -16,6 +22,8 @@ import type {
 type Actor = {
   id: string;
   role?: string | null;
+  systemRole?: string | null;
+  facilityWorkflowRole?: string | null;
   email?: string | null;
   name?: string | null;
 };
@@ -29,6 +37,7 @@ type OrderForNotification = {
     email: string;
     firstName: string | null;
     lastName: string | null;
+    isActive: boolean;
     isDemo?: boolean | null;
     notificationPreferences?: string | null;
   };
@@ -42,6 +51,7 @@ type TicketForNotification = {
     email: string;
     firstName: string | null;
     lastName: string | null;
+    isActive: boolean;
     isDemo?: boolean | null;
     notificationPreferences?: string | null;
   };
@@ -91,22 +101,29 @@ export async function dispatchNotification(
 
 export async function notifyOrderSubmitted(orderId: string, actor: Actor): Promise<void> {
   await bestEffort("order submitted", async () => {
+    const profile = getServerDeploymentProfile();
+    if (profile.id !== "sequencing-center") return;
     const order = await loadOrderForNotification(orderId);
     if (!order) return;
     const context = orderContext(order, {
       snippet: "The sequencing order was submitted and is ready for facility review.",
     });
 
+    const ownerDelivery = order.user.isActive
+      ? dispatchNotification({
+          event: "order.submitted",
+          recipient: userRecipient(order.user),
+          context,
+          replyTo: await getFacilityReplyTo(),
+        })
+      : Promise.resolve(false);
+
     await Promise.all([
-      dispatchNotification({
-        event: "order.submitted",
-        recipient: userRecipient(order.user),
-        context,
-        replyTo: await getFacilityReplyTo(),
-      }),
-      notifyAdmins({
+      ownerDelivery,
+      notifyOperationalRecipients({
         event: "order.submitted",
         actor,
+        capability: "orders.process",
         context: {
           ...context,
           actorName: actorName(actor),
@@ -125,9 +142,11 @@ export async function notifyOrderStatusChanged(
   actor: Actor
 ): Promise<void> {
   await bestEffort("order status change", async () => {
-    if (actor.role !== "FACILITY_ADMIN") return;
+    const profile = getServerDeploymentProfile();
+    if (profile.id !== "sequencing-center") return;
+    if (!actorHasCapability(actor, "orders.process", profile)) return;
     const order = await loadOrderForNotification(orderId);
-    if (!order) return;
+    if (!order || !order.user.isActive) return;
 
     await dispatchNotification({
       event: "order.status_changed",
@@ -145,13 +164,16 @@ export async function notifyOrderStatusChanged(
 
 export async function notifySamplesMarkedSent(orderId: string, actor: Actor): Promise<void> {
   await bestEffort("samples marked sent", async () => {
-    if (actor.role === "FACILITY_ADMIN") return;
+    const profile = getServerDeploymentProfile();
+    if (profile.id !== "sequencing-center") return;
+    if (actorHasCapability(actor, "orders.process", profile)) return;
     const order = await loadOrderForNotification(orderId);
     if (!order) return;
 
-    await notifyAdmins({
+    await notifyOperationalRecipients({
       event: "order.samples_sent",
       actor,
+      capability: "orders.process",
       context: orderContext(order, {
         actorName: actorName(actor),
         snippet: "Samples were marked as sent to the facility.",
@@ -163,13 +185,16 @@ export async function notifySamplesMarkedSent(orderId: string, actor: Actor): Pr
 
 export async function notifyTicketCreated(ticketId: string, actor: Actor): Promise<void> {
   await bestEffort("ticket created", async () => {
-    if (actor.role === "FACILITY_ADMIN") return;
+    const profile = getServerDeploymentProfile();
+    if (profile.id !== "sequencing-center") return;
+    if (actorHasCapability(actor, "support.tickets.manage", profile)) return;
     const ticket = await loadTicketForNotification(ticketId);
     if (!ticket) return;
 
-    await notifyAdmins({
+    await notifyOperationalRecipients({
       event: "ticket.created",
       actor,
+      capability: "support.tickets.manage",
       context: ticketContext(ticket, {
         actorName: actorName(actor),
         snippet: "A new support request was opened.",
@@ -181,10 +206,13 @@ export async function notifyTicketCreated(ticketId: string, actor: Actor): Promi
 
 export async function notifyTicketReply(ticketId: string, actor: Actor): Promise<void> {
   await bestEffort("ticket reply", async () => {
+    const profile = getServerDeploymentProfile();
+    if (profile.id !== "sequencing-center") return;
     const ticket = await loadTicketForNotification(ticketId);
     if (!ticket) return;
 
-    if (actor.role === "FACILITY_ADMIN") {
+    if (actorHasCapability(actor, "support.tickets.manage", profile)) {
+      if (!ticket.user.isActive) return;
       await dispatchNotification({
         event: "ticket.reply",
         recipient: userRecipient(ticket.user),
@@ -197,9 +225,10 @@ export async function notifyTicketReply(ticketId: string, actor: Actor): Promise
       return;
     }
 
-    await notifyAdmins({
+    await notifyOperationalRecipients({
       event: "ticket.reply",
       actor,
+      capability: "support.tickets.manage",
       context: ticketContext(ticket, {
         actorName: actorName(actor),
         snippet: "A researcher replied to a support request.",
@@ -226,19 +255,22 @@ export async function sendTestNotification(recipient: NotificationRecipient): Pr
   );
 }
 
-async function notifyAdmins(input: {
+async function notifyOperationalRecipients(input: {
   event: NotificationDispatchInput["event"];
   actor: Actor;
+  capability: Capability;
   context: NotificationContext;
   replyTo?: string | null;
 }): Promise<void> {
-  const admins = await db.user.findMany({
-    where: {
-      systemRole: "ADMIN",
-    },
+  const profile = getServerDeploymentProfile();
+  const candidates = await db.user.findMany({
+    where: { isActive: true },
     select: {
       id: true,
       email: true,
+      role: true,
+      systemRole: true,
+      facilityWorkflowRole: true,
       firstName: true,
       lastName: true,
       isDemo: true,
@@ -247,23 +279,35 @@ async function notifyAdmins(input: {
   });
 
   await Promise.all(
-    admins
-      .filter((admin) => admin.id !== input.actor.id)
-      .map((admin) =>
+    candidates
+      .filter((candidate) => candidate.id !== input.actor.id)
+      .filter((candidate) =>
+        actorHasCapability(candidate, input.capability, profile)
+      )
+      .map((candidate) =>
         dispatchNotification({
           event: input.event,
           recipient: {
-            email: admin.email,
-            name: getRecipientName(admin),
+            email: candidate.email,
+            name: getRecipientName(candidate),
             role: "admin",
-            isDemo: admin.isDemo,
-            preferences: admin.notificationPreferences,
+            isDemo: candidate.isDemo,
+            preferences: candidate.notificationPreferences,
           },
           context: input.context,
           replyTo: input.replyTo,
         })
       )
   );
+}
+
+function actorHasCapability(
+  actor: Actor,
+  capability: Capability,
+  profile = getServerDeploymentProfile()
+): boolean {
+  const principal = principalFromSession({ user: actor });
+  return Boolean(principal && getCapabilityGrant(profile, principal, capability));
 }
 
 async function loadOrderForNotification(orderId: string): Promise<OrderForNotification | null> {
@@ -279,6 +323,7 @@ async function loadOrderForNotification(orderId: string): Promise<OrderForNotifi
           email: true,
           firstName: true,
           lastName: true,
+          isActive: true,
           isDemo: true,
           notificationPreferences: true,
         },
@@ -300,6 +345,7 @@ async function loadTicketForNotification(ticketId: string): Promise<TicketForNot
           email: true,
           firstName: true,
           lastName: true,
+          isActive: true,
           isDemo: true,
           notificationPreferences: true,
         },

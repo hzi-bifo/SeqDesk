@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from '@/lib/authorization/api';
 import { getPipelineDefinition } from '@/lib/pipelines/definitions';
 import { getPackageSamplesheet } from '@/lib/pipelines/package-loader';
 
@@ -11,9 +15,10 @@ export async function GET(
 ) {
   try {
     const session = await getServerSession(authOptions);
+    const access = decideServerCapability(session, 'system.pipelines.manage');
 
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const { pipelineId } = await params;

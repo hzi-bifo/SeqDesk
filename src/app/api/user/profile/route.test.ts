@@ -112,6 +112,24 @@ describe("/api/user/profile", () => {
       await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
     });
 
+    it("rejects an invalidated session before updating the account", async () => {
+      mocks.getServerSession.mockResolvedValue({
+        user: { id: "user-1", authorizationValid: false },
+      });
+
+      const response = await PUT(
+        new NextRequest("http://localhost:3000/api/user/profile", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ firstName: "Test", lastName: "User" }),
+        })
+      );
+
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+      expect(mocks.db.user.update).not.toHaveBeenCalled();
+    });
+
     it("validates required names before updating", async () => {
       mocks.getServerSession.mockResolvedValue({
         user: { id: "user-1" },

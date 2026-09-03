@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -28,6 +29,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/sequencing-tech/config", () => ({
   getDefaultTechSyncUrl: mocks.getDefaultTechSyncUrl,
   loadDefaultTechConfig: mocks.loadDefaultTechConfig,
@@ -38,6 +43,7 @@ vi.mock("@/lib/sequencing-tech/config", () => ({
 // Mock global fetch for remote config fetching
 const originalFetch = globalThis.fetch;
 
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 import { GET, PUT, POST } from "./route";
 
 const adminSession = {
@@ -59,6 +65,12 @@ const defaultConfig = {
   version: 1,
   syncUrl: "https://seqdesk.org/api/sequencing-technologies",
 };
+
+beforeEach(() => {
+  mocks.getServerDeploymentProfile.mockReturnValue(
+    getDeploymentProfileDefinition("sequencing-center")
+  );
+});
 
 describe("GET /api/admin/sequencing-tech", () => {
   beforeEach(() => {
@@ -85,8 +97,31 @@ describe("GET /api/admin/sequencing-tech", () => {
     expect(body.error).toBe("Unauthorized");
   });
 
-  it("returns stored config for authenticated user", async () => {
+  it("returns 403 for a member without configuration access", async () => {
     mocks.getServerSession.mockResolvedValue(researcherSession);
+
+    const response = await GET();
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Forbidden" });
+    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when sequencing operations are unavailable", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+    mocks.getServerSession.mockResolvedValue(adminSession);
+
+    const response = await GET();
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Not found" });
+    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns stored config for an administrator", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
     const storedConfig = { ...defaultConfig, version: 2 };
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       extraSettings: JSON.stringify({
@@ -104,7 +139,7 @@ describe("GET /api/admin/sequencing-tech", () => {
   });
 
   it("auto-syncs from remote when no stored config exists", async () => {
-    mocks.getServerSession.mockResolvedValue(researcherSession);
+    mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.fetch.mockResolvedValue({
       ok: true,
@@ -121,7 +156,7 @@ describe("GET /api/admin/sequencing-tech", () => {
   });
 
   it("falls back to parsed defaults when remote sync fails and no stored config", async () => {
-    mocks.getServerSession.mockResolvedValue(researcherSession);
+    mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.fetch.mockRejectedValue(new Error("Network error"));
     mocks.parseTechConfig.mockReturnValue(defaultConfig);
@@ -134,7 +169,7 @@ describe("GET /api/admin/sequencing-tech", () => {
   });
 
   it("returns 500 when database throws unexpectedly", async () => {
-    mocks.getServerSession.mockResolvedValue(researcherSession);
+    mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.db.siteSettings.findUnique.mockRejectedValue(new Error("DB down"));
 
     const response = await GET();
@@ -598,7 +633,7 @@ describe("POST /api/admin/sequencing-tech", () => {
   });
 
   it("GET handles malformed extraSettings JSON by auto-syncing", async () => {
-    mocks.getServerSession.mockResolvedValue(researcherSession);
+    mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       extraSettings: "invalid-json{",
     });

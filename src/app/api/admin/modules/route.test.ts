@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -23,47 +24,60 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
-vi.mock("@/lib/modules/types", () => ({
-  DEFAULT_MODULE_STATES: {
-    "ai-validation": true,
-    "mixs-metadata": true,
-    "account-validation": false,
-  },
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
 }));
 
 import { GET, PUT } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile/definitions";
+import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 
-const adminSession = { user: { id: "admin-1", role: "FACILITY_ADMIN" } };
-const userSession = { user: { id: "user-1", role: "RESEARCHER" } };
+const adminSession = {
+  user: { id: "admin-1", systemRole: "ADMIN", role: "RESEARCHER" },
+};
+const userSession = {
+  user: { id: "user-1", systemRole: "MEMBER", role: "FACILITY_ADMIN" },
+};
 
 describe("GET /api/admin/modules", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
   it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
     const res = await GET();
     expect(res.status).toBe(401);
+    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when a member requests administrative module settings", async () => {
+    mocks.getServerSession.mockResolvedValue(userSession);
+
+    const res = await GET();
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Forbidden" });
+    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
   });
 
   it("returns default module config when no settings stored", async () => {
-    mocks.getServerSession.mockResolvedValue(userSession);
+    mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
 
     const res = await GET();
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.modules).toEqual({
-      "ai-validation": true,
-      "mixs-metadata": true,
-      "account-validation": false,
-    });
+    expect(data.modules).toEqual(DEFAULT_MODULE_STATES);
     expect(data.globalDisabled).toBe(false);
+    expect(data.incompatibleModules).toEqual([]);
   });
 
-  it("returns stored module config for authenticated user", async () => {
-    mocks.getServerSession.mockResolvedValue(userSession);
+  it("returns stored module config for an administrator", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       modulesConfig: JSON.stringify({
         modules: { "ai-validation": false, "mixs-metadata": true, "account-validation": true },
@@ -77,11 +91,38 @@ describe("GET /api/admin/modules", () => {
     expect(data.modules["account-validation"]).toBe(true);
     expect(data.globalDisabled).toBe(true);
   });
+
+  it("reports unavailable facility modules as disabled in Research Workbench", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      modulesConfig: JSON.stringify({
+        modules: { "billing-info": true, notifications: true },
+        globalDisabled: false,
+      }),
+    });
+
+    const res = await GET();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.modules["billing-info"]).toBe(false);
+    expect(data.modules["sequencing-tech"]).toBe(false);
+    expect(data.modules.notifications).toBe(true);
+    expect(data.incompatibleModules).toEqual(
+      expect.arrayContaining(["billing-info", "sequencing-tech"])
+    );
+  });
 });
 
 describe("PUT /api/admin/modules", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.db.siteSettings.upsert.mockResolvedValue({});
   });
 
@@ -127,5 +168,43 @@ describe("PUT /api/admin/modules", () => {
 
     const data = await res.json();
     expect(data.globalDisabled).toBe(true);
+  });
+
+  it("rejects a feature module that requires a domain outside the deployment profile", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+
+    const req = new NextRequest("http://localhost/api/admin/modules", {
+      method: "PUT",
+      body: JSON.stringify({ moduleId: "billing-info", enabled: true }),
+    });
+    const res = await PUT(req);
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "PROFILE_MODULE_INCOMPATIBLE",
+      error: expect.stringContaining("Research workbench cannot enable modules.billing-info"),
+    });
+    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
+    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects unknown feature-module switches before writing settings", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+
+    const req = new NextRequest("http://localhost/api/admin/modules", {
+      method: "PUT",
+      body: JSON.stringify({ moduleId: "made-up-module", enabled: true }),
+    });
+    const res = await PUT(req);
+
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "PROFILE_MODULE_INCOMPATIBLE",
+      error: expect.stringContaining("not a recognized SeqDesk feature module"),
+    });
+    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
   });
 });

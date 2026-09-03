@@ -88,7 +88,8 @@ The older "seqdesk data-storage" spelling remains an alias.
 Status exits non-zero until the configured directory is ready.
 After configuration succeeds and the directory is writable, load the optional example dataset with
 "seqdesk demo-data install" or use Admin > Settings > Demo data.
-Local shell access to the installed directory is treated as operator access.
+Local shell access can launch order/study pipelines only through an active
+account with installation-scoped analysis permission in the selected mode.
 `;
 
 const DEMO_DATA_USAGE = `Usage:

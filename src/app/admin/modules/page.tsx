@@ -1,6 +1,7 @@
 "use client";
 
 import { useModules } from "@/lib/modules";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 import Link from "next/link";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
@@ -71,7 +72,9 @@ export default function ModulesPage() {
     setModuleEnabled,
     loading,
     globalDisabled,
+    incompatibleModules,
   } = useModules();
+  const deploymentProfile = useDeploymentProfile();
   const [updating, setUpdating] = useState<string | null>(null);
 
   // Account validation settings state
@@ -609,8 +612,12 @@ export default function ModulesPage() {
               <TabsContent key={category} value={category} className="m-0">
                 <div className="grid gap-3">
                   {categoryModules.map((module) => {
-                    const isAlwaysEnabled = isAlwaysEnabledModule(module.id);
-                    const isEnabled = isAlwaysEnabled || (moduleStates[module.id] ?? false);
+                    const isProfileCompatible = !incompatibleModules.includes(module.id);
+                    const isAlwaysEnabled =
+                      isProfileCompatible && isAlwaysEnabledModule(module.id);
+                    const isEnabled =
+                      isProfileCompatible &&
+                      (isAlwaysEnabled || (moduleStates[module.id] ?? false));
                     const isEffectivelyEnabled = isModuleEnabled(module.id);
                     const isUpdating = updating === module.id;
                     const isComingSoon = module.comingSoon;
@@ -644,7 +651,11 @@ export default function ModulesPage() {
                           <div className="flex-1 space-y-2">
                             <div className="flex items-center gap-3 flex-wrap">
                               <h3 className="text-base font-semibold">{module.name}</h3>
-                              {isComingSoon ? (
+                              {!isProfileCompatible ? (
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+                                  Unavailable in {deploymentProfile.label}
+                                </span>
+                              ) : isComingSoon ? (
                                 <span className="text-xs px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-medium flex items-center gap-1">
                                   <Clock className="h-3 w-3" />
                                   Coming Soon
@@ -673,7 +684,7 @@ export default function ModulesPage() {
                                   Settings available
                                 </span>
                               )}
-                              {formIntegration && (
+                              {formIntegration && isProfileCompatible && (
                                 <>
                                   <span
                                     className={`rounded px-2 py-0.5 text-xs font-medium ${
@@ -695,13 +706,18 @@ export default function ModulesPage() {
                             <p className="text-sm text-muted-foreground">
                               {module.description}
                             </p>
-                            {module.featureLocation && (
+                            {!isProfileCompatible && (
+                              <p className="text-xs text-muted-foreground">
+                                This module requires application domains that are not part of the selected deployment profile.
+                              </p>
+                            )}
+                            {module.featureLocation && isProfileCompatible && (
                               <p className="text-xs text-primary flex items-center gap-1">
                                 <ArrowRight className="h-3 w-3" />
                                 {module.featureLocation}
                               </p>
                             )}
-                            {builderLinks.length > 0 && (
+                            {builderLinks.length > 0 && isProfileCompatible && (
                               <div className="flex flex-wrap gap-2 pt-1">
                                 {builderLinks.map((target) => (
                                   <Button
@@ -868,6 +884,7 @@ export default function ModulesPage() {
                               }
                               disabled={
                                 isAlwaysEnabled ||
+                                !isProfileCompatible ||
                                 isUpdating ||
                                 isComingSoon ||
                                 globalDisabled

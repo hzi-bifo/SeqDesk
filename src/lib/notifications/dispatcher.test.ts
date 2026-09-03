@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getRecipientName: vi.fn(),
   isRealNotificationEmail: vi.fn(),
   sendViaSeqDeskRelay: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({ db: mocks.db }));
@@ -34,6 +35,11 @@ vi.mock("./recipients", () => ({
 vi.mock("./relay", () => ({
   sendViaSeqDeskRelay: mocks.sendViaSeqDeskRelay,
 }));
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 import {
   dispatchNotification,
@@ -82,6 +88,10 @@ beforeEach(() => {
   mocks.canNotifyRecipient.mockReturnValue(true);
   mocks.isRealNotificationEmail.mockReturnValue(true);
   mocks.getRecipientName.mockReturnValue("Researcher");
+  mocks.getServerDeploymentProfile.mockReturnValue(
+    getDeploymentProfileDefinition("sequencing-center")
+  );
+  mocks.db.user.findMany.mockResolvedValue([]);
   mocks.getEffectiveConfig.mockResolvedValue({
     config: {
       site: { name: "SeqDesk", contactEmail: "facility@example.org" },
@@ -231,7 +241,7 @@ describe("notifyOrderSubmitted", () => {
     expect(mocks.db.user.findMany).not.toHaveBeenCalled();
   });
 
-  it("dispatches to the order user and admins (excluding the actor)", async () => {
+  it("dispatches to the order user and facility operators (excluding the actor)", async () => {
     mocks.db.order.findUnique.mockResolvedValue({
       id: "order-1",
       orderNumber: "ORD-1",
@@ -241,6 +251,7 @@ describe("notifyOrderSubmitted", () => {
         email: "researcher@example.org",
         firstName: "R",
         lastName: "K",
+        isActive: true,
         isDemo: false,
         notificationPreferences: null,
       },
@@ -249,16 +260,32 @@ describe("notifyOrderSubmitted", () => {
       {
         id: "actor-1",
         email: "self@example.org",
+        role: "RESEARCHER",
+        systemRole: "MEMBER",
         firstName: "Self",
         lastName: null,
         isDemo: false,
         notificationPreferences: null,
       },
       {
-        id: "admin-1",
-        email: "admin@example.org",
-        firstName: "A",
+        id: "operator-1",
+        email: "operator@example.org",
+        role: "RESEARCHER",
+        systemRole: "MEMBER",
+        facilityWorkflowRole: "OPERATOR",
+        firstName: "O",
         lastName: null,
+        isDemo: false,
+        notificationPreferences: null,
+      },
+      {
+        id: "settings-admin-1",
+        email: "settings-admin@example.org",
+        role: "FACILITY_ADMIN",
+        systemRole: "ADMIN",
+        facilityWorkflowRole: "REQUESTER",
+        firstName: "Settings",
+        lastName: "Admin",
         isDemo: false,
         notificationPreferences: null,
       },
@@ -271,17 +298,25 @@ describe("notifyOrderSubmitted", () => {
       name: "Actor",
     });
 
-    // 1 dispatch for the order user + 1 for each admin (minus self) = 2
+    // 1 dispatch for the order user + 1 for each operator (minus self) = 2
     expect(mocks.sendViaSeqDeskRelay).toHaveBeenCalledTimes(2);
     const recipients = mocks.sendViaSeqDeskRelay.mock.calls.map(
       ([call]) =>
         (call as { recipient: { email: string } }).recipient.email,
     );
     expect(recipients).toContain("researcher@example.org");
-    expect(recipients).toContain("admin@example.org");
+    expect(recipients).toContain("operator@example.org");
+    expect(recipients).not.toContain("settings-admin@example.org");
     expect(recipients).not.toContain("self@example.org");
     expect(mocks.db.user.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { systemRole: "ADMIN" } })
+      expect.objectContaining({
+        where: { isActive: true },
+        select: expect.objectContaining({
+          role: true,
+          systemRole: true,
+          facilityWorkflowRole: true,
+        }),
+      })
     );
   });
 
@@ -295,19 +330,49 @@ describe("notifyOrderSubmitted", () => {
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
+
+  it("suppresses requester/facility handoff mail outside Sequencing Center", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+
+    await notifyOrderSubmitted("order-1", {
+      id: "member-1",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+    });
+
+    expect(mocks.db.order.findUnique).not.toHaveBeenCalled();
+    expect(mocks.db.user.findMany).not.toHaveBeenCalled();
+    expect(mocks.sendViaSeqDeskRelay).not.toHaveBeenCalled();
+  });
 });
 
 describe("notifyOrderStatusChanged", () => {
-  it("only fires for FACILITY_ADMIN actors", async () => {
+  it("does not fire for requester actors", async () => {
     await notifyOrderStatusChanged("order-1", "PENDING", "IN_PROGRESS", {
       id: "u-1",
       role: "RESEARCHER",
+      systemRole: "MEMBER",
+      facilityWorkflowRole: "REQUESTER",
     });
     expect(mocks.sendViaSeqDeskRelay).not.toHaveBeenCalled();
     expect(mocks.db.order.findUnique).not.toHaveBeenCalled();
   });
 
-  it("dispatches to the order user when an admin changes status", async () => {
+  it("does not treat an installation administrator as a facility operator", async () => {
+    await notifyOrderStatusChanged("order-1", "PENDING", "IN_PROGRESS", {
+      id: "settings-admin-1",
+      role: "FACILITY_ADMIN",
+      systemRole: "ADMIN",
+      facilityWorkflowRole: "REQUESTER",
+    });
+
+    expect(mocks.db.order.findUnique).not.toHaveBeenCalled();
+    expect(mocks.sendViaSeqDeskRelay).not.toHaveBeenCalled();
+  });
+
+  it("dispatches to the order user when a facility operator changes status", async () => {
     mocks.db.order.findUnique.mockResolvedValue({
       id: "order-1",
       orderNumber: "ORD-1",
@@ -317,15 +382,18 @@ describe("notifyOrderStatusChanged", () => {
         email: "u@example.org",
         firstName: "U",
         lastName: null,
+        isActive: true,
         isDemo: false,
         notificationPreferences: null,
       },
     });
 
     await notifyOrderStatusChanged("order-1", "PENDING", "IN_PROGRESS", {
-      id: "admin-1",
-      role: "FACILITY_ADMIN",
-      email: "admin@example.org",
+      id: "operator-1",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+      facilityWorkflowRole: "OPERATOR",
+      email: "operator@example.org",
     });
 
     expect(mocks.sendViaSeqDeskRelay).toHaveBeenCalledTimes(1);
@@ -335,18 +403,55 @@ describe("notifyOrderStatusChanged", () => {
     expect(sent.context.statusFrom).toBe("PENDING");
     expect(sent.context.statusTo).toBe("IN_PROGRESS");
   });
+
+  it("does not deliver order-owner mail to a deactivated account", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      orderNumber: "ORD-1",
+      name: "X",
+      status: "IN_PROGRESS",
+      user: {
+        email: "inactive@example.org",
+        firstName: "Former",
+        lastName: "Member",
+        isActive: false,
+        isDemo: false,
+        notificationPreferences: null,
+      },
+    });
+
+    await notifyOrderStatusChanged("order-1", "PENDING", "IN_PROGRESS", {
+      id: "operator-1",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+      facilityWorkflowRole: "OPERATOR",
+    });
+
+    expect(mocks.sendViaSeqDeskRelay).not.toHaveBeenCalled();
+    expect(mocks.db.order.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          user: {
+            select: expect.objectContaining({ isActive: true }),
+          },
+        }),
+      }),
+    );
+  });
 });
 
 describe("notifySamplesMarkedSent", () => {
-  it("does not fire when the actor is a FACILITY_ADMIN", async () => {
+  it("does not fire when the actor is a facility operator", async () => {
     await notifySamplesMarkedSent("order-1", {
       id: "admin-1",
-      role: "FACILITY_ADMIN",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+      facilityWorkflowRole: "OPERATOR",
     });
     expect(mocks.sendViaSeqDeskRelay).not.toHaveBeenCalled();
   });
 
-  it("notifies admins when a researcher marks samples sent", async () => {
+  it("notifies facility operators when a researcher marks samples sent", async () => {
     mocks.db.order.findUnique.mockResolvedValue({
       id: "order-1",
       orderNumber: "ORD-1",
@@ -356,15 +461,19 @@ describe("notifySamplesMarkedSent", () => {
         email: "u@example.org",
         firstName: null,
         lastName: null,
+        isActive: true,
         isDemo: false,
         notificationPreferences: null,
       },
     });
     mocks.db.user.findMany.mockResolvedValue([
       {
-        id: "admin-1",
-        email: "admin@example.org",
-        firstName: "A",
+        id: "operator-1",
+        email: "operator@example.org",
+        role: "RESEARCHER",
+        systemRole: "MEMBER",
+        facilityWorkflowRole: "OPERATOR",
+        firstName: "O",
         lastName: null,
         isDemo: false,
         notificationPreferences: null,
@@ -385,12 +494,17 @@ describe("notifySamplesMarkedSent", () => {
 });
 
 describe("notifyTicketCreated", () => {
-  it("does not fire when the actor is a FACILITY_ADMIN", async () => {
-    await notifyTicketCreated("t-1", { id: "admin-1", role: "FACILITY_ADMIN" });
+  it("does not fire when the actor is a facility operator", async () => {
+    await notifyTicketCreated("t-1", {
+      id: "operator-1",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+      facilityWorkflowRole: "OPERATOR",
+    });
     expect(mocks.db.ticket.findUnique).not.toHaveBeenCalled();
   });
 
-  it("notifies admins on ticket creation", async () => {
+  it("notifies facility operators on ticket creation", async () => {
     mocks.db.ticket.findUnique.mockResolvedValue({
       id: "t-1",
       subject: "Help",
@@ -399,14 +513,18 @@ describe("notifyTicketCreated", () => {
         email: "u@example.org",
         firstName: null,
         lastName: null,
+        isActive: true,
         isDemo: false,
         notificationPreferences: null,
       },
     });
     mocks.db.user.findMany.mockResolvedValue([
       {
-        id: "admin-1",
-        email: "admin@example.org",
+        id: "operator-1",
+        email: "operator@example.org",
+        role: "RESEARCHER",
+        systemRole: "MEMBER",
+        facilityWorkflowRole: "OPERATOR",
         firstName: null,
         lastName: null,
         isDemo: false,
@@ -422,7 +540,7 @@ describe("notifyTicketCreated", () => {
 });
 
 describe("notifyTicketReply", () => {
-  it("dispatches to the ticket user when an admin replies", async () => {
+  it("dispatches to the ticket user when a facility operator replies", async () => {
     mocks.db.ticket.findUnique.mockResolvedValue({
       id: "t-1",
       subject: "Help",
@@ -431,12 +549,18 @@ describe("notifyTicketReply", () => {
         email: "u@example.org",
         firstName: null,
         lastName: null,
+        isActive: true,
         isDemo: false,
         notificationPreferences: null,
       },
     });
 
-    await notifyTicketReply("t-1", { id: "admin-1", role: "FACILITY_ADMIN" });
+    await notifyTicketReply("t-1", {
+      id: "operator-1",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+      facilityWorkflowRole: "OPERATOR",
+    });
 
     expect(mocks.sendViaSeqDeskRelay).toHaveBeenCalledTimes(1);
     expect(mocks.sendViaSeqDeskRelay.mock.calls[0][0].recipient.email).toBe(
@@ -444,7 +568,41 @@ describe("notifyTicketReply", () => {
     );
   });
 
-  it("notifies admins when a researcher replies", async () => {
+  it("does not deliver ticket-owner mail to a deactivated account", async () => {
+    mocks.db.ticket.findUnique.mockResolvedValue({
+      id: "t-1",
+      subject: "Help",
+      userId: "u-1",
+      user: {
+        email: "inactive@example.org",
+        firstName: "Former",
+        lastName: "Member",
+        isActive: false,
+        isDemo: false,
+        notificationPreferences: null,
+      },
+    });
+
+    await notifyTicketReply("t-1", {
+      id: "operator-1",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+      facilityWorkflowRole: "OPERATOR",
+    });
+
+    expect(mocks.sendViaSeqDeskRelay).not.toHaveBeenCalled();
+    expect(mocks.db.ticket.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          user: {
+            select: expect.objectContaining({ isActive: true }),
+          },
+        }),
+      }),
+    );
+  });
+
+  it("notifies facility operators when a researcher replies", async () => {
     mocks.db.ticket.findUnique.mockResolvedValue({
       id: "t-1",
       subject: "Help",
@@ -453,14 +611,18 @@ describe("notifyTicketReply", () => {
         email: "u@example.org",
         firstName: null,
         lastName: null,
+        isActive: true,
         isDemo: false,
         notificationPreferences: null,
       },
     });
     mocks.db.user.findMany.mockResolvedValue([
       {
-        id: "admin-1",
-        email: "admin@example.org",
+        id: "operator-1",
+        email: "operator@example.org",
+        role: "RESEARCHER",
+        systemRole: "MEMBER",
+        facilityWorkflowRole: "OPERATOR",
         firstName: null,
         lastName: null,
         isDemo: false,

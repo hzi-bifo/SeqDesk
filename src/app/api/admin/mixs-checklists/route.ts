@@ -223,9 +223,10 @@ const summarizeUpdate = (
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
+    const access = decideServerCapability(session, "system.catalog.manage");
 
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const active = await getActiveMixsConfig(db);

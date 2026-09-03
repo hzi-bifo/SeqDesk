@@ -6,6 +6,7 @@ import path from "path";
 import readline from "readline";
 import { createGunzip } from "zlib";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
@@ -132,7 +133,7 @@ export async function GET(
 ) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!isActiveSession(session)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

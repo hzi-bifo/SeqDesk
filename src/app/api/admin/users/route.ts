@@ -50,8 +50,28 @@ export async function GET(request: NextRequest) {
   const users = await db.user.findMany({
     where: whereClause,
     orderBy: { createdAt: "desc" },
-    include: {
-      department: true,
+    // Keep credentials and other private scalar fields out of the response.
+    // Prisma's default scalar selection would otherwise include password hashes.
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      systemRole: true,
+      role: true,
+      researcherRole: true,
+      institution: true,
+      facilityName: true,
+      isActive: true,
+      deactivatedAt: true,
+      createdAt: true,
+      updatedAt: true,
+      department: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
       _count: {
         select: {
           orders: true,

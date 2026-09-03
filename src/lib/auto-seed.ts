@@ -9,6 +9,10 @@ import {
   resolveWritableBase,
   runDummySeed,
 } from "./seed/run-seed";
+import {
+  assertBootstrapPlaintextPasswordSupported,
+  resolveBootstrapAdminFacilityWorkflowRole,
+} from "../../prisma/bootstrap-account-policy.mjs";
 
 // Keep auto-seeding independent from external module resolution.
 // These hashes correspond to the default credentials:
@@ -229,7 +233,10 @@ function resolvePasswordHash(
   if (passwordHash) return { hash: passwordHash, isBuiltInDefault: false };
 
   const password = firstSeedString(process.env[`${envPrefix}_PASSWORD`], configUser.password);
-  if (password) return { hash: hashSync(password, 12), isBuiltInDefault: false };
+  if (password) {
+    assertBootstrapPlaintextPasswordSupported(password, kind);
+    return { hash: hashSync(password, 12), isBuiltInDefault: false };
+  }
 
   return { hash: defaultHash, isBuiltInDefault: true };
 }
@@ -423,6 +430,11 @@ async function seedBootstrapAccounts(
   options: BootstrapSeedOptions
 ): Promise<{ reports: BootstrapAccountReports; adminEmail: string }> {
   const adminBootstrap = resolveBootstrapUser("admin", seedConfig);
+  const adminFacilityWorkflowRole =
+    resolveBootstrapAdminFacilityWorkflowRole(
+      seedConfig,
+      process.env.SEQDESK_DEPLOYMENT_PROFILE
+    );
   const admin =
     refuseBuiltInDefaultPassword("admin", adminBootstrap, options) ??
     (await ensureBootstrapAccount("admin", adminBootstrap.email, {
@@ -432,6 +444,7 @@ async function seedBootstrapAccounts(
       lastName: adminBootstrap.lastName,
       systemRole: "ADMIN",
       role: "FACILITY_ADMIN",
+      facilityWorkflowRole: adminFacilityWorkflowRole,
       facilityName: adminBootstrap.facilityName,
     }));
 
@@ -450,6 +463,7 @@ async function seedBootstrapAccounts(
           lastName: researcherBootstrap.lastName,
           systemRole: "MEMBER",
           role: "RESEARCHER",
+          facilityWorkflowRole: "REQUESTER",
           researcherRole: researcherBootstrap.researcherRole,
           institution: researcherBootstrap.institution,
         }

@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { DashboardShell } from "@/components/layout/DashboardShell";
 import { getCurrentVersion } from "@/lib/updater";
 import { isPublicDemoEnabled } from "@/lib/demo/config";
@@ -17,8 +18,8 @@ export default async function DashboardLayout({
 }) {
   const session = await getServerSession(authOptions);
 
-  if (!session) {
-    if (!isPublicDemoEnabled()) {
+  if (!isActiveSession(session)) {
+    if (session || !isPublicDemoEnabled()) {
       redirect("/login");
     }
 
@@ -50,8 +51,8 @@ export default async function DashboardLayout({
     return (
       <OperationalSetupPending
         profile={pendingOnboarding.profile}
-        completedCount={pendingOnboarding.completedCount}
-        totalCount={pendingOnboarding.totalCount}
+        completedCount={pendingOnboarding.requiredCompletedCount}
+        totalCount={pendingOnboarding.requiredTotalCount}
       />
     );
   }

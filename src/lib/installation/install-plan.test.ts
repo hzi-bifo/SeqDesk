@@ -23,7 +23,10 @@ function validPlan() {
         pipelineCache: 20_000_000_000,
       },
     },
-    deployment: { profile: "research-workbench" },
+    deployment: {
+      profile: "research-workbench",
+      featureModules: { "account-validation": true },
+    },
     access: {
       audience: "team-server",
       browserUrl: "https://seqdesk.example.org",
@@ -135,5 +138,41 @@ describe("InstallPlan", () => {
         },
       })
     ).toThrow(/estimated byte size/i);
+  });
+
+  it("rejects feature modules that require a domain absent from the deployment profile", () => {
+    const plan = validPlan();
+    expect(() =>
+      parseInstallPlan({
+        ...plan,
+        deployment: {
+          ...plan.deployment,
+          featureModules: { "billing-info": true },
+        },
+      })
+    ).toThrow(
+      /Research workbench cannot enable modules\.billing-info[\s\S]*facility-intake[\s\S]*Disable modules\.billing-info/
+    );
+  });
+
+  it("fails closed when an install plan names an unknown feature module", () => {
+    const plan = validPlan();
+    expect(() =>
+      parseInstallPlan({
+        ...plan,
+        deployment: {
+          ...plan.deployment,
+          featureModules: { "billing-inof": true },
+        },
+      })
+    ).toThrow(/modules\.billing-inof is not a recognized SeqDesk feature module/);
+  });
+
+  it("keeps schema-version-one plans without module overrides backward compatible", () => {
+    const plan = validPlan();
+    const deployment = { profile: plan.deployment.profile };
+    expect(parseInstallPlan({ ...plan, deployment }).deployment.featureModules).toEqual(
+      {}
+    );
   });
 });

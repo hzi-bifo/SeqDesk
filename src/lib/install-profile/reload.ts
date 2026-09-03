@@ -4,6 +4,7 @@ import fs from "fs";
 import fsp from "fs/promises";
 import os from "os";
 import path from "path";
+import { db } from "@/lib/db";
 import {
   ARRAY_INSTALL_PROFILE_SECTIONS,
   INSTALL_ONLY_PROFILE_SECTIONS,
@@ -11,6 +12,16 @@ import {
   STRUCTURED_INSTALL_PROFILE_SECTIONS,
   UNSUPPORTED_PROFILE_SECTIONS,
 } from "@/lib/install-profile/coverage";
+import { validateDeploymentProfileCompatibility } from "@/lib/deployment-profile/compatibility";
+import {
+  DEFAULT_DEPLOYMENT_PROFILE_ID,
+  getDeploymentProfileDefinition,
+} from "@/lib/deployment-profile/definitions";
+import {
+  isDeploymentProfileId,
+  resolveDeploymentProfileId,
+} from "@/lib/deployment-profile/resolve";
+import type { DeploymentProfileId } from "@/lib/deployment-profile/types";
 
 export type AppliedInstallProfileSummary = {
   id?: string;
@@ -218,6 +229,133 @@ function readPackageVersion(cwd: string): string {
   return "0.0.0";
 }
 
+type InstalledDeploymentConfiguration = {
+  profileId: DeploymentProfileId;
+  pipelinesEnabled: boolean;
+};
+
+function readBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (value === 1) return true;
+  if (value === 0) return false;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "yes", "y", "1", "on"].includes(normalized)) return true;
+  if (["false", "no", "n", "0", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
+function readInstalledDeploymentConfiguration(
+  cwd: string,
+  env: NodeJS.ProcessEnv
+): InstalledDeploymentConfiguration {
+  let configuredProfile: unknown;
+  let configuredPipelines: unknown;
+
+  for (const fileName of ["settings.json", "seqdesk.config.json", ".seqdeskrc", ".seqdeskrc.json"]) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(cwd, fileName), "utf8")) as unknown;
+      if (!isRecord(parsed)) {
+        throw new Error("configuration root must be a JSON object");
+      }
+      const deployment = isRecord(parsed.deployment) ? parsed.deployment : {};
+      const pipelines = isRecord(parsed.pipelines) ? parsed.pipelines : {};
+      configuredProfile = deployment.profile;
+      configuredPipelines = pipelines.enabled;
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw new Error(
+        `Cannot validate hosted-profile compatibility because ${fileName} is not valid JSON`
+      );
+    }
+  }
+
+  const profileCandidate = readString(env.SEQDESK_DEPLOYMENT_PROFILE) ?? configuredProfile;
+  if (
+    profileCandidate !== undefined &&
+    profileCandidate !== null &&
+    profileCandidate !== "" &&
+    !isDeploymentProfileId(profileCandidate)
+  ) {
+    throw new Error(
+      `Cannot validate hosted-profile compatibility: the installation has invalid deployment.profile ${JSON.stringify(
+        profileCandidate
+      )}. Expected sequencing-center, shared-lab, or research-workbench.`
+    );
+  }
+
+  const envPipelines = readBoolean(env.SEQDESK_PIPELINES_ENABLED);
+  const filePipelines = readBoolean(configuredPipelines);
+  if (env.SEQDESK_PIPELINES_ENABLED !== undefined && envPipelines === undefined) {
+    throw new Error(
+      "Cannot validate hosted-profile compatibility: SEQDESK_PIPELINES_ENABLED must be true or false."
+    );
+  }
+  if (
+    configuredPipelines !== undefined &&
+    configuredPipelines !== null &&
+    filePipelines === undefined
+  ) {
+    throw new Error(
+      "Cannot validate hosted-profile compatibility: pipelines.enabled in the installation config must be true or false."
+    );
+  }
+  return {
+    profileId: isDeploymentProfileId(profileCandidate)
+      ? profileCandidate
+      : resolveDeploymentProfileId({
+          legacyPublicSurface: env.NEXT_PUBLIC_SEQDESK_APP_SURFACE,
+          legacyServerSurface: env.SEQDESK_APP_SURFACE,
+          legacyWorkbenchOnly: env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY,
+        }) || DEFAULT_DEPLOYMENT_PROFILE_ID,
+    pipelinesEnabled: envPipelines ?? filePipelines ?? false,
+  };
+}
+
+function parsePersistedFeatureModules(
+  rawConfig: string | null | undefined
+): Record<string, unknown> {
+  if (!rawConfig?.trim()) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawConfig);
+  } catch {
+    throw new Error(
+      "Cannot validate hosted-profile compatibility because the stored feature-module configuration is not valid JSON. Repair the module settings before reloading the hosted profile."
+    );
+  }
+  if (!isRecord(parsed)) {
+    throw new Error(
+      "Cannot validate hosted-profile compatibility because the stored feature-module configuration must be a JSON object. Repair the module settings before reloading the hosted profile."
+    );
+  }
+
+  if (Object.prototype.hasOwnProperty.call(parsed, "modules")) {
+    if (!isRecord(parsed.modules)) {
+      throw new Error(
+        "Cannot validate hosted-profile compatibility because stored modulesConfig.modules must be a JSON object. Repair the module settings before reloading the hosted profile."
+      );
+    }
+    return parsed.modules;
+  }
+
+  // Legacy settings stored the switches directly at the root. The global kill
+  // switch controls runtime availability but is not itself a feature module.
+  const legacyModules = { ...parsed };
+  delete legacyModules.globalDisabled;
+  return legacyModules;
+}
+
+async function readPersistedFeatureModules(): Promise<Record<string, unknown>> {
+  const settings = await db.siteSettings.findUnique({
+    where: { id: "singleton" },
+    select: { modulesConfig: true },
+  });
+  return parsePersistedFeatureModules(settings?.modulesConfig);
+}
+
 type ComparableVersion = {
   core: [number, number, number];
   prerelease: string[];
@@ -275,10 +413,14 @@ function validateResolvedInstallProfile({
   profile,
   requestedProfileId,
   cwd,
+  env,
+  persistedFeatureModules,
 }: {
   profile: Record<string, unknown>;
   requestedProfileId: string;
   cwd: string;
+  env: NodeJS.ProcessEnv;
+  persistedFeatureModules: Record<string, unknown>;
 }): InstallProfileValidationSummary {
   const resolvedId = readString(profile.id);
   if (!resolvedId) {
@@ -318,6 +460,64 @@ function validateResolvedInstallProfile({
   const warnings: string[] = [];
   const ignoredSections: string[] = [];
   const appliedSections: string[] = [];
+
+  const installed = readInstalledDeploymentConfiguration(cwd, env);
+  const requestedDeployment = isRecord(profile.deployment)
+    ? profile.deployment.profile
+    : undefined;
+  if (
+    requestedDeployment !== undefined &&
+    requestedDeployment !== installed.profileId
+  ) {
+    throw new Error(
+      `Hosted profile ${resolvedId} targets deployment.profile ${JSON.stringify(
+        requestedDeployment
+      )}, but this installation uses ${installed.profileId}. Reload cannot change the installation's deployment profile; use a hosted profile for ${installed.profileId} or perform a reviewed profile migration.`
+    );
+  }
+
+  const profilePipelines = isRecord(profile.pipelines)
+    ? readBoolean(profile.pipelines.enabled)
+    : undefined;
+  if (
+    isRecord(profile.pipelines) &&
+    profile.pipelines.enabled !== undefined &&
+    profilePipelines === undefined
+  ) {
+    throw new Error(
+      `Hosted profile ${resolvedId} has invalid pipelines.enabled; expected true or false.`
+    );
+  }
+  const compatibilityIssues = validateDeploymentProfileCompatibility(
+    getDeploymentProfileDefinition(installed.profileId),
+    {
+      pipelinesEnabled: profilePipelines ?? installed.pipelinesEnabled,
+      // The applicator merge-preserves switches omitted by the hosted profile.
+      // Validate that exact next state so an incompatible persisted-on switch
+      // cannot survive a successful reload unnoticed.
+      featureModules: {
+        ...persistedFeatureModules,
+        ...(isRecord(profile.modules) ? profile.modules : {}),
+      },
+    }
+  );
+  const compatibilityErrors = compatibilityIssues.filter(
+    (issue) => issue.severity === "error"
+  );
+  if (compatibilityErrors.length > 0) {
+    throw new Error(
+      `Hosted profile ${resolvedId} is incompatible with ${getDeploymentProfileDefinition(
+        installed.profileId
+      ).label}:\n${compatibilityErrors
+        .map((issue) => `- ${issue.message}`)
+        .join("\n")}`
+    );
+  }
+  warnings.push(
+    ...compatibilityIssues
+      .filter((issue) => issue.severity === "warning")
+      .map((issue) => issue.message)
+  );
 
   for (const [key, value] of Object.entries(profile)) {
     if (!KNOWN_INSTALL_PROFILE_SECTIONS.has(key)) {
@@ -608,7 +808,7 @@ export async function reloadHostedInstallProfile(
       "Explicit profile access code is required when using a non-default profile registry"
     );
   }
-  const releaseLock = await acquireReloadLock(cwd, profileId);
+  let releaseLock: (() => Promise<void>) | undefined;
   let tempDir: string | undefined;
   try {
     const profile = await resolveHostedProfile({
@@ -616,11 +816,19 @@ export async function reloadHostedInstallProfile(
       profileCode,
       profileRegistryUrl,
     });
+    const persistedFeatureModules = await readPersistedFeatureModules();
     const validation = validateResolvedInstallProfile({
       profile,
       requestedProfileId: profileId,
       cwd,
+      env: input.env || process.env,
+      persistedFeatureModules,
     });
+
+    // Resolving and validating the complete hosted profile is read-only. Take
+    // the lock only after it is known to be compatible, immediately before
+    // writing a temporary copy or invoking either mutating apply script.
+    releaseLock = await acquireReloadLock(cwd, profileId);
 
     const tempProfile = await writeTempProfile(profile);
     tempDir = tempProfile.tempDir;
@@ -655,6 +863,6 @@ export async function reloadHostedInstallProfile(
     if (tempDir) {
       await fsp.rm(tempDir, { recursive: true, force: true });
     }
-    await releaseLock();
+    await releaseLock?.();
   }
 }

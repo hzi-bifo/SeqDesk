@@ -1,5 +1,6 @@
 import { bootstrapRuntimeEnv } from "@/lib/config/runtime-env";
 import { getDatabaseConfigurationError } from "@/lib/database-url";
+import { ACTIVE_ADMINISTRATOR_WHERE } from "@/lib/accounts/lifecycle";
 
 bootstrapRuntimeEnv();
 
@@ -119,7 +120,7 @@ export async function checkDatabaseStatus(): Promise<DatabaseStatus> {
     }
 
     const administratorCount = await db.user.count({
-      where: { systemRole: "ADMIN" },
+      where: ACTIVE_ADMINISTRATOR_WHERE,
     });
 
     return {

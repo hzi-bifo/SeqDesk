@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { archiveInAppNotification } from "@/lib/notifications/in-app";
 
 export const runtime = "nodejs";
@@ -11,7 +12,7 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
+  if (!isActiveSession(session)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

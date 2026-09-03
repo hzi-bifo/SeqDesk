@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { getEffectiveConfig, saveConfigToDatabase } from "@/lib/config";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { parseModulesConfig, isModuleEnabled } from "@/lib/modules/form-integration";
 import type {
   AdminNotificationSettings,
@@ -69,7 +70,10 @@ export async function getNotificationSettings(): Promise<NotificationSettings> {
       select: { modulesConfig: true },
     }),
   ]);
-  const modulesConfig = parseModulesConfig(siteSettings?.modulesConfig ?? null);
+  const modulesConfig = parseModulesConfig(
+    siteSettings?.modulesConfig ?? null,
+    getServerDeploymentProfile()
+  );
   const config = resolved.config.notifications ?? {};
   const eventConfig = config.events ?? {};
   const userDefaults = config.userDefaults ?? {};

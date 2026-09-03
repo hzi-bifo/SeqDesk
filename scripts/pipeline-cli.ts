@@ -81,7 +81,8 @@ const USAGE = `Usage:
   seqdesk pipeline debug <runId> --dir <install> [--format text|json] [--out file]
   seqdesk pipeline cancel <runId> --dir <install> [--json]
 
-Local shell access to the installed SeqDesk directory is treated as operator access.
+Local shell access can launch order/study pipelines only through an active
+account with installation-scoped analysis permission in the selected mode.
 The singular "seqdesk pipeline" form remains an alias.
 `;
 

@@ -1,24 +1,25 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  ArrowRight,
-  ArrowLeft,
-  Loader2,
-} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowRight, CheckCircle2, Loader2, Shield } from "lucide-react";
 
-type UserRole = "RESEARCHER" | null;
 type DeploymentProfileId =
   | "sequencing-center"
   | "shared-lab"
   | "research-workbench";
+type SystemRole = "MEMBER" | "ADMIN";
+type FacilityWorkflowRole = "REQUESTER" | "OPERATOR";
+
+interface InviteGrant {
+  systemRole: SystemRole;
+  facilityWorkflowRole: FacilityWorkflowRole;
+}
 
 interface Department {
   id: string;
   name: string;
-  description: string | null;
 }
 
 const RESEARCHER_ROLES = [
@@ -30,17 +31,35 @@ const RESEARCHER_ROLES = [
   { value: "OTHER", label: "Other" },
 ];
 
+const PROFILE_COPY: Record<
+  DeploymentProfileId,
+  { title: string; description: string }
+> = {
+  "sequencing-center": {
+    title: "Researcher account",
+    description: "Create an account to submit and manage sequencing requests",
+  },
+  "shared-lab": {
+    title: "Lab member account",
+    description: "Join your lab's shared sequencing and analysis workspace",
+  },
+  "research-workbench": {
+    title: "Workbench member account",
+    description: "Join this workbench to import data and run analyses",
+  },
+};
+
 export default function RegisterPage() {
   const router = useRouter();
-  const [selectedRole, setSelectedRole] = useState<UserRole>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [loadingDepartments, setLoadingDepartments] = useState(false);
   const [deploymentProfile, setDeploymentProfile] =
     useState<DeploymentProfileId>("sequencing-center");
   const [inviteOnly, setInviteOnly] = useState(false);
-
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [loadingDepartments, setLoadingDepartments] = useState(false);
+  const [inviteCode, setInviteCode] = useState("");
+  const [inviteGrant, setInviteGrant] = useState<InviteGrant | null>(null);
+  const [verifyingInvite, setVerifyingInvite] = useState(false);
+  const [inviteNotice, setInviteNotice] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -49,24 +68,60 @@ export default function RegisterPage() {
   const [institution, setInstitution] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const isSequencingCenter = deploymentProfile === "sequencing-center";
-  const effectiveRole: UserRole = isSequencingCenter
-    ? selectedRole
-    : "RESEARCHER";
-  const memberLabel =
-    deploymentProfile === "shared-lab"
-      ? "Lab member"
-      : deploymentProfile === "research-workbench"
-        ? "Member"
-        : "Researcher";
+  const copy = PROFILE_COPY[deploymentProfile];
+  const showRequesterMetadata =
+    deploymentProfile === "sequencing-center" &&
+    inviteGrant?.facilityWorkflowRole !== "OPERATOR";
+
+  const verifyInviteCode = useCallback(async (rawCode: string) => {
+    const code = rawCode.trim().toUpperCase();
+    if (!code) {
+      setInviteNotice("Enter an invitation code first");
+      return;
+    }
+
+    setVerifyingInvite(true);
+    setInviteNotice("");
+    setInviteGrant(null);
+    try {
+      const response = await fetch("/api/admin/invites/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const body = (await response.json().catch(() => null)) as
+        | { valid?: boolean; error?: string; grant?: InviteGrant }
+        | null;
+      if (!response.ok || !body?.valid || !body.grant) {
+        throw new Error(body?.error || "Invalid invitation code");
+      }
+      setInviteCode(code);
+      setInviteGrant(body.grant);
+    } catch (inviteError) {
+      setInviteNotice(
+        inviteError instanceof Error
+          ? inviteError.message
+          : "Could not verify this invitation"
+      );
+    } finally {
+      setVerifyingInvite(false);
+    }
+  }, []);
 
   useEffect(() => {
-    fetch("/api/setup/status")
-      .then((res) => res.json())
-      .then((data) => {
-        const id = data?.deploymentProfile?.id;
+    const codeFromUrl = new URLSearchParams(window.location.search).get("code");
+    if (codeFromUrl) {
+      setInviteCode(codeFromUrl.toUpperCase());
+      void verifyInviteCode(codeFromUrl);
+    }
+
+    fetch("/api/setup/status", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((body) => {
+        const id = body?.deploymentProfile?.id;
         if (
           id === "sequencing-center" ||
           id === "shared-lab" ||
@@ -74,442 +129,224 @@ export default function RegisterPage() {
         ) {
           setDeploymentProfile(id);
         }
-        setInviteOnly(data?.enrollment?.policy === "invite-only");
+        setInviteOnly(body?.enrollment?.policy === "invite-only");
       })
       .catch(() => {
-        // The registration API remains authoritative if setup status is unavailable.
+        // The registration endpoint remains authoritative.
       });
-  }, []);
+  }, [verifyInviteCode]);
 
   useEffect(() => {
-    if (effectiveRole && isSequencingCenter) {
-      setLoadingDepartments(true);
-      fetch("/api/departments")
-        .then((res) => res.json())
-        .then((data) => {
-          setDepartments(data);
-          setLoadingDepartments(false);
-        })
-        .catch(() => {
-          setLoadingDepartments(false);
-        });
+    if (!showRequesterMetadata) return;
+    setLoadingDepartments(true);
+    fetch("/api/departments")
+      .then((response) => response.json())
+      .then((body) => setDepartments(Array.isArray(body) ? body : []))
+      .catch(() => setDepartments([]))
+      .finally(() => setLoadingDepartments(false));
+  }, [showRequesterMetadata]);
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setError("");
+
+    if (inviteOnly && !inviteCode.trim()) {
+      setError("This installation requires an invitation code");
+      return;
     }
-  }, [effectiveRole, isSequencingCenter]);
-
-  const handleBack = () => {
-    setSelectedRole(null);
-    setError("");
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-
     if (password !== confirmPassword) {
       setError("Passwords do not match");
       return;
     }
-
     if (password.length < 8) {
       setError("Password must be at least 8 characters");
       return;
     }
+    if (new TextEncoder().encode(password).length > 72) {
+      setError("Password must be at most 72 bytes");
+      return;
+    }
 
     setIsLoading(true);
-
     try {
       const response = await fetch("/api/register", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "content-type": "application/json" },
         body: JSON.stringify({
           email,
           password,
           firstName,
           lastName,
-          role: effectiveRole,
-          researcherRole: researcherRole || undefined,
-          departmentId: departmentId || undefined,
-          institution: institution || undefined,
-          inviteCode: inviteCode || undefined,
+          inviteCode: inviteCode.trim() || undefined,
+          researcherRole: showRequesterMetadata
+            ? researcherRole || undefined
+            : undefined,
+          departmentId: showRequesterMetadata ? departmentId || undefined : undefined,
+          institution: showRequesterMetadata ? institution || undefined : undefined,
         }),
       });
-
-      const data = await response.json();
-
+      const body = (await response.json().catch(() => null)) as
+        | { error?: string }
+        | null;
       if (!response.ok) {
-        setError(data.error || "Registration failed");
-        return;
+        throw new Error(body?.error || "Registration failed");
       }
-
       router.push("/login?registered=true");
-    } catch {
-      setError("Something went wrong. Please try again.");
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error
+          ? submitError.message
+          : "Something went wrong. Please try again."
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
-  const inputStyle = {
-    background: '#F7F7F4',
-    border: '1px solid #e5e5e0',
-    color: '#171717'
-  };
+  const inputClass =
+    "w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50 bg-[#F7F7F4] border border-[#e5e5e0] text-[#171717]";
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: '#EFEFE9' }}>
-      {/* Header */}
+    <div className="min-h-screen flex flex-col bg-[#EFEFE9]">
       <header className="py-4 px-6 flex items-center justify-between max-w-[1200px] mx-auto w-full">
-        <Link href="/" className="text-lg font-semibold no-underline" style={{ color: '#171717' }}>
+        <Link href="/" className="text-lg font-semibold no-underline text-[#171717]">
           SeqDesk
         </Link>
-        <nav className="flex items-center gap-2">
-          <Link
-            href="/login"
-            className="px-4 py-2 text-sm rounded-lg transition-colors no-underline"
-            style={{ color: '#525252' }}
-          >
-            Sign in
-          </Link>
-        </nav>
+        <Link href="/login" className="px-4 py-2 text-sm no-underline text-[#525252]">
+          Sign in
+        </Link>
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-md">
-          {/* Card */}
-          <div
-            className="rounded-2xl p-8"
-            style={{
-              background: '#ffffff',
-              border: '1px solid #e5e5e0',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
-            }}
-          >
-            {!effectiveRole ? (
-              <>
-                <div className="text-center mb-8">
-                  <h1
-                    className="text-2xl font-semibold mb-2"
-                    style={{ color: '#171717', letterSpacing: '-0.02em' }}
-                  >
-                    Create Account
-                  </h1>
-                  <p style={{ color: '#525252', fontSize: '0.9375rem' }}>
-                    Select your account type
-                  </p>
-                </div>
+          <div className="rounded-2xl border border-[#e5e5e0] bg-white p-8 shadow-sm">
+            <div className="text-center mb-7">
+              <h1 className="text-2xl font-semibold tracking-tight text-[#171717]">
+                {inviteGrant?.systemRole === "ADMIN"
+                  ? "Administrator account"
+                  : copy.title}
+              </h1>
+              <p className="mt-2 text-sm text-[#525252]">
+                {inviteGrant?.systemRole === "ADMIN"
+                  ? "Administrators use the same sign-in and can additionally configure SeqDesk"
+                  : copy.description}
+              </p>
+            </div>
 
-                <div className="space-y-3">
-                  <button
-                    onClick={() => setSelectedRole("RESEARCHER")}
-                    className="w-full p-5 rounded-xl text-left transition-all"
-                    style={{
-                      background: '#F7F7F4',
-                      border: '1px solid #e5e5e0'
-                    }}
-                    onMouseOver={(e) => {
-                      e.currentTarget.style.borderColor = '#a3a3a3';
-                    }}
-                    onMouseOut={(e) => {
-                      e.currentTarget.style.borderColor = '#e5e5e0';
-                    }}
-                  >
-                    <h3 className="font-semibold text-base mb-1" style={{ color: '#171717' }}>
-                      Researcher
-                    </h3>
-                    <p className="text-sm" style={{ color: '#525252' }}>
-                      Submit samples and create sequencing orders
-                    </p>
-                  </button>
-
-                  <Link
-                    href="/register/admin"
-                    className="w-full p-5 rounded-xl text-left transition-all block no-underline"
-                    style={{
-                      background: '#F7F7F4',
-                      border: '1px solid #e5e5e0'
-                    }}
-                    onMouseOver={(e) => {
-                      e.currentTarget.style.borderColor = '#a3a3a3';
-                    }}
-                    onMouseOut={(e) => {
-                      e.currentTarget.style.borderColor = '#e5e5e0';
-                    }}
-                  >
-                    <h3 className="font-semibold text-base mb-1" style={{ color: '#171717' }}>
-                      Sequencing Facility
-                    </h3>
-                    <p className="text-sm" style={{ color: '#525252' }}>
-                      Manage orders and process samples
-                    </p>
-                    <p className="text-xs mt-1" style={{ color: '#d97706' }}>
-                      Requires invite code
-                    </p>
-                  </Link>
-                </div>
-              </>
-            ) : (
-              <>
-                {isSequencingCenter && (
-                <div className="mb-6">
-                  <button
-                    onClick={handleBack}
-                    className="flex items-center gap-2 text-sm transition-colors"
-                    style={{ color: '#525252' }}
-                    disabled={isLoading}
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                    Back
-                  </button>
-                </div>
-                )}
-
-                <div className="text-center mb-8">
-                  <h2 className="text-xl font-semibold mb-2" style={{ color: '#171717' }}>
-                    {memberLabel} Account
-                  </h2>
-                  <p className="text-sm" style={{ color: '#525252' }}>
-                    {deploymentProfile === "research-workbench"
-                      ? "Join this SeqDesk workbench to import data and run analyses"
-                      : deploymentProfile === "shared-lab"
-                        ? "Join your lab's shared sequencing and analysis workspace"
-                        : "Create an account to submit sequencing orders"}
-                  </p>
-                </div>
-
-                {error && (
-                  <div
-                    className="mb-5 p-3 rounded-xl text-sm"
-                    style={{
-                      background: '#fef2f2',
-                      border: '1px solid #fecaca',
-                      color: '#dc2626'
-                    }}
-                  >
-                    {error}
-                  </div>
-                )}
-
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
-                        First Name
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="John"
-                        value={firstName}
-                        onChange={(e) => setFirstName(e.target.value)}
-                        required
-                        disabled={isLoading}
-                        className="w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
-                        style={inputStyle}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
-                        Last Name
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Doe"
-                        value={lastName}
-                        onChange={(e) => setLastName(e.target.value)}
-                        required
-                        disabled={isLoading}
-                        className="w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
-                        style={inputStyle}
-                      />
-                    </div>
-                  </div>
-
-                  {inviteOnly && (
-                    <div>
-                      <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
-                        Invite code
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="Enter the code from your administrator"
-                        value={inviteCode}
-                        onChange={(e) => setInviteCode(e.target.value)}
-                        required
-                        disabled={isLoading}
-                        autoCapitalize="characters"
-                        className="w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
-                        style={inputStyle}
-                      />
-                      <p className="text-xs mt-1" style={{ color: '#737373' }}>
-                        This installation is invite-only.
-                      </p>
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
-                      Email
-                    </label>
-                    <input
-                      type="email"
-                      placeholder="name@example.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                      disabled={isLoading}
-                      className="w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
-                      style={inputStyle}
-                    />
-                  </div>
-
-                  {isSequencingCenter && (
-                  <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
-                      Role
-                    </label>
-                    <select
-                      value={researcherRole}
-                      onChange={(e) => setResearcherRole(e.target.value)}
-                      disabled={isLoading}
-                      className="w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
-                      style={inputStyle}
-                    >
-                      <option value="">Select your role...</option>
-                      {RESEARCHER_ROLES.map((role) => (
-                        <option key={role.value} value={role.value}>
-                          {role.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  )}
-
-                  {isSequencingCenter && (
-                  <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
-                      Research Department
-                    </label>
-                    <select
-                      value={departmentId}
-                      onChange={(e) => setDepartmentId(e.target.value)}
-                      disabled={isLoading || loadingDepartments}
-                      className="w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
-                      style={inputStyle}
-                    >
-                      <option value="">Select department...</option>
-                      {departments.map((dept) => (
-                        <option key={dept.id} value={dept.id}>
-                          {dept.name}
-                        </option>
-                      ))}
-                    </select>
-                    {loadingDepartments && (
-                      <p className="text-xs mt-1" style={{ color: '#a3a3a3' }}>
-                        Loading departments...
-                      </p>
-                    )}
-                  </div>
-                  )}
-
-                  {isSequencingCenter && (
-                  <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
-                      Institution (optional)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="University or Research Institute"
-                      value={institution}
-                      onChange={(e) => setInstitution(e.target.value)}
-                      disabled={isLoading}
-                      className="w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
-                      style={inputStyle}
-                    />
-                  </div>
-                  )}
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
-                      Password
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="Create a password (min. 8 characters)"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      disabled={isLoading}
-                      className="w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
-                      style={inputStyle}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium mb-2" style={{ color: '#171717' }}>
-                      Confirm Password
-                    </label>
-                    <input
-                      type="password"
-                      placeholder="Confirm your password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      required
-                      disabled={isLoading}
-                      className="w-full h-10 px-3 text-sm rounded-xl outline-none transition-all disabled:opacity-50"
-                      style={inputStyle}
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isLoading}
-                    className="w-full h-11 flex items-center justify-center gap-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 mt-6"
-                    style={{
-                      background: '#171717',
-                      color: '#ffffff'
-                    }}
-                    onMouseOver={(e) => !isLoading && (e.currentTarget.style.background = '#404040')}
-                    onMouseOut={(e) => (e.currentTarget.style.background = '#171717')}
-                  >
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Creating account...
-                      </>
-                    ) : (
-                      <>
-                        Create Account
-                        <ArrowRight className="h-4 w-4" />
-                      </>
-                    )}
-                  </button>
-                </form>
-              </>
+            {error && (
+              <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {error}
+              </div>
             )}
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2 text-[#171717]">
+                  {inviteOnly ? "Invitation code" : "Invitation code (optional)"}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    value={inviteCode}
+                    onChange={(event) => {
+                      setInviteCode(event.target.value.toUpperCase());
+                      setInviteGrant(null);
+                      setInviteNotice("");
+                    }}
+                    required={inviteOnly}
+                    disabled={isLoading || verifyingInvite}
+                    className={inputClass}
+                    placeholder="Code from your administrator"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void verifyInviteCode(inviteCode)}
+                    disabled={!inviteCode.trim() || verifyingInvite || isLoading}
+                    className="h-10 px-4 rounded-lg border text-sm font-medium disabled:opacity-50"
+                  >
+                    {verifyingInvite ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify"}
+                  </button>
+                </div>
+                {inviteNotice && <p className="mt-1 text-xs text-red-600">{inviteNotice}</p>}
+                {inviteGrant && (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg bg-emerald-50 p-2.5 text-xs text-emerald-800">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    <span>
+                      Invitation verified: {inviteGrant.systemRole === "ADMIN" ? "administrator" : "member"}
+                      {deploymentProfile === "sequencing-center"
+                        ? `, ${inviteGrant.facilityWorkflowRole === "OPERATOR" ? "facility operator" : "requester"}`
+                        : ""}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">First name</label>
+                  <input value={firstName} onChange={(event) => setFirstName(event.target.value)} required disabled={isLoading} className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">Last name</label>
+                  <input value={lastName} onChange={(event) => setLastName(event.target.value)} required disabled={isLoading} className={inputClass} />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Email</label>
+                <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={isLoading} className={inputClass} />
+              </div>
+
+              {showRequesterMetadata && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Research role</label>
+                    <select value={researcherRole} onChange={(event) => setResearcherRole(event.target.value)} disabled={isLoading} className={inputClass}>
+                      <option value="">Select your role...</option>
+                      {RESEARCHER_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Research department</label>
+                    <select value={departmentId} onChange={(event) => setDepartmentId(event.target.value)} disabled={isLoading || loadingDepartments} className={inputClass}>
+                      <option value="">Select department...</option>
+                      {departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Institution (optional)</label>
+                    <input value={institution} onChange={(event) => setInstitution(event.target.value)} disabled={isLoading} className={inputClass} />
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Password</label>
+                <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} maxLength={72} required disabled={isLoading} className={inputClass} />
+                <p className="mt-1 text-xs text-[#737373]">8–72 UTF-8 bytes</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Confirm password</label>
+                <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required disabled={isLoading} className={inputClass} />
+              </div>
+
+              {inviteGrant?.systemRole === "ADMIN" && (
+                <div className="flex gap-2 rounded-lg border bg-stone-50 p-3 text-xs text-[#525252]">
+                  <Shield className="h-4 w-4 shrink-0" />
+                  This invitation grants installation configuration access. It does not create a separate login type.
+                </div>
+              )}
+
+              <button type="submit" disabled={isLoading} className="mt-6 flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#171717] text-sm font-medium text-white disabled:opacity-50">
+                {isLoading ? <><Loader2 className="h-4 w-4 animate-spin" />Creating account...</> : <>Create account<ArrowRight className="h-4 w-4" /></>}
+              </button>
+            </form>
           </div>
 
-          <p className="text-center text-sm mt-6" style={{ color: '#a3a3a3' }}>
-            Already have an account?{" "}
-            <Link href="/login" className="font-medium no-underline" style={{ color: '#171717' }}>
-              Sign in
-            </Link>
+          <p className="text-center text-sm mt-6 text-[#737373]">
+            Already have an account? <Link href="/login" className="font-medium text-[#171717] no-underline">Sign in</Link>
           </p>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="py-6 px-6" style={{ borderTop: '1px solid #e5e5e0' }}>
-        <div className="max-w-[1200px] mx-auto flex justify-between items-center">
-          <span className="text-sm font-semibold" style={{ color: '#a3a3a3' }}>
-            SeqDesk
-          </span>
-          <div className="flex gap-6">
-            <Link href="/impressum" className="text-sm no-underline" style={{ color: '#a3a3a3' }}>
-              Impressum
-            </Link>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   isStudyModuleEnabled,
   loadStudyFormSchema,
@@ -429,7 +430,10 @@ export async function buildStudyTableData(
   ]);
 
   const dynamicStudiesEnabled = isStudyModuleEnabled(
-    parseStudyModulesConfig(settings?.modulesConfig ?? null),
+    parseStudyModulesConfig(
+      settings?.modulesConfig ?? null,
+      getServerDeploymentProfile()
+    ),
     "dynamic-studies"
   );
   const hasOwnForm = dynamicStudiesEnabled

@@ -6,6 +6,9 @@ import path from "path";
 import { pathToFileURL } from "url";
 import { describe, expect, it } from "vitest";
 
+import { FEATURE_MODULE_DOMAIN_REQUIREMENTS } from "@/lib/deployment-profile/compatibility";
+import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
+
 const repoRoot = process.cwd();
 const installDist = fs.readFileSync(
   path.join(repoRoot, "scripts/install-dist.sh"),
@@ -354,6 +357,97 @@ describe("install profile installer wiring", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(
       'SEQDESK_CFG_BOOTSTRAP_INCLUDE_DUMMY_DATA="true"'
+    );
+  });
+
+  it("normalizes hosted feature-module switches for InstallPlan validation", () => {
+    const result = parseInstallProfileConfig({
+      deployment: { profile: "shared-lab" },
+      modules: {
+        "billing-info": "yes",
+        notifications: 0,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      'SEQDESK_CFG_FEATURE_MODULES_JSON="{\\"billing-info\\":true,\\"notifications\\":false}"'
+    );
+  });
+
+  it("applies reviewed local feature modules through the shared profile engine", () => {
+    expect(installDist).toContain(
+      'elif [ -n "$SEQDESK_FEATURE_MODULES_JSON" ] && [ "$SEQDESK_FEATURE_MODULES_JSON" != "{}" ]; then'
+    );
+    expect(installDist).toContain(
+      'env SEQDESK_FEATURE_MODULES_JSON="$SEQDESK_FEATURE_MODULES_JSON"'
+    );
+    expect(installDist).toContain(
+      "node scripts/apply-install-profile.mjs --feature-modules-from-env"
+    );
+    expect(installDist).toContain('"Requested enabled modules"');
+    expect(installDist).toContain(
+      "an existing global feature-module disable remains authoritative"
+    );
+    expect(profileApplicator).toContain("applyFeatureModules(prisma, parsedModules)");
+    expect(profileApplicatorCore).toContain(
+      "verifyFeatureModulesReadback(prisma, normalizedModules)"
+    );
+  });
+
+  it("keeps the standalone installer's feature-module requirements aligned with the application validator", () => {
+    const validator = extractShellFunction(
+      installDist,
+      "validate_install_plan_profile_compatibility"
+    );
+    const requirementsMatch = validator.match(
+      /const requirements = (\{[\s\S]*?\});\nconst alwaysEnabled/
+    );
+    const defaultsMatch = validator.match(
+      /const defaultStates = (\{[\s\S]*?\});\nconst profileId/
+    );
+
+    expect(requirementsMatch).not.toBeNull();
+    expect(defaultsMatch).not.toBeNull();
+    const installerRequirements = JSON.parse(
+      (requirementsMatch?.[1] || "{}").replace(/,\s*([}\]])/g, "$1")
+    ) as Record<string, string[]>;
+    expect(installerRequirements).toEqual(
+      FEATURE_MODULE_DOMAIN_REQUIREMENTS
+    );
+    const installerDefaults = JSON.parse(
+      (defaultsMatch?.[1] || "{}").replace(/,\s*([}\]])/g, "$1")
+    ) as Record<string, boolean>;
+    expect(installerDefaults).toEqual(DEFAULT_MODULE_STATES);
+  });
+
+  it("rejects a malformed feature-module switch before constructing an install plan", () => {
+    const result = parseInstallProfileConfig({
+      deployment: { profile: "shared-lab" },
+      modules: { "billing-info": "sometimes" },
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("modules.billing-info must be true or false");
+  });
+
+  it("discloses bootstrap administrator credentials only for an active verified admin", () => {
+    const verifierStart = installDist.indexOf(
+      "verify_bootstrap_administrator_created() {"
+    );
+    const verifierEnd = installDist.indexOf(
+      "\n# The honest report for a database that already holds SeqDesk accounts.",
+      verifierStart
+    );
+    const verifier = installDist.slice(verifierStart, verifierEnd);
+
+    expect(verifierStart).toBeGreaterThanOrEqual(0);
+    expect(verifierEnd).toBeGreaterThan(verifierStart);
+    expect(verifier).toContain(
+      "select: { systemRole: true, isActive: true, password: true }"
+    );
+    expect(verifier).toContain(
+      'user.systemRole !== "ADMIN" || user.isActive !== true'
     );
   });
 

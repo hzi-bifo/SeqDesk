@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { validateDeploymentProfileCompatibility } from "@/lib/deployment-profile/compatibility";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile/definitions";
+
 export const INSTALL_PLAN_SCHEMA_VERSION = 1 as const;
 
 const sourceSchema = z.enum(["default", "answer", "cli", "config", "hosted"]);
@@ -55,6 +58,7 @@ export const installPlanSchema = z
     deployment: z
       .object({
         profile: z.enum(["sequencing-center", "shared-lab", "research-workbench"]),
+        featureModules: z.record(z.string(), z.boolean()).default({}),
       })
       .strict(),
     access: z
@@ -127,6 +131,22 @@ export const installPlanSchema = z
   })
   .strict()
   .superRefine((plan, context) => {
+    const profile = getDeploymentProfileDefinition(plan.deployment.profile);
+    const compatibilityIssues = validateDeploymentProfileCompatibility(profile, {
+      pipelinesEnabled: plan.execution.prepareNow,
+      featureModules: plan.deployment.featureModules,
+    });
+    for (const issue of compatibilityIssues) {
+      if (issue.severity !== "error") continue;
+      context.addIssue({
+        code: "custom",
+        path: issue.moduleId
+          ? ["deployment", "featureModules", issue.moduleId]
+          : ["deployment", "profile"],
+        message: issue.message,
+      });
+    }
+
     const browserUrl = new URL(plan.access.browserUrl);
     const localHostname =
       browserUrl.hostname === "localhost" ||

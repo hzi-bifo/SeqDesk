@@ -1,9 +1,13 @@
 import type { FieldType, FormFieldDefinition } from "@/types/form-config";
-import { DEFAULT_MODULE_STATES, isAlwaysEnabledModule } from "@/lib/modules/types";
+import { isAlwaysEnabledModule } from "@/lib/modules/types";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile/definitions";
+import { resolveEffectiveFeatureModuleStates } from "@/lib/deployment-profile/compatibility";
+import type { DeploymentProfileDefinition } from "@/lib/deployment-profile/types";
 
 export interface ModulesConfig {
   modules: Record<string, boolean>;
   globalDisabled: boolean;
+  incompatibleModules: string[];
 }
 
 export type FormModuleTarget = "order" | "study";
@@ -75,35 +79,47 @@ for (const integration of FORM_MODULE_INTEGRATIONS) {
   }
 }
 
-export function parseModulesConfig(configString: string | null): ModulesConfig {
-  if (!configString) {
-    return { modules: { ...DEFAULT_MODULE_STATES }, globalDisabled: false };
+export function parseModulesConfig(
+  configString: string | null,
+  profile: DeploymentProfileDefinition = getDeploymentProfileDefinition(
+    "sequencing-center"
+  )
+): ModulesConfig {
+  let configuredModules: Record<string, unknown> = {};
+  let globalDisabled = false;
+
+  if (configString) {
+    try {
+      const parsed = JSON.parse(configString);
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed) &&
+        parsed.modules &&
+        typeof parsed.modules === "object" &&
+        !Array.isArray(parsed.modules)
+      ) {
+        configuredModules = parsed.modules;
+        globalDisabled = parsed.globalDisabled === true;
+      } else if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        configuredModules = parsed;
+      }
+    } catch {
+      // Fall back to profile-aware defaults below.
+    }
   }
 
-  try {
-    const parsed = JSON.parse(configString);
-    if (parsed && typeof parsed.modules === "object" && !Array.isArray(parsed.modules)) {
-      return {
-        modules: { ...DEFAULT_MODULE_STATES, ...parsed.modules },
-        globalDisabled: parsed.globalDisabled ?? false,
-      };
-    }
-
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return {
-        modules: { ...DEFAULT_MODULE_STATES, ...parsed },
-        globalDisabled: false,
-      };
-    }
-  } catch {
-    // Fall back to defaults below.
-  }
-
-  return { modules: { ...DEFAULT_MODULE_STATES }, globalDisabled: false };
+  const resolved = resolveEffectiveFeatureModuleStates(profile, configuredModules);
+  return {
+    modules: resolved.modules,
+    globalDisabled,
+    incompatibleModules: resolved.incompatibleModules,
+  };
 }
 
 export function isModuleEnabled(config: ModulesConfig, moduleId: string): boolean {
-  if (isAlwaysEnabledModule(moduleId)) return true;
+  if (config.incompatibleModules.includes(moduleId)) return false;
+  if (isAlwaysEnabledModule(moduleId)) return config.modules[moduleId] === true;
   if (config.globalDisabled) return false;
   return config.modules[moduleId] ?? false;
 }

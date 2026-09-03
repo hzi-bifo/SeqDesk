@@ -6,24 +6,28 @@ import {
   authorizationErrorResponse,
   decideServerCapability,
 } from "@/lib/authorization/api";
+import { validateFeatureModuleCompatibility } from "@/lib/deployment-profile/compatibility";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { parseModulesConfig } from "@/lib/modules/form-integration";
 
 // GET module configuration
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
+    const access = decideServerCapability(session, "system.settings.manage");
 
-    // Allow any authenticated user to read module states
-    // (they need to know which features are available)
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const settings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
     });
 
-    const config = parseModulesConfig(settings?.modulesConfig ?? null);
+    const config = parseModulesConfig(
+      settings?.modulesConfig ?? null,
+      getServerDeploymentProfile()
+    );
 
     return NextResponse.json(config);
   } catch (error) {
@@ -52,12 +56,33 @@ export async function PUT(request: NextRequest) {
       globalDisabled?: boolean;
     };
 
+    const deploymentProfile = getServerDeploymentProfile();
+    if (moduleId && typeof enabled === "boolean") {
+      const compatibilityErrors = validateFeatureModuleCompatibility(
+        deploymentProfile,
+        { [moduleId]: enabled }
+      ).filter((issue) => issue.severity === "error");
+      if (compatibilityErrors.length > 0) {
+        return NextResponse.json(
+          {
+            error: compatibilityErrors[0].message,
+            code: "PROFILE_MODULE_INCOMPATIBLE",
+            issues: compatibilityErrors,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     // Get current config
     const settings = await db.siteSettings.findUnique({
       where: { id: "singleton" },
     });
 
-    const config = parseModulesConfig(settings?.modulesConfig ?? null);
+    const config = parseModulesConfig(
+      settings?.modulesConfig ?? null,
+      deploymentProfile
+    );
 
     // Handle global disabled update
     if (typeof globalDisabled === "boolean") {
@@ -73,11 +98,17 @@ export async function PUT(request: NextRequest) {
     await db.siteSettings.upsert({
       where: { id: "singleton" },
       update: {
-        modulesConfig: JSON.stringify(config),
+        modulesConfig: JSON.stringify({
+          modules: config.modules,
+          globalDisabled: config.globalDisabled,
+        }),
       },
       create: {
         id: "singleton",
-        modulesConfig: JSON.stringify(config),
+        modulesConfig: JSON.stringify({
+          modules: config.modules,
+          globalDisabled: config.globalDisabled,
+        }),
       },
     });
 

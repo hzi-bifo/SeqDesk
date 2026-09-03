@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import {
   createUserInAppNotification,
   listInAppNotifications,
@@ -25,7 +26,7 @@ const MAX_SOURCE_ID_LENGTH = 160;
 
 export async function GET(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
+  if (!isActiveSession(session)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (session.user.isDemo) {
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
+  if (!isActiveSession(session)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (session.user.isDemo) {

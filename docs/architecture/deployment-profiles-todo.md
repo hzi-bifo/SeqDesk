@@ -23,10 +23,20 @@ flow, profile-aware navigation, guarded Workbench APIs, local file upload, and
 real ENA FASTQ import are implemented. The installer now uses a versioned,
 redacted `InstallPlan`; explains profile, access, database, storage, and workflow
 choices; classifies existing targets; and preserves the selected profile during
-maintenance. Authenticated first-login onboarding and profile-aware operational
-readiness are implemented. A unified question engine, resumable apply
-checkpoints, remaining domain-by-domain capability migration, and the full
-release matrix remain open. The facility pipeline-run API/UI slice now uses
+maintenance. An authenticated, profile-aware first-login checklist is
+implemented with required gates separated from non-blocking recommendations;
+replacing the remaining manual confirmations with automated storage/runtime
+checks remains open. Invitations now carry explicit system and facility grants,
+redeem atomically, and are revoked when their creating administrator is
+demoted or deactivated. Accounts can be deactivated without deleting scientific
+history, invalidated sessions are rejected centrally, and only an inactive,
+unreferenced account can enter the separately confirmed hard-delete path.
+Feature-module defaults are resolved against the selected profile and
+incompatible combinations are rejected before installer, hosted-reload, or
+administrator-setting writes. A unified question engine, automatically
+resumable apply checkpoints, remaining domain-by-domain capability migration,
+durable public-endpoint rate limiting, and the full release matrix remain open.
+The facility pipeline-run API/UI slice now uses
 separate capabilities for execution, global pipeline configuration, result
 resolution, own/all cancellation, and shared-data purge. Order/project CRUD,
 notes, sequencing operations, inspection, delivery, preview, and download paths
@@ -142,7 +152,7 @@ Likely areas:
 - [x] Validate profile identifiers and reject unknown values instead of falling back to a broader profile.
 - [x] Add a compatibility validator for profile x domain x module dependencies and conflicts.
 - [x] Fail closed on structural profile incompatibilities during server profile resolution/startup.
-- [ ] Run compatibility validation during install-plan construction, hosted-profile reload, and settings updates.
+- [x] Run compatibility validation during install-plan construction, hosted-profile reload, and settings updates.
 - [x] Pass a sanitized profile descriptor from the dashboard layout to client navigation/components.
 - [x] Keep `sequencing-center` as the default for every existing installation.
 
@@ -193,9 +203,9 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Keep local PostgreSQL versus existing/managed PostgreSQL as the primary database choice and explain the operational tradeoff.
 - [ ] Verify the selected database before requesting/generating account passwords.
 - [x] Offer recommended managed storage locations first; show only the selected profile's labels and paths.
-- [x] Validate storage existence/creation, writability, free space, mount availability, symlink resolution, dangerous roots, and overlapping/nested roots.
+- [ ] Complete storage preflight. Current checks resolve symlinks, reject the most dangerous roots/application overlap, inspect an existing writable ancestor, and report filesystem free space; still verify selected mounts, service-identity writes, staging paths, minimum scientific-data capacity, every cross-root overlap, and successful directory creation before claiming readiness.
 - [x] Ask about workflow execution with profile-aware guidance: optional for Sequencing Center, recommended for Shared Lab, and required for full Workbench operational readiness.
-- [ ] Keep local versus Slurm executor details and package/runtime downloads behind the workflow choice; show estimated sizes. The executor choice and honest apply-time download-size status are now shown only after workflow opt-in; package-specific estimates still need registry metadata.
+- [ ] Keep local versus Slurm executor details and package/runtime downloads behind the workflow choice; show estimated sizes. The executor choice and honest apply-time download-size status are shown only after workflow opt-in, but approved starter-package selection, package-specific estimates, Slurm connectivity/shared-mount preflight, runtime provisioning choice, and the optional smoke-test choice still need implementation.
 - [x] Create exactly one initial administrator with an entered or generated strong password; remove the generic “also create a researcher” question.
 - [x] Apply the profile's enrollment default and explain it: Sequencing Center researcher self-registration by default; Shared Lab and Workbench invite-only by default.
 - [x] Defer extra users, SMTP/OIDC, instruments, ENA/repository credentials, and detailed module configuration to authenticated onboarding unless a hosted profile provides them.
@@ -208,7 +218,8 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Allow Back, Save sanitized plan, Install, and Cancel before mutations begin. Back restarts the guided choices and regenerates the normalized review; saved plans are private, redacted, and never overwrite an existing file.
 - [x] After confirmation, ask no new product/configuration questions; display stable pending/running/done/failed stages.
 - [x] Take an exclusive per-target apply lock and record schema-versioned, secret-free recovery checkpoints through material stages.
-- [ ] Run remaining detectable preflight before material changes and make recorded checkpoints automatically resumable/idempotent.
+- [ ] Run remaining detectable preflight before material changes and make recorded checkpoints automatically resumable/idempotent. Checkpoints are currently diagnostic only; recovery restarts from a safe path rather than resuming a recorded stage.
+- [ ] Add a mandatory backup/readiness gate for update and rollback: define the database/config/secrets/managed-data backup set, verify a restorable backup before schema migration where feasible, and block rollback when the installed database schema is not backward-compatible. Keep rollback documentation aligned with the versioned `releases/current` layout.
 - [ ] Verify persisted profile, database/migrations, intended administrator, application version/profile response, storage writability, and selected runtime/smoke test.
 - [x] Run the equivalent of `seqdesk doctor` automatically when the guided installer starts a persistent service.
 - [x] Distinguish “installed and verified,” “installed; manual start required,” “installed; optional/operational setup remains,” and restored/preserved failure states.
@@ -222,9 +233,10 @@ Implement the detailed journey in `docs/architecture/deployment-profiles-install
 - [x] Move bootstrap seeding into the installer or an explicit protected/idempotent startup operation.
 - [x] Let public setup status report only database/schema, valid deployment profile, enrollment policy, and existence of an active administrator.
 - [x] Add an authenticated, administrator-only, versioned onboarding checklist with explicit completion actor/time.
-- [x] Separate base application readiness from profile operational readiness; do not equate a `SiteSettings` row with completed setup.
-- [x] Route the first administrator login to incomplete critical onboarding and keep the checklist reopenable.
-- [x] Show ordinary members a clear administrator-is-finishing-setup state when critical operational setup is incomplete.
+- [x] Separate base application readiness from profile operational readiness, and classify onboarding items as required versus recommended so optional manual acknowledgements never block members.
+- [ ] Replace required manual onboarding confirmations with automated storage/runtime verifiers where feasible; do not present an acknowledgement as independent infrastructure verification.
+- [x] Route the first administrator login to incomplete required onboarding and keep the checklist reopenable without requiring optional backup/retention acknowledgements to unlock ordinary work.
+- [x] Show ordinary members a clear administrator-is-finishing-setup state only while required operational items are incomplete; optional recommendations do not globally block members.
 - [x] Compose onboarding by profile: facility intake/instruments for Sequencing Center, shared storage/members/limits for Shared Lab, and storage/importers/runtime/first workspace for Workbench.
 
 Acceptance:
@@ -275,7 +287,7 @@ Acceptance:
   - [x] `publishing.submit`
   - [x] `support.tickets.use`, `support.tickets.manage`
 - [x] Add table-driven tests for representative profile x account level x capability x scope combinations; expand to exhaustive catalog coverage before release.
-- [ ] Add tests proving an already signed-in administrator loses protected access immediately after demotion or deactivation. Demotion and deleted-account JWT refresh are covered; reversible deactivation still needs a model and test.
+- [x] Add tests proving an already signed-in administrator loses protected access immediately after demotion or deactivation.
 - [x] Add a repository check that rejects new `session.user.role === ...` authorization outside the compatibility package.
 
 Acceptance:
@@ -294,9 +306,9 @@ Convert APIs before relying on capability-based UI.
 
 ### System administration
 
-- [ ] Convert `/api/admin/users`, invites, departments, modules, form configuration, and settings routes.
+- [x] Convert `/api/admin/users`, invites, departments, modules, form configuration, and settings routes.
 - [x] Convert pipeline install/configuration, database download, execution defaults, workers, updates, telemetry, ENA credentials, and MinKNOW settings.
-- [ ] Ensure secret-bearing responses remain administrator-only.
+- [x] Ensure secret-bearing responses remain administrator-only.
 
 ### Facility and sample operations
 
@@ -337,17 +349,20 @@ Acceptance:
 - [x] Default Shared Lab and Research Workbench to invite-only enrollment after bootstrap; keep self-registration an explicit administrator setting and retain configurable researcher self-registration for Sequencing Center.
 - [x] Keep all profiles authenticated; do not add a no-login “single-user” shortcut.
 - [x] Make the initial account on a new installation an administrator through the secure bootstrap flow.
-- [ ] Create/claim the first administrator through locally supplied installer credentials or a short-lived single-use bootstrap token; do not leave an externally reachable first-user-wins registration endpoint.
-- [ ] Make initial-administrator claiming atomic so concurrent requests cannot both pass an empty-installation check.
+- [x] Create the first administrator through locally supplied installer credentials; the public registration endpoint refuses all registration until an active administrator exists and has no first-user-wins path.
+- [x] Avoid browser-side initial-administrator claiming entirely, so concurrent public requests cannot race to claim an empty installation.
 - [x] Let administrators invite/create members.
 - [x] Let administrators promote a member to administrator.
 - [x] Let administrators demote another administrator.
-- [ ] Prevent demotion, deletion, or deactivation of the final active administrator.
+- [x] Prevent demotion, deletion, or deactivation of the final active administrator.
 - [x] Enforce the final-administrator check and role update in one transaction to prevent concurrent demotions.
 - [x] Prevent users from self-promoting through registration or profile-update requests.
+- [x] Use cryptographically random invitation secrets with at least 192 bits of entropy, store their grants explicitly, and return one generic verification error shape for missing, used, expired, revoked, or creator-invalid invitations.
+- [ ] **Release blocker:** store only a cryptographic digest of new invitation secrets, show/copy the raw secret once, and define a safe expiry or revocation path for legacy plaintext invitation rows.
+- [ ] **Release blocker:** add durable, shared rate limiting for public registration and invitation verification (for example at the reverse proxy or in PostgreSQL/Redis). Process-local counters are insufficient for multi-process and restarted installations.
 - [ ] Record administrator promotion/demotion with actor, target, timestamp, and old/new level.
-- [ ] Default to account deactivation; make hard deletion a separate destructive workflow.
-- [ ] Keep Shared Lab scientific records accessible after their creator is deactivated.
+- [x] Default to account deactivation; make hard deletion a separate destructive workflow.
+- [x] Keep Shared Lab scientific records accessible after their creator is deactivated.
 - [ ] Separate reversible archive/trash from permanent purge; keep permanent purge of shared data administrator-only by default.
 - [x] Allow members to cancel their own runs; require a separate capability to cancel another member's active run.
 - [ ] Require explicit transfer, export, retention, or purge handling before deleting the owner of a private Workbench workspace.
@@ -370,12 +385,12 @@ Likely areas:
 
 Acceptance:
 
-- [ ] A clean Shared Lab install cannot end up without an administrator.
-- [ ] Multiple administrators are supported.
-- [ ] Members and administrators sign in through the same page.
-- [ ] Registration never accepts an administrator grant without existing administrator authorization or first-account bootstrap rules.
-- [ ] An unclaimed installation exposed to the network cannot be claimed by an arbitrary browser visitor.
-- [ ] Deactivated or demoted accounts cannot retain access through an existing session or API credential.
+- [x] A clean Shared Lab install cannot end up without an administrator.
+- [x] Multiple administrators are supported.
+- [x] Members and administrators sign in through the same page.
+- [x] Registration never accepts an administrator grant without existing administrator authorization or first-account bootstrap rules.
+- [x] An unclaimed installation exposed to the network cannot be claimed by an arbitrary browser visitor.
+- [x] Deactivated or demoted accounts cannot retain access through an existing browser session; future API credentials must use the same active-principal check.
 - [ ] Losing normal administrator credentials has a documented local recovery procedure.
 
 ## Milestone 5 — Shared Lab scientific experience
@@ -389,7 +404,7 @@ Acceptance:
 - [ ] Add optimistic concurrency to meaningful shared-record edits; reject stale updates with `409 Conflict` instead of silently overwriting another member's change.
 - [ ] Keep multi-record operations such as sample/run assignment transactional.
 - [x] Display the existing `Order` record as “Project” in Shared Lab while keeping storage/API names stable.
-- [ ] Adjust notifications so normal Shared Lab actions do not notify an artificial requester/facility counterpart.
+- [x] Adjust notifications so normal Shared Lab actions do not notify an artificial requester/facility counterpart.
 - [ ] Add administrator-configurable compute, concurrency, storage, and retention limits without removing members' ability to launch approved workflows.
 - [ ] Update help text, empty states, onboarding, and demo/seed data for Shared Lab.
 
@@ -406,13 +421,13 @@ Acceptance journey:
 Do this only after authorization no longer depends on raw `User.role` checks.
 
 - [x] Add an explicit system-level field, for example `systemRole: MEMBER | ADMIN`.
-- [x] Keep the legacy role temporarily as an independent facility-workflow field (`RESEARCHER` = requester, `FACILITY_ADMIN` = operator) while its eventual replacement is named and migrated.
+- [x] Add `facilityWorkflowRole` as the independent Sequencing Center responsibility (`REQUESTER` or `OPERATOR`). Keep legacy `role` only as a conservative system-role mirror during the rollback window.
 - [x] Backfill current users:
   - [x] `RESEARCHER` -> `systemRole=MEMBER`, facility role `REQUESTER`.
   - [x] `FACILITY_ADMIN` -> `systemRole=ADMIN`, facility role `OPERATOR`.
 - [x] Preserve current sessions during deployment by refreshing both authorization fields from the database on each authenticated request.
 - [x] Update NextAuth token/session fields to carry the system and facility-workflow dimensions needed by capability-aware UI.
-- [ ] Remove role-specific registration payloads where the profile determines defaults.
+- [x] Remove role selection from the registration UI. The server derives both grants from an invitation or the profile's safe member default; legacy role input is only a non-authoritative compatibility assertion.
 - [x] Retain a compatibility reader until all stored users and tests are migrated.
 - [ ] Remove the deprecated `role` field only in a later release after rollback compatibility is no longer required.
 - [ ] Follow the repository database reset-and-seed workflow while developing the schema change.

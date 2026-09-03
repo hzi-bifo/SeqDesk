@@ -751,6 +751,7 @@ export default function StudyFormBuilderPage() {
   const isFieldAvailableForModules = (field: FormFieldDefinition) => {
     return isFieldAvailableForModuleState(field, {
       globalDisabled: false,
+      incompatibleModules: [],
       modules: {
         "mixs-metadata": mixsModuleEnabled,
         "funding-info": fundingModuleEnabled,

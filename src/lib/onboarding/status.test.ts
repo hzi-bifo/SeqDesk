@@ -29,14 +29,17 @@ describe("profile onboarding status", () => {
     expect(status.completedCount).toBe(0);
   });
 
-  it("requires every current profile item for a newly installed profile", () => {
+  it("blocks a newly installed profile only on required readiness items", () => {
     const definitions = getOnboardingItems("research-workbench");
     const completedAt = "2026-09-03T12:00:00.000Z";
+    const requiredDefinitions = definitions.filter(
+      (item) => item.requirement === "required"
+    );
     const stored = {
       schemaVersion: ONBOARDING_SCHEMA_VERSION,
       profile: "research-workbench" as const,
       items: Object.fromEntries(
-        definitions.slice(0, -1).map((item) => [
+        requiredDefinitions.slice(0, -1).map((item) => [
           item.id,
           { completedAt, completedByUserId: "admin-1" },
         ])
@@ -49,7 +52,37 @@ describe("profile onboarding status", () => {
     });
     expect(status.required).toBe(true);
     expect(status.complete).toBe(false);
-    expect(status.completedCount).toBe(status.totalCount - 1);
+    expect(status.requiredCompletedCount).toBe(status.requiredTotalCount - 1);
+  });
+
+  it("does not block members on unfinished recommendations", () => {
+    const definitions = getOnboardingItems("shared-lab");
+    const completedAt = "2026-09-03T12:00:00.000Z";
+    const stored = {
+      schemaVersion: ONBOARDING_SCHEMA_VERSION,
+      profile: "shared-lab" as const,
+      items: Object.fromEntries(
+        definitions
+          .filter((item) => item.requirement === "required")
+          .map((item) => [
+            item.id,
+            { completedAt, completedByUserId: "admin-1" },
+          ])
+      ),
+      completedAt,
+      completedByUserId: "admin-1",
+    };
+
+    const status = buildOnboardingStatus({
+      profile: "shared-lab",
+      requiredVersion: 1,
+      stored,
+    });
+
+    expect(status.complete).toBe(true);
+    expect(status.recommendationsComplete).toBe(false);
+    expect(status.requiredCompletedCount).toBe(status.requiredTotalCount);
+    expect(status.completedCount).toBeLessThan(status.totalCount);
   });
 
   it("ignores completion state from a different immutable profile", () => {

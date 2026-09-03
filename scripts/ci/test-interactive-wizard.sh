@@ -64,6 +64,7 @@ reset_state() {
     SEQDESK_YES=""
     SEQDESK_CONFIG=""
     SEQDESK_PROFILE=""
+    SEQDESK_FEATURE_MODULES_JSON=""
     SEQDESK_DEPLOYMENT_PROFILE=""
     SEQDESK_ACCESS_AUDIENCE=""
     SEQDESK_BIND_HOST=""
@@ -75,6 +76,8 @@ reset_state() {
     SEQDESK_DIR="$TEST_TMP_DIR/install"
     SEQDESK_DATABASE_URL=""
     SEQDESK_DATABASE_DIRECT_URL=""
+    SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME=""
+    SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME=""
     SEQDESK_BOOTSTRAP_ADMIN_EMAIL=""
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD=""
     SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH=""
@@ -135,6 +138,8 @@ y
 
 n
 
+Ada
+Lovelace
 admin@lab.org
 longpassword1
 longpassword1
@@ -144,6 +149,8 @@ assert_eq "managed DATABASE_URL captured" \
     "postgresql://u:secret@db.example.com:5432/seqdesk" "$SEQDESK_DATABASE_URL"
 assert_eq "sequencing center profile captured" \
     "sequencing-center" "$SEQDESK_DEPLOYMENT_PROFILE"
+assert_eq "admin first name captured" "Ada" "$SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME"
+assert_eq "admin last name captured" "Lovelace" "$SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME"
 assert_eq "admin email captured" "admin@lab.org" "$SEQDESK_BOOTSTRAP_ADMIN_EMAIL"
 assert_eq "admin password captured" "longpassword1" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD"
 assert_eq "generic researcher is disabled" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
@@ -163,6 +170,26 @@ assert_contains "members are deferred to authenticated invitations" \
     "Additional accounts are invited" "$OUT"
 
 echo ""
+echo "== Case 1a: guided passwords enforce bcrypt's UTF-8 byte limit =="
+OVERLONG_BCRYPT_PASSWORD="$(printf '🔬%.0s' {1..19})"
+EXACT_BCRYPT_PASSWORD="$(printf '🔬%.0s' {1..18})"
+interactive_prompt_password "  Admin password" >"$OUT" 2>&1 <<EOF
+$OVERLONG_BCRYPT_PASSWORD
+validpassword1
+validpassword1
+EOF
+assert_eq "guided password retries after an overlong multibyte value" \
+    "validpassword1" "$INTERACTIVE_RESULT"
+assert_contains "guided password explains bcrypt's byte limit" \
+    "at most 72 UTF-8 bytes" "$OUT"
+if bcrypt_plaintext_password_is_supported "$EXACT_BCRYPT_PASSWORD"; then
+    echo "ok: a password of exactly 72 UTF-8 bytes is accepted"
+else
+    echo "FAIL: a password of exactly 72 UTF-8 bytes was rejected" >&2
+    FAILURES=$((FAILURES + 1))
+fi
+
+echo ""
 echo "== Case 2: local DB choice, no researcher, reachable managed not used =="
 reset_state
 TEST_DB_REACHABLE=1
@@ -174,6 +201,8 @@ run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
 
 1
 n
+
+
 
 
 password123
@@ -199,6 +228,8 @@ run_interactive_wizard >"$OUT" 2>&1 <<'EOF'
 
 
 
+Workbench
+Admin
 admin@workbench.test
 
 EOF
@@ -211,6 +242,8 @@ assert_eq "workbench run directory is isolated" \
 assert_eq "workbench database cache is isolated from runs" \
     "$TEST_TMP_DIR/install-data/pipeline-databases" "$SEQDESK_PIPELINE_DATABASE_DIR"
 assert_eq "workbench creates no bootstrap researcher" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
+assert_eq "workbench captures the administrator name" \
+    "Workbench Admin" "$SEQDESK_BOOTSTRAP_ADMIN_FIRST_NAME $SEQDESK_BOOTSTRAP_ADMIN_LAST_NAME"
 assert_eq "generated admin password is flagged for the final summary" \
     "true" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED"
 assert_nonempty "generated admin password is retained for the final summary" \
@@ -319,6 +352,7 @@ SEQDESK_DATABASE_URL="postgresql://seqdesk:database-secret@db.example/seqdesk"
 SEQDESK_DATABASE_DIRECT_URL="postgresql://owner:direct-secret@db.example/seqdesk"
 SEQDESK_BOOTSTRAP_ADMIN_EMAIL="admin@lab.example"
 SEQDESK_BOOTSTRAP_ADMIN_PASSWORD="account-secret"
+SEQDESK_FEATURE_MODULES_JSON='{"account-validation":true,"notifications":false}'
 SEQDESK_WITH_PIPELINES="1"
 PIPELINES_ENABLED="true"
 SEQDESK_DATA_PATH="$TEST_TMP_DIR/plan-data"
@@ -331,6 +365,8 @@ plan_json="$(build_install_plan_json)"
 assert_contains "plan schema is versioned" '"schemaVersion": 1' <(printf '%s\n' "$plan_json")
 assert_contains "plan carries the selected profile" \
     '"profile": "research-workbench"' <(printf '%s\n' "$plan_json")
+assert_contains "plan carries normalized compatible feature-module switches" \
+    '"account-validation": true' <(printf '%s\n' "$plan_json")
 assert_contains "plan records measured installation free space" \
     '"installationAvailableBytes":' <(printf '%s\n' "$plan_json")
 assert_contains "plan records the enforced disk reserve" \
@@ -363,6 +399,33 @@ assert_contains "review shows value provenance" \
     "Value sources" "$OUT"
 assert_contains "review shows hosted lock state" \
     "Locked values          none" "$OUT"
+assert_contains "review labels compatible feature modules as requested, not necessarily effective" \
+    "Requested enabled modules account-validation" "$OUT"
+assert_contains "review preserves the authority of the global feature-module switch" \
+    "an existing global feature-module disable remains authoritative" "$OUT"
+
+SEQDESK_FEATURE_MODULES_JSON='{"billing-info":true}'
+if build_install_plan_json >"$OUT" 2>&1; then
+    echo "FAIL: Workbench plan accepted the facility-only billing module" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: Workbench plan rejects facility-only feature modules"
+fi
+assert_contains "module incompatibility names the selected profile and missing domain" \
+    "Research workbench cannot enable modules.billing-info: it requires facility-intake" "$OUT"
+assert_contains "module incompatibility gives a corrective action" \
+    "Disable modules.billing-info or choose a compatible deployment profile" "$OUT"
+
+SEQDESK_FEATURE_MODULES_JSON='{"module-name-typo":true}'
+if build_install_plan_json >"$OUT" 2>&1; then
+    echo "FAIL: install plan accepted an unknown feature module" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: install plan fails closed for unknown feature modules"
+fi
+assert_contains "unknown feature-module error identifies the exact config path" \
+    "modules.module-name-typo is not a recognized SeqDesk feature module" "$OUT"
+SEQDESK_FEATURE_MODULES_JSON='{"account-validation":true,"notifications":false}'
 
 SAVED_PLAN="$TEST_TMP_DIR/saved-install-plan.json"
 confirm_config "$plan_json" >"$OUT" 2>&1 <<EOF
@@ -582,9 +645,14 @@ echo "== Case 2h: update/reconfigure preserve the installed deployment profile =
 cat >"$TARGET_VALID/settings.json" <<'EOF'
 {
   "deployment": {"profile": "shared-lab"},
-  "runtime": {"databaseUrl": "postgresql://seqdesk:secret@localhost/seqdesk"}
+  "app": {"port": 8000, "accessAudience": "team-server"},
+  "runtime": {
+    "nextAuthUrl": "https://seqdesk.lab.example",
+    "databaseUrl": "postgresql://seqdesk:secret@localhost/seqdesk"
+  }
 }
 EOF
+printf '127.0.0.1\n' >"$TARGET_VALID/.seqdesk-bind-host"
 if (
     reset_state
     SEQDESK_DIR="$TARGET_VALID"
@@ -603,6 +671,43 @@ reset_state
 SEQDESK_DIR="$TARGET_VALID"
 load_existing_install_values "$TARGET_VALID" >"$OUT" 2>&1
 assert_eq "maintenance loads the installed profile" "shared-lab" "$SEQDESK_DEPLOYMENT_PROFILE"
+assert_eq "maintenance loads the saved access audience" "team-server" "$SEQDESK_ACCESS_AUDIENCE"
+assert_eq "maintenance loads the saved browser URL" \
+    "https://seqdesk.lab.example" "$SEQDESK_NEXTAUTH_URL"
+assert_eq "maintenance loads the saved bind host" "127.0.0.1" "$SEQDESK_BIND_HOST"
+
+# Update is not reconfiguration: it must consume no fresh-setup defaults and
+# preserve even an older installation that did not save accessAudience.
+SEQDESK_ACCESS_AUDIENCE=""
+SEQDESK_UPDATE_EXISTING="1"
+run_interactive_wizard_database </dev/null >"$OUT" 2>&1
+assert_eq "guided update preserves the browser URL without fresh prompts" \
+    "https://seqdesk.lab.example" "$SEQDESK_NEXTAUTH_URL"
+assert_eq "guided update preserves the bind host without fresh prompts" \
+    "127.0.0.1" "$SEQDESK_BIND_HOST"
+assert_contains "guided update explains that configuration is preserved" \
+    "workflow settings are preserved" "$OUT"
+
+# Reconfigure shows existing values and defaults to keeping them. The two blank
+# answers are “do not change access” and “do not change database”.
+SEQDESK_UPDATE_EXISTING=""
+SEQDESK_RECONFIGURE="1"
+run_interactive_wizard_database >"$OUT" 2>&1 <<'EOF'
+
+
+EOF
+assert_eq "guided reconfigure infers legacy team-server access safely" \
+    "team-server" "$SEQDESK_ACCESS_AUDIENCE"
+assert_eq "guided reconfigure keeps the browser URL by default" \
+    "https://seqdesk.lab.example" "$SEQDESK_NEXTAUTH_URL"
+assert_eq "guided reconfigure keeps the bind host by default" \
+    "127.0.0.1" "$SEQDESK_BIND_HOST"
+assert_eq "guided reconfigure keeps the database by default" \
+    "postgresql://seqdesk:secret@localhost/seqdesk" "$SEQDESK_DATABASE_URL"
+assert_not_contains "guided reconfigure never prints the database password" \
+    "seqdesk:secret" "$OUT"
+
+SEQDESK_RECONFIGURE=""
 SEQDESK_UPDATE_EXISTING="1"
 PIPELINES_ENABLED="false"
 PLAN_RELEASE_VERSION="1.2.4"
@@ -721,6 +826,31 @@ assert_eq "unattended admin email defaults safely" "admin@example.com" "$SEQDESK
 assert_nonempty "unattended admin password generated" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD"
 assert_eq "unattended generated password is flagged" "true" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_GENERATED"
 assert_eq "unattended generic researcher disabled" "0" "$SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED"
+
+echo ""
+echo "== Case 3a.1: unattended bootstrap rejects overlong plaintext and accepts hashes =="
+reset_state
+SEQDESK_YES="1"
+SEQDESK_BOOTSTRAP_ADMIN_PASSWORD="$OVERLONG_BCRYPT_PASSWORD"
+if ensure_secure_bootstrap_accounts >"$OUT" 2>&1; then
+    echo "FAIL: unattended bootstrap accepted an overlong plaintext password" >&2
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok: unattended bootstrap rejects an overlong plaintext password"
+fi
+assert_contains "unattended rejection explains bcrypt's byte limit" \
+    "72-byte UTF-8 limit" "$OUT"
+assert_not_contains "unattended rejection never prints the supplied password" \
+    "$OVERLONG_BCRYPT_PASSWORD" "$OUT"
+
+reset_state
+SEQDESK_YES="1"
+SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH='$2b$12$prehashed-bootstrap-credential'
+ensure_secure_bootstrap_accounts >"$OUT" 2>&1
+assert_eq "pre-hashed bootstrap credentials remain supported" \
+    '$2b$12$prehashed-bootstrap-credential' "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD_HASH"
+assert_eq "a configured hash does not generate a replacement plaintext" \
+    "" "$SEQDESK_BOOTSTRAP_ADMIN_PASSWORD"
 
 echo ""
 echo "== Case 3b: generated macOS socket URLs remain usable by installer helpers =="

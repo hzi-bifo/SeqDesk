@@ -154,7 +154,7 @@ describe("admin settings and modules coverage quick wins", () => {
     expect(unauthorized.status).toBe(401);
     expect(await unauthorized.json()).toEqual({ error: "Unauthorized" });
 
-    mocks.getServerSession.mockResolvedValueOnce({ user: { id: "user-1", role: "RESEARCHER" } });
+    mocks.getServerSession.mockResolvedValueOnce(adminSession);
     mocks.db.siteSettings.findUnique.mockResolvedValueOnce({
       extraSettings: JSON.stringify({
         accountValidationSettings: "{bad-json",
@@ -179,8 +179,8 @@ describe("admin settings and modules coverage quick wins", () => {
         settings: DEFAULT_ACCOUNT_VALIDATION_SETTINGS,
       })
     );
-    expect(unauthorizedPut.status).toBe(401);
-    expect(await unauthorizedPut.json()).toEqual({ error: "Unauthorized" });
+    expect(unauthorizedPut.status).toBe(403);
+    expect(await unauthorizedPut.json()).toEqual({ error: "Forbidden" });
 
     const missingSettings = await putAccountValidation(
       jsonRequest("/api/admin/modules/account-validation", "PUT", {})
@@ -261,8 +261,8 @@ describe("admin settings and modules coverage quick wins", () => {
         settings: DEFAULT_BILLING_SETTINGS,
       })
     );
-    expect(unauthorizedPut.status).toBe(401);
-    expect(await unauthorizedPut.json()).toEqual({ error: "Unauthorized" });
+    expect(unauthorizedPut.status).toBe(403);
+    expect(await unauthorizedPut.json()).toEqual({ error: "Forbidden" });
 
     const missingSettings = await putBilling(
       jsonRequest("/api/admin/modules/billing", "PUT", {})
@@ -397,8 +397,8 @@ describe("admin settings and modules coverage quick wins", () => {
         dataBasePath: "/configured/base",
       })
     );
-    expect(unauthorizedPut.status).toBe(401);
-    expect(await unauthorizedPut.json()).toEqual({ error: "Unauthorized" });
+    expect(unauthorizedPut.status).toBe(403);
+    expect(await unauthorizedPut.json()).toEqual({ error: "Forbidden" });
 
     mocks.db.siteSettings.findUnique.mockResolvedValueOnce({
       extraSettings: JSON.stringify({
@@ -478,8 +478,8 @@ describe("admin settings and modules coverage quick wins", () => {
         url: "https://example.test/departments.csv",
       })
     );
-    expect(unauthorizedPost.status).toBe(401);
-    expect(await unauthorizedPost.json()).toEqual({ error: "Unauthorized" });
+    expect(unauthorizedPost.status).toBe(403);
+    expect(await unauthorizedPost.json()).toEqual({ error: "Forbidden" });
 
     mocks.db.siteSettings.findUnique.mockResolvedValueOnce({
       extraSettings: JSON.stringify({
@@ -544,8 +544,8 @@ describe("admin settings and modules coverage quick wins", () => {
         groups: [],
       })
     );
-    expect(unauthorizedPut.status).toBe(401);
-    expect(await unauthorizedPut.json()).toEqual({ error: "Unauthorized" });
+    expect(unauthorizedPut.status).toBe(403);
+    expect(await unauthorizedPut.json()).toEqual({ error: "Forbidden" });
 
     mocks.db.siteSettings.findUnique.mockResolvedValueOnce({
       extraSettings: JSON.stringify({

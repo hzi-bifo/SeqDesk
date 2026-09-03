@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { decideServerCapability } from "@/lib/authorization/api";
 
 export default async function LegacyOrderFilesPage({
@@ -11,7 +12,7 @@ export default async function LegacyOrderFilesPage({
   const session = await getServerSession(authOptions);
   const { id } = await params;
 
-  if (!session) {
+  if (!isActiveSession(session)) {
     redirect("/login");
   }
 

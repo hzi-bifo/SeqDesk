@@ -2,13 +2,14 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { getOnboardingStatus } from "@/lib/onboarding/server";
 import { decideCapability } from "@/lib/authorization";
 
 export default async function PostLoginPage() {
   const session = await getServerSession(authOptions);
-  if (!session) redirect("/login");
+  if (!isActiveSession(session)) redirect("/login");
   const deploymentProfile = getServerDeploymentProfile();
 
   let needsAdministratorOnboarding = false;

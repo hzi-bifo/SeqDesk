@@ -6,6 +6,7 @@ declare module "next-auth" {
       id: string;
       role: string;
       systemRole: string;
+      facilityWorkflowRole: string;
       isDemo: boolean;
       authorizationValid: boolean;
       demoExperience?: "researcher" | "facility";
@@ -15,6 +16,7 @@ declare module "next-auth" {
   interface User {
     role: string;
     systemRole: string;
+    facilityWorkflowRole: string;
     isDemo: boolean;
     authorizationValid?: boolean;
     demoExperience?: "researcher" | "facility";
@@ -26,6 +28,7 @@ declare module "next-auth/jwt" {
     id: string;
     role: string;
     systemRole: string;
+    facilityWorkflowRole: string;
     isDemo: boolean;
     authorizationValid?: boolean;
     demoExperience?: "researcher" | "facility";

@@ -49,6 +49,23 @@ describe("GET /api/admin/modules/account-validation", () => {
 
     const response = await GET();
     expect(response.status).toBe(401);
+    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 when a member requests validation configuration", async () => {
+    mocks.getServerSession.mockResolvedValue({
+      user: {
+        id: "member-1",
+        systemRole: "MEMBER",
+        role: "FACILITY_ADMIN",
+      },
+    });
+
+    const response = await GET();
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Forbidden" });
+    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
   });
 });
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   authorizationErrorResponse,
   decideServerCapability,
@@ -44,7 +45,10 @@ export async function GET() {
         select: { modulesConfig: true },
       }),
     ]);
-    const modulesConfig = parseModulesConfig(siteSettings?.modulesConfig ?? null);
+    const modulesConfig = parseModulesConfig(
+      siteSettings?.modulesConfig ?? null,
+      getServerDeploymentProfile()
+    );
 
     // If no config exists, return default system fields and groups
     if (!config) {

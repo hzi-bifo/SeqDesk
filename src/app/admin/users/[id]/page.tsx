@@ -6,8 +6,10 @@ import { db } from "@/lib/db";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Badge } from "@/components/ui/badge";
 import { AccountAccessControl } from "@/components/admin/AccountAccessControl";
+import { AccountLifecycleControl } from "@/components/admin/AccountLifecycleControl";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { decideCapability } from "@/lib/authorization";
+import { ACTIVE_ADMINISTRATOR_WHERE } from "@/lib/accounts/lifecycle";
 import {
   ArrowLeft,
   Mail,
@@ -73,9 +75,13 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
   }
 
   const administratorCount =
-    user.systemRole === "ADMIN"
-      ? await db.user.count({ where: { systemRole: "ADMIN" } })
+    user.systemRole === "ADMIN" && user.isActive
+      ? await db.user.count({
+          where: ACTIVE_ADMINISTRATOR_WHERE,
+        })
       : 0;
+  const isFinalAdministrator =
+    user.systemRole === "ADMIN" && user.isActive && administratorCount <= 1;
 
   const formatDate = (date: Date) => {
     return new Date(date).toLocaleDateString("en-US", {
@@ -139,6 +145,7 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
                   ? "Administrator"
                   : deploymentProfile.terminology.member}
               </Badge>
+              {!user.isActive && <Badge variant="outline">Deactivated</Badge>}
             </div>
             {user.researcherRole && (
               <p className="text-muted-foreground">
@@ -149,13 +156,17 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
         </div>
       </div>
 
-      <div className="mb-8">
+      <div className="mb-8 grid gap-4 lg:grid-cols-2">
         <AccountAccessControl
           userId={user.id}
           systemRole={user.systemRole}
-          isFinalAdministrator={
-            user.systemRole === "ADMIN" && administratorCount <= 1
-          }
+          isFinalAdministrator={isFinalAdministrator}
+        />
+        <AccountLifecycleControl
+          userId={user.id}
+          email={user.email}
+          isActive={user.isActive}
+          isFinalAdministrator={isFinalAdministrator}
         />
       </div>
 

@@ -82,6 +82,7 @@ import { GET as getUpdates } from "./updates/route";
 import { GET as getUpdateProgress } from "./updates/progress/route";
 import { POST as installUpdates } from "./updates/install/route";
 import { GET as getInfrastructureReadiness } from "./infrastructure/readiness/route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile/definitions";
 
 function makeInstallRequest() {
   return new Request("http://localhost/api/admin/updates/install", {
@@ -113,10 +114,9 @@ describe("admin route coverage quick wins", () => {
     mocks.loadConfig.mockReturnValue({
       config: { pipelines: { enabled: true } },
     });
-    mocks.getServerDeploymentProfile.mockReturnValue({
-      id: "sequencing-center",
-      experience: "sequencing",
-    });
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
     mocks.quickPrerequisiteCheck.mockResolvedValue({
       ready: true,
       summary: "All good",
@@ -155,7 +155,7 @@ describe("admin route coverage quick wins", () => {
     const unauthorized = await getPrerequisites(
       new Request("http://localhost/api/admin/settings/pipelines/check-prerequisites")
     );
-    expect(unauthorized.status).toBe(403);
+    expect(unauthorized.status).toBe(401);
     expect(await unauthorized.json()).toEqual({ error: "Unauthorized" });
 
     const quick = await getPrerequisites(

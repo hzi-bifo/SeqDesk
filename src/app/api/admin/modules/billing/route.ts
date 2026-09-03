@@ -6,6 +6,7 @@ import {
   authorizationErrorResponse,
   decideServerCapability,
 } from "@/lib/authorization/api";
+import type { CapabilityDecision } from "@/lib/authorization";
 import {
   BillingSettings,
   DEFAULT_BILLING_SETTINGS,
@@ -25,13 +26,32 @@ function parseSettings(settingsJson: string | null): BillingSettings {
   }
 }
 
+function decideBillingReadAccess(
+  session: Parameters<typeof decideServerCapability>[0]
+): CapabilityDecision {
+  // Billing fields are part of the order form, so authenticated users who can
+  // create orders must be able to read their non-secret formatting settings.
+  // Using the order capability also makes this endpoint unavailable in a
+  // profile without facility intake, such as Research Workbench.
+  return decideServerCapability(session, "orders.create");
+}
+
+function decideBillingManagementAccess(
+  session: Parameters<typeof decideServerCapability>[0]
+): CapabilityDecision {
+  const routeAccess = decideBillingReadAccess(session);
+  if (!routeAccess.allowed) return routeAccess;
+  return decideServerCapability(session, "system.settings.manage");
+}
+
 // GET billing settings
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
+    const access = decideBillingReadAccess(session);
 
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!access.allowed) {
+      return authorizationErrorResponse(access);
     }
 
     const settings = await db.siteSettings.findUnique({
@@ -66,7 +86,7 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    const access = decideServerCapability(session, "system.settings.manage");
+    const access = decideBillingManagementAccess(session);
 
     if (!access.allowed) {
       return authorizationErrorResponse(access);

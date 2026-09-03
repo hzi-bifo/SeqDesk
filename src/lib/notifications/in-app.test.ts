@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
     },
   },
   getInAppNotificationSettings: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -28,6 +29,11 @@ vi.mock("@/lib/db", () => ({
 vi.mock("./settings", () => ({
   getInAppNotificationSettings: mocks.getInAppNotificationSettings,
 }));
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 import {
   archiveInAppNotification,
@@ -47,22 +53,39 @@ const user = {
   firstName: "Ada",
   lastName: "Lovelace",
   email: "ada@example.com",
+  isActive: true,
 };
 
-const admin = {
+const systemAdmin = {
   id: "admin-1",
-  firstName: "Facility",
+  role: "FACILITY_ADMIN",
+  systemRole: "ADMIN",
+  facilityWorkflowRole: "REQUESTER",
+  firstName: "System",
   lastName: "Admin",
   email: "admin@example.com",
+};
+
+const operator = {
+  id: "operator-1",
+  role: "RESEARCHER",
+  systemRole: "MEMBER",
+  facilityWorkflowRole: "OPERATOR",
+  firstName: "Facility",
+  lastName: "Operator",
+  email: "operator@example.com",
 };
 
 describe("in-app notifications", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.db.user.findMany.mockResolvedValue([admin]);
+    mocks.db.user.findMany.mockResolvedValue([systemAdmin]);
     mocks.db.inAppNotification.createMany.mockResolvedValue({ count: 1 });
     mocks.db.inAppNotification.updateMany.mockResolvedValue({ count: 1 });
     mocks.getInAppNotificationSettings.mockResolvedValue({ enabled: true });
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
   });
 
   it("lists visible notifications with unread counts", async () => {
@@ -145,9 +168,13 @@ describe("in-app notifications", () => {
     expect(mocks.db.inAppNotification.createMany).not.toHaveBeenCalled();
   });
 
-  it("creates order-created notifications for admins and excludes the actor", async () => {
-    const otherAdmin = { ...admin, id: "admin-2", email: "admin2@example.com" };
-    mocks.db.user.findMany.mockResolvedValue([admin, otherAdmin]);
+  it("creates order-created notifications for facility operators and excludes the actor", async () => {
+    const otherOperator = {
+      ...operator,
+      id: "operator-2",
+      email: "operator2@example.com",
+    };
+    mocks.db.user.findMany.mockResolvedValue([operator, otherOperator]);
     mocks.db.order.findUnique.mockResolvedValue({
       id: "order-1",
       orderNumber: "ORD-20260519-0001",
@@ -157,22 +184,33 @@ describe("in-app notifications", () => {
     });
     mocks.db.inAppNotification.createMany.mockResolvedValue({ count: 1 });
 
-    await notifyOrderCreatedInApp("order-1", { id: "admin-1", name: "Facility Admin" });
+    await notifyOrderCreatedInApp("order-1", {
+      id: "operator-1",
+      name: "Facility Operator",
+    });
 
     expect(mocks.db.user.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { systemRole: "ADMIN" } })
+      expect.objectContaining({
+        where: { isActive: true },
+        select: expect.objectContaining({
+          role: true,
+          systemRole: true,
+          facilityWorkflowRole: true,
+        }),
+      })
     );
     expect(mocks.db.inAppNotification.createMany).toHaveBeenCalledTimes(1);
     const data = mocks.db.inAppNotification.createMany.mock.calls[0][0].data;
     expect(data).toHaveLength(1);
     expect(data[0]).toMatchObject({
-      userId: "admin-2",
+      userId: "operator-2",
       eventType: "order.created",
-      dedupeKey: "order.created:order-1:admin-2",
+      dedupeKey: "order.created:order-1:operator-2",
     });
   });
 
-  it("creates order-updated notifications for owner and admins while excluding the actor", async () => {
+  it("creates order-updated notifications for owner and operators while excluding the actor", async () => {
+    mocks.db.user.findMany.mockResolvedValue([operator]);
     mocks.db.order.findUnique.mockResolvedValue({
       id: "order-1",
       orderNumber: "ORD-20260519-0001",
@@ -187,14 +225,65 @@ describe("in-app notifications", () => {
     const data = mocks.db.inAppNotification.createMany.mock.calls[0][0].data;
     expect(data).toHaveLength(1);
     expect(data[0]).toMatchObject({
-      userId: "admin-1",
+      userId: "operator-1",
       eventType: "order.updated",
       sourceType: "order",
       sourceId: "order-1",
     });
   });
 
+  it("does not create a direct order notification for a deactivated owner", async () => {
+    mocks.db.user.findMany.mockResolvedValue([operator]);
+    mocks.db.order.findUnique.mockResolvedValue({
+      id: "order-1",
+      orderNumber: "ORD-20260519-0001",
+      name: "RNA order",
+      status: "SUBMITTED",
+      generatedByE2E: false,
+      user: { ...user, isActive: false },
+    });
+
+    await notifyOrderUpdatedInApp("order-1", {
+      id: "operator-1",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+      facilityWorkflowRole: "OPERATOR",
+    });
+
+    expect(mocks.db.inAppNotification.createMany).not.toHaveBeenCalled();
+    expect(mocks.db.order.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          user: {
+            select: expect.objectContaining({ isActive: true }),
+          },
+        }),
+      }),
+    );
+  });
+
+  it("does not create requester/facility counterpart notifications in Shared Lab", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+
+    await notifyOrderCreatedInApp("order-1", {
+      id: "user-1",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+    });
+    await notifyOrderUpdatedInApp("order-1", {
+      id: "user-1",
+      role: "RESEARCHER",
+      systemRole: "MEMBER",
+    });
+
+    expect(mocks.db.order.findUnique).not.toHaveBeenCalled();
+    expect(mocks.db.inAppNotification.createMany).not.toHaveBeenCalled();
+  });
+
   it("deduplicates terminal pipeline notifications per run and recipient", async () => {
+    mocks.db.user.findMany.mockResolvedValue([operator]);
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
       runNumber: "MAG-20260519-001",
@@ -218,11 +307,38 @@ describe("in-app notifications", () => {
           dedupeKey: "pipeline.completed:run-1:user-1",
         }),
         expect.objectContaining({
-          userId: "admin-1",
-          dedupeKey: "pipeline.completed:run-1:admin-1",
+          userId: "operator-1",
+          dedupeKey: "pipeline.completed:run-1:operator-1",
         }),
       ])
     );
+  });
+
+  it("notifies only the run owner for Shared Lab pipeline completion", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab")
+    );
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: "run-1",
+      runNumber: "MAG-20260519-001",
+      pipelineId: "mag",
+      status: "completed",
+      user,
+      order: {
+        id: "order-1",
+        orderNumber: "ORD-20260519-0001",
+        name: null,
+        generatedByE2E: false,
+      },
+      study: null,
+    });
+
+    await notifyPipelineRunTerminalInApp("run-1", "running", "completed");
+
+    const data = mocks.db.inAppNotification.createMany.mock.calls[0][0].data;
+    expect(data).toHaveLength(1);
+    expect(data[0].userId).toBe("user-1");
+    expect(mocks.db.user.findMany).not.toHaveBeenCalled();
   });
 
   it("does not notify when the terminal status did not change", async () => {
@@ -232,7 +348,7 @@ describe("in-app notifications", () => {
     expect(mocks.db.inAppNotification.createMany).not.toHaveBeenCalled();
   });
 
-  it("creates update-started notifications for facility admins", async () => {
+  it("creates update-started notifications for active system administrators", async () => {
     await notifyAppUpdateStartedInApp({ targetVersion: "2.0.0" });
 
     const data = mocks.db.inAppNotification.createMany.mock.calls[0][0].data;
@@ -247,6 +363,11 @@ describe("in-app notifications", () => {
       sourceId: "2.0.0",
     });
     expect(data[0].dedupeKey).toContain("app.update.started:2.0.0:");
+    expect(mocks.db.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { systemRole: "ADMIN", isActive: true },
+      })
+    );
   });
 
   it("creates repair-started notifications for facility admins", async () => {

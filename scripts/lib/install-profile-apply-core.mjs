@@ -522,6 +522,34 @@ function parseModulesConfig(raw) {
   };
 }
 
+function normalizeFeatureModules(rawModules, source = "modules") {
+  if (rawModules === undefined || rawModules === null) return {};
+  if (!isRecord(rawModules)) {
+    throw new Error(`${source} must be an object of module-id: true/false switches.`);
+  }
+
+  const entries = [];
+  for (const [moduleId, rawEnabled] of Object.entries(rawModules)) {
+    const enabled = toOptionalBoolean(rawEnabled);
+    if (enabled === undefined) {
+      throw new Error(`${source}.${moduleId} must be true or false.`);
+    }
+    entries.push([moduleId, enabled]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function mergeFeatureModulesConfig(rawConfig, normalizedModules) {
+  const config = parseModulesConfig(rawConfig);
+  return {
+    modules: {
+      ...config.modules,
+      ...normalizedModules,
+    },
+    globalDisabled: config.globalDisabled,
+  };
+}
+
 function readFormConfig(profile, formKey, defaultVersion = 1) {
   const form = toRecord(toRecord(profile.forms)[formKey]);
   return {
@@ -549,6 +577,38 @@ async function updateSiteSettings(prisma, update) {
       ...update,
     },
   });
+}
+
+async function verifyFeatureModulesReadback(prisma, expectedModules) {
+  if (Object.keys(expectedModules).length === 0) return;
+
+  const persisted = await loadSiteSettings(prisma);
+  const persistedConfig = parseModulesConfig(persisted?.modulesConfig);
+  for (const [moduleId, enabled] of Object.entries(expectedModules)) {
+    if (persistedConfig.modules[moduleId] !== enabled) {
+      throw new Error(
+        `Feature-module readback verification failed for modules.${moduleId}.`
+      );
+    }
+  }
+}
+
+async function applyFeatureModules(prisma, rawModules) {
+  const normalizedModules = normalizeFeatureModules(rawModules);
+  const appliedCount = Object.keys(normalizedModules).length;
+  if (appliedCount === 0) return { appliedCount: 0 };
+
+  const settings = await loadSiteSettings(prisma);
+  const modulesConfig = mergeFeatureModulesConfig(
+    settings?.modulesConfig,
+    normalizedModules
+  );
+  await updateSiteSettings(prisma, {
+    modulesConfig: JSON.stringify(modulesConfig),
+  });
+  await verifyFeatureModulesReadback(prisma, normalizedModules);
+
+  return { appliedCount };
 }
 
 async function applyOrderForm(prisma, profile) {
@@ -599,15 +659,13 @@ async function applySiteProfile(prisma, profile) {
   const managed = toRecord(extra[INSTALL_PROFILE_MANAGED_KEY]);
   const update = {};
 
-  const modules = toRecord(profile.modules);
+  // Validate every hosted-profile toggle before the single SiteSettings write,
+  // then verify those exact normalized values after it. Local/unattended
+  // installs use applyFeatureModules below, which shares the same merge and
+  // verification path without touching hosted-profile managed metadata.
+  const modules = normalizeFeatureModules(profile.modules);
   if (Object.keys(modules).length > 0) {
-    const modulesConfig = parseModulesConfig(settings?.modulesConfig);
-    for (const [moduleId, enabled] of Object.entries(modules)) {
-      const parsedEnabled = toOptionalBoolean(enabled);
-      if (parsedEnabled !== undefined) {
-        modulesConfig.modules[moduleId] = parsedEnabled;
-      }
-    }
+    const modulesConfig = mergeFeatureModulesConfig(settings?.modulesConfig, modules);
     update.modulesConfig = JSON.stringify(modulesConfig);
   }
 
@@ -994,6 +1052,7 @@ async function applySiteProfile(prisma, profile) {
   extra[INSTALL_PROFILE_MANAGED_KEY] = managed;
   update.extraSettings = JSON.stringify(extra);
   await updateSiteSettings(prisma, update);
+  await verifyFeatureModulesReadback(prisma, modules);
 
   return true;
 }
@@ -1117,16 +1176,18 @@ function readStudyDefinitions(profile) {
   return out;
 }
 
-// Studies need an owner (Study.userId). Prefer the first facility admin, else any
-// user. Returns null when the install has no users yet (study creation is skipped).
+// Studies need an active owner (Study.userId). Prefer the first active system
+// administrator, else any active user. Returns null when the install has no
+// active users yet (study creation is skipped).
 async function resolveProfileStudyOwner(prisma) {
   const admin = await prisma.user.findFirst({
-    where: { systemRole: "ADMIN" },
+    where: { systemRole: "ADMIN", isActive: true },
     orderBy: { createdAt: "asc" },
     select: { id: true },
   });
   if (admin) return admin.id;
   const anyUser = await prisma.user.findFirst({
+    where: { isActive: true },
     orderBy: { createdAt: "asc" },
     select: { id: true },
   });
@@ -1206,6 +1267,10 @@ export async function applyStudyDefinitions(prisma, profile) {
 }
 
 export async function applyInstallProfile(prisma, profile) {
+  // Validate the module section before any profile-managed store is changed.
+  // applySiteProfile normalizes it again at the write boundary so direct callers
+  // receive the same guarantee.
+  normalizeFeatureModules(profile.modules);
   const appliedOrderForm = await applyOrderForm(prisma, profile);
   await applySiteProfile(prisma, profile);
   const enabledPipelines = await applyPipelineEnablement(prisma, profile);
@@ -1221,6 +1286,7 @@ export async function applyInstallProfile(prisma, profile) {
 }
 
 export {
+  applyFeatureModules,
   applyManagedJsonStringSetting,
   applyOrderForm,
   applyPipelineEnablement,
@@ -1229,11 +1295,13 @@ export {
   buildSafeInstallProfileMetadata,
   ensureDatabaseEnv,
   mergeManagedObject,
+  mergeFeatureModulesConfig,
   mergePipelineConfigWithManagedKeys,
   normalizeAccessSettings,
   normalizeAccountValidationSettings,
   normalizeAuthSettings,
   normalizeBillingSettings,
+  normalizeFeatureModules,
   normalizeNotificationManagedSettings,
   normalizeSequencingFilesConfig,
   normalizeStringArray,

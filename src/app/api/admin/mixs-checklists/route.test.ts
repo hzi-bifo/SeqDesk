@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {},
   getActiveMixsConfig: vi.fn(),
   saveActiveMixsConfig: vi.fn(),
@@ -28,6 +29,10 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
 vi.mock("@/lib/mixs/config", () => ({
   getActiveMixsConfig: mocks.getActiveMixsConfig,
   saveActiveMixsConfig: mocks.saveActiveMixsConfig,
@@ -42,6 +47,7 @@ vi.mock("@/lib/mixs/config", () => ({
 
 const originalFetch = globalThis.fetch;
 
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 import { GET, PUT, POST } from "./route";
 
 const DEFAULT_SYNC_URL = "https://seqdesk.org/api/registry/mixs";
@@ -88,6 +94,9 @@ const baseConfig = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.getServerDeploymentProfile.mockReturnValue(
+    getDeploymentProfileDefinition("sequencing-center")
+  );
   globalThis.fetch = mocks.fetch;
   mocks.getDefaultMixsSyncUrl.mockReturnValue(DEFAULT_SYNC_URL);
   mocks.normalizeSyncUrl.mockImplementation((value: unknown) => {
@@ -130,8 +139,31 @@ describe("GET /api/admin/mixs-checklists", () => {
     expect(body.error).toBe("Unauthorized");
   });
 
-  it("returns active config for any authenticated user", async () => {
+  it("returns 403 for a member without catalog-management access", async () => {
     mocks.getServerSession.mockResolvedValue(researcherSession);
+
+    const response = await GET();
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Forbidden" });
+    expect(mocks.getActiveMixsConfig).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the sample catalog is unavailable", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+    mocks.getServerSession.mockResolvedValue(adminSession);
+
+    const response = await GET();
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Not found" });
+    expect(mocks.getActiveMixsConfig).not.toHaveBeenCalled();
+  });
+
+  it("returns active config for an administrator", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.getActiveMixsConfig.mockResolvedValue(baseConfig);
 
     const response = await GET();
@@ -144,7 +176,7 @@ describe("GET /api/admin/mixs-checklists", () => {
   });
 
   it("returns 500 when getActiveMixsConfig throws", async () => {
-    mocks.getServerSession.mockResolvedValue(researcherSession);
+    mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.getActiveMixsConfig.mockRejectedValue(new Error("DB down"));
 
     const response = await GET();

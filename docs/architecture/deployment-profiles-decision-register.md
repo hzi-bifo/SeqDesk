@@ -30,6 +30,7 @@ This register captures choices that are easy to hide inside implementation detai
 | F-07 | Foundation | The deployment profile is locally configured and restart-required; it is not initially editable in the database/UI. |
 | F-08 | Foundation | Model human and machine principals separately; do not reuse a human admin account for automation. |
 | F-09 | Foundation | Ship local credentials first while keeping authorization independent of the login provider; defer OIDC/LDAP. |
+| F-10 | Foundation | Store installation administration and Sequencing Center responsibility independently; keep the legacy role only as a conservative rollback mirror. |
 | I-01 | Installation | Fresh guided installs require an explicit, explained deployment-profile choice. |
 | I-02 | Installation | Guided, unattended, hosted, and reconfigure paths resolve to one versioned `InstallPlan`. |
 | I-03 | Installation | Ask local-only versus team-server access before exposing host/port/proxy details. |
@@ -38,6 +39,8 @@ This register captures choices that are easy to hide inside implementation detai
 | I-06 | Installation | Verify base readiness automatically and report incomplete profile-specific operational readiness honestly. |
 | I-07 | Installation | Updates preserve the profile; reconfigure previews a diff; profile changes use a separate future migration. |
 | I-08 | Installation | Add a redacted, zero-mutation `--plan` mode before applying changes. |
+| I-09 | Installation | Gate members only on required operational readiness; keep recommendations visible and reopenable without blocking work. |
+| I-10 | Installation | Treat database/config/data backup and schema-compatible rollback as release gates, not optional post-install advice. |
 | S-01 | Shared Lab | Use optimistic concurrency for shared edits and return a visible conflict instead of silently overwriting. |
 | S-02 | Shared Lab | Keep shared scientific data after account deactivation; archive is reversible and shared purge is administrator-only. |
 | W-01 | Workbench | Allow multiple private workspaces per user in the first release; add collaborative sharing later. |
@@ -104,7 +107,14 @@ Recommended defaults:
 
 All profiles still use the same login page. Do not add an authentication-free “single user” shortcut: a machine that begins as localhost-only is often exposed later through a proxy without revisiting its security assumptions.
 
-Invites should be single-use, expiring, optionally email-bound, and grant the profile's normal member level. Administrative promotion is a separate authenticated action. Local credentials ship first; external identity providers are covered by F-09.
+Invites should be single-use, expiring, strongly random, atomically redeemed,
+and revocable. Member invitations may be reusable only if a future explicit
+group-enrollment design requires it; the initial implementation uses single-use
+invitations. Administrator invitations must be bound to a normalized email
+address and may grant administrator access directly so a second administrator
+can join without sharing credentials. Invitation grants come from the server,
+never from the registration form. Local credentials ship first; external
+identity providers are covered by F-09.
 
 ### F-05 — Define resource ownership separately from creator provenance
 
@@ -153,6 +163,21 @@ Recommendation: ship local email/password accounts for the first profile release
 
 Schema/API work should avoid assuming every future user has a local password, but the profile project should not expand into a full authentication-provider rewrite.
 
+### F-10 — Separate administration from facility responsibility
+
+Recommendation: persist `MEMBER`/`ADMIN` installation access independently from
+Sequencing Center `REQUESTER`/`OPERATOR` responsibility. A center may therefore
+have a member/operator who runs the facility without changing global settings,
+or an administrator/requester who manages the installation without operating
+the facility. Shared Lab and Workbench ignore facility responsibility.
+
+Invitation records store both grants explicitly. The old `User.role` value is
+not authoritative; while downgrade support is required, mirror only the system
+role (`ADMIN` to `FACILITY_ADMIN`, `MEMBER` to `RESEARCHER`). Mirroring an
+operator into the legacy admin value would turn a member/operator into an
+administrator after rollback. A future release may remove the legacy field only
+after the documented rollback window closes.
+
 ## Installation and setup decisions
 
 The detailed operator journey, question copy, readiness split, failure behavior, and acceptance matrix are defined in `docs/architecture/deployment-profiles-installation-setup.md`.
@@ -190,6 +215,25 @@ Recommendation: detect Update, Reconfigure, Diagnose/Resume, and Fresh Install b
 ### I-08 — Provide a no-write plan preview
 
 Recommendation: add `--plan` (plus redacted JSON output) to resolve sources/defaults/locks, validate compatibility and paths, show expected downloads/resources, and exit before filesystem, database, or service changes. “Save sanitized plan” in the guided wizard uses the same representation and excludes secret values.
+
+### I-09 — Separate required readiness from recommendations
+
+Recommendation: the authenticated checklist labels every item. Required items
+gate ordinary members only when the chosen operating model cannot perform its
+normal work without them: managed storage for all profiles and workflow-runtime
+readiness for Research Workbench. Backup/retention documentation, enrollment
+review, optional integrations, and first test journeys remain recommended.
+Replace manual confirmations with automatic storage/runtime verifiers where
+feasible, and never present an acknowledgement as an independent verification.
+
+### I-10 — Make backup and rollback compatibility release gates
+
+Recommendation: define one coherent backup set covering PostgreSQL, canonical
+configuration, secrets, installed pipeline metadata, and managed data roots.
+Before a schema-changing update, verify or explicitly acknowledge a restorable
+backup. Code rollback must check database-schema compatibility and refuse when
+the prior release cannot safely read the migrated schema. Recovery documentation
+and tests must follow the versioned release layout used by the real installer.
 
 ## Shared Lab decisions
 

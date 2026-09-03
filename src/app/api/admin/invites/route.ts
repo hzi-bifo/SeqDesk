@@ -4,15 +4,43 @@ import { authOptions } from "@/lib/auth";
 import { decideCapability } from "@/lib/authorization";
 import {
   formatInviteCode,
-  getInviteAccountRole,
+  getInviteGrant,
+  grantFromLegacyAccountRole,
+  isFacilityWorkflowRole,
   isInviteAccountRole,
+  isSystemRole,
+  legacyRoleForSystemRole,
+  type FacilityWorkflowRole,
+  type SystemRole,
 } from "@/lib/accounts/invite-role";
 import { db } from "@/lib/db";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { Prisma } from "@prisma/client";
 import { randomBytes } from "crypto";
+import { z } from "zod";
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const createInviteSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().email().max(320).optional().nullable(),
+    expiresInDays: z.coerce.number().int().min(1).max(30).default(7),
+    systemRole: z.enum(["MEMBER", "ADMIN"]).optional(),
+    facilityWorkflowRole: z.enum(["REQUESTER", "OPERATOR"]).optional(),
+    // Compatibility input for clients from the coupled-role release.
+    accountRole: z.enum(["RESEARCHER", "FACILITY_ADMIN"]).optional(),
+  })
+  .strict();
+
+function serializeInviteGrant(invite: {
+  code: string;
+  targetSystemRole?: string | null;
+  targetFacilityWorkflowRole?: string | null;
+}) {
+  const grant = getInviteGrant(invite);
+  return {
+    grant,
+    accountRole: legacyRoleForSystemRole(grant.systemRole),
+  };
+}
 
 // GET /api/admin/invites - List all invites
 export async function GET() {
@@ -46,7 +74,7 @@ export async function GET() {
     return NextResponse.json(
       invites.map((invite) => ({
         ...invite,
-        accountRole: getInviteAccountRole(invite.code),
+        ...serializeInviteGrant(invite),
       }))
     );
   } catch (error) {
@@ -75,46 +103,80 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { email, expiresInDays = 7, accountRole = "FACILITY_ADMIN" } =
-      await request.json();
-    const normalizedEmail =
-      typeof email === "string" ? email.trim().toLowerCase() : null;
-    const parsedExpiresInDays = Number.parseInt(String(expiresInDays), 10);
-
-    if (!isInviteAccountRole(accountRole)) {
+    const parsed = createInviteSchema.safeParse(
+      await request.json().catch(() => null)
+    );
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "accountRole must be RESEARCHER or FACILITY_ADMIN" },
+        { error: "Invalid invitation details" },
         { status: 400 }
       );
     }
+
+    const { email, expiresInDays, accountRole } = parsed.data;
+    const normalizedEmail = email || null;
+    const compatibilityGrant =
+      accountRole && isInviteAccountRole(accountRole)
+        ? grantFromLegacyAccountRole(accountRole)
+        : null;
+    const systemRole: SystemRole = isSystemRole(parsed.data.systemRole)
+      ? parsed.data.systemRole
+      : compatibilityGrant?.systemRole ?? "MEMBER";
+    const facilityWorkflowRole: FacilityWorkflowRole = isFacilityWorkflowRole(
+      parsed.data.facilityWorkflowRole
+    )
+      ? parsed.data.facilityWorkflowRole
+      : compatibilityGrant?.facilityWorkflowRole ?? "REQUESTER";
 
     if (
-      !Number.isInteger(parsedExpiresInDays) ||
-      parsedExpiresInDays < 1 ||
-      parsedExpiresInDays > 30
+      compatibilityGrant &&
+      ((parsed.data.systemRole !== undefined &&
+        parsed.data.systemRole !== compatibilityGrant.systemRole) ||
+        (parsed.data.facilityWorkflowRole !== undefined &&
+          parsed.data.facilityWorkflowRole !==
+            compatibilityGrant.facilityWorkflowRole))
     ) {
       return NextResponse.json(
-        { error: "expiresInDays must be an integer between 1 and 30" },
+        { error: "Legacy and explicit invitation grants conflict" },
         { status: 400 }
       );
     }
 
-    if (normalizedEmail && !EMAIL_PATTERN.test(normalizedEmail)) {
+    const profile = getServerDeploymentProfile();
+    if (
+      profile.id !== "sequencing-center" &&
+      facilityWorkflowRole !== "REQUESTER"
+    ) {
       return NextResponse.json(
-        { error: "Invalid invite email address" },
+        { error: "Facility workflow access is only available in Sequencing Center" },
+        { status: 400 }
+      );
+    }
+
+    if (systemRole === "ADMIN" && !normalizedEmail) {
+      return NextResponse.json(
+        { error: "Administrator invitations must be restricted to an email address" },
         { status: 400 }
       );
     }
 
     // Calculate expiration date
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + parsedExpiresInDays);
+    expiresAt.setDate(expiresAt.getDate() + expiresInDays);
+
+    const creator = await db.user.findUnique({
+      where: { id: decision.principal!.id },
+      select: { id: true, systemRole: true, isActive: true },
+    });
+    if (!creator?.isActive || creator.systemRole !== "ADMIN") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     let invite = null;
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const code = formatInviteCode(
-        randomBytes(4).toString("hex"),
-        accountRole
+        randomBytes(24).toString("hex"),
+        systemRole
       );
       try {
         invite = await db.adminInvite.create({
@@ -123,6 +185,8 @@ export async function POST(request: NextRequest) {
             email: normalizedEmail || null,
             expiresAt,
             createdById: decision.principal!.id,
+            targetSystemRole: systemRole,
+            targetFacilityWorkflowRole: facilityWorkflowRole,
           },
           include: {
             createdBy: {
@@ -150,7 +214,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(
-      { ...invite, accountRole: getInviteAccountRole(invite.code) },
+      { ...invite, ...serializeInviteGrant(invite) },
       { status: 201 }
     );
   } catch (error) {

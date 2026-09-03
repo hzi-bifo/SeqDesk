@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { isDemoSession } from "@/lib/demo/server";
@@ -51,7 +52,7 @@ const MAX_PREVIEW_BYTES = 100 * 1024 * 1024;
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!isActiveSession(session)) {
       return new NextResponse("Unauthorized", { status: 401 });
     }
 

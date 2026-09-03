@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { DashboardShell } from "@/components/layout/DashboardShell";
 import { AdminDemoReadOnlyWrapper } from "@/components/demo/AdminDemoReadOnlyWrapper";
 import { getCurrentVersion } from "@/lib/updater";
@@ -15,8 +16,8 @@ export default async function AdminLayout({
 }) {
   const session = await getServerSession(authOptions);
 
-  if (!session) {
-    redirect(isPublicDemoEnabled() ? "/demo" : "/login");
+  if (!isActiveSession(session)) {
+    redirect(session ? "/login" : isPublicDemoEnabled() ? "/demo" : "/login");
   }
 
   const deploymentProfile = getServerDeploymentProfile();

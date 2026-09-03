@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
     siteSettings: {
       findUnique: vi.fn(),
@@ -23,14 +24,27 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 import { GET, PUT } from "./route";
+
+const adminSession = {
+  user: { id: "admin-1", systemRole: "ADMIN", role: "RESEARCHER" },
+};
+const memberSession = {
+  user: { id: "member-1", systemRole: "MEMBER", role: "RESEARCHER" },
+};
 
 describe("GET /api/admin/modules/billing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getServerSession.mockResolvedValue({
-      user: { id: "admin-1", role: "FACILITY_ADMIN" },
-    });
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
+    mocks.getServerSession.mockResolvedValue(adminSession);
   });
 
   it("returns default billing settings when none are stored", async () => {
@@ -49,15 +63,38 @@ describe("GET /api/admin/modules/billing", () => {
 
     const response = await GET();
     expect(response.status).toBe(401);
+    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("allows a member to read the non-secret format used by order forms", async () => {
+    mocks.getServerSession.mockResolvedValue(memberSession);
+    mocks.db.siteSettings.findUnique.mockResolvedValue(null);
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+  });
+
+  it("returns 404 when billing has no order domain in Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+
+    const response = await GET();
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Not found" });
+    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
   });
 });
 
 describe("PUT /api/admin/modules/billing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getServerSession.mockResolvedValue({
-      user: { id: "admin-1", role: "FACILITY_ADMIN" },
-    });
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center")
+    );
+    mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     mocks.db.siteSettings.upsert.mockResolvedValue({});
   });
@@ -88,9 +125,7 @@ describe("PUT /api/admin/modules/billing", () => {
   });
 
   it("returns 403 for users without settings access", async () => {
-    mocks.getServerSession.mockResolvedValue({
-      user: { id: "user-1", role: "RESEARCHER" },
-    });
+    mocks.getServerSession.mockResolvedValue(memberSession);
 
     const request = new NextRequest("http://localhost/api/admin/modules/billing", {
       method: "PUT",
@@ -100,6 +135,22 @@ describe("PUT /api/admin/modules/billing", () => {
 
     const response = await PUT(request);
     expect(response.status).toBe(403);
+  });
+
+  it("returns 404 before mutation when billing is unavailable in Workbench", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("research-workbench")
+    );
+
+    const request = new NextRequest("http://localhost/api/admin/modules/billing", {
+      method: "PUT",
+      body: JSON.stringify({ settings: {} }),
+    });
+    const response = await PUT(request);
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Not found" });
+    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
   });
 
   it("returns 400 when settings are missing", async () => {

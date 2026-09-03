@@ -457,6 +457,15 @@ export function validateConfig(config: unknown): {
 
   const cfg = config as SeqDeskConfig;
 
+  if (cfg.app?.accessAudience) {
+    const validAccessAudiences = ['local', 'team-server', 'advanced'];
+    if (!validAccessAudiences.includes(cfg.app.accessAudience)) {
+      errors.push(
+        `app.accessAudience must be one of: ${validAccessAudiences.join(', ')}`
+      );
+    }
+  }
+
   if (cfg.deployment?.profile) {
     const validProfiles = [
       'sequencing-center',

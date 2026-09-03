@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
@@ -10,7 +11,7 @@ import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 export async function GET(request: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!isActiveSession(session)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

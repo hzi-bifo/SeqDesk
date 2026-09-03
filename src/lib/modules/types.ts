@@ -136,6 +136,7 @@ export const DEFAULT_MODULE_STATES: Record<string, boolean> = {
   "funding-info": false,
   "billing-info": false,
   "ena-sample-fields": true, // Enabled by default - essential for ENA submission
+  "sequencing-tech": true, // Always active when the deployment profile supports sequencing operations
   "dynamic-studies": false, // Off by default - single global study form unless enabled
   "notifications": false,
 };

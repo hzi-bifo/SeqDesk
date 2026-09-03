@@ -3,6 +3,8 @@ import os from "os";
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  applyFeatureModules,
+  applyInstallProfile,
   applyOrderForm,
   applyPipelineEnablement,
   applySiteProfile,
@@ -241,6 +243,88 @@ describe("install profile applicator core", () => {
       costCenterPattern: "^[A-Z0-9-]+$",
       costCenterExample: "HZI-001",
     });
+  });
+
+  it("applies local feature modules without changing hosted-profile metadata", async () => {
+    const originalExtraSettings = JSON.stringify({
+      installProfile: { id: "hosted-profile", version: "1" },
+      [MANAGED_KEY]: { accessKeys: ["departmentSharing"] },
+      localFlag: "keep",
+    });
+    const prisma = createPrisma({
+      modulesConfig: JSON.stringify({
+        modules: {
+          "account-validation": false,
+          notifications: true,
+        },
+        globalDisabled: true,
+      }),
+      extraSettings: originalExtraSettings,
+    });
+
+    await expect(
+      applyFeatureModules(prisma, {
+        "billing-info": "yes",
+        notifications: 0,
+      })
+    ).resolves.toEqual({ appliedCount: 2 });
+
+    expect(JSON.parse(String(prisma.state.siteSettings?.modulesConfig))).toEqual({
+      modules: {
+        "account-validation": false,
+        "billing-info": true,
+        notifications: false,
+      },
+      globalDisabled: true,
+    });
+    expect(prisma.state.siteSettings?.extraSettings).toBe(originalExtraSettings);
+    expect(prisma.siteSettings.findUnique).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects malformed feature-module values before writing", async () => {
+    const prisma = createPrisma();
+
+    await expect(
+      applyFeatureModules(prisma, { "billing-info": "sometimes" })
+    ).rejects.toThrow("modules.billing-info must be true or false");
+    expect(prisma.siteSettings.upsert).not.toHaveBeenCalled();
+
+    const orderFormPrisma = createOrderFormPrisma();
+    await expect(
+      applyInstallProfile(
+        { ...prisma, orderFormConfig: orderFormPrisma.orderFormConfig },
+        {
+          id: "hosted-profile",
+          modules: { notifications: "occasionally" },
+          forms: {
+            order: {
+              fields: [{ id: "must-not-write", label: "Must not write" }],
+            },
+          },
+        }
+      )
+    ).rejects.toThrow("modules.notifications must be true or false");
+    expect(prisma.siteSettings.upsert).not.toHaveBeenCalled();
+    expect(orderFormPrisma.orderFormConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it("fails when a feature-module write cannot be read back", async () => {
+    const prisma = createPrisma({
+      modulesConfig: JSON.stringify({ modules: { notifications: false } }),
+    });
+    prisma.siteSettings.findUnique
+      .mockResolvedValueOnce(prisma.state.siteSettings)
+      .mockResolvedValueOnce({
+        ...prisma.state.siteSettings,
+        modulesConfig: JSON.stringify({ modules: { notifications: false } }),
+      });
+
+    await expect(
+      applyFeatureModules(prisma, { notifications: true })
+    ).rejects.toThrow(
+      "Feature-module readback verification failed for modules.notifications"
+    );
+    expect(prisma.siteSettings.upsert).toHaveBeenCalledTimes(1);
   });
 
   it("applies safe DB-backed runtime settings while preserving local settings", async () => {
@@ -818,12 +902,14 @@ describe("install profile applicator core", () => {
 
 describe("install profile study definitions (per-study dynamic forms)", () => {
   function createStudyDefsPrisma(options?: {
-    users?: Array<{ id: string; systemRole: string }>;
+    users?: Array<{ id: string; systemRole: string; isActive: boolean }>;
     studies?: Array<{ id: string; alias: string | null }>;
     modulesConfig?: string | null;
   }) {
     const state = {
-      users: options?.users ?? [{ id: "admin-1", systemRole: "ADMIN" }],
+      users: options?.users ?? [
+        { id: "admin-1", systemRole: "ADMIN", isActive: true },
+      ],
       studies: (options?.studies ?? []).map((s) => ({ ...s })) as Array<
         Record<string, unknown>
       >,
@@ -841,8 +927,11 @@ describe("install profile study definitions (per-study dynamic forms)", () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         findFirst: vi.fn(async (args?: any) => {
           const systemRole = args?.where?.systemRole;
-          const match = state.users.find((u) =>
-            systemRole ? u.systemRole === systemRole : true
+          const isActive = args?.where?.isActive;
+          const match = state.users.find(
+            (u) =>
+              (systemRole ? u.systemRole === systemRole : true) &&
+              (isActive === undefined ? true : u.isActive === isActive)
           );
           return match ? { id: match.id } : null;
         }),
@@ -956,6 +1045,44 @@ describe("install profile study definitions (per-study dynamic forms)", () => {
     expect(applied).toBe(0);
     expect(prisma.study.create).not.toHaveBeenCalled();
     expect(prisma.studyFormConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it("never assigns hosted studies to a deactivated administrator", async () => {
+    const prisma = createStudyDefsPrisma({
+      users: [
+        { id: "inactive-admin", systemRole: "ADMIN", isActive: false },
+        { id: "active-member", systemRole: "MEMBER", isActive: true },
+      ],
+    });
+
+    const applied = await applyStudyDefinitions(prisma, profileWithStudy);
+
+    expect(applied).toBe(1);
+    expect(prisma.study.create.mock.calls[0][0].data.userId).toBe(
+      "active-member"
+    );
+    expect(prisma.user.findFirst).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: { systemRole: "ADMIN", isActive: true },
+      })
+    );
+    expect(prisma.user.findFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ where: { isActive: true } })
+    );
+  });
+
+  it("skips hosted studies when every possible owner is deactivated", async () => {
+    const prisma = createStudyDefsPrisma({
+      users: [
+        { id: "inactive-admin", systemRole: "ADMIN", isActive: false },
+        { id: "inactive-member", systemRole: "MEMBER", isActive: false },
+      ],
+    });
+
+    expect(await applyStudyDefinitions(prisma, profileWithStudy)).toBe(0);
+    expect(prisma.study.create).not.toHaveBeenCalled();
   });
 
   it("returns 0 when the profile declares no studies", async () => {

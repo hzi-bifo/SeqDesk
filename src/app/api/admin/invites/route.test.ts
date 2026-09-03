@@ -3,32 +3,21 @@ import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   db: {
-    adminInvite: {
-      findMany: vi.fn(),
-      create: vi.fn(),
-    },
+    user: { findUnique: vi.fn() },
+    adminInvite: { findMany: vi.fn(), create: vi.fn() },
   },
   randomBytes: vi.fn(),
 }));
 
-vi.mock("next-auth", () => ({
-  getServerSession: mocks.getServerSession,
+vi.mock("next-auth", () => ({ getServerSession: mocks.getServerSession }));
+vi.mock("@/lib/auth", () => ({ authOptions: {} }));
+vi.mock("@/lib/db", () => ({ db: mocks.db }));
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
 }));
-
-vi.mock("@/lib/auth", () => ({
-  authOptions: {},
-}));
-
-vi.mock("@/lib/db", () => ({
-  db: mocks.db,
-}));
-
-vi.mock("crypto", () => ({
-  randomBytes: mocks.randomBytes,
-}));
-
-// Mock Prisma error class
+vi.mock("crypto", () => ({ randomBytes: mocks.randomBytes }));
 vi.mock("@prisma/client", () => ({
   Prisma: {
     PrismaClientKnownRequestError: class PrismaClientKnownRequestError extends Error {
@@ -42,185 +31,178 @@ vi.mock("@prisma/client", () => ({
 }));
 
 import { GET, POST } from "./route";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
-describe("GET /api/admin/invites", () => {
+const adminSession = {
+  user: {
+    id: "admin-1",
+    role: "FACILITY_ADMIN",
+    systemRole: "ADMIN",
+    facilityWorkflowRole: "REQUESTER",
+  },
+};
+
+function request(body: Record<string, unknown>) {
+  return new NextRequest("http://localhost:3000/api/admin/invites", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("admin invitations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("sequencing-center"),
+    );
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.db.user.findUnique.mockResolvedValue({
+      id: "admin-1",
+      systemRole: "ADMIN",
+      isActive: true,
+    });
+    mocks.randomBytes.mockReturnValue({
+      toString: () => "a".repeat(48),
+    });
+    mocks.db.adminInvite.create.mockImplementation(async ({ data }) => ({
+      id: "invite-1",
+      ...data,
+      createdBy: { firstName: "Admin", lastName: "User" },
+    }));
   });
 
-  it("returns 401 when not authenticated", async () => {
+  it("requires administrator access", async () => {
     mocks.getServerSession.mockResolvedValue(null);
+    expect((await GET()).status).toBe(401);
+    expect((await POST(request({}))).status).toBe(401);
 
-    const response = await GET();
-
-    expect(response.status).toBe(401);
+    mocks.getServerSession.mockResolvedValue({
+      user: { id: "member-1", role: "RESEARCHER", systemRole: "MEMBER" },
+    });
+    expect((await GET()).status).toBe(403);
   });
 
-  it("returns 403 when not admin", async () => {
-    mocks.getServerSession.mockResolvedValue({
-      user: { id: "user-1", role: "RESEARCHER" },
-    });
-
-    const response = await GET();
-
-    expect(response.status).toBe(403);
-  });
-
-  it("returns invites for admin", async () => {
-    mocks.getServerSession.mockResolvedValue({
-      user: { id: "admin-1", role: "FACILITY_ADMIN" },
-    });
-    const invites = [
+  it("lists explicit stored invitation grants", async () => {
+    mocks.db.adminInvite.findMany.mockResolvedValue([
       {
-        id: "inv-1",
-        code: "ABCD1234",
-        email: null,
+        id: "invite-1",
+        code: `M-${"A".repeat(48)}`,
+        targetSystemRole: "MEMBER",
+        targetFacilityWorkflowRole: "OPERATOR",
         createdBy: { firstName: "Admin", lastName: "User" },
         usedBy: null,
       },
-    ];
-    mocks.db.adminInvite.findMany.mockResolvedValue(invites);
+    ]);
 
     const response = await GET();
 
     expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body).toHaveLength(1);
-    expect(body[0].code).toBe("ABCD1234");
-  });
-});
-
-describe("POST /api/admin/invites", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mocks.randomBytes.mockReturnValue({
-      toString: () => "abcd1234",
-    });
+    await expect(response.json()).resolves.toMatchObject([
+      {
+        grant: {
+          systemRole: "MEMBER",
+          facilityWorkflowRole: "OPERATOR",
+        },
+      },
+    ]);
   });
 
-  it("returns 401 when not admin", async () => {
-    mocks.getServerSession.mockResolvedValue(null);
-
-    const request = new NextRequest("http://localhost:3000/api/admin/invites", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "test@example.com" }),
-    });
-
-    const response = await POST(request);
-
-    expect(response.status).toBe(401);
-  });
-
-  it("creates invite with email", async () => {
-    mocks.getServerSession.mockResolvedValue({
-      user: { id: "admin-1", role: "FACILITY_ADMIN" },
-    });
-    const createdInvite = {
-      id: "inv-1",
-      code: "A-ABCD1234",
-      email: "test@example.com",
-      createdBy: { firstName: "Admin", lastName: "User" },
-    };
-    mocks.db.adminInvite.create.mockResolvedValue(createdInvite);
-
-    const request = new NextRequest("http://localhost:3000/api/admin/invites", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "Test@Example.com", expiresInDays: 7 }),
-    });
-
-    const response = await POST(request);
+  it("defaults to a safe unrestricted member/requester invitation", async () => {
+    const response = await POST(request({}));
 
     expect(response.status).toBe(201);
-    const body = await response.json();
-    expect(body.code).toBe("A-ABCD1234");
-    expect(body.accountRole).toBe("FACILITY_ADMIN");
-    // Verify email was normalized to lowercase
-    const createCall = mocks.db.adminInvite.create.mock.calls[0][0];
-    expect(createCall.data.email).toBe("test@example.com");
+    expect(mocks.randomBytes).toHaveBeenCalledWith(24);
+    expect(mocks.db.adminInvite.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          code: `M-${"A".repeat(48)}`,
+          email: null,
+          targetSystemRole: "MEMBER",
+          targetFacilityWorkflowRole: "REQUESTER",
+        }),
+      })
+    );
   });
 
-  it("creates invite without email", async () => {
-    mocks.getServerSession.mockResolvedValue({
-      user: { id: "admin-1", role: "FACILITY_ADMIN" },
-    });
-    const createdInvite = {
-      id: "inv-1",
-      code: "A-ABCD1234",
-      email: null,
-      createdBy: { firstName: "Admin", lastName: "User" },
-    };
-    mocks.db.adminInvite.create.mockResolvedValue(createdInvite);
-
-    const request = new NextRequest("http://localhost:3000/api/admin/invites", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
-
-    const response = await POST(request);
-
-    expect(response.status).toBe(201);
-  });
-
-  it("creates a member-targeted invitation", async () => {
-    mocks.getServerSession.mockResolvedValue({
-      user: { id: "admin-1", role: "FACILITY_ADMIN" },
-    });
-    mocks.db.adminInvite.create.mockImplementation(async ({ data }) => ({
-      id: "inv-member",
-      ...data,
-    }));
-
+  it("creates an email-bound administrator who can remain a requester", async () => {
     const response = await POST(
-      new NextRequest("http://localhost:3000/api/admin/invites", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ accountRole: "RESEARCHER" }),
+      request({
+        email: "  Admin@Example.COM ",
+        systemRole: "ADMIN",
+        facilityWorkflowRole: "REQUESTER",
       })
     );
 
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toMatchObject({
-      code: "M-ABCD1234",
+      code: `A-${"A".repeat(48)}`,
+      email: "admin@example.com",
+      grant: {
+        systemRole: "ADMIN",
+        facilityWorkflowRole: "REQUESTER",
+      },
+    });
+  });
+
+  it("creates a member who is independently a facility operator", async () => {
+    const response = await POST(
+      request({ systemRole: "MEMBER", facilityWorkflowRole: "OPERATOR" })
+    );
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      grant: {
+        systemRole: "MEMBER",
+        facilityWorkflowRole: "OPERATOR",
+      },
       accountRole: "RESEARCHER",
     });
   });
 
-  it("returns 400 for invalid email", async () => {
-    mocks.getServerSession.mockResolvedValue({
-      user: { id: "admin-1", role: "FACILITY_ADMIN" },
-    });
-
-    const request = new NextRequest("http://localhost:3000/api/admin/invites", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "not-an-email" }),
-    });
-
-    const response = await POST(request);
+  it("requires every administrator invitation to be email-bound", async () => {
+    const response = await POST(request({ systemRole: "ADMIN" }));
 
     expect(response.status).toBe(400);
-    const body = await response.json();
-    expect(body.error).toContain("email");
+    expect(mocks.db.adminInvite.create).not.toHaveBeenCalled();
   });
 
-  it("returns 400 for invalid expiresInDays", async () => {
-    mocks.getServerSession.mockResolvedValue({
-      user: { id: "admin-1", role: "FACILITY_ADMIN" },
-    });
+  it("rejects invalid and contradictory input strictly", async () => {
+    const invalidEmail = await POST(request({ email: "not-an-email" }));
+    const extraField = await POST(request({ unknownGrant: "ADMIN" }));
+    const contradictory = await POST(
+      request({ accountRole: "FACILITY_ADMIN", systemRole: "MEMBER" })
+    );
 
-    const request = new NextRequest("http://localhost:3000/api/admin/invites", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ expiresInDays: 999 }),
-    });
+    expect(invalidEmail.status).toBe(400);
+    expect(extraField.status).toBe(400);
+    expect(contradictory.status).toBe(400);
+    expect(mocks.db.adminInvite.create).not.toHaveBeenCalled();
+  });
 
-    const response = await POST(request);
+  it("rejects operator grants outside Sequencing Center", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition("shared-lab"),
+    );
+
+    const response = await POST(
+      request({ facilityWorkflowRole: "OPERATOR" })
+    );
 
     expect(response.status).toBe(400);
-    const body = await response.json();
-    expect(body.error).toContain("expiresInDays");
+    expect(mocks.db.adminInvite.create).not.toHaveBeenCalled();
+  });
+
+  it("rechecks that the invitation creator is still an active administrator", async () => {
+    mocks.db.user.findUnique.mockResolvedValue({
+      id: "admin-1",
+      systemRole: "ADMIN",
+      isActive: false,
+    });
+
+    const response = await POST(request({}));
+
+    expect(response.status).toBe(403);
+    expect(mocks.db.adminInvite.create).not.toHaveBeenCalled();
   });
 });

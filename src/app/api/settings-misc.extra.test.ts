@@ -515,10 +515,28 @@ describe("settings and misc route quick wins", () => {
     );
     expect(defaultUsers.status).toBe(200);
     expect(mocks.db.user.findMany).toHaveBeenCalledWith({
-      where: { role: "RESEARCHER" },
+      where: { systemRole: "MEMBER" },
       orderBy: { createdAt: "desc" },
-      include: {
-        department: true,
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        systemRole: true,
+        role: true,
+        researcherRole: true,
+        institution: true,
+        facilityName: true,
+        isActive: true,
+        deactivatedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        department: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
         _count: {
           select: {
             orders: true,
@@ -527,6 +545,8 @@ describe("settings and misc route quick wins", () => {
         },
       },
     });
+    const defaultUserQuery = mocks.db.user.findMany.mock.calls.at(-1)?.[0];
+    expect(defaultUserQuery?.select).not.toHaveProperty("password");
     expect(await defaultUsers.json()).toEqual([
       {
         id: "user-1",

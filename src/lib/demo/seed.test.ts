@@ -3,6 +3,7 @@ import {
   addDemoProjectsFieldToSchema,
   getDemoSiteSettingsUpdate,
 } from "./seed";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile/definitions";
 
 describe("demo seed helpers", () => {
   it("adds the projects field to object-based order form schemas", () => {
@@ -87,5 +88,24 @@ describe("demo seed helpers", () => {
     expect(extraSettings.studyFormFields).toEqual([{ name: "principal_investigator" }]);
     expect(extraSettings.customFlag).toBe(true);
     expect(extraSettings.departmentSharing).toBe(false);
+  });
+
+  it("does not seed facility-only module defaults in Research Workbench", () => {
+    const updated = getDemoSiteSettingsUpdate(
+      null,
+      getDeploymentProfileDefinition("research-workbench")
+    );
+    const modulesConfig = JSON.parse(updated.modulesConfig) as {
+      modules: Record<string, boolean>;
+    };
+
+    expect(modulesConfig.modules).toMatchObject({
+      "ai-validation": false,
+      "mixs-metadata": false,
+      "ena-sample-fields": false,
+      "sequencing-tech": false,
+      "dynamic-studies": false,
+      notifications: false,
+    });
   });
 });

@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   DEFAULT_FORM_SCHEMA,
   type FormFieldDefinition,
@@ -62,7 +63,10 @@ export async function loadOrderFormSchema(
       select: { modulesConfig: true },
     }),
   ]);
-  const modulesConfig = parseModulesConfig(siteSettings?.modulesConfig ?? null);
+  const modulesConfig = parseModulesConfig(
+    siteSettings?.modulesConfig ?? null,
+    getServerDeploymentProfile()
+  );
 
   // No saved config yet — fall back to the default system fields.
   if (!config) {

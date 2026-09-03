@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
@@ -113,7 +114,10 @@ async function getAdminOnlyPerSampleFields(): Promise<FormFieldDefinition[]> {
       select: { modulesConfig: true },
     }),
   ]);
-  const modulesConfig = parseModulesConfig(siteSettings?.modulesConfig ?? null);
+  const modulesConfig = parseModulesConfig(
+    siteSettings?.modulesConfig ?? null,
+    getServerDeploymentProfile()
+  );
 
   if (!config) {
     const defaultFields = ensureOrderModuleDefaultFields(DEFAULT_FORM_SCHEMA.fields, {
@@ -156,7 +160,7 @@ export async function GET(
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session) {
+    if (!isActiveSession(session)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -220,7 +224,7 @@ export async function POST(
   try {
     const session = await getServerSession(authOptions);
 
-    if (!session) {
+    if (!isActiveSession(session)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 

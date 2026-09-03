@@ -1,48 +1,67 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { getInviteAccountRole } from "@/lib/accounts/invite-role";
+import { getInviteGrant } from "@/lib/accounts/invite-role";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+import { z } from "zod";
+
+const verifyInviteSchema = z
+  .object({ code: z.string().trim().min(1).max(128) })
+  .strict();
+
+const INVALID_INVITE_RESPONSE = {
+  valid: false,
+  error: "This invitation is invalid or no longer active",
+} as const;
 
 // POST /api/admin/invites/verify - Verify an invite code
 export async function POST(request: NextRequest) {
   try {
-    const { code } = await request.json();
-
-    if (!code) {
+    const parsed = verifyInviteSchema.safeParse(
+      await request.json().catch(() => null)
+    );
+    if (!parsed.success) {
       return NextResponse.json(
-        { valid: false, error: "Invite code is required" },
+        INVALID_INVITE_RESPONSE,
         { status: 400 }
       );
     }
 
     const invite = await db.adminInvite.findUnique({
-      where: { code: code.toUpperCase() },
+      where: { code: parsed.data.code.toUpperCase() },
+      include: {
+        createdBy: {
+          select: { systemRole: true, isActive: true },
+        },
+      },
     });
 
     if (!invite) {
-      return NextResponse.json(
-        { valid: false, error: "Invalid invite code" },
-        { status: 404 }
-      );
+      return NextResponse.json(INVALID_INVITE_RESPONSE, { status: 400 });
     }
 
-    if (invite.usedAt) {
-      return NextResponse.json(
-        { valid: false, error: "This invite has already been used" },
-        { status: 400 }
-      );
+    if (
+      invite.usedAt ||
+      invite.revokedAt ||
+      new Date() > invite.expiresAt ||
+      invite.createdBy.isActive !== true ||
+      invite.createdBy.systemRole !== "ADMIN"
+    ) {
+      return NextResponse.json(INVALID_INVITE_RESPONSE, { status: 400 });
     }
 
-    if (new Date() > invite.expiresAt) {
-      return NextResponse.json(
-        { valid: false, error: "This invite has expired" },
-        { status: 400 }
-      );
-    }
+    const storedGrant = getInviteGrant(invite);
+    const profile = getServerDeploymentProfile();
+    const grant = {
+      ...storedGrant,
+      facilityWorkflowRole:
+        profile.id === "sequencing-center"
+          ? storedGrant.facilityWorkflowRole
+          : ("REQUESTER" as const),
+    };
 
     return NextResponse.json({
       valid: true,
-      email: invite.email, // May be null (unrestricted) or a specific email
-      accountRole: getInviteAccountRole(invite.code),
+      grant,
     });
   } catch (error) {
     console.error("Failed to verify invite:", error);

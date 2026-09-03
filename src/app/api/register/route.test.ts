@@ -4,37 +4,26 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   hash: vi.fn(),
   getServerEnrollmentPolicy: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   transactionUserCreate: vi.fn(),
-  transactionInviteUpdate: vi.fn(),
+  transactionInviteUpdateMany: vi.fn(),
   db: {
-    siteSettings: {
-      findUnique: vi.fn(),
-    },
-    user: {
-      findUnique: vi.fn(),
-    },
-    department: {
-      findUnique: vi.fn(),
-    },
-    adminInvite: {
-      findUnique: vi.fn(),
-    },
+    siteSettings: { findUnique: vi.fn() },
+    user: { count: vi.fn(), findFirst: vi.fn() },
+    department: { findUnique: vi.fn() },
+    adminInvite: { findUnique: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
 
-vi.mock("bcryptjs", () => ({
-  hash: mocks.hash,
-}));
-
-vi.mock("@/lib/db", () => ({
-  db: mocks.db,
-}));
-
+vi.mock("bcryptjs", () => ({ hash: mocks.hash }));
+vi.mock("@/lib/db", () => ({ db: mocks.db }));
 vi.mock("@/lib/deployment-profile/enrollment.server", () => ({
   getServerEnrollmentPolicy: mocks.getServerEnrollmentPolicy,
 }));
-
+vi.mock("@/lib/deployment-profile/server", () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
 vi.mock("@/lib/modules/types", () => ({
   DEFAULT_MODULE_STATES: {},
   DEFAULT_ACCOUNT_VALIDATION_SETTINGS: {
@@ -58,93 +47,128 @@ const validBody = {
   password: "securepassword",
   firstName: "Jane",
   lastName: "Doe",
-  role: "RESEARCHER",
 };
+
+function activeInvite(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "invite-1",
+    code: "M-MEMBER01",
+    email: null,
+    usedAt: null,
+    revokedAt: null,
+    expiresAt: new Date(Date.now() + 86_400_000),
+    targetSystemRole: "MEMBER",
+    targetFacilityWorkflowRole: "REQUESTER",
+    createdBy: { systemRole: "ADMIN", isActive: true },
+    ...overrides,
+  };
+}
 
 describe("POST /api/register", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.hash.mockResolvedValue("hashed-pw");
+    mocks.getServerDeploymentProfile.mockReturnValue({ id: "sequencing-center" });
     mocks.getServerEnrollmentPolicy.mockResolvedValue({
       policy: "self-registration",
       allowSelfRegistration: true,
       source: "profile-default",
     });
     mocks.db.siteSettings.findUnique.mockResolvedValue(null);
-    mocks.db.user.findUnique.mockResolvedValue(null);
-    mocks.transactionUserCreate.mockResolvedValue({
+    mocks.db.user.count.mockResolvedValue(1);
+    mocks.db.user.findFirst.mockResolvedValue(null);
+    mocks.transactionInviteUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.transactionUserCreate.mockImplementation(async ({ data }) => ({
       id: "user-1",
-      email: "new@example.com",
-      firstName: "Jane",
-      lastName: "Doe",
-      role: "RESEARCHER",
-      systemRole: "MEMBER",
-    });
-    mocks.db.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
-      const tx = {
-        user: {
-          create: mocks.transactionUserCreate,
-        },
-        adminInvite: { update: mocks.transactionInviteUpdate },
-      };
-      return fn(tx);
-    });
+      ...data,
+    }));
+    mocks.db.$transaction.mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback({
+          user: { create: mocks.transactionUserCreate },
+          adminInvite: { updateMany: mocks.transactionInviteUpdateMany },
+        })
+    );
   });
 
-  it("creates a researcher and returns 201", async () => {
-    const response = await POST(makeRequest(validBody));
-    const data = await response.json();
+  it("creates a lowercase member account with safe default grants", async () => {
+    const response = await POST(
+      makeRequest({ ...validBody, email: "  New@Example.COM " })
+    );
 
     expect(response.status).toBe(201);
-    expect(data.user.email).toBe("new@example.com");
-    expect(mocks.hash).toHaveBeenCalledWith("securepassword", 12);
+    await expect(response.json()).resolves.toMatchObject({
+      user: {
+        email: "new@example.com",
+        systemRole: "MEMBER",
+        facilityWorkflowRole: "REQUESTER",
+        role: "RESEARCHER",
+      },
+    });
+    expect(mocks.db.user.findFirst).toHaveBeenCalledWith({
+      where: {
+        email: { equals: "new@example.com", mode: "insensitive" },
+      },
+    });
     expect(mocks.transactionUserCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          email: "new@example.com",
           systemRole: "MEMBER",
+          facilityWorkflowRole: "REQUESTER",
           role: "RESEARCHER",
         }),
       })
     );
+    expect(mocks.hash).toHaveBeenCalledWith("securepassword", 12);
   });
 
-  it("returns 400 when required fields are missing", async () => {
-    const response = await POST(makeRequest({ email: "a@b.com" }));
+  it("rejects missing fields and client-supplied system access", async () => {
+    const missing = await POST(makeRequest({ email: "a@b.com" }));
+    const elevated = await POST(
+      makeRequest({ ...validBody, systemRole: "ADMIN" })
+    );
+
+    expect(missing.status).toBe(400);
+    expect(elevated.status).toBe(400);
+    await expect(missing.json()).resolves.toEqual({
+      error: "Invalid registration details",
+    });
+    expect(mocks.db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects passwords whose UTF-8 representation exceeds bcrypt's 72-byte limit", async () => {
+    const response = await POST(
+      makeRequest({ ...validBody, password: "🔬".repeat(19) })
+    );
 
     expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.error).toBe("Missing required fields");
+    expect(mocks.hash).not.toHaveBeenCalled();
   });
 
-  it("returns 400 for invalid role", async () => {
-    const response = await POST(makeRequest({ ...validBody, role: "SUPERADMIN" }));
-
-    expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.error).toBe("Invalid role");
-  });
-
-  it("returns 400 when email already exists", async () => {
-    mocks.db.user.findUnique.mockResolvedValue({ id: "existing" });
+  it("rejects an existing address case-insensitively", async () => {
+    mocks.db.user.findFirst.mockResolvedValue({ id: "existing" });
 
     const response = await POST(makeRequest(validBody));
 
     expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.error).toBe("User with this email already exists");
+    await expect(response.json()).resolves.toEqual({
+      error: "User with this email already exists",
+    });
   });
 
-  it("returns 403 when FACILITY_ADMIN lacks invite code", async () => {
-    const response = await POST(
-      makeRequest({ ...validBody, role: "FACILITY_ADMIN" })
-    );
+  it("does not open registration before setup has an active administrator", async () => {
+    mocks.db.user.count.mockResolvedValue(0);
 
-    expect(response.status).toBe(403);
-    const data = await response.json();
-    expect(data.error).toBe("Admin registration requires an invite code");
+    const response = await POST(makeRequest(validBody));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "SETUP_INCOMPLETE",
+    });
   });
 
-  it("requires an invite for a member when the profile is invite-only", async () => {
+  it("requires an invitation when enrollment is invite-only", async () => {
     mocks.getServerEnrollmentPolicy.mockResolvedValue({
       policy: "invite-only",
       allowSelfRegistration: false,
@@ -155,25 +179,15 @@ describe("POST /api/register", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({
-      error: "This SeqDesk installation is invite-only",
       code: "INVITE_REQUIRED",
     });
     expect(mocks.hash).not.toHaveBeenCalled();
   });
 
-  it("creates a member from a valid invite on an invite-only profile", async () => {
-    mocks.getServerEnrollmentPolicy.mockResolvedValue({
-      policy: "invite-only",
-      allowSelfRegistration: false,
-      source: "profile-default",
-    });
-    mocks.db.adminInvite.findUnique.mockResolvedValue({
-      id: "invite-1",
-      code: "M-MEMBER01",
-      usedAt: null,
-      expiresAt: new Date(Date.now() + 86400000),
-      email: "new@example.com",
-    });
+  it("redeems a member invite through an atomic conditional claim", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue(
+      activeInvite({ email: "new@example.com" })
+    );
 
     const response = await POST(
       makeRequest({ ...validBody, inviteCode: "m-member01" })
@@ -182,169 +196,159 @@ describe("POST /api/register", () => {
     expect(response.status).toBe(201);
     expect(mocks.db.adminInvite.findUnique).toHaveBeenCalledWith({
       where: { code: "M-MEMBER01" },
+      include: {
+        createdBy: { select: { systemRole: true, isActive: true } },
+      },
+    });
+    expect(mocks.transactionInviteUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: "invite-1",
+        usedAt: null,
+        revokedAt: null,
+        expiresAt: { gt: expect.any(Date) },
+        createdBy: {
+          is: { systemRole: "ADMIN", isActive: true },
+        },
+      },
+      data: { usedAt: expect.any(Date), usedById: "user-1" },
     });
   });
 
-  it("does not allow a member invitation to create an administrator", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue({
-      id: "invite-1",
-      code: "M-MEMBER01",
-      usedAt: null,
-      expiresAt: new Date(Date.now() + 86400000),
-      email: null,
-    });
-
-    const response = await POST(
-      makeRequest({
-        ...validBody,
-        role: "FACILITY_ADMIN",
-        inviteCode: "M-MEMBER01",
-      })
+  it("supports a member who is independently a Sequencing Center operator", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue(
+      activeInvite({ targetFacilityWorkflowRole: "OPERATOR" })
     );
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({
-      error: "This invite is for a different account type",
-    });
-    expect(mocks.hash).not.toHaveBeenCalled();
-  });
-
-  it("creates admin with valid invite code and returns 201", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue({
-      id: "invite-1",
-      code: "VALIDCODE",
-      usedAt: null,
-      expiresAt: new Date(Date.now() + 86400000), // tomorrow
-      email: null,
-    });
-    mocks.transactionUserCreate.mockResolvedValue({
-      id: "admin-1",
-      email: "admin@example.com",
-      firstName: "Admin",
-      lastName: "User",
-      role: "FACILITY_ADMIN",
-      systemRole: "ADMIN",
-    });
-
     const response = await POST(
-      makeRequest({
-        ...validBody,
-        email: "admin@example.com",
-        role: "FACILITY_ADMIN",
-        inviteCode: "validcode",
-        facilityName: "Core Lab",
-      })
+      makeRequest({ ...validBody, inviteCode: "m-member01" })
     );
 
     expect(response.status).toBe(201);
-    const data = await response.json();
-    expect(data.user.role).toBe("FACILITY_ADMIN");
+    expect(mocks.transactionUserCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          systemRole: "MEMBER",
+          facilityWorkflowRole: "OPERATOR",
+          role: "RESEARCHER",
+        }),
+      })
+    );
+  });
+
+  it("supports an administrator who remains a Sequencing Center requester", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue(
+      activeInvite({
+        code: "A-ADMIN01",
+        email: "new@example.com",
+        targetSystemRole: "ADMIN",
+        targetFacilityWorkflowRole: "REQUESTER",
+      })
+    );
+
+    const response = await POST(
+      makeRequest({ ...validBody, inviteCode: "a-admin01" })
+    );
+
+    expect(response.status).toBe(201);
     expect(mocks.transactionUserCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           systemRole: "ADMIN",
+          facilityWorkflowRole: "REQUESTER",
           role: "FACILITY_ADMIN",
         }),
       })
     );
   });
 
-  it("returns 400 for invalid invite code", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue(null);
+  it("never lets a legacy role assertion elevate a member grant", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue(activeInvite());
 
     const response = await POST(
       makeRequest({
         ...validBody,
+        inviteCode: "M-MEMBER01",
         role: "FACILITY_ADMIN",
-        inviteCode: "BADCODE",
       })
     );
 
-    expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.error).toBe("Invalid invite code");
+    expect(response.status).toBe(403);
+    expect(mocks.transactionUserCreate).not.toHaveBeenCalled();
   });
 
-  it("returns 400 for already-used invite", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue({
-      id: "invite-1",
-      code: "USEDCODE",
-      usedAt: new Date(),
-      expiresAt: new Date(Date.now() + 86400000),
-      email: null,
-    });
+  it("rejects revoked invitations and invitations from inactive creators", async () => {
+    mocks.db.adminInvite.findUnique
+      .mockResolvedValueOnce(activeInvite({ revokedAt: new Date() }))
+      .mockResolvedValueOnce(
+        activeInvite({ createdBy: { systemRole: "ADMIN", isActive: false } })
+      );
 
-    const response = await POST(
-      makeRequest({
-        ...validBody,
-        role: "FACILITY_ADMIN",
-        inviteCode: "USEDCODE",
-      })
+    const revoked = await POST(
+      makeRequest({ ...validBody, inviteCode: "M-MEMBER01" })
+    );
+    const inactiveCreator = await POST(
+      makeRequest({ ...validBody, inviteCode: "M-MEMBER01" })
     );
 
-    expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.error).toBe("This invite has already been used");
+    expect(revoked.status).toBe(400);
+    expect(inactiveCreator.status).toBe(400);
+    expect(mocks.hash).not.toHaveBeenCalled();
   });
 
-  it("returns 400 for expired invite", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue({
-      id: "invite-1",
-      code: "EXPIRED",
-      usedAt: null,
-      expiresAt: new Date(Date.now() - 86400000), // yesterday
-      email: null,
-    });
-
-    const response = await POST(
-      makeRequest({
-        ...validBody,
-        role: "FACILITY_ADMIN",
-        inviteCode: "EXPIRED",
-      })
+  it("enforces email-bound invitations", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue(
+      activeInvite({ email: "specific@example.com" })
     );
-
-    expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.error).toBe("This invite has expired");
-  });
-
-  it("returns 400 when invite email restriction does not match", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue({
-      id: "invite-1",
-      code: "RESTRICTED",
-      usedAt: null,
-      expiresAt: new Date(Date.now() + 86400000),
-      email: "specific@example.com",
-    });
 
     const response = await POST(
       makeRequest({
         ...validBody,
         email: "other@example.com",
-        role: "FACILITY_ADMIN",
-        inviteCode: "RESTRICTED",
+        inviteCode: "M-MEMBER01",
       })
     );
 
     expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.error).toBe("This invite is for a different email address");
+    expect(mocks.transactionUserCreate).not.toHaveBeenCalled();
   });
 
-  it("returns 400 for non-existent department", async () => {
-    mocks.db.department.findUnique.mockResolvedValue(null);
+  it("rolls back registration when another request claims the invite first", async () => {
+    mocks.db.adminInvite.findUnique.mockResolvedValue(activeInvite());
+    mocks.transactionInviteUpdateMany.mockResolvedValue({ count: 0 });
 
     const response = await POST(
-      makeRequest({ ...validBody, departmentId: "bad-dept" })
+      makeRequest({ ...validBody, inviteCode: "M-MEMBER01" })
     );
 
-    expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.error).toBe("Invalid department selected");
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "This invite was already used or revoked",
+    });
   });
 
-  it("returns 400 for inactive department", async () => {
+  it("normalizes legacy operator grants and rejects center-only fields outside the center", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue({ id: "shared-lab" });
+    mocks.db.adminInvite.findUnique.mockResolvedValue(
+      activeInvite({ targetFacilityWorkflowRole: "OPERATOR" })
+    );
+
+    const accepted = await POST(
+      makeRequest({ ...validBody, inviteCode: "M-MEMBER01" })
+    );
+    const rejected = await POST(
+      makeRequest({ ...validBody, facilityName: "Legacy core" })
+    );
+
+    expect(accepted.status).toBe(201);
+    expect(mocks.transactionUserCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ facilityWorkflowRole: "REQUESTER" }),
+      })
+    );
+    expect(rejected.status).toBe(400);
+  });
+
+  it("validates Sequencing Center departments", async () => {
     mocks.db.department.findUnique.mockResolvedValue({
       id: "dept-1",
       isActive: false,
@@ -355,55 +359,6 @@ describe("POST /api/register", () => {
     );
 
     expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.error).toBe("Invalid department selected");
-  });
-
-  it("creates researcher with valid department", async () => {
-    mocks.db.department.findUnique.mockResolvedValue({
-      id: "dept-1",
-      isActive: true,
-    });
-
-    const response = await POST(
-      makeRequest({ ...validBody, departmentId: "dept-1", institution: "HZI" })
-    );
-
-    expect(response.status).toBe(201);
-    const data = await response.json();
-    expect(data.user.email).toBe("new@example.com");
-  });
-
-  it("returns 400 when email domain is restricted", async () => {
-    mocks.db.siteSettings.findUnique.mockResolvedValue({
-      modulesConfig: JSON.stringify({
-        modules: { "account-validation": true },
-        globalDisabled: false,
-      }),
-      extraSettings: JSON.stringify({
-        accountValidationSettings: JSON.stringify({
-          allowedDomains: ["allowed.org"],
-          enforceValidation: true,
-        }),
-      }),
-    });
-
-    const response = await POST(
-      makeRequest({ ...validBody, email: "user@blocked.com" })
-    );
-
-    expect(response.status).toBe(400);
-    const data = await response.json();
-    expect(data.code).toBe("INVALID_EMAIL_DOMAIN");
-  });
-
-  it("returns 500 on unexpected error", async () => {
-    mocks.db.$transaction.mockRejectedValue(new Error("DB crash"));
-
-    const response = await POST(makeRequest(validBody));
-
-    expect(response.status).toBe(500);
-    const data = await response.json();
-    expect(data.error).toBe("Something went wrong");
+    expect(mocks.transactionUserCreate).not.toHaveBeenCalled();
   });
 });

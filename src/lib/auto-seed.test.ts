@@ -26,6 +26,7 @@ const BOOTSTRAP_ENV_KEYS = [
   "SEQDESK_BOOTSTRAP_RESEARCHER_INSTITUTION",
   "SEQDESK_BOOTSTRAP_RESEARCHER_ROLE",
   "SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED",
+  "SEQDESK_DEPLOYMENT_PROFILE",
 ];
 
 // Mock the db module before importing
@@ -113,6 +114,38 @@ function mockEmptyDatabase() {
 }
 
 describe("autoSeedIfNeeded", () => {
+  it.each([
+    ["sequencing-center", "OPERATOR"],
+    ["shared-lab", "REQUESTER"],
+    ["research-workbench", "REQUESTER"],
+  ] as const)(
+    "creates the %s bootstrap administrator with workflow role %s",
+    async (profile, expectedRole) => {
+      await useInstallDir({
+        deployment: { profile },
+        bootstrap: {
+          users: {
+            admin: { password: "profile-specific-password" },
+            researcher: false,
+          },
+        },
+      });
+      mockEmptyDatabase();
+
+      const result = await autoSeedIfNeeded();
+
+      expect(result.seeded).toBe(true);
+      const adminCall = mockDb.user.upsert.mock.calls.find(
+        ([args]) => args?.create?.systemRole === "ADMIN"
+      );
+      expect(adminCall?.[0]?.create).toMatchObject({
+        systemRole: "ADMIN",
+        role: "FACILITY_ADMIN",
+        facilityWorkflowRole: expectedRole,
+      });
+    }
+  );
+
   it("returns seeded: false when site settings and users already exist", async () => {
     mockDb.siteSettings.findUnique.mockResolvedValue({ id: "singleton" });
     mockDb.user.count.mockResolvedValue(4);
@@ -463,6 +496,54 @@ describe("autoSeedIfNeeded", () => {
         where: { email: "facility@example.org" },
         create: expect.objectContaining({ password: "$2b$12$chosen-admin-hash" }),
       })
+    );
+  });
+
+  it("rejects an overlong multibyte plaintext before hashing or writing an account", async () => {
+    const overlongPassword = "🔬".repeat(19);
+    await useInstallDir({
+      bootstrap: {
+        users: {
+          admin: {
+            email: "facility@example.org",
+            password: overlongPassword,
+          },
+          researcher: false,
+        },
+      },
+    });
+    mockEmptyDatabase();
+
+    const result = await autoSeedIfNeeded();
+
+    expect(result.seeded).toBe(false);
+    expect(result.error).toContain("72-byte UTF-8 limit");
+    expect(result.error).not.toContain(overlongPassword);
+    expect(mockDb.user.upsert).not.toHaveBeenCalled();
+  });
+
+  it("keeps accepting a pre-hashed bootstrap password", async () => {
+    const configuredHash = "$2b$12$prehashed-bootstrap-credential";
+    await useInstallDir({
+      bootstrap: {
+        users: {
+          admin: {
+            email: "facility@example.org",
+            passwordHash: configuredHash,
+          },
+          researcher: false,
+        },
+      },
+    });
+    mockEmptyDatabase();
+
+    const result = await autoSeedIfNeeded();
+
+    expect(result.seeded).toBe(true);
+    expect(mockDb.user.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ password: configuredHash }),
+      }),
     );
   });
 

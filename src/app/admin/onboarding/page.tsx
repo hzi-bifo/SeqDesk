@@ -6,6 +6,7 @@ import { ArrowRight, CheckCircle2, ClipboardCheck, Loader2 } from "lucide-react"
 
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { OnboardingStatus } from "@/lib/onboarding";
@@ -112,7 +113,7 @@ export default function OnboardingPage() {
             <h1 className="text-2xl font-semibold tracking-tight">Finish setting up SeqDesk</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
               Confirm the operational choices that cannot be safely guessed by the installer. This
-              checklist remains available under Settings after completion.
+              checklist remains available under Settings after required setup is complete.
             </p>
           </div>
           <div className="min-w-48">
@@ -128,6 +129,14 @@ export default function OnboardingPage() {
             </div>
           </div>
         </div>
+
+        {status.required && (
+          <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm">
+            Required readiness: {status.requiredCompletedCount} of{" "}
+            {status.requiredTotalCount} complete. Recommended items can be finished later and do
+            not block members.
+          </div>
+        )}
 
         {!status.required && (
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
@@ -155,7 +164,12 @@ export default function OnboardingPage() {
                   className="mt-1"
                 />
                 <label htmlFor={item.id} className="min-w-0 flex-1 cursor-pointer">
-                  <span className="font-medium">{item.label}</span>
+                  <span className="flex flex-wrap items-center gap-2 font-medium">
+                    {item.label}
+                    <Badge variant={item.requirement === "required" ? "default" : "secondary"}>
+                      {item.requirement === "required" ? "Required" : "Recommended"}
+                    </Badge>
+                  </span>
                   <span className="mt-1 block text-sm leading-6 text-muted-foreground">
                     {item.description}
                   </span>
@@ -177,15 +191,17 @@ export default function OnboardingPage() {
           ))}
         </div>
 
-        {status.complete && status.completedCount === status.totalCount && (
+        {status.complete && (
           <Card className="border-emerald-300 bg-emerald-50">
             <CardContent className="flex flex-col gap-4 p-0 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex gap-3">
                 <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-700" />
                 <div>
-                  <p className="font-medium text-emerald-950">Operational setup is complete</p>
+                  <p className="font-medium text-emerald-950">Required setup is complete</p>
                   <p className="mt-1 text-sm text-emerald-800">
-                    The recommended first journey is {profile.journey}.
+                    {status.recommendationsComplete
+                      ? `The recommended first journey is ${profile.journey}.`
+                      : "SeqDesk is available to members. You can finish the remaining recommendations later."}
                   </p>
                 </div>
               </div>

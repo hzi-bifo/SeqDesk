@@ -59,7 +59,8 @@ now classified before the fresh-install questions and routed to update,
 reconfigure, diagnosis, or safe refusal. New installs opt into a versioned,
 administrator-only onboarding checklist; legacy installs are not unexpectedly
 blocked, and ordinary members see a safe setup-in-progress state until required
-onboarding is complete.
+onboarding is complete. Recommended items remain visible but do not block
+members.
 
 ## Current behavior worth preserving
 
@@ -81,6 +82,9 @@ The profile work should fix these gaps rather than layering another question ont
 - Existing/managed PostgreSQL is checked for endpoint reachability before account questions, but authenticated migration/write capability is not yet proven at that point on hosts without PostgreSQL client tools.
 - Workflow package registry metadata does not yet provide exact per-package download and expanded-size estimates for the review.
 - The browser `/setup` page reports base database/schema/account readiness but does not yet represent profile-specific operational readiness.
+- Required onboarding items are currently administrator confirmations. Replace
+  them with automatic storage/runtime checks where feasible so a checkbox is
+  not mistaken for infrastructure verification.
 - Hosted lock/source fidelity, reconfiguration diffs, and automatic resume from apply checkpoints remain incomplete.
 
 ## Installation entry points
@@ -190,15 +194,19 @@ If enabled, ask:
 
 Keep executor details, queues, memory, cluster options, caches, and private package credentials under Advanced unless a hosted profile supplies them. A deployment profile never directly selects a Nextflow profile.
 
-### Step 6 — Create the first administrator and choose enrollment policy
+### Step 6 — Create the first administrator and explain enrollment
 
 Create exactly one administrator during a normal fresh guided install. Do not create a generic second “researcher” account.
 
 Ask for:
 
 - administrator name and email;
-- a password, with **Generate a strong password** as the recommended option;
-- the enrollment policy, preselected from the deployment-profile default.
+- a password, with **Generate a strong password** as the recommended option.
+
+The first release applies and explains the deployment-profile enrollment
+default instead of adding another required installer choice. An administrator
+can deliberately change the policy after sign-in. This keeps a fresh guided
+install safe and short while still making the resulting behavior explicit.
 
 Explain the administrator's role using profile-aware text:
 
@@ -361,6 +369,15 @@ Common checklist:
 - invite members or configure enrollment;
 - review enabled modules and credentials;
 - finish a small test journey.
+
+Classify every item as **required** or **recommended**. Required items gate
+ordinary members only when the selected profile cannot perform its normal work
+without them: managed storage for all profiles, plus workflow-runtime readiness
+for Research Workbench. Identity review, enrollment review, backup/retention
+documentation, optional credentials, and test journeys remain recommended and
+reopenable; they must not globally lock out a small lab. A completed checkbox is
+an administrator acknowledgement until an automatic verifier is implemented,
+and the UI must not describe it as an independently verified check.
 
 Profile additions:
 

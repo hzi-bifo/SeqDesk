@@ -2,6 +2,10 @@ import fs from "fs";
 import path from "path";
 import { PrismaClient } from "@prisma/client";
 import { hashSync } from "bcryptjs";
+import {
+  assertBootstrapPlaintextPasswordSupported,
+  resolveBootstrapAdminFacilityWorkflowRole,
+} from "./bootstrap-account-policy.mjs";
 
 const CONFIG_FILE_NAMES = [
   "settings.json",
@@ -193,7 +197,10 @@ function resolvePasswordHash(kind, configUser, defaultHash) {
     process.env[envNameFor(kind, "PASSWORD")],
     configUser.password
   );
-  if (password) return { hash: hashSync(password, 12), isBuiltInDefault: false };
+  if (password) {
+    assertBootstrapPlaintextPasswordSupported(password, kind);
+    return { hash: hashSync(password, 12), isBuiltInDefault: false };
+  }
 
   return { hash: defaultHash, isBuiltInDefault: true };
 }
@@ -381,6 +388,10 @@ async function main() {
       lastName: adminBootstrap.lastName,
       systemRole: "ADMIN",
       role: "FACILITY_ADMIN",
+      facilityWorkflowRole: resolveBootstrapAdminFacilityWorkflowRole(
+        seedConfig,
+        process.env.SEQDESK_DEPLOYMENT_PROFILE,
+      ),
       facilityName: adminBootstrap.facilityName,
     },
     { refuseBuiltInDefault: adminBootstrap.refusesBuiltInDefault },
@@ -400,6 +411,7 @@ async function main() {
       lastName: researcherBootstrap.lastName,
       systemRole: "MEMBER",
       role: "RESEARCHER",
+      facilityWorkflowRole: "REQUESTER",
       researcherRole: researcherBootstrap.researcherRole,
       institution: researcherBootstrap.institution,
     },

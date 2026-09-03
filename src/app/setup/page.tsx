@@ -85,8 +85,9 @@ const PHASE_COPY: Record<
   { title: string; description: string; tone: "success" | "warning" | "error" | "info" }
 > = {
   ready: {
-    title: "SeqDesk is ready",
-    description: "Database, schema, initial data, and admin access are available.",
+    title: "Base setup is ready",
+    description:
+      "Database, schema, initial data, and administrator access are available. Sign in to finish the operating-model checklist.",
     tone: "success",
   },
   "database-config": {
@@ -454,8 +455,9 @@ export default function SetupPage() {
                 </CardHeader>
                 <CardContent className="text-xs text-muted-foreground">
                   Selected during installation as{" "}
-                  <code>{status.deploymentProfile.id}</code>. Changing it requires
-                  reconfiguration and an application restart.
+                  <code>{status.deploymentProfile.id}</code>. Updates and normal
+                  reconfiguration preserve it; changing it requires a guarded
+                  profile migration.
                 </CardContent>
               </Card>
             ) : null}

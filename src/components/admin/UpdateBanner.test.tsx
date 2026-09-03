@@ -49,7 +49,11 @@ describe("UpdateBanner", () => {
     mocks.useSession.mockReturnValue({
       data: {
         user: {
+          id: "admin-1",
           role: "FACILITY_ADMIN",
+          systemRole: "ADMIN",
+          facilityWorkflowRole: "OPERATOR",
+          authorizationValid: true,
         },
       },
     });
@@ -59,7 +63,11 @@ describe("UpdateBanner", () => {
     mocks.useSession.mockReturnValue({
       data: {
         user: {
-          role: "USER",
+          id: "member-1",
+          role: "RESEARCHER",
+          systemRole: "MEMBER",
+          facilityWorkflowRole: "REQUESTER",
+          authorizationValid: true,
         },
       },
     });

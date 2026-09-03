@@ -180,6 +180,7 @@ describe("config loader", () => {
 
   it("validateConfig reports invalid values", () => {
     const invalid = validateConfig({
+      app: { accessAudience: "public" },
       deployment: { profile: "unknown" },
       site: { dataBasePath: 42 },
       pipelines: { execution: { mode: "invalid-mode" } },
@@ -189,6 +190,9 @@ describe("config loader", () => {
     });
 
     expect(invalid.valid).toBe(false);
+    expect(invalid.errors).toContain(
+      "app.accessAudience must be one of: local, team-server, advanced"
+    );
     expect(invalid.errors).toContain("site.dataBasePath must be a string");
     expect(
       invalid.errors.some((e) => e.includes("deployment.profile must be one of"))
@@ -205,6 +209,7 @@ describe("config loader", () => {
 
   it("validateConfig accepts valid values", () => {
     const valid = validateConfig({
+      app: { accessAudience: "team-server" },
       site: { dataBasePath: "./data" },
       pipelines: { execution: { mode: "slurm" } },
       ena: { testMode: false },

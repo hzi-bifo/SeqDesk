@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { isActiveSession } from "@/lib/auth-session";
 import { db } from "@/lib/db";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { parseModulesConfig } from "@/lib/modules/form-integration";
 
 export async function GET() {
@@ -10,7 +12,7 @@ export async function GET() {
 
     // Allow any authenticated user to read module states
     // (their forms are module-driven, so this is not admin-only)
-    if (!session) {
+    if (!isActiveSession(session)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -18,7 +20,10 @@ export async function GET() {
       where: { id: "singleton" },
     });
 
-    const config = parseModulesConfig(settings?.modulesConfig ?? null);
+    const config = parseModulesConfig(
+      settings?.modulesConfig ?? null,
+      getServerDeploymentProfile()
+    );
     return NextResponse.json(config);
   } catch (error) {
     console.error("Error fetching module config:", error);

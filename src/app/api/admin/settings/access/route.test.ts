@@ -59,27 +59,30 @@ describe("/api/admin/settings/access", () => {
       });
     });
 
-    it("returns researcher-safe subset only", async () => {
+    it("returns 403 without exposing settings to a member", async () => {
       mocks.getServerSession.mockResolvedValue({
         user: {
           id: "user-1",
-          role: "RESEARCHER",
+          systemRole: "MEMBER",
+          role: "FACILITY_ADMIN",
         },
-      });
-      mocks.db.siteSettings.findUnique.mockResolvedValue({
-        extraSettings: JSON.stringify({
-          allowDeleteSubmittedOrders: true,
-          allowUserAssemblyDownload: true,
-        }),
-        postSubmissionInstructions: "Ignored for researchers",
       });
 
       const response = await GET();
 
-      expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual({
-        allowUserAssemblyDownload: true,
-      });
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({ error: "Forbidden" });
+      expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("returns 401 when no valid session exists", async () => {
+      mocks.getServerSession.mockResolvedValue(null);
+
+      const response = await GET();
+
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toEqual({ error: "Unauthorized" });
+      expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
     });
 
     it("falls back to defaults when extraSettings JSON is invalid", async () => {

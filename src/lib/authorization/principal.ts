@@ -5,6 +5,7 @@ export interface SessionPrincipalInput {
     id?: string | null;
     role?: string | null;
     systemRole?: string | null;
+    facilityWorkflowRole?: string | null;
     isDemo?: boolean;
     authorizationValid?: boolean;
   } | null;
@@ -20,6 +21,7 @@ export function principalFromSession(
   const id = session?.user?.id;
   const legacyRole = session?.user?.role;
   const storedSystemRole = session?.user?.systemRole;
+  const storedFacilityWorkflowRole = session?.user?.facilityWorkflowRole;
   const legacyRoleValid =
     legacyRole === "RESEARCHER" || legacyRole === "FACILITY_ADMIN";
   const systemRole =
@@ -44,7 +46,13 @@ export function principalFromSession(
     id,
     accountLevel: isAdmin ? "admin" : "member",
     facilityWorkflowRole:
-      legacyRole === "FACILITY_ADMIN" ? "operator" : "requester",
+      storedFacilityWorkflowRole === "OPERATOR"
+        ? "operator"
+        : storedFacilityWorkflowRole === "REQUESTER"
+          ? "requester"
+          : legacyRole === "FACILITY_ADMIN"
+            ? "operator"
+            : "requester",
     isDemo: Boolean(session.user?.isDemo),
   };
 }

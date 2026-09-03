@@ -3,6 +3,7 @@ import type {
   DeploymentModuleId,
   DeploymentProfileDefinition,
 } from "./types";
+import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
 
 export type DeploymentCompatibilitySeverity = "error" | "warning";
 
@@ -10,10 +11,13 @@ export interface DeploymentCompatibilityIssue {
   severity: DeploymentCompatibilitySeverity;
   code: string;
   message: string;
+  moduleId?: string;
 }
 
 export interface DeploymentCompatibilityOptions {
   pipelinesEnabled?: boolean;
+  /** Feature-module switches from SiteSettings or an install profile. */
+  featureModules?: Record<string, unknown>;
 }
 
 const MODULE_DOMAIN_REQUIREMENTS: Readonly<
@@ -46,6 +50,168 @@ const SEQUENCING_MODULES = new Set<DeploymentModuleId>([
   "archive-submissions",
   "support",
 ]);
+
+/**
+ * Domain requirements for the smaller, administrator-configurable feature
+ * modules. These are deliberately separate from DeploymentModuleId: the
+ * latter describes the application topology selected by a deployment profile,
+ * while these switches customize features inside that topology.
+ */
+export const FEATURE_MODULE_DOMAIN_REQUIREMENTS = {
+  "ai-validation": ["facility-intake"],
+  "mixs-metadata": ["sample-catalog"],
+  "account-validation": ["core"],
+  "funding-info": ["facility-intake"],
+  "billing-info": ["facility-intake"],
+  "ena-sample-fields": ["sample-catalog", "publishing"],
+  "sequencing-tech": ["sequencing-operations"],
+  "dynamic-studies": ["sample-catalog"],
+  notifications: ["core"],
+} as const satisfies Readonly<Record<string, readonly DeploymentDomainId[]>>;
+
+export type FeatureModuleId = keyof typeof FEATURE_MODULE_DOMAIN_REQUIREMENTS;
+
+export interface EffectiveFeatureModuleResolution {
+  modules: Record<FeatureModuleId, boolean>;
+  incompatibleModules: FeatureModuleId[];
+}
+
+const ALWAYS_ENABLED_FEATURE_MODULES = new Set<FeatureModuleId>([
+  "sequencing-tech",
+]);
+
+function readModuleToggle(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (value === 1) return true;
+  if (value === 0) return false;
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "yes", "y", "1", "on"].includes(normalized)) return true;
+  if (["false", "no", "n", "0", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
+export function normalizeFeatureModuleToggles(
+  modules: Record<string, unknown>
+): Record<string, boolean> {
+  const normalized: Record<string, boolean> = {};
+  for (const [moduleId, value] of Object.entries(modules)) {
+    const enabled = readModuleToggle(value);
+    if (enabled !== undefined) normalized[moduleId] = enabled;
+  }
+  return normalized;
+}
+
+/**
+ * Resolve the complete runtime feature-module state for one deployment profile.
+ *
+ * Defaults and stored overrides are both constrained by the profile's domains.
+ * Invalid stored values and modules outside the selected profile fail closed at
+ * runtime; entry-point validators separately reject explicit invalid overrides
+ * with actionable diagnostics before they are persisted.
+ */
+export function resolveEffectiveFeatureModuleStates(
+  profile: DeploymentProfileDefinition,
+  configuredModules: Record<string, unknown> = {}
+): EffectiveFeatureModuleResolution {
+  const domains = new Set(profile.domains);
+  const incompatibleModules: FeatureModuleId[] = [];
+  const entries = Object.entries(FEATURE_MODULE_DOMAIN_REQUIREMENTS).map(
+    ([moduleId, requiredDomains]) => {
+      const typedModuleId = moduleId as FeatureModuleId;
+      if (requiredDomains.some((domain) => !domains.has(domain))) {
+        incompatibleModules.push(typedModuleId);
+        return [typedModuleId, false] as const;
+      }
+
+      if (ALWAYS_ENABLED_FEATURE_MODULES.has(typedModuleId)) {
+        return [typedModuleId, true] as const;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(configuredModules, moduleId)) {
+        return [
+          typedModuleId,
+          readModuleToggle(configuredModules[moduleId]) ?? false,
+        ] as const;
+      }
+
+      return [typedModuleId, DEFAULT_MODULE_STATES[moduleId] === true] as const;
+    }
+  );
+
+  return {
+    modules: Object.fromEntries(entries) as Record<FeatureModuleId, boolean>,
+    incompatibleModules,
+  };
+}
+
+export function validateFeatureModuleCompatibility(
+  profile: DeploymentProfileDefinition,
+  configuredModules: Record<string, unknown>,
+  options: { explicitModuleIds?: ReadonlySet<string> } = {}
+): DeploymentCompatibilityIssue[] {
+  const issues: DeploymentCompatibilityIssue[] = [];
+  const domains = new Set(profile.domains);
+
+  for (const [moduleId, rawEnabled] of Object.entries(configuredModules)) {
+    const requiredDomains = (
+      FEATURE_MODULE_DOMAIN_REQUIREMENTS as Readonly<
+        Record<string, readonly DeploymentDomainId[] | undefined>
+      >
+    )[moduleId];
+    if (!requiredDomains) {
+      issues.push({
+        severity: "error",
+        code: "unknown-feature-module",
+        moduleId,
+        message: `modules.${moduleId} is not a recognized SeqDesk feature module. Remove it or update SeqDesk to a release that declares it.`,
+      });
+      continue;
+    }
+
+    const enabled = readModuleToggle(rawEnabled);
+    if (enabled === undefined) {
+      issues.push({
+        severity: "error",
+        code: "invalid-feature-module-toggle",
+        moduleId,
+        message: `modules.${moduleId} must be true or false.`,
+      });
+      continue;
+    }
+
+    const missingDomains = requiredDomains.filter((domain) => !domains.has(domain));
+
+    if (!enabled) {
+      if (
+        ALWAYS_ENABLED_FEATURE_MODULES.has(moduleId as FeatureModuleId) &&
+        missingDomains.length === 0 &&
+        (!options.explicitModuleIds || options.explicitModuleIds.has(moduleId))
+      ) {
+        issues.push({
+          severity: "error",
+          code: "always-enabled-feature-module-disabled",
+          moduleId,
+          message: `modules.${moduleId} cannot be disabled because SeqDesk currently treats it as always enabled. Remove this override; the deployment profile controls whether its domain is available.`,
+        });
+      }
+      continue;
+    }
+
+    if (missingDomains.length > 0) {
+      issues.push({
+        severity: "error",
+        code: "feature-module-domain-missing",
+        moduleId,
+        message: `${profile.label} cannot enable modules.${moduleId}: it requires ${missingDomains.join(
+          " and "
+        )}, which this deployment profile does not provide. Disable modules.${moduleId} or choose a compatible deployment profile.`,
+      });
+    }
+  }
+
+  return issues;
+}
 
 function duplicateValues<T extends string>(values: readonly T[]): T[] {
   const seen = new Set<T>();
@@ -164,6 +330,18 @@ export function validateDeploymentProfileCompatibility(
       message: "sequencing-center must retain requester-scoped scientific records.",
     });
   }
+
+  const configuredFeatureModules = options.featureModules ?? {};
+  const effectiveDefaults = resolveEffectiveFeatureModuleStates(profile).modules;
+  const completeFeatureModuleState = {
+    ...effectiveDefaults,
+    ...configuredFeatureModules,
+  };
+  issues.push(
+    ...validateFeatureModuleCompatibility(profile, completeFeatureModuleState, {
+      explicitModuleIds: new Set(Object.keys(configuredFeatureModules)),
+    })
+  );
 
   return issues;
 }

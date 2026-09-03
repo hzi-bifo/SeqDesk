@@ -1,9 +1,41 @@
-export const INVITE_ACCOUNT_ROLES = ["RESEARCHER", "FACILITY_ADMIN"] as const;
+export const SYSTEM_ROLES = ["MEMBER", "ADMIN"] as const;
+export const FACILITY_WORKFLOW_ROLES = ["REQUESTER", "OPERATOR"] as const;
 
+export type SystemRole = (typeof SYSTEM_ROLES)[number];
+export type FacilityWorkflowRole = (typeof FACILITY_WORKFLOW_ROLES)[number];
+
+/** @deprecated Compatibility shape for callers from the coupled-role release. */
+export const INVITE_ACCOUNT_ROLES = ["RESEARCHER", "FACILITY_ADMIN"] as const;
 export type InviteAccountRole = (typeof INVITE_ACCOUNT_ROLES)[number];
+
+export interface InviteGrant {
+  systemRole: SystemRole;
+  facilityWorkflowRole: FacilityWorkflowRole;
+}
+
+export interface StoredInviteGrant {
+  code: string;
+  targetSystemRole?: string | null;
+  targetFacilityWorkflowRole?: string | null;
+}
 
 const MEMBER_INVITE_PREFIX = "M-";
 const ADMIN_INVITE_PREFIX = "A-";
+
+export function isSystemRole(value: unknown): value is SystemRole {
+  return (
+    typeof value === "string" && SYSTEM_ROLES.includes(value as SystemRole)
+  );
+}
+
+export function isFacilityWorkflowRole(
+  value: unknown
+): value is FacilityWorkflowRole {
+  return (
+    typeof value === "string" &&
+    FACILITY_WORKFLOW_ROLES.includes(value as FacilityWorkflowRole)
+  );
+}
 
 export function isInviteAccountRole(value: unknown): value is InviteAccountRole {
   return (
@@ -12,20 +44,51 @@ export function isInviteAccountRole(value: unknown): value is InviteAccountRole 
   );
 }
 
+export function legacyRoleForSystemRole(
+  systemRole: SystemRole
+): InviteAccountRole {
+  return systemRole === "ADMIN" ? "FACILITY_ADMIN" : "RESEARCHER";
+}
+
+export function grantFromLegacyAccountRole(
+  role: InviteAccountRole
+): InviteGrant {
+  return role === "FACILITY_ADMIN"
+    ? { systemRole: "ADMIN", facilityWorkflowRole: "OPERATOR" }
+    : { systemRole: "MEMBER", facilityWorkflowRole: "REQUESTER" };
+}
+
 export function formatInviteCode(
   token: string,
-  role: InviteAccountRole
+  systemRole: SystemRole | InviteAccountRole
 ): string {
-  const prefix = role === "RESEARCHER" ? MEMBER_INVITE_PREFIX : ADMIN_INVITE_PREFIX;
-  return `${prefix}${token.trim().toUpperCase()}`;
+  const elevated = systemRole === "ADMIN" || systemRole === "FACILITY_ADMIN";
+  return `${elevated ? ADMIN_INVITE_PREFIX : MEMBER_INVITE_PREFIX}${token
+    .trim()
+    .toUpperCase()}`;
 }
 
 /**
- * Legacy, unprefixed AdminInvite rows were created exclusively for
- * administrators, so they remain administrator invitations.
+ * Explicit stored grants are authoritative. Prefix decoding exists only for
+ * invitations created before those grant columns were introduced.
  */
+export function getInviteGrant(invite: StoredInviteGrant): InviteGrant {
+  if (
+    isSystemRole(invite.targetSystemRole) &&
+    isFacilityWorkflowRole(invite.targetFacilityWorkflowRole)
+  ) {
+    return {
+      systemRole: invite.targetSystemRole,
+      facilityWorkflowRole: invite.targetFacilityWorkflowRole,
+    };
+  }
+
+  return invite.code.trim().toUpperCase().startsWith(MEMBER_INVITE_PREFIX)
+    ? { systemRole: "MEMBER", facilityWorkflowRole: "REQUESTER" }
+    : { systemRole: "ADMIN", facilityWorkflowRole: "OPERATOR" };
+}
+
+/** @deprecated Use getInviteGrant. */
 export function getInviteAccountRole(code: string): InviteAccountRole {
-  return code.trim().toUpperCase().startsWith(MEMBER_INVITE_PREFIX)
-    ? "RESEARCHER"
-    : "FACILITY_ADMIN";
+  return legacyRoleForSystemRole(getInviteGrant({ code }).systemRole);
 }

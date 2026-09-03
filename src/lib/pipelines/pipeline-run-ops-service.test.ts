@@ -4,7 +4,7 @@ import { EventEmitter } from 'events';
 const mocks = vi.hoisted(() => ({
   db: {
     user: {
-      findFirst: vi.fn(),
+      findMany: vi.fn(),
     },
     pipelineRun: {
       findUnique: vi.fn(),
@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   finalizeCompletedPipelineRun: vi.fn(),
   processCompletedPipelineRun: vi.fn(),
   notifyPipelineRunTerminalInApp: vi.fn(),
+  getServerDeploymentProfile: vi.fn(),
   // child_process collaborators captured at module load.
   execFile: vi.fn(),
   spawn: vi.fn(),
@@ -101,6 +102,11 @@ vi.mock('@/lib/pipelines/run-completion', () => ({
 vi.mock('@/lib/notifications/in-app', () => ({
   notifyPipelineRunTerminalInApp: mocks.notifyPipelineRunTerminalInApp,
 }));
+vi.mock('@/lib/deployment-profile/server', () => ({
+  getServerDeploymentProfile: mocks.getServerDeploymentProfile,
+}));
+
+import { getDeploymentProfileDefinition } from '@/lib/deployment-profile';
 
 import {
   cancelPipelineRunForOperator,
@@ -134,6 +140,9 @@ describe('pipeline run operator services', () => {
     vi.clearAllMocks();
     mocks.getPipelineEnabled.mockResolvedValue(true);
     mocks.getAllPackages.mockReturnValue([]);
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition('sequencing-center')
+    );
     mocks.notifyPipelineRunTerminalInApp.mockResolvedValue(undefined);
     mocks.finalizeCompletedPipelineRun.mockResolvedValue('completed');
     mocks.processCompletedPipelineRun.mockResolvedValue(undefined);
@@ -149,48 +158,112 @@ describe('pipeline run operator services', () => {
     });
   });
 
-  it('uses the first facility admin when no user email is supplied', async () => {
-    mocks.db.user.findFirst.mockResolvedValue({
-      id: 'admin-1',
-      email: 'admin@example.org',
-      role: 'FACILITY_ADMIN',
-    });
+  it('uses the first active facility operator when no user email is supplied', async () => {
+    mocks.db.user.findMany.mockResolvedValue([
+      {
+        id: 'settings-admin-1',
+        email: 'settings@example.org',
+        role: 'FACILITY_ADMIN',
+        systemRole: 'ADMIN',
+        facilityWorkflowRole: 'REQUESTER',
+      },
+      {
+        id: 'operator-1',
+        email: 'operator@example.org',
+        role: 'RESEARCHER',
+        systemRole: 'MEMBER',
+        facilityWorkflowRole: 'OPERATOR',
+      },
+    ]);
 
     const result = await resolvePipelineOperator();
 
     expect(result.status).toBe(200);
-    expect(mocks.db.user.findFirst).toHaveBeenCalledWith({
-      where: { role: 'FACILITY_ADMIN' },
+    expect(mocks.db.user.findMany).toHaveBeenCalledWith({
+      where: { isActive: true },
       orderBy: { createdAt: 'asc' },
-      select: { id: true, email: true, firstName: true, lastName: true, role: true },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        systemRole: true,
+        facilityWorkflowRole: true,
+      },
     });
-    expect(result.body.user).toMatchObject({ id: 'admin-1' });
+    expect(result.body.user).toMatchObject({ id: 'operator-1' });
   });
 
-  it('selects the requested facility admin by email', async () => {
-    mocks.db.user.findFirst.mockResolvedValue({
-      id: 'admin-2',
+  it('selects the requested facility operator by email', async () => {
+    mocks.db.user.findMany.mockResolvedValue([{
+      id: 'operator-2',
       email: 'ops@example.org',
-      role: 'FACILITY_ADMIN',
-    });
+      role: 'RESEARCHER',
+      systemRole: 'MEMBER',
+      facilityWorkflowRole: 'OPERATOR',
+    }]);
 
     const result = await resolvePipelineOperator('ops@example.org');
 
     expect(result.status).toBe(200);
-    expect(mocks.db.user.findFirst).toHaveBeenCalledWith(
+    expect(mocks.db.user.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { email: 'ops@example.org', role: 'FACILITY_ADMIN' },
+        where: { isActive: true, email: 'ops@example.org' },
       })
     );
   });
 
-  it('fails clearly when no facility admin exists', async () => {
-    mocks.db.user.findFirst.mockResolvedValue(null);
+  it('allows a normal Shared Lab member to launch installation-scoped pipelines', async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition('shared-lab')
+    );
+    mocks.db.user.findMany.mockResolvedValue([{
+      id: 'member-1',
+      email: 'member@example.org',
+      role: 'RESEARCHER',
+      systemRole: 'MEMBER',
+      facilityWorkflowRole: 'REQUESTER',
+    }]);
+
+    const result = await resolvePipelineOperator('member@example.org');
+
+    expect(result.status).toBe(200);
+    expect(result.body.user).toMatchObject({ id: 'member-1' });
+  });
+
+  it('fails clearly when no eligible pipeline operator exists', async () => {
+    mocks.db.user.findMany.mockResolvedValue([]);
 
     const result = await resolvePipelineOperator();
 
     expect(result.status).toBe(400);
-    expect(result.body.error).toContain('No FACILITY_ADMIN user exists');
+    expect(result.body.error).toContain('No active account can run');
+  });
+
+  it('does not infer pipeline-operation rights from installation admin status', async () => {
+    mocks.db.user.findMany.mockResolvedValue([{
+      id: 'settings-admin-1',
+      email: 'settings@example.org',
+      role: 'FACILITY_ADMIN',
+      systemRole: 'ADMIN',
+      facilityWorkflowRole: 'REQUESTER',
+    }]);
+
+    const result = await resolvePipelineOperator('settings@example.org');
+
+    expect(result.status).toBe(403);
+  });
+
+  it('does not expose order/study pipeline commands in Research Workbench', async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(
+      getDeploymentProfileDefinition('research-workbench')
+    );
+
+    const result = await resolvePipelineOperator('member@example.org');
+
+    expect(result.status).toBe(404);
+    expect(mocks.db.user.findMany).not.toHaveBeenCalled();
   });
 
   it('selects attribution and FastQC report paths for order and study Reads', async () => {

@@ -58,8 +58,21 @@ export function buildOnboardingStatus(args: {
     ...(storedItems[item.id] ? { completion: storedItems[item.id] } : {}),
   }));
   const completedCount = items.filter((item) => item.complete).length;
+  const requiredItems = items.filter((item) => item.requirement === "required");
+  const recommendedItems = items.filter(
+    (item) => item.requirement === "recommended"
+  );
+  const requiredCompletedCount = requiredItems.filter(
+    (item) => item.complete
+  ).length;
+  const recommendedCompletedCount = recommendedItems.filter(
+    (item) => item.complete
+  ).length;
   const required = args.requiredVersion > 0;
-  const checklistComplete = completedCount === items.length;
+  const requiredChecklistComplete =
+    requiredCompletedCount === requiredItems.length;
+  const recommendationsComplete =
+    recommendedCompletedCount === recommendedItems.length;
   const requiredVersionComplete =
     !required || (args.stored?.schemaVersion ?? 0) >= args.requiredVersion;
 
@@ -68,15 +81,26 @@ export function buildOnboardingStatus(args: {
     requiredVersion: args.requiredVersion,
     required,
     profile: args.profile,
-    complete: required ? checklistComplete && requiredVersionComplete : true,
-    ...(checklistComplete && requiredVersionComplete && args.stored?.completedAt
+    complete: required
+      ? requiredChecklistComplete && requiredVersionComplete
+      : true,
+    ...(requiredChecklistComplete &&
+    requiredVersionComplete &&
+    args.stored?.completedAt
       ? { completedAt: args.stored.completedAt }
       : {}),
-    ...(checklistComplete && requiredVersionComplete && args.stored?.completedByUserId
+    ...(requiredChecklistComplete &&
+    requiredVersionComplete &&
+    args.stored?.completedByUserId
       ? { completedByUserId: args.stored.completedByUserId }
       : {}),
     completedCount,
     totalCount: items.length,
+    requiredCompletedCount,
+    requiredTotalCount: requiredItems.length,
+    recommendedCompletedCount,
+    recommendedTotalCount: recommendedItems.length,
+    recommendationsComplete,
     items,
   };
 }

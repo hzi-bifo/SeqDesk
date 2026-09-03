@@ -2,6 +2,17 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  db: {
+    siteSettings: {
+      findUnique: vi.fn(),
+    },
+  },
+}));
+
+vi.mock("@/lib/db", () => ({ db: mocks.db }));
+
 import {
   defaultProfileRegistryUrl,
   profileCodeEnvName,
@@ -40,6 +51,8 @@ describe("install profile reload helpers", () => {
   let tempDir: string;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
+    mocks.db.siteSettings.findUnique.mockResolvedValue(null);
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-profile-reload-test-"));
     await fs.mkdir(path.join(tempDir, "scripts"), { recursive: true });
     await fs.writeFile(
@@ -287,6 +300,175 @@ describe("install profile reload helpers", () => {
     ]);
   });
 
+  it("rejects feature modules that do not belong to the installed deployment profile before mutating", async () => {
+    const markerPath = path.join(tempDir, "settings-applied.marker");
+    await fs.writeFile(
+      path.join(tempDir, "settings.json"),
+      JSON.stringify({
+        deployment: { profile: "research-workbench" },
+        pipelines: { enabled: true },
+      })
+    );
+    await fs.writeFile(
+      path.join(tempDir, "scripts", "apply-install-profile.mjs"),
+      `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(markerPath)}, "applied");\n`
+    );
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "dev",
+        version: "1.0.0",
+        modules: { "billing-info": true },
+      }),
+    }) as unknown as typeof fetch;
+
+    await expect(
+      reloadHostedInstallProfile({
+        profileId: "dev",
+        profileCode: "setup-code",
+        cwd: tempDir,
+      })
+    ).rejects.toThrow(
+      /Research workbench cannot enable modules\.billing-info[\s\S]*facility-intake[\s\S]*Disable modules\.billing-info/
+    );
+
+    await expect(fs.stat(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(path.join(tempDir, "pipelines"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rejects an incompatible persisted module omitted by the hosted delta before mutating", async () => {
+    const markerPath = path.join(tempDir, "settings-applied.marker");
+    await fs.writeFile(
+      path.join(tempDir, "settings.json"),
+      JSON.stringify({
+        deployment: { profile: "research-workbench" },
+        pipelines: { enabled: true },
+      })
+    );
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      modulesConfig: JSON.stringify({
+        modules: { "billing-info": true },
+        globalDisabled: false,
+      }),
+    });
+    await fs.writeFile(
+      path.join(tempDir, "scripts", "apply-install-profile.mjs"),
+      `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(markerPath)}, "applied");\n`
+    );
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "dev",
+        version: "1.0.0",
+        modules: { notifications: true },
+      }),
+    }) as unknown as typeof fetch;
+
+    await expect(
+      reloadHostedInstallProfile({
+        profileId: "dev",
+        profileCode: "setup-code",
+        cwd: tempDir,
+      })
+    ).rejects.toThrow(/Research workbench cannot enable modules\.billing-info/);
+
+    await expect(fs.stat(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("lets a hosted delta turn off an incompatible persisted module", async () => {
+    const markerPath = path.join(tempDir, "settings-applied.marker");
+    await fs.writeFile(
+      path.join(tempDir, "settings.json"),
+      JSON.stringify({
+        deployment: { profile: "research-workbench" },
+        pipelines: { enabled: true },
+      })
+    );
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      modulesConfig: JSON.stringify({
+        modules: { "billing-info": true },
+        globalDisabled: false,
+      }),
+    });
+    await fs.writeFile(
+      path.join(tempDir, "scripts", "apply-install-profile.mjs"),
+      `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(markerPath)}, "applied");\n`
+    );
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "dev",
+        version: "1.0.0",
+        modules: { "billing-info": false },
+      }),
+    }) as unknown as typeof fetch;
+
+    const result = await reloadHostedInstallProfile({
+      profileId: "dev",
+      profileCode: "setup-code",
+      cwd: tempDir,
+    });
+
+    expect(result.profile.id).toBe("dev");
+    await expect(fs.readFile(markerPath, "utf8")).resolves.toBe("applied");
+  });
+
+  it("rejects a hosted profile that targets a different deployment profile during reload", async () => {
+    await fs.writeFile(
+      path.join(tempDir, "settings.json"),
+      JSON.stringify({ deployment: { profile: "shared-lab" } })
+    );
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "dev",
+        version: "1.0.0",
+        deployment: { profile: "sequencing-center" },
+      }),
+    }) as unknown as typeof fetch;
+
+    await expect(
+      reloadHostedInstallProfile({
+        profileId: "dev",
+        profileCode: "setup-code",
+        cwd: tempDir,
+      })
+    ).rejects.toThrow(
+      /Reload cannot change the installation's deployment profile.*reviewed profile migration/
+    );
+  });
+
+  it("reports Workbench workflow execution as incomplete when a reload disables pipelines", async () => {
+    await fs.writeFile(
+      path.join(tempDir, "settings.json"),
+      JSON.stringify({
+        deployment: { profile: "research-workbench" },
+        pipelines: { enabled: true },
+      })
+    );
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "dev",
+        version: "1.0.0",
+        pipelines: { enabled: false },
+        modules: { "account-validation": true },
+      }),
+    }) as unknown as typeof fetch;
+
+    const result = await reloadHostedInstallProfile({
+      profileId: "dev",
+      profileCode: "setup-code",
+      cwd: tempDir,
+    });
+
+    expect(result.validation.warnings).toContain(
+      "Research Workbench can import data, but is not operationally complete until workflow execution is enabled."
+    );
+  });
+
   it("rejects malformed structured hosted profile sections before applying settings", async () => {
     const applyScriptPath = path.join(tempDir, "scripts", "apply-install-profile.mjs");
     await fs.writeFile(
@@ -335,6 +517,13 @@ describe("install profile reload helpers", () => {
   it("rejects concurrent hosted profile reloads", async () => {
     await fs.mkdir(path.join(tempDir, "pipelines"), { recursive: true });
     await fs.writeFile(path.join(tempDir, "pipelines", ".install-profile-reload.lock"), "{}");
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "dev",
+        version: "1.0.0",
+      }),
+    }) as unknown as typeof fetch;
 
     await expect(
       reloadHostedInstallProfile({
@@ -399,6 +588,13 @@ describe("install profile reload helpers", () => {
         await fs.writeFile(oldPath, JSON.stringify(replacement));
         await originalRename(oldPath, newPath);
       });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        id: "dev",
+        version: "1.0.0",
+      }),
+    }) as unknown as typeof fetch;
 
     await expect(
       reloadHostedInstallProfile({

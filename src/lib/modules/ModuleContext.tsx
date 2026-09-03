@@ -3,7 +3,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import {
   AVAILABLE_MODULES,
-  DEFAULT_MODULE_STATES,
   getModuleDefinition,
   isAlwaysEnabledModule,
   ModuleDefinition,
@@ -26,6 +25,8 @@ interface ModuleContextValue {
   refresh: () => Promise<void>;
   // Global disable state
   globalDisabled: boolean;
+  // Modules excluded by the installation-wide deployment profile
+  incompatibleModules: string[];
   // Set global disabled
   setGlobalDisabled: (disabled: boolean) => Promise<void>;
 }
@@ -33,7 +34,8 @@ interface ModuleContextValue {
 const ModuleContext = createContext<ModuleContextValue | undefined>(undefined);
 
 export function ModuleProvider({ children }: { children: ReactNode }) {
-  const [moduleStates, setModuleStates] = useState<Record<string, boolean>>(DEFAULT_MODULE_STATES);
+  const [moduleStates, setModuleStates] = useState<Record<string, boolean>>({});
+  const [incompatibleModules, setIncompatibleModules] = useState<string[]>([]);
   const [globalDisabled, setGlobalDisabledState] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -43,13 +45,25 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
       const res = await fetch("/api/modules");
       if (res.ok) {
         const data = await res.json();
-        setModuleStates(data.modules || DEFAULT_MODULE_STATES);
+        setModuleStates(
+          data.modules && typeof data.modules === "object" ? data.modules : {}
+        );
+        setIncompatibleModules(
+          Array.isArray(data.incompatibleModules)
+            ? data.incompatibleModules.filter(
+                (moduleId: unknown): moduleId is string =>
+                  typeof moduleId === "string"
+              )
+            : []
+        );
         setGlobalDisabledState(data.globalDisabled || false);
       }
     } catch (error) {
       console.error("Failed to load module states:", error);
-      // Fall back to defaults
-      setModuleStates(DEFAULT_MODULE_STATES);
+      // Without a server-resolved profile, fail closed rather than exposing
+      // facility defaults in a Workbench installation.
+      setModuleStates({});
+      setIncompatibleModules([]);
       setGlobalDisabledState(false);
     } finally {
       setLoading(false);
@@ -61,11 +75,11 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isModuleEnabled = (moduleId: string): boolean => {
-    if (isAlwaysEnabledModule(moduleId)) return true;
+    if (incompatibleModules.includes(moduleId)) return false;
+    if (loading) return false;
+    if (isAlwaysEnabledModule(moduleId)) return moduleStates[moduleId] === true;
     // If global disabled, everything is off
     if (globalDisabled) return false;
-    // If loading, assume enabled to avoid flash of disabled content
-    if (loading) return DEFAULT_MODULE_STATES[moduleId] ?? false;
     return moduleStates[moduleId] ?? false;
   };
 
@@ -123,6 +137,7 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
     setModuleEnabled,
     refresh: loadModuleStates,
     globalDisabled,
+    incompatibleModules,
     setGlobalDisabled,
   };
 

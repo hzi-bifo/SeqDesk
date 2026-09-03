@@ -44,7 +44,16 @@ describe("GET /api/admin/users", () => {
     expect(mocks.db.user.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { systemRole: "MEMBER" },
+        select: expect.objectContaining({
+          email: true,
+          systemRole: true,
+          isActive: true,
+          department: { select: { id: true, name: true } },
+        }),
       })
+    );
+    expect(mocks.db.user.findMany.mock.calls[0]?.[0]?.select).not.toHaveProperty(
+      "password"
     );
   });
 

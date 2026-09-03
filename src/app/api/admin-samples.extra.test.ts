@@ -101,7 +101,7 @@ describe("admin modules, departments, and sample-study quick wins", () => {
     expect(unauthorizedGet.status).toBe(401);
     expect(await unauthorizedGet.json()).toEqual({ error: "Unauthorized" });
 
-    mocks.getServerSession.mockResolvedValueOnce({ user: { id: "user-1", role: "RESEARCHER" } });
+    mocks.getServerSession.mockResolvedValueOnce(adminSession);
     mocks.db.siteSettings.findUnique.mockResolvedValueOnce({
       modulesConfig: JSON.stringify({
         "billing-info": true,
@@ -117,6 +117,7 @@ describe("admin modules, departments, and sample-study quick wins", () => {
         notifications: true,
       },
       globalDisabled: false,
+      incompatibleModules: [],
     });
 
     mocks.db.siteSettings.findUnique.mockResolvedValueOnce({
@@ -133,6 +134,7 @@ describe("admin modules, departments, and sample-study quick wins", () => {
         "funding-info": true,
       },
       globalDisabled: true,
+      incompatibleModules: [],
     });
 
     mocks.db.siteSettings.findUnique.mockRejectedValueOnce(new Error("db down"));
@@ -149,8 +151,8 @@ describe("admin modules, departments, and sample-study quick wins", () => {
         enabled: true,
       })
     );
-    expect(unauthorizedPut.status).toBe(401);
-    expect(await unauthorizedPut.json()).toEqual({ error: "Unauthorized" });
+    expect(unauthorizedPut.status).toBe(403);
+    expect(await unauthorizedPut.json()).toEqual({ error: "Forbidden" });
 
     mocks.db.siteSettings.findUnique.mockResolvedValueOnce({
       modulesConfig: JSON.stringify({
@@ -173,6 +175,7 @@ describe("admin modules, departments, and sample-study quick wins", () => {
         "funding-info": true,
       },
       globalDisabled: true,
+      incompatibleModules: [],
     });
     expect(lastModulesConfig()).toEqual({
       modules: {
@@ -228,8 +231,8 @@ describe("admin modules, departments, and sample-study quick wins", () => {
         name: "Genomics",
       })
     );
-    expect(unauthorizedPost.status).toBe(401);
-    expect(await unauthorizedPost.json()).toEqual({ error: "Unauthorized" });
+    expect(unauthorizedPost.status).toBe(403);
+    expect(await unauthorizedPost.json()).toEqual({ error: "Forbidden" });
 
     const missingName = await postAdminDepartments(
       jsonRequest("/api/admin/departments", "POST", {
