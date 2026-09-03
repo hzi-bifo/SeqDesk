@@ -145,6 +145,7 @@ const MODULE_PATHS: ReadonlyArray<{
   { prefix: "/api/admin/settings/ena", module: "archive-submissions" },
   { prefix: "/api/admin/submissions", module: "archive-submissions" },
   { prefix: "/api/admin/seed/dummy-data", module: "orders" },
+  { prefix: "/api/admin/seed/example-datasets", module: "studies" },
   { prefix: "/admin/form-builder", module: "orders" },
   { prefix: "/admin/study-form-builder", module: "studies" },
   { prefix: "/admin/study-definitions", module: "studies" },

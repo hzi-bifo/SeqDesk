@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { decideServerCapability } from "@/lib/authorization/api";
 import { db } from "@/lib/db";
 import { resolveDataBasePathFromStoredValue } from "@/lib/files/data-base-path";
 import { inspectDataStoragePath } from "@/lib/files/data-storage-path-validation";
@@ -49,10 +50,17 @@ async function resolveContext(options: {
   | { ok: false; status: number; body: { error: string; dataBasePath?: string } }
 > {
   const session = await getServerSession(authOptions);
-  if (!session || session.user.role !== "FACILITY_ADMIN") {
-    return { ok: false, status: 401, body: { error: "Unauthorized" } };
+  const access = decideServerCapability(session, "system.catalog.manage");
+  if (!access.allowed) {
+    const error =
+      access.status === 401
+        ? "Unauthorized"
+        : access.status === 404
+          ? "Not found"
+          : "Forbidden";
+    return { ok: false, status: access.status, body: { error } };
   }
-  if (options.rejectDemoMutation && session.user.isDemo) {
+  if (options.rejectDemoMutation && access.principal?.isDemo) {
     return {
       ok: false,
       status: 403,
@@ -66,7 +74,7 @@ async function resolveContext(options: {
       select: { dataBasePath: true },
     }),
     db.user.findUnique({
-      where: { id: session.user.id },
+      where: { id: access.principal!.id },
       select: { email: true, firstName: true, lastName: true },
     }),
   ]);
@@ -111,7 +119,7 @@ async function resolveContext(options: {
       resolvedBase,
       storageReady,
       storageError,
-      userId: session.user.id,
+      userId: access.principal!.id,
       userEmail: user?.email ?? null,
       userDisplayName,
     },

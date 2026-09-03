@@ -123,14 +123,14 @@ describe("Gemma MetaxPath example dataset seed API", () => {
     expect(mocks.getGemmaMetaxPathExampleStatus).toHaveBeenCalledTimes(1);
   });
 
-  it("requires a facility admin", async () => {
+  it("requires catalog administration", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
 
     const res = await GET();
 
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it("blocks GET when no hosted install profile is applied", async () => {

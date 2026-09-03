@@ -3,6 +3,10 @@ import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/auth";
 import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
+import {
   getMouseGutExampleStatus,
   seedMouseGutExampleDataset,
 } from "@/lib/seed/mouse-gut-ena-example";
@@ -10,21 +14,23 @@ import {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-async function requireFacilityAdmin() {
+async function requireCatalogAdministration() {
   const session = await getServerSession(authOptions);
-  return session?.user?.role === "FACILITY_ADMIN";
+  return decideServerCapability(session, "system.catalog.manage");
 }
 
 export async function GET() {
-  if (!(await requireFacilityAdmin())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await requireCatalogAdministration();
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
   return NextResponse.json(await getMouseGutExampleStatus());
 }
 
 export async function POST() {
-  if (!(await requireFacilityAdmin())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await requireCatalogAdministration();
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
   try {
     const result = await seedMouseGutExampleDataset();

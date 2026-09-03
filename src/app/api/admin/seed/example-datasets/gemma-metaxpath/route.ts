@@ -3,6 +3,10 @@ import * as path from "path";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import {
+  authorizationErrorResponse,
+  decideServerCapability,
+} from "@/lib/authorization/api";
 import { db } from "@/lib/db";
 import { resolveDataBasePathFromStoredValue } from "@/lib/files/data-base-path";
 import {
@@ -28,9 +32,9 @@ const runningGemmaJobs = new Set<string>();
 const HOSTED_PROFILE_REQUIRED_ERROR =
   "The Gemma MetaxPath dataset is only available on hosted-profile installs.";
 
-async function requireFacilityAdmin() {
+async function requireCatalogAdministration() {
   const session = await getServerSession(authOptions);
-  return session?.user?.role === "FACILITY_ADMIN";
+  return decideServerCapability(session, "system.catalog.manage");
 }
 
 async function getAppliedProfile() {
@@ -175,8 +179,9 @@ function isFreshRunningJob(job: Awaited<ReturnType<typeof getAdminActivityJob>>)
 }
 
 export async function GET() {
-  if (!(await requireFacilityAdmin())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await requireCatalogAdministration();
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   if (!(await hasHostedProfile())) {
@@ -190,8 +195,9 @@ export async function GET() {
 }
 
 export async function POST() {
-  if (!(await requireFacilityAdmin())) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const access = await requireCatalogAdministration();
+  if (!access.allowed) {
+    return authorizationErrorResponse(access);
   }
 
   if (!(await hasHostedProfile())) {

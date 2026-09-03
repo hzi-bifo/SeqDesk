@@ -50,7 +50,10 @@ Workbench administrators through a direct API call. Sequencing registries, run f
 simulation tools, and MinKNOW connectivity now use a separate
 `system.sequencing.manage` grant, so Shared Lab members can operate sequencing
 work without being able to change installation-wide instrument configuration;
-those endpoints remain unavailable in Research Workbench.
+those endpoints remain unavailable in Research Workbench. Existing
+order/study-based demo and example-data loaders now require catalog
+administration and are unavailable in Workbench; a future Workbench evaluation
+option must create workspace-owned data instead of leaking the facility model.
 
 Do these milestones in order. Do not expose a profile in production setup until its server-side authorization milestone is complete.
 
