@@ -86,7 +86,8 @@ test("records curation edits without changing the stored version", async ({ page
 
   await page.goto(`/explore/datasets/${dataset.id}`);
   await page.getByRole("tab", { name: /Edits/ }).click();
-  await expect(page.getByRole("cell", { name: "row-flag" })).toBeVisible();
+  // Earlier runs may have left edits on the same dataset; one visible row is enough.
+  await expect(page.getByRole("cell", { name: "row-flag" }).first()).toBeVisible();
 
   const detail = await request.get(`/api/explore/datasets/${dataset.id}`);
   const { dataset: after } = (await detail.json()) as { dataset: { currentVersion: { contentHash: string }; editCount: number } };
