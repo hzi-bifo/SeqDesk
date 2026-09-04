@@ -306,7 +306,10 @@ def _convert_column(series: "pd.Series", column_type: str) -> "pd.Series":
         lowered = text.str.strip().str.lower()
         values = lowered.map(lambda value: True if value in _TRUE_VALUES else False if value in _FALSE_VALUES else None)
         return values.astype("boolean")
-    return text.map(lambda value: value if value != "" else None).astype(object)
+    # Build an object column explicitly: since pandas 3 a mapped string column
+    # keeps the string dtype and turns None into a missing marker, but kits
+    # expect plain ``None`` for empty cells.
+    return pd.Series([value if value != "" else None for value in text.tolist()], index=series.index, dtype=object)
 
 
 def load_dataset(alias: str, *, parse_dates: bool = False) -> "pd.DataFrame":
@@ -573,8 +576,13 @@ def save_table(
         series = out[column]
         if str(series.dtype) in ("bool", "boolean"):
             out[column] = series.map(lambda value: None if pd.isna(value) else ("true" if bool(value) else "false")).astype(object)
-        elif series.dtype == object:
-            out[column] = series.map(_clean_text)
+        elif series.dtype == object or pd.api.types.is_string_dtype(series):
+            # Covers both the classic object columns and the pandas 3 string dtype.
+            out[column] = pd.Series(
+                [None if (value is None or value is pd.NA or (isinstance(value, float) and math.isnan(value))) else _clean_text(value) for value in series.tolist()],
+                index=series.index,
+                dtype=object,
+            )
     path = _target_path(name, ".tsv")
     out.to_csv(path, sep="\t", index=False, na_rep="", float_format=float_format, lineterminator="\n", encoding="utf-8")
     return _artifact(

@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { createAndSubmitOrder, createStudyFromOrderSamples } from "./helpers";
 
 // Explore: datasets built from a study, the table view with curation edits,
 // and the module gate. Uses the seeded researcher (owner of the seeded studies).
@@ -13,7 +14,7 @@ interface BuildResult {
  * The first study of the researcher whose samples dataset has rows, built
  * through the API. Seeded studies without samples are skipped.
  */
-async function buildSamplesDataset(request: APIRequestContext): Promise<{ scope: string; result: BuildResult }> {
+async function findStudyWithSamples(request: APIRequestContext): Promise<{ scope: string; result: BuildResult } | null> {
   const response = await request.get("/api/explore/scopes");
   expect(response.ok()).toBeTruthy();
   const { scopes } = (await response.json()) as { scopes: Array<{ targetKey: string; type: string }> };
@@ -24,12 +25,27 @@ async function buildSamplesDataset(request: APIRequestContext): Promise<{ scope:
     const result = (await build.json()) as BuildResult;
     if (result.version.rowCount > 0) return { scope: scope.targetKey, result };
   }
-  test.skip(true, "the seeded researcher owns no study with samples");
-  throw new Error("unreachable");
+  return null;
+}
+
+/**
+ * Build the samples dataset of a study the researcher owns. When no seeded
+ * study has samples yet, create an order with one sample and a study from it
+ * through the UI, exactly like the study specs do.
+ */
+async function buildSamplesDataset(page: Page, request: APIRequestContext): Promise<{ scope: string; result: BuildResult }> {
+  const existing = await findStudyWithSamples(request);
+  if (existing) return existing;
+  const suffix = Date.now().toString(36);
+  await createAndSubmitOrder(page, `Explore order ${suffix}`, [{ volume: "10", concentration: "5" }]);
+  await createStudyFromOrderSamples(page, `Explore study ${suffix}`);
+  const created = await findStudyWithSamples(request);
+  expect(created, "a study with samples exists after creating one").toBeTruthy();
+  return created!;
 }
 
 test("builds the samples dataset of a study and opens it in the table view", async ({ page, request }) => {
-  const { scope, result } = await buildSamplesDataset(request);
+  const { scope, result } = await buildSamplesDataset(page, request);
   const { dataset } = result;
 
   await page.goto(`/explore?scope=${encodeURIComponent(scope)}`);
@@ -56,7 +72,7 @@ test("builds the samples dataset of a study and opens it in the table view", asy
 });
 
 test("records curation edits without changing the stored version", async ({ page, request }) => {
-  const { result } = await buildSamplesDataset(request);
+  const { result } = await buildSamplesDataset(page, request);
   const { dataset } = result;
 
   const rows = await request.get(`/api/explore/datasets/${dataset.id}/rows?limit=1`);
@@ -83,4 +99,48 @@ test("rejects scopes the researcher does not own", async ({ request }) => {
   expect(forbidden.status()).toBe(404);
   const malformed = await request.get("/api/explore/datasets?targetKey=nonsense");
   expect(malformed.status()).toBe(404);
+});
+
+// Runs a kit through the app when a registered environment exists. The CI
+// workflow builds the Python environment and registers it before this spec;
+// on a developer machine without one the test is skipped, not failed.
+test("runs an analysis kit end to end and records its outputs", async ({ page, request }) => {
+  test.setTimeout(240_000);
+  const kitId = process.env.EXPLORE_E2E_KIT || "table-summary";
+  const environments = await request.get("/api/explore/environments");
+  const { environments: list } = (await environments.json()) as { environments: Array<{ name: string; status: string }> };
+  test.skip(!list.some((entry) => entry.name === "seqdesk-explore-python" && entry.status === "ready"), "no ready analysis environment");
+
+  const { scope, result } = await buildSamplesDataset(page, request);
+  const created = await request.post("/api/explore/analyses", {
+    data: { targetKey: scope, kitId, inputs: [{ alias: "table", datasetId: result.dataset.id }] },
+  });
+  expect(created.status()).toBe(201);
+  const { analysis } = (await created.json()) as { analysis: { id: string } };
+
+  const started = await request.post(`/api/explore/analyses/${analysis.id}/runs`, { data: { executionMode: "local" } });
+  expect(started.status(), await started.text()).toBe(201);
+  const { run } = (await started.json()) as { run: { id: string; runNumber: string } };
+
+  let status = "pending";
+  let payload: { run: { status: string; artifacts: Array<{ kind: string; format: string; derivedDatasetId: string | null }>; errorTail: string | null } } | null = null;
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    const response = await request.get(`/api/explore/runs/${run.id}`);
+    payload = (await response.json()) as typeof payload;
+    status = payload?.run.status ?? "pending";
+    if (["completed", "failed", "cancelled"].includes(status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  expect(status, payload?.run.errorTail ?? "").toBe("completed");
+  const artifacts = payload!.run.artifacts;
+  expect(artifacts.some((artifact) => artifact.kind === "figure" && artifact.format === "plotly-json")).toBe(true);
+  const table = artifacts.find((artifact) => artifact.kind === "table");
+  expect(table?.derivedDatasetId, "the summary table becomes a derived dataset").toBeTruthy();
+
+  await page.goto(`/explore/runs/${run.id}`);
+  await expect(page.getByRole("heading", { name: run.runNumber })).toBeVisible();
+  await expect(page.getByText("completed")).toBeVisible();
+  await page.getByRole("tab", { name: /Code/ }).click();
+  await expect(page.getByRole("region", { name: "Executed code" })).toBeVisible();
 });

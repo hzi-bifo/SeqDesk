@@ -43,9 +43,53 @@ export async function readEnvironmentSpecs(): Promise<Map<string, string>> {
  * Make sure every shipped spec has a database record. A record whose hash no
  * longer matches the shipped spec is reported as stale so an admin can rebuild.
  */
+/**
+ * A build runs as a detached conda process. If the server restarted while it
+ * ran, the record is stuck at "building": settle it from what is on disk
+ * (a usable interpreter in the prefix means ready, a finished log without one
+ * means failed).
+ */
+type ExploreEnvironmentRecord = NonNullable<Awaited<ReturnType<typeof db.exploreEnvironment.findUnique>>>;
+
+async function reconcileBuildingRecord(record: ExploreEnvironmentRecord): Promise<ExploreEnvironmentRecord> {
+  if (record.status !== "building" || !record.prefixPath) return record;
+  const logPath = `${record.prefixPath}.log`;
+  const interpreterReady = await hasInterpreter(record.prefixPath);
+  if (interpreterReady) {
+    return db.exploreEnvironment.update({
+      where: { name: record.name },
+      data: { status: "ready", builtAt: new Date(), lastError: null },
+    });
+  }
+  const log = await fs.readFile(logPath, "utf8").catch(() => "");
+  const stale = Date.now() - record.updatedAt.getTime() > 3 * 60 * 60 * 1000;
+  if (/CondaError|EnvironmentFileNotFound|ResolvePackageNotFound|error:/i.test(log) || stale) {
+    return db.exploreEnvironment.update({
+      where: { name: record.name },
+      data: { status: "failed", lastError: (log.split("\n").slice(-30).join("\n") || "The build stopped without a result").slice(0, 4000) },
+    });
+  }
+  return record;
+}
+
+async function hasInterpreter(prefixPath: string): Promise<boolean> {
+  for (const candidate of [path.join(prefixPath, "bin", "python"), path.join(prefixPath, "bin", "Rscript")]) {
+    try {
+      await fs.access(candidate);
+      // conda writes the history file last; require it so a half-built prefix is not accepted.
+      await fs.access(path.join(prefixPath, "conda-meta", "history"));
+      return true;
+    } catch {
+      // try the next candidate
+    }
+  }
+  return false;
+}
+
 export async function listEnvironments(): Promise<ExploreEnvironmentSummary[]> {
   const specs = await readEnvironmentSpecs();
-  const records = await db.exploreEnvironment.findMany({ orderBy: { name: "asc" } });
+  const stored = await db.exploreEnvironment.findMany({ orderBy: { name: "asc" } });
+  const records = await Promise.all(stored.map((record) => reconcileBuildingRecord(record)));
   const byName = new Map(records.map((record) => [record.name, record] as const));
   const out: ExploreEnvironmentSummary[] = [];
   for (const [name, spec] of specs) {
@@ -112,7 +156,7 @@ async function environmentsRoot(): Promise<string> {
  * old one can be removed once no run references it. Runs in the background;
  * the record's status tracks progress.
  */
-export async function buildEnvironment(name: string): Promise<{ started: boolean; message: string }> {
+export async function buildEnvironment(name: string, options: { wait?: boolean } = {}): Promise<{ started: boolean; message: string; exitCode?: number | null }> {
   const specs = await readEnvironmentSpecs();
   const spec = specs.get(name);
   if (!spec) return { started: false, message: `No specification file for environment ${name}` };
@@ -137,38 +181,48 @@ export async function buildEnvironment(name: string): Promise<{ started: boolean
     data: { status: "building", lastError: null, prefixPath: prefix },
   });
 
+  // A previous attempt may have left a partial prefix behind.
+  await fs.rm(prefix, { recursive: true, force: true }).catch(() => {});
   const log = await fs.open(logPath, "w");
   const child = spawn(conda, ["env", "create", "--yes", "-p", prefix, "-f", specPath], {
     stdio: ["ignore", log.fd, log.fd],
-    detached: true,
+    detached: !options.wait,
     env: { ...process.env, CONDA_ALWAYS_YES: "true" },
   });
-  child.unref();
-  child.on("error", async (error) => {
-    await log.close().catch(() => {});
-    await db.exploreEnvironment.update({
-      where: { name },
-      data: { status: "failed", lastError: `conda could not be started: ${error.message}` },
+  if (!options.wait) child.unref();
+  const finished = new Promise<number | null>((resolve) => {
+    child.on("error", async (error) => {
+      await log.close().catch(() => {});
+      await db.exploreEnvironment.update({
+        where: { name },
+        data: { status: "failed", lastError: `conda could not be started: ${error.message}` },
+      });
+      resolve(null);
+    });
+    child.on("close", async (code) => {
+      await log.close().catch(() => {});
+      if (code === 0) {
+        await db.exploreEnvironment.update({
+          where: { name },
+          data: { status: "ready", builtAt: new Date(), lastError: null, prefixPath: prefix },
+        });
+      } else {
+        const tail = await fs
+          .readFile(logPath, "utf8")
+          .then((text) => text.split("\n").slice(-30).join("\n"))
+          .catch(() => "");
+        await db.exploreEnvironment.update({
+          where: { name },
+          data: { status: "failed", lastError: `conda env create exited with ${code}\n${tail}`.slice(0, 4000) },
+        });
+      }
+      resolve(code);
     });
   });
-  child.on("close", async (code) => {
-    await log.close().catch(() => {});
-    if (code === 0) {
-      await db.exploreEnvironment.update({
-        where: { name },
-        data: { status: "ready", builtAt: new Date(), lastError: null, prefixPath: prefix },
-      });
-    } else {
-      const tail = await fs
-        .readFile(logPath, "utf8")
-        .then((text) => text.split("\n").slice(-30).join("\n"))
-        .catch(() => "");
-      await db.exploreEnvironment.update({
-        where: { name },
-        data: { status: "failed", lastError: `conda env create exited with ${code}\n${tail}`.slice(0, 4000) },
-      });
-    }
-  });
+  if (options.wait) {
+    const exitCode = await finished;
+    return { started: true, message: exitCode === 0 ? `Built ${name} in ${prefix}` : `Build of ${name} failed (${exitCode})`, exitCode };
+  }
   return { started: true, message: `Building ${name} in ${prefix}` };
 }
 
@@ -177,8 +231,10 @@ export async function buildEnvironment(name: string): Promise<{ started: boolean
  * whether a run can be prepared.
  */
 export async function resolveReadyEnvironment(name: string): Promise<{ prefixPath: string; specHash: string } | null> {
-  const record = await db.exploreEnvironment.findUnique({ where: { name } });
-  if (!record || record.status !== "ready" || !record.prefixPath) return null;
+  const stored = await db.exploreEnvironment.findUnique({ where: { name } });
+  if (!stored) return null;
+  const record = await reconcileBuildingRecord(stored);
+  if (record.status !== "ready" || !record.prefixPath) return null;
   return { prefixPath: record.prefixPath, specHash: record.specHash };
 }
 
