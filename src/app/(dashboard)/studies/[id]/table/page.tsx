@@ -750,10 +750,9 @@ export default function StudyTablePage({
     for (const label of wanted) {
       for (const panel of info) {
         const field = panel.fields.find((entry) => entry.label === label);
-        if (field && !parts.includes(field.value)) {
-          parts.push(field.value);
-          break;
-        }
+        if (!field) continue;
+        if (!parts.includes(field.value)) parts.push(field.value);
+        break;
       }
     }
     return parts.join(" · ");
@@ -1844,49 +1843,54 @@ export default function StudyTablePage({
     </Popover>
   );
 
-  const densityToggle = (
-    <div className="inline-flex overflow-hidden rounded-md border">
-      {(["comfortable", "compact"] as const).map((d) => (
+  const segmentedToggle = <T extends string | number>(
+    label: string,
+    options: ReadonlyArray<{ value: T; label: string }>,
+    current: T,
+    onSelect: (value: T) => void
+  ) => (
+    <div
+      className="inline-flex overflow-hidden rounded-md border"
+      role="group"
+      aria-label={label}
+    >
+      {options.map((option) => (
         <button
-          key={d}
+          key={String(option.value)}
           type="button"
-          onClick={() => persistDensity(d)}
+          onClick={() => onSelect(option.value)}
+          aria-pressed={current === option.value}
           className={cn(
-            "px-2.5 py-1.5 text-xs capitalize",
-            density === d
+            "px-2.5 py-1.5 text-xs tabular-nums",
+            current === option.value
               ? "bg-muted font-medium text-foreground"
               : "text-muted-foreground hover:bg-muted/50"
           )}
         >
-          {d}
+          {option.label}
         </button>
       ))}
     </div>
   );
 
-  const zoomToggle = (
-    <div
-      className="inline-flex overflow-hidden rounded-md border"
-      role="group"
-      aria-label="Table zoom"
-    >
-      {TABLE_ZOOM_LEVELS.map((level) => (
-        <button
-          key={level}
-          type="button"
-          onClick={() => persistZoom(level)}
-          aria-pressed={zoom === level}
-          className={cn(
-            "px-2 py-1.5 text-xs tabular-nums",
-            zoom === level
-              ? "bg-muted font-medium text-foreground"
-              : "text-muted-foreground hover:bg-muted/50"
-          )}
-        >
-          {Math.round(level * 100)}%
-        </button>
-      ))}
-    </div>
+  const densityToggle = segmentedToggle<TableDensity>(
+    "Row density",
+    [
+      { value: "comfortable", label: "Comfortable" },
+      { value: "compact", label: "Compact" },
+    ],
+    density,
+    persistDensity
+  );
+
+  const zoomToggle = segmentedToggle<TableZoom>(
+    "Table zoom",
+    TABLE_ZOOM_LEVELS.map((level) => ({
+      value: level,
+      label: `${Math.round(level * 100)}%`,
+    })),
+    zoom,
+    persistZoom
   );
 
   const undoRedoControls = (
@@ -2214,7 +2218,12 @@ export default function StudyTablePage({
                 {/* Pinned to the left of the visible scroll area and sized to it
                     (100cqw), so the message stays centered in the viewport rather
                     than the full — possibly very wide — table. */}
-                <div className="sticky left-0 w-[100cqw] px-4 py-16 text-center text-muted-foreground">
+                <div
+                  className="sticky left-0 px-4 py-16 text-center text-muted-foreground"
+                  // 100cqw resolves against the (unzoomed) scroll container and
+                  // is then scaled by the table's zoom, so divide it back out.
+                  style={{ width: `calc(100cqw / ${zoom})` }}
+                >
                   <Table2 className="mx-auto mb-2 h-6 w-6" />
                   {rows.length === 0 ? (
                     <>
@@ -2409,7 +2418,7 @@ export default function StudyTablePage({
                           </span>
                         )}
                       </div>
-                      <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+                      <dl className="grid grid-cols-[fit-content(45%)_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
                         {panel.fields.map((field) => (
                           <Fragment key={field.label}>
                             <dt className="text-muted-foreground">

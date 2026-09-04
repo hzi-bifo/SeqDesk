@@ -15,6 +15,16 @@ import {
   type FacilitySampleStatus,
 } from "@/lib/sequencing/constants";
 import type { FormFieldDefinition } from "@/types/form-config";
+import { getFieldType } from "@/lib/field-types";
+// Register the field-type plugins so structured values (sequencing technology,
+// funding, billing, …) render through their own getDisplayValue below. These
+// plugin modules are server-safe (no React renderers), unlike field-types/init.
+import "@/lib/field-types/standard";
+import "@/lib/field-types/mixs";
+import "@/lib/field-types/funding";
+import "@/lib/field-types/billing";
+import "@/lib/field-types/sequencing-tech";
+import "@/lib/field-types/barcode";
 
 /**
  * One column in the study "Table overview". `group` drives the header colour so a
@@ -240,20 +250,20 @@ const studyTableSelect = {
   studyMetadata: true,
 } as const;
 
-function formatCell(value: unknown): string {
+function formatCell(value: unknown, field?: FormFieldDefinition): string {
   if (value === null || value === undefined) return "";
   if (Array.isArray(value)) {
-    return value.map((entry) => formatCell(entry)).filter(Boolean).join(", ");
+    return value.map((entry) => formatCell(entry, field)).filter(Boolean).join(", ");
   }
   if (typeof value === "object") {
-    // Structured picker values (e.g. the sequencing-technology selector stores
-    // {technologyId, technologyName, …}) read far better by their display name
-    // than as raw JSON in the overview panels.
-    const record = value as Record<string, unknown>;
-    for (const key of ["technologyName", "label", "name", "technologyId"]) {
-      const candidate = record[key];
-      if (typeof candidate === "string" && candidate.trim()) return candidate;
-    }
+    // Structured values render through their field-type plugin (the
+    // sequencing-technology selector stores {technologyId, technologyName, …}
+    // and its plugin knows to show the name). Scalars are left untouched so
+    // editable cells keep their raw stored value.
+    const display = field
+      ? getFieldType(field.type)?.getDisplayValue?.(value, field)
+      : undefined;
+    if (display && display !== "[object Object]") return display;
     return JSON.stringify(value);
   }
   return String(value);
@@ -292,6 +302,8 @@ interface FieldColumnSource {
   source: "order" | "study";
   fieldName: string;
   coreColumn?: string;
+  /** The originating form field, when the column came from a schema field. */
+  field?: FormFieldDefinition;
 }
 
 /**
@@ -569,7 +581,7 @@ export async function buildStudyTableData(
               }))
             : undefined,
       });
-      fieldColumns.push({ key, source, fieldName: field.name, coreColumn });
+      fieldColumns.push({ key, source, fieldName: field.name, coreColumn, field });
     }
   };
 
@@ -730,7 +742,7 @@ export async function buildStudyTableData(
       } else {
         raw = checklist[column.fieldName];
       }
-      cells[column.key] = formatCell(raw);
+      cells[column.key] = formatCell(raw, column.field);
     }
 
     // ── Pipeline outputs ──
@@ -779,15 +791,15 @@ export async function buildStudyTableData(
     if (field.visible === false) continue;
     if (field.type === "mixs" || field.type === "funding") continue;
     if (field.name === "_sample_association") continue;
-    const value = formatCell(studyMetadata[field.name]);
+    const value = formatCell(studyMetadata[field.name], field);
     if (value) studyFields.push({ label: field.label, value });
   }
 
   // Labels for order-level custom fields come from the order form's non-per-sample
   // fields; sequencer/library settings are explicit Order columns.
-  const orderFieldLabels = new Map<string, string>();
+  const orderFields = new Map<string, FormFieldDefinition>();
   for (const field of orderSchema.fields) {
-    if (!field.perSample) orderFieldLabels.set(field.name, field.label);
+    if (!field.perSample) orderFields.set(field.name, field);
   }
 
   const distinctOrders = new Map<string, (typeof samples)[number]["order"]>();
@@ -813,9 +825,10 @@ export async function buildStudyTableData(
       if (formatted) fields.push({ label, value: formatted });
     }
     for (const [key, value] of Object.entries(parseJsonObject(order.customFields))) {
-      const formatted = formatCell(value);
+      const field = orderFields.get(key);
+      const formatted = formatCell(value, field);
       if (formatted) {
-        fields.push({ label: orderFieldLabels.get(key) ?? humanizeKey(key), value: formatted });
+        fields.push({ label: field?.label ?? humanizeKey(key), value: formatted });
       }
     }
     if (fields.length > 0) {
