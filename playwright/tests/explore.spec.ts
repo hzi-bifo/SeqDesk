@@ -122,13 +122,16 @@ test("runs an analysis kit end to end and records its outputs", async ({ page, r
   expect(started.status(), await started.text()).toBe(201);
   const { run } = (await started.json()) as { run: { id: string; runNumber: string } };
 
+  interface RunPayload {
+    run: { status: string; artifacts: Array<{ kind: string; format: string; derivedDatasetId: string | null }>; errorTail: string | null };
+  }
   let status = "pending";
-  let payload: { run: { status: string; artifacts: Array<{ kind: string; format: string; derivedDatasetId: string | null }>; errorTail: string | null } } | null = null;
+  let payload: RunPayload | null = null;
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
     const response = await request.get(`/api/explore/runs/${run.id}`);
-    payload = (await response.json()) as typeof payload;
-    status = payload?.run.status ?? "pending";
+    payload = (await response.json()) as RunPayload;
+    status = payload.run.status;
     if (["completed", "failed", "cancelled"].includes(status)) break;
     await new Promise((resolve) => setTimeout(resolve, 5000));
   }
