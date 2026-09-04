@@ -2094,7 +2094,7 @@ export default function StudyTablePage({
   // per-column help), and a spanning placeholder row when there are no samples.
   const grid = (maxHeight: string) => (
     <div
-      className="overflow-auto rounded-lg border bg-card [container-type:inline-size]"
+      className="isolate overflow-auto rounded-lg border bg-card [container-type:inline-size]"
       style={{ maxHeight }}
     >
       <table
