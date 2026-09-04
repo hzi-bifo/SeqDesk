@@ -1,0 +1,40 @@
+{
+  "kitVersion": 1,
+  "id": "table-summary",
+  "name": "Table summary",
+  "description": "Column-level summary statistics and distribution plots for any table. Numeric columns get count, mean, standard deviation, minimum, median and maximum; text, boolean and date columns get the number of distinct values and the most frequent value. Up to max_columns numeric columns are drawn as small-multiple histograms, coloured by the group role when the dataset maps one.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [
+    {
+      "alias": "table",
+      "label": "Table",
+      "description": "Any dataset. Roles are optional; a mapped group role colours the histograms and a mapped sample role adds a sample count.",
+      "tableKind": null,
+      "requiredRoles": [],
+      "optionalRoles": ["sample", "group", "value", "count"]
+    }
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "max_columns": {
+        "type": "integer",
+        "title": "Numeric columns to plot",
+        "description": "At most this many numeric columns (in table order) get a histogram panel.",
+        "default": 12,
+        "minimum": 1,
+        "maximum": 64
+      }
+    }
+  },
+  "outputs": [
+    { "name": "summary", "kind": "table", "description": "One row per column with type, counts and summary statistics." },
+    { "name": "distributions", "kind": "figure", "description": "Small-multiple histograms of the numeric columns." }
+  ],
+  "citation": "Built with pandas (McKinney 2010; The pandas development team, https://pandas.pydata.org), NumPy (Harris et al. 2020, https://numpy.org) and Plotly (Plotly Technologies Inc., https://plotly.com/python/). See README.md for details.",
+  "tags": ["summary", "descriptive", "any-table"],
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}

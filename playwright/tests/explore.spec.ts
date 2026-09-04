@@ -4,22 +4,33 @@ import { expect, test, type APIRequestContext } from "@playwright/test";
 // and the module gate. Uses the seeded researcher (owner of the seeded studies).
 test.use({ storageState: "playwright/.auth/researcher.json" });
 
-async function firstStudyScope(request: APIRequestContext): Promise<string> {
+interface BuildResult {
+  dataset: { id: string; name: string; currentVersion: { contentHash: string } };
+  version: { rowCount: number };
+}
+
+/**
+ * The first study of the researcher whose samples dataset has rows, built
+ * through the API. Seeded studies without samples are skipped.
+ */
+async function buildSamplesDataset(request: APIRequestContext): Promise<{ scope: string; result: BuildResult }> {
   const response = await request.get("/api/explore/scopes");
   expect(response.ok()).toBeTruthy();
   const { scopes } = (await response.json()) as { scopes: Array<{ targetKey: string; type: string }> };
-  const study = scopes.find((scope) => scope.type === "study");
-  expect(study, "the researcher owns at least one study").toBeTruthy();
-  return study!.targetKey;
+  for (const scope of scopes.filter((entry) => entry.type === "study")) {
+    const build = await request.post("/api/explore/datasets/build", { data: { targetKey: scope.targetKey, kind: "samples" } });
+    if (build.status() === 404) continue;
+    expect([200, 201]).toContain(build.status());
+    const result = (await build.json()) as BuildResult;
+    if (result.version.rowCount > 0) return { scope: scope.targetKey, result };
+  }
+  test.skip(true, "the seeded researcher owns no study with samples");
+  throw new Error("unreachable");
 }
 
 test("builds the samples dataset of a study and opens it in the table view", async ({ page, request }) => {
-  const scope = await firstStudyScope(request);
-
-  const build = await request.post("/api/explore/datasets/build", { data: { targetKey: scope, kind: "samples" } });
-  expect([200, 201]).toContain(build.status());
-  const { dataset, version } = (await build.json()) as { dataset: { id: string; name: string }; version: { rowCount: number } };
-  expect(version.rowCount).toBeGreaterThan(0);
+  const { scope, result } = await buildSamplesDataset(request);
+  const { dataset } = result;
 
   await page.goto(`/explore?scope=${encodeURIComponent(scope)}`);
   await expect(page.getByRole("heading", { name: "Explore" })).toBeVisible();
@@ -45,9 +56,8 @@ test("builds the samples dataset of a study and opens it in the table view", asy
 });
 
 test("records curation edits without changing the stored version", async ({ page, request }) => {
-  const scope = await firstStudyScope(request);
-  const build = await request.post("/api/explore/datasets/build", { data: { targetKey: scope, kind: "samples" } });
-  const { dataset } = (await build.json()) as { dataset: { id: string; currentVersion: { contentHash: string } } };
+  const { result } = await buildSamplesDataset(request);
+  const { dataset } = result;
 
   const rows = await request.get(`/api/explore/datasets/${dataset.id}/rows?limit=1`);
   const { rows: page1 } = (await rows.json()) as { rows: Array<{ rowKey: string }> };

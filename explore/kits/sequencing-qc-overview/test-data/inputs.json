@@ -1,0 +1,30 @@
+{
+  "inputs": {
+    "sequencing": {
+      "path": "inputs/sequencing.tsv",
+      "schemaPath": "inputs/sequencing.schema.json",
+      "tableKind": "sample-summary",
+      "roles": {
+        "sample": "sample_db_id",
+        "date": "run_date"
+      },
+      "datasetId": "ds_sequencing_test",
+      "versionId": "ds_sequencing_test_v1",
+      "rowCount": 20,
+      "name": "Sequencing of the study"
+    }
+  },
+  "params": {
+    "low_read_threshold": 10000
+  },
+  "outputDir": "outputs",
+  "run": {
+    "id": "run_sequencing_test",
+    "runNumber": "EXP-20260904-002",
+    "analysisId": "analysis_sequencing_test",
+    "revision": 1
+  },
+  "curation": {
+    "lists": []
+  }
+}

@@ -1,0 +1,26 @@
+# Conda environment for R Explore kits.
+# Referenced from kit.json as  "environment": "seqdesk-explore-r"  (the file name
+# without .yml). Like the Python environment it is created once per content
+# hash of this file and reused until the file changes.
+#
+# R kits read the same run-folder contract as Python kits (inputs.json, one TSV
+# plus schema per input, outputs/manifest.json); jsonlite and readr cover that.
+name: seqdesk-explore-r
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - r-base=4.3.*
+  - r-tidyverse
+  - r-vegan
+  - r-ggplot2
+  - r-plotly
+  - r-jsonlite
+  # MaAsLin 3 exists on bioconda (bioconductor-maaslin3 1.2.0) but only as an
+  # R 4.5 build (r45hdfd78af_0), which cannot be installed next to r-base 4.3.
+  # Either move this file to r-base=4.5.* and add "bioconductor-maaslin3", or
+  # install it from GitHub inside the environment:
+  #   remotes::install_github("biobakery/maaslin3")
+  # MaAsLin 2 has R 4.3 builds and is included as the supported alternative.
+  - bioconductor-maaslin2=1.18.*

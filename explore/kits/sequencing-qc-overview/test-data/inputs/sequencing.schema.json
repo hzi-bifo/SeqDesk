@@ -1,0 +1,156 @@
+{
+  "schema": {
+    "columns": [
+      {
+        "key": "sample_db_id",
+        "label": "Sample record",
+        "type": "string",
+        "role": "sample",
+        "group": "identity"
+      },
+      {
+        "key": "sample_id",
+        "label": "Sample ID",
+        "type": "string",
+        "group": "identity"
+      },
+      {
+        "key": "run_db_id",
+        "label": "Run record",
+        "type": "string",
+        "group": "run"
+      },
+      {
+        "key": "run_id",
+        "label": "Run ID",
+        "type": "string",
+        "group": "run"
+      },
+      {
+        "key": "run_name",
+        "label": "Run name",
+        "type": "string",
+        "group": "run"
+      },
+      {
+        "key": "platform",
+        "label": "Platform",
+        "type": "string",
+        "group": "run"
+      },
+      {
+        "key": "instrument",
+        "label": "Instrument",
+        "type": "string",
+        "group": "run"
+      },
+      {
+        "key": "run_date",
+        "label": "Run date",
+        "type": "date",
+        "role": "date",
+        "group": "run"
+      },
+      {
+        "key": "barcode",
+        "label": "Barcode",
+        "type": "string",
+        "group": "run"
+      },
+      {
+        "key": "q30_score",
+        "label": "Q30 score",
+        "type": "number",
+        "group": "run"
+      },
+      {
+        "key": "cluster_density",
+        "label": "Cluster density",
+        "type": "number",
+        "group": "run"
+      },
+      {
+        "key": "pass_filter_pct",
+        "label": "Pass filter %",
+        "type": "number",
+        "group": "run"
+      },
+      {
+        "key": "run_total_reads",
+        "label": "Run total reads",
+        "type": "number",
+        "group": "run"
+      },
+      {
+        "key": "run_total_bases",
+        "label": "Run total bases",
+        "type": "number",
+        "group": "run"
+      },
+      {
+        "key": "read_file_1",
+        "label": "Read file 1",
+        "type": "string",
+        "group": "reads"
+      },
+      {
+        "key": "read_file_2",
+        "label": "Read file 2",
+        "type": "string",
+        "group": "reads"
+      },
+      {
+        "key": "read_count_1",
+        "label": "Read count 1",
+        "type": "number",
+        "group": "reads"
+      },
+      {
+        "key": "read_count_2",
+        "label": "Read count 2",
+        "type": "number",
+        "group": "reads"
+      },
+      {
+        "key": "avg_quality_1",
+        "label": "Average quality 1",
+        "type": "number",
+        "group": "reads"
+      },
+      {
+        "key": "avg_quality_2",
+        "label": "Average quality 2",
+        "type": "number",
+        "group": "reads"
+      },
+      {
+        "key": "data_class",
+        "label": "Data class",
+        "type": "string",
+        "group": "reads"
+      },
+      {
+        "key": "read_active",
+        "label": "Active read",
+        "type": "boolean",
+        "group": "reads"
+      }
+    ]
+  },
+  "provenance": {
+    "builtAt": "2026-09-04T12:00:00.000Z",
+    "builder": "sequencing@1",
+    "sources": [
+      {
+        "type": "study",
+        "id": "study_synthetic",
+        "label": "Synthetic study"
+      }
+    ],
+    "notes": [
+      "18 samples, 20 rows",
+      "Synthetic data generated for the kit self-test; no real samples."
+    ]
+  },
+  "contentHash": "045eefab3ca77c9e2e8462eef6d3b006177588defa169220f7f189b6330ca238"
+}

@@ -1,0 +1,31 @@
+{
+  "inputs": {
+    "table": {
+      "path": "inputs/table.tsv",
+      "schemaPath": "inputs/table.schema.json",
+      "tableKind": null,
+      "roles": {
+        "sample": "sample_id",
+        "group": "condition",
+        "count": "read_count"
+      },
+      "datasetId": "ds_table_summary_test",
+      "versionId": "ds_table_summary_test_v1",
+      "rowCount": 40,
+      "name": "Synthetic sample table"
+    }
+  },
+  "params": {
+    "max_columns": 12
+  },
+  "outputDir": "outputs",
+  "run": {
+    "id": "run_table_test",
+    "runNumber": "EXP-20260904-001",
+    "analysisId": "analysis_table_test",
+    "revision": 1
+  },
+  "curation": {
+    "lists": []
+  }
+}

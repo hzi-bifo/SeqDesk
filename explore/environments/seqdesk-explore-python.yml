@@ -1,0 +1,33 @@
+# Conda environment for Python Explore kits.
+# Referenced from kit.json as  "environment": "seqdesk-explore-python"  (the file
+# name without .yml). The app creates the environment once per content hash of
+# this file and reuses it for every run; editing anything here produces a new
+# hash and therefore a fresh environment on the next run.
+#
+# Keep constraints loose enough to solve on linux-64 and osx-arm64; pin only
+# where behaviour matters. The seqdesk_explore helper is not installed into the
+# environment: the app puts explore/lib/python on PYTHONPATH at run time.
+name: seqdesk-explore-python
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.11.*
+  - pandas>=2.1
+  - numpy>=1.26
+  - scipy>=1.11
+  - statsmodels>=0.14
+  - scikit-learn>=1.3
+  # plotly >= 6.1 is the first release that works with kaleido 1.x; plotly 7
+  # no longer supports kaleido 0.x at all.
+  - plotly>=6.1
+  # Static PNG export of plotly figures. conda-forge packages kaleido as
+  # "python-kaleido". Version 1.x needs a Chrome/Chromium binary on the host
+  # (run `plotly_get_chrome` once inside the environment, or point
+  # BROWSER_PATH at an existing binary). Without it the helper keeps the
+  # interactive plotly-json artifact and records a note; the run still succeeds.
+  - python-kaleido>=1.0
+  # matplotlib-base is matplotlib without the Qt/Tk GUI backends.
+  - matplotlib-base>=3.8
+  - openpyxl>=3.1
+  - pytest>=7
