@@ -1,0 +1,12 @@
+# CODEOWNERS — automatic review routing
+#
+# Syntax: <path pattern>  <owner ...>
+# Owners can be GitHub teams (@org/team) or users (@username).
+# See https://docs.github.com/articles/about-code-owners
+#
+# NOTE: The owner below is a PLACEHOLDER. A maintainer must replace it with a
+# real GitHub team or user before this file takes effect (an unknown owner is
+# silently ignored by GitHub and no review will be requested).
+
+# Contributed pipeline packages — route review to the pipeline maintainers.
+/pipelines/ @hzi-bifo/seqdesk-maintainers
