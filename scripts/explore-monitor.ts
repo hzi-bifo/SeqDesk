@@ -11,6 +11,11 @@ import { finalizeExploreRun } from "../src/lib/explore/run-finalize";
 
 const DEFAULT_INTERVAL_MS = 10000;
 const ACTIVE = ["pending", "queued", "running"];
+// A local process that is gone without a marker is only declared dead after
+// this grace period: the wrapper writes the marker in its EXIT trap, so a run
+// that finishes between the marker check and the process check would
+// otherwise be failed although it succeeded.
+const LOCAL_EXIT_GRACE_MS = 30 * 1000;
 
 /**
  * Bring one active Explore run up to date. The canonical completion signal is
@@ -24,6 +29,7 @@ export async function syncExploreRun(run: {
   runFolder: string | null;
   queueJobId: string | null;
   createdAt: Date;
+  startedAt?: Date | null;
 }): Promise<void> {
   if (!run.runFolder) {
     // Preparation crashed before a folder existed; give it a minute, then fail.
@@ -67,7 +73,15 @@ export async function syncExploreRun(run: {
     // Scheduler says done but no marker yet: wait for the shared filesystem.
     if (!isQueueSnapshotRetryable(snapshot)) update.status = run.status;
   } else if (!snapshot.identityVerified && run.status === "running" && snapshot.source === "local") {
-    // The local process is gone and no marker was written.
+    // The local process is gone. Look for the marker once more: the wrapper
+    // writes it while exiting, so it may have appeared since the first check.
+    const lateExitCode = await inferPipelineExitCode(run.runFolder);
+    if (lateExitCode !== null) {
+      await finalizeExploreRun(run.id, lateExitCode);
+      return;
+    }
+    const since = run.startedAt ?? run.createdAt;
+    if (Date.now() - since.getTime() < LOCAL_EXIT_GRACE_MS) return;
     update.status = "failed";
     update.completedAt = new Date();
     update.errorTail = `${errorTail ?? ""}\n${snapshot.reason ?? "The analysis process disappeared."}`.trim();
@@ -79,7 +93,7 @@ export async function syncExploreRun(run: {
 async function runOnce(): Promise<void> {
   const runs = await db.exploreAnalysisRun.findMany({
     where: { status: { in: ACTIVE } },
-    select: { id: true, status: true, runFolder: true, queueJobId: true, createdAt: true },
+    select: { id: true, status: true, runFolder: true, queueJobId: true, createdAt: true, startedAt: true },
   });
   for (const run of runs) {
     try {
