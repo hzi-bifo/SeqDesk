@@ -13,6 +13,7 @@ import {
   type FacilityWorkflowRole,
   type SystemRole,
 } from "@/lib/accounts/invite-role";
+import { digestInviteCode } from "@/lib/accounts/invite-secret.server";
 import { db } from "@/lib/db";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { Prisma } from "@prisma/client";
@@ -31,7 +32,7 @@ const createInviteSchema = z
   .strict();
 
 function serializeInviteGrant(invite: {
-  code: string;
+  code?: string | null;
   targetSystemRole?: string | null;
   targetFacilityWorkflowRole?: string | null;
 }) {
@@ -39,6 +40,32 @@ function serializeInviteGrant(invite: {
   return {
     grant,
     accountRole: legacyRoleForSystemRole(grant.systemRole),
+  };
+}
+
+function serializeInvite(invite: {
+  id: string;
+  code?: string | null;
+  email?: string | null;
+  expiresAt?: Date;
+  createdAt?: Date;
+  usedAt?: Date | null;
+  revokedAt?: Date | null;
+  createdBy?: { firstName: string; lastName: string };
+  usedBy?: { firstName: string; lastName: string; email: string } | null;
+  targetSystemRole?: string | null;
+  targetFacilityWorkflowRole?: string | null;
+}) {
+  return {
+    id: invite.id,
+    email: invite.email ?? null,
+    expiresAt: invite.expiresAt,
+    createdAt: invite.createdAt,
+    usedAt: invite.usedAt ?? null,
+    revokedAt: invite.revokedAt ?? null,
+    createdBy: invite.createdBy,
+    usedBy: invite.usedBy ?? null,
+    ...serializeInviteGrant(invite),
   };
 }
 
@@ -59,6 +86,20 @@ export async function GET() {
   }
 
   try {
+    // Remove plaintext from inactive legacy rows before returning history.
+    // Active legacy rows remain redeemable for their original lifetime, but
+    // are never serialized back to the browser.
+    await db.adminInvite.updateMany({
+      where: {
+        code: { not: null },
+        OR: [
+          { usedAt: { not: null } },
+          { revokedAt: { not: null } },
+          { expiresAt: { lte: new Date() } },
+        ],
+      },
+      data: { code: null },
+    });
     const invites = await db.adminInvite.findMany({
       orderBy: { createdAt: "desc" },
       include: {
@@ -72,10 +113,7 @@ export async function GET() {
     });
 
     return NextResponse.json(
-      invites.map((invite) => ({
-        ...invite,
-        ...serializeInviteGrant(invite),
-      }))
+      invites.map((invite) => serializeInvite(invite))
     );
   } catch (error) {
     console.error("Failed to fetch invites:", error);
@@ -173,15 +211,18 @@ export async function POST(request: NextRequest) {
     }
 
     let invite = null;
+    let createdCode = "";
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const code = formatInviteCode(
         randomBytes(24).toString("hex"),
         systemRole
       );
+      const codeDigest = digestInviteCode(code);
       try {
         invite = await db.adminInvite.create({
           data: {
-            code,
+            code: null,
+            codeDigest,
             email: normalizedEmail || null,
             expiresAt,
             createdById: decision.principal!.id,
@@ -194,6 +235,7 @@ export async function POST(request: NextRequest) {
             },
           },
         });
+        createdCode = code;
         break;
       } catch (error) {
         if (
@@ -214,7 +256,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(
-      { ...invite, ...serializeInviteGrant(invite) },
+      { ...serializeInvite(invite), code: createdCode },
       { status: 201 }
     );
   } catch (error) {

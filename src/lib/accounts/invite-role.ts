@@ -14,7 +14,7 @@ export interface InviteGrant {
 }
 
 export interface StoredInviteGrant {
-  code: string;
+  code?: string | null;
   targetSystemRole?: string | null;
   targetFacilityWorkflowRole?: string | null;
 }
@@ -83,7 +83,11 @@ export function getInviteGrant(invite: StoredInviteGrant): InviteGrant {
     };
   }
 
-  return invite.code.trim().toUpperCase().startsWith(MEMBER_INVITE_PREFIX)
+  const legacyCode = invite.code?.trim().toUpperCase();
+  if (!legacyCode) {
+    return { systemRole: "MEMBER", facilityWorkflowRole: "REQUESTER" };
+  }
+  return legacyCode.startsWith(MEMBER_INVITE_PREFIX)
     ? { systemRole: "MEMBER", facilityWorkflowRole: "REQUESTER" }
     : { systemRole: "ADMIN", facilityWorkflowRole: "OPERATOR" };
 }

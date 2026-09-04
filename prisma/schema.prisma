@@ -844,7 +844,11 @@ model TicketMessage {
 
 model AdminInvite {
   id          String    @id @default(cuid())
-  code        String    @unique
+  // Legacy plaintext invitation secret. New invitations leave this null and
+  // persist only codeDigest; retained temporarily so still-active pre-upgrade
+  // invitations can be redeemed until they expire or are revoked.
+  code        String?   @unique
+  codeDigest  String?   @unique
   email       String?
   expiresAt   DateTime
   createdAt   DateTime  @default(now())

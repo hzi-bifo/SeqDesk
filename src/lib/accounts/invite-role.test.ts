@@ -23,6 +23,13 @@ describe("invite account roles", () => {
     expect(getInviteAccountRole("M-ABCD1234")).toBe("RESEARCHER");
   });
 
+  it("falls back conservatively when neither explicit grants nor a legacy code exist", () => {
+    expect(getInviteGrant({ code: null })).toEqual({
+      systemRole: "MEMBER",
+      facilityWorkflowRole: "REQUESTER",
+    });
+  });
+
   it("validates supported target roles", () => {
     expect(isInviteAccountRole("RESEARCHER")).toBe(true);
     expect(isInviteAccountRole("FACILITY_ADMIN")).toBe(true);
