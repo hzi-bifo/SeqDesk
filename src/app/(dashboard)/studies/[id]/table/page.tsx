@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   use,
   useEffect,
   useRef,
@@ -151,6 +152,9 @@ const COLUMN_GROUP_ORDER: StudyTableColumnGroup[] = [
 ];
 
 type TableDensity = "comfortable" | "compact";
+// Table zoom levels (Google-Sheets-style) so more columns fit on screen.
+const TABLE_ZOOM_LEVELS = [0.6, 0.8, 1, 1.1] as const;
+type TableZoom = (typeof TABLE_ZOOM_LEVELS)[number];
 
 // One level of a multi-level (Excel-style) sort: column key + direction.
 type SortLevel = { key: string; dir: "asc" | "desc" };
@@ -553,7 +557,9 @@ export default function StudyTablePage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
-  const [infoOpen, setInfoOpen] = useState(true);
+  // Collapsed by default: the sample table is the point of this page, the
+  // study/order panels are context. The choice persists per study.
+  const [infoOpen, setInfoOpen] = useState(false);
   const [mixsPickerOpen, setMixsPickerOpen] = useState(false);
   const [mixsSearch, setMixsSearch] = useState("");
   const [mixsBusy, setMixsBusy] = useState(false);
@@ -568,6 +574,7 @@ export default function StudyTablePage({
   );
   const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
   const [density, setDensity] = useState<TableDensity>("comfortable");
+  const [zoom, setZoom] = useState<TableZoom>(1);
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [statusMenuOpen, setStatusMenuOpen] = useState(false);
   // Bulk edit: set one editable field across all currently-shown rows.
@@ -595,6 +602,8 @@ export default function StudyTablePage({
 
   const hiddenKey = `seqdesk:study-table:${id}:hidden`;
   const densityKey = `seqdesk:study-table:${id}:density`;
+  const zoomKey = `seqdesk:study-table:${id}:zoom`;
+  const infoOpenKey = `seqdesk:study-table:${id}:info-open`;
 
   // Restore persisted view preferences once per study (in an effect, to avoid a
   // hydration mismatch from reading localStorage during render).
@@ -611,6 +620,10 @@ export default function StudyTablePage({
       if (rawDensity === "compact" || rawDensity === "comfortable") {
         setDensity(rawDensity);
       }
+      const rawZoom = Number(localStorage.getItem(zoomKey));
+      const zoomLevel = TABLE_ZOOM_LEVELS.find((level) => level === rawZoom);
+      if (zoomLevel) setZoom(zoomLevel);
+      if (localStorage.getItem(infoOpenKey) === "1") setInfoOpen(true);
     } catch {
       // ignore unreadable/disabled storage
     }
@@ -635,6 +648,23 @@ export default function StudyTablePage({
     setDensity(next);
     try {
       localStorage.setItem(densityKey, next);
+    } catch {
+      // ignore
+    }
+  };
+  const persistZoom = (next: TableZoom) => {
+    setZoom(next);
+    try {
+      localStorage.setItem(zoomKey, String(next));
+    } catch {
+      // ignore
+    }
+  };
+  const toggleInfoOpen = () => {
+    const next = !infoOpen;
+    setInfoOpen(next);
+    try {
+      localStorage.setItem(infoOpenKey, next ? "1" : "0");
     } catch {
       // ignore
     }
@@ -711,6 +741,22 @@ export default function StudyTablePage({
   }
 
   const { study, columns, rows, info, perStudy } = data;
+
+  // One-line digest shown in the collapsed info header (checklist, instrument,
+  // library strategy) so the panels can stay folded without losing context.
+  const infoSummary = (() => {
+    const wanted = ["MIxS checklist", "Instrument", "Library strategy"];
+    const parts: string[] = [];
+    for (const label of wanted) {
+      for (const panel of info) {
+        const field = panel.fields.find((entry) => entry.label === label);
+        if (!field) continue;
+        if (!parts.includes(field.value)) parts.push(field.value);
+        break;
+      }
+    }
+    return parts.join(" · ");
+  })();
 
   // Clicking a header is a quick single-column sort (asc → desc → off); the Sort
   // menu builds the multi-level sort.
@@ -1797,24 +1843,54 @@ export default function StudyTablePage({
     </Popover>
   );
 
-  const densityToggle = (
-    <div className="inline-flex overflow-hidden rounded-md border">
-      {(["comfortable", "compact"] as const).map((d) => (
+  const segmentedToggle = <T extends string | number>(
+    label: string,
+    options: ReadonlyArray<{ value: T; label: string }>,
+    current: T,
+    onSelect: (value: T) => void
+  ) => (
+    <div
+      className="inline-flex overflow-hidden rounded-md border"
+      role="group"
+      aria-label={label}
+    >
+      {options.map((option) => (
         <button
-          key={d}
+          key={String(option.value)}
           type="button"
-          onClick={() => persistDensity(d)}
+          onClick={() => onSelect(option.value)}
+          aria-pressed={current === option.value}
           className={cn(
-            "px-2.5 py-1.5 text-xs capitalize",
-            density === d
+            "px-2.5 py-1.5 text-xs tabular-nums",
+            current === option.value
               ? "bg-muted font-medium text-foreground"
               : "text-muted-foreground hover:bg-muted/50"
           )}
         >
-          {d}
+          {option.label}
         </button>
       ))}
     </div>
+  );
+
+  const densityToggle = segmentedToggle<TableDensity>(
+    "Row density",
+    [
+      { value: "comfortable", label: "Comfortable" },
+      { value: "compact", label: "Compact" },
+    ],
+    density,
+    persistDensity
+  );
+
+  const zoomToggle = segmentedToggle<TableZoom>(
+    "Table zoom",
+    TABLE_ZOOM_LEVELS.map((level) => ({
+      value: level,
+      label: `${Math.round(level * 100)}%`,
+    })),
+    zoom,
+    persistZoom
   );
 
   const undoRedoControls = (
@@ -1888,6 +1964,7 @@ export default function StudyTablePage({
       {importButton}
       {undoRedoControls}
       {densityToggle}
+      {zoomToggle}
       {validationCount > 0 && (
         <span className="inline-flex items-center gap-1 rounded-md border border-destructive/20 bg-destructive/5 px-2 py-1 text-xs font-medium text-destructive">
           <AlertCircle className="h-3.5 w-3.5" />
@@ -2021,10 +2098,13 @@ export default function StudyTablePage({
   // per-column help), and a spanning placeholder row when there are no samples.
   const grid = (maxHeight: string) => (
     <div
-      className="overflow-auto rounded-lg border bg-card [container-type:inline-size]"
+      className="isolate overflow-auto rounded-lg border bg-card [container-type:inline-size]"
       style={{ maxHeight }}
     >
-      <table className="w-full border-collapse text-sm">
+      <table
+        className="w-full border-collapse text-sm"
+        style={zoom === 1 ? undefined : { zoom }}
+      >
         <thead>
           <tr>
             {renderColumns.map((column, index) => {
@@ -2138,7 +2218,12 @@ export default function StudyTablePage({
                 {/* Pinned to the left of the visible scroll area and sized to it
                     (100cqw), so the message stays centered in the viewport rather
                     than the full — possibly very wide — table. */}
-                <div className="sticky left-0 w-[100cqw] px-4 py-16 text-center text-muted-foreground">
+                <div
+                  className="sticky left-0 px-4 py-16 text-center text-muted-foreground"
+                  // 100cqw resolves against the (unzoomed) scroll container and
+                  // is then scaled by the table's zoom, so divide it back out.
+                  style={{ width: `calc(100cqw / ${zoom})` }}
+                >
                   <Table2 className="mx-auto mb-2 h-6 w-6" />
                   {rows.length === 0 ? (
                     <>
@@ -2288,48 +2373,61 @@ export default function StudyTablePage({
             </div>
           </div>
 
-          {/* Study & sequencing information (everything that is not per-sample) */}
+          {/* Study & sequencing information (everything that is not per-sample).
+              Collapsed by default so the sample table stays the focus; the
+              header carries a one-line summary of the panels while folded. */}
           {info.length > 0 && (
             <div className="rounded-lg border">
               <button
                 type="button"
-                onClick={() => setInfoOpen((open) => !open)}
-                className="flex w-full items-center gap-2 px-4 py-2 text-sm font-medium hover:bg-muted/40"
+                onClick={toggleInfoOpen}
+                aria-expanded={infoOpen}
+                className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm hover:bg-muted/40"
               >
                 {infoOpen ? (
-                  <ChevronDown className="h-4 w-4" />
+                  <ChevronDown className="h-4 w-4 flex-shrink-0" />
                 ) : (
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="h-4 w-4 flex-shrink-0" />
                 )}
-                Study &amp; sequencing information
+                <span className="font-medium">
+                  Study &amp; sequencing information
+                </span>
+                {!infoOpen && infoSummary && (
+                  <span className="min-w-0 truncate text-muted-foreground">
+                    · {infoSummary}
+                  </span>
+                )}
               </button>
               {infoOpen && (
-                <div className="grid gap-3 border-t p-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-3 border-t p-3 [grid-template-columns:repeat(auto-fit,minmax(20rem,1fr))]">
                   {info.map((panel, index) => (
                     <div
                       key={`${panel.heading}-${panel.subheading ?? index}`}
-                      className="rounded-lg border bg-muted/30 p-3"
+                      className="min-w-0 rounded-lg border bg-muted/30 p-3"
                     >
-                      <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+                      <div className="mb-2 flex min-w-0 flex-wrap items-baseline gap-x-2">
                         <span className="text-sm font-semibold">
                           {panel.heading}
                         </span>
                         {panel.subheading && (
-                          <span className="truncate text-xs text-muted-foreground">
+                          <span
+                            className="min-w-0 truncate text-xs text-muted-foreground"
+                            title={panel.subheading}
+                          >
                             {panel.subheading}
                           </span>
                         )}
                       </div>
-                      <dl className="space-y-1 text-sm">
+                      <dl className="grid grid-cols-[fit-content(45%)_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
                         {panel.fields.map((field) => (
-                          <div key={field.label} className="flex gap-2">
-                            <dt className="shrink-0 text-muted-foreground">
-                              {field.label}:
+                          <Fragment key={field.label}>
+                            <dt className="text-muted-foreground">
+                              {field.label}
                             </dt>
                             <dd className="min-w-0 break-words font-medium">
                               <InfoFieldValue value={field.value} />
                             </dd>
-                          </div>
+                          </Fragment>
                         ))}
                       </dl>
                     </div>
