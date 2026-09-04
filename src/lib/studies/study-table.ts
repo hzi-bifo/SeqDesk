@@ -245,7 +245,17 @@ function formatCell(value: unknown): string {
   if (Array.isArray(value)) {
     return value.map((entry) => formatCell(entry)).filter(Boolean).join(", ");
   }
-  if (typeof value === "object") return JSON.stringify(value);
+  if (typeof value === "object") {
+    // Structured picker values (e.g. the sequencing-technology selector stores
+    // {technologyId, technologyName, …}) read far better by their display name
+    // than as raw JSON in the overview panels.
+    const record = value as Record<string, unknown>;
+    for (const key of ["technologyName", "label", "name", "technologyId"]) {
+      const candidate = record[key];
+      if (typeof candidate === "string" && candidate.trim()) return candidate;
+    }
+    return JSON.stringify(value);
+  }
   return String(value);
 }
 
