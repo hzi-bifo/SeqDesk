@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import useSWR from "swr";
-import { Activity, ArrowLeft, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Activity, ArrowLeft, Grid3x3, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -235,12 +235,20 @@ export default function ExploreDatasetPage() {
         </div>
         <div className="flex items-center gap-2">
           {subjectTimelineReady && (
-            <Button asChild size="sm">
-              <Link href={`/explore/datasets/${dataset.id}/subject-timeline`}>
-                <Activity className="mr-2 h-4 w-4" />
-                Subject timeline
-              </Link>
-            </Button>
+            <>
+              <Button asChild size="sm">
+                <Link href={`/explore/datasets/${dataset.id}/subject-timeline`}>
+                  <Activity className="mr-2 h-4 w-4" />
+                  Subject timeline
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <Link href={`/explore/datasets/${dataset.id}/heatmap`}>
+                  <Grid3x3 className="mr-2 h-4 w-4" />
+                  Heatmap
+                </Link>
+              </Button>
+            </>
           )}
           <Button asChild variant="outline" size="sm">
             <Link href={`/explore/curation?scope=${encodeURIComponent(dataset.targetKey)}`}>Curated lists</Link>
