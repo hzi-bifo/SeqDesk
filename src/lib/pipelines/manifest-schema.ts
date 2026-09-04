@@ -253,6 +253,18 @@ export const ManifestSchema = z
             .strict()
             .optional(),
           result: PipelineResultContractSchema.optional(),
+          // Declares that this output is a delimited table Explore can turn
+          // into a dataset. `roles` maps Explore column roles to column names.
+          table: z
+            .object({
+              tableKind: z.string().min(1),
+              format: z.enum(["tsv", "csv"]).optional(),
+              sampleColumn: z.string().min(1).optional(),
+              roles: z.record(z.string().min(1), z.string().min(1)).optional(),
+              skipLinesStartingWith: z.string().min(1).optional(),
+            })
+            .strict()
+            .optional(),
           writeback: z
             .object({
               target: z.literal("Read"),

@@ -1,0 +1,1312 @@
+{
+  "seedId": "clinical-metagenomics",
+  "label": "Clinical metagenomics (urine and ascites)",
+  "description": "Curated pathogen tiers for urine and ascites, commensal flora, skin-associated bacteria and likely artifacts. Ported from the INDIVO Explorer curation seed; entries carry notes and literature references. Tiers follow the BILULU urine traffic light and the SBP literature for ascites.",
+  "lists": [
+    {
+      "listId": "urine_verified",
+      "label": "Urine · typically uropathogenic",
+      "site": "Urine",
+      "tier": "verified",
+      "role": "pathogen",
+      "color": "#C0392B",
+      "help": "BILULU red tier: considered the causative agent of a symptomatic UTI  essentially regardless of colony count.",
+      "entries": [
+        {
+          "name": "Acinetobacter baumannii",
+          "note": "Major multidrug-resistant Gram-negative cause of catheter-associated and complicated/nosocomial UTI; roughly 1 in 5 A. baumannii clinical isolates come from urinary sites and several centers report it among the most comm…",
+          "refs": [
+            "{\"title\": \"Urinary tract colonization is enhanced by a plasmid that regulates uropathogenic Acinetobacter baumannii chromosomal genes\", \"url\": \"https://doi.org/10.1038/s41467-019-10706-y\", \"year\": 2019}"
+          ]
+        },
+        {
+          "name": "Aerococcus urinae",
+          "note": "Valid species (LPSN 1992). Recognized fastidious Gram-positive uropathogen; causes cystitis, pyelonephritis, urosepsis, endocarditis. Causative in symptomatic pure/predominant growth. Verified confirmed.",
+          "refs": [
+            "{\"title\": \"Aerococcus urinae: an emerging gram-positive pathogen causing urinary tract infection\", \"url\": \"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8380466/\", \"year\": 2021}"
+          ]
+        },
+        {
+          "name": "Citrobacter freundii",
+          "note": "Valid Enterobacterales uropathogen (BILULU RED tier). Causative in complicated/nosocomial UTI; catheter/instrumentation-linked, often ESBL/AmpC. Verified confirmed.",
+          "refs": [
+            "{\"title\": \"Citrobacter: An emerging health care associated urinary pathogen\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC3836000/\", \"year\": 2013}"
+          ]
+        },
+        {
+          "name": "Corynebacterium urealyticum",
+          "note": "Valid name (Pitcher 1992, former CDC group D-2). Urease-positive uropathogen causing alkaline-encrusted cystitis/pyelitis with struvite; verified RED tier confirmed.",
+          "refs": [
+            "{\"title\": \"Encrusted Uropathy: A Comprehensive Overview\\u2014To the Bottom of the Crust\", \"url\": \"https://www.frontiersin.org/journals/medicine/articles/10.3389/fmed.2020.609024/full\", \"year\": 2020}"
+          ]
+        },
+        {
+          "name": "Enterobacter cloacae",
+          "note": "Valid name; Enterobacterales, classical biofilm-forming uropathogen causing complicated/HCA-UTI, pyelonephritis, urosepsis. RED/definite tier confirmed.",
+          "refs": [
+            "{\"title\": \"Laboratory diagnosis of urinary tract infections: Towards a BILULU consensus guideline\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/29427686/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Escherichia coli",
+          "note": "Canonical uropathogen: >80% of uncomplicated UTIs; treated as causative regardless of colony count in symptomatic patients. Valid nomenclature. RED/verified tier.",
+          "refs": [
+            "{\"title\": \"European Association of Urology Guidelines on Urological Infections: Summary of the 2024 Guidelines\", \"url\": \"https://www.europeanurology.com/article/S0302-2838(24)02263-2/fulltext\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Klebsiella aerogenes",
+          "note": "Reclassified from Enterobacter aerogenes; a common opportunistic, frequently ESBL/AmpC-producing nosocomial Enterobacterales uropathogen causing complicated/recurrent UTI, pyelonephritis and urosepsis.",
+          "refs": [
+            "{\"title\": \"Case report: A successfully treated case of community-acquired urinary tract infection due to Klebsiella aerogenes in Bangladesh\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10330784/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Klebsiella oxytoca",
+          "note": "Valid name (Flugge 1886). Klebsiella/Enterobacterales = primary Gram-neg uropathogen, BILULU RED tier; 2nd most common Klebsiella in UTI after K. pneumoniae. Verified confirmed.",
+          "refs": [
+            "{\"title\": \"Klebsiella oxytoca: An emerging pathogen?\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC5192185/\", \"year\": 2017}"
+          ]
+        },
+        {
+          "name": "Klebsiella pneumoniae",
+          "note": "K. pneumoniae (valid nomenclature) is a primary Enterobacterales uropathogen, 2nd to E. coli; always-significant RED-tier per BILULU/EAU. Verified confirmed.",
+          "refs": [
+            "{\"title\": \"European Association of Urology Guidelines on Urological Infections: Summary of the 2024 Guidelines\", \"url\": \"https://www.europeanurology.com/article/S0302-2838(24)02263-2/fulltext\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Proteus mirabilis",
+          "note": "Valid name; classic urease-producing Enterobacterales uropathogen, major cause of complicated/catheter-assoc UTI and struvite stones. Verified (RED tier) confirmed.",
+          "refs": [
+            "{\"title\": \"Proteus mirabilis and Urinary Tract Infections\", \"url\": \"https://journals.asm.org/doi/10.1128/microbiolspec.uti-0017-2013\", \"year\": 2015}"
+          ]
+        },
+        {
+          "name": "Providencia stuartii",
+          "note": "Confirmed: P. stuartii (valid, family Morganellaceae/Proteeae) is a recognized uropathogen, esp. catheter-associated UTI w/ biofilm. RED/verified tier.",
+          "refs": [
+            "{\"title\": \"Transposon Insertion Site Sequencing of Providencia stuartii: Essential Genes, Fitness Factors for Catheter-Associated Urinary Tract Infection, and the Impact of Polymicrobial Infection on Fitness Requirements\", \"url\": \"https://journals.asm.org/doi/10.1128/msphere.00412-20\", \"year\": 2020}"
+          ]
+        },
+        {
+          "name": "Pseudomonas aeruginosa",
+          "note": "Established uropathogen; ESKAPE non-fermenter, ~10% of CAUTI and key complicated-UTI agent per EAU/BILULU. Valid nomenclature. Verified tier correct.",
+          "refs": [
+            "{\"title\": \"Urinary tract infections and catheter-associated urinary tract infections caused by Pseudomonas aeruginosa\", \"url\": \"https://journals.asm.org/doi/10.1128/mmbr.00066-22\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Serratia marcescens",
+          "note": "Valid Enterobacterales (Yersiniaceae) name; classic healthcare/catheter-associated uropathogen causing complicated UTI, pyelonephritis, urosepsis. Verified tier confirmed.",
+          "refs": [
+            "{\"title\": \"Serratia marcescens: A Versatile Opportunistic Pathogen with Emerging Clinical and Biotechnological Significance\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC12691863/\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Staphylococcus aureus",
+          "note": "S. aureus is a recognized uropathogen treated regardless of colony count in true UTI; in urine also flags possible haematogenous seeding/bacteremia. Valid nomenclature. Verified.",
+          "refs": [
+            "{\"title\": \"Bacterial Urinary Tract Infection (UTI) Treatment Guidelines (Johns Hopkins Antimicrobial Stewardship)\", \"url\": \"https://www.hopkinsmedicine.org/-/media/antimicrobial-stewardship/bacterial_uti_guidelines.pdf\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Staphylococcus saprophyticus",
+          "note": "Valid name. 2nd most common cause of uncomplicated cystitis in young women; the one CoNS treated as a true uropathogen at any colony count. RED/verified confirmed.",
+          "refs": [
+            "{\"title\": \"Staphylococcus saprophyticus Infection - StatPearls - NCBI Bookshelf\", \"url\": \"https://www.ncbi.nlm.nih.gov/books/NBK482367/\", \"year\": 2023}"
+          ]
+        }
+      ]
+    },
+    {
+      "listId": "urine_potential",
+      "label": "Urine · potentially uropathogenic",
+      "site": "Urine",
+      "tier": "potential",
+      "role": "pathogen",
+      "color": "#E0A800",
+      "help": "BILULU yellow tier: significant only above threshold counts, in  pure/predominant growth, or in specific hosts (catheter, pregnancy,  immunocompromise).",
+      "entries": [
+        {
+          "name": "Actinotignum schaalii",
+          "note": "Valid name (formerly Actinobaculum schaalii). Genuine but fastidious uropathogen; also urobiome member. Significant in elderly/urologic-abnormality hosts and pure/predominant growth = YELLOW, not RED.",
+          "refs": [
+            "{\"title\": \"Actinotignum schaalii (formerly Actinobaculum schaalii): a newly recognized pathogen\\u2014review of the literature\", \"url\": \"https://www.sciencedirect.com/science/article/pii/S1198743X15009799\", \"year\": 2016}"
+          ]
+        },
+        {
+          "name": "Aerococcus sanguinicola",
+          "note": "Valid sp. (Lawson 2001). BILULU-listed uropathogen but emerging/opportunistic: significant in elderly men w/ UT abnormalities or catheters. YELLOW, not RED.",
+          "refs": [
+            "{\"title\": \"Bacteremia with Aerococcus sanguinicola: Case Series with Characterization of Virulence Properties\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC4324188/\", \"year\": 2014}"
+          ]
+        },
+        {
+          "name": "Aerococcus viridans",
+          "note": "Valid name; type species, often confused w/ A. sanguinicola. Rare uropathogen of uncertain significance, only in predominant growth/elderly/post-surgical hosts. YELLOW.",
+          "refs": [
+            "{\"title\": \"Aerococcus Viridans: A Rare Pathogen Causing Urinary Tract Infection\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC5324413/\", \"year\": 2017}"
+          ]
+        },
+        {
+          "name": "Candida albicans",
+          "note": "Demote verified→potential. Candiduria is usually colonization; significant only in catheter/diabetes/immunocompromised/ICU hosts. IDSA does not treat asymptomatic candiduria. YELLOW, not RED.",
+          "refs": [
+            "{\"title\": \"Clinical Practice Guideline for the Management of Candidiasis: 2016 Update by the Infectious Diseases Society of America\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC4725385/\", \"year\": 2016}"
+          ]
+        },
+        {
+          "name": "Candida parapsilosis",
+          "note": "Valid name. Candiduria usually colonization (catheter/biofilm); pathogenic only in symptomatic or high-risk hosts (catheter, ICU, immunocompromised). YELLOW/potential confirmed.",
+          "refs": [
+            "{\"title\": \"Microbiological Relevance of Candida in Urine Cultures\", \"url\": \"https://www.mdpi.com/2309-608X/11/7/483\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Candida tropicalis",
+          "note": "Valid name; 3rd most common urinary Candida (~10%). Usually asymptomatic colonization; significance threshold/host-dependent (catheter, ICU, immunocompromise). YELLOW/potential.",
+          "refs": [
+            "{\"title\": \"Microbiological Relevance of Candida in Urine Cultures\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC12298255/\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Citrobacter koseri",
+          "note": "Opportunistic Enterobacterales uropathogen (the list already verifies the sibling C. freundii). Causes healthcare-associated UTI, particularly with catheterization/instrumentation and in immunocompromised/elderly hosts;…",
+          "refs": [
+            "{\"title\": \"Citrobacter: An emerging health care associated urinary pathogen\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC3836000/\", \"year\": 2013}"
+          ]
+        },
+        {
+          "name": "Corynebacterium amycolatum",
+          "note": "Valid name (Collins 1988). Skin commensal & frequent urine contaminant; opportunistic uropathogen in pure growth/catheter/immunocompromised. YELLOW, not RED C. urealyticum.",
+          "refs": [
+            "{\"title\": \"Draft genome sequences of four Corynebacterium amycolatum strains isolated from female urine samples\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC11384733/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Corynebacterium striatum",
+          "note": "Valid name. Skin/coryneform flora, frequent urine contaminant, but emerging MDR opportunist; uropathogenic in pure growth in catheter/immunocompromised hosts = YELLOW.",
+          "refs": [
+            "{\"title\": \"Clinical Characteristics and Risk Factors of Corynebacterium striatum Infection in Normally Sterile Body Fluids and Urine Specimens\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC12747092/\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Enterobacter hormaechei",
+          "note": "Now recognized as the predominant species within the Enterobacter cloacae complex in clinical isolates; an ESBL/carbapenemase-prone nosocomial Enterobacterales uropathogen documented in catheter-associated UTI.",
+          "refs": [
+            "{\"title\": \"Draft genome sequences of an Enterobacter hormaechei and Providencia rettgeri isolated from the urine of a male experiencing a catheter-associated urinary tract infection\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC11385441/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Enterococcus faecalis",
+          "note": "Valid name; recognized enterococcal uropathogen but significance is count/host-dependent (catheter, complicated, predominant growth) = YELLOW/potential, not unconditional RED.",
+          "refs": [
+            "{\"title\": \"Laboratory diagnosis of urinary tract infections: Towards a BILULU consensus guideline\", \"url\": \"https://www.sciencedirect.com/science/article/abs/pii/S0167701218300940\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Enterococcus faecium",
+          "note": "Valid name (Schleifer & Kilpper-Balz 1984). Conditional uropathogen: significant at high count/predominant growth, catheter/HAI/immunocompromised; often colonizer in mixed flora. YELLOW.",
+          "refs": [
+            "{\"title\": \"Enterococcal Urinary Tract Infections: A Review of the Pathogenicity, Epidemiology, and Treatment\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10135011/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Gardnerella vaginalis",
+          "note": "Valid name (G. vaginalis, type sp. post-2019 split). Urobiome/vaginal flora; conditionally significant in recurrent UTI, dysbiosis, E. coli reactivation. YELLOW, not RED.",
+          "refs": [
+            "{\"title\": \"Gardnerella vaginalis in Recurrent Urinary Tract Infection Is Associated with Dysbiosis of the Bladder Microbiome\", \"url\": \"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9100223/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Morganella morganii",
+          "note": "Valid Proteeae sp.; opportunistic uropathogen of complicated/catheter-assoc UTI, significant in specific hosts/threshold growth, not obligate. Demote verified->potential (YELLOW).",
+          "refs": [
+            "{\"title\": \"Comparative Genome Analysis of Uropathogenic Morganella morganii Strains\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC6558430/\", \"year\": 2019}"
+          ]
+        },
+        {
+          "name": "Nakaseomyces glabratus",
+          "note": "Valid current name (formerly C. glabrata). 2nd most common urinary yeast; candiduria usually asymptomatic colonization, significant only in catheter/ICU/immunocompromised hosts. YELLOW/potential.",
+          "refs": [
+            "{\"title\": \"Characteristics and Clinical Relevance of Candiduria in Hospitalized Patients\", \"url\": \"https://www.mdpi.com/2077-0383/15/5/1881\", \"year\": 2026}"
+          ]
+        },
+        {
+          "name": "Pichia kudriavzevii",
+          "note": "Teleomorph/current name for Candida krusei; a recognized cause of funguria/candiduria in catheterized, diabetic and broadly antibiotic-exposed hosts, clinically important for its intrinsic fluconazole resistance (require…",
+          "refs": [
+            "{\"title\": \"Clinical Practice Guideline for the Management of Candidiasis: 2016 Update by the Infectious Diseases Society of America\", \"url\": \"https://www.idsociety.org/practice-guideline/candidiasis/\", \"year\": 2016}"
+          ]
+        },
+        {
+          "name": "Proteus vulgaris",
+          "note": "Urease-positive Proteus species causing UTI and struvite (magnesium ammonium phosphate) stone formation via urea hydrolysis and urine alkalinization, similar mechanism to the verified P. mirabilis. Less common than P.",
+          "refs": [
+            "{\"title\": \"Proteus Infections: Background, Etiology, Pathophysiology\", \"url\": \"https://emedicine.medscape.com/article/226434-overview\"}"
+          ]
+        },
+        {
+          "name": "Providencia rettgeri",
+          "note": "Urease-positive, biofilm-forming Enterobacterales closely associated with long-term catheter-associated UTI and crystalline catheter encrustation; increasingly reported as MDR/pan-drug-resistant.",
+          "refs": [
+            "{\"title\": \"Uropathogenic Pan-Drug-Resistant Providencia rettgeri Infection in a Patient With an Indwelling Urinary Catheter: A Case Report\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC11628197/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Schaalia turicensis",
+          "note": "Fastidious Gram-positive anaerobe/microaerophile in the same emerging-uropathogen group as Actinotignum schaalii (already listed); reported in UTI and urogenital infections, easily missed on standard aerobic culture and…",
+          "refs": [
+            "{\"title\": \"Beyond the usual suspects: emerging uropathogens in the microbiome age\", \"url\": \"https://doi.org/10.3389/fruro.2023.1212590\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Staphylococcus epidermidis",
+          "note": "Valid CoNS (non-saprophyticus). In voided urine usually skin/periurethral contamination, but conditional uropathogen in catheter/instrumented/immunocompromised hosts at significant pure growth. Tier: potential.",
+          "refs": [
+            "{\"title\": \"Significance of Coagulase-Negative Staphylococcus in Urine\", \"url\": \"https://academic.oup.com/jid/article-abstract/127/2/179/878548\", \"year\": 1973}"
+          ]
+        },
+        {
+          "name": "Staphylococcus haemolyticus",
+          "note": "CoNS, valid name. Usually skin/periurethral contaminant in voided urine, but emerging MDR conditional uropathogen significant in pure/predominant growth, catheter/nosocomial hosts (YELLOW).",
+          "refs": [
+            "{\"title\": \"Staphylococcus haemolyticus as an emerging infectious agent in female genital and urinary tract: a narrative review\", \"url\": \"https://link.springer.com/article/10.1007/s44337-026-00575-y\", \"year\": 2026}"
+          ]
+        },
+        {
+          "name": "Staphylococcus warneri",
+          "note": "CoNS skin commensal, usually voided-urine contaminant; rare uropathogen only in pure/significant growth or compromised/catheterised hosts. YELLOW tier.",
+          "refs": [
+            "{\"title\": \"Staphylococcus warneri: Skin Commensal and a Rare Cause of Urinary Tract Infection\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC7263002/\", \"year\": 2020}"
+          ]
+        },
+        {
+          "name": "Stenotrophomonas maltophilia",
+          "note": "Intrinsically multidrug-resistant non-fermenting Gram-negative; an emerging cause of complicated/catheter-associated UTI that tends to follow a severe clinical course in patients with urological disease or immunosuppress…",
+          "refs": [
+            "{\"title\": \"Stenotrophomonas Maltophilia and Urinary Tract Infections: A Systematic Review\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC9304920/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Streptococcus agalactiae",
+          "note": "S. agalactiae (GBS) is host/threshold-dependent in urine: significant in pregnancy & at high counts, often asymptomatic colonization otherwise. Potential (YELLOW), not verified.",
+          "refs": [
+            "{\"title\": \"Laboratory diagnosis of urinary tract infections: Towards a BILULU consensus guideline\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/29427686/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Streptococcus anginosus",
+          "note": "Valid name. SAG/anginosus group = normal oral-GI flora, emerging conditional uropathogen: enriched in urgency incontinence, significant in immunocompromise/predominant growth. YELLOW/potential, not verified.",
+          "refs": [
+            "{\"title\": \"Beyond the usual suspects: emerging uropathogens in the microbiome age\", \"url\": \"https://www.frontiersin.org/journals/urology/articles/10.3389/fruro.2023.1212590/full\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Streptococcus dysgalactiae",
+          "note": "Beta-hemolytic group C/G streptococcus reported as a uropathogen and cause of bacteriuria/UTI, paralleling the group A (S. pyogenes) and group B (S. agalactiae) streptococci already in the lists."
+        },
+        {
+          "name": "Streptococcus pyogenes",
+          "note": "Valid name. GAS is an uncommon, conditional uropathogen: genuine UTI/urethritis in pure/predominant growth or complicated hosts, often perineal contamination otherwise. YELLOW/potential confirmed.",
+          "refs": [
+            "{\"title\": \"Streptococcus pyogenes: An Unusual Cause of Urethritis\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC11470757/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "[Candida] auris",
+          "note": "Emerging multidrug-resistant nosocomial yeast increasingly reported as the etiologic agent of UTI/candiduria, frequently fluconazole-resistant; first-line treatment is echinocandin or liposomal amphotericin B.",
+          "refs": [
+            "{\"title\": \"Candida auris Urinary Tract Infections and Possible Treatment\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC7764735/\", \"year\": 2020}"
+          ]
+        },
+        {
+          "name": "Alloscardovia omnicolens",
+          "note": "Valid name (Alloscardovia, est. 2007). Emerging opportunistic uropathogen; significant mainly in pure/predominant growth or compromised/elderly hosts. YELLOW/potential, not RED.",
+          "refs": [
+            "{\"title\": \"Beyond the usual suspects: emerging uropathogens in the microbiome age\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC12327349/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Mycoplasma hominis",
+          "note": "Urogenital mollicute with an etiologic role in acute urethral syndrome and upper urinary tract infection in selected hosts; missed by routine culture.",
+          "refs": [
+            "{\"title\": \"A Systematic Review of Mycoplasma and Ureaplasma in Urogynaecology\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC5734936/\", \"year\": 2017}"
+          ]
+        },
+        {
+          "name": "Ureaplasma urealyticum",
+          "note": "Cell-wall-deficient urogenital organism; urease-positive and implicated in nongonococcal urethritis, acute urethral syndrome and possibly infection-related struvite stones.",
+          "refs": [
+            "{\"title\": \"A Systematic Review of Mycoplasma and Ureaplasma in Urogynaecology\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC5734936/\", \"year\": 2017}"
+          ]
+        }
+      ]
+    },
+    {
+      "listId": "urine_flora",
+      "label": "Urine · urogenital mucosal flora",
+      "site": "Urine",
+      "tier": "flora",
+      "role": "flora",
+      "color": "#2E8B57",
+      "help": "BILULU green tier: normal urogenital / periurethral commensals (incl.  vaginal & skin flora); in voided urine usually contamination.",
+      "entries": [
+        {
+          "name": "Aerococcus christensenii",
+          "note": "Validly named (1999) vaginal commensal; rarely if ever a true uropathogen. In voided urine usually genital-flora contamination, unlike A. urinae/sanguinicola. Demote to GREEN.",
+          "refs": [
+            "{\"title\": \"Aerococcus christensenii sp. nov., from the human vagina\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/10425770/\", \"year\": 1999}"
+          ]
+        },
+        {
+          "name": "Anaerococcus prevotii",
+          "note": "Valid name (type species of Anaerococcus). GPAC commensal of skin/urogenital tract & urobiome; in voided urine = mucosal contamination. GREEN/flora_commensal.",
+          "refs": [
+            "{\"title\": \"Gram-positive anaerobic cocci \\u2013 commensals and opportunistic pathogens\", \"url\": \"https://academic.oup.com/femsre/article/37/4/520/2399123\", \"year\": 2013}"
+          ]
+        },
+        {
+          "name": "Bifidobacterium breve",
+          "note": "Valid name (ATCC 15700). Gut/urogenital commensal; in voided urine reflects flora/contamination. UTI case reports are B. scardovii, not B. breve. GREEN tier.",
+          "refs": [
+            "{\"title\": \"Gram-Positive Uropathogens, Polymicrobial Urinary Tract Infection, and the Emerging Microbiota of the Urinary Tract\", \"url\": \"https://journals.asm.org/doi/10.1128/microbiolspec.uti-0012-2012\", \"year\": 2016}"
+          ]
+        },
+        {
+          "name": "Corynebacterium tuberculostearicum",
+          "note": "Valid name (Feurer 2004). Lipophilic skin commensal; in voided urine usually contamination, UTI only at case-report rarity. Per BILULU only C. urealyticum is uropathogenic. GREEN/flora.",
+          "refs": [
+            "{\"title\": \"Unveiling a Rarity: First Instance of Urinary Tract Infection Caused by Corynebacterium tuberculostearicum in India\", \"url\": \"https://karger.com/cnd/article/14/1/185/916873/Unveiling-a-Rarity-First-Instance-of-Urinary-Tract\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Cutibacterium acnes",
+          "note": "Skin/genitourinary commensal (ex-Propionibacterium acnes); in voided urine = periurethral/skin contamination, enriched in no-growth samples. GREEN/flora_commensal confirmed.",
+          "refs": [
+            "{\"title\": \"Prostate and urinary microbiomes in prostate cancer development: focus on Cutibacterium acnes\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC12133773/\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Fannyhessea vaginae",
+          "note": "Valid name (ex-Atopobium vaginae). Gram+ anaerobic vaginal/urogenital flora; in voided urine usually contamination, only context-dependent pathogenicity. GREEN.",
+          "refs": [
+            "{\"title\": \"Polymicrobial urine cultures: reconciling contamination with the urobiome while recognizing the pathogens\", \"url\": \"https://www.frontiersin.org/journals/cellular-and-infection-microbiology/articles/10.3389/fcimb.2025.1562687/full\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Finegoldia magna",
+          "note": "Valid name (was Peptostreptococcus magnus). Normal GU/skin/urobiome anaerobe; in voided urine usually periurethral flora/contamination, only occasionally pathogenic. GREEN tier confirmed.",
+          "refs": [
+            "{\"title\": \"Finegoldia magna, an Anaerobic Gram-Positive Bacterium of the Normal Human Microbiota, Induces Inflammation by Activating Neutrophils\", \"url\": \"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7025542/\", \"year\": 2020}"
+          ]
+        },
+        {
+          "name": "Lactobacillus crispatus",
+          "note": "Valid name (retained genus, Zheng 2020). Hallmark health-associated urogenital Lactobacillus; in voided urine = vaginal-flora contamination/protective commensal, not a uropathogen. GREEN tier confirmed.",
+          "refs": [
+            "{\"title\": \"Lactobacillus crispatus Limits Bladder Uropathogenic E. coli Infection by Triggering a Host Type I Interferon Response\", \"url\": \"https://www.pnas.org/doi/10.1073/pnas.2117904119\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Lactobacillus gasseri",
+          "note": "Valid name (L. delbrueckii group, retained genus post-2020). Urogenital/urobiome commensal; in voided urine = vaginal flora; not a uropathogen. GREEN/flora_commensal.",
+          "refs": [
+            "{\"title\": \"Commensal Urinary Lactobacilli Inhibit Major Uropathogens In Vitro With Heterogeneity at Species and Strain Level\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC9260849/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Lactobacillus iners",
+          "note": "Valid name (Falsen 1999, not renamed in 2020 split). Health-associated urogenital/vaginal Lactobacillus; in voided urine a recognised commensal/contaminant, not uropathogenic. GREEN tier.",
+          "refs": [
+            "{\"title\": \"Commensal Urinary Lactobacilli Inhibit Major Uropathogens In Vitro With Heterogeneity at Species and Strain Level\", \"url\": \"https://www.frontiersin.org/journals/cellular-and-infection-microbiology/articles/10.3389/fcimb.2022.870603/full\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Lactobacillus jensenii",
+          "note": "Health-associated vaginal/urogenital commensal; valid name retained post-2020 reclassification. In voided urine = contamination, not uropathogen. GREEN tier.",
+          "refs": [
+            "{\"title\": \"Laboratory diagnosis of urinary tract infections: Towards a BILULU consensus guideline\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/29427686/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Lactobacillus johnsonii",
+          "note": "Vaginal/urogenital Lactobacillus species forming part of the healthy, Lactobacillus-dominated female urobiome described in core-urinary-microbiota studies; in voided urine represents commensal/contaminant flora rather th…",
+          "refs": [
+            "{\"title\": \"Pre- and postmenopausal women have different core urinary microbiota\", \"url\": \"https://doi.org/10.1038/s41598-021-81790-8\", \"year\": 2021}"
+          ]
+        },
+        {
+          "name": "Micrococcus luteus",
+          "note": "Validated species (Schroeter 1872); ubiquitous skin/periurethral commensal classed as dermal contaminant in voided urine. Not a uropathogen; only opportunistic via bloodstream in immunocompromised hosts. GREEN tier.",
+          "refs": [
+            "{\"title\": \"Laboratory diagnosis of urinary tract infections: Towards a BILULU consensus guideline\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/29427686/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Peptoniphilus harei",
+          "note": "Valid name (Ezaki 2001). GPAC of urogenital/skin commensal flora; in voided urine = anaerobic microbiome/contaminant, only opportunistic in polymicrobial infections. Not a BILULU uropathogen. GREEN.",
+          "refs": [
+            "{\"title\": \"Gram-positive anaerobic cocci - commensals and opportunistic pathogens\", \"url\": \"https://academic.oup.com/femsre/article/37/4/520/2399123\", \"year\": 2013}"
+          ]
+        },
+        {
+          "name": "Prevotella bivia",
+          "note": "Valid name (LPSN). Gram-neg anaerobe of vaginal/urogenital flora; in voided urine usually contamination, not a recognized uropathogen. GREEN/commensal tier confirmed.",
+          "refs": [
+            "{\"title\": \"Laboratory diagnosis of urinary tract infections: Towards a BILULU consensus guideline\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/29427686/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Staphylococcus capitis",
+          "note": "Valid species (LPSN). Skin-flora CoNS; in voided urine usually contaminant (GREEN). Significant only in pure high-count growth or catheter/compromised host. Not S. saprophyticus/lugdunensis.",
+          "refs": [
+            "{\"title\": \"Coagulase-negative Staphylococci: a rare cause of urinary tract infections in children with consequences on clinical practice\", \"url\": \"https://link.springer.com/article/10.1007/s00431-021-04308-4\", \"year\": 2021}"
+          ]
+        },
+        {
+          "name": "Staphylococcus hominis",
+          "note": "Valid name (LPSN). CoNS (non-saprophyticus) skin/periurethral flora; in BILULU/EAU usually voided-urine contaminant. Only rarely significant in pure growth/catheter/immunocompromised.",
+          "refs": [
+            "{\"title\": \"Laboratory diagnosis of urinary tract infections: Towards a BILULU consensus guideline\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/29427686/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Streptococcus gordonii",
+          "note": "Validly named viridans-group oral/mucosal commensal (Kilian 1989). In voided urine it represents commensal/contaminant flora, only rarely a true uropathogen. GREEN tier confirmed.",
+          "refs": [
+            "{\"title\": \"Taxonomic Study of Viridans Streptococci: Description of Streptococcus gordonii sp. nov...\", \"url\": \"https://www.microbiologyresearch.org/content/journal/ijsem/10.1099/00207713-39-4-471\", \"year\": 1989}"
+          ]
+        },
+        {
+          "name": "Streptococcus mitis",
+          "note": "S. mitis (valid; oral/genitourinary viridans commensal) is a typical voided-urine contaminant; true UTI is rare and host-dependent. GREEN flora_commensal.",
+          "refs": [
+            "{\"title\": \"Genomic relatedness and clinical significance of Streptococcus mitis strains isolated from the urogenital tract of sexual partners\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC8190612/\", \"year\": 2021}"
+          ]
+        },
+        {
+          "name": "Streptococcus oralis",
+          "note": "Mitis-group oral/urogenital commensal (valid name, LPSN). In voided urine usually contamination; rarely a true uropathogen in immunocompromised/complicated UTI. Best fit GREEN/flora_commensal.",
+          "refs": [
+            "{\"title\": \"Laboratory diagnosis of urinary tract infections: Towards a BILULU consensus guideline\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/29427686/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Streptococcus salivarius",
+          "note": "Valid name (LPSN). Oral/periurethral viridans streptococcus; voided-urine contaminant (BILULU GREEN). Pathogenicity only in rare case reports; demote to flora_commensal.",
+          "refs": [
+            "{\"title\": \"Laboratory diagnosis of urinary tract infections: Towards a BILULU consensus guideline\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/29427686/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Streptococcus sanguinis",
+          "note": "Viridans-group oral/urogenital commensal (BILULU GREEN); in voided urine almost always contamination. Name valid (corrig. of S. sanguis). True UTI rare, needs obstruction/pure growth.",
+          "refs": [
+            "{\"title\": \"Laboratory diagnosis of urinary tract infections: Towards a BILULU consensus guideline\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/29427686/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Prevotella timonensis",
+          "note": "Anaerobic Gram-negative rod and a recognized member of the urogenital/vaginal-derived urinary microbiome (urobiome), alongside Prevotella bivia which is already in the flora list.",
+          "refs": [
+            "{\"title\": \"Pre- and postmenopausal women have different core urinary microbiota\", \"url\": \"https://doi.org/10.1038/s41598-021-81790-8\", \"year\": 2021}"
+          ]
+        }
+      ]
+    },
+    {
+      "listId": "ascites_verified",
+      "label": "Ascites · established SBP pathogen",
+      "site": "Ascites",
+      "tier": "verified",
+      "role": "pathogen",
+      "color": "#C0392B",
+      "help": "Organisms most frequently cultured from spontaneous bacterial peritonitis  (SBP) / ascitic-fluid infection in cirrhosis.",
+      "entries": [
+        {
+          "name": "Clostridium perfringens",
+          "note": "An anaerobic Gram-positive bacillus associated with gut perforation and secondary bacterial peritonitis; a classic anaerobe whose presence in ascitic fluid points to a surgically treatable intra-abdominal source rather t…"
+        },
+        {
+          "name": "Enterococcus faecalis",
+          "note": "Valid nomenclature. Enterococci (incl. E. faecalis) named among commonly cultured SBP organisms; skews to healthcare-associated SBP. Verified per tier def.",
+          "refs": [
+            "{\"title\": \"Spontaneous Bacterial Peritonitis in Cirrhotic Patients: A Shift in the Microbial Pattern? A Retrospective Analysis\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC9274822/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Escherichia coli",
+          "note": "E. coli is the single most frequently cultured organism in community-acquired SBP (~50-66% of culture-positive episodes); prototypical translocating enteric GNB. Verified.",
+          "refs": [
+            "{\"title\": \"Recognition of Antibiotic Resistance in Spontaneous Bacterial Peritonitis Caused by Escherichia coli in Liver Cirrhotic Patients in Civil Hospital Karachi\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC6764645/\", \"year\": 2019}"
+          ]
+        },
+        {
+          "name": "Klebsiella pneumoniae",
+          "note": "Valid name; 2nd most common Enterobacterales SBP agent after E. coli (~12-14% of ascitic-fluid isolates). Classic gut-translocation pathogen of community-acquired SBP. Verified.",
+          "refs": [
+            "{\"title\": \"Spontaneous Bacterial Peritonitis in Cirrhotic Patients: A Shift in the Microbial Pattern? A Retrospective Analysis\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC9274822/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Listeria monocytogenes",
+          "note": "Well-documented cause of SBP in cirrhotics and a clinically critical omission: it is intrinsically resistant to the third-generation cephalosporins (cefotaxime/ceftriaxone) used as empiric SBP therapy, so missing it has…",
+          "refs": [
+            "{\"title\": \"Spontaneous Bacterial Peritonitis Caused by Listeria monocytogenes Associated with Ascitic Fluid Lymphocytosis: A Case Report and Review of Current Empiric Therapy\", \"url\": \"https://doi.org/10.1155/2013/832457\", \"year\": 2013}"
+          ]
+        },
+        {
+          "name": "Streptococcus agalactiae",
+          "note": "Valid name (GBS). Nonenterococcal streptococci are core community-acquired SBP agents; S. agalactiae documented among SBP ascitic-fluid isolates. Verified.",
+          "refs": [
+            "{\"title\": \"Spontaneous Bacterial Peritonitis in Cirrhotic Patients: A Shift in the Microbial Pattern? A Retrospective Analysis\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC9274822/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Streptococcus anginosus",
+          "note": "Valid name; anginosus(milleri)-group viridans streptococcus. Streptococci are a verified SBP agent; VGS ~74% of strep SBP isolates, abscess-prone. Less-classic, so medium.",
+          "refs": [
+            "{\"title\": \"Viridans group streptococci: an underestimated cause of spontaneous bacterial peritonitis in cirrhotic patients with ascites\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/16093870/\", \"year\": 2005}"
+          ]
+        },
+        {
+          "name": "Streptococcus gallolyticus",
+          "note": "Valid name (S. bovis biotype I, SBSEC group D). Gut-derived streptococcus; documented SBP case series. Streptococci are classic community-acquired SBP agents. Verified.",
+          "refs": [
+            "{\"title\": \"Spontaneous bacterial peritonitis caused by Streptococcus bovis: case series and review of the literature\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/12094869/\", \"year\": 2002}"
+          ]
+        },
+        {
+          "name": "Streptococcus mitis",
+          "note": "Valid name; viridans-group streptococcus. Streptococci are a named verified SBP agent; VGS dominant in SBP series, explicitly not dismissable as contaminant. Verified, not commensal.",
+          "refs": [
+            "{\"title\": \"Viridans group streptococci: an underestimated cause of spontaneous bacterial peritonitis in cirrhotic patients with ascites\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/16093870/\", \"year\": 2005}"
+          ]
+        },
+        {
+          "name": "Streptococcus parasanguinis",
+          "note": "Valid name (sanguinis-group VGS). VGS are a documented, underestimated SBP cause in cirrhosis; S. parasanguinis cultured from ascites in SBP. Streptococci are verified-tier.",
+          "refs": [
+            "{\"title\": \"Viridans group streptococci: an underestimated cause of spontaneous bacterial peritonitis in cirrhotic patients with ascites\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/16093870/\", \"year\": 2005}"
+          ]
+        },
+        {
+          "name": "Streptococcus pneumoniae",
+          "note": "Established non-enteric streptococcal SBP agent; ~3-6% of culture-proven SBP (not 18-19%, that figure is inflated). Valid nomenclature. Verified holds.",
+          "refs": [
+            "{\"title\": \"Spontaneous bacterial peritonitis: recent guidelines and beyond\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/22147550/\", \"year\": 2012}"
+          ]
+        },
+        {
+          "name": "Streptococcus salivarius",
+          "note": "Valid name. Streptococci are frequent SBP agents; S. salivarius (viridans group) documented in case reports and series as a real SBP cause. Verified.",
+          "refs": [
+            "{\"title\": \"Viridans group streptococci: an underestimated cause of spontaneous bacterial peritonitis in cirrhotic patients with ascites\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/16093870/\", \"year\": 2005}"
+          ]
+        },
+        {
+          "name": "Streptococcus sanguinis",
+          "note": "Viridans streptococci (incl. S. sanguinis, valid name) are a frequent, underestimated SBP cause; verified tier lists streptococci. Demote from flora_commensal.",
+          "refs": [
+            "{\"title\": \"Viridans group streptococci: an underestimated cause of spontaneous bacterial peritonitis in cirrhotic patients with ascites\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/16093870/\", \"year\": 2005}"
+          ]
+        }
+      ]
+    },
+    {
+      "listId": "ascites_potential",
+      "label": "Ascites · potential / opportunistic",
+      "site": "Ascites",
+      "tier": "potential",
+      "role": "pathogen",
+      "color": "#E0A800",
+      "help": "Cause ascitic-fluid infection in specific settings: healthcare-associated  / nosocomial SBP, secondary bacterial peritonitis, fungal peritonitis,  immunocompromise.",
+      "entries": [
+        {
+          "name": "Acinetobacter baumannii",
+          "note": "Nosocomial/HCA-SBP opportunist; MDR non-fermenter cultured from ascitic fluid in cirrhosis, outside community-acquired SBP spectrum. Valid nomenclature.",
+          "refs": [
+            "{\"title\": \"Spontaneous Bacterial Peritonitis: Etiology, Microbiology, and Clinical Outcomes in Cirrhosis Patients\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC11781897/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Aerococcus viridans",
+          "note": "Valid name. Skin/environmental opportunist, often misID'd as viridans strep; emerging pathogen in immunocompromised/HCA hosts. Not a true commensal; most ascites isolates are contamination.",
+          "refs": [
+            "{\"title\": \"Aerococcus viridans Bacteremia: A Rare Case Report from India\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC8783239/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Bacteroides fragilis",
+          "note": "Valid name. Dominant anaerobe of secondary peritonitis/intra-abdominal infection; rare in true SBP (aerobic ascites). Fits potential, not verified.",
+          "refs": [
+            "{\"title\": \"Bacteroides Fragilis (StatPearls)\", \"url\": \"https://www.ncbi.nlm.nih.gov/books/NBK553032/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Bacteroides ovatus",
+          "note": "Valid name (B. fragilis group). Gut commensal; opportunistic in polymicrobial secondary/intra-abdominal peritonitis, not SBP. Tier definition explicitly lists anaerobes here.",
+          "refs": [
+            "{\"title\": \"Resistance and Virulence Features of Bacteroides spp. Isolated from Abdominal Infections in Romanian Patients\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC7696418/\", \"year\": 2020}"
+          ]
+        },
+        {
+          "name": "Bacteroides thetaiotaomicron",
+          "note": "Valid name. Gut-commensal B. fragilis-group anaerobe; causes ascitic-fluid infection in secondary peritonitis (gut perforation) and PD peritonitis, rarely primary SBP. Potential confirmed.",
+          "refs": [
+            "{\"title\": \"Peritoneal Dialysis Peritonitis Caused by Bacteroides thetaiotaomicron\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC3862105/\", \"year\": 2013}"
+          ]
+        },
+        {
+          "name": "Candida albicans",
+          "note": "Most common agent of spontaneous fungal peritonitis in cirrhosis; opportunistic (HCA/antibiotic-driven, immunocompromise), high mortality, outside SBP empirical cover. Potential.",
+          "refs": [
+            "{\"title\": \"Spontaneous fungal peritonitis: Micro-organisms, management and mortality in liver cirrhosis-A systematic review\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC6669191/\", \"year\": 2019}"
+          ]
+        },
+        {
+          "name": "Candida parapsilosis",
+          "note": "Leading non-albicans Candida in PD-related/fungal peritonitis; biofilm/catheter-associated, healthcare-associated ascitic infection. Valid name. Potential tier confirmed.",
+          "refs": [
+            "{\"title\": \"The Emerging Uncommon Non-Albicans Candida: Candida Parapsilosis Peritonitis in a Peritoneal Dialysis Patient\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC8432431/\", \"year\": 2021}"
+          ]
+        },
+        {
+          "name": "Candida tropicalis",
+          "note": "Valid nomenclature. Non-albicans Candida documented in spontaneous fungal peritonitis of cirrhosis; opportunistic, not a bacterial SBP agent. Potential confirmed.",
+          "refs": [
+            "{\"title\": \"Spontaneous fungal peritonitis: Micro-organisms, management and mortality in liver cirrhosis-A systematic review\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC6669191\", \"year\": 2019}"
+          ]
+        },
+        {
+          "name": "Citrobacter freundii",
+          "note": "Valid Enterobacterales coliform; real but infrequent ascites/peritonitis agent, mostly non-classic (PD, nephrotic) settings. Not among top-cultured SBP organisms, so potential not verified.",
+          "refs": [
+            "{\"title\": \"Changes in the epidemiology and management of bacterial infections in cirrhosis\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC8273641/\", \"year\": 2021}"
+          ]
+        },
+        {
+          "name": "Corynebacterium amycolatum",
+          "note": "Skin commensal/frequent contaminant in cirrhotic SBP, but documented as a true cause of PD-related peritonitis (case report), which the ascites 'potential' tier explicitly covers.",
+          "refs": [
+            "{\"title\": \"Corynebacterium amycolatum peritonitis in a patient undergoing peritoneal dialysis: case report and literature review\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC11524318/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Corynebacterium striatum",
+          "note": "Skin diphtheroid/common contaminant, but a documented agent of PD-associated peritonitis (device/biofilm). Opportunistic ascites pathogen in specific settings -> potential, not pure commensal.",
+          "refs": [
+            "{\"title\": \"Relapsing peritoneal dialysis-associated peritonitis caused by Corynebacterium striatum: a case report\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/39560709/\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Cryptococcus neoformans",
+          "note": "The major NON-Candida cause of spontaneous FUNGAL peritonitis in cirrhosis (the systematic review found it accounted for ~53% of non-Candida SFP cases), frequently with concurrent fungemia and high mortality.",
+          "refs": [
+            "{\"title\": \"Spontaneous fungal peritonitis: Micro-organisms, management and mortality in liver cirrhosis - A systematic review\", \"url\": \"https://doi.org/10.4254/wjh.v11.i7.596\", \"year\": 2019}"
+          ]
+        },
+        {
+          "name": "Enterobacter cloacae",
+          "note": "Recognized Enterobacterales SBP agent but uncommon and predominantly nosocomial/healthcare-associated (~62% hospital-acquired), AmpC-bearing; fits potential, not verified.",
+          "refs": [
+            "{\"title\": \"Clinical characteristics and outcomes of spontaneous bacterial peritonitis caused by Enterobacter species versus Escherichia coli: a matched case-control study\", \"url\": \"https://bmcinfectdis.biomedcentral.com/articles/10.1186/s12879-016-1595-y\", \"year\": 2016}"
+          ]
+        },
+        {
+          "name": "Enterococcus faecium",
+          "note": "Recognized ascitic-fluid/SBP pathogen, but E. faecium specifically clusters in nosocomial/HCA SBP and quinolone-prophylaxis patients (often VRE); best fit is potential, not community-acquired verified.",
+          "refs": [
+            "{\"title\": \"Evolving epidemiology and antimicrobial resistance in spontaneous bacterial peritonitis: a two-year observational study\", \"url\": \"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4055793/\", \"year\": 2014}"
+          ]
+        },
+        {
+          "name": "Fusobacterium nucleatum",
+          "note": "Valid name. Obligate anaerobe, oral/gut commensal; rare in secondary/polymicrobial peritoneal infection via gut spillover, not a primary SBP agent. Potential fits.",
+          "refs": [
+            "{\"title\": \"Fusobacterium nucleatum: More Than Just an Oral Anaerobe\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC9386311/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Klebsiella aerogenes",
+          "note": "Enterobacterales of the ESKAPE group, reclassified from Enterobacter aerogenes to Klebsiella aerogenes in 2019. An opportunistic gut-derived gram-negative bacillus with the same translocation route and AmpC/MDR concerns…",
+          "refs": [
+            "{\"title\": \"Reclassification of Enterobacter aerogenes (Hormaeche and Edwards 1960) to the genus Klebsiella as Klebsiella aerogenes comb. nov.\", \"url\": \"https://doi.org/10.1016/j.diagmicrobio.2018.12.012\", \"year\": 2019}"
+          ]
+        },
+        {
+          "name": "Klebsiella oxytoca",
+          "note": "Enteric gram-negative opportunist; Klebsiella spp. are among the most common SBP isolates and K. oxytoca specifically has documented spontaneous peritonitis episodes.",
+          "refs": [
+            "{\"title\": \"Spontaneous peritonitis due to Klebsiella oxytoca in a patient with cardiac ascites\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/3189273/\", \"year\": 1988}"
+          ]
+        },
+        {
+          "name": "Lacticaseibacillus paracasei",
+          "note": "Gut commensal/probiotic (now Lacticaseibacillus paracasei); usually translocation/contaminant, but a documented SBP case (sole pathogen, neutrophilic ascites) supports rare true infection in cirrhosis -> potential, not p…",
+          "refs": [
+            "{\"title\": \"Spontaneous Bacterial Peritonitis due to Lactobacillus paracasei in Cirrhosis\", \"url\": \"https://doi.org/10.1155/2018/5714053\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Lacticaseibacillus rhamnosus",
+          "note": "Gut commensal/probiotic, but documented PD-peritonitis & cirrhosis-SBP agent via translocation; intrinsic vanco resistance. Opportunistic -> potential, not flora.",
+          "refs": [
+            "{\"title\": \"Peritonitis associated with vancomycin-resistant Lactobacillus rhamnosus in a continuous ambulatory peritoneal dialysis patient\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/9620421/\", \"year\": 1998}"
+          ]
+        },
+        {
+          "name": "Micrococcus luteus",
+          "note": "Valid name; skin commensal/classic contaminant, but documented cause of PD-related (and relapsing, biofilm) peritonitis — fits 'potential' opportunistic ascites pathogen, not pure commensal.",
+          "refs": [
+            "{\"title\": \"Three Weeks of Treatment Induced Long-term Remission in a Patient with Micrococcus luteus-related Peritonitis\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10292988/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Morganella morganii",
+          "note": "Enterobacterales gut commensal and recognized opportunistic pathogen (UTI, bacteremia, peritonitis), intrinsically AmpC-bearing.",
+          "refs": [
+            "{\"title\": \"Serratia marcescens, Morganella morganii, Klebsiella oxytoca related peritonitis attacks in a patient on automated peritoneal dialysis: A case report\", \"url\": \"https://www.revistanefrologia.com/en-serratia-marcescens-morganella-morganii-klebsiella-articulo-S2013251417301128\", \"year\": 2017}"
+          ]
+        },
+        {
+          "name": "Nakaseomyces glabratus",
+          "note": "Confirmed: 2nd-most-common Candida in spontaneous fungal peritonitis of cirrhotic ascites (6-20%) after C. albicans; azole/echinocandin resistance. Valid name now Nakaseomyces glabratus. Potential/opportunistic tier.",
+          "refs": [
+            "{\"title\": \"Spontaneous fungal peritonitis: Micro-organisms, management and mortality in liver cirrhosis-A systematic review\", \"url\": \"https://www.wjgnet.com/1948-5182/full/v11/i7/596.htm\", \"year\": 2019}"
+          ]
+        },
+        {
+          "name": "Parabacteroides distasonis",
+          "note": "Valid name (ex-Bacteroides distasonis, reclassified 2006). B. fragilis-group gut anaerobe in polymicrobial intra-abdominal/secondary peritonitis; not a classic SBP agent. Potential confirmed.",
+          "refs": [
+            "{\"title\": \"Parabacteroides distasonis: intriguing aerotolerant gut anaerobe with emerging antimicrobial resistance and pathogenic and probiotic roles in human health\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC8253142/\", \"year\": 2021}"
+          ]
+        },
+        {
+          "name": "Peptostreptococcus anaerobius",
+          "note": "Valid name (LPSN). Gut-flora anaerobe; agent of polymicrobial secondary peritonitis from gut perforation/abscess, not SBP. Opportunistic = potential.",
+          "refs": [
+            "{\"title\": \"Peptostreptococcus anaerobius: Pathogenicity, identification, and antimicrobial susceptibility. Review of monobacterial infections...\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/34626800/\", \"year\": 2021}"
+          ]
+        },
+        {
+          "name": "Phocaeicola vulgatus",
+          "note": "Bacteroides fragilis-group anaerobe and dominant colonic commensal. The B. fragilis group is the predominant anaerobic isolate (25-80% of cases) in secondary/polymicrobial peritonitis from bowel-derived sources.",
+          "refs": [
+            "{\"title\": \"Diagnosis and Management of Complicated Intra-abdominal Infection in Adults and Children: Guidelines by the Surgical Infection Society and the Infectious Diseases Society of America (SIS/IDSA)\", \"url\": \"https://doi.org/10.1086/649554\", \"year\": 2010}"
+          ]
+        },
+        {
+          "name": "Pichia kudriavzevii",
+          "note": "Agent of spontaneous fungal peritonitis (2nd after C. albicans, 15-25% of series); intrinsic fluconazole resistance is clinically actionable. Current name Pichia kudriavzevii.",
+          "refs": [
+            "{\"title\": \"Spontaneous fungal peritonitis: Micro-organisms, management and mortality in liver cirrhosis\\u2014A systematic review\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC6669191/\", \"year\": 2019}"
+          ]
+        },
+        {
+          "name": "Prevotella bivia",
+          "note": "Valid name (ex Bacteroides bivius); anaerobic GNR, genital/gut flora; role in polymicrobial secondary peritonitis, not classic SBP. Potential tier confirmed.",
+          "refs": [
+            "{\"title\": \"An unusual case of fulminant generalized peritonitis secondary to purulent salpingitis caused by Prevotella bivia - case report with literature review\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC7117888/\", \"year\": 2020}"
+          ]
+        },
+        {
+          "name": "Prevotella melaninogenica",
+          "note": "Pigmented anaerobic gram-negative bacillus (oral/gut commensal) seen in polymicrobial secondary peritonitis and intra-abdominal abscess.",
+          "refs": [
+            "{\"title\": \"Diagnosis and Management of Complicated Intra-abdominal Infection in Adults and Children: Guidelines by the Surgical Infection Society and the Infectious Diseases Society of America (SIS/IDSA)\", \"url\": \"https://doi.org/10.1086/649554\", \"year\": 2010}"
+          ]
+        },
+        {
+          "name": "Proteus mirabilis",
+          "note": "Valid Enterobacterales; documented but infrequent SBP agent (~4% of cultures), not among the most-frequent (E. coli/Klebsiella). Demote verified->potential.",
+          "refs": [
+            "{\"title\": \"Novel pathomechanism for spontaneous bacterial peritonitis: disruption of cell junctions by cellular and bacterial proteases\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC8862089/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Pseudomonas aeruginosa",
+          "note": "Valid species; minority SBP isolate (~0.7-2%), not a top community-acquired agent. Opportunistic/MDR role in nosocomial-HCA SBP fits potential, not verified.",
+          "refs": [
+            "{\"title\": \"Causative agents and outcome of spontaneous bacterial peritonitis in cirrhotic patients: community-acquired versus nosocomial infections\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC6533661/\", \"year\": 2019}"
+          ]
+        },
+        {
+          "name": "Rothia mucilaginosa",
+          "note": "Oral commensal, usually contaminant in ascites, but documented single-pathogen PD-associated peritonitis -> potential, not flora_commensal. Name valid (was Stomatococcus mucilaginosus).",
+          "refs": [
+            "{\"title\": \"Peritonitis from Rothia mucilaginosa in a chronic peritoneal dialysis patient\", \"url\": \"https://academic.oup.com/ckj/article/6/5/552/377207\", \"year\": 2013}"
+          ]
+        },
+        {
+          "name": "Serratia marcescens",
+          "note": "Valid name. Enterobacterales but uncommon SBP agent, skewed to nosocomial/HCA & resistant; not among top community-acquired SBP organisms. Demote verified->potential.",
+          "refs": [
+            "{\"title\": \"Epidemiological Study of Pathogens in Spontaneous Bacterial Peritonitis in 2017-2024 - University Hospital in South-Eastern Poland\", \"url\": \"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC11123777/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Staphylococcus aureus",
+          "note": "Real but infrequent SBP agent (~2-4%), concentrated in nosocomial/HCA episodes w/ notable MRSA; not a top community-acquired organism. Potential, not verified.",
+          "refs": [
+            "{\"title\": \"Predictive Factors of Spontaneous Bacterial Peritonitis Caused by Gram-Positive Bacteria in Patients With Cirrhosis\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC4998712/\", \"year\": 2016}"
+          ]
+        },
+        {
+          "name": "Staphylococcus capitis",
+          "note": "CoNS skin commensal, usually paracentesis contaminant, but a documented opportunistic agent of PD-associated peritonitis & healthcare-assoc SBP -> potential, not pure flora.",
+          "refs": [
+            "{\"title\": \"Risk Factors and Pathogen Spectrum in Continuous Ambulatory Peritoneal Dialysis-Associated Peritonitis: A Single Center Retrospective Study\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC9422442/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Staphylococcus caprae",
+          "note": "Valid CoNS skin commensal; documented as sole agent of PD-related peritonitis (true infection), matching 'potential' (PD/HCA setting). Not pure contaminant.",
+          "refs": [
+            "{\"title\": \"Peritoneal Dialysis-Related Peritonitis Caused by Staphylococcus caprae: A Case Report\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC12381540/\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Staphylococcus epidermidis",
+          "note": "Leading PD-peritonitis pathogen and HCA/catheter-related ascites opportunist; common skin contaminant in cirrhotic SBP, not a primary community-acquired SBP agent.",
+          "refs": [
+            "{\"title\": \"Coagulase Negative Staphylococcal Peritonitis in Peritoneal Dialysis Patients: Review of 232 Consecutive Cases\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC2390994/\", \"year\": 2008}"
+          ]
+        },
+        {
+          "name": "Staphylococcus haemolyticus",
+          "note": "Valid CoNS; usually paracentesis skin contaminant, but a biofilm/device-associated opportunist cultured in nosocomial/HCA SBP -> potential, not pure commensal.",
+          "refs": [
+            "{\"title\": \"Epidemiological Study of Pathogens in Spontaneous Bacterial Peritonitis in 2017-2024 - A Preliminary Report of the University Hospital in South-Eastern Poland\", \"url\": \"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC11123777/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Staphylococcus hominis",
+          "note": "Valid CoNS skin commensal; usual paracentesis contaminant, but a documented opportunistic agent of PD-related/HCA peritonitis -> potential, not flora_commensal.",
+          "refs": [
+            "{\"title\": \"Coagulase Negative Staphylococcal Peritonitis in Peritoneal Dialysis Patients: Review of 232 Consecutive Cases\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC2390994/\", \"year\": 2008}"
+          ]
+        },
+        {
+          "name": "Staphylococcus warneri",
+          "note": "Skin-commensal CoNS; usually paracentesis contaminant in SBP, but a documented opportunist in PD-related peritonitis (~7% of CoNS cases) -> potential, not pure commensal.",
+          "refs": [
+            "{\"title\": \"Peritoneal Dialysis-Related Peritonitis due to Coagulase-Negative Staphylococcus: A Review of 115 Cases in a Brazilian Center\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC4046731/\", \"year\": 2014}"
+          ]
+        },
+        {
+          "name": "Stenotrophomonas maltophilia",
+          "note": "Valid name. MDR non-fermenter; documented but uncommon cause of SBP/intra-abdominal infection in cirrhosis, mainly healthcare-associated/antibiotic-selected. Potential, not verified.",
+          "refs": [
+            "{\"title\": \"Clinical Characteristics of Patients with Intra-Abdominal Infection Caused by Stenotrophomonas maltophilia\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC12155589/\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Streptococcus constellatus",
+          "note": "Member of the Streptococcus anginosus (milleri) group, oral/GI commensals with a pyogenic, abscess-forming reputation in intra-abdominal infection and peritonitis. S. anginosus is already listed; its congeners S.",
+          "refs": [
+            "{\"title\": \"Intra-Abdominal Abscess and Primary Peritonitis Caused by Streptococcus anginosus\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC5011413/\", \"year\": 2016}"
+          ]
+        },
+        {
+          "name": "Streptococcus dysgalactiae",
+          "note": "Beta-hemolytic group C/G streptococcus that, like the listed S. pyogenes (group A) and S. agalactiae (group B), can cause invasive infection and bacteremia/peritonitis in patients with chronic liver disease.",
+          "refs": [
+            "{\"title\": \"Bacterial infections other than spontaneous bacterial peritonitis in cirrhosis\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC3365435/\", \"year\": 2012}"
+          ]
+        },
+        {
+          "name": "Streptococcus gordonii",
+          "note": "Viridans (sanguinis/mitis) group oral commensal in the same underestimated-VGS-SBP category as the other viridans streptococci already listed (sanguinis, parasanguinis, mitis).",
+          "refs": [
+            "{\"title\": \"Viridans group streptococci: an underestimated cause of spontaneous bacterial peritonitis in cirrhotic patients with ascites\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/16093870/\", \"year\": 2005}"
+          ]
+        },
+        {
+          "name": "Streptococcus intermedius",
+          "note": "Streptococcus anginosus/milleri group member; oral and gut commensal strongly associated with abscess formation and intra-abdominal/hepatic infection. Same rationale and tier as S.",
+          "refs": [
+            "{\"title\": \"Intra-Abdominal Abscess and Primary Peritonitis Caused by Streptococcus anginosus\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC5011413/\", \"year\": 2016}"
+          ]
+        },
+        {
+          "name": "Streptococcus oralis",
+          "note": "Viridans group streptococcus (oral/GI commensal). VGS are an underestimated cause of SBP/bacterascites in cirrhotics (responsible for a large share of streptococcal SBP episodes).",
+          "refs": [
+            "{\"title\": \"Viridans group streptococci: an underestimated cause of spontaneous bacterial peritonitis in cirrhotic patients with ascites\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/16093870/\", \"year\": 2005}"
+          ]
+        },
+        {
+          "name": "Streptococcus pyogenes",
+          "note": "S. pyogenes (valid name) is a documented but rare cause of ascitic-fluid infection—primarily primary peritonitis in healthy hosts (often gynecologic source), <50 reported cases; streptococcal SBP is dominated by viridans…",
+          "refs": [
+            "{\"title\": \"Spontaneous bacterial peritonitis: recent guidelines and beyond\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/22147550/\", \"year\": 2012}"
+          ]
+        },
+        {
+          "name": "Veillonella parvula",
+          "note": "Anaerobic gram-negative coccus and oral/GI commensal occasionally recovered in polymicrobial intra-abdominal/anaerobic infections."
+        },
+        {
+          "name": "[Candida] auris",
+          "note": "Emerging multidrug-resistant Candida of major nosocomial concern; cirrhotics with prior antifungal/antibiotic exposure and ICU stay are exactly the at-risk SFP population."
+        },
+        {
+          "name": "Aeromonas hydrophila",
+          "note": "Water-borne gram-negative that causes SBP in advanced cirrhosis, often seasonal (warm months) and associated with diarrhea; described as a highly fatal form of spontaneous peritonitis. Aeromonas spp.",
+          "refs": [
+            "{\"title\": \"Aeromonas spontaneous bacterial peritonitis: a highly fatal infectious disease in patients with advanced liver cirrhosis\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/19369176/\", \"year\": 2009}"
+          ]
+        },
+        {
+          "name": "Clostridium ramosum",
+          "note": "Anaerobic gut commensal clostridium implicated in intra-abdominal/abdominal infections (cholecystitis, peritonitis) from bowel perforation/obstruction.",
+          "refs": [
+            "{\"title\": \"Overview of Clostridial Infections\", \"url\": \"https://www.msdmanuals.com/professional/infectious-diseases/anaerobic-bacteria/overview-of-clostridial-infections\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Kocuria rosea",
+          "note": "Valid name (ex-Micrococcus); skin/oral commensal & common contaminant, but documented PD-associated peritonitis & opportunistic infections fit ascites 'potential' tier.",
+          "refs": [
+            "{\"title\": \"Peritonitis attributable to Kocuria rosea in a pediatric peritoneal dialysis patient\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/22991024/\", \"year\": 2012}"
+          ]
+        },
+        {
+          "name": "Staphylococcus cohnii",
+          "note": "Low-virulence skin CoNS, usually a paracentesis contaminant, but documented as true SBP agent in HCA/immunocompromised (hemodialysis+cirrhosis) cases; opportunistic, not pure commensal.",
+          "refs": [
+            "{\"title\": \"Staphylococcus cohnii infection diagnosed by metagenomic next generation sequencing in a patient on hemodialysis with cirrhotic ascites: a case report\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10556727/\", \"year\": 2023}"
+          ]
+        }
+      ]
+    },
+    {
+      "listId": "ascites_commensal",
+      "label": "Ascites · commensal / contaminant",
+      "site": "Ascites",
+      "tier": "flora",
+      "role": "flora",
+      "color": "#2E8B57",
+      "help": "Gut/skin commensals; in ascitic fluid usually skin contamination at  paracentesis or gut-translocation background rather than true infection.",
+      "entries": [
+        {
+          "name": "Bacillus subtilis",
+          "note": "Valid name. Ascitic-fluid study classes B. subtilis (with CoNS) from low-WCC samples as organism of no clinical significance—contaminant, not true SBP.",
+          "refs": [
+            "{\"title\": \"P09 Incidence of bacterascites and spontaneous bacterial peritonitis (SBP) at a tertiary care teaching hospital\", \"url\": \"https://academic.oup.com/jacamr/article/7/Supplement_4/dlaf230.016/8363760\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Bifidobacterium longum",
+          "note": "Low-virulence gut anaerobic commensal; ascitic detection reflects translocation/contamination, not SBP. Only a single secondary-peritonitis (bowel-perforation) case report exists.",
+          "refs": [
+            "{\"title\": \"Peritonitis caused by Bifidobacterium longum: case report and literature review\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/24657157/\", \"year\": 2014}"
+          ]
+        },
+        {
+          "name": "Corynebacterium jeikeium",
+          "note": "Valid name (formerly CDC group JK). Lipophilic skin commensal; opportunistic line/device pathogen in immunocompromised. No SBP role; in ascites = skin contaminant.",
+          "refs": [
+            "{\"title\": \"Complete Genome Sequence and Analysis of the Multiresistant Nosocomial Pathogen Corynebacterium jeikeium K411, a Lipid-Requiring Bacterium of the Human Skin Flora\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC1151758/\", \"year\": 2005}"
+          ]
+        },
+        {
+          "name": "Cutibacterium acnes",
+          "note": "Dominant skin/sebaceous commensal, classic sterile-fluid culture contaminant; in ascites isolation usually reflects paracentesis skin contamination, not SBP. Name current (ex-Propionibacterium).",
+          "refs": [
+            "{\"title\": \"Cutibacterium acnes as an Opportunistic Pathogen: An Update of Its Virulence-Associated Factors\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC7913060/\", \"year\": 2021}"
+          ]
+        },
+        {
+          "name": "Cutibacterium avidum",
+          "note": "Valid name (formerly P. avidum). Skin commensal; opportunist in implant/device/SSI, not SBP. Ascites isolates ~ paracentesis skin contamination. Agree flora_commensal.",
+          "refs": [
+            "{\"title\": \"Clinical and Biological Features of Cutibacterium (Formerly Propionibacterium) avidum, an Underrecognized Microorganism\", \"url\": \"https://journals.asm.org/doi/full/10.1128/cmr.00064-17\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Cutibacterium granulosum",
+          "note": "Valid name (ex-Propionibacterium granulosum, Scholz/Kilian 2016). Low-virulence skin commensal, not an SBP agent; ascitic recovery = paracentesis skin contamination.",
+          "refs": [
+            "{\"title\": \"Comparative genomic analyses of Cutibacterium granulosum provide insights into genomic diversity\", \"url\": \"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10832045/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Lacticaseibacillus casei",
+          "note": "Gut/probiotic Lactobacillus; like the already-listed L. rhamnosus and L. paracasei it is normally a commensal/contaminant and only rarely an opportunist (e.g., probiotic-associated bacteremia in compromised hosts)."
+        },
+        {
+          "name": "Staphylococcus auricularis",
+          "note": "Valid CoNS (Kloos & Schleifer 1983), external-ear/skin commensal, low virulence; in ascites/SBP cultures routinely a skin contaminant from paracentesis, not a true SBP agent.",
+          "refs": [
+            "{\"title\": \"Predictive Factors of Spontaneous Bacterial Peritonitis Caused by Gram-Positive Bacteria in Patients With Cirrhosis\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC4998712/\", \"year\": 2016}"
+          ]
+        },
+        {
+          "name": "Staphylococcus pasteuri",
+          "note": "Valid CoNS species; normal skin flora, chiefly a blood-culture contaminant. No SBP/ascites pathogen role; in ascites = paracentesis skin contamination.",
+          "refs": [
+            "{\"title\": \"Species: Staphylococcus pasteuri (LPSN)\", \"url\": \"https://lpsn.dsmz.de/species/staphylococcus-pasteuri\", \"year\": 1993}"
+          ]
+        },
+        {
+          "name": "Staphylococcus saccharolyticus",
+          "note": "Valid anaerobic CoNS skin commensal, frequent culture contaminant. Rare opportunist (bacteremia/PJI) but no SBP/ascites role; in ascitic fluid = paracentesis skin contamination.",
+          "refs": [
+            "{\"title\": \"Clinical relevance of Staphylococcus saccharolyticus detection in human samples: a retrospective cohort study\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/38963607/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Bacillus cereus",
+          "note": "Bacillus species (excluding B. anthracis) are environmental and transient-skin organisms counted among standard culture contaminants; a single growth from ascites usually represents contamination rather than true periton…"
+        },
+        {
+          "name": "Corynebacterium minutissimum",
+          "note": "Valid name; cutaneous coryneform (erythrasma agent). In SBP studies Corynebacterium is explicitly excluded as suspicious skin contaminant; ascitic isolation = tap contamination.",
+          "refs": [
+            "{\"title\": \"Causative agents and outcome of spontaneous bacterial peritonitis in cirrhotic patients: community-acquired versus nosocomial infections\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC6533661/\", \"year\": 2019}"
+          ]
+        }
+      ]
+    },
+    {
+      "listId": "artifacts",
+      "label": "Likely artifacts (removed from composition)",
+      "site": null,
+      "tier": null,
+      "role": "artifact",
+      "color": "#DD8452",
+      "help": "Dataset-specific exclusions for recurrent assignments judged to reflect  residual host reads, reference-database problems, or clearly non-clinical  environmental signal. This is not a universal blacklist: controls and  genome-wide read coverage should be reviewed before adding taxa. Listed taxa  are removed and within-sample RA is renormalised.",
+      "entries": [
+        {
+          "name": "Toxoplasma gondii",
+          "note": "Known host/reference cross-mapping risk: human sequence embedded in T. gondii references can create large false-positive assignments. Excluded here because this dataset's recurrent/high-abundance pattern matches that failure mode; genuine toxoplasmosis still requires clinical and orthogonal confirmation.",
+          "refs": [
+            "{\"title\": \"Using populations of human and microbial genomes for organism detection in metagenomes\", \"url\": \"https://genome.cshlp.org/content/25/7/1056\", \"year\": 2015}",
+            "{\"title\": \"Use of the CHM13-T2T genome improves metagenomic analysis by minimizing host DNA contamination\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC12542756/\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Eimeria tenella",
+          "note": "Chicken-specific caecal coccidian; a recurrent call in human urine/ascites is biologically discordant. Its highly repetitive genome and contamination-prone oocyst preparations make a classifier/reference artifact plausible, so this is a dataset-specific exclusion rather than a universal blacklist.",
+          "refs": [
+            "{\"title\": \"The complete genome sequence of Eimeria tenella, a common gut parasite of chickens\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC8515493/\", \"year\": 2021}",
+            "{\"title\": \"Chromosome-level genome assembly of Eimeria tenella at the single-oocyst level\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC11912684/\", \"year\": 2025}"
+          ]
+        },
+        {
+          "name": "Besnoitia besnoiti",
+          "note": "Bovine coccidian not known to infect humans naturally. Genome material has been propagated in human fibroblasts and assembly workflows explicitly removed human host reads, giving recurrent human-sample assignments a credible host/reference cross-mapping route. This remains a dataset-specific exclusion.",
+          "refs": [
+            "{\"title\": \"Besnoitia besnoiti intermediate host life-cycle stages: from morphology to gene expression\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC9714946/\", \"year\": 2022}",
+            "{\"title\": \"EFSA assessment of animal diseases caused by Besnoitia besnoiti\", \"url\": \"https://animal-diseases.efsa.europa.eu/Besnoitia\", \"year\": 2026}"
+          ]
+        },
+        {
+          "name": "Puccinia striiformis",
+          "note": "Obligate biotrophic wheat stripe-rust fungus. Its detection here is treated as a dataset-specific non-clinical/environmental assignment; the source establishes plant ecology, not a proven human-read misclassification.",
+          "refs": [
+            "{\"title\": \"Distinct life histories impact dikaryotic genome evolution in Puccinia striiformis causing stripe rust in wheat\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC7250506/\", \"year\": 2020}"
+          ]
+        },
+        {
+          "name": "Ascochyta rabiei",
+          "note": "Host-specialised fungus causing Ascochyta blight of chickpea. Its detection here is treated as a dataset-specific non-clinical/environmental assignment; the source establishes plant ecology, not a proven human-read misclassification.",
+          "refs": [
+            "{\"title\": \"Ascochyta rabiei: A threat to global chickpea production\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC9366070/\", \"year\": 2022}"
+          ]
+        }
+      ]
+    },
+    {
+      "listId": "skin_flora",
+      "label": "Human skin-associated bacteria (context only)",
+      "site": null,
+      "tier": "flora",
+      "role": "flora",
+      "color": "#2E8B57",
+      "help": "Cross-site context only: species repeatedly recovered from healthy human skin  by culture or sequencing. Association is site-, strain- and host-dependent;  membership does not prove contamination, benignity or skin origin, and many  listed taxa are opportunistic pathogens. These taxa remain in composition views.",
+      "entries": [
+        {
+          "name": "Cutibacterium acnes",
+          "note": "Dominant, often stable resident of sebaceous skin and follicles (formerly Propionibacterium acnes); strain/context dependent and capable of acne and deep or device-associated infection.",
+          "refs": [
+            "{\"title\": \"Interference and co-existence of staphylococci and Cutibacterium acnes within the healthy human skin microbiome\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC9452508/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Cutibacterium avidum",
+          "note": "Minor resident of moist or occluded skin such as the axilla and groin (formerly Propionibacterium avidum); recognized surgical-site and prosthetic-joint opportunist.",
+          "refs": [
+            "{\"title\": \"Clinical and biological features of Cutibacterium avidum, an underrecognized microorganism\", \"url\": \"https://doi.org/10.1128/CMR.00064-17\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Cutibacterium granulosum",
+          "note": "Low-abundance cutaneous commensal (formerly Propionibacterium granulosum); rare opportunistic infections are reported.",
+          "refs": [
+            "{\"title\": \"Comparative genomic analyses of Cutibacterium granulosum provide insights into genomic diversity\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10832045/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Staphylococcus epidermidis",
+          "note": "Ubiquitous, often stable healthy-skin coagulase-negative staphylococcus; also a major biofilm and device-associated opportunistic pathogen.",
+          "refs": [
+            "{\"title\": \"Integrated genomic and functional analyses of human skin-associated Staphylococcus reveal extensive inter- and intra-species diversity\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10666031/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Staphylococcus hominis",
+          "note": "One of the most prevalent healthy-skin staphylococci across body sites, often enriched at moist sites; can cause catheter or bloodstream infection.",
+          "refs": [
+            "{\"title\": \"Integrated genomic and functional analyses of human skin-associated Staphylococcus reveal extensive inter- and intra-species diversity\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10666031/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Staphylococcus capitis",
+          "note": "Prominent healthy-skin coagulase-negative staphylococcus with a head/sebaceous-site preference; also a neonatal and device-associated opportunist.",
+          "refs": [
+            "{\"title\": \"Integrated genomic and functional analyses of human skin-associated Staphylococcus reveal extensive inter- and intra-species diversity\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10666031/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Staphylococcus haemolyticus",
+          "note": "Frequent skin coagulase-negative staphylococcus, especially at axillary and pubic moist sites; clinically important multidrug-resistant and device-associated opportunist.",
+          "refs": [
+            "{\"title\": \"Integrated genomic and functional analyses of human skin-associated Staphylococcus reveal extensive inter- and intra-species diversity\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10666031/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Staphylococcus warneri",
+          "note": "Lower-abundance but widespread skin coagulase-negative staphylococcus; usually commensal, yet capable of device, bloodstream, endocardial and urinary infection.",
+          "refs": [
+            "{\"title\": \"Integrated genomic and functional analyses of human skin-associated Staphylococcus reveal extensive inter- and intra-species diversity\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10666031/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Staphylococcus caprae",
+          "note": "Colonizes healthy human skin, nails and nasal mucosa; occasional opportunist, particularly in bone, joint and device infections.",
+          "refs": [
+            "{\"title\": \"Staphylococcus caprae: a skin commensal with pathogenic potential\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC6314791/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Staphylococcus auricularis",
+          "note": "Site-specific healthy-skin coagulase-negative staphylococcus strongly associated with the external auditory canal; rare opportunistic infection is possible.",
+          "refs": [
+            "{\"title\": \"Integrated genomic and functional analyses of human skin-associated Staphylococcus reveal extensive inter- and intra-species diversity\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10666031/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Corynebacterium tuberculostearicum",
+          "note": "Predominant, widespread lipophilic Corynebacterium on healthy skin; belongs to a close species complex, so exact species calls can be reference-dependent; occasional multidrug-resistant opportunist.",
+          "refs": [
+            "{\"title\": \"Genomic characterization of the Corynebacterium tuberculostearicum species complex, a prominent member of the human skin microbiome\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10790575/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Corynebacterium kefirresidentii",
+          "note": "Skin- and nares-associated member of the Corynebacterium tuberculostearicum species complex; exact assignment can be reference-dependent and should be interpreted cautiously.",
+          "refs": [
+            "{\"title\": \"Genomic characterization of the Corynebacterium tuberculostearicum species complex, a prominent member of the human skin microbiome\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10790575/\", \"year\": 2024}"
+          ]
+        },
+        {
+          "name": "Corynebacterium kroppenstedtii",
+          "note": "Lipophilic skin-associated Corynebacterium reported among healthy facial-skin taxa; also strongly associated with granulomatous mastitis.",
+          "refs": [
+            "{\"title\": \"Cultivation and characterization of the healthy human facial skin microbiome\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10683109/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Corynebacterium striatum",
+          "note": "Constituent of normal skin microbiota, but an increasingly important multidrug-resistant nosocomial and device-associated opportunist.",
+          "refs": [
+            "{\"title\": \"Corynebacterium striatum: an emerging multidrug-resistant opportunistic pathogen\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/36534203/\", \"year\": 2022}"
+          ]
+        },
+        {
+          "name": "Corynebacterium jeikeium",
+          "note": "Lipid-dependent member of human skin flora; clinically important multidrug-resistant opportunist in immunocompromised or device-bearing hosts.",
+          "refs": [
+            "{\"title\": \"Complete genome sequence and analysis of Corynebacterium jeikeium K411, a lipid-requiring bacterium of the human skin flora\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC1151758/\", \"year\": 2005}"
+          ]
+        },
+        {
+          "name": "Corynebacterium amycolatum",
+          "note": "Typical healthy-skin corynebacterial commensal; occasionally causes infection, especially when barriers or host defenses are impaired.",
+          "refs": [
+            "{\"title\": \"Corynebacterium amycolatum: an unexpected pathogen in the ear\", \"url\": \"https://pubmed.ncbi.nlm.nih.gov/29066761/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Corynebacterium simulans",
+          "note": "Skin-associated Corynebacterium documented in healthy facial-skin surveys; species identification can be difficult and invasive infection is reported.",
+          "refs": [
+            "{\"title\": \"Cultivation and characterization of the healthy human facial skin microbiome\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC10683109/\", \"year\": 2023}"
+          ]
+        },
+        {
+          "name": "Finegoldia magna",
+          "note": "Anaerobic commensal of skin and other non-sterile surfaces (formerly Peptostreptococcus magnus); also a comparatively virulent opportunist in wounds and soft tissue.",
+          "refs": [
+            "{\"title\": \"Identification of molecular mechanisms used by Finegoldia magna to penetrate and colonize human skin\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC4241043/\", \"year\": 2014}"
+          ]
+        },
+        {
+          "name": "Lawsonella clevelandensis",
+          "note": "Common inhabitant of oily or sebaceous skin and nostrils, often missed by routine culture; documented cause of deep abscess and graft or device infection.",
+          "refs": [
+            "{\"title\": \"New insights into human nostril microbiome from the expanded Human Oral Microbiome Database\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC6280432/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Micrococcus luteus",
+          "note": "Frequent aerobic resident of healthy skin, especially dry sites; also environmental and a rare catheter-associated or immunocompromised-host opportunist.",
+          "refs": [
+            "{\"title\": \"Draft genome sequences of Micrococcus luteus strains isolated from the skin of healthy volunteers\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC7303413/\", \"year\": 2020}"
+          ]
+        },
+        {
+          "name": "Acinetobacter johnsonii",
+          "note": "Recovered from skin of healthy and hospitalized people; also environmental and occasionally opportunistic.",
+          "refs": [
+            "{\"title\": \"Distribution of Acinetobacter species on human skin\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC230069/\", \"year\": 1997}"
+          ]
+        },
+        {
+          "name": "Acinetobacter lwoffii",
+          "note": "A frequent human-skin Acinetobacter in culture-based surveys; also environmental and a rare opportunist.",
+          "refs": [
+            "{\"title\": \"Distribution of Acinetobacter species on human skin\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC230069/\", \"year\": 1997}"
+          ]
+        },
+        {
+          "name": "Acinetobacter radioresistens",
+          "note": "Recognized, less frequent human-skin colonizer with strong desiccation tolerance; also environmental and occasionally opportunistic.",
+          "refs": [
+            "{\"title\": \"Distribution of Acinetobacter species on human skin\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC230069/\", \"year\": 1997}"
+          ]
+        },
+        {
+          "name": "Moraxella osloensis",
+          "note": "Skin-associated Gram-negative species isolated from healthy human skin; abundance varies by population and site, and rare invasive infection occurs.",
+          "refs": [
+            "{\"title\": \"Commensal Gram-negative skin microbiota triggers type I immunity\", \"url\": \"https://pmc.ncbi.nlm.nih.gov/articles/PMC5773745/\", \"year\": 2018}"
+          ]
+        },
+        {
+          "name": "Peptoniphilus harei",
+          "note": "Anaerobic Gram-positive coccus of skin and mucosal microbiota; not skin-exclusive and can act as an opportunist in polymicrobial skin or soft-tissue infection.",
+          "refs": [
+            "{\"title\": \"Gram-positive anaerobic cocci \\u2014 commensals and opportunistic pathogens\", \"url\": \"https://academic.oup.com/femsre/article/37/4/520/2399123\", \"year\": 2013}"
+          ]
+        }
+      ]
+    }
+  ]
+}

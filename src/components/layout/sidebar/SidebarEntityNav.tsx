@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   Building2,
+  Compass,
   FileText,
   FlaskConical,
   HardDrive,
@@ -12,6 +13,7 @@ import {
   Table2,
   Workflow,
 } from "lucide-react";
+import { useModuleEnabled } from "@/lib/modules";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -166,6 +168,7 @@ export function SidebarEntityNav({
       : "empty";
 
   // Derive active tab from URL or entity context (e.g. analysis page with studyId param)
+  const exploreEnabled = useModuleEnabled("explore");
   const analysisRunId = pathname.match(/^\/analysis\/([^/]+)/)?.[1] ?? null;
   const isAnalysisDetailRoute = analysisRunId !== null;
   const isStudyAnalysisContext = isAnalysisDetailRoute && entityType === "study";
@@ -232,6 +235,7 @@ export function SidebarEntityNav({
     },
     { key: "sequencing", label: "Sequencing Data", href: entityId ? `/studies/${entityId}?tab=samples` : undefined, icon: HardDrive, show: true },
     { key: "analysis", label: "Analysis", href: entityId ? `/studies/${entityId}?tab=pipelines` : undefined, icon: Workflow, show: showAdminControls },
+    { key: "explore", label: "Explore", href: entityId ? `/explore?scope=study:${entityId}` : undefined, icon: Compass, show: exploreEnabled },
     { key: "publishing", label: "Publishing", href: entityId ? `/studies/${entityId}?tab=publishing` : undefined, icon: Send, show: true },
   ];
 

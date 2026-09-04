@@ -9,11 +9,12 @@ import {
 
 describe("workers/registry", () => {
   describe("WORKER_REGISTRY", () => {
-    it("contains the four canonical worker names", () => {
+    it("contains the canonical worker names", () => {
       const names = WORKER_REGISTRY.map((spec) => spec.name).sort();
       expect(names).toEqual(
         [
           "discover-simulator",
+          "explore-monitor",
           "pipeline-monitor",
           "stream-monitor",
           "stream-simulator",
@@ -96,7 +97,7 @@ describe("workers/registry", () => {
     it("filters out devOnly workers in production", () => {
       const visible = visibleWorkers({ isProduction: true });
       const names = visible.map((spec) => spec.name).sort();
-      expect(names).toEqual(["pipeline-monitor", "stream-monitor"].sort());
+      expect(names).toEqual(["explore-monitor", "pipeline-monitor", "stream-monitor"].sort());
       expect(visible.every((spec) => !spec.devOnly)).toBe(true);
     });
 

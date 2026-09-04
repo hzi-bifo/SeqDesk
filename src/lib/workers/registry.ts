@@ -13,7 +13,8 @@ export type WorkerName =
   | "stream-monitor"
   | "stream-simulator"
   | "discover-simulator"
-  | "pipeline-monitor";
+  | "pipeline-monitor"
+  | "explore-monitor";
 
 export interface WorkerSpec {
   name: WorkerName;
@@ -57,6 +58,16 @@ export const WORKER_REGISTRY: WorkerSpec[] = [
     supportsPause: false,
     devOnly: false,
     settingsHref: "/admin/settings/pipelines",
+  },
+  {
+    name: "explore-monitor",
+    label: "Explore analysis monitor",
+    description:
+      "Finalizes Explore analysis runs: reads the exit marker of local and SLURM runs, records figures and tables from outputs/manifest.json, and promotes result tables to datasets.",
+    script: "scripts/explore-monitor.ts",
+    supportsPause: false,
+    devOnly: false,
+    settingsHref: "/explore",
   },
   {
     name: "stream-simulator",

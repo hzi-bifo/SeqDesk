@@ -97,6 +97,18 @@ export interface PackageOutputParsed {
   map: Record<string, string>;  // Field mapping
 }
 
+export interface PackageOutputTable {
+  /** Explore table kind, e.g. "taxon-profile-long" */
+  tableKind: string;
+  format?: 'tsv' | 'csv';
+  /** Column that names the sample in combined (study/run scoped) tables */
+  sampleColumn?: string;
+  /** Explore role -> column name */
+  roles?: Record<string, string>;
+  /** Lines starting with this prefix are comments and skipped */
+  skipLinesStartingWith?: string;
+}
+
 export interface PackageOutput {
   id: string;
   scope: PackageScope;
@@ -112,6 +124,7 @@ export interface PackageOutput {
   discovery: PackageOutputDiscovery;
   parsed?: PackageOutputParsed;
   result?: PackageOutputResultContract;
+  table?: PackageOutputTable;
   writeback?: PackageOutputWriteback;
 }
 

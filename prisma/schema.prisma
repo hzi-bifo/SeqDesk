@@ -44,6 +44,9 @@ model User {
   backgroundWorkersStarted   BackgroundWorkerProcess[] @relation("BackgroundWorkerStartedBy")
   workbenchWorkspace WorkbenchWorkspace? @relation("WorkbenchWorkspaceOwner")
   workbenchImportJobsCreated WorkbenchImportJob[] @relation("WorkbenchImportJobCreator")
+  exploreDatasetsCreated ExploreDataset[] @relation("ExploreDatasetCreator")
+  exploreAnalysesCreated ExploreAnalysis[] @relation("ExploreAnalysisCreator")
+  exploreRunsCreated ExploreAnalysisRun[] @relation("ExploreRunCreator")
   department     Department?     @relation(fields: [departmentId], references: [id])
 }
 
@@ -842,4 +845,206 @@ model AdminInvite {
   usedById    String?   @unique
   usedBy      User?     @relation("InviteUser", fields: [usedById], references: [id])
   createdBy   User      @relation("InviteCreator", fields: [createdById], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Explore: datasets assembled from study/sequencing/pipeline data, curation
+// edits applied at query time, code-visible analyses with managed runs.
+// Scope is a targetKey (study:<id> | order:<id> | workspace:<id>), the same
+// shape PipelineResultSelection uses.
+// ---------------------------------------------------------------------------
+
+model ExploreDataset {
+  id               String   @id @default(cuid())
+  targetKey        String
+  kind             String   // samples | sequencing | pipeline-table | external | derived
+  tableKind        String?  // e.g. taxon-profile-long
+  name             String
+  description      String?
+  sensitivity      String   @default("standard") // standard | pseudonymous | clinical
+  roles            String?  // JSON column -> role map
+  sourceConfig     String?  // JSON builder configuration (pipeline id, output id, run ids, import options)
+  currentVersionId String?  @unique
+  createdById      String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  createdBy User                    @relation("ExploreDatasetCreator", fields: [createdById], references: [id])
+  versions  ExploreDatasetVersion[]
+  edits     ExploreDatasetEdit[]
+
+  @@index([targetKey, kind])
+  @@index([createdById])
+}
+
+model ExploreDatasetVersion {
+  id          String   @id @default(cuid())
+  datasetId   String
+  number      Int
+  contentHash String
+  schema      String   // JSON: columns with types and roles
+  rowCount    Int
+  provenance  String   // JSON: source entities, runs, artifacts, files
+  storagePath String?  // immutable TSV + schema.json copy
+  buildSource String   // auto | manual | import | analysis-run
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  dataset ExploreDataset      @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  rows    ExploreDatasetRow[]
+
+  @@unique([datasetId, number])
+  @@index([datasetId, contentHash])
+}
+
+model ExploreDatasetRow {
+  id        Int     @id @default(autoincrement())
+  versionId String
+  rowIndex  Int
+  sampleId  String?
+  subjectId String?
+  key       String? // secondary key, e.g. taxon id or run id
+  data      Json
+
+  version ExploreDatasetVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@unique([versionId, rowIndex])
+  @@index([versionId, sampleId])
+  @@index([versionId, subjectId])
+  @@index([versionId, key])
+}
+
+// Curation edits never touch a version; they are applied at query time.
+model ExploreDatasetEdit {
+  id          String    @id @default(cuid())
+  datasetId   String
+  kind        String    // cell | row-flag | row-exclude | column-add | column-hide
+  target      String    // JSON {rowKey?, column?}
+  value       String?   // JSON
+  reason      String?
+  createdById String
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+  revokedById String?
+
+  dataset ExploreDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@index([datasetId, createdAt])
+}
+
+// Named lists (pathogen tiers, flora, artifacts) per scope, editable at runtime.
+model ExploreCurationList {
+  id        String   @id @default(cuid())
+  targetKey String
+  listId    String
+  label     String
+  role      String   // pathogen | flora | artifact
+  site      String?
+  tier      String?
+  color     String?
+  entries   String   // JSON [{name, note, refs}]
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([targetKey, listId])
+}
+
+model ExploreEnvironment {
+  id         String    @id @default(cuid())
+  name       String    @unique // seqdesk-explore-python
+  spec       String    // conda environment YAML
+  specHash   String
+  status     String    @default("missing") // missing | building | ready | failed
+  prefixPath String?
+  builtAt    DateTime?
+  lastError  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model ExploreAnalysis {
+  id                String   @id @default(cuid())
+  targetKey         String
+  name              String
+  description       String?
+  kitId             String?  // template it was created from
+  language          String   // python | r
+  environmentName   String
+  currentRevisionId String?  @unique
+  createdById       String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  createdBy User                      @relation("ExploreAnalysisCreator", fields: [createdById], references: [id])
+  revisions ExploreAnalysisRevision[]
+  runs      ExploreAnalysisRun[]
+
+  @@index([targetKey])
+  @@index([createdById])
+}
+
+model ExploreAnalysisRevision {
+  id           String   @id @default(cuid())
+  analysisId   String
+  number       Int
+  code         String
+  params       String   // JSON
+  inputs       String   // JSON [{alias, datasetId, versionId}]
+  author       String   // user | agent
+  authorUserId String?
+  prompt       String?
+  message      String?
+  createdAt    DateTime @default(now())
+
+  analysis ExploreAnalysis      @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  runs     ExploreAnalysisRun[]
+
+  @@unique([analysisId, number])
+}
+
+model ExploreAnalysisRun {
+  id            String    @id @default(cuid())
+  analysisId    String
+  revisionId    String
+  runNumber     String    @unique // EXP-20260904-001
+  status        String    @default("pending") // pending | queued | running | completed | failed | cancelled
+  executionMode String?   // local | slurm
+  runFolder     String?
+  queueJobId    String?
+  queuedAt      DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  exitCode      Int?
+  outputTail    String?
+  errorTail     String?
+  results       String?   // JSON summary
+  createdById   String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  analysis  ExploreAnalysis         @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  revision  ExploreAnalysisRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  createdBy User                    @relation("ExploreRunCreator", fields: [createdById], references: [id])
+  artifacts ExploreArtifact[]
+
+  @@index([analysisId, createdAt])
+  @@index([status])
+}
+
+model ExploreArtifact {
+  id               String   @id @default(cuid())
+  runId            String
+  kind             String   // figure | table | report | log
+  format           String   // plotly-json | png | svg | html | tsv | md | txt
+  name             String
+  path             String
+  size             BigInt?
+  checksum         String?
+  derivedDatasetId String?
+  createdAt        DateTime @default(now())
+
+  run ExploreAnalysisRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, path])
 }

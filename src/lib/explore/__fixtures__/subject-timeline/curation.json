@@ -1,0 +1,417 @@
+{
+ "memberships": {
+  "acinetobacter baumannii": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "aerococcus urinae": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"}
+  ],
+  "citrobacter freundii": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "corynebacterium urealyticum": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"}
+  ],
+  "enterobacter cloacae": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "escherichia coli": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "klebsiella aerogenes": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "klebsiella oxytoca": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "klebsiella pneumoniae": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "proteus mirabilis": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "providencia stuartii": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"}
+  ],
+  "pseudomonas aeruginosa": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "serratia marcescens": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "staphylococcus aureus": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "staphylococcus saprophyticus": [
+   {"listId": "urine_verified", "label": "Urine · typically uropathogenic", "role": "pathogen", "site": "Urine", "tier": "verified", "color": "#C0392B"}
+  ],
+  "actinotignum schaalii": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "aerococcus sanguinicola": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "aerococcus viridans": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "candida albicans": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "candida parapsilosis": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "candida tropicalis": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "citrobacter koseri": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "corynebacterium amycolatum": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "corynebacterium striatum": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "enterobacter hormaechei": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "enterococcus faecalis": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "enterococcus faecium": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "gardnerella vaginalis": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "morganella morganii": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "nakaseomyces glabratus": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "pichia kudriavzevii": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "proteus vulgaris": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "providencia rettgeri": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "schaalia turicensis": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "staphylococcus epidermidis": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "staphylococcus haemolyticus": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "staphylococcus warneri": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "stenotrophomonas maltophilia": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "streptococcus agalactiae": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "streptococcus anginosus": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "streptococcus dysgalactiae": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "streptococcus pyogenes": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "[candida] auris": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "alloscardovia omnicolens": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "mycoplasma hominis": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "ureaplasma urealyticum": [
+   {"listId": "urine_potential", "label": "Urine · potentially uropathogenic", "role": "pathogen", "site": "Urine", "tier": "potential", "color": "#E0A800"}
+  ],
+  "aerococcus christensenii": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "anaerococcus prevotii": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "bifidobacterium breve": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "corynebacterium tuberculostearicum": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "cutibacterium acnes": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "fannyhessea vaginae": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "finegoldia magna": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "lactobacillus crispatus": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "lactobacillus gasseri": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "lactobacillus iners": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "lactobacillus jensenii": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "lactobacillus johnsonii": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "micrococcus luteus": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "peptoniphilus harei": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "prevotella bivia": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "staphylococcus capitis": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "staphylococcus hominis": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "streptococcus gordonii": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "streptococcus mitis": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "streptococcus oralis": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "streptococcus salivarius": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "streptococcus sanguinis": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "prevotella timonensis": [
+   {"listId": "urine_flora", "label": "Urine · urogenital mucosal flora", "role": "flora", "site": "Urine", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "clostridium perfringens": [
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "listeria monocytogenes": [
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "streptococcus gallolyticus": [
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "streptococcus parasanguinis": [
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "streptococcus pneumoniae": [
+   {"listId": "ascites_verified", "label": "Ascites · established SBP pathogen", "role": "pathogen", "site": "Ascites", "tier": "verified", "color": "#C0392B"}
+  ],
+  "bacteroides fragilis": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "bacteroides ovatus": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "bacteroides thetaiotaomicron": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "cryptococcus neoformans": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "fusobacterium nucleatum": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "lacticaseibacillus paracasei": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "lacticaseibacillus rhamnosus": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "parabacteroides distasonis": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "peptostreptococcus anaerobius": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "phocaeicola vulgatus": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "prevotella melaninogenica": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "rothia mucilaginosa": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "staphylococcus caprae": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "streptococcus constellatus": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "streptococcus intermedius": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "veillonella parvula": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "aeromonas hydrophila": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "clostridium ramosum": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "kocuria rosea": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "staphylococcus cohnii": [
+   {"listId": "ascites_potential", "label": "Ascites · potential / opportunistic", "role": "pathogen", "site": "Ascites", "tier": "potential", "color": "#E0A800"}
+  ],
+  "bacillus subtilis": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "bifidobacterium longum": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "corynebacterium jeikeium": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "cutibacterium avidum": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "cutibacterium granulosum": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "lacticaseibacillus casei": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "staphylococcus auricularis": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"},
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "staphylococcus pasteuri": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "staphylococcus saccharolyticus": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "bacillus cereus": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "corynebacterium minutissimum": [
+   {"listId": "ascites_commensal", "label": "Ascites · commensal / contaminant", "role": "flora", "site": "Ascites", "tier": "flora", "color": "#2E8B57"}
+  ],
+  "toxoplasma gondii": [
+   {"listId": "artifacts", "label": "Likely artifacts (removed from composition)", "role": "artifact", "site": null, "tier": null, "color": "#DD8452"}
+  ],
+  "eimeria tenella": [
+   {"listId": "artifacts", "label": "Likely artifacts (removed from composition)", "role": "artifact", "site": null, "tier": null, "color": "#DD8452"}
+  ],
+  "besnoitia besnoiti": [
+   {"listId": "artifacts", "label": "Likely artifacts (removed from composition)", "role": "artifact", "site": null, "tier": null, "color": "#DD8452"}
+  ],
+  "puccinia striiformis": [
+   {"listId": "artifacts", "label": "Likely artifacts (removed from composition)", "role": "artifact", "site": null, "tier": null, "color": "#DD8452"}
+  ],
+  "ascochyta rabiei": [
+   {"listId": "artifacts", "label": "Likely artifacts (removed from composition)", "role": "artifact", "site": null, "tier": null, "color": "#DD8452"}
+  ],
+  "corynebacterium kefirresidentii": [
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "corynebacterium kroppenstedtii": [
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "corynebacterium simulans": [
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "lawsonella clevelandensis": [
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "acinetobacter johnsonii": [
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "acinetobacter lwoffii": [
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "acinetobacter radioresistens": [
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ],
+  "moraxella osloensis": [
+   {"listId": "skin_flora", "label": "Human skin-associated bacteria (context only)", "role": "flora", "site": null, "tier": "flora", "color": "#2E8B57"}
+  ]
+ },
+ "artifacts": ["Ascochyta rabiei", "Besnoitia besnoiti", "Eimeria tenella", "Puccinia striiformis", "Toxoplasma gondii"]
+}
