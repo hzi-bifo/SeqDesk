@@ -106,6 +106,9 @@ type CardActions = {
   scopeQuery: string;
   onPreset: (id: string, size: { width: number; height: number }) => void;
   onAnalyse: (datasetId: string, kitId: string | null) => Promise<void>;
+  /** Inputs of existing analyses this table could be connected to. */
+  connectTargets: ConnectTarget[];
+  onConnect: (datasetId: string, target: ConnectTarget) => Promise<void>;
   onToggleReport: (target: ReportTarget) => Promise<void>;
   kits: KitSummary[];
   /** Set for a few seconds after a run rewrote this card. */
@@ -152,33 +155,30 @@ function tint(hue: number) {
 }
 
 /** Resize handles for one card; shown while the card is selected. */
-function Resizer({ kind, selected }: { kind: CanvasNodeKind; selected: boolean }) {
+function Resizer({ kind, selected, colour }: { kind: CanvasNodeKind; selected: boolean; colour: string }) {
   const min = CANVAS_MIN_SIZES[kind];
   // React Flow keeps resize controls the same size on screen whatever the zoom;
-  // the grip should shrink with its card instead, and go away when the card is
+  // the corner should shrink with its card instead, and go away when the card is
   // too small to resize by hand.
   const { zoom } = useViewport();
   return (
     <>
       <NodeResizer isVisible={selected} minWidth={min.width} minHeight={min.height} lineClassName={resizerLine} handleClassName={resizerHandle} />
-      {/* A grip that is always there, so resizing does not need the card selected first. */}
+      {/* The card's own corner is the handle: a thicker stretch of border, no icon. */}
       {zoom >= 0.35 && (
         <NodeResizeControl
           position="bottom-right"
           minWidth={min.width}
           minHeight={min.height}
-          className="!h-5 !w-5 !border-0 !bg-transparent"
+          className="group/grip !h-6 !w-6 !border-0 !bg-transparent"
           style={{ right: 0, bottom: 0, cursor: "nwse-resize" }}
         >
-          <svg
-            viewBox="0 0 20 20"
-            className="h-5 w-5 text-muted-foreground/50 transition-colors hover:text-foreground"
-            style={{ transform: `scale(${Math.min(1, zoom)})`, transformOrigin: "100% 100%" }}
+          <span
+            className="absolute inset-0 rounded-br-lg opacity-60 transition-opacity group-hover/grip:opacity-100"
+            style={{ borderRight: `3px solid ${colour}`, borderBottom: `3px solid ${colour}`, transform: `scale(${Math.min(1, zoom)})`, transformOrigin: "100% 100%" }}
+            title="Drag to resize"
             aria-hidden
-          >
-            <title>Drag to resize</title>
-            <path d="M17 9 9 17M17 13l-4 4M17 5 5 17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
-          </svg>
+          />
         </NodeResizeControl>
       )}
     </>
@@ -239,7 +239,7 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
 
   return (
     <div className={cn("relative flex h-full w-full flex-col rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
-      <Resizer kind="dataset" selected={Boolean(selected)} />
+      <Resizer kind="dataset" selected={Boolean(selected)} colour={colours.border} />
       {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={handleClass} />
       <div className="flex items-start gap-2 border-b px-3 py-2" style={{ background: colours.header }}>
@@ -356,7 +356,14 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
         {hiddenRows > 0 ? <OverflowChip>+{hiddenRows.toLocaleString()} rows</OverflowChip> : <span className="text-[10px] text-muted-foreground">all rows</span>}
         {hiddenColumns > 0 ? <OverflowChip>+{hiddenColumns} columns</OverflowChip> : <span className="text-[10px] text-muted-foreground">all columns</span>}
         <span className="flex-1" />
-        <AnalyseMenu dataset={data} kits={data.kits} onPick={(kitId) => data.onAnalyse(data.datasetId, kitId)} compact={compact} />
+        <AnalyseMenu
+          dataset={data}
+          kits={data.kits}
+          onPick={(kitId) => data.onAnalyse(data.datasetId, kitId)}
+          compact={compact}
+          connectTargets={data.connectTargets}
+          onConnect={(target) => data.onConnect(data.datasetId, target)}
+        />
         {data.datasetKind === "derived" && (
           <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name })} compact={compact} />
         )}
@@ -397,7 +404,21 @@ function roleHintText(hints: NonNullable<CanvasDatasetData["roleHints"]>): strin
 }
 
 /** Start an analysis from this table: templates that fit it, or a blank script. */
-function AnalyseMenu({ dataset, kits, onPick, compact = false }: { dataset: CanvasDatasetData; kits: KitSummary[]; onPick: (kitId: string | null) => Promise<void>; compact?: boolean }) {
+function AnalyseMenu({
+  dataset,
+  kits,
+  onPick,
+  compact = false,
+  connectTargets,
+  onConnect,
+}: {
+  dataset: CanvasDatasetData;
+  kits: KitSummary[];
+  onPick: (kitId: string | null) => Promise<void>;
+  compact?: boolean;
+  connectTargets?: ConnectTarget[];
+  onConnect?: (target: ConnectTarget) => Promise<void>;
+}) {
   const [busy, setBusy] = useState(false);
   const pick = async (kitId: string | null) => {
     setBusy(true);
@@ -416,17 +437,52 @@ function AnalyseMenu({ dataset, kits, onPick, compact = false }: { dataset: Canv
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
-        <AnalyseList dataset={dataset} kits={kits} onPick={(kitId) => void pick(kitId)} />
+        <AnalyseList dataset={dataset} kits={kits} onPick={(kitId) => void pick(kitId)} connectTargets={connectTargets} onConnect={onConnect ? (target) => void onConnect(target) : undefined} />
       </DropdownMenuContent>
     </DropdownMenu>
   );
 }
 
+/** An input of an existing analysis that this table could be connected to. */
+export interface ConnectTarget {
+  analysisId: string;
+  analysisName: string;
+  alias: string;
+  label: string;
+}
+
 /** The entries of the Analyse menu; also shown where a drag from a table ends. */
-function AnalyseList({ dataset, kits, onPick }: { dataset: CanvasDatasetData; kits: KitSummary[]; onPick: (kitId: string | null) => void }) {
+function AnalyseList({
+  dataset,
+  kits,
+  onPick,
+  connectTargets = [],
+  onConnect,
+}: {
+  dataset: CanvasDatasetData;
+  kits: KitSummary[];
+  onPick: (kitId: string | null) => void;
+  connectTargets?: ConnectTarget[];
+  onConnect?: (target: ConnectTarget) => void;
+}) {
   return (
     <>
-      <DropdownMenuLabel>Analyse {dataset.name}</DropdownMenuLabel>
+      {connectTargets.length > 0 && onConnect && (
+        <>
+          <DropdownMenuLabel>Connect {dataset.name} to</DropdownMenuLabel>
+          {connectTargets.map((target) => (
+            <DropdownMenuItem key={`${target.analysisId}:${target.alias}`} onSelect={() => onConnect(target)}>
+              <FlaskConical className="mr-2 h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <div className="truncate font-medium">{target.analysisName}</div>
+                <div className="truncate text-xs text-muted-foreground">as {target.label}</div>
+              </div>
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+        </>
+      )}
+      <DropdownMenuLabel>{connectTargets.length > 0 ? "Or start a new analysis" : `Analyse ${dataset.name}`}</DropdownMenuLabel>
       {kits.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No templates installed.</div>}
       {kits.map((kit) => {
         const input = kit.inputs[0];
@@ -575,7 +631,7 @@ function AnalysisNode({ data, selected, height }: NodeProps<AnalysisNodeType>) {
   };
   return (
     <div className="flex h-full w-full flex-col rounded-lg border bg-card shadow-sm" style={{ borderColor: colours.border }}>
-      <Resizer kind="analysis" selected={Boolean(selected)} />
+      <Resizer kind="analysis" selected={Boolean(selected)} colour={colours.border} />
       <Handle type="target" position={Position.Left} className={handleClass} />
       <div className="flex items-start gap-2 px-3 py-2" style={{ background: colours.header }}>
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" style={{ color: colours.strong }} />
@@ -683,7 +739,7 @@ function FigureNode({ data, selected, width, height }: NodeProps<FigureNodeType>
   const area = Math.max(80, (height ?? CANVAS_SIZES.figure.height) - 34);
   return (
     <div className={cn("relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
-      <Resizer kind="figure" selected={Boolean(selected)} />
+      <Resizer kind="figure" selected={Boolean(selected)} colour={colours.border} />
       {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={handleClass} />
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/30">
@@ -721,7 +777,7 @@ function PendingNode({ data, selected }: NodeProps<PendingNodeType>) {
   const colours = tint(data.hue);
   return (
     <div className="flex h-full w-full flex-col overflow-hidden rounded-lg border border-dashed bg-card shadow-sm" style={{ borderColor: colours.border }}>
-      <Resizer kind="pending" selected={Boolean(selected)} />
+      <Resizer kind="pending" selected={Boolean(selected)} colour={colours.border} />
       <Handle type="target" position={Position.Left} className={handleClass} />
       <div className="min-h-0 flex-1 space-y-2 p-3">
         <Skeleton className="h-[60%] w-full" />
@@ -868,6 +924,52 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
     [kits, mutate, scope]
   );
 
+  /** Inputs an existing analysis still has free, per table: a kit input not yet bound, or an extra input of a blank script. */
+  const connectTargetsFor = useCallback(
+    (datasetId: string): ConnectTarget[] => {
+      if (!graph) return [];
+      const targets: ConnectTarget[] = [];
+      for (const node of graph.nodes) {
+        const data = node.data;
+        if (data.kind !== "analysis") continue;
+        const bound = data.inputs ?? [];
+        if (bound.some((binding) => binding.datasetId === datasetId)) continue;
+        const kit = data.kitId ? kits.find((entry) => entry.id === data.kitId) : null;
+        if (kit) {
+          for (const input of kit.inputs) {
+            if (bound.some((binding) => binding.alias === input.alias)) continue;
+            targets.push({ analysisId: data.analysisId, analysisName: data.name, alias: input.alias, label: input.label });
+          }
+        } else {
+          let index = bound.length + 1;
+          while (bound.some((binding) => binding.alias === `table${index}`)) index += 1;
+          targets.push({ analysisId: data.analysisId, analysisName: data.name, alias: `table${index}`, label: `extra input ${index}` });
+        }
+      }
+      return targets;
+    },
+    [graph, kits]
+  );
+
+  /** Bind a table to a free input of an existing analysis; the binding is a new version. */
+  const connectInput = useCallback(
+    async (datasetId: string, target: ConnectTarget) => {
+      const node = graph?.nodes.find((entry) => entry.data.kind === "analysis" && entry.data.analysisId === target.analysisId);
+      const bound = node?.data.kind === "analysis" ? (node.data.inputs ?? []) : [];
+      try {
+        await postJson(`/api/explore/analyses/${target.analysisId}/revisions`, {
+          inputs: [...bound, { alias: target.alias, datasetId }],
+          message: `Connected a table as ${target.alias} on the canvas`,
+        });
+        toast.success(`Connected to ${target.analysisName} as ${target.label}; press Run to use it`);
+        await mutate();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not connect the table");
+      }
+    },
+    [graph, mutate]
+  );
+
   /** Parameters changed on a card become a new version of the analysis. */
   const saveParams = useCallback(
     async (analysisId: string, params: Record<string, unknown>) => {
@@ -996,7 +1098,22 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
       const base = { id: node.id, position, width: size.width, height: size.height };
       const justUpdated = fresh.has(node.id);
       if (node.data.kind === "dataset") {
-        return { ...base, type: "dataset", data: { ...node.data, hue, scopeQuery, justUpdated, kits, onPreset: applyPreset, onAnalyse: createAnalysis, onToggleReport: toggleReport } } as DatasetNodeType;
+        return {
+          ...base,
+          type: "dataset",
+          data: {
+            ...node.data,
+            hue,
+            scopeQuery,
+            justUpdated,
+            kits,
+            connectTargets: connectTargetsFor(node.data.datasetId),
+            onPreset: applyPreset,
+            onAnalyse: createAnalysis,
+            onConnect: connectInput,
+            onToggleReport: toggleReport,
+          },
+        } as DatasetNodeType;
       }
       if (node.data.kind === "analysis") {
         return { ...base, type: "analysis", data: { ...node.data, hue, scopeQuery, onOpenCode: openCode, onRun: runAnalysis, onSaveParams: saveParams } } as AnalysisNodeType;
@@ -1005,7 +1122,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
       if (node.data.kind === "pending") return { ...base, type: "pending", data: { ...node.data, hue, scopeQuery } } as PendingNodeType;
       return { ...base, type: "source", data: node.data } as SourceNodeType;
     });
-  }, [graph, applyPreset, openCode, runAnalysis, saveParams, createAnalysis, toggleReport, kits, fresh, scope, scopeQuery, arrangeVersion]);
+  }, [graph, applyPreset, openCode, runAnalysis, saveParams, createAnalysis, connectTargetsFor, connectInput, toggleReport, kits, fresh, scope, scopeQuery, arrangeVersion]);
 
   const flowEdges = useMemo<Edge[]>(() => {
     if (!graph) return [];
@@ -1149,19 +1266,26 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
         )}
       </ReactFlow>
       {analyseAt && analyseDataset?.kind === "dataset" && (
-        <>
-          <div className="absolute inset-0 z-20" onClick={() => setAnalyseAt(null)} aria-hidden />
-          <div className="absolute z-30 w-80 rounded-md border bg-popover p-1 text-sm text-popover-foreground shadow-md" style={{ left: analyseAt.x, top: analyseAt.y }} role="menu" aria-label={`Analyse ${analyseDataset.name}`}>
+        <DropdownMenu open onOpenChange={(open) => !open && setAnalyseAt(null)}>
+          <DropdownMenuTrigger asChild>
+            <span className="absolute h-px w-px" style={{ left: analyseAt.x, top: analyseAt.y }} aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-80" aria-label={`Connect ${analyseDataset.name}`}>
             <AnalyseList
               dataset={analyseDataset}
               kits={kits}
+              connectTargets={connectTargetsFor(analyseDataset.datasetId)}
+              onConnect={(target) => {
+                setAnalyseAt(null);
+                void connectInput(analyseDataset.datasetId, target);
+              }}
               onPick={(kitId) => {
                 setAnalyseAt(null);
                 void createAnalysis(analyseDataset.datasetId, kitId);
               }}
             />
-          </div>
-        </>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
       {openAnalysisId && <CodePanel analysisId={openAnalysisId} scopeQuery={scopeQuery} onClose={() => setOpenAnalysisId(null)} onChanged={() => mutate()} onRun={runAnalysis} />}
     </div>
