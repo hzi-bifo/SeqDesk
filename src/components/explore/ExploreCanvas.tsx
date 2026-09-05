@@ -9,6 +9,7 @@ import {
   Handle,
   MarkerType,
   MiniMap,
+  NodeResizeControl,
   NodeResizer,
   Position,
   ReactFlow,
@@ -152,7 +153,24 @@ function tint(hue: number) {
 /** Resize handles for one card; shown while the card is selected. */
 function Resizer({ kind, selected }: { kind: CanvasNodeKind; selected: boolean }) {
   const min = CANVAS_MIN_SIZES[kind];
-  return <NodeResizer isVisible={selected} minWidth={min.width} minHeight={min.height} lineClassName={resizerLine} handleClassName={resizerHandle} />;
+  return (
+    <>
+      <NodeResizer isVisible={selected} minWidth={min.width} minHeight={min.height} lineClassName={resizerLine} handleClassName={resizerHandle} />
+      {/* A grip that is always there, so resizing does not need the card selected first. */}
+      <NodeResizeControl
+        position="bottom-right"
+        minWidth={min.width}
+        minHeight={min.height}
+        className="!h-5 !w-5 !border-0 !bg-transparent"
+        style={{ right: 0, bottom: 0, cursor: "nwse-resize" }}
+      >
+        <svg viewBox="0 0 20 20" className="h-5 w-5 text-muted-foreground/50 transition-colors hover:text-foreground" aria-hidden>
+          <title>Drag to resize</title>
+          <path d="M17 9 9 17M17 13l-4 4M17 5 5 17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+        </svg>
+      </NodeResizeControl>
+    </>
+  );
 }
 
 function SourceNode({ data }: NodeProps<SourceNodeType>) {
@@ -198,6 +216,7 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
   const colours = tint(data.hue);
   const compute = tint(COMPUTE_HUE);
   const computeSoft = `hsl(${COMPUTE_HUE} 55% 95% / 0.5)`;
+  const compact = size.width < 380;
   const toggleFold = (fold: number) =>
     setOpenFolds((current) => {
       const next = new Set(current);
@@ -325,9 +344,9 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
         {hiddenRows > 0 ? <OverflowChip>+{hiddenRows.toLocaleString()} rows</OverflowChip> : <span className="text-[10px] text-muted-foreground">all rows</span>}
         {hiddenColumns > 0 ? <OverflowChip>+{hiddenColumns} columns</OverflowChip> : <span className="text-[10px] text-muted-foreground">all columns</span>}
         <span className="flex-1" />
-        <AnalyseMenu dataset={data} kits={data.kits} onPick={(kitId) => data.onAnalyse(data.datasetId, kitId)} />
+        <AnalyseMenu dataset={data} kits={data.kits} onPick={(kitId) => data.onAnalyse(data.datasetId, kitId)} compact={compact} />
         {data.datasetKind === "derived" && (
-          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name })} />
+          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name })} compact={compact} />
         )}
         {data.views.length === 0 && data.roleHints && data.roleHints.length > 0 && (
           <Link
@@ -349,8 +368,8 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
             <Grid3x3 className="h-3.5 w-3.5" />
           </Link>
         )}
-        <Link href={`/explore/datasets/${data.datasetId}${data.scopeQuery}`} className="nodrag inline-flex items-center gap-1 text-[11px] font-medium hover:underline">
-          Open table <ExternalLink className="h-3 w-3" />
+        <Link href={`/explore/datasets/${data.datasetId}${data.scopeQuery}`} className="nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] font-medium hover:underline" title="Open the table">
+          {compact ? "Open" : "Open table"} <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
       <Handle type="source" position={Position.Right} className={cn(handleClass, "!h-3 !w-3 !bg-emerald-600")} isConnectable title="Drag onto empty space to start an analysis from this table" />
@@ -366,7 +385,7 @@ function roleHintText(hints: NonNullable<CanvasDatasetData["roleHints"]>): strin
 }
 
 /** Start an analysis from this table: templates that fit it, or a blank script. */
-function AnalyseMenu({ dataset, kits, onPick }: { dataset: CanvasDatasetData; kits: KitSummary[]; onPick: (kitId: string | null) => Promise<void> }) {
+function AnalyseMenu({ dataset, kits, onPick, compact = false }: { dataset: CanvasDatasetData; kits: KitSummary[]; onPick: (kitId: string | null) => Promise<void>; compact?: boolean }) {
   const [busy, setBusy] = useState(false);
   const pick = async (kitId: string | null) => {
     setBusy(true);
@@ -379,8 +398,9 @@ function AnalyseMenu({ dataset, kits, onPick }: { dataset: CanvasDatasetData; ki
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="nodrag inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium hover:bg-muted" title="Start an analysis that reads this table" disabled={busy}>
-          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />} Analyse
+        <button type="button" className="nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[11px] font-medium hover:bg-muted" title="Start an analysis that reads this table" aria-label="Analyse" disabled={busy}>
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+          {!compact && "Analyse"}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
@@ -427,7 +447,7 @@ function AnalyseList({ dataset, kits, onPick }: { dataset: CanvasDatasetData; ki
 }
 
 /** Put an output on the report page, or take it off. */
-function ReportToggle({ inReport, onToggle }: { inReport: boolean; onToggle: () => Promise<void> }) {
+function ReportToggle({ inReport, onToggle, compact = false }: { inReport: boolean; onToggle: () => Promise<void>; compact?: boolean }) {
   const [busy, setBusy] = useState(false);
   const toggle = async () => {
     setBusy(true);
@@ -442,12 +462,13 @@ function ReportToggle({ inReport, onToggle }: { inReport: boolean; onToggle: () 
       type="button"
       onClick={() => void toggle()}
       disabled={busy}
-      className={cn("nodrag inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium hover:bg-muted", inReport ? "border-transparent bg-secondary" : "text-muted-foreground")}
+      className={cn("nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-medium hover:bg-muted", inReport ? "border-transparent bg-secondary" : "text-muted-foreground")}
       title={inReport ? "Shown on the report page; click to take it off" : "Not on the report page; click to add it"}
+      aria-label={inReport ? "In report" : "Add to report"}
       aria-pressed={inReport}
     >
       {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : inReport ? <BookmarkCheck className="h-3 w-3" /> : <BookmarkPlus className="h-3 w-3" />}
-      {inReport ? "In report" : "Add to report"}
+      {!compact && (inReport ? "In report" : "Add to report")}
     </button>
   );
 }
@@ -643,9 +664,10 @@ function PlotlyThumbnail({ url, height }: { url: string; height: number }) {
   );
 }
 
-function FigureNode({ data, selected, height }: NodeProps<FigureNodeType>) {
+function FigureNode({ data, selected, width, height }: NodeProps<FigureNodeType>) {
   const image = data.thumbnailUrl ?? (data.format === "png" || data.format === "svg" ? data.url : null);
   const colours = tint(data.hue);
+  const compact = (width ?? CANVAS_SIZES.figure.width) < 340;
   const area = Math.max(80, (height ?? CANVAS_SIZES.figure.height) - 34);
   return (
     <div className={cn("relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
@@ -663,19 +685,19 @@ function FigureNode({ data, selected, height }: NodeProps<FigureNodeType>) {
         )}
       </div>
       <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px]">
-        <span className="min-w-0 truncate font-medium" title={data.name}>{data.name}</span>
-        <span className="shrink-0 text-muted-foreground">{data.format === "plotly-json" ? "interactive" : data.format}</span>
+        <span className="min-w-0 truncate font-medium" title={`${data.name}, ${data.format === "plotly-json" ? "interactive" : data.format}`}>{data.name}</span>
+        {!compact && <span className="shrink-0 text-muted-foreground">{data.format === "plotly-json" ? "interactive" : data.format}</span>}
         <span className="flex-1" />
-        {data.unchanged && <OverflowChip>unchanged</OverflowChip>}
+        {data.unchanged && !compact && <OverflowChip>unchanged</OverflowChip>}
         {data.analysisId && (
-          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "figure", analysisId: data.analysisId!, figureName: data.name, label: data.name })} />
+          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "figure", analysisId: data.analysisId!, figureName: data.name, label: data.name })} compact={compact} />
         )}
         <Link
           href={`/explore/runs/${data.runId}${data.scopeQuery}`}
-          className="nodrag inline-flex shrink-0 items-center gap-1 hover:underline"
-          title={data.unchanged ? "The latest run produced the same figure as the run before it" : "Open the run that wrote this figure"}
+          className="nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap hover:underline"
+          title={`${data.runNumber ?? "Run"}${data.unchanged ? ": the latest run produced the same figure as the run before it" : ": open the run that wrote this figure"}`}
         >
-          {data.runNumber ?? "Run"} <ExternalLink className="h-3 w-3" />
+          {compact ? "Run" : (data.runNumber ?? "Run")} <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
     </div>

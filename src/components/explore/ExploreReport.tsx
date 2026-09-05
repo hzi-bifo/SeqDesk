@@ -6,33 +6,21 @@ import useSWR from "swr";
 import {
   ArrowDown,
   ArrowUp,
-  BarChart3,
   ExternalLink,
-  FileText,
-  Image as ImageIcon,
   LayoutGrid,
   Loader2,
   Pencil,
   Plus,
   RectangleHorizontal,
   RotateCcw,
-  Sigma,
   Square,
-  Table2,
   Trash2,
   X,
 } from "lucide-react";
+import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -106,6 +94,7 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
   const { data, error, isLoading, mutate } = useSWR<ReportResponse>(key, fetcher, { refreshInterval: 15000 });
   const [draft, setDraft] = useState<ReportInput | null>(null);
   const [saving, setSaving] = useState(false);
+  const [storeOpen, setStoreOpen] = useState(false);
   const report = data?.report;
 
   if (error) return <p className="mt-6 text-sm text-destructive">Could not load the report: {String(error.message)}</p>;
@@ -143,12 +132,52 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
     });
   const removeBlock = (id: string) => update((current) => current.filter((block) => block.id !== id));
   const addBlock = (block: ReportBlock) => update((current) => (current.some((entry) => entry.id === block.id) ? current : [...current, block]));
-  const addAllOutputs = () =>
-    update((current) => {
-      const have = new Set(current.map((block) => block.id));
-      const additions = [...report.outputs.figures.map(figureBlockOf), ...outputTables.map(tableBlockOf)].filter((block) => !have.has(block.id));
-      return [...current, ...additions];
-    });
+  const storeGroups: StoreGroup[] = [
+    {
+      label: "Build from a table",
+      items: [
+        { id: "text", title: "Text", hint: "Headings, paragraphs and lists in Markdown", sketch: "text", onSelect: () => addBlock({ id: newBlockId("text"), type: "text", markdown: "" }) },
+        { id: "histogram", title: "Histogram", hint: "How the values of a numeric column spread", sketch: "histogram", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "histogram" } as ReportBlock) },
+        { id: "bar", title: "Bar chart", hint: "How many rows have each value", sketch: "bar", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "bar" } as ReportBlock) },
+        { id: "scatter", title: "Dot plot", hint: "Two numeric columns against each other", sketch: "scatter", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "scatter" } as ReportBlock) },
+        { id: "box", title: "Box plot", hint: "A numeric column per group", sketch: "box", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "box" } as ReportBlock) },
+        { id: "metric", title: "Numbers", hint: "Count, mean, min, max of one column", sketch: "numbers", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock(defaultMetricBlock(report.outputs.tables)) },
+      ],
+    },
+    {
+      label: "Figures from your analyses",
+      empty: "No analysis has drawn a figure yet. Run one on the canvas and it appears here.",
+      items: report.outputs.figures.map((figure) => {
+        const used = usedFigures.has(figureKey(figure.analysisId, figure.figureName));
+        return {
+          id: figureKey(figure.analysisId, figure.figureName),
+          title: figure.figureName,
+          hint: `${figure.analysisName}, ${figure.runNumber}`,
+          sketch: "figure" as const,
+          image: figure.thumbnailUrl,
+          badge: used ? "added" : undefined,
+          disabled: used,
+          onSelect: () => addBlock(figureBlockOf(figure)),
+        };
+      }),
+    },
+    {
+      label: "Tables",
+      empty: "No tables in this scope yet.",
+      items: report.outputs.tables.map((table) => {
+        const used = usedTables.has(table.datasetId);
+        return {
+          id: table.datasetId,
+          title: table.name,
+          hint: `${table.rowCount.toLocaleString()} rows, ${table.columnCount} columns`,
+          sketch: "table" as const,
+          badge: used ? "added" : table.output ? "output" : "input",
+          disabled: used,
+          onSelect: () => addBlock(tableBlockOf(table)),
+        };
+      }),
+    },
+  ];
 
   const save = async () => {
     if (!draft) return;
@@ -200,63 +229,17 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
         {canEdit &&
           (editing ? (
             <div className="flex items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add block
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-80">
-                  <DropdownMenuItem onSelect={() => addBlock({ id: newBlockId("text"), type: "text", markdown: "" })}>
-                    <FileText className="mr-2 h-4 w-4" /> Text
-                  </DropdownMenuItem>
-                  <DropdownMenuItem disabled={report.outputs.tables.length === 0} onSelect={() => addBlock(defaultChartBlock(report.outputs.tables))}>
-                    <BarChart3 className="mr-2 h-4 w-4" />
-                    <span className="flex-1">Chart from a table</span>
-                    <span className="ml-2 text-xs text-muted-foreground">no code needed</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem disabled={report.outputs.tables.length === 0} onSelect={() => addBlock(defaultMetricBlock(report.outputs.tables))}>
-                    <Sigma className="mr-2 h-4 w-4" />
-                    <span className="flex-1">Numbers from a column</span>
-                    <span className="ml-2 text-xs text-muted-foreground">count, mean, min, max</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel>Figures</DropdownMenuLabel>
-                  {report.outputs.figures.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No analysis has drawn a figure yet.</div>}
-                  {report.outputs.figures.map((figure) => {
-                    const used = usedFigures.has(figureKey(figure.analysisId, figure.figureName));
-                    return (
-                      <DropdownMenuItem key={figureKey(figure.analysisId, figure.figureName)} disabled={used} onSelect={() => addBlock(figureBlockOf(figure))}>
-                        <ImageIcon className="mr-2 h-4 w-4" />
-                        <span className="flex-1 truncate">{figure.figureName}</span>
-                        <span className="ml-2 text-xs text-muted-foreground">{used ? "added" : figure.analysisName}</span>
-                      </DropdownMenuItem>
-                    );
-                  })}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuLabel>Tables</DropdownMenuLabel>
-                  {report.outputs.tables.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No datasets in this scope yet.</div>}
-                  {report.outputs.tables.map((table) => {
-                    const used = usedTables.has(table.datasetId);
-                    return (
-                      <DropdownMenuItem key={table.datasetId} disabled={used} onSelect={() => addBlock(tableBlockOf(table))}>
-                        <Table2 className="mr-2 h-4 w-4" />
-                        <span className="flex-1 truncate">{table.name}</span>
-                        <span className="ml-2 text-xs text-muted-foreground">{used ? "added" : table.output ? "output" : "input"}</span>
-                      </DropdownMenuItem>
-                    );
-                  })}
-                  {hasOutputs && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onSelect={addAllOutputs}>
-                        <Plus className="mr-2 h-4 w-4" /> Add every output not yet on the page
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <Button variant="outline" size="sm" onClick={() => setStoreOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add block
+              </Button>
+              <ElementStore
+                open={storeOpen}
+                onOpenChange={setStoreOpen}
+                title="Add to the report"
+                description="Build a block from a table, or place a figure or table an analysis produced."
+                groups={storeGroups}
+              />
               <Button variant="outline" size="sm" onClick={() => setDraft(null)} disabled={saving}>
                 <X className="mr-2 h-4 w-4" />
                 Cancel
