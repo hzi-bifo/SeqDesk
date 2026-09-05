@@ -1,0 +1,38 @@
+{
+  "kitVersion": 1,
+  "id": "beta-diversity",
+  "name": "Beta diversity (PCoA)",
+  "description": "Between-sample differences from a long taxon profile table: Bray-Curtis (abundance) or Jaccard (presence) distances between samples, a principal coordinates ordination coloured by group, the coordinates as a table, and PERMANOVA (pseudo-F, R2, permutation p) for the group and subject roles.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [
+    {
+      "alias": "profiles",
+      "label": "Taxon profiles (long)",
+      "description": "One row per taxon per sample with read counts. Group and subject roles colour the ordination and are tested.",
+      "tableKind": "taxon-profile-long",
+      "requiredRoles": ["sample", "taxon", "count"],
+      "optionalRoles": ["group", "subject", "timepoint", "taxon_id", "rank"]
+    }
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "metric": { "type": "string", "title": "Distance", "description": "Bray-Curtis on relative abundance, or Jaccard on presence and absence.", "default": "bray-curtis", "enum": ["bray-curtis", "jaccard"] },
+      "permutations": { "type": "integer", "title": "PERMANOVA permutations", "description": "Label permutations for the p-value; 0 skips the test.", "default": 999, "minimum": 0, "maximum": 9999 },
+      "rank": { "type": "string", "title": "Taxonomic rank", "description": "When the table maps a rank role, use taxa of this rank only.", "default": "species" },
+      "min_reads": { "type": "number", "title": "Minimum reads per sample", "description": "Samples with fewer retained reads are dropped; 0 keeps every sample.", "default": 0, "minimum": 0 },
+      "remove_artifacts": { "type": "boolean", "title": "Remove curated artifacts", "description": "Drop taxa on curation lists with the artifact role before computing distances.", "default": true }
+    }
+  },
+  "outputs": [
+    { "name": "pcoa", "kind": "figure", "description": "Samples on the first two principal coordinates, coloured by group." },
+    { "name": "pcoa_coordinates", "kind": "table", "description": "One row per sample: the first three coordinates plus group, subject and timepoint." },
+    { "name": "permanova", "kind": "table", "description": "PERMANOVA per factor: groups, pseudo-F, R2, permutation p." }
+  ],
+  "citation": "Built with pandas, NumPy, SciPy (Virtanen et al. 2020) and Plotly. PCoA by eigendecomposition of the double-centred squared distances (Gower 1966); PERMANOVA after Anderson (2001), following the INDIVO Explorer ordination page. See README.md for details.",
+  "tags": ["microbiome", "beta-diversity", "pcoa", "permanova", "bray-curtis", "taxon-profile"],
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}

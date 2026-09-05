@@ -1,0 +1,44 @@
+{
+  "artifacts": [
+    {
+      "name": "alpha_diversity",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "alpha_tests",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "alpha_by_group",
+      "kind": "figure",
+      "format": "plotly-json"
+    },
+    {
+      "name": "alpha_over_time",
+      "kind": "figure",
+      "format": "plotly-json"
+    }
+  ],
+  "metrics": {
+    "n_rows_input": 123,
+    "n_rows_retained": 98,
+    "n_nondetections_dropped": 1,
+    "n_artifact_taxa_removed": 2,
+    "n_samples_dropped": 0,
+    "n_samples": 12,
+    "n_taxa": 20,
+    "index": "shannon",
+    "median_shannon": {
+      "approx": 1.8128,
+      "tol": 0.001
+    },
+    "median_richness": 8.0,
+    "kruskal_p_group": {
+      "approx": 0.4233,
+      "tol": 0.0005
+    },
+    "n_groups": 2
+  }
+}

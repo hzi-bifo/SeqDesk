@@ -1,0 +1,38 @@
+{
+  "artifacts": [
+    {
+      "name": "overview",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "subjects",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "samples_per_group",
+      "kind": "figure",
+      "format": "plotly-json"
+    },
+    {
+      "name": "sampling_timeline",
+      "kind": "figure",
+      "format": "plotly-json"
+    }
+  ],
+  "metrics": {
+    "n_rows_input": 123,
+    "n_rows_retained": 98,
+    "n_nondetections_dropped": 1,
+    "n_artifact_taxa_removed": 2,
+    "n_samples_dropped": 0,
+    "n_samples": 12,
+    "n_subjects": 4,
+    "n_groups": 2,
+    "n_taxa": 20,
+    "total_reads": 603708.0,
+    "first_timepoint": 0.0,
+    "last_timepoint": 14.0
+  }
+}

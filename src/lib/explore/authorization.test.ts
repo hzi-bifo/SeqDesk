@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     study: { findUnique: vi.fn(), findMany: vi.fn() },
     order: { findUnique: vi.fn(), findMany: vi.fn() },
     workbenchWorkspace: { findUnique: vi.fn() },
+    exploreProject: { findUnique: vi.fn(), findMany: vi.fn() },
   },
 }));
 
@@ -22,6 +23,8 @@ const admin = { user: { id: "admin-1", role: "FACILITY_ADMIN" } } as never;
 
 describe("explore authorization", () => {
   beforeEach(() => {
+    mocks.db.exploreProject.findMany.mockResolvedValue([]);
+    mocks.db.exploreProject.findUnique.mockResolvedValue(null);
     vi.clearAllMocks();
     mocks.db.study.findUnique.mockResolvedValue({ userId: "user-1" });
     mocks.db.order.findUnique.mockResolvedValue({ userId: "someone-else" });

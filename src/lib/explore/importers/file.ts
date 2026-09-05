@@ -34,7 +34,9 @@ function fileKind(fileName: string): "xlsx" | "csv" | "tsv" | "unknown" {
 }
 
 async function parseXlsx(buffer: Buffer, sheetName: string | null | undefined): Promise<ParsedImport> {
-  const ExcelJS = await import("exceljs");
+  // The package is CommonJS; bundlers hand it over as the default export, plain Node as the namespace.
+  const loaded = (await import("exceljs")) as typeof import("exceljs") & { default?: typeof import("exceljs") };
+  const ExcelJS = loaded.default ?? loaded;
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
   const sheets = workbook.worksheets.map((sheet) => sheet.name);

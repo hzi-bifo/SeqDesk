@@ -1,17 +1,55 @@
 {
   "schemaVersion": 1,
   "kits": {
-    "table-summary": {
+    "alpha-diversity": {
       "tier": "required",
-      "proofs": ["validate", "pytest", "app-run"]
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "beta-diversity": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "cohort-overview": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "differential-abundance": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
     },
     "sequencing-qc-overview": {
       "tier": "required",
-      "proofs": ["validate", "pytest"]
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "table-summary": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest",
+        "app-run"
+      ]
     },
     "taxon-composition": {
       "tier": "required",
-      "proofs": ["validate", "pytest"]
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
     }
   }
 }

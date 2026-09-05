@@ -2,11 +2,13 @@
  * Explore scopes everything by a target key, the same shape that
  * PipelineResultSelection.targetKey already uses:
  *
- *   study:<id> | order:<id> | workspace:<id>
+ *   study:<id> | order:<id> | workspace:<id> | project:<id>
  *
- * Keys are parsed strictly so a malformed key can never widen a query.
+ * A project is an Explore scope of its own, for tables that belong to no
+ * study or sequencing order. Keys are parsed strictly so a malformed key can
+ * never widen a query.
  */
-export type ExploreTargetType = "study" | "order" | "workspace";
+export type ExploreTargetType = "study" | "order" | "workspace" | "project";
 
 export interface ExploreTargetKey {
   type: ExploreTargetType;
@@ -17,6 +19,7 @@ export const EXPLORE_TARGET_TYPES: readonly ExploreTargetType[] = [
   "study",
   "order",
   "workspace",
+  "project",
 ] as const;
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
@@ -58,5 +61,7 @@ export function targetTypeLabel(type: ExploreTargetType): string {
       return "Sequencing Order";
     case "workspace":
       return "Workspace";
+    case "project":
+      return "Project";
   }
 }

@@ -58,6 +58,12 @@ export async function resolveTargetAccess(
     return { level: admin || order.userId === userId ? "write" : "none", target };
   }
 
+  if (target.type === "project") {
+    const project = await db.exploreProject.findUnique({ where: { id: target.id }, select: { ownerId: true } });
+    if (!project) return { level: "none", target };
+    return { level: admin || project.ownerId === userId ? "write" : "none", target };
+  }
+
   const workspace = await db.workbenchWorkspace.findUnique({
     where: { id: target.id },
     select: { ownerId: true },
@@ -94,7 +100,7 @@ export async function listExploreScopes(session: SessionLike): Promise<ExploreSc
   const admin = isFacilityAdminSession(session);
   const ownerFilter = admin ? {} : { userId };
 
-  const [studies, orders, workspace] = await Promise.all([
+  const [studies, orders, workspace, projects] = await Promise.all([
     db.study.findMany({
       where: ownerFilter,
       select: { id: true, title: true, alias: true },
@@ -111,9 +117,24 @@ export async function listExploreScopes(session: SessionLike): Promise<ExploreSc
       where: { ownerId: userId },
       select: { id: true, name: true },
     }),
+    db.exploreProject.findMany({
+      where: admin ? {} : { ownerId: userId },
+      select: { id: true, name: true, description: true },
+      orderBy: { updatedAt: "desc" },
+      take: 200,
+    }),
   ]);
 
   const scopes: ExploreScope[] = [];
+  for (const project of projects) {
+    scopes.push({
+      targetKey: `project:${project.id}`,
+      type: "project",
+      label: project.name,
+      detail: project.description ?? undefined,
+      access: "write",
+    });
+  }
   for (const study of studies) {
     scopes.push({
       targetKey: `study:${study.id}`,

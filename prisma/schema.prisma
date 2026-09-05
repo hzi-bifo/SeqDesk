@@ -933,6 +933,17 @@ model ExploreDatasetEdit {
 }
 
 // Named lists (pathogen tiers, flora, artifacts) per scope, editable at runtime.
+model ExploreProject {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  ownerId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerId])
+}
+
 model ExploreReport {
   id          String    @id @default(cuid())
   targetKey   String

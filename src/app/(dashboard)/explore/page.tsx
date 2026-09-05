@@ -1,13 +1,17 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { BookOpen, Compass, Database, FileText, FlaskConical, Inbox, Info, LayoutGrid, List, Pencil, Plus, Upload } from "lucide-react";
+import { BookOpen, Compass, Database, FileText, FlaskConical, FolderOpen, FolderPlus, Inbox, Info, LayoutGrid, List, Loader2, Pencil, Plus, Upload } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/toast";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,7 +20,7 @@ import { ExploreCanvas } from "@/components/explore/ExploreCanvas";
 import { ExploreReport } from "@/components/explore/ExploreReport";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import { DATASET_KIND_DEFINITIONS, TABLE_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
-import { fetcher, formatDateTime, SCOPE_STORAGE_KEY } from "@/lib/explore/client";
+import { fetcher, formatDateTime, postJson, SCOPE_STORAGE_KEY } from "@/lib/explore/client";
 import { isValidTargetKey } from "@/lib/explore/target-key";
 import type { ExploreDatasetSummary, ExploreScope } from "@/lib/explore/types";
 
@@ -53,12 +57,14 @@ function ExploreHome() {
   const urlMode = requestedMode === "edit" || requestedMode === "report" ? requestedMode : null;
   const urlView = requestedView === "canvas" || requestedView === "list" ? requestedView : null;
   const [storedScope, setStoredScope] = useStoredPreference<string>(SCOPE_STORAGE_KEY, "");
+  const [projectDialog, setProjectDialog] = useState<{ name: string; description: string } | null>(null);
+  const [creatingProject, setCreatingProject] = useState(false);
   const [view, setView] = useStoredPreference<"list" | "canvas">(VIEW_STORAGE_KEY, "list", ["list", "canvas"]);
   // The report is the final page of a scope; list and canvas are where it is made.
   // Until the user picks, a scope with outputs or a saved report opens on the report.
   const [mode, setMode] = useStoredPreference<"auto" | "report" | "edit">(MODE_STORAGE_KEY, "auto", ["auto", "report", "edit"]);
 
-  const { data: scopesData, error: scopesError, isLoading: scopesLoading } = useSWR<{ scopes: ExploreScope[] }>(
+  const { data: scopesData, error: scopesError, isLoading: scopesLoading, mutate: mutateScopes } = useSWR<{ scopes: ExploreScope[] }>(
     "/api/explore/scopes",
     fetcher
   );
@@ -140,7 +146,15 @@ function ExploreHome() {
             <SelectTrigger className="h-8 max-w-[22rem] gap-1.5 border-transparent bg-transparent px-1.5 text-sm font-medium shadow-none hover:bg-secondary" aria-label="Explore scope">
               {activeScope ? (
                 <span className="inline-flex min-w-0 items-center gap-1.5">
-                  {activeScope.type === "study" ? <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground" /> : activeScope.type === "order" ? <Inbox className="h-4 w-4 shrink-0 text-muted-foreground" /> : <Compass className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                  {activeScope.type === "study" ? (
+                    <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  ) : activeScope.type === "order" ? (
+                    <Inbox className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  ) : activeScope.type === "project" ? (
+                    <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <Compass className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  )}
                   <span className="truncate">{activeScope.label}</span>
                 </span>
               ) : (
@@ -148,12 +162,12 @@ function ExploreHome() {
               )}
             </SelectTrigger>
             <SelectContent>
-              {(["study", "order", "workspace"] as const).map((type) => {
+              {(["project", "study", "order", "workspace"] as const).map((type) => {
                 const entries = scopes.filter((entry) => entry.type === type);
                 if (entries.length === 0) return null;
                 return (
                   <SelectGroup key={type}>
-                    <SelectLabel>{type === "study" ? "Studies" : type === "order" ? "Sequencing orders" : "Workspace"}</SelectLabel>
+                    <SelectLabel>{type === "study" ? "Studies" : type === "order" ? "Sequencing orders" : type === "project" ? "Projects" : "Workspace"}</SelectLabel>
                     {entries.map((entry) => (
                       <SelectItem key={entry.targetKey} value={entry.targetKey}>
                         {entry.label}
@@ -166,6 +180,15 @@ function ExploreHome() {
             </SelectContent>
           </Select>
         )}
+        <button
+          type="button"
+          onClick={() => setProjectDialog({ name: "", description: "" })}
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+          aria-label="New project"
+          title="New project: a scope of its own for tables that belong to no study or order"
+        >
+          <FolderPlus className="h-4 w-4" />
+        </button>
         <span className="h-5 w-px bg-border" aria-hidden />
         <div className="flex rounded-md border text-xs" role="group" aria-label="Mode">
           <button type="button" onClick={() => chooseMode("report")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${effectiveMode === "report" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={effectiveMode === "report"} title="The final page: figures, tables and text for others">
@@ -227,9 +250,57 @@ function ExploreHome() {
 
       {!scopesLoading && scopes.length === 0 && (
         <div className="mt-4 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Explore works on studies and sequencing orders you own. Create one first, then come back here.
+          <p>Explore works on a study or a sequencing order you own, or on a project of its own.</p>
+          <Button variant="outline" size="sm" className="mt-4" onClick={() => setProjectDialog({ name: "", description: "" })}>
+            <FolderPlus className="mr-2 h-4 w-4" />
+            New project
+          </Button>
         </div>
       )}
+
+      <Dialog open={projectDialog !== null} onOpenChange={(open) => !open && setProjectDialog(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>New project</DialogTitle>
+            <DialogDescription>A scope of its own: bring in tables, analyse them and write the report, without a study or sequencing order behind it.</DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-3"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (!projectDialog || !projectDialog.name.trim()) return;
+              setCreatingProject(true);
+              try {
+                const result = await postJson<{ project: { targetKey: string } }>("/api/explore/projects", { name: projectDialog.name.trim(), description: projectDialog.description.trim() || undefined });
+                await mutateScopes();
+                setProjectDialog(null);
+                selectScope(result.project.targetKey);
+                toast.success("Project created");
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Could not create the project");
+              } finally {
+                setCreatingProject(false);
+              }
+            }}
+          >
+            <label className="block text-sm">
+              <span className="font-medium">Name</span>
+              <Input className="mt-1" value={projectDialog?.name ?? ""} onChange={(event) => setProjectDialog((current) => (current ? { ...current, name: event.target.value } : current))} placeholder="Clinical metagenomics cohort" autoFocus />
+            </label>
+            <label className="block text-sm">
+              <span className="font-medium">Description</span>
+              <Textarea className="mt-1" rows={2} value={projectDialog?.description ?? ""} onChange={(event) => setProjectDialog((current) => (current ? { ...current, description: event.target.value } : current))} placeholder="What the tables in this project are about" />
+            </label>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setProjectDialog(null)} disabled={creatingProject}>Cancel</Button>
+              <Button type="submit" disabled={creatingProject || !projectDialog?.name.trim()}>
+                {creatingProject ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FolderPlus className="mr-2 h-4 w-4" />}
+                Create project
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {activeScope && effectiveMode === null && (
         <div className="mt-4 space-y-3">

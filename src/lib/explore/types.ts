@@ -164,8 +164,8 @@ export interface ExploreRowPage {
 
 export interface ExploreScope {
   targetKey: string;
-  type: "study" | "order" | "workspace";
-  /** The study title, the order name or the workspace name. */
+  type: "study" | "order" | "workspace" | "project";
+  /** The study title, the order name, the workspace name or the project name. */
   label: string;
   /** A secondary identifier: study alias or order number. */
   detail?: string;

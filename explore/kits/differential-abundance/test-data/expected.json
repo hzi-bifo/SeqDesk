@@ -1,0 +1,27 @@
+{
+  "artifacts": [
+    {
+      "name": "differential_abundance",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "volcano",
+      "kind": "figure",
+      "format": "plotly-json"
+    }
+  ],
+  "metrics": {
+    "n_rows_input": 123,
+    "n_rows_retained": 98,
+    "n_nondetections_dropped": 1,
+    "n_artifact_taxa_removed": 2,
+    "n_samples_dropped": 0,
+    "group_a": "Urine",
+    "group_b": "Stool",
+    "n_samples_a": 6,
+    "n_samples_b": 6,
+    "n_taxa_tested": 20,
+    "n_significant": 7
+  }
+}
