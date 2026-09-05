@@ -436,8 +436,29 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
     const auto = layoutCanvas(graph, { expanded });
     const hues = assignCanvasHues(graph);
     const stored = arrangeVersion === 0 ? readPositions(scope) : {};
+    const sizeOf = (node: CanvasGraph["nodes"][number]) =>
+      node.data.kind === "dataset" && expanded.has(node.id) ? CANVAS_EXPANDED_DATASET : CANVAS_SIZES[node.data.kind];
+    // Nodes the user placed keep their spot; new nodes take the computed slot
+    // and move down until they no longer overlap a placed node.
+    const occupied = graph.nodes
+      .filter((node) => stored[node.id])
+      .map((node) => ({ ...stored[node.id], ...sizeOf(node) }));
+    const settle = (node: CanvasGraph["nodes"][number]) => {
+      if (stored[node.id]) return stored[node.id];
+      const size = sizeOf(node);
+      const position = { ...(auto[node.id] ?? { x: 0, y: 0 }) };
+      for (let guard = 0; guard < 50; guard += 1) {
+        const hit = occupied.find(
+          (box) => position.x < box.x + box.width + 24 && position.x + size.width + 24 > box.x && position.y < box.y + box.height + 24 && position.y + size.height + 24 > box.y
+        );
+        if (!hit) break;
+        position.y = hit.y + hit.height + 28;
+      }
+      occupied.push({ ...position, ...size });
+      return position;
+    };
     return graph.nodes.map((node) => {
-      const position = stored[node.id] ?? auto[node.id] ?? { x: 0, y: 0 };
+      const position = settle(node);
       const hue = hues[node.id] ?? COMPUTE_HUE;
       if (node.data.kind === "dataset") {
         return { id: node.id, type: "dataset", position, data: { ...node.data, expanded: expanded.has(node.id), hue, onToggle: toggle } } as DatasetNodeType;

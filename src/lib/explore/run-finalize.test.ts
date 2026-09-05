@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   db: {
-    exploreAnalysisRun: { findUnique: vi.fn(), updateMany: vi.fn() },
+    exploreAnalysisRun: { findUnique: vi.fn(), updateMany: vi.fn(), findMany: vi.fn() },
     exploreArtifact: { upsert: vi.fn(), update: vi.fn() },
     exploreDataset: { findMany: vi.fn(), update: vi.fn() },
   },
@@ -41,6 +41,7 @@ describe("finalizeExploreRun", () => {
     mocks.db.exploreArtifact.update.mockResolvedValue({});
     mocks.createDataset.mockResolvedValue({ id: "derived1" });
     mocks.db.exploreDataset.findMany.mockResolvedValue([]);
+    mocks.db.exploreAnalysisRun.findMany.mockResolvedValue([{ id: "old" }]);
     mocks.db.exploreDataset.update.mockResolvedValue({ id: "derived-existing" });
     mocks.writeDatasetVersion.mockResolvedValue({ versionId: "dv1", number: 1, rowCount: 2, contentHash: "h", unchanged: false });
     mocks.readTail.mockResolvedValue("tail");
@@ -114,5 +115,19 @@ describe("finalizeExploreRun", () => {
     expect(mocks.createDataset).not.toHaveBeenCalled();
     expect(mocks.db.exploreDataset.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "derived-existing" } }));
     expect(mocks.writeDatasetVersion).toHaveBeenCalledWith(expect.objectContaining({ datasetId: "derived-existing" }));
+  });
+
+  it("adopts an output dataset written before artifact names were recorded", async () => {
+    mocks.db.exploreDataset.findMany.mockResolvedValue([
+      { id: "legacy", name: "Summary (Table summary, EXP-1)", sourceConfig: JSON.stringify({ builder: "analysis-run", runId: "old", artifactId: "x" }) },
+    ]);
+    await fs.writeFile(path.join(runFolder, "outputs", "summary.tsv"), "sample\tmean\nS1\t1\n");
+    await fs.writeFile(
+      path.join(runFolder, "outputs", "manifest.json"),
+      JSON.stringify({ manifestVersion: 1, artifacts: [{ name: "summary", kind: "table", format: "tsv", path: "outputs/summary.tsv", title: "Summary" }] })
+    );
+    await finalizeExploreRun("run1", 0);
+    expect(mocks.createDataset).not.toHaveBeenCalled();
+    expect(mocks.db.exploreDataset.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "legacy" } }));
   });
 });

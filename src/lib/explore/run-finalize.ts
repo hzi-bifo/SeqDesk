@@ -170,15 +170,21 @@ async function promoteTable(
 
   // One output dataset per analysis and table name: a re-run writes a new
   // version instead of a new dataset, so the canvas shows outputs refreshing.
-  const candidates = await db.exploreDataset.findMany({ where: { targetKey: run.analysis.targetKey, kind: "derived" }, select: { id: true, sourceConfig: true } });
-  const existing = candidates.find((candidate) => {
+  const candidates = await db.exploreDataset.findMany({ where: { targetKey: run.analysis.targetKey, kind: "derived" }, select: { id: true, name: true, sourceConfig: true } });
+  const parsedCandidates = candidates.map((candidate) => {
     try {
-      const parsed = JSON.parse(candidate.sourceConfig ?? "{}") as { analysisId?: string; artifactName?: string };
-      return parsed.analysisId === run.analysisId && parsed.artifactName === options.artifactName;
+      return { candidate, config: JSON.parse(candidate.sourceConfig ?? "{}") as { analysisId?: string; artifactName?: string; runId?: string } };
     } catch {
-      return false;
+      return { candidate, config: {} as { analysisId?: string; artifactName?: string; runId?: string } };
     }
   });
+  let existing = parsedCandidates.find(({ config }) => config.analysisId === run.analysisId && config.artifactName === options.artifactName)?.candidate;
+  if (!existing) {
+    // Datasets written before analysisId and artifactName were recorded: match
+    // a dataset of this table name written by an earlier run of the same analysis.
+    const runIds = new Set((await db.exploreAnalysisRun.findMany({ where: { analysisId: run.analysisId }, select: { id: true } })).map((entry) => entry.id));
+    existing = parsedCandidates.find(({ candidate, config }) => !config.artifactName && config.runId && runIds.has(config.runId) && candidate.name.startsWith(`${options.name} (`))?.candidate;
+  }
   const dataset = existing
     ? await db.exploreDataset.update({
         where: { id: existing.id },
