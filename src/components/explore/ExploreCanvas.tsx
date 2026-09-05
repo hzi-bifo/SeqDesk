@@ -19,14 +19,16 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Activity, Code2, Database, ExternalLink, FlaskConical, Grid3x3, Image as ImageIcon, Info, LayoutGrid, Map as MapIcon, Maximize2, Minimize2, Play, Sparkle, X } from "lucide-react";
+import { Activity, Code2, Database, ExternalLink, FlaskConical, Grid3x3, Image as ImageIcon, Info, LayoutGrid, Loader2, Map as MapIcon, Maximize2, Minimize2, Play, Sparkle, X } from "lucide-react";
+import { PlotlyChart } from "@/components/explore/PlotlyChart";
+import { toast } from "@/components/ui/toast";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import { CodeEditor } from "@/components/explore/CodeEditor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import { fetcher, formatCell, ROLE_LABELS } from "@/lib/explore/client";
+import { fetcher, formatCell, postJson, ROLE_LABELS } from "@/lib/explore/client";
 import {
   assignCanvasHues,
   CANVAS_EXPANDED_DATASET,
@@ -37,21 +39,34 @@ import {
   type CanvasDatasetData,
   type CanvasFigureData,
   type CanvasGraph,
+  type CanvasPendingData,
   type CanvasSourceData,
 } from "@/lib/explore/canvas-layout";
 import { DATASET_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
 import type { ExploreColumn, ExploreRole, ExploreRowRecord } from "@/lib/explore/types";
 
 type DatasetNodeType = Node<CanvasDatasetData & { expanded: boolean; hue: number; onToggle: (id: string) => void }, "dataset">;
-type AnalysisNodeType = Node<CanvasAnalysisData & { hue: number; onOpenCode: (analysisId: string) => void }, "analysis">;
+type AnalysisNodeType = Node<CanvasAnalysisData & { hue: number; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void> }, "analysis">;
+type PendingNodeType = Node<CanvasPendingData & { hue: number }, "pending">;
 type SourceNodeType = Node<CanvasSourceData, "source">;
 type FigureNodeType = Node<CanvasFigureData & { hue: number }, "figure">;
-type CanvasFlowNode = DatasetNodeType | AnalysisNodeType | SourceNodeType | FigureNodeType;
+type CanvasFlowNode = DatasetNodeType | AnalysisNodeType | SourceNodeType | FigureNodeType | PendingNodeType;
 
 const EXPANDED_ROWS = 10;
 const EXPANDED_COLUMNS = 8;
 
 const handleClass = "!h-2 !w-2 !border-0 !bg-muted-foreground/60";
+
+/** Pulsing overlay for outputs that a running analysis is about to replace. */
+function RefreshingOverlay({ label }: { label: string }) {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-card/70">
+      <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2 py-1 text-[11px] text-muted-foreground shadow-sm">
+        <Loader2 className="h-3 w-3 animate-spin" /> {label}
+      </span>
+    </div>
+  );
+}
 
 /** Card colours derived from a hue: a tinted header, a saturated border and an edge stroke. */
 function tint(hue: number) {
@@ -99,7 +114,8 @@ function DatasetNode({ id, data }: NodeProps<DatasetNodeType>) {
   const colours = tint(data.hue);
 
   return (
-    <div className="flex flex-col rounded-lg border bg-card shadow-sm" style={{ width: size.width, minHeight: size.height, borderColor: colours.border }}>
+    <div className={cn("relative flex flex-col rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse")} style={{ width: size.width, minHeight: size.height, borderColor: colours.border }}>
+      {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={handleClass} />
       <div className="flex items-start gap-2 border-b px-3 py-2" style={{ background: colours.header }}>
         <Database className="mt-0.5 h-4 w-4 shrink-0" style={{ color: colours.strong }} />
@@ -184,6 +200,15 @@ function DatasetNode({ id, data }: NodeProps<DatasetNodeType>) {
 function AnalysisNode({ data }: NodeProps<AnalysisNodeType>) {
   const status = data.latestRun?.status;
   const colours = tint(data.hue);
+  const [starting, setStarting] = useState(false);
+  const run = async () => {
+    setStarting(true);
+    try {
+      await data.onRun(data.analysisId);
+    } finally {
+      setStarting(false);
+    }
+  };
   return (
     <div className="w-[300px] rounded-lg border bg-card shadow-sm" style={{ borderColor: colours.border }}>
       <Handle type="target" position={Position.Left} className={handleClass} />
@@ -216,13 +241,24 @@ function AnalysisNode({ data }: NodeProps<AnalysisNodeType>) {
         <pre className="max-h-[72px] overflow-hidden whitespace-pre font-mono text-[10px] leading-[14px] text-muted-foreground">{data.codePreview || "(no code yet)"}</pre>
       </button>
       <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px]">
+        <button
+          type="button"
+          onClick={() => void run()}
+          disabled={data.active || starting}
+          className="nodrag inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-white disabled:opacity-60"
+          style={{ background: colours.strong }}
+          title={data.active ? "A run is in progress" : "Run the current revision"}
+        >
+          {data.active || starting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+          {data.active ? "Running" : starting ? "Starting" : "Run"}
+        </button>
         {data.latestRun ? (
           <>
             <Badge variant={status === "completed" ? "secondary" : "outline"} className="px-1.5 py-0 text-[10px]">{status}</Badge>
             <Link href={`/explore/runs/${data.latestRun.id}`} className="nodrag text-muted-foreground hover:underline">{data.latestRun.runNumber}</Link>
           </>
         ) : (
-          <span className="inline-flex items-center gap-1 text-muted-foreground"><Play className="h-3 w-3" /> not run yet</span>
+          <span className="text-muted-foreground">not run yet</span>
         )}
         <span className="flex-1" />
         <Link href={`/explore/analyses/${data.analysisId}`} className="nodrag inline-flex items-center gap-1 font-medium hover:underline">Open <ExternalLink className="h-3 w-3" /></Link>
@@ -232,16 +268,35 @@ function AnalysisNode({ data }: NodeProps<AnalysisNodeType>) {
   );
 }
 
+/** A live miniature of a Plotly figure, rendered static so the card stays draggable. */
+function PlotlyThumbnail({ url, height }: { url: string; height: number }) {
+  const { data, error } = useSWR<{ data?: unknown[]; layout?: Record<string, unknown> }>(url, fetcher);
+  if (error) return <ImageIcon className="h-8 w-8 text-muted-foreground/60" />;
+  if (!data) return <Skeleton className="h-full w-full" />;
+  return (
+    <PlotlyChart
+      data={Array.isArray(data.data) ? data.data : []}
+      layout={{ ...(data.layout ?? {}), title: undefined, margin: { l: 28, r: 8, t: 8, b: 24 }, showlegend: false, font: { size: 8 } }}
+      height={height}
+      staticPlot
+      className="w-full"
+    />
+  );
+}
+
 function FigureNode({ data }: NodeProps<FigureNodeType>) {
-  const isImage = data.format === "png" || data.format === "svg";
+  const image = data.thumbnailUrl ?? (data.format === "png" || data.format === "svg" ? data.url : null);
   const colours = tint(data.hue);
   return (
-    <div className="w-[220px] overflow-hidden rounded-lg border bg-card shadow-sm" style={{ borderColor: colours.border }}>
+    <div className={cn("relative w-[280px] overflow-hidden rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse")} style={{ borderColor: colours.border }}>
+      {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={handleClass} />
-      <div className="flex h-[96px] items-center justify-center bg-muted/40">
-        {isImage ? (
+      <div className="flex h-[156px] items-center justify-center overflow-hidden bg-muted/30">
+        {image ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={data.url} alt={data.name} className="max-h-full max-w-full object-contain" />
+          <img src={image} alt={data.name} className="max-h-full max-w-full object-contain" />
+        ) : data.format === "plotly-json" ? (
+          <PlotlyThumbnail url={data.url} height={156} />
         ) : (
           <ImageIcon className="h-8 w-8 text-muted-foreground/60" />
         )}
@@ -256,7 +311,30 @@ function FigureNode({ data }: NodeProps<FigureNodeType>) {
   );
 }
 
-const nodeTypes = { source: SourceNode, dataset: DatasetNode, analysis: AnalysisNode, figure: FigureNode };
+/** Where the outputs of a run will appear once it finishes. */
+function PendingNode({ data }: NodeProps<PendingNodeType>) {
+  const colours = tint(data.hue);
+  return (
+    <div className="w-[280px] overflow-hidden rounded-lg border border-dashed bg-card shadow-sm" style={{ borderColor: colours.border }}>
+      <Handle type="target" position={Position.Left} className={handleClass} />
+      <div className="space-y-2 p-3">
+        <Skeleton className="h-[110px] w-full" />
+        <div className="flex gap-2">
+          <Skeleton className="h-3 w-1/2" />
+          <Skeleton className="h-3 w-1/4" />
+        </div>
+      </div>
+      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px] text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        <span>{data.status === "queued" ? "Queued" : "Computing"} outputs of {data.runNumber}</span>
+        <span className="flex-1" />
+        <Link href={`/explore/runs/${data.runId}`} className="nodrag inline-flex items-center gap-1 hover:underline">Run <ExternalLink className="h-3 w-3" /></Link>
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { source: SourceNode, dataset: DatasetNode, analysis: AnalysisNode, figure: FigureNode, pending: PendingNode };
 
 function storageKey(scope: string): string {
   return `seqdesk:explore:canvas:${scope}`;
@@ -292,8 +370,9 @@ export interface ExploreCanvasProps {
  * browser; "Arrange" recomputes the layered layout.
  */
 export function ExploreCanvas({ scope, className, fillViewport = false }: ExploreCanvasProps) {
-  const { data: graph, error, isLoading } = useSWR<CanvasGraph>(`/api/explore/canvas?targetKey=${encodeURIComponent(scope)}`, fetcher, {
-    refreshInterval: 15000,
+  const { data: graph, error, isLoading, mutate } = useSWR<CanvasGraph>(`/api/explore/canvas?targetKey=${encodeURIComponent(scope)}`, fetcher, {
+    // Poll quickly while something is computing so skeletons turn into outputs on their own.
+    refreshInterval: (latest) => (latest?.nodes.some((node) => node.data.kind === "analysis" && node.data.active) ? 3000 : 15000),
   });
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasFlowNode>([]);
@@ -318,6 +397,19 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
   }, [fillViewport, graph]);
 
   const openCode = useCallback((analysisId: string) => setOpenAnalysisId(analysisId), []);
+
+  const runAnalysis = useCallback(
+    async (analysisId: string) => {
+      try {
+        const result = await postJson<{ run: { runNumber: string } }>(`/api/explore/analyses/${analysisId}/runs`, {});
+        toast.success(`Run ${result.run.runNumber} started`);
+        await mutate();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not start the run");
+      }
+    },
+    [mutate]
+  );
 
   // Expanding a card changes its footprint, so the layered layout is recomputed
   // and hand-moved positions are dropped for this scope.
@@ -350,11 +442,12 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
       if (node.data.kind === "dataset") {
         return { id: node.id, type: "dataset", position, data: { ...node.data, expanded: expanded.has(node.id), hue, onToggle: toggle } } as DatasetNodeType;
       }
-      if (node.data.kind === "analysis") return { id: node.id, type: "analysis", position, data: { ...node.data, hue, onOpenCode: openCode } } as AnalysisNodeType;
+      if (node.data.kind === "analysis") return { id: node.id, type: "analysis", position, data: { ...node.data, hue, onOpenCode: openCode, onRun: runAnalysis } } as AnalysisNodeType;
       if (node.data.kind === "figure") return { id: node.id, type: "figure", position, data: { ...node.data, hue } } as FigureNodeType;
+      if (node.data.kind === "pending") return { id: node.id, type: "pending", position, data: { ...node.data, hue } } as PendingNodeType;
       return { id: node.id, type: "source", position, data: node.data } as SourceNodeType;
     });
-  }, [graph, expanded, toggle, openCode, scope, arrangeVersion]);
+  }, [graph, expanded, toggle, openCode, runAnalysis, scope, arrangeVersion]);
 
   const flowEdges = useMemo<Edge[]>(() => {
     if (!graph) return [];

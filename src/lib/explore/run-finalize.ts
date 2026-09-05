@@ -109,6 +109,7 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
       if (format === "tsv" || format === "csv") {
         try {
           const derivedId = await promoteTable(run, artifact.id, absolute, {
+            artifactName: name,
             name: typeof entry.title === "string" && entry.title.trim() ? entry.title.trim() : name,
             format: format as "tsv" | "csv",
             tableKind: typeof entry.table?.tableKind === "string" ? entry.table.tableKind : null,
@@ -153,7 +154,7 @@ async function promoteTable(
   run: { id: string; runNumber: string; analysisId: string; analysis: { targetKey: string; name: string; createdById: string }; revision: { number: number } },
   artifactId: string,
   filePath: string,
-  options: { name: string; format: "tsv" | "csv"; tableKind: string | null; roles: Record<string, string>; sensitivity: ExploreSensitivity }
+  options: { artifactName: string; name: string; format: "tsv" | "csv"; tableKind: string | null; roles: Record<string, string>; sensitivity: ExploreSensitivity }
 ): Promise<string> {
   const text = await fs.readFile(filePath, "utf8");
   const parsed = parseDelimited(text, { delimiter: options.format === "csv" ? "," : "\t" });
@@ -163,18 +164,37 @@ async function promoteTable(
     if (parsed.columns.includes(column)) roles[role as ExploreRole] = column;
   }
   const schema = inferSchema(parsed.rows, { roles, groups: Object.fromEntries(parsed.columns.map((key) => [key, "analysis"])) });
-  const datasetName = `${options.name} (${run.analysis.name}, ${run.runNumber})`;
-  const dataset = await createDataset({
-    targetKey: run.analysis.targetKey,
-    kind: "derived",
-    tableKind: options.tableKind,
-    name: datasetName,
-    description: `Written by analysis ${run.analysis.name}, revision ${run.revision.number}, run ${run.runNumber}.`,
-    sensitivity: options.sensitivity,
-    roles,
-    sourceConfig: { builder: "analysis-run", runId: run.id, artifactId },
-    createdById: run.analysis.createdById,
+  const datasetName = `${options.name} (${run.analysis.name})`;
+  const description = `Written by analysis ${run.analysis.name}, revision ${run.revision.number}, run ${run.runNumber}.`;
+  const sourceConfig = { builder: "analysis-run", analysisId: run.analysisId, artifactName: options.artifactName, runId: run.id, artifactId };
+
+  // One output dataset per analysis and table name: a re-run writes a new
+  // version instead of a new dataset, so the canvas shows outputs refreshing.
+  const candidates = await db.exploreDataset.findMany({ where: { targetKey: run.analysis.targetKey, kind: "derived" }, select: { id: true, sourceConfig: true } });
+  const existing = candidates.find((candidate) => {
+    try {
+      const parsed = JSON.parse(candidate.sourceConfig ?? "{}") as { analysisId?: string; artifactName?: string };
+      return parsed.analysisId === run.analysisId && parsed.artifactName === options.artifactName;
+    } catch {
+      return false;
+    }
   });
+  const dataset = existing
+    ? await db.exploreDataset.update({
+        where: { id: existing.id },
+        data: { name: datasetName, description, tableKind: options.tableKind, sensitivity: options.sensitivity, roles: JSON.stringify(roles), sourceConfig: JSON.stringify(sourceConfig) },
+      })
+    : await createDataset({
+        targetKey: run.analysis.targetKey,
+        kind: "derived",
+        tableKind: options.tableKind,
+        name: datasetName,
+        description,
+        sensitivity: options.sensitivity,
+        roles,
+        sourceConfig,
+        createdById: run.analysis.createdById,
+      });
   await writeDatasetVersion({
     datasetId: dataset.id,
     schema,

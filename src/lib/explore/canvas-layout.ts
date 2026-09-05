@@ -5,7 +5,7 @@
  */
 import type { ExploreColumn, ExploreRoleMap, ExploreRowData } from "./types";
 
-export type CanvasNodeKind = "source" | "dataset" | "analysis" | "figure";
+export type CanvasNodeKind = "source" | "dataset" | "analysis" | "figure" | "pending";
 
 export type CanvasSourceData = {
   kind: "source";
@@ -32,6 +32,8 @@ export type CanvasDatasetData = {
   roles: ExploreRoleMap;
   previewRows: ExploreRowData[];
   views: Array<"subject-timeline" | "heatmap">;
+  /** True while the analysis that writes this dataset is running again. */
+  refreshing?: boolean;
 }
 
 export type CanvasAnalysisData = {
@@ -45,6 +47,8 @@ export type CanvasAnalysisData = {
   codePreview: string;
   codeLines: number;
   latestRun: { id: string; runNumber: string; status: string } | null;
+  /** True while the latest run is pending, queued or running. */
+  active: boolean;
 }
 
 export type CanvasFigureData = {
@@ -54,9 +58,21 @@ export type CanvasFigureData = {
   name: string;
   format: string;
   url: string;
+  /** A static image of the same figure, when the run wrote one next to the interactive version. */
+  thumbnailUrl: string | null;
+  refreshing?: boolean;
 }
 
-export type CanvasNodeData = CanvasSourceData | CanvasDatasetData | CanvasAnalysisData | CanvasFigureData;
+/** Placeholder for outputs of a run that has not finished yet. */
+export type CanvasPendingData = {
+  kind: "pending";
+  analysisId: string;
+  runId: string;
+  runNumber: string;
+  status: string;
+}
+
+export type CanvasNodeData = CanvasSourceData | CanvasDatasetData | CanvasAnalysisData | CanvasFigureData | CanvasPendingData;
 
 export interface CanvasNode {
   id: string;
@@ -126,11 +142,12 @@ export const CANVAS_SIZES: Record<CanvasNodeKind, { width: number; height: numbe
   source: { width: 220, height: 64 },
   dataset: { width: 300, height: 236 },
   analysis: { width: 300, height: 190 },
-  figure: { width: 220, height: 150 },
+  figure: { width: 280, height: 210 },
+  pending: { width: 280, height: 210 },
 };
 export const CANVAS_EXPANDED_DATASET = { width: 680, height: 480 };
 
-const BASE_RANK: Record<CanvasNodeKind, number> = { source: 0, dataset: 1, analysis: 2, figure: 3 };
+const BASE_RANK: Record<CanvasNodeKind, number> = { source: 0, dataset: 1, analysis: 2, figure: 3, pending: 3 };
 
 /**
  * Rank every node by the longest path from a root, never below the base rank
@@ -234,7 +251,7 @@ export function assignCanvasHues(graph: CanvasGraph): Record<string, number | nu
       value = null;
     } else if (node.data.kind === "analysis") {
       value = COMPUTE_HUE;
-    } else if (node.data.kind === "figure") {
+    } else if (node.data.kind === "figure" || node.data.kind === "pending") {
       value = outputHue(id);
     } else {
       const producer = (incoming.get(id) ?? []).find((parent) => byId.get(parent)?.data.kind === "analysis");

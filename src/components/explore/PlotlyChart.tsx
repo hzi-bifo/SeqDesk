@@ -30,6 +30,8 @@ export interface PlotlyChartProps {
   height?: number;
   onClick?: (event: unknown) => void;
   className?: string;
+  /** Render without toolbar or interaction, for thumbnails. */
+  staticPlot?: boolean;
 }
 
 const BASE_LAYOUT = {
@@ -42,7 +44,7 @@ const BASE_LAYOUT = {
 
 const CONFIG = { displaylogo: false, responsive: true, toImageButtonOptions: { format: "png", scale: 2 }, modeBarButtonsToRemove: ["lasso2d", "select2d"] };
 
-export function PlotlyChart({ data, layout, height = 360, onClick, className }: PlotlyChartProps) {
+export function PlotlyChart({ data, layout, height = 360, onClick, className, staticPlot = false }: PlotlyChartProps) {
   const [Plot, setPlot] = useState<ComponentType<PlotProps> | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
 
@@ -67,7 +69,7 @@ export function PlotlyChart({ data, layout, height = 360, onClick, className }: 
       <Plot
         data={data}
         layout={{ ...BASE_LAYOUT, ...layout, height, autosize: true }}
-        config={CONFIG}
+        config={staticPlot ? { ...CONFIG, staticPlot: true, displayModeBar: false } : CONFIG}
         style={{ width: "100%", height }}
         useResizeHandler
         onClick={onClick}

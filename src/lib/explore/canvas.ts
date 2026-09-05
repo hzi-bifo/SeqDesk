@@ -5,6 +5,8 @@ import { parseJsonObject, parseRoles, parseSchema } from "./schema";
 import type { ExploreProvenance, ExploreRoleMap } from "./types";
 import { pickPreviewColumns, PREVIEW_ROWS, type CanvasEdge, type CanvasFigureData, type CanvasGraph, type CanvasNode } from "./canvas-layout";
 
+const ACTIVE_RUN = new Set(["pending", "queued", "running"]);
+
 export * from "./canvas-layout";
 
 /** The first meaningful lines of a script: skip the module docstring and blank lines. */
@@ -88,7 +90,9 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
     const timelineReady = ["sample", "subject", "timepoint", "taxon", "count"].every((role) => Boolean(roles[role as keyof ExploreRoleMap]));
     const sourceConfig = parseJsonObject(dataset.sourceConfig);
     const producingRunId = typeof sourceConfig?.runId === "string" ? sourceConfig.runId : null;
-    const producingAnalysis = producingRunId ? runToAnalysis.get(producingRunId) : null;
+    const producingAnalysis =
+      (typeof sourceConfig?.analysisId === "string" ? sourceConfig.analysisId : null) ?? (producingRunId ? runToAnalysis.get(producingRunId) : null) ?? null;
+    const producerActive = producingAnalysis ? ACTIVE_RUN.has(latestRunByAnalysis.get(producingAnalysis)?.status ?? "") : false;
     const sources = provenanceSources(current?.provenance);
     nodes.push({
       id: nodeId,
@@ -108,11 +112,12 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
         roles,
         previewRows: preview.rows.map((row) => row.data),
         views: timelineReady ? ["subject-timeline", "heatmap"] : [],
+        ...(producerActive ? { refreshing: true } : {}),
       },
     });
 
     if (producingAnalysis) {
-      edges.push({ id: `wrote:${producingRunId}:${dataset.id}`, source: `analysis:${producingAnalysis}`, target: nodeId, label: "wrote" });
+      edges.push({ id: `wrote:${producingAnalysis}:${dataset.id}`, source: `analysis:${producingAnalysis}`, target: nodeId, label: "wrote" });
     }
   }
 
@@ -132,33 +137,48 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
         codePreview: codePreviewOf(revision?.code ?? ""),
         codeLines: revision?.code ? revision.code.split("\n").length : 0,
         latestRun: latest ? { id: latest.id, runNumber: latest.runNumber, status: latest.status } : null,
+        active: latest ? ACTIVE_RUN.has(latest.status) : false,
       },
     });
+    const active = latest ? ACTIVE_RUN.has(latest.status) : false;
     for (const binding of parseInputBindings(revision?.inputs)) {
       const datasetNodeId = `dataset:${binding.datasetId}`;
       if (!datasetNodeIds.has(datasetNodeId)) continue;
       edges.push({ id: `input:${binding.datasetId}:${analysis.id}:${binding.alias}`, source: datasetNodeId, target: nodeId, label: binding.alias });
     }
     const completed = latestCompletedByAnalysis.get(analysis.id);
+    if (active && !completed && latest) {
+      // Nothing to show yet: a placeholder stands where the outputs will appear.
+      const pendingId = `pending:${analysis.id}`;
+      nodes.push({ id: pendingId, data: { kind: "pending", analysisId: analysis.id, runId: latest.id, runNumber: latest.runNumber, status: latest.status } });
+      edges.push({ id: `pending:${analysis.id}`, source: nodeId, target: pendingId, label: latest.runNumber });
+    }
+    // One node per figure name. The interactive version is the node; a PNG or
+    // SVG twin written by the same run becomes its thumbnail.
+    const figures = new Map<string, { interactive: (typeof runs)[number]["artifacts"][number] | null; image: (typeof runs)[number]["artifacts"][number] | null }>();
     for (const artifact of completed?.artifacts ?? []) {
       if (artifact.kind !== "figure" || !["plotly-json", "png", "svg", "html"].includes(artifact.format)) continue;
-      // One node per figure name: the interactive version wins over its PNG twin.
-      const figureNodeId = `figure:${completed!.id}:${artifact.name}`;
-      const existing = nodes.find((node) => node.id === figureNodeId);
-      if (existing && existing.data.kind === "figure" && existing.data.format === "plotly-json") continue;
+      const entry = figures.get(artifact.name) ?? { interactive: null, image: null };
+      if (artifact.format === "png" || artifact.format === "svg") entry.image = entry.image ?? artifact;
+      else entry.interactive = entry.interactive ?? artifact;
+      figures.set(artifact.name, entry);
+    }
+    for (const [name, entry] of figures) {
+      const main = entry.interactive ?? entry.image!;
+      const figureNodeId = `figure:${completed!.id}:${name}`;
+      const artifactUrl = (artifact: { id: string }) => `/api/explore/runs/${completed!.id}/artifacts/${artifact.id}`;
       const data: CanvasFigureData = {
         kind: "figure",
-        artifactId: artifact.id,
+        artifactId: main.id,
         runId: completed!.id,
-        name: artifact.name,
-        format: artifact.format,
-        url: `/api/explore/runs/${completed!.id}/artifacts/${artifact.id}`,
+        name,
+        format: main.format,
+        url: artifactUrl(main),
+        thumbnailUrl: entry.image ? artifactUrl(entry.image) : null,
+        ...(active ? { refreshing: true } : {}),
       };
-      if (existing) existing.data = data;
-      else {
-        nodes.push({ id: figureNodeId, data });
-        edges.push({ id: `figure:${completed!.id}:${artifact.name}`, source: nodeId, target: figureNodeId, label: completed!.runNumber });
-      }
+      nodes.push({ id: figureNodeId, data });
+      edges.push({ id: `figure:${completed!.id}:${name}`, source: nodeId, target: figureNodeId, label: completed!.runNumber });
     }
   }
 

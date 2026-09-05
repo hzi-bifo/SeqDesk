@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   db: {
     exploreAnalysisRun: { findUnique: vi.fn(), updateMany: vi.fn() },
     exploreArtifact: { upsert: vi.fn(), update: vi.fn() },
+    exploreDataset: { findMany: vi.fn(), update: vi.fn() },
   },
   createDataset: vi.fn(),
   writeDatasetVersion: vi.fn(),
@@ -39,6 +40,8 @@ describe("finalizeExploreRun", () => {
     mocks.db.exploreArtifact.upsert.mockImplementation(async ({ create }: { create: { path: string } }) => ({ id: `art-${path.basename(create.path)}` }));
     mocks.db.exploreArtifact.update.mockResolvedValue({});
     mocks.createDataset.mockResolvedValue({ id: "derived1" });
+    mocks.db.exploreDataset.findMany.mockResolvedValue([]);
+    mocks.db.exploreDataset.update.mockResolvedValue({ id: "derived-existing" });
     mocks.writeDatasetVersion.mockResolvedValue({ versionId: "dv1", number: 1, rowCount: 2, contentHash: "h", unchanged: false });
     mocks.readTail.mockResolvedValue("tail");
   });
@@ -96,5 +99,20 @@ describe("finalizeExploreRun", () => {
     expect(update.data.status).toBe("failed");
     expect(update.data.exitCode).toBe(2);
     expect(JSON.parse(update.data.results).warnings).toEqual([]);
+  });
+
+  it("writes a new version of the existing output dataset on a re-run", async () => {
+    mocks.db.exploreDataset.findMany.mockResolvedValue([
+      { id: "derived-existing", sourceConfig: JSON.stringify({ builder: "analysis-run", analysisId: "a1", artifactName: "summary", runId: "old" }) },
+    ]);
+    await fs.writeFile(path.join(runFolder, "outputs", "summary.tsv"), "sample\tmean\nS1\t1\n");
+    await fs.writeFile(
+      path.join(runFolder, "outputs", "manifest.json"),
+      JSON.stringify({ manifestVersion: 1, artifacts: [{ name: "summary", kind: "table", format: "tsv", path: "outputs/summary.tsv", title: "Summary" }] })
+    );
+    await finalizeExploreRun("run1", 0);
+    expect(mocks.createDataset).not.toHaveBeenCalled();
+    expect(mocks.db.exploreDataset.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "derived-existing" } }));
+    expect(mocks.writeDatasetVersion).toHaveBeenCalledWith(expect.objectContaining({ datasetId: "derived-existing" }));
   });
 });
