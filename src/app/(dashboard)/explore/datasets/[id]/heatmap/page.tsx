@@ -125,7 +125,7 @@ export default function HeatmapPage() {
             }}
           />
           <p className="text-xs text-muted-foreground">
-            {data.taxa.length} taxa shown out of {data.nSamplesTotal} samples; prevalence of the first taxon {Math.round(data.taxa[0].prevalence * 100)} %.
+            {data.taxa.length} taxa across {data.nSamplesTotal} samples; the first taxon is present in {Math.round(data.taxa[0].prevalence * 100)} % of them.
           </p>
         </div>
       )}

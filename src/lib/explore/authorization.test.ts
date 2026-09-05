@@ -60,7 +60,8 @@ describe("explore authorization", () => {
     const scopes = await listExploreScopes(researcher);
 
     expect(scopes.map((scope) => scope.targetKey)).toEqual(["study:s1", "order:o1", "workspace:w1"]);
-    expect(scopes[0].label).toBe("Cohort (COH)");
+    expect(scopes[0].label).toBe("Cohort");
+    expect(scopes[0].detail).toBe("COH");
     expect(mocks.db.study.findMany.mock.calls[0][0].where).toEqual({ userId: "user-1" });
   });
 

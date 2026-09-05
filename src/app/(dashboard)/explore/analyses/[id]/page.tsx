@@ -211,7 +211,7 @@ export default function ExploreAnalysisPage() {
                 <div className="mt-2 space-y-1">
                   <div className="flex items-center gap-2">
                     <Badge variant={STATUS_VARIANT[analysis.latestRun.status] ?? "outline"}>{analysis.latestRun.status}</Badge>
-                    <Link href={`/explore/runs/${analysis.latestRun.id}`} className="hover:underline">{analysis.latestRun.runNumber}</Link>
+                    <Link href={`/explore/runs/${analysis.latestRun.id}?scope=${encodeURIComponent(analysis.targetKey)}`} className="hover:underline">{analysis.latestRun.runNumber}</Link>
                     <span className="text-muted-foreground">revision {analysis.latestRun.revisionNumber}</span>
                   </div>
                   <div className="text-muted-foreground">{formatDateTime(analysis.latestRun.completedAt ?? analysis.latestRun.startedAt ?? analysis.latestRun.createdAt)}</div>
@@ -303,7 +303,7 @@ export default function ExploreAnalysisPage() {
                 <tbody>
                   {analysis.runs.map((entry) => (
                     <tr key={entry.id} className="border-t hover:bg-muted/30">
-                      <td className="px-3 py-2"><Link href={`/explore/runs/${entry.id}`} className="font-medium hover:underline">{entry.runNumber}</Link></td>
+                      <td className="px-3 py-2"><Link href={`/explore/runs/${entry.id}?scope=${encodeURIComponent(analysis.targetKey)}`} className="font-medium hover:underline">{entry.runNumber}</Link></td>
                       <td className="px-3 py-2"><Badge variant={STATUS_VARIANT[entry.status] ?? "outline"}>{entry.status}</Badge></td>
                       <td className="px-3 py-2 tabular-nums">{entry.revisionNumber}</td>
                       <td className="px-3 py-2 text-muted-foreground">{entry.executionMode ?? ""}</td>

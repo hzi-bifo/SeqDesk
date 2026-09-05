@@ -20,7 +20,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Activity, Code2, Database, ExternalLink, FlaskConical, Grid3x3, Image as ImageIcon, Info, LayoutGrid, Loader2, Map as MapIcon, Maximize2, Minimize2, Play, Sparkle, X } from "lucide-react";
+import { Activity, Code2, Database, ExternalLink, FlaskConical, FoldHorizontal, Grid3x3, Image as ImageIcon, Info, LayoutGrid, Loader2, Map as MapIcon, Maximize2, Minimize2, Play, Sparkle, X } from "lucide-react";
 import { CodeEditor } from "@/components/explore/CodeEditor";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { Badge } from "@/components/ui/badge";
@@ -31,10 +31,14 @@ import { cn } from "@/lib/utils";
 import { fetcher, formatCell, postJson, ROLE_LABELS } from "@/lib/explore/client";
 import {
   assignCanvasHues,
+  CANVAS_COLUMN_WIDTH,
   CANVAS_EXPANDED_DATASET,
+  CANVAS_FOLD_WIDTH,
   CANVAS_MIN_SIZES,
   CANVAS_SIZES,
   COMPUTE_HUE,
+  fitSegments,
+  foldColumns,
   layoutCanvas,
   nodeSize,
   type CanvasAnalysisData,
@@ -47,18 +51,18 @@ import {
 } from "@/lib/explore/canvas-layout";
 import { DATASET_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
-import type { ExploreColumn, ExploreRole, ExploreRowRecord } from "@/lib/explore/types";
+import type { ExploreRole, ExploreRowRecord } from "@/lib/explore/types";
 
-type Sizing = { onPreset: (id: string, size: { width: number; height: number }) => void };
+type Sizing = { onPreset: (id: string, size: { width: number; height: number }) => void; scopeQuery: string };
 type DatasetNodeType = Node<CanvasDatasetData & Sizing & { hue: number }, "dataset">;
-type AnalysisNodeType = Node<CanvasAnalysisData & { hue: number; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void> }, "analysis">;
+type AnalysisNodeType = Node<CanvasAnalysisData & { hue: number; scopeQuery: string; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void> }, "analysis">;
 type SourceNodeType = Node<CanvasSourceData, "source">;
-type FigureNodeType = Node<CanvasFigureData & { hue: number }, "figure">;
-type PendingNodeType = Node<CanvasPendingData & { hue: number }, "pending">;
+type FigureNodeType = Node<CanvasFigureData & { hue: number; scopeQuery: string }, "figure">;
+type PendingNodeType = Node<CanvasPendingData & { hue: number; scopeQuery: string }, "pending">;
 type CanvasFlowNode = DatasetNodeType | AnalysisNodeType | SourceNodeType | FigureNodeType | PendingNodeType;
 
 const MAX_FETCHED_ROWS = 200;
-const COLUMN_WIDTH = 96;
+const COLUMN_WIDTH = CANVAS_COLUMN_WIDTH;
 const ROW_HEIGHT = 22;
 const CODE_LINE_HEIGHT = 14;
 
@@ -109,7 +113,9 @@ function OverflowChip({ children }: { children: React.ReactNode }) {
 
 /**
  * A dataset card: a real fragment of the table plus chips that say how much
- * is hidden on each axis. Resizing the card shows more columns across and
+ * is hidden on each axis. Columns worth seeing (the preview picks and every
+ * column an analysis reads) stay open; runs of other columns fold into "+N"
+ * pills that open on click. Resizing the card shows more columns across and
  * more rows down; rows beyond the preview are fetched as needed.
  */
 function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNodeType>) {
@@ -118,19 +124,29 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
   const headerHeight = data.origin ? 92 : 70;
   const footerHeight = 36;
   const tableHeader = 36;
-  const maxColumns = Math.max(1, Math.floor((size.width - 20) / COLUMN_WIDTH));
   const maxRows = Math.max(1, Math.floor((size.height - headerHeight - footerHeight - tableHeader) / ROW_HEIGHT));
   const wanted = maxRows > data.previewRows.length ? Math.min(MAX_FETCHED_ROWS, Math.ceil(maxRows / 10) * 10) : 0;
   const { data: more } = useSWR<{ rows: ExploreRowRecord[] }>(wanted > 0 ? `/api/explore/datasets/${data.datasetId}/rows?limit=${wanted}` : null, fetcher, { keepPreviousData: true });
+  const [openFolds, setOpenFolds] = useState<Set<number>>(() => new Set());
 
-  const previewKeys = new Set(data.previewColumns.map((column) => column.key));
-  const columns: ExploreColumn[] = [...data.previewColumns, ...data.columns.filter((column) => !previewKeys.has(column.key) && !column.key.endsWith("_db_id"))].slice(0, maxColumns);
+  const usedColumns = data.usedColumns ?? {};
+  const keep = new Set([...data.previewColumns.map((column) => column.key), ...Object.keys(usedColumns)]);
+  const tableColumns = data.columns.filter((column) => !column.key.endsWith("_db_id"));
+  const { shown, hiddenColumns } = fitSegments(foldColumns(tableColumns, keep, openFolds), size.width - 20);
   const allRows = more?.rows.map((row) => row.data) ?? data.previewRows;
   const rows = allRows.slice(0, maxRows);
-  const hiddenColumns = Math.max(data.columnCount - columns.length, 0);
   const hiddenRows = Math.max(data.rowCount - rows.length, 0);
   const roleOf = (key: string) => (Object.entries(data.roles) as Array<[ExploreRole, string]>).find(([, column]) => column === key)?.[0];
   const colours = tint(data.hue);
+  const compute = tint(COMPUTE_HUE);
+  const computeSoft = `hsl(${COMPUTE_HUE} 55% 95% / 0.5)`;
+  const toggleFold = (fold: number) =>
+    setOpenFolds((current) => {
+      const next = new Set(current);
+      if (next.has(fold)) next.delete(fold);
+      else next.add(fold);
+      return next;
+    });
 
   return (
     <div className={cn("relative flex h-full w-full flex-col rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse")} style={{ borderColor: colours.border }}>
@@ -140,7 +156,7 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
       <div className="flex items-start gap-2 border-b px-3 py-2" style={{ background: colours.header }}>
         <Database className="mt-0.5 h-4 w-4 shrink-0" style={{ color: colours.strong }} />
         <div className="min-w-0 flex-1">
-          <Link href={`/explore/datasets/${data.datasetId}`} className="block truncate text-sm font-medium hover:underline" title={data.name}>
+          <Link href={`/explore/datasets/${data.datasetId}${data.scopeQuery}`} className="block truncate text-sm font-medium hover:underline" title={data.name}>
             {data.name}
           </Link>
           <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
@@ -149,6 +165,18 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
             {data.origin && <span className="basis-full truncate" title={data.origin}>{data.origin}</span>}
             <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">{DATASET_KIND_DEFINITIONS[data.datasetKind as keyof typeof DATASET_KIND_DEFINITIONS]?.label ?? data.datasetKind}</Badge>
             {data.sensitivity !== "standard" && <Badge variant="outline" className="px-1.5 py-0 text-[10px]">{data.sensitivity}</Badge>}
+            {data.latestWrite && (
+              <span
+                className={cn("rounded-full border px-1.5 py-0 text-[10px]", data.latestWrite.changed ? "border-transparent bg-secondary text-foreground" : "border-dashed")}
+                title={
+                  data.latestWrite.changed
+                    ? `The latest run, ${data.latestWrite.runNumber}, wrote this version`
+                    : `The latest run, ${data.latestWrite.runNumber}, produced the same table, so no new version was written`
+                }
+              >
+                {data.latestWrite.changed ? `updated by ${data.latestWrite.runNumber}` : `unchanged in ${data.latestWrite.runNumber}`}
+              </span>
+            )}
           </div>
         </div>
         <button
@@ -165,11 +193,43 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
         <table className="w-full text-[11px]">
           <thead className="bg-muted/50 text-left">
             <tr>
-              {columns.map((column) => {
+              {shown.map((segment) => {
+                if (segment.kind === "fold") {
+                  const names = segment.columns.map((column) => column.label).join(", ");
+                  return (
+                    <th key={`fold-${segment.fold}`} className="px-0.5 py-1 align-middle" style={{ width: CANVAS_FOLD_WIDTH }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleFold(segment.fold)}
+                        className="nodrag mx-auto flex h-5 items-center justify-center rounded border border-dashed bg-muted/60 px-1 text-[10px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                        title={`Show ${segment.columns.length} folded columns: ${names}`}
+                        aria-label={`Show ${segment.columns.length} folded columns`}
+                      >
+                        +{segment.columns.length}
+                      </button>
+                    </th>
+                  );
+                }
+                const { column } = segment;
                 const role = roleOf(column.key);
+                const usedBy = usedColumns[column.key];
+                const foldIndex = segment.fold;
                 return (
-                  <th key={column.key} className="whitespace-nowrap px-2 py-1 font-medium" title={column.key} style={{ maxWidth: COLUMN_WIDTH + 20 }}>
-                    <span className="block truncate">{column.label}</span>
+                  <th
+                    key={column.key}
+                    className={cn("whitespace-nowrap px-2 py-1 font-medium", foldIndex !== null && "bg-muted/30")}
+                    style={{ maxWidth: COLUMN_WIDTH + 20, background: usedBy ? compute.header : undefined }}
+                    title={usedBy ? `${column.key}: read by ${usedBy.join(", ")}` : column.key}
+                  >
+                    <span className="flex items-center gap-1">
+                      {foldIndex !== null && segment.firstOfFold && (
+                        <button type="button" onClick={() => toggleFold(foldIndex)} className="nodrag shrink-0 rounded text-muted-foreground hover:text-foreground" title="Fold these columns away" aria-label="Fold these columns away">
+                          <FoldHorizontal className="h-3 w-3" />
+                        </button>
+                      )}
+                      {usedBy && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: compute.strong }} aria-hidden />}
+                      <span className="truncate">{column.label}</span>
+                    </span>
                     {role && <span className="text-[9px] uppercase tracking-wide text-muted-foreground">{ROLE_LABELS[role]}</span>}
                   </th>
                 );
@@ -180,16 +240,25 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
           <tbody>
             {rows.map((row, index) => (
               <tr key={index} className="border-t">
-                {columns.map((column) => (
-                  <td key={column.key} className={cn("truncate whitespace-nowrap px-2 py-1", column.type === "number" && "text-right tabular-nums")} style={{ maxWidth: COLUMN_WIDTH + 20 }} title={formatCell(row[column.key])}>
-                    {formatCell(row[column.key])}
-                  </td>
-                ))}
+                {shown.map((segment) =>
+                  segment.kind === "fold" ? (
+                    <td key={`fold-${segment.fold}`} className="border-x border-dashed bg-muted/30 px-0 py-1" style={{ width: CANVAS_FOLD_WIDTH }} />
+                  ) : (
+                    <td
+                      key={segment.column.key}
+                      className={cn("truncate whitespace-nowrap px-2 py-1", segment.column.type === "number" && "text-right tabular-nums")}
+                      style={{ maxWidth: COLUMN_WIDTH + 20, background: usedColumns[segment.column.key] ? computeSoft : undefined }}
+                      title={formatCell(row[segment.column.key])}
+                    >
+                      {formatCell(row[segment.column.key])}
+                    </td>
+                  )
+                )}
                 {hiddenColumns > 0 && <td className="px-2 py-1 text-muted-foreground">…</td>}
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td className="px-2 py-3 text-muted-foreground" colSpan={columns.length + 1}>{wanted > 0 && !more ? "Loading rows" : "No rows"}</td></tr>
+              <tr><td className="px-2 py-3 text-muted-foreground" colSpan={shown.length + 1}>{wanted > 0 && !more ? "Loading rows" : "No rows"}</td></tr>
             )}
           </tbody>
         </table>
@@ -199,16 +268,16 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
         {hiddenColumns > 0 ? <OverflowChip>+{hiddenColumns} columns</OverflowChip> : <span className="text-[10px] text-muted-foreground">all columns</span>}
         <span className="flex-1" />
         {data.views.includes("subject-timeline") && (
-          <Link href={`/explore/datasets/${data.datasetId}/subject-timeline`} className="nodrag rounded p-1 text-muted-foreground hover:text-foreground" title="Subject timeline">
+          <Link href={`/explore/datasets/${data.datasetId}/subject-timeline${data.scopeQuery}`} className="nodrag rounded p-1 text-muted-foreground hover:text-foreground" title="Subject timeline">
             <Activity className="h-3.5 w-3.5" />
           </Link>
         )}
         {data.views.includes("heatmap") && (
-          <Link href={`/explore/datasets/${data.datasetId}/heatmap`} className="nodrag rounded p-1 text-muted-foreground hover:text-foreground" title="Heatmap">
+          <Link href={`/explore/datasets/${data.datasetId}/heatmap${data.scopeQuery}`} className="nodrag rounded p-1 text-muted-foreground hover:text-foreground" title="Heatmap">
             <Grid3x3 className="h-3.5 w-3.5" />
           </Link>
         )}
-        <Link href={`/explore/datasets/${data.datasetId}`} className="nodrag inline-flex items-center gap-1 text-[11px] font-medium hover:underline">
+        <Link href={`/explore/datasets/${data.datasetId}${data.scopeQuery}`} className="nodrag inline-flex items-center gap-1 text-[11px] font-medium hover:underline">
           Open table <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
@@ -240,7 +309,7 @@ function AnalysisNode({ data, selected, height }: NodeProps<AnalysisNodeType>) {
       <div className="flex items-start gap-2 px-3 py-2" style={{ background: colours.header }}>
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" style={{ color: colours.strong }} />
         <div className="min-w-0 flex-1">
-          <Link href={`/explore/analyses/${data.analysisId}`} className="block truncate text-sm font-medium hover:underline" title={data.name}>{data.name}</Link>
+          <Link href={`/explore/analyses/${data.analysisId}${data.scopeQuery}`} className="block truncate text-sm font-medium hover:underline" title={data.name}>{data.name}</Link>
           <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
             <span className="capitalize">{data.language}</span>
             {data.kitId && <span>kit {data.kitId}</span>}
@@ -289,7 +358,7 @@ function AnalysisNode({ data, selected, height }: NodeProps<AnalysisNodeType>) {
           <span className="text-muted-foreground">not run yet</span>
         )}
         <span className="flex-1" />
-        <Link href={`/explore/analyses/${data.analysisId}`} className="nodrag inline-flex items-center gap-1 font-medium hover:underline">Open <ExternalLink className="h-3 w-3" /></Link>
+        <Link href={`/explore/analyses/${data.analysisId}${data.scopeQuery}`} className="nodrag inline-flex items-center gap-1 font-medium hover:underline">Open <ExternalLink className="h-3 w-3" /></Link>
       </div>
       <Handle type="source" position={Position.Right} className={handleClass} />
     </div>
@@ -332,10 +401,17 @@ function FigureNode({ data, selected, height }: NodeProps<FigureNodeType>) {
         )}
       </div>
       <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px]">
-        <span className="truncate font-medium" title={data.name}>{data.name}</span>
-        <span className="text-muted-foreground">{data.format === "plotly-json" ? "interactive" : data.format}</span>
+        <span className="min-w-0 truncate font-medium" title={data.name}>{data.name}</span>
+        <span className="shrink-0 text-muted-foreground">{data.format === "plotly-json" ? "interactive" : data.format}</span>
         <span className="flex-1" />
-        <Link href={`/explore/runs/${data.runId}`} className="nodrag inline-flex items-center gap-1 hover:underline">Run <ExternalLink className="h-3 w-3" /></Link>
+        {data.unchanged && <OverflowChip>unchanged</OverflowChip>}
+        <Link
+          href={`/explore/runs/${data.runId}${data.scopeQuery}`}
+          className="nodrag inline-flex shrink-0 items-center gap-1 hover:underline"
+          title={data.unchanged ? "The latest run produced the same figure as the run before it" : "Open the run that wrote this figure"}
+        >
+          {data.runNumber ?? "Run"} <ExternalLink className="h-3 w-3" />
+        </Link>
       </div>
     </div>
   );
@@ -359,7 +435,7 @@ function PendingNode({ data, selected }: NodeProps<PendingNodeType>) {
         <Loader2 className="h-3 w-3 animate-spin" />
         <span className="truncate">{data.status === "queued" ? "Queued" : "Computing"} outputs of {data.runNumber}</span>
         <span className="flex-1" />
-        <Link href={`/explore/runs/${data.runId}`} className="nodrag inline-flex items-center gap-1 hover:underline">Run <ExternalLink className="h-3 w-3" /></Link>
+        <Link href={`/explore/runs/${data.runId}${data.scopeQuery}`} className="nodrag inline-flex items-center gap-1 hover:underline">Run <ExternalLink className="h-3 w-3" /></Link>
       </div>
     </div>
   );
@@ -475,15 +551,17 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
       occupied.push({ ...position, ...size });
       return position;
     };
+    // Links from cards keep the scope so the sidebar stays with the study or order.
+    const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
     return graph.nodes.map((node) => {
       const position = settle(node);
       const size = nodeSize(node, { sizes });
       const hue = hues[node.id] ?? COMPUTE_HUE;
       const base = { id: node.id, position, width: size.width, height: size.height };
-      if (node.data.kind === "dataset") return { ...base, type: "dataset", data: { ...node.data, hue, onPreset: applyPreset } } as DatasetNodeType;
-      if (node.data.kind === "analysis") return { ...base, type: "analysis", data: { ...node.data, hue, onOpenCode: openCode, onRun: runAnalysis } } as AnalysisNodeType;
-      if (node.data.kind === "figure") return { ...base, type: "figure", data: { ...node.data, hue } } as FigureNodeType;
-      if (node.data.kind === "pending") return { ...base, type: "pending", data: { ...node.data, hue } } as PendingNodeType;
+      if (node.data.kind === "dataset") return { ...base, type: "dataset", data: { ...node.data, hue, scopeQuery, onPreset: applyPreset } } as DatasetNodeType;
+      if (node.data.kind === "analysis") return { ...base, type: "analysis", data: { ...node.data, hue, scopeQuery, onOpenCode: openCode, onRun: runAnalysis } } as AnalysisNodeType;
+      if (node.data.kind === "figure") return { ...base, type: "figure", data: { ...node.data, hue, scopeQuery } } as FigureNodeType;
+      if (node.data.kind === "pending") return { ...base, type: "pending", data: { ...node.data, hue, scopeQuery } } as PendingNodeType;
       return { ...base, type: "source", data: node.data } as SourceNodeType;
     });
   }, [graph, applyPreset, openCode, runAnalysis, scope, arrangeVersion]);
@@ -602,7 +680,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
           />
         )}
       </ReactFlow>
-      {openAnalysisId && <CodePanel analysisId={openAnalysisId} onClose={() => setOpenAnalysisId(null)} />}
+      {openAnalysisId && <CodePanel analysisId={openAnalysisId} scopeQuery={`?scope=${encodeURIComponent(scope)}`} onClose={() => setOpenAnalysisId(null)} />}
     </div>
   );
 }
@@ -640,6 +718,7 @@ function CanvasLegend() {
             </div>
           ))}
           <p className="mt-1 text-muted-foreground">Select a card and drag its corners to resize it; tables then show more rows and columns.</p>
+          <p className="mt-1 text-muted-foreground">Column headers tinted like compute, with a dot, are the columns an analysis reads. A +N pill folds the columns in between; click it to open them.</p>
         </div>
       )}
     </div>
@@ -647,7 +726,7 @@ function CanvasLegend() {
 }
 
 /** Side panel with the current code of one analysis, opened from a card or an arrow. */
-function CodePanel({ analysisId, onClose }: { analysisId: string; onClose: () => void }) {
+function CodePanel({ analysisId, scopeQuery, onClose }: { analysisId: string; scopeQuery: string; onClose: () => void }) {
   const { data, error } = useSWR<{ analysis: { name: string; description: string | null; language: "python" | "r"; code: string; currentRevision: { number: number } | null; kitId: string | null } }>(
     `/api/explore/analyses/${analysisId}`,
     fetcher
@@ -667,7 +746,7 @@ function CodePanel({ analysisId, onClose }: { analysisId: string; onClose: () =>
           )}
         </div>
         <Button asChild size="sm" variant="outline">
-          <Link href={`/explore/analyses/${analysisId}`}>Open analysis</Link>
+          <Link href={`/explore/analyses/${analysisId}${scopeQuery}`}>Open analysis</Link>
         </Button>
         <button type="button" onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close code panel">
           <X className="h-4 w-4" />

@@ -135,3 +135,68 @@ describe("nodeSize", () => {
     expect(nodeSize(node, { expanded: new Set(["dataset:d"]), sizes: { "dataset:d": { width: 500, height: 300 } } })).toEqual({ width: 500, height: 300 });
   });
 });
+
+describe("usedColumnKeys", () => {
+  const table = [
+    { key: "sample_db_id", label: "Sample record", type: "string" as const },
+    { key: "sample_id", label: "Sample ID", type: "string" as const },
+    { key: "speciesName", label: "speciesName", type: "string" as const },
+    { key: "numReads", label: "numReads", type: "number" as const },
+    { key: "depth", label: "depth", type: "number" as const },
+  ];
+
+  it("maps the roles the code asks for and the keys it quotes onto columns", async () => {
+    const { usedColumnKeys } = await import("./canvas-layout");
+    const code = 'sample = sx.role_column(df, "sample", required=False)\ncounts = df["numReads"].sum()\nprint("depth is unused text")';
+    // The code names a role, so the roles the kit declares (value) do not count; "depth" only appears inside a longer string.
+    expect(usedColumnKeys({ code, columns: table, roles: { sample: "sample_db_id", count: "numReads", value: "depth" }, declaredRoles: ["value"] })).toEqual([
+      "sample_db_id",
+      "sample_id",
+      "numReads",
+    ]);
+  });
+
+  it("does not mistake a role name passed to the helper for a column of the same name", async () => {
+    const { usedColumnKeys } = await import("./canvas-layout");
+    const columns = [...table, { key: "sample", label: "sample", type: "string" as const }];
+    expect(usedColumnKeys({ code: 'sx.role_column(df, "sample")', columns, roles: { sample: "sample_id" } })).toEqual(["sample_id"]);
+  });
+
+  it("falls back to the roles a kit declares when the code names none", async () => {
+    const { usedColumnKeys } = await import("./canvas-layout");
+    expect(usedColumnKeys({ code: "df.describe()", columns: table, roles: { taxon: "speciesName", count: "numReads" }, declaredRoles: ["taxon", "group"] })).toEqual(["speciesName"]);
+    expect(usedColumnKeys({ code: "df.describe()", columns: table, roles: { taxon: "speciesName" } })).toEqual([]);
+  });
+});
+
+describe("foldColumns", () => {
+  const cols = ["a", "b", "c", "d", "e", "f"].map((key) => ({ key, label: key, type: "string" as const }));
+
+  it("keeps anchor columns open and folds the runs between them", async () => {
+    const { foldColumns } = await import("./canvas-layout");
+    const segments = foldColumns(cols, new Set(["a", "d"]));
+    expect(segments.map((segment) => (segment.kind === "fold" ? `+${segment.columns.length}` : segment.column.key))).toEqual(["a", "+2", "d", "+2"]);
+  });
+
+  it("opens a fold on request and marks its first column", async () => {
+    const { foldColumns } = await import("./canvas-layout");
+    const segments = foldColumns(cols, new Set(["a", "d"]), new Set([0]));
+    expect(segments.map((segment) => (segment.kind === "fold" ? `+${segment.columns.length}` : segment.column.key))).toEqual(["a", "b", "c", "d", "+2"]);
+    expect(segments[1]).toMatchObject({ kind: "column", fold: 0, firstOfFold: true });
+    expect(segments[2]).toMatchObject({ kind: "column", fold: 0, firstOfFold: false });
+  });
+
+  it("shows the plain table when nothing is worth keeping", async () => {
+    const { foldColumns } = await import("./canvas-layout");
+    expect(foldColumns(cols, new Set(["zzz"])).every((segment) => segment.kind === "column")).toBe(true);
+  });
+
+  it("fits segments into a width and counts what stays hidden", async () => {
+    const { fitSegments, foldColumns, CANVAS_COLUMN_WIDTH, CANVAS_FOLD_WIDTH } = await import("./canvas-layout");
+    const segments = foldColumns(cols, new Set(["a", "d", "f"]));
+    const { shown, hiddenColumns } = fitSegments(segments, CANVAS_COLUMN_WIDTH * 2 + CANVAS_FOLD_WIDTH);
+    expect(shown.map((segment) => segment.kind)).toEqual(["column", "fold", "column"]);
+    expect(hiddenColumns).toBe(4);
+    expect(fitSegments(segments, 10).shown).toHaveLength(1);
+  });
+});

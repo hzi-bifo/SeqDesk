@@ -147,4 +147,39 @@ test("runs an analysis kit end to end and records its outputs", async ({ page, r
   await expect(page.getByText("completed")).toBeVisible();
   await page.getByRole("tab", { name: /Code/ }).click();
   await expect(page.getByRole("region", { name: "Executed code" })).toBeVisible();
+
+  // The report assembles itself from the outputs, and edits persist.
+  interface ReportPayload {
+    report: { id: string | null; title: string; draft: boolean; blocks: Array<{ id: string; type: string; figure?: unknown; table?: unknown }> };
+  }
+  const reportKey = `/api/explore/reports?targetKey=${encodeURIComponent(scope)}`;
+  const draft = (await (await request.get(reportKey)).json()) as ReportPayload;
+  expect(draft.report.draft).toBe(true);
+  expect(draft.report.blocks.some((block) => block.type === "figure" && block.figure)).toBe(true);
+  expect(draft.report.blocks.some((block) => block.type === "table" && block.table)).toBe(true);
+
+  const saved = await request.put(reportKey, {
+    data: {
+      title: "Kit run report",
+      blocks: [
+        { id: "text:intro", type: "text", markdown: "## Findings\n\nWritten by the E2E test." },
+        ...draft.report.blocks
+          .filter((block) => block.type !== "text")
+          .map((block) => {
+            const stored: Record<string, unknown> = { ...block };
+            delete stored.figure;
+            delete stored.table;
+            return stored;
+          }),
+      ],
+    },
+  });
+  expect(saved.status(), await saved.text()).toBe(200);
+  const stored = (await (await request.get(reportKey)).json()) as ReportPayload;
+  expect(stored.report.draft).toBe(false);
+  expect(stored.report.title).toBe("Kit run report");
+
+  await page.goto(`/explore?scope=${encodeURIComponent(scope)}`);
+  await expect(page.getByRole("heading", { name: "Kit run report" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Findings" })).toBeVisible();
 });

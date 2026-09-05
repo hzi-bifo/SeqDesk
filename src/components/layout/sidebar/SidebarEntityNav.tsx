@@ -169,6 +169,7 @@ export function SidebarEntityNav({
 
   // Derive active tab from URL or entity context (e.g. analysis page with studyId param)
   const exploreEnabled = useModuleEnabled("explore");
+  const isExploreRoute = pathname === "/explore" || pathname.startsWith("/explore/");
   const analysisRunId = pathname.match(/^\/analysis\/([^/]+)/)?.[1] ?? null;
   const isAnalysisDetailRoute = analysisRunId !== null;
   const isStudyAnalysisContext = isAnalysisDetailRoute && entityType === "study";
@@ -277,6 +278,7 @@ export function SidebarEntityNav({
     },
     { key: "sequencing", label: "Sequencing Data", href: entityId ? `/orders/${entityId}/sequencing` : undefined, icon: HardDrive, show: showAdminControls },
     { key: "analysis", label: "Analysis", href: entityId ? `/orders/${entityId}/sequencing?view=analysis` : undefined, icon: FlaskConical, show: showAdminControls && orderPipelines.length > 0 },
+    { key: "explore", label: "Explore", href: entityId ? `/explore?scope=order:${entityId}` : undefined, icon: Compass, show: exploreEnabled },
   ];
 
   const items = activeTab === "studies" ? studyItems : orderItems;
@@ -296,20 +298,22 @@ export function SidebarEntityNav({
       const isStudyOverviewTab =
         currentStudySubview === null &&
         (currentStudyTab === null || currentStudyTab === "overview" || currentStudyTab === "notes");
-      if (item.key === "overview") return isStudyOverviewTab && currentStudySection === "overview";
+      if (item.key === "overview") return !isExploreRoute && isStudyOverviewTab && currentStudySection === "overview";
       if (item.key === "table") return currentStudySubview === "table";
       if (item.key === "facility") return currentStudySubview === "facility";
       if (item.key === "sequencing") {
         return currentStudyTab === "samples" || currentStudyTab === "reads";
       }
       if (item.key === "analysis") return currentStudyTab === "pipelines";
+      if (item.key === "explore") return isExploreRoute;
       if (item.key === "publishing") return currentStudyTab === "publishing";
       return false;
     }
+    if (item.key === "explore") return isExploreRoute;
 
     // Orders
     if (item.key === "details") {
-      if (isOrderAnalysisContext) {
+      if (isOrderAnalysisContext || isExploreRoute) {
         return false;
       }
       if (currentOrderSubview === "edit") {

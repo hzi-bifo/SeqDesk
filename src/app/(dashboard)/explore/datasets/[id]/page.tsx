@@ -237,13 +237,13 @@ export default function ExploreDatasetPage() {
           {subjectTimelineReady && (
             <>
               <Button asChild size="sm">
-                <Link href={`/explore/datasets/${dataset.id}/subject-timeline`}>
+                <Link href={`/explore/datasets/${dataset.id}/subject-timeline?scope=${encodeURIComponent(dataset.targetKey)}`}>
                   <Activity className="mr-2 h-4 w-4" />
                   Subject timeline
                 </Link>
               </Button>
               <Button asChild size="sm" variant="outline">
-                <Link href={`/explore/datasets/${dataset.id}/heatmap`}>
+                <Link href={`/explore/datasets/${dataset.id}/heatmap?scope=${encodeURIComponent(dataset.targetKey)}`}>
                   <Grid3x3 className="mr-2 h-4 w-4" />
                   Heatmap
                 </Link>

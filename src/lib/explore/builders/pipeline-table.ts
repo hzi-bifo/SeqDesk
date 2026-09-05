@@ -162,7 +162,6 @@ export async function buildPipelineTableDataset(
 
   const rows: ExploreRowData[] = [];
   const sources: ExploreProvenanceSource[] = chosen.map((run) => ({ type: "pipeline-run", id: run.id, label: run.runNumber }));
-  let firstColumns: string[] | null = null;
   for (const artifact of artifacts) {
     let text: string;
     try {
@@ -181,7 +180,6 @@ export async function buildPipelineTableDataset(
       skipLinesStartingWith: spec.skipLinesStartingWith,
     });
     if (parsed.columns.length === 0) continue;
-    if (!firstColumns) firstColumns = parsed.columns;
     sources.push({ type: "artifact", id: artifact.id, label: path.basename(artifact.path), checksum: artifact.checksum ?? undefined });
     const artifactSample = artifact.sampleId ? sampleById.get(artifact.sampleId) ?? null : null;
     for (const row of parsed.rows) {

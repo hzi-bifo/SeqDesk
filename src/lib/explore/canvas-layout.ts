@@ -32,6 +32,10 @@ export type CanvasDatasetData = {
   roles: ExploreRoleMap;
   previewRows: ExploreRowData[];
   views: Array<"subject-timeline" | "heatmap">;
+  /** Column key → names of the analyses that read it; these columns stay open and are tinted on the card. */
+  usedColumns?: Record<string, string[]>;
+  /** For outputs: the latest finished run of the analysis writing this table and whether it changed the table. */
+  latestWrite?: { runNumber: string; changed: boolean } | null;
   /** True while the analysis that writes this dataset is running again. */
   refreshing?: boolean;
 }
@@ -60,6 +64,11 @@ export type CanvasFigureData = {
   url: string;
   /** A static image of the same figure, when the run wrote one next to the interactive version. */
   thumbnailUrl: string | null;
+  /** The analysis that draws this figure; with the name it identifies the figure across runs. */
+  analysisId?: string;
+  runNumber?: string;
+  /** True when the latest run wrote a byte-identical figure to the run before it. */
+  unchanged?: boolean;
   refreshing?: boolean;
 }
 
@@ -96,6 +105,11 @@ const PREVIEW_COLUMNS = 3;
 const ROLE_PREFERENCE = ["sample", "subject", "taxon", "group", "timepoint", "count", "value"] as const;
 const SAMPLE_LABEL_KEYS = new Set(["sample_id", "_sampleId", "sampleId", "sample"]);
 
+/** The human-readable sample column of a table, if it has one next to the database id. */
+export function sampleLabelKey(columns: ExploreColumn[]): string | undefined {
+  return columns.find((column) => SAMPLE_LABEL_KEYS.has(column.key) || /^sample id$/i.test(column.label))?.key;
+}
+
 /** Pick the columns that tell the most about a table: role columns first, ids last. */
 export function pickPreviewColumns(columns: ExploreColumn[], roles: ExploreRoleMap, limit = PREVIEW_COLUMNS): ExploreColumn[] {
   const byKey = new Map(columns.map((column) => [column.key, column] as const));
@@ -106,10 +120,7 @@ export function pickPreviewColumns(columns: ExploreColumn[], roles: ExploreRoleM
     if (column && !chosen.includes(column)) chosen.push(column);
   };
   // A human sample label beats the database id used for joins.
-  const sampleLabel =
-    roles.sample && roles.sample.endsWith("_db_id")
-      ? columns.find((column) => SAMPLE_LABEL_KEYS.has(column.key) || /^sample id$/i.test(column.label))?.key
-      : undefined;
+  const sampleLabel = roles.sample && roles.sample.endsWith("_db_id") ? sampleLabelKey(columns) : undefined;
   if (sampleLabel) take(sampleLabel);
   for (const role of ROLE_PREFERENCE) {
     if (chosen.length >= limit) break;
@@ -285,4 +296,93 @@ export function assignCanvasHues(graph: CanvasGraph): Record<string, number | nu
 
   for (const node of graph.nodes) hueOf(node.id);
   return hues;
+}
+
+// ---------------------------------------------------------------------------
+// Which columns an analysis reads, and how a card folds the others away.
+// ---------------------------------------------------------------------------
+
+/**
+ * Columns of an input table that an analysis reads: the role columns its code
+ * asks for (or, when the code names none, the roles its kit declares) plus any
+ * column key quoted verbatim in the code. A heuristic, meant to point at the
+ * columns worth looking at rather than to be complete.
+ */
+export function usedColumnKeys(input: { code: string; columns: ExploreColumn[]; roles: ExploreRoleMap; declaredRoles?: string[] }): string[] {
+  const keys = new Set(input.columns.map((column) => column.key));
+  const used = new Set<string>();
+  const codeRoles = new Set<string>();
+  for (const match of input.code.matchAll(/role_columns?\([^)]*?["']([a-z_]+)["']/g)) codeRoles.add(match[1]);
+  for (const match of input.code.matchAll(/roles?(?:\([^)]*\))?\[["']([a-z_]+)["']\]/g)) codeRoles.add(match[1]);
+  const roleNames = codeRoles.size > 0 ? codeRoles : new Set(input.declaredRoles ?? []);
+  for (const role of roleNames) {
+    const column = input.roles[role as keyof ExploreRoleMap];
+    if (!column) continue;
+    if (keys.has(column)) used.add(column);
+    // Cards hide database ids; point at the human sample label instead.
+    if (role === "sample" && column.endsWith("_db_id")) {
+      const label = sampleLabelKey(input.columns);
+      if (label) used.add(label);
+    }
+  }
+  // Role names passed to the helper are not column names, even when a column happens to share the name.
+  const literals = input.code.replace(/role_columns?\([^)]*\)/g, "").replace(/roles?(?:\([^)]*\))?\[["'][a-z_]+["']\]/g, "");
+  for (const match of literals.matchAll(/["']([^"'\n]{1,80})["']/g)) if (keys.has(match[1])) used.add(match[1]);
+  return input.columns.map((column) => column.key).filter((key) => used.has(key));
+}
+
+export type ColumnSegment =
+  | { kind: "column"; column: ExploreColumn; fold: number | null; firstOfFold: boolean }
+  | { kind: "fold"; fold: number; columns: ExploreColumn[] };
+
+/**
+ * Lay a table's columns out like an accordion: the columns worth seeing stay
+ * open and each run of other columns between them collapses into one fold.
+ * Open folds render their columns, marked so the card can offer to fold them again.
+ */
+export function foldColumns(columns: ExploreColumn[], keep: Set<string>, openFolds: Set<number> = new Set()): ColumnSegment[] {
+  if (![...keep].some((key) => columns.some((column) => column.key === key))) {
+    return columns.map((column) => ({ kind: "column", column, fold: null, firstOfFold: false }));
+  }
+  const segments: ColumnSegment[] = [];
+  let pending: ExploreColumn[] = [];
+  let foldIndex = 0;
+  const flush = () => {
+    if (pending.length === 0) return;
+    if (openFolds.has(foldIndex)) {
+      pending.forEach((column, index) => segments.push({ kind: "column", column, fold: foldIndex, firstOfFold: index === 0 }));
+    } else {
+      segments.push({ kind: "fold", fold: foldIndex, columns: pending });
+    }
+    foldIndex += 1;
+    pending = [];
+  };
+  for (const column of columns) {
+    if (keep.has(column.key)) {
+      flush();
+      segments.push({ kind: "column", column, fold: null, firstOfFold: false });
+    } else {
+      pending.push(column);
+    }
+  }
+  flush();
+  return segments;
+}
+
+export const CANVAS_COLUMN_WIDTH = 96;
+export const CANVAS_FOLD_WIDTH = 28;
+
+/** As many segments as fit the width, left to right; the rest counts as hidden. */
+export function fitSegments(segments: ColumnSegment[], available: number): { shown: ColumnSegment[]; hiddenColumns: number } {
+  const shown: ColumnSegment[] = [];
+  let budget = available;
+  for (const segment of segments) {
+    const width = segment.kind === "fold" ? CANVAS_FOLD_WIDTH : CANVAS_COLUMN_WIDTH;
+    if (budget < width && shown.length > 0) break;
+    shown.push(segment);
+    budget -= width;
+  }
+  const visible = shown.filter((segment) => segment.kind === "column").length;
+  const total = segments.reduce((count, segment) => count + (segment.kind === "fold" ? segment.columns.length : 1), 0);
+  return { shown, hiddenColumns: total - visible };
 }

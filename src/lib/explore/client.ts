@@ -47,9 +47,25 @@ export function formatDateTime(value: string | null | undefined): string {
   return date.toLocaleString();
 }
 
+/**
+ * Up to six significant digits, but never rounding away the integer part of a
+ * large value (a read count must stay exact); integers print verbatim. The same
+ * rule the DataGrid applies, so a value reads alike on a card and in the table.
+ */
+export function formatNumber(value: number): string {
+  if (!Number.isFinite(value) || Number.isInteger(value)) return String(value);
+  const magnitude = Math.abs(value);
+  if (magnitude >= 1) {
+    const integerDigits = Math.floor(Math.log10(magnitude)) + 1;
+    const fractionDigits = Math.max(0, 6 - integerDigits);
+    return String(Number(value.toFixed(fractionDigits)));
+  }
+  return String(Number(value.toPrecision(6)));
+}
+
 export function formatCell(value: string | number | boolean | null | undefined): string {
   if (value === null || value === undefined) return "";
-  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toPrecision(6).replace(/\.?0+$/, "");
+  if (typeof value === "number") return formatNumber(value);
   if (typeof value === "boolean") return value ? "true" : "false";
   return value;
 }

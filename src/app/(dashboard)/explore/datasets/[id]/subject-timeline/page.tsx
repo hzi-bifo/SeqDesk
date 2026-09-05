@@ -49,7 +49,7 @@ export default function SubjectTimelinePage() {
   if (subjectsError) {
     return (
       <PageContainer>
-        <Link href={`/explore/datasets/${id}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" />Dataset</Link>
+        <Link href={`/explore/datasets/${id}?scope=${encodeURIComponent(detail?.dataset.targetKey ?? "")}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" />Dataset</Link>
         <p className="mt-4 text-sm text-destructive">{String(subjectsError.message)}</p>
       </PageContainer>
     );
@@ -57,7 +57,7 @@ export default function SubjectTimelinePage() {
 
   return (
     <PageContainer>
-      <Link href={`/explore/datasets/${id}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+      <Link href={`/explore/datasets/${id}?scope=${encodeURIComponent(detail?.dataset.targetKey ?? "")}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="h-4 w-4" />
         {detail?.dataset.name ?? "Dataset"}
       </Link>

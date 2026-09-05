@@ -118,7 +118,8 @@ export async function listExploreScopes(session: SessionLike): Promise<ExploreSc
     scopes.push({
       targetKey: `study:${study.id}`,
       type: "study",
-      label: study.alias ? `${study.title} (${study.alias})` : study.title,
+      label: study.title,
+      detail: study.alias ?? undefined,
       access: "write",
     });
   }
@@ -126,7 +127,8 @@ export async function listExploreScopes(session: SessionLike): Promise<ExploreSc
     scopes.push({
       targetKey: `order:${order.id}`,
       type: "order",
-      label: order.name ? `${order.orderNumber} ${order.name}` : order.orderNumber,
+      label: order.name ?? order.orderNumber,
+      detail: order.name ? order.orderNumber : undefined,
       access: "write",
     });
   }

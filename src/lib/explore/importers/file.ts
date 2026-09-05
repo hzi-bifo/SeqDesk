@@ -96,7 +96,7 @@ export async function parseImportFile(buffer: Buffer, options: ImportFileOptions
   if (kind === "xlsx") {
     parsed = await parseXlsx(buffer, options.sheet);
   } else if (kind === "csv" || kind === "tsv" || kind === "unknown") {
-    const result = parseDelimited(buffer.toString("utf8"), { delimiter: kind === "csv" ? "," : kind === "tsv" ? "auto" : "auto", maxRows: MAX_IMPORT_ROWS });
+    const result = parseDelimited(buffer.toString("utf8"), { delimiter: kind === "csv" ? "," : "auto", maxRows: MAX_IMPORT_ROWS });
     parsed = { columns: result.columns, rows: result.rows, sheets: [], sheet: null, truncated: result.truncated, warnings: [] };
   } else {
     throw new Error("Unsupported file type");

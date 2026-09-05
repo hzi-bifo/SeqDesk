@@ -32,6 +32,7 @@ export function useSidebarEntity(): SidebarEntityContext {
   const orderMatch = pathname.match(/^\/orders\/([^/]+)(\/(.+))?$/);
   const studyMatch = pathname.match(/^\/studies\/([^/]+)(\/(.+))?$/);
   const analysisMatch = pathname.match(/^\/analysis\/([^/]+)/);
+  const exploreMatch = pathname === "/explore" || pathname.startsWith("/explore/");
 
   if (orderMatch && orderMatch[1] !== "new") {
     entityType = "order";
@@ -41,6 +42,15 @@ export function useSidebarEntity(): SidebarEntityContext {
     entityType = "study";
     entityId = studyMatch[1];
     currentSubPage = studyMatch[3] || "overview";
+  } else if (exploreMatch) {
+    // Explore pages belong to the study or order named by their scope, so the
+    // sidebar keeps that entity's navigation with "Explore" as the current page.
+    const scopeMatch = searchParams.get("scope")?.match(/^(study|order):([A-Za-z0-9_-]+)$/);
+    if (scopeMatch) {
+      entityType = scopeMatch[1] as "study" | "order";
+      entityId = scopeMatch[2];
+      currentSubPage = "explore";
+    }
   } else if (analysisMatch) {
     // On analysis pages, restore sidebar context from query params
     const fromStudy = searchParams.get("studyId");

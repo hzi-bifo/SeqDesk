@@ -87,7 +87,7 @@ export default function ExploreRunPage() {
 
   return (
     <PageContainer>
-      <Link href={`/explore/analyses/${run.analysis.id}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+      <Link href={`/explore/analyses/${run.analysis.id}?scope=${encodeURIComponent(run.analysis.targetKey)}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="h-4 w-4" />
         {run.analysis.name}
       </Link>

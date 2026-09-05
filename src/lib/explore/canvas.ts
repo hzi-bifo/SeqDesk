@@ -1,9 +1,10 @@
 import { db } from "@/lib/db";
 import { fetchDatasetRows } from "./datasets";
 import { parseInputBindings } from "./analyses";
+import { getKit } from "./kits/loader";
 import { parseJsonObject, parseRoles, parseSchema } from "./schema";
 import type { ExploreProvenance, ExploreRoleMap } from "./types";
-import { pickPreviewColumns, PREVIEW_ROWS, type CanvasEdge, type CanvasFigureData, type CanvasGraph, type CanvasNode } from "./canvas-layout";
+import { pickPreviewColumns, PREVIEW_ROWS, usedColumnKeys, type CanvasEdge, type CanvasFigureData, type CanvasGraph, type CanvasNode } from "./canvas-layout";
 
 const ACTIVE_RUN = new Set(["pending", "queued", "running"]);
 
@@ -72,21 +73,58 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
 
   const nodes: CanvasNode[] = [];
   const edges: CanvasEdge[] = [];
-  const datasetNodeIds = new Set<string>();
+  const datasetNodeIds = new Set(datasets.map((dataset) => `dataset:${dataset.id}`));
+  const analysisNames = new Map(analyses.map((analysis) => [analysis.id, analysis.name] as const));
   const runToAnalysis = new Map(runs.map((run) => [run.id, run.analysisId] as const));
   const latestRunByAnalysis = new Map<string, (typeof runs)[number]>();
   for (const run of runs) if (!latestRunByAnalysis.has(run.analysisId)) latestRunByAnalysis.set(run.analysisId, run);
-  const latestCompletedByAnalysis = new Map<string, (typeof runs)[number]>();
-  for (const run of runs) if (run.status === "completed" && !latestCompletedByAnalysis.has(run.analysisId)) latestCompletedByAnalysis.set(run.analysisId, run);
+  // Finished runs per analysis, newest first: the first one owns the outputs shown, the second tells whether they changed.
+  const completedByAnalysis = new Map<string, Array<(typeof runs)[number]>>();
+  for (const run of runs) {
+    if (run.status !== "completed") continue;
+    const list = completedByAnalysis.get(run.analysisId) ?? [];
+    list.push(run);
+    completedByAnalysis.set(run.analysisId, list);
+  }
+
+  const datasetInfo = new Map(
+    datasets.map((dataset) => {
+      const current = dataset.versions.find((version) => version.id === dataset.currentVersionId) ?? dataset.versions[0] ?? null;
+      return [dataset.id, { current, schema: parseSchema(current?.schema), roles: parseRoles(dataset.roles) }] as const;
+    })
+  );
+
+  // Which columns each analysis reads from each of its inputs, from its code and its kit.
+  const usage = new Map<string, Map<string, Set<string>>>();
+  const kits = new Map<string, Awaited<ReturnType<typeof getKit>>>();
+  for (const analysis of analyses) {
+    const revision = analysis.revisions[0];
+    if (!revision) continue;
+    let kit: Awaited<ReturnType<typeof getKit>> = null;
+    if (analysis.kitId) {
+      if (!kits.has(analysis.kitId)) kits.set(analysis.kitId, await getKit(analysis.kitId));
+      kit = kits.get(analysis.kitId) ?? null;
+    }
+    for (const binding of parseInputBindings(revision.inputs)) {
+      const info = datasetInfo.get(binding.datasetId);
+      if (!info) continue;
+      const kitInput = kit?.manifest.inputs.find((input) => input.alias === binding.alias);
+      const declaredRoles = kitInput ? [...kitInput.requiredRoles, ...kitInput.optionalRoles] : [];
+      const byColumn = usage.get(binding.datasetId) ?? new Map<string, Set<string>>();
+      for (const key of usedColumnKeys({ code: revision.code, columns: info.schema.columns, roles: info.roles, declaredRoles })) {
+        const names = byColumn.get(key) ?? new Set<string>();
+        names.add(analysis.name);
+        byColumn.set(key, names);
+      }
+      if (byColumn.size > 0) usage.set(binding.datasetId, byColumn);
+    }
+  }
 
   for (const dataset of datasets) {
-    const current = dataset.versions.find((version) => version.id === dataset.currentVersionId) ?? dataset.versions[0] ?? null;
-    const schema = parseSchema(current?.schema);
-    const roles = parseRoles(dataset.roles);
+    const { current, schema, roles } = datasetInfo.get(dataset.id)!;
     const previewColumns = pickPreviewColumns(schema.columns, roles);
     const preview = current ? await fetchDatasetRows(current.id, { limit: PREVIEW_ROWS }) : { rows: [] };
     const nodeId = `dataset:${dataset.id}`;
-    datasetNodeIds.add(nodeId);
     const timelineReady = ["sample", "subject", "timepoint", "taxon", "count"].every((role) => Boolean(roles[role as keyof ExploreRoleMap]));
     const sourceConfig = parseJsonObject(dataset.sourceConfig);
     const producingRunId = typeof sourceConfig?.runId === "string" ? sourceConfig.runId : null;
@@ -94,6 +132,13 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
       (typeof sourceConfig?.analysisId === "string" ? sourceConfig.analysisId : null) ?? (producingRunId ? runToAnalysis.get(producingRunId) : null) ?? null;
     const producerActive = producingAnalysis ? ACTIVE_RUN.has(latestRunByAnalysis.get(producingAnalysis)?.status ?? "") : false;
     const sources = provenanceSources(current?.provenance);
+    // The run that wrote the current version versus the latest finished run:
+    // when they differ, the latest run produced the same table again.
+    const versionRun = sources.find((source) => source.type === "analysis-run");
+    const latestFinished = producingAnalysis ? completedByAnalysis.get(producingAnalysis)?.[0] : undefined;
+    const latestWrite = latestFinished ? { runNumber: latestFinished.runNumber, changed: versionRun?.id === latestFinished.id } : null;
+    const producerName = producingAnalysis ? analysisNames.get(producingAnalysis) : undefined;
+    const usedColumns = Object.fromEntries([...(usage.get(dataset.id) ?? new Map<string, Set<string>>())].map(([key, names]) => [key, [...names]]));
     nodes.push({
       id: nodeId,
       data: {
@@ -103,7 +148,7 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
         datasetKind: dataset.kind,
         tableKind: dataset.tableKind,
         sensitivity: dataset.sensitivity,
-        origin: producingAnalysis ? "Written by an analysis" : originLabel(sources, dataset.kind),
+        origin: producingAnalysis ? `Written by ${producerName ?? "an analysis"}` : originLabel(sources, dataset.kind),
         version: current?.number ?? null,
         rowCount: current?.rowCount ?? 0,
         columnCount: schema.columns.length,
@@ -112,6 +157,8 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
         roles,
         previewRows: preview.rows.map((row) => row.data),
         views: timelineReady ? ["subject-timeline", "heatmap"] : [],
+        usedColumns,
+        latestWrite,
         ...(producerActive ? { refreshing: true } : {}),
       },
     });
@@ -146,17 +193,22 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
       if (!datasetNodeIds.has(datasetNodeId)) continue;
       edges.push({ id: `input:${binding.datasetId}:${analysis.id}:${binding.alias}`, source: datasetNodeId, target: nodeId, label: binding.alias });
     }
-    const completed = latestCompletedByAnalysis.get(analysis.id);
+    const finished = completedByAnalysis.get(analysis.id) ?? [];
+    const completed = finished[0];
+    const previous = finished[1];
     if (active && !completed && latest) {
       // Nothing to show yet: a placeholder stands where the outputs will appear.
       const pendingId = `pending:${analysis.id}`;
       nodes.push({ id: pendingId, data: { kind: "pending", analysisId: analysis.id, runId: latest.id, runNumber: latest.runNumber, status: latest.status } });
       edges.push({ id: `pending:${analysis.id}`, source: nodeId, target: pendingId, label: latest.runNumber });
     }
-    // One node per figure name. The interactive version is the node; a PNG or
-    // SVG twin written by the same run becomes its thumbnail.
-    const figures = new Map<string, { interactive: (typeof runs)[number]["artifacts"][number] | null; image: (typeof runs)[number]["artifacts"][number] | null }>();
-    for (const artifact of completed?.artifacts ?? []) {
+    if (!completed) continue;
+    // One card per figure name, owned by the analysis rather than the run, so a
+    // re-run replaces the figure in place. The interactive version is the card;
+    // a PNG or SVG twin written by the same run becomes its thumbnail.
+    type Artifact = (typeof runs)[number]["artifacts"][number];
+    const figures = new Map<string, { interactive: Artifact | null; image: Artifact | null }>();
+    for (const artifact of completed.artifacts) {
       if (artifact.kind !== "figure" || !["plotly-json", "png", "svg", "html"].includes(artifact.format)) continue;
       const entry = figures.get(artifact.name) ?? { interactive: null, image: null };
       if (artifact.format === "png" || artifact.format === "svg") entry.image = entry.image ?? artifact;
@@ -165,23 +217,26 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
     }
     for (const [name, entry] of figures) {
       const main = entry.interactive ?? entry.image!;
-      const figureNodeId = `figure:${completed!.id}:${name}`;
-      const artifactUrl = (artifact: { id: string }) => `/api/explore/runs/${completed!.id}/artifacts/${artifact.id}`;
+      const before = previous?.artifacts.find((artifact) => artifact.name === name && artifact.format === main.format);
+      const figureNodeId = `figure:${analysis.id}:${name}`;
+      const artifactUrl = (artifact: { id: string }) => `/api/explore/runs/${completed.id}/artifacts/${artifact.id}`;
       const data: CanvasFigureData = {
         kind: "figure",
         artifactId: main.id,
-        runId: completed!.id,
+        analysisId: analysis.id,
+        runId: completed.id,
+        runNumber: completed.runNumber,
         name,
         format: main.format,
         url: artifactUrl(main),
         thumbnailUrl: entry.image ? artifactUrl(entry.image) : null,
+        unchanged: Boolean(before && main.checksum && before.checksum === main.checksum),
         ...(active ? { refreshing: true } : {}),
       };
       nodes.push({ id: figureNodeId, data });
-      edges.push({ id: `figure:${completed!.id}:${name}`, source: nodeId, target: figureNodeId, label: completed!.runNumber });
+      edges.push({ id: figureNodeId, source: nodeId, target: figureNodeId, label: completed.runNumber });
     }
   }
 
   return { nodes, edges };
 }
-
