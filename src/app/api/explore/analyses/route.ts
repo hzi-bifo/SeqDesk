@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
     const session = await requireExploreSession();
     const targetKey = request.nextUrl.searchParams.get("targetKey") ?? "";
     await requireTargetAccess(session, targetKey, "read");
-    return NextResponse.json({ analyses: await listAnalyses(targetKey) });
+    return NextResponse.json({ analyses: await listAnalyses(targetKey, request.nextUrl.searchParams.get("reportId") || null) });
   } catch (error) {
     return exploreErrorResponse(error);
   }
@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
       name: optionalString(body.name, 200),
       description: optionalString(body.description),
       kitId: optionalString(body.kitId, 80),
+      reportId: optionalString(body.reportId, 80),
       language,
       environmentName: optionalString(body.environmentName, 120),
       inputs: await parseBindings(body.inputs, targetKey),

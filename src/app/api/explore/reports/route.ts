@@ -1,54 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listExploreScopes, requireTargetAccess } from "@/lib/explore/authorization";
-import { ExploreReportError, getReportView, resetReport, saveReport } from "@/lib/explore/reports";
-import { exploreErrorResponse, readJsonBody, requireExploreSession } from "../_shared";
-import type { Session } from "next-auth";
+import { requireTargetAccess } from "@/lib/explore/authorization";
+import { createReport, ExploreReportError, listReports } from "@/lib/explore/reports";
+import { exploreErrorResponse, optionalString, readJsonBody, requireExploreSession, requireString } from "../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-async function scopeLabel(session: Session, targetKey: string): Promise<string> {
-  const scopes = await listExploreScopes(session);
-  return scopes.find((scope) => scope.targetKey === targetKey)?.label ?? "Report";
-}
 
 function reportError(error: unknown): NextResponse {
   if (error instanceof ExploreReportError) return NextResponse.json({ error: error.message }, { status: error.status });
   return exploreErrorResponse(error);
 }
 
-/** The report of one scope: saved blocks, or a draft assembled from all outputs. */
+/** The reports of one scope, oldest first. */
 export async function GET(request: NextRequest) {
   try {
     const session = await requireExploreSession();
     const targetKey = request.nextUrl.searchParams.get("targetKey") ?? "";
     await requireTargetAccess(session, targetKey, "read");
-    return NextResponse.json({ report: await getReportView(targetKey, await scopeLabel(session, targetKey)) });
+    return NextResponse.json({ reports: await listReports(targetKey) });
   } catch (error) {
     return reportError(error);
   }
 }
 
-/** Save the report: title and ordered blocks. */
-export async function PUT(request: NextRequest) {
+/** A new report in a scope; "Report N" unless a title is given. */
+export async function POST(request: NextRequest) {
   try {
     const session = await requireExploreSession();
-    const targetKey = request.nextUrl.searchParams.get("targetKey") ?? "";
-    await requireTargetAccess(session, targetKey, "write");
     const body = await readJsonBody(request);
-    return NextResponse.json({ report: await saveReport(targetKey, body, session.user.id, await scopeLabel(session, targetKey)) });
-  } catch (error) {
-    return reportError(error);
-  }
-}
-
-/** Forget the saved report and start again from the outputs. */
-export async function DELETE(request: NextRequest) {
-  try {
-    const session = await requireExploreSession();
-    const targetKey = request.nextUrl.searchParams.get("targetKey") ?? "";
+    const targetKey = requireString(body.targetKey, "targetKey");
     await requireTargetAccess(session, targetKey, "write");
-    return NextResponse.json({ report: await resetReport(targetKey, await scopeLabel(session, targetKey)) });
+    const report = await createReport(targetKey, session.user.id, optionalString(body.title, 200));
+    return NextResponse.json({ report }, { status: 201 });
   } catch (error) {
     return reportError(error);
   }

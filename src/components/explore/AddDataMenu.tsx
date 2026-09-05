@@ -23,6 +23,8 @@ export interface PipelineTableSource {
 
 interface AddDataMenuProps {
   scope: string;
+  /** The report a new analysis becomes a step of. */
+  reportId?: string;
   /** Called after a table was built so the caller can refresh what it shows. */
   onBuilt?: () => void | Promise<unknown>;
   /** Show the entries that start an analysis or import a file, not only the tables built from SeqDesk data. */
@@ -37,7 +39,7 @@ interface AddDataMenuProps {
  * built from the study's samples, its sequencing runs or a pipeline output, an
  * imported file, and a new analysis. Used by the list view and the canvas alike.
  */
-export function AddDataMenu({ scope, onBuilt, withAnalysis = true, label = "Add", variant = "default", className }: AddDataMenuProps) {
+export function AddDataMenu({ scope, reportId, onBuilt, withAnalysis = true, label = "Add", variant = "default", className }: AddDataMenuProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [building, setBuilding] = useState<string | null>(null);
@@ -91,7 +93,7 @@ export function AddDataMenu({ scope, onBuilt, withAnalysis = true, label = "Add"
       items: [
         { id: "import", title: "Import a file", hint: "TSV, CSV or Excel from your computer", sketch: "import", onSelect: () => router.push(`/explore/datasets/import?scope=${encodeURIComponent(scope)}`) },
         ...(withAnalysis
-          ? [{ id: "analysis", title: "New analysis", hint: "From a template or a blank script", sketch: "analysis" as const, onSelect: () => router.push(`/explore/analyses/new?scope=${encodeURIComponent(scope)}`) }]
+          ? [{ id: "analysis", title: "New analysis", hint: "From a template or a blank script", sketch: "analysis" as const, onSelect: () => router.push(`/explore/analyses/new?scope=${encodeURIComponent(scope)}${reportId ? `&report=${encodeURIComponent(reportId)}` : ""}`) }]
           : []),
       ],
     },

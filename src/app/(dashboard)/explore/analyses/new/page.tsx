@@ -51,6 +51,7 @@ function NewAnalysisForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const scope = searchParams.get("scope");
+  const report = searchParams.get("report");
   const validScope = scope && isValidTargetKey(scope) ? scope : null;
   const [selectedKitId, setKitId] = useState<string>(searchParams.get("kit") ?? "");
   const [name, setName] = useState("");
@@ -128,6 +129,7 @@ function NewAnalysisForm() {
     try {
       const result = await postJson<{ analysis: { id: string } }>("/api/explore/analyses", {
         targetKey: validScope,
+        reportId: report ?? undefined,
         kitId: kit?.id ?? null,
         name: name.trim() || undefined,
         language: kit?.language ?? "python",
@@ -135,7 +137,7 @@ function NewAnalysisForm() {
         params,
       });
       toast.success("Analysis created");
-      router.push(`/explore/analyses/${result.analysis.id}`);
+      router.push(`/explore/analyses/${result.analysis.id}?scope=${encodeURIComponent(validScope)}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not create the analysis");
       setBusy(false);
@@ -153,9 +155,9 @@ function NewAnalysisForm() {
 
   return (
     <PageContainer maxWidth="wide">
-      <Link href={`/explore?scope=${encodeURIComponent(validScope)}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+      <Link href={report ? `/explore/reports/${encodeURIComponent(report)}?scope=${encodeURIComponent(validScope)}&mode=edit&view=canvas` : `/explore?scope=${encodeURIComponent(validScope)}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="h-4 w-4" />
-        Explore
+        {report ? "Back to the report" : "Reports"}
       </Link>
       <h1 className="mt-2 text-xl font-semibold">New analysis</h1>
       <p className="mt-1 max-w-2xl text-sm text-muted-foreground">

@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import useSWR from "swr";
 import {
   Building2,
-  Compass,
   FileText,
   FlaskConical,
   HardDrive,
+  NotebookText,
+  Plus,
   Send,
   Table2,
   Workflow,
@@ -170,6 +172,31 @@ export function SidebarEntityNav({
   // Derive active tab from URL or entity context (e.g. analysis page with studyId param)
   const exploreEnabled = useModuleEnabled("explore");
   const isExploreRoute = pathname === "/explore" || pathname.startsWith("/explore/");
+  // The reports of this study or order sit under the Reports entry; one click opens each.
+  const router = useRouter();
+  const reportsScope = entityId && (entityType === "study" || entityType === "order") ? `${entityType}:${entityId}` : null;
+  const { data: reportsData, mutate: mutateReports } = useSWR<{ reports: Array<{ id: string; title: string }> }>(
+    exploreEnabled && reportsScope && !collapsed ? `/api/explore/reports?targetKey=${encodeURIComponent(reportsScope)}` : null,
+    async (url: string) => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+      return response.json();
+    }
+  );
+  const reports = reportsData?.reports ?? [];
+  const activeReportId = pathname.match(/^\/explore\/reports\/([^/]+)/)?.[1] ?? null;
+  const createReport = async () => {
+    if (!reportsScope) return;
+    try {
+      const response = await fetch("/api/explore/reports", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetKey: reportsScope }) });
+      if (!response.ok) return;
+      const { report } = (await response.json()) as { report: { id: string } };
+      await mutateReports();
+      router.push(`/explore/reports/${report.id}?scope=${encodeURIComponent(reportsScope)}&mode=edit&view=canvas`);
+    } catch {
+      // The reports page reports the problem when opened directly.
+    }
+  };
   const analysisRunId = pathname.match(/^\/analysis\/([^/]+)/)?.[1] ?? null;
   const isAnalysisDetailRoute = analysisRunId !== null;
   const isStudyAnalysisContext = isAnalysisDetailRoute && entityType === "study";
@@ -236,7 +263,7 @@ export function SidebarEntityNav({
     },
     { key: "sequencing", label: "Sequencing Data", href: entityId ? `/studies/${entityId}?tab=samples` : undefined, icon: HardDrive, show: true },
     { key: "analysis", label: "Analysis", href: entityId ? `/studies/${entityId}?tab=pipelines` : undefined, icon: Workflow, show: showAdminControls },
-    { key: "explore", label: "Explore", href: entityId ? `/explore?scope=study:${entityId}` : undefined, icon: Compass, show: exploreEnabled },
+    { key: "explore", label: "Reports", href: entityId ? `/explore?scope=study:${entityId}` : undefined, icon: NotebookText, show: exploreEnabled },
     { key: "publishing", label: "Publishing", href: entityId ? `/studies/${entityId}?tab=publishing` : undefined, icon: Send, show: true },
   ];
 
@@ -278,7 +305,7 @@ export function SidebarEntityNav({
     },
     { key: "sequencing", label: "Sequencing Data", href: entityId ? `/orders/${entityId}/sequencing` : undefined, icon: HardDrive, show: showAdminControls },
     { key: "analysis", label: "Analysis", href: entityId ? `/orders/${entityId}/sequencing?view=analysis` : undefined, icon: FlaskConical, show: showAdminControls && orderPipelines.length > 0 },
-    { key: "explore", label: "Explore", href: entityId ? `/explore?scope=order:${entityId}` : undefined, icon: Compass, show: exploreEnabled },
+    { key: "explore", label: "Reports", href: entityId ? `/explore?scope=order:${entityId}` : undefined, icon: NotebookText, show: exploreEnabled },
   ];
 
   const items = activeTab === "studies" ? studyItems : orderItems;
@@ -406,6 +433,8 @@ export function SidebarEntityNav({
             activeTab === "studies" &&
             item.key === "publishing" &&
             !!entityId;
+          const shouldShowReportSubitems =
+            !collapsed && item.key === "explore" && !!reportsScope && exploreEnabled;
 
           const link = (
             <Link
@@ -444,7 +473,8 @@ export function SidebarEntityNav({
             !shouldShowStudyPipelineSubitems &&
             !shouldShowStudyPublishingSubitems &&
             !shouldShowStudyOverviewSubitems &&
-            !shouldShowStudyFacilitySubitems
+            !shouldShowStudyFacilitySubitems &&
+            !shouldShowReportSubitems
           ) {
             return link;
           }
@@ -452,6 +482,36 @@ export function SidebarEntityNav({
           return (
             <div key={item.key} className="space-y-1">
               {link}
+              {shouldShowReportSubitems && reportsScope && (
+                <div className="ml-5 border-l border-border/70 pl-2">
+                  {reports.map((report) => {
+                    const isReportActive = activeReportId === report.id;
+                    return (
+                      <Link
+                        key={report.id}
+                        href={`/explore/reports/${report.id}?scope=${encodeURIComponent(reportsScope)}`}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
+                          isReportActive
+                            ? "bg-secondary text-foreground font-medium"
+                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                        )}
+                      >
+                        <span className={cn("h-2 w-2 shrink-0 rounded-full bg-slate-300 shadow-sm", isReportActive && "ring-2 ring-background")} aria-hidden="true" />
+                        <span className="truncate">{report.title}</span>
+                      </Link>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => void createReport()}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground"
+                  >
+                    <Plus className="h-3 w-3 shrink-0" aria-hidden="true" />
+                    New report
+                  </button>
+                </div>
+              )}
               {shouldShowStudyOverviewSubitems && (
                 <div className="ml-5 border-l border-border/70 pl-2">
                   {studyFormLoading && studyOverviewSections.length === 0 ? (

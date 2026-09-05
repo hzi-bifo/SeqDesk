@@ -3,20 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import {
-  ArrowDown,
-  ArrowUp,
-  ExternalLink,
-  LayoutGrid,
-  Loader2,
-  Pencil,
-  Plus,
-  RectangleHorizontal,
-  RotateCcw,
-  Square,
-  Trash2,
-  X,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink, LayoutGrid, Loader2, Plus, RectangleHorizontal, RotateCcw, Square, Trash2, X } from "lucide-react";
 import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
@@ -40,8 +27,12 @@ import type { ReportAnalysis, ReportBlock, ReportFigure, ReportInput, ReportTabl
 import type { ExploreColumn } from "@/lib/explore/types";
 
 interface ExploreReportProps {
+  reportId: string;
   scope: string;
   canEdit: boolean;
+  /** True while the page is being edited (the report page's edit mode); saving or cancelling calls onDone. */
+  editing: boolean;
+  onDone: () => void;
   /** Switch to the canvas, where outputs are made. */
   onOpenCanvas: () => void;
 }
@@ -103,8 +94,8 @@ function tableBlockOf(table: ReportTable): ReportBlock {
  * together with text. Read-only for viewers; editors arrange blocks, write
  * Markdown and pick which figures and tables to show.
  */
-export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportProps) {
-  const key = `/api/explore/reports?targetKey=${encodeURIComponent(scope)}`;
+export function ExploreReport({ reportId, scope, canEdit, editing: editRequested, onDone, onOpenCanvas }: ExploreReportProps) {
+  const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
   const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
   const { data, error, isLoading, mutate } = useSWR<ReportResponse>(key, fetcher, { refreshInterval: 15000 });
   const [draft, setDraft] = useState<ReportInput | null>(null);
@@ -123,15 +114,18 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
     );
   }
 
-  const editing = draft !== null;
+  const editing = editRequested && canEdit;
+  // The working copy starts from the saved page and lives in state once something changes.
+  const working: ReportInput | null = editing ? (draft ?? toInput(report)) : null;
+  const patchDraft = (fn: (current: ReportInput) => ReportInput) => setDraft((current) => fn(current ?? toInput(report)));
   const outputTables = report.outputs.tables.filter((table) => table.output);
   const hasOutputs = report.outputs.figures.length + outputTables.length > 0;
   const resolvedById = new Map(report.blocks.map((block) => [block.id, block] as const));
   const figureByKey = new Map(report.outputs.figures.map((figure) => [figureKey(figure.analysisId, figure.figureName), figure] as const));
   const tableById = new Map(report.outputs.tables.map((table) => [table.datasetId, table] as const));
-  const blocks: ReportBlock[] = draft ? draft.blocks : report.blocks;
-  const filters: ReportFilter[] = draft ? (draft.filters ?? []) : report.filters;
-  const setFilters = (next: ReportFilter[]) => setDraft((current) => (current ? { ...current, filters: next } : current));
+  const blocks: ReportBlock[] = working ? working.blocks : report.blocks;
+  const filters: ReportFilter[] = working ? (working.filters ?? []) : report.filters;
+  const setFilters = (next: ReportFilter[]) => patchDraft((current) => ({ ...current, filters: next }));
   const analysisById = new Map(report.outputs.analyses.map((analysis) => [analysis.analysisId, analysis] as const));
   const headings = blocks.flatMap((block) => (block.type === "text" ? block.markdown.split("\n").filter((line) => /^##\s+/.test(line)).slice(0, 1).map((line) => ({ id: block.id, title: line.replace(/^##\s+/, "").trim() })) : []));
   const usedFigures = new Set(blocks.filter((block) => block.type === "figure").map((block) => figureKey(block.analysisId, block.figureName)));
@@ -139,7 +133,7 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
   const usedViews = new Set(blocks.filter((block) => block.type === "view").map((block) => `${block.datasetId}:${block.view}`));
 
   const update = (mutator: (blocks: ReportBlock[]) => ReportBlock[]) =>
-    setDraft((current) => (current ? { ...current, blocks: mutator(current.blocks) } : current));
+    patchDraft((current) => ({ ...current, blocks: mutator(current.blocks) }));
   const patchBlock = (id: string, patch: Partial<ReportBlock>) =>
     update((current) => current.map((block) => (block.id === id ? ({ ...block, ...patch } as ReportBlock) : block)));
   const moveBlock = (id: string, delta: number) =>
@@ -265,13 +259,14 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
   ];
 
   const save = async () => {
-    if (!draft) return;
+    if (!working) return;
     setSaving(true);
     try {
-      const result = await postJson<ReportResponse>(key, draft, "PUT");
+      const result = await postJson<ReportResponse>(key, working, "PUT");
       await mutate(result, { revalidate: false });
       setDraft(null);
       toast.success("Report saved");
+      onDone();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save the report");
     } finally {
@@ -281,7 +276,7 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
 
   const reset = async () => {
     try {
-      const result = await postJson<ReportResponse>(key, undefined, "DELETE");
+      const result = await postJson<ReportResponse>(`${key}/reset`, {}, "POST");
       await mutate(result, { revalidate: false });
       setDraft(null);
       toast.success("Report reset to the current outputs");
@@ -296,8 +291,8 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
         <div className="min-w-0 flex-1">
           {editing ? (
             <Input
-              value={draft.title}
-              onChange={(event) => setDraft((current) => (current ? { ...current, title: event.target.value } : current))}
+              value={working?.title ?? report.title}
+              onChange={(event) => patchDraft((current) => ({ ...current, title: event.target.value }))}
               className="max-w-xl text-lg font-semibold"
               aria-label="Report title"
             />
@@ -306,7 +301,7 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
           )}
           <p className="mt-1 text-sm text-muted-foreground">
             {report.draft
-              ? "A draft assembled from every output of this scope; nothing is saved until you edit it."
+              ? "A draft assembled from every output of this report; nothing is saved until you edit the page."
               : `Saved report, last changed ${formatDateTime(report.updatedAt)}.`}{" "}
             Figures and tables follow the latest run of their analysis.
           </p>
@@ -325,7 +320,7 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
                 description="Build a block from a table, or place a figure or table an analysis produced."
                 groups={storeGroups}
               />
-              <Button variant="outline" size="sm" onClick={() => setDraft(null)} disabled={saving}>
+              <Button variant="outline" size="sm" onClick={() => { setDraft(null); onDone(); }} disabled={saving}>
                 <X className="mr-2 h-4 w-4" />
                 Cancel
               </Button>
@@ -337,15 +332,11 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
           ) : (
             <div className="flex items-center gap-2">
               {!report.draft && (
-                <Button variant="ghost" size="sm" onClick={() => void reset()} title="Forget the saved report and start again from the current outputs">
+                <Button variant="ghost" size="sm" onClick={() => void reset()} title="Forget the saved page and start again from the current outputs">
                   <RotateCcw className="mr-2 h-4 w-4" />
                   Start over
                 </Button>
               )}
-              <Button variant="outline" size="sm" onClick={() => setDraft(toInput(report))}>
-                <Pencil className="mr-2 h-4 w-4" />
-                Edit report
-              </Button>
             </div>
           ))}
       </div>
@@ -387,7 +378,7 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
               onPatch={(patch) => patchBlock(block.id, patch)}
               onMove={(delta) => moveBlock(block.id, delta)}
               onRemove={() => removeBlock(block.id)}
-              scopeQuery={scopeQuery}
+              scopeQuery={scopeQuery} reportId={reportId}
               scope={scope}
               tables={report.outputs.tables}
               analyses={report.outputs.analyses}
@@ -417,6 +408,7 @@ interface ReportBlockCardProps {
   onMove: (delta: number) => void;
   onRemove: () => void;
   scopeQuery: string;
+  reportId: string;
   tables: ReportTable[];
   analyses: ReportAnalysis[];
   analysis: ReportAnalysis | null;
@@ -428,7 +420,7 @@ interface ReportBlockCardProps {
 
 const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Run numbers" };
 
-function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, tables, analyses, analysis, filters, active, scope }: ReportBlockCardProps) {
+function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope }: ReportBlockCardProps) {
   const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
   const label = BLOCK_LABELS[block.type];
   const blockTable = "datasetId" in block ? (tables.find((table) => table.datasetId === block.datasetId) ?? null) : null;
@@ -478,7 +470,7 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
                 {Object.values(active).some((values) => values.length > 0) && (
                   <p className="mb-1 text-[11px] text-muted-foreground">Drawn by the analysis run; page filters do not change it.</p>
                 )}
-                <FigureContent figure={figure} scopeQuery={scopeQuery} />
+                <FigureContent figure={figure} scopeQuery={scopeQuery} reportId={reportId} />
               </>
             ) : (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This figure is not produced by the analysis any more.</div>
@@ -498,7 +490,7 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
           <>
             <Caption editing={editing} value={block.caption ?? ""} fallback={viewTitle(block, tables)} onChange={(caption) => onPatch({ caption })} />
             {editing && <ViewControls block={block} tables={tables} onPatch={onPatch} />}
-            <ViewBlockView block={block} table={blockTable} scopeQuery={scopeQuery} filters={filters} active={active} />
+            <ViewBlockView block={block} table={blockTable} scopeQuery={scopeQuery} reportId={reportId} filters={filters} active={active} />
           </>
         )}
 
@@ -575,9 +567,9 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
           <>
             <Caption editing={editing} value={block.caption ?? ""} fallback={tableInfo?.name ?? "Table"} onChange={(caption) => onPatch({ caption })} />
             {narrowed && blockTable ? (
-              <FilteredTableContent table={blockTable} rows={block.rows ?? 12} filters={filters} active={active} scopeQuery={scopeQuery} />
+              <FilteredTableContent table={blockTable} rows={block.rows ?? 12} filters={filters} active={active} scopeQuery={scopeQuery} reportId={reportId} />
             ) : resolved && resolved.type === "table" && resolved.table ? (
-              <TableContent table={resolved.table} scopeQuery={scopeQuery} />
+              <TableContent table={resolved.table} scopeQuery={scopeQuery} reportId={reportId} />
             ) : tableInfo ? (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                 {tableInfo.name}: {tableInfo.rowCount.toLocaleString()} rows × {tableInfo.columnCount} columns. The rows appear once the report is saved.
@@ -606,7 +598,7 @@ function InteractiveFigure({ url }: { url: string }) {
   return <PlotlyChart data={Array.isArray(data.data) ? data.data : []} layout={{ ...(data.layout ?? {}), autosize: true }} height={380} className="w-full" />;
 }
 
-function FigureContent({ figure, scopeQuery }: { figure: ReportFigure; scopeQuery: string }) {
+function FigureContent({ figure, scopeQuery, reportId }: { figure: ReportFigure; scopeQuery: string; reportId: string }) {
   const image = figure.thumbnailUrl ?? (figure.format === "png" || figure.format === "svg" ? figure.url : null);
   return (
     <figure>
@@ -625,7 +617,7 @@ function FigureContent({ figure, scopeQuery }: { figure: ReportFigure; scopeQuer
         <span>{figure.runNumber}</span>
         {figure.unchanged && <span>unchanged since the previous run</span>}
         <span className="flex-1" />
-        <Link href={`/explore${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`figure:${figure.analysisId}:${figure.figureName}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at the card that draws this figure">
+        <Link href={`/explore/reports/${encodeURIComponent(reportId)}${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`figure:${figure.analysisId}:${figure.figureName}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at the card that draws this figure">
           <LayoutGrid className="h-3 w-3" /> Show on canvas
         </Link>
         <Link href={`/explore/runs/${figure.runId}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">
@@ -636,7 +628,8 @@ function FigureContent({ figure, scopeQuery }: { figure: ReportFigure; scopeQuer
   );
 }
 
-function TableContent({ table, scopeQuery, note }: { table: ReportTableContent; scopeQuery: string; note?: string }) {
+function TableContent({ table, scopeQuery, reportId, note }: { table: ReportTableContent; scopeQuery: string;
+  reportId: string; note?: string }) {
   return (
     <div>
       <div className="overflow-x-auto rounded-md border">
@@ -675,7 +668,7 @@ function TableContent({ table, scopeQuery, note }: { table: ReportTableContent; 
           {note ?? `${Math.min(table.rows.length, table.rowCount).toLocaleString()} of ${table.rowCount.toLocaleString()} rows, ${table.columnCount} columns${table.version ? `, v${table.version}` : ""}`}
         </span>
         <span className="flex-1" />
-        <Link href={`/explore${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`dataset:${table.datasetId}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at this table's card">
+        <Link href={`/explore/reports/${encodeURIComponent(reportId)}${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`dataset:${table.datasetId}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at this table's card">
           <LayoutGrid className="h-3 w-3" /> Show on canvas
         </Link>
         <Link href={`/explore/datasets/${table.datasetId}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">
@@ -814,14 +807,14 @@ function useFilteredTable(table: ReportTable | null, filters: ReportFilter[], ac
 }
 
 /** A table block while page filters narrow it: the first rows that pass, from the whole table. */
-function FilteredTableContent({ table, rows, filters, active, scopeQuery }: { table: ReportTable; rows: number; filters: ReportFilter[]; active: ActiveFilters; scopeQuery: string }) {
+function FilteredTableContent({ table, rows, filters, active, scopeQuery, reportId }: { table: ReportTable; rows: number; filters: ReportFilter[]; active: ActiveFilters; scopeQuery: string; reportId: string }) {
   const { frame, rows: kept, error } = useFilteredTable(table, filters, active);
   if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
   if (!frame) return <Skeleton className="h-40 w-full" />;
   return (
     <TableContent
       table={{ datasetId: table.datasetId, name: table.name, version: frame.version, columns: frame.columns, rows: kept.slice(0, rows), rowCount: kept.length, columnCount: frame.columns.length }}
-      scopeQuery={scopeQuery}
+      scopeQuery={scopeQuery} reportId={reportId}
       note={`${kept.length.toLocaleString()} of ${frame.total.toLocaleString()} rows pass the page filters`}
     />
   );
@@ -1070,7 +1063,8 @@ function ViewControls({ block, tables, onPatch }: { block: ViewBlock; tables: Re
   );
 }
 
-function ViewBlockView({ block, table, scopeQuery, filters, active }: { block: ViewBlock; table: ReportTable | null; scopeQuery: string; filters: ReportFilter[]; active: ActiveFilters }) {
+function ViewBlockView({ block, table, scopeQuery, reportId, filters, active }: { block: ViewBlock; table: ReportTable | null; scopeQuery: string;
+  reportId: string; filters: ReportFilter[]; active: ActiveFilters }) {
   if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
   if (!table.views.includes(block.view)) {
     return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{table.name} lacks the roles this view needs (sample, subject, timepoint, taxon and count).</div>;
@@ -1100,7 +1094,7 @@ function ViewBlockView({ block, table, scopeQuery, filters, active }: { block: V
           {block.view !== "heatmap" && filtersApply(table, filters, active) ? ", page filters do not apply to this view" : ""}
         </span>
         <span className="flex-1" />
-        <Link href={`/explore${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`view:${block.datasetId}:${block.view}`)}`} className="inline-flex items-center gap-1 hover:underline">
+        <Link href={`/explore/reports/${encodeURIComponent(reportId)}${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`view:${block.datasetId}:${block.view}`)}`} className="inline-flex items-center gap-1 hover:underline">
           <LayoutGrid className="h-3 w-3" /> Show on canvas
         </Link>
         <Link href={`/explore/datasets/${block.datasetId}/${block.view}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">

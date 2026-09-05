@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Compass } from "lucide-react";
+import { NotebookText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useModuleEnabled } from "@/lib/modules";
@@ -12,7 +12,7 @@ interface SidebarExploreNavProps {
 }
 
 /**
- * Global entry to the Explore section. Rendered in both the lab and the
+ * Global entry to the Reports section (the Explore module). Rendered in both the lab and the
  * workbench sidebar; hidden entirely when the `explore` module is off.
  */
 export function SidebarExploreNav({ collapsed }: SidebarExploreNavProps) {
@@ -32,13 +32,13 @@ export function SidebarExploreNav({ collapsed }: SidebarExploreNavProps) {
           ? "bg-secondary font-medium text-foreground"
           : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
       )}
-      title={collapsed ? "Explore" : undefined}
+      title={collapsed ? "Reports" : undefined}
     >
-      <Compass className={collapsed ? "h-5 w-5 shrink-0" : "h-4 w-4 shrink-0"} />
+      <NotebookText className={collapsed ? "h-5 w-5 shrink-0" : "h-4 w-4 shrink-0"} />
       {!collapsed && (
         <span className="min-w-0 flex-1">
-          <span className="block">Explore</span>
-          <span className="block truncate text-xs text-muted-foreground">Tables, analyses and the report</span>
+          <span className="block">Reports</span>
+          <span className="block truncate text-xs text-muted-foreground">Analyses and the pages they fill</span>
         </span>
       )}
     </Link>

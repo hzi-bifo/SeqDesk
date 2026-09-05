@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   usePathname: mocks.usePathname,
   useSearchParams: mocks.useSearchParams,
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
 vi.mock("next/link", () => ({
@@ -238,7 +239,7 @@ describe("SidebarEntityNav", () => {
       />
     );
 
-    const explore = screen.getByRole("link", { name: /^Explore$/ });
+    const explore = screen.getByRole("link", { name: /^Reports$/ });
     expect(explore.getAttribute("href")).toBe("/explore?scope=study:study-1");
     expect(explore.className).toContain("font-medium");
     expect(screen.getByRole("link", { name: /^Overview$/ }).className).not.toContain("font-medium");

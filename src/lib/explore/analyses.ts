@@ -45,6 +45,8 @@ export interface AnalysisSummary {
   name: string;
   description: string | null;
   kitId: string | null;
+  /** The report this analysis is a step of. */
+  reportId: string | null;
   language: AnalysisLanguage;
   environmentName: string;
   currentRevision: RevisionSummary | null;
@@ -155,6 +157,7 @@ function serializeAnalysis(analysis: AnalysisRecord): AnalysisSummary {
     name: analysis.name,
     description: analysis.description,
     kitId: analysis.kitId,
+    reportId: analysis.reportId,
     language: analysis.language as AnalysisLanguage,
     environmentName: analysis.environmentName,
     currentRevision: current ? serializeRevision(current) : null,
@@ -164,9 +167,9 @@ function serializeAnalysis(analysis: AnalysisRecord): AnalysisSummary {
   };
 }
 
-export async function listAnalyses(targetKey: string): Promise<AnalysisSummary[]> {
+export async function listAnalyses(targetKey: string, reportId: string | null = null): Promise<AnalysisSummary[]> {
   const analyses = await db.exploreAnalysis.findMany({
-    where: { targetKey },
+    where: reportId ? { targetKey, reportId } : { targetKey },
     include: analysisInclude,
     orderBy: { updatedAt: "desc" },
   });
@@ -209,6 +212,8 @@ export interface CreateAnalysisInput {
   name?: string | null;
   description?: string | null;
   kitId?: string | null;
+  /** The report this analysis is a step of; must belong to the same scope. */
+  reportId?: string | null;
   language?: AnalysisLanguage;
   environmentName?: string | null;
   inputs: AnalysisInputBinding[];
@@ -231,6 +236,12 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
   const environmentName = kit?.manifest.environment ?? input.environmentName ?? (language === "r" ? "seqdesk-explore-r" : "seqdesk-explore-python");
   const code = kit?.code ?? (language === "r" ? BLANK_R : BLANK_PYTHON);
   const params = { ...defaultParams(kit), ...(input.params ?? {}) };
+  let reportId: string | null = null;
+  if (input.reportId) {
+    const report = await db.exploreReport.findUnique({ where: { id: input.reportId }, select: { id: true, targetKey: true } });
+    if (!report || report.targetKey !== input.targetKey) throw new Error("The report does not belong to this scope");
+    reportId = report.id;
+  }
 
   const analysis = await db.exploreAnalysis.create({
     data: {
@@ -238,6 +249,7 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
       name: input.name?.trim() || kit?.manifest.name || "Untitled analysis",
       description: input.description ?? kit?.manifest.description ?? null,
       kitId: kit?.manifest.id ?? null,
+      reportId,
       language,
       environmentName,
       createdById: input.createdById,

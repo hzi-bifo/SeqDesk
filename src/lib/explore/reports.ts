@@ -103,7 +103,8 @@ export type ResolvedReportBlock =
   | (Extract<ReportBlock, { type: "run-metric" }> & { analysis: ReportAnalysis | null });
 
 export interface ReportView {
-  id: string | null;
+  id: string;
+  targetKey: string;
   title: string;
   /** Page filters: columns readers can narrow every block by. */
   filters: ReportFilter[];
@@ -123,9 +124,9 @@ export class ExploreReportError extends Error {
   }
 }
 
-/** Figures and tables of a scope, from the same graph the canvas shows. */
-export async function collectReportOutputs(targetKey: string): Promise<ReportOutputs> {
-  const graph = await loadCanvasGraph(targetKey);
+/** Figures and tables of a report's canvas (or of the whole scope), from the same graph the canvas shows. */
+export async function collectReportOutputs(targetKey: string, reportId: string | null = null): Promise<ReportOutputs> {
+  const graph = await loadCanvasGraph(targetKey, reportId);
   const analysisNames = new Map<string, string>();
   const analyses: ReportAnalysis[] = [];
   for (const node of graph.nodes) {
@@ -255,23 +256,73 @@ export function parseStoredFilters(raw: unknown): ReportFilter[] {
   return filters;
 }
 
-export async function getReportView(targetKey: string, scopeLabel: string): Promise<ReportView> {
-  const outputs = await collectReportOutputs(targetKey);
-  const stored = await db.exploreReport.findFirst({ where: { targetKey }, orderBy: { createdAt: "asc" } });
-  const blocks = stored ? parseStoredBlocks(stored.blocks) : suggestReportBlocks(outputs);
+/** One report in a list: enough for a card or a sidebar entry. */
+export interface ReportSummary {
+  id: string;
+  targetKey: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  /** Analysis steps that belong to the report. */
+  analysisCount: number;
+  /** Saved blocks; zero means the page is a draft assembled from the outputs. */
+  blockCount: number;
+}
+
+type StoredReportRow = { id: string; targetKey: string; title: string; blocks: unknown; createdAt: Date; updatedAt: Date; _count: { analyses: number } };
+
+const withCounts = { _count: { select: { analyses: true } } } as const;
+
+function summarize(report: StoredReportRow): ReportSummary {
   return {
-    id: stored?.id ?? null,
-    title: stored?.title ?? scopeLabel,
-    filters: stored ? parseStoredFilters(stored.settings) : [],
-    draft: !stored,
-    updatedAt: stored ? stored.updatedAt.toISOString() : null,
-    blocks: await resolveReportBlocks(blocks, outputs, loadTableContent),
+    id: report.id,
+    targetKey: report.targetKey,
+    title: report.title,
+    createdAt: report.createdAt.toISOString(),
+    updatedAt: report.updatedAt.toISOString(),
+    analysisCount: report._count.analyses,
+    blockCount: parseStoredBlocks(report.blocks).length,
+  };
+}
+
+/** The reports of a scope, oldest first. */
+export async function listReports(targetKey: string): Promise<ReportSummary[]> {
+  const reports = await db.exploreReport.findMany({ where: { targetKey }, orderBy: { createdAt: "asc" }, include: withCounts });
+  return reports.map(summarize);
+}
+
+/** A new, empty report: its page is a draft of its outputs until blocks are saved. */
+export async function createReport(targetKey: string, userId: string, title?: string | null): Promise<ReportSummary> {
+  const count = await db.exploreReport.count({ where: { targetKey } });
+  const name = (title?.trim() || `Report ${count + 1}`).slice(0, 200);
+  const created = await db.exploreReport.create({ data: { targetKey, title: name, blocks: [], createdById: userId }, include: withCounts });
+  return summarize(created);
+}
+
+export async function getReportRecord(id: string): Promise<{ id: string; targetKey: string; title: string } | null> {
+  return db.exploreReport.findUnique({ where: { id }, select: { id: true, targetKey: true, title: true } });
+}
+
+export async function getReportView(reportId: string): Promise<ReportView> {
+  const stored = await db.exploreReport.findUnique({ where: { id: reportId } });
+  if (!stored) throw new ExploreReportError(404, "Report not found");
+  const outputs = await collectReportOutputs(stored.targetKey, stored.id);
+  const storedBlocks = parseStoredBlocks(stored.blocks);
+  const draft = storedBlocks.length === 0;
+  return {
+    id: stored.id,
+    targetKey: stored.targetKey,
+    title: stored.title,
+    filters: parseStoredFilters(stored.settings),
+    draft,
+    updatedAt: stored.updatedAt.toISOString(),
+    blocks: await resolveReportBlocks(draft ? suggestReportBlocks(outputs) : storedBlocks, outputs, loadTableContent),
     outputs,
   };
 }
 
-/** Validate and store a report; one report per scope for now. */
-export async function saveReport(targetKey: string, raw: unknown, userId: string, scopeLabel: string): Promise<ReportView> {
+/** Validate and store the page of a report: title, ordered blocks and filters. */
+export async function saveReport(reportId: string, raw: unknown): Promise<ReportView> {
   const parsed = ReportInputSchema.safeParse(raw);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
@@ -282,19 +333,34 @@ export async function saveReport(targetKey: string, raw: unknown, userId: string
     if (ids.has(block.id)) throw new ExploreReportError(400, `Block id ${block.id} is used twice`);
     ids.add(block.id);
   }
+  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true } });
+  if (!existing) throw new ExploreReportError(404, "Report not found");
   const blocks = parsed.data.blocks as unknown as Prisma.InputJsonValue;
   const settings = { filters: parsed.data.filters ?? [] } as unknown as Prisma.InputJsonValue;
-  const existing = await db.exploreReport.findFirst({ where: { targetKey }, orderBy: { createdAt: "asc" } });
-  if (existing) {
-    await db.exploreReport.update({ where: { id: existing.id }, data: { title: parsed.data.title, blocks, settings } });
-  } else {
-    await db.exploreReport.create({ data: { targetKey, title: parsed.data.title, blocks, settings, createdById: userId } });
-  }
-  return getReportView(targetKey, scopeLabel);
+  await db.exploreReport.update({ where: { id: reportId }, data: { title: parsed.data.title, blocks, settings } });
+  return getReportView(reportId);
 }
 
-/** Drop the saved report so the page goes back to the draft assembled from the outputs. */
-export async function resetReport(targetKey: string, scopeLabel: string): Promise<ReportView> {
-  await db.exploreReport.deleteMany({ where: { targetKey } });
-  return getReportView(targetKey, scopeLabel);
+export async function renameReport(reportId: string, title: string): Promise<ReportSummary> {
+  const name = title.trim().slice(0, 200);
+  if (!name) throw new ExploreReportError(400, "A report needs a title");
+  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true } });
+  if (!existing) throw new ExploreReportError(404, "Report not found");
+  const updated = await db.exploreReport.update({ where: { id: reportId }, data: { title: name }, include: withCounts });
+  return summarize(updated);
+}
+
+/** Drop the saved page so it goes back to the draft assembled from the outputs; the analysis steps stay. */
+export async function resetReport(reportId: string): Promise<ReportView> {
+  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true } });
+  if (!existing) throw new ExploreReportError(404, "Report not found");
+  await db.exploreReport.update({ where: { id: reportId }, data: { blocks: [], settings: { filters: [] } } });
+  return getReportView(reportId);
+}
+
+/** Delete a report with its analysis steps and their runs; the scope's tables stay. */
+export async function deleteReport(reportId: string): Promise<void> {
+  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true } });
+  if (!existing) throw new ExploreReportError(404, "Report not found");
+  await db.exploreReport.delete({ where: { id: reportId } });
 }

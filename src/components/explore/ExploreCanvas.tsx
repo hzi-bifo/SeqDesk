@@ -949,6 +949,8 @@ function writeLayout(scope: string, layout: StoredLayout): void {
 
 export interface ExploreCanvasProps {
   scope: string;
+  /** The report whose analysis steps the canvas shows; tables of the scope are shared. */
+  reportId: string;
   className?: string;
   /** Grow to the bottom of the window instead of a fixed height. */
   fillViewport?: boolean;
@@ -961,7 +963,9 @@ export interface ExploreCanvasProps {
  * resizable card, connected by their lineage. Positions and sizes are kept per
  * scope in the browser; "Arrange" recomputes the layered layout.
  */
-export function ExploreCanvas({ scope, className, fillViewport = false, focusNodeId = null }: ExploreCanvasProps) {
+export function ExploreCanvas({ scope, reportId, className, fillViewport = false, focusNodeId = null }: ExploreCanvasProps) {
+  // Card positions are remembered per report: every report has its own canvas.
+  const layoutKey = `${scope}#${reportId}`;
   // Outputs a run just rewrote glow for a few seconds so the eye lands on what
   // changed, and the analyses reading those outputs run again (x -> y -> z).
   const statusRef = useRef<Map<string, string>>(new Map());
@@ -997,7 +1001,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
     },
     [cascade]
   );
-  const { data: graph, error, isLoading, mutate } = useSWR<CanvasGraph>(`/api/explore/canvas?targetKey=${encodeURIComponent(scope)}`, fetcher, {
+  const { data: graph, error, isLoading, mutate } = useSWR<CanvasGraph>(`/api/explore/canvas?targetKey=${encodeURIComponent(scope)}&reportId=${encodeURIComponent(reportId)}`, fetcher, {
     // Poll quickly while something is computing so skeletons turn into outputs on their own.
     refreshInterval: (latest) => (latest?.nodes.some((node) => node.data.kind === "analysis" && node.data.active) ? 3000 : 15000),
     onSuccess: noteFinishedRuns,
@@ -1056,13 +1060,14 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
       try {
         const result = await postJson<{ analysis: { id: string } }>("/api/explore/analyses", {
           targetKey: scope,
+          reportId,
           kitId,
           language: kit?.language ?? "python",
           inputs: [{ alias: kit?.inputs[0]?.alias ?? "table", datasetId }],
         });
         if (placeAt) {
           // The new card appears where it was asked for, not where the layout would put it.
-          writeLayout(scope, { ...readLayout(scope), [`analysis:${result.analysis.id}`]: { x: placeAt.x, y: placeAt.y } });
+          writeLayout(layoutKey, { ...readLayout(layoutKey), [`analysis:${result.analysis.id}`]: { x: placeAt.x, y: placeAt.y } });
         }
         toast.success(kit ? `${kit.name} added; press Run on its card` : "Blank analysis added; open Code to write it");
         await mutate();
@@ -1070,7 +1075,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
         toast.error(err instanceof Error ? err.message : "Could not create the analysis");
       }
     },
-    [kits, mutate, scope]
+    [kits, mutate, scope, layoutKey, reportId]
   );
 
   /** Inputs an existing analysis still has free, per table: a kit input not yet bound, or an extra input of a blank script. */
@@ -1126,16 +1131,16 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
       if (!window.confirm(question)) return;
       try {
         await postJson(`/api/explore/${kind === "dataset" ? "datasets" : "analyses"}/${id}`, undefined, "DELETE");
-        const layout = readLayout(scope);
+        const layout = readLayout(layoutKey);
         delete layout[`${kind}:${id}`];
-        writeLayout(scope, layout);
+        writeLayout(layoutKey, layout);
         toast.success(kind === "dataset" ? "Table deleted" : "Analysis deleted");
         await mutate();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Could not delete");
       }
     },
-    [mutate, scope]
+    [mutate, layoutKey]
   );
 
   /** Parameters changed on a card become a new version of the analysis. */
@@ -1155,7 +1160,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
   /** Add an output to the report page or take it off; a draft report is saved on first use. */
   const toggleReport = useCallback(
     async (target: ReportTarget) => {
-      const key = `/api/explore/reports?targetKey=${encodeURIComponent(scope)}`;
+      const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
       try {
         const { report } = (await fetcher(key)) as { report: ReportView };
         const blocks: ReportBlock[] = report.blocks.map((block) => {
@@ -1189,7 +1194,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
         toast.error(err instanceof Error ? err.message : "Could not change the report");
       }
     },
-    [mutate, scope]
+    [mutate, reportId]
   );
 
   // Pan to the card a report link asked for, once React Flow has measured it.
@@ -1247,7 +1252,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
   const flowNodes = useMemo<CanvasFlowNode[]>(() => {
     if (!graph) return [];
     // Read again after Arrange dropped the positions (arrangeVersion changes then).
-    const stored = arrangeVersion >= 0 ? readLayout(scope) : {};
+    const stored = arrangeVersion >= 0 ? readLayout(layoutKey) : {};
     const sizes: Record<string, { width: number; height: number }> = {};
     for (const [id, entry] of Object.entries(stored)) if (entry.width && entry.height) sizes[id] = { width: entry.width, height: entry.height };
     const auto = layoutCanvas(graph, { sizes });
@@ -1313,7 +1318,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
       if (node.data.kind === "view") return { ...base, type: "view", data: { ...node.data, hue, scopeQuery, hasInput, onToggleReport: toggleReport } } as ViewNodeType;
       return { ...base, type: "source", data: node.data } as SourceNodeType;
     });
-  }, [graph, applyPreset, openCode, runAnalysis, saveParams, createAnalysis, connectTargetsFor, connectInput, toggleReport, deleteCard, kits, fresh, scope, scopeQuery, arrangeVersion]);
+  }, [graph, applyPreset, openCode, runAnalysis, saveParams, createAnalysis, connectTargetsFor, connectInput, toggleReport, deleteCard, kits, fresh, scopeQuery, arrangeVersion, layoutKey]);
 
   const flowEdges = useMemo<Edge[]>(() => {
     if (!graph) return [];
@@ -1359,10 +1364,10 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
       for (const node of nodes) {
         layout[node.id] = { x: node.position.x, y: node.position.y, width: node.width ?? node.measured?.width, height: node.height ?? node.measured?.height };
       }
-      writeLayout(scope, layout);
+      writeLayout(layoutKey, layout);
     }, 400);
     return () => clearTimeout(timer);
-  }, [nodes, scope]);
+  }, [nodes, scope, layoutKey]);
 
   // Clicking an arrow opens the code of the analysis it goes into or comes from.
   const onEdgeClick: EdgeMouseHandler = useCallback((_event, edge) => {
@@ -1373,10 +1378,10 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
   const arrange = useCallback(() => {
     // Positions are recomputed; the sizes people chose stay.
     const sizesOnly: StoredLayout = {};
-    for (const [id, entry] of Object.entries(readLayout(scope))) if (entry.width && entry.height) sizesOnly[id] = { width: entry.width, height: entry.height };
-    writeLayout(scope, sizesOnly);
+    for (const [id, entry] of Object.entries(readLayout(layoutKey))) if (entry.width && entry.height) sizesOnly[id] = { width: entry.width, height: entry.height };
+    writeLayout(layoutKey, sizesOnly);
     setArrangeVersion((value) => value + 1);
-  }, [scope]);
+  }, [layoutKey]);
 
   if (error) return <p className="text-sm text-destructive">Could not load the canvas: {String(error.message)}</p>;
   if (isLoading && !graph) return <Skeleton className={cn("h-[560px] w-full", className)} />;
@@ -1389,7 +1394,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
             <li className="rounded-lg border bg-card p-4">
               <div className="flex items-center gap-2 font-medium"><span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-secondary text-xs">1</span> Add a table</div>
               <p className="mt-1 text-muted-foreground">From the samples, the sequencing runs, a pipeline output, or a file of your own.</p>
-              <div className="mt-3"><AddDataMenu scope={scope} onBuilt={() => mutate()} withAnalysis={false} label="Add table" /></div>
+              <div className="mt-3"><AddDataMenu scope={scope} reportId={reportId} onBuilt={() => mutate()} withAnalysis={false} label="Add table" /></div>
             </li>
             <li className="rounded-lg border bg-card p-4">
               <div className="flex items-center gap-2 font-medium"><span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-secondary text-xs">2</span> Analyse it</div>
@@ -1409,7 +1414,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
   return (
     <div ref={containerRef} className={cn("relative w-full overflow-hidden rounded-lg border bg-muted/20", className)} style={{ height: fillViewport ? height : 640 }}>
       <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
-        <AddDataMenu scope={scope} onBuilt={() => mutate()} label="Add" variant="outline" />
+        <AddDataMenu scope={scope} reportId={reportId} onBuilt={() => mutate()} label="Add" variant="outline" />
         <CanvasLegend />
         <Button size="sm" variant="outline" onClick={() => setMinimap(minimap === "shown" ? "hidden" : "shown")} title={minimap === "shown" ? "Hide the overview map" : "Show the overview map"} aria-pressed={minimap === "shown"}>
           <MapIcon className="mr-2 h-4 w-4" />

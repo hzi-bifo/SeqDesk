@@ -66,28 +66,55 @@ function runMetrics(results: string | null | undefined): Record<string, string |
 }
 
 /** Assemble the graph of one scope from the database. */
-export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
-  const [datasets, analyses, runs] = await Promise.all([
+/**
+ * The graph of one report's canvas: the scope's tables, the report's analysis
+ * steps and their outputs. Without a report id the whole scope is drawn.
+ */
+export async function loadCanvasGraph(targetKey: string, reportId: string | null = null): Promise<CanvasGraph> {
+  const analysisWhere = reportId ? { targetKey, reportId } : { targetKey };
+  const [allDatasets, analyses, runs] = await Promise.all([
     db.exploreDataset.findMany({
       where: { targetKey },
       include: { versions: { orderBy: { number: "desc" }, take: 1 } },
       orderBy: { createdAt: "asc" },
     }),
     db.exploreAnalysis.findMany({
-      where: { targetKey },
+      where: analysisWhere,
       include: { revisions: { orderBy: { number: "desc" }, take: 1 } },
       orderBy: { createdAt: "asc" },
     }),
     db.exploreAnalysisRun.findMany({
-      where: { analysis: { targetKey } },
+      where: { analysis: analysisWhere },
       orderBy: { createdAt: "desc" },
       include: { artifacts: true, revision: { select: { number: true } } },
     }),
   ]);
 
   // What the report page shows: the saved blocks, or (as a draft) every output.
-  const storedReport = await db.exploreReport.findFirst({ where: { targetKey }, orderBy: { createdAt: "asc" }, select: { blocks: true } });
-  const reportBlocks = storedReport ? parseStoredBlocks(storedReport.blocks) : null;
+  // An empty page is a draft too, so it shows every output like no page at all.
+  const storedReport = reportId
+    ? await db.exploreReport.findUnique({ where: { id: reportId }, select: { blocks: true } })
+    : await db.exploreReport.findFirst({ where: { targetKey }, orderBy: { createdAt: "asc" }, select: { blocks: true } });
+  const storedBlocks = storedReport ? parseStoredBlocks(storedReport.blocks) : [];
+  const reportBlocks = storedBlocks.length > 0 ? storedBlocks : null;
+
+  const analysisIds = new Set(analyses.map((analysis) => analysis.id));
+  const runToAnalysis = new Map(runs.map((run) => [run.id, run.analysisId] as const));
+  const producerOf = (dataset: (typeof allDatasets)[number]): string | null => {
+    const sourceConfig = parseJsonObject(dataset.sourceConfig);
+    const runId = typeof sourceConfig?.runId === "string" ? sourceConfig.runId : null;
+    return (typeof sourceConfig?.analysisId === "string" ? sourceConfig.analysisId : null) ?? (runId ? runToAnalysis.get(runId) : null) ?? null;
+  };
+  // Inside a report, tables written by other reports' analyses stay out of the
+  // picture unless one of this report's analyses reads them.
+  const inputDatasetIds = new Set(analyses.flatMap((analysis) => parseInputBindings(analysis.revisions[0]?.inputs).map((binding) => binding.datasetId)));
+  const datasets = reportId
+    ? allDatasets.filter((dataset) => {
+        if (dataset.kind !== "derived" || inputDatasetIds.has(dataset.id)) return true;
+        const producer = producerOf(dataset);
+        return Boolean(producer && analysisIds.has(producer));
+      })
+    : allDatasets;
   const reportFigures = new Set(reportBlocks?.filter((block) => block.type === "figure").map((block) => `${block.analysisId}:${block.figureName}`) ?? []);
   const reportTables = new Set(reportBlocks?.filter((block) => block.type === "table").map((block) => block.datasetId) ?? []);
   const reportViews = new Set(reportBlocks?.filter((block) => block.type === "view").map((block) => `${block.datasetId}:${block.view}`) ?? []);
@@ -98,7 +125,6 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
   const edges: CanvasEdge[] = [];
   const datasetNodeIds = new Set(datasets.map((dataset) => `dataset:${dataset.id}`));
   const analysisNames = new Map(analyses.map((analysis) => [analysis.id, analysis.name] as const));
-  const runToAnalysis = new Map(runs.map((run) => [run.id, run.analysisId] as const));
   const latestRunByAnalysis = new Map<string, (typeof runs)[number]>();
   for (const run of runs) if (!latestRunByAnalysis.has(run.analysisId)) latestRunByAnalysis.set(run.analysisId, run);
   // Finished runs per analysis, newest first: the first one owns the outputs shown, the second tells whether they changed.
@@ -149,10 +175,7 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
     const preview = current ? await fetchDatasetRows(current.id, { limit: PREVIEW_ROWS }) : { rows: [] };
     const nodeId = `dataset:${dataset.id}`;
     const timelineReady = ["sample", "subject", "timepoint", "taxon", "count"].every((role) => Boolean(roles[role as keyof ExploreRoleMap]));
-    const sourceConfig = parseJsonObject(dataset.sourceConfig);
-    const producingRunId = typeof sourceConfig?.runId === "string" ? sourceConfig.runId : null;
-    const producingAnalysis =
-      (typeof sourceConfig?.analysisId === "string" ? sourceConfig.analysisId : null) ?? (producingRunId ? runToAnalysis.get(producingRunId) : null) ?? null;
+    const producingAnalysis = producerOf(dataset);
     const producerActive = producingAnalysis ? ACTIVE_RUN.has(latestRunByAnalysis.get(producingAnalysis)?.status ?? "") : false;
     const sources = provenanceSources(current?.provenance);
     // The run that wrote the current version versus the latest finished run:

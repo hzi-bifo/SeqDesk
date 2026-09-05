@@ -44,13 +44,13 @@ describe("SidebarExploreNav", () => {
   it("links to /explore and marks the active route", () => {
     mocks.usePathname.mockReturnValue("/explore/datasets/d1");
     render(<SidebarExploreNav collapsed={false} />);
-    const link = screen.getByRole("link", { name: /Explore/i });
+    const link = screen.getByRole("link", { name: /Reports/i });
     expect(link.getAttribute("href")).toBe("/explore");
     expect(link.getAttribute("aria-current")).toBe("page");
   });
 
   it("uses a title in collapsed mode", () => {
     render(<SidebarExploreNav collapsed />);
-    expect(screen.getByRole("link").getAttribute("title")).toBe("Explore");
+    expect(screen.getByRole("link").getAttribute("title")).toBe("Reports");
   });
 });

@@ -956,6 +956,8 @@ model ExploreReport {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  analyses ExploreAnalysis[] // the analysis steps that belong to this report
+
   @@index([targetKey])
 }
 
@@ -995,6 +997,7 @@ model ExploreAnalysis {
   name              String
   description       String?
   kitId             String?  // template it was created from
+  reportId          String?  // the report this analysis is a step of
   language          String   // python | r
   environmentName   String
   currentRevisionId String?  @unique
@@ -1003,10 +1006,12 @@ model ExploreAnalysis {
   updatedAt         DateTime @updatedAt
 
   createdBy User                      @relation("ExploreAnalysisCreator", fields: [createdById], references: [id])
+  report    ExploreReport?            @relation(fields: [reportId], references: [id], onDelete: Cascade)
   revisions ExploreAnalysisRevision[]
   runs      ExploreAnalysisRun[]
 
   @@index([targetKey])
+  @@index([reportId])
   @@index([createdById])
 }
 
