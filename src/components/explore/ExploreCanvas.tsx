@@ -9,6 +9,7 @@ import {
   Handle,
   MarkerType,
   MiniMap,
+  NodeResizer,
   Position,
   ReactFlow,
   useEdgesState,
@@ -20,42 +21,50 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Activity, Code2, Database, ExternalLink, FlaskConical, Grid3x3, Image as ImageIcon, Info, LayoutGrid, Loader2, Map as MapIcon, Maximize2, Minimize2, Play, Sparkle, X } from "lucide-react";
-import { PlotlyChart } from "@/components/explore/PlotlyChart";
-import { toast } from "@/components/ui/toast";
-import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import { CodeEditor } from "@/components/explore/CodeEditor";
+import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { fetcher, formatCell, postJson, ROLE_LABELS } from "@/lib/explore/client";
 import {
   assignCanvasHues,
   CANVAS_EXPANDED_DATASET,
+  CANVAS_MIN_SIZES,
   CANVAS_SIZES,
   COMPUTE_HUE,
   layoutCanvas,
+  nodeSize,
   type CanvasAnalysisData,
   type CanvasDatasetData,
   type CanvasFigureData,
   type CanvasGraph,
+  type CanvasNodeKind,
   type CanvasPendingData,
   type CanvasSourceData,
 } from "@/lib/explore/canvas-layout";
 import { DATASET_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
+import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import type { ExploreColumn, ExploreRole, ExploreRowRecord } from "@/lib/explore/types";
 
-type DatasetNodeType = Node<CanvasDatasetData & { expanded: boolean; hue: number; onToggle: (id: string) => void }, "dataset">;
+type Sizing = { onPreset: (id: string, size: { width: number; height: number }) => void };
+type DatasetNodeType = Node<CanvasDatasetData & Sizing & { hue: number }, "dataset">;
 type AnalysisNodeType = Node<CanvasAnalysisData & { hue: number; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void> }, "analysis">;
-type PendingNodeType = Node<CanvasPendingData & { hue: number }, "pending">;
 type SourceNodeType = Node<CanvasSourceData, "source">;
 type FigureNodeType = Node<CanvasFigureData & { hue: number }, "figure">;
+type PendingNodeType = Node<CanvasPendingData & { hue: number }, "pending">;
 type CanvasFlowNode = DatasetNodeType | AnalysisNodeType | SourceNodeType | FigureNodeType | PendingNodeType;
 
-const EXPANDED_ROWS = 10;
-const EXPANDED_COLUMNS = 8;
+const MAX_FETCHED_ROWS = 200;
+const COLUMN_WIDTH = 96;
+const ROW_HEIGHT = 22;
+const CODE_LINE_HEIGHT = 14;
 
 const handleClass = "!h-2 !w-2 !border-0 !bg-muted-foreground/60";
+const resizerLine = "!border-transparent";
+const resizerHandle = "!h-2.5 !w-2.5 !rounded-sm !border !border-muted-foreground/60 !bg-card";
 
 /** Pulsing overlay for outputs that a running analysis is about to replace. */
 function RefreshingOverlay({ label }: { label: string }) {
@@ -78,9 +87,15 @@ function tint(hue: number) {
   };
 }
 
+/** Resize handles for one card; shown while the card is selected. */
+function Resizer({ kind, selected }: { kind: CanvasNodeKind; selected: boolean }) {
+  const min = CANVAS_MIN_SIZES[kind];
+  return <NodeResizer isVisible={selected} minWidth={min.width} minHeight={min.height} lineClassName={resizerLine} handleClassName={resizerHandle} />;
+}
+
 function SourceNode({ data }: NodeProps<SourceNodeType>) {
   return (
-    <div className="w-[220px] rounded-lg border border-dashed bg-card px-3 py-2 text-xs shadow-sm">
+    <div className="h-full w-full rounded-lg border border-dashed bg-card px-3 py-2 text-xs shadow-sm">
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{data.sourceType.replace("-", " ")}</div>
       <div className="truncate font-medium" title={data.label}>{data.label}</div>
       <Handle type="source" position={Position.Right} className={handleClass} />
@@ -89,32 +104,37 @@ function SourceNode({ data }: NodeProps<SourceNodeType>) {
 }
 
 function OverflowChip({ children }: { children: React.ReactNode }) {
-  return <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{children}</span>;
+  return <span className="whitespace-nowrap rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{children}</span>;
 }
 
 /**
  * A dataset card: a real fragment of the table plus chips that say how much
- * is hidden on each axis. Expanded, it shows more rows and columns in place.
+ * is hidden on each axis. Resizing the card shows more columns across and
+ * more rows down; rows beyond the preview are fetched as needed.
  */
-function DatasetNode({ id, data }: NodeProps<DatasetNodeType>) {
-  const { expanded } = data;
-  const { data: more } = useSWR<{ rows: ExploreRowRecord[] }>(
-    expanded ? `/api/explore/datasets/${data.datasetId}/rows?limit=${EXPANDED_ROWS}` : null,
-    fetcher
-  );
+function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNodeType>) {
+  const size = { width: width ?? CANVAS_SIZES.dataset.width, height: height ?? CANVAS_SIZES.dataset.height };
+  const expanded = size.width >= CANVAS_EXPANDED_DATASET.width - 1 && size.height >= CANVAS_EXPANDED_DATASET.height - 1;
+  const headerHeight = data.origin ? 92 : 70;
+  const footerHeight = 36;
+  const tableHeader = 36;
+  const maxColumns = Math.max(1, Math.floor((size.width - 20) / COLUMN_WIDTH));
+  const maxRows = Math.max(1, Math.floor((size.height - headerHeight - footerHeight - tableHeader) / ROW_HEIGHT));
+  const wanted = maxRows > data.previewRows.length ? Math.min(MAX_FETCHED_ROWS, Math.ceil(maxRows / 10) * 10) : 0;
+  const { data: more } = useSWR<{ rows: ExploreRowRecord[] }>(wanted > 0 ? `/api/explore/datasets/${data.datasetId}/rows?limit=${wanted}` : null, fetcher, { keepPreviousData: true });
+
   const previewKeys = new Set(data.previewColumns.map((column) => column.key));
-  const columns: ExploreColumn[] = expanded
-    ? [...data.previewColumns, ...data.columns.filter((column) => !previewKeys.has(column.key) && !column.key.endsWith("_db_id"))].slice(0, EXPANDED_COLUMNS)
-    : data.previewColumns;
-  const rows = expanded ? (more?.rows.map((row) => row.data) ?? data.previewRows) : data.previewRows;
+  const columns: ExploreColumn[] = [...data.previewColumns, ...data.columns.filter((column) => !previewKeys.has(column.key) && !column.key.endsWith("_db_id"))].slice(0, maxColumns);
+  const allRows = more?.rows.map((row) => row.data) ?? data.previewRows;
+  const rows = allRows.slice(0, maxRows);
   const hiddenColumns = Math.max(data.columnCount - columns.length, 0);
   const hiddenRows = Math.max(data.rowCount - rows.length, 0);
   const roleOf = (key: string) => (Object.entries(data.roles) as Array<[ExploreRole, string]>).find(([, column]) => column === key)?.[0];
-  const size = expanded ? CANVAS_EXPANDED_DATASET : CANVAS_SIZES.dataset;
   const colours = tint(data.hue);
 
   return (
-    <div className={cn("relative flex flex-col rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse")} style={{ width: size.width, minHeight: size.height, borderColor: colours.border }}>
+    <div className={cn("relative flex h-full w-full flex-col rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse")} style={{ borderColor: colours.border }}>
+      <Resizer kind="dataset" selected={Boolean(selected)} />
       {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={handleClass} />
       <div className="flex items-start gap-2 border-b px-3 py-2" style={{ background: colours.header }}>
@@ -133,23 +153,23 @@ function DatasetNode({ id, data }: NodeProps<DatasetNodeType>) {
         </div>
         <button
           type="button"
-          onClick={() => data.onToggle(id)}
+          onClick={() => data.onPreset(id, expanded ? CANVAS_SIZES.dataset : CANVAS_EXPANDED_DATASET)}
           className="nodrag rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
           aria-label={expanded ? "Collapse dataset" : "Expand dataset"}
-          title={expanded ? "Collapse" : "Expand"}
+          title={expanded ? "Back to the small card" : "Grow the card; drag a corner for any other size"}
         >
           {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </button>
       </div>
-      <div className={cn("nodrag nowheel min-h-0 flex-1", expanded ? "overflow-auto" : "overflow-hidden")} style={{ maxHeight: expanded ? size.height - 120 : undefined }}>
+      <div className="nodrag nowheel min-h-0 flex-1 overflow-hidden">
         <table className="w-full text-[11px]">
           <thead className="bg-muted/50 text-left">
             <tr>
               {columns.map((column) => {
                 const role = roleOf(column.key);
                 return (
-                  <th key={column.key} className="whitespace-nowrap px-2 py-1 font-medium" title={column.key}>
-                    <span className="block max-w-[140px] truncate">{column.label}</span>
+                  <th key={column.key} className="whitespace-nowrap px-2 py-1 font-medium" title={column.key} style={{ maxWidth: COLUMN_WIDTH + 20 }}>
+                    <span className="block truncate">{column.label}</span>
                     {role && <span className="text-[9px] uppercase tracking-wide text-muted-foreground">{ROLE_LABELS[role]}</span>}
                   </th>
                 );
@@ -161,7 +181,7 @@ function DatasetNode({ id, data }: NodeProps<DatasetNodeType>) {
             {rows.map((row, index) => (
               <tr key={index} className="border-t">
                 {columns.map((column) => (
-                  <td key={column.key} className={cn("max-w-[160px] truncate whitespace-nowrap px-2 py-1", column.type === "number" && "text-right tabular-nums")} title={formatCell(row[column.key])}>
+                  <td key={column.key} className={cn("truncate whitespace-nowrap px-2 py-1", column.type === "number" && "text-right tabular-nums")} style={{ maxWidth: COLUMN_WIDTH + 20 }} title={formatCell(row[column.key])}>
                     {formatCell(row[column.key])}
                   </td>
                 ))}
@@ -169,12 +189,12 @@ function DatasetNode({ id, data }: NodeProps<DatasetNodeType>) {
               </tr>
             ))}
             {rows.length === 0 && (
-              <tr><td className="px-2 py-3 text-muted-foreground" colSpan={columns.length + 1}>{expanded && !more ? "Loading rows" : "No rows"}</td></tr>
+              <tr><td className="px-2 py-3 text-muted-foreground" colSpan={columns.length + 1}>{wanted > 0 && !more ? "Loading rows" : "No rows"}</td></tr>
             )}
           </tbody>
         </table>
       </div>
-      <div className="flex items-center gap-1.5 border-t px-3 py-1.5">
+      <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-t px-3 py-1.5">
         {hiddenRows > 0 ? <OverflowChip>+{hiddenRows.toLocaleString()} rows</OverflowChip> : <span className="text-[10px] text-muted-foreground">all rows</span>}
         {hiddenColumns > 0 ? <OverflowChip>+{hiddenColumns} columns</OverflowChip> : <span className="text-[10px] text-muted-foreground">all columns</span>}
         <span className="flex-1" />
@@ -197,10 +217,14 @@ function DatasetNode({ id, data }: NodeProps<DatasetNodeType>) {
   );
 }
 
-function AnalysisNode({ data }: NodeProps<AnalysisNodeType>) {
+/** The compute card: kit, revision, run control and as many code lines as fit. */
+function AnalysisNode({ data, selected, height }: NodeProps<AnalysisNodeType>) {
   const status = data.latestRun?.status;
   const colours = tint(data.hue);
   const [starting, setStarting] = useState(false);
+  const visibleLines = Math.max(2, Math.floor(((height ?? CANVAS_SIZES.analysis.height) - 104) / CODE_LINE_HEIGHT));
+  const lines = data.codePreview ? data.codePreview.split("\n") : [];
+  const shown = lines.slice(0, visibleLines);
   const run = async () => {
     setStarting(true);
     try {
@@ -210,7 +234,8 @@ function AnalysisNode({ data }: NodeProps<AnalysisNodeType>) {
     }
   };
   return (
-    <div className="w-[300px] rounded-lg border bg-card shadow-sm" style={{ borderColor: colours.border }}>
+    <div className="flex h-full w-full flex-col rounded-lg border bg-card shadow-sm" style={{ borderColor: colours.border }}>
+      <Resizer kind="analysis" selected={Boolean(selected)} />
       <Handle type="target" position={Position.Left} className={handleClass} />
       <div className="flex items-start gap-2 px-3 py-2" style={{ background: colours.header }}>
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" style={{ color: colours.strong }} />
@@ -235,10 +260,13 @@ function AnalysisNode({ data }: NodeProps<AnalysisNodeType>) {
       <button
         type="button"
         onClick={() => data.onOpenCode(data.analysisId)}
-        className="nodrag block w-full border-t bg-muted/40 px-3 py-2 text-left"
+        className="nodrag nowheel block min-h-0 w-full flex-1 overflow-hidden border-t bg-muted/40 px-3 py-2 text-left"
         title="Show the full code"
       >
-        <pre className="max-h-[72px] overflow-hidden whitespace-pre font-mono text-[10px] leading-[14px] text-muted-foreground">{data.codePreview || "(no code yet)"}</pre>
+        <pre className="whitespace-pre font-mono text-[10px] leading-[14px] text-muted-foreground">
+          {shown.length ? shown.join("\n") : "(no code yet)"}
+          {lines.length > shown.length ? `\n… ${data.codeLines - shown.length} more lines` : ""}
+        </pre>
       </button>
       <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px]">
         <button
@@ -255,7 +283,7 @@ function AnalysisNode({ data }: NodeProps<AnalysisNodeType>) {
         {data.latestRun ? (
           <>
             <Badge variant={status === "completed" ? "secondary" : "outline"} className="px-1.5 py-0 text-[10px]">{status}</Badge>
-            <Link href={`/explore/runs/${data.latestRun.id}`} className="nodrag text-muted-foreground hover:underline">{data.latestRun.runNumber}</Link>
+            <Link href={`/explore/runs/${data.latestRun.id}`} className="nodrag truncate text-muted-foreground hover:underline">{data.latestRun.runNumber}</Link>
           </>
         ) : (
           <span className="text-muted-foreground">not run yet</span>
@@ -284,24 +312,26 @@ function PlotlyThumbnail({ url, height }: { url: string; height: number }) {
   );
 }
 
-function FigureNode({ data }: NodeProps<FigureNodeType>) {
+function FigureNode({ data, selected, height }: NodeProps<FigureNodeType>) {
   const image = data.thumbnailUrl ?? (data.format === "png" || data.format === "svg" ? data.url : null);
   const colours = tint(data.hue);
+  const area = Math.max(80, (height ?? CANVAS_SIZES.figure.height) - 34);
   return (
-    <div className={cn("relative w-[280px] overflow-hidden rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse")} style={{ borderColor: colours.border }}>
+    <div className={cn("relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse")} style={{ borderColor: colours.border }}>
+      <Resizer kind="figure" selected={Boolean(selected)} />
       {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={handleClass} />
-      <div className="flex h-[156px] items-center justify-center overflow-hidden bg-muted/30">
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/30">
         {image ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={image} alt={data.name} className="max-h-full max-w-full object-contain" />
         ) : data.format === "plotly-json" ? (
-          <PlotlyThumbnail url={data.url} height={156} />
+          <PlotlyThumbnail url={data.url} height={area} />
         ) : (
           <ImageIcon className="h-8 w-8 text-muted-foreground/60" />
         )}
       </div>
-      <div className="flex items-center gap-2 px-3 py-1.5 text-[11px]">
+      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px]">
         <span className="truncate font-medium" title={data.name}>{data.name}</span>
         <span className="text-muted-foreground">{data.format === "plotly-json" ? "interactive" : data.format}</span>
         <span className="flex-1" />
@@ -312,13 +342,14 @@ function FigureNode({ data }: NodeProps<FigureNodeType>) {
 }
 
 /** Where the outputs of a run will appear once it finishes. */
-function PendingNode({ data }: NodeProps<PendingNodeType>) {
+function PendingNode({ data, selected }: NodeProps<PendingNodeType>) {
   const colours = tint(data.hue);
   return (
-    <div className="w-[280px] overflow-hidden rounded-lg border border-dashed bg-card shadow-sm" style={{ borderColor: colours.border }}>
+    <div className="flex h-full w-full flex-col overflow-hidden rounded-lg border border-dashed bg-card shadow-sm" style={{ borderColor: colours.border }}>
+      <Resizer kind="pending" selected={Boolean(selected)} />
       <Handle type="target" position={Position.Left} className={handleClass} />
-      <div className="space-y-2 p-3">
-        <Skeleton className="h-[110px] w-full" />
+      <div className="min-h-0 flex-1 space-y-2 p-3">
+        <Skeleton className="h-[60%] w-full" />
         <div className="flex gap-2">
           <Skeleton className="h-3 w-1/2" />
           <Skeleton className="h-3 w-1/4" />
@@ -326,7 +357,7 @@ function PendingNode({ data }: NodeProps<PendingNodeType>) {
       </div>
       <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px] text-muted-foreground">
         <Loader2 className="h-3 w-3 animate-spin" />
-        <span>{data.status === "queued" ? "Queued" : "Computing"} outputs of {data.runNumber}</span>
+        <span className="truncate">{data.status === "queued" ? "Queued" : "Computing"} outputs of {data.runNumber}</span>
         <span className="flex-1" />
         <Link href={`/explore/runs/${data.runId}`} className="nodrag inline-flex items-center gap-1 hover:underline">Run <ExternalLink className="h-3 w-3" /></Link>
       </div>
@@ -336,22 +367,24 @@ function PendingNode({ data }: NodeProps<PendingNodeType>) {
 
 const nodeTypes = { source: SourceNode, dataset: DatasetNode, analysis: AnalysisNode, figure: FigureNode, pending: PendingNode };
 
+type StoredLayout = Record<string, { x: number; y: number; width?: number; height?: number }>;
+
 function storageKey(scope: string): string {
   return `seqdesk:explore:canvas:${scope}`;
 }
 
-function readPositions(scope: string): Record<string, { x: number; y: number }> {
+function readLayout(scope: string): StoredLayout {
   try {
     const raw = window.localStorage.getItem(storageKey(scope));
-    return raw ? (JSON.parse(raw) as Record<string, { x: number; y: number }>) : {};
+    return raw ? (JSON.parse(raw) as StoredLayout) : {};
   } catch {
     return {};
   }
 }
 
-function writePositions(scope: string, positions: Record<string, { x: number; y: number }>): void {
+function writeLayout(scope: string, layout: StoredLayout): void {
   try {
-    window.localStorage.setItem(storageKey(scope), JSON.stringify(positions));
+    window.localStorage.setItem(storageKey(scope), JSON.stringify(layout));
   } catch {
     // Storage may be unavailable; the layout is recomputed next time.
   }
@@ -366,15 +399,14 @@ export interface ExploreCanvasProps {
 
 /**
  * The Explore canvas for one scope: every dataset, analysis and figure as a
- * card, connected by their lineage. Positions are kept per scope in the
- * browser; "Arrange" recomputes the layered layout.
+ * resizable card, connected by their lineage. Positions and sizes are kept per
+ * scope in the browser; "Arrange" recomputes the layered layout.
  */
 export function ExploreCanvas({ scope, className, fillViewport = false }: ExploreCanvasProps) {
   const { data: graph, error, isLoading, mutate } = useSWR<CanvasGraph>(`/api/explore/canvas?targetKey=${encodeURIComponent(scope)}`, fetcher, {
     // Poll quickly while something is computing so skeletons turn into outputs on their own.
     refreshInterval: (latest) => (latest?.nodes.some((node) => node.data.kind === "analysis" && node.data.active) ? 3000 : 15000),
   });
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [arrangeVersion, setArrangeVersion] = useState(0);
@@ -411,41 +443,27 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
     [mutate]
   );
 
-  // Expanding a card changes its footprint, so the layered layout is recomputed
-  // and hand-moved positions are dropped for this scope.
-  const toggle = useCallback(
-    (id: string) => {
-      setExpanded((current) => {
-        const next = new Set(current);
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        return next;
-      });
-      try {
-        window.localStorage.removeItem(storageKey(scope));
-      } catch {
-        // ignore
-      }
-      setArrangeVersion((value) => value + 1);
+  /** Size presets from the card's own button (expand, collapse). */
+  const applyPreset = useCallback(
+    (id: string, size: { width: number; height: number }) => {
+      setNodes((current) => current.map((node) => (node.id === id ? ({ ...node, width: size.width, height: size.height } as CanvasFlowNode) : node)));
     },
-    [scope]
+    [setNodes]
   );
 
   const flowNodes = useMemo<CanvasFlowNode[]>(() => {
     if (!graph) return [];
-    const auto = layoutCanvas(graph, { expanded });
+    const stored = arrangeVersion === 0 ? readLayout(scope) : {};
+    const sizes: Record<string, { width: number; height: number }> = {};
+    for (const [id, entry] of Object.entries(stored)) if (entry.width && entry.height) sizes[id] = { width: entry.width, height: entry.height };
+    const auto = layoutCanvas(graph, { sizes });
     const hues = assignCanvasHues(graph);
-    const stored = arrangeVersion === 0 ? readPositions(scope) : {};
-    const sizeOf = (node: CanvasGraph["nodes"][number]) =>
-      node.data.kind === "dataset" && expanded.has(node.id) ? CANVAS_EXPANDED_DATASET : CANVAS_SIZES[node.data.kind];
     // Nodes the user placed keep their spot; new nodes take the computed slot
     // and move down until they no longer overlap a placed node.
-    const occupied = graph.nodes
-      .filter((node) => stored[node.id])
-      .map((node) => ({ ...stored[node.id], ...sizeOf(node) }));
+    const occupied = graph.nodes.filter((node) => stored[node.id]).map((node) => ({ ...stored[node.id], ...nodeSize(node, { sizes }) }));
     const settle = (node: CanvasGraph["nodes"][number]) => {
-      if (stored[node.id]) return stored[node.id];
-      const size = sizeOf(node);
+      if (stored[node.id]) return { x: stored[node.id].x, y: stored[node.id].y };
+      const size = nodeSize(node, { sizes });
       const position = { ...(auto[node.id] ?? { x: 0, y: 0 }) };
       for (let guard = 0; guard < 50; guard += 1) {
         const hit = occupied.find(
@@ -459,16 +477,16 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
     };
     return graph.nodes.map((node) => {
       const position = settle(node);
+      const size = nodeSize(node, { sizes });
       const hue = hues[node.id] ?? COMPUTE_HUE;
-      if (node.data.kind === "dataset") {
-        return { id: node.id, type: "dataset", position, data: { ...node.data, expanded: expanded.has(node.id), hue, onToggle: toggle } } as DatasetNodeType;
-      }
-      if (node.data.kind === "analysis") return { id: node.id, type: "analysis", position, data: { ...node.data, hue, onOpenCode: openCode, onRun: runAnalysis } } as AnalysisNodeType;
-      if (node.data.kind === "figure") return { id: node.id, type: "figure", position, data: { ...node.data, hue } } as FigureNodeType;
-      if (node.data.kind === "pending") return { id: node.id, type: "pending", position, data: { ...node.data, hue } } as PendingNodeType;
-      return { id: node.id, type: "source", position, data: node.data } as SourceNodeType;
+      const base = { id: node.id, position, width: size.width, height: size.height };
+      if (node.data.kind === "dataset") return { ...base, type: "dataset", data: { ...node.data, hue, onPreset: applyPreset } } as DatasetNodeType;
+      if (node.data.kind === "analysis") return { ...base, type: "analysis", data: { ...node.data, hue, onOpenCode: openCode, onRun: runAnalysis } } as AnalysisNodeType;
+      if (node.data.kind === "figure") return { ...base, type: "figure", data: { ...node.data, hue } } as FigureNodeType;
+      if (node.data.kind === "pending") return { ...base, type: "pending", data: { ...node.data, hue } } as PendingNodeType;
+      return { ...base, type: "source", data: node.data } as SourceNodeType;
     });
-  }, [graph, expanded, toggle, openCode, runAnalysis, scope, arrangeVersion]);
+  }, [graph, applyPreset, openCode, runAnalysis, scope, arrangeVersion]);
 
   const flowEdges = useMemo<Edge[]>(() => {
     if (!graph) return [];
@@ -492,29 +510,35 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
   }, [graph]);
 
   useEffect(() => {
-    // Keep positions of nodes the user already moved; new nodes take the computed slot.
+    // Keep positions and sizes of nodes the user already touched; new nodes take the computed slot.
     setNodes((current) => {
       const currentById = new Map(current.map((node) => [node.id, node] as const));
       return flowNodes.map((node) => {
         const existing = arrangeVersion === 0 ? currentById.get(node.id) : undefined;
-        return existing ? ({ ...node, position: existing.position } as CanvasFlowNode) : node;
+        return existing ? ({ ...node, position: existing.position, width: existing.width ?? node.width, height: existing.height ?? node.height } as CanvasFlowNode) : node;
       });
     });
     setEdges(flowEdges);
   }, [flowNodes, flowEdges, setNodes, setEdges, arrangeVersion]);
 
-  const persist = useCallback(() => {
-    writePositions(scope, Object.fromEntries(nodes.map((node) => [node.id, node.position])));
+  // Remember positions and sizes shortly after any change (drag, resize, preset).
+  useEffect(() => {
+    if (nodes.length === 0) return;
+    const timer = setTimeout(() => {
+      const layout: StoredLayout = {};
+      for (const node of nodes) {
+        layout[node.id] = { x: node.position.x, y: node.position.y, width: node.width ?? node.measured?.width, height: node.height ?? node.measured?.height };
+      }
+      writeLayout(scope, layout);
+    }, 400);
+    return () => clearTimeout(timer);
   }, [nodes, scope]);
 
   // Clicking an arrow opens the code of the analysis it goes into or comes from.
-  const onEdgeClick: EdgeMouseHandler = useCallback(
-    (_event, edge) => {
-      const analysisId = [edge.source, edge.target].find((id) => id.startsWith("analysis:"))?.slice("analysis:".length);
-      if (analysisId) setOpenAnalysisId(analysisId);
-    },
-    []
-  );
+  const onEdgeClick: EdgeMouseHandler = useCallback((_event, edge) => {
+    const analysisId = [edge.source, edge.target].find((id) => id.startsWith("analysis:"))?.slice("analysis:".length);
+    if (analysisId) setOpenAnalysisId(analysisId);
+  }, []);
 
   const arrange = useCallback(() => {
     try {
@@ -543,7 +567,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
           <MapIcon className="mr-2 h-4 w-4" />
           Overview
         </Button>
-        <Button size="sm" variant="outline" onClick={arrange} title="Recompute the layout">
+        <Button size="sm" variant="outline" onClick={arrange} title="Recompute the layout and reset card sizes">
           <LayoutGrid className="mr-2 h-4 w-4" />
           Arrange
         </Button>
@@ -554,7 +578,6 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
-        onNodeDragStop={persist}
         onEdgeClick={onEdgeClick}
         edgesFocusable
         fitView
@@ -616,6 +639,7 @@ function CanvasLegend() {
               <span><span className="font-medium">{entry.label}</span> <span className="text-muted-foreground">{entry.note}</span></span>
             </div>
           ))}
+          <p className="mt-1 text-muted-foreground">Select a card and drag its corners to resize it; tables then show more rows and columns.</p>
         </div>
       )}
     </div>

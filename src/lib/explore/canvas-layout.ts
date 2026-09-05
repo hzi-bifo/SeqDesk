@@ -131,21 +131,35 @@ export function pickPreviewColumns(columns: ExploreColumn[], roles: ExploreRoleM
 export interface LayoutOptions {
   columnGap?: number;
   rowGap?: number;
-  heights?: Partial<Record<CanvasNodeKind, number>>;
-  widths?: Partial<Record<CanvasNodeKind, number>>;
   /** Node ids rendered in their expanded size. */
   expanded?: Set<string>;
-  expandedHeight?: number;
+  /** Explicit sizes (for example after the user resized a card) that win over the defaults. */
+  sizes?: Record<string, { width: number; height: number }>;
 }
 
 export const CANVAS_SIZES: Record<CanvasNodeKind, { width: number; height: number }> = {
   source: { width: 220, height: 64 },
-  dataset: { width: 300, height: 236 },
+  dataset: { width: 320, height: 264 },
   analysis: { width: 300, height: 190 },
   figure: { width: 280, height: 210 },
   pending: { width: 280, height: 210 },
 };
 export const CANVAS_EXPANDED_DATASET = { width: 680, height: 480 };
+export const CANVAS_MIN_SIZES: Record<CanvasNodeKind, { width: number; height: number }> = {
+  source: { width: 160, height: 56 },
+  dataset: { width: 240, height: 170 },
+  analysis: { width: 240, height: 130 },
+  figure: { width: 180, height: 140 },
+  pending: { width: 180, height: 140 },
+};
+
+/** The size a node renders at: user size, else expanded preset, else the default. */
+export function nodeSize(node: CanvasNode, options: Pick<LayoutOptions, "expanded" | "sizes"> = {}): { width: number; height: number } {
+  const custom = options.sizes?.[node.id];
+  if (custom) return custom;
+  if (node.data.kind === "dataset" && options.expanded?.has(node.id)) return CANVAS_EXPANDED_DATASET;
+  return CANVAS_SIZES[node.data.kind];
+}
 
 const BASE_RANK: Record<CanvasNodeKind, number> = { source: 0, dataset: 1, analysis: 2, figure: 3, pending: 3 };
 
@@ -191,8 +205,7 @@ export function layoutCanvas(graph: CanvasGraph, options: LayoutOptions = {}): R
     let y = 0;
     let widest = 0;
     for (const node of column) {
-      const expanded = options.expanded?.has(node.id) && node.data.kind === "dataset";
-      const size = expanded ? CANVAS_EXPANDED_DATASET : CANVAS_SIZES[node.data.kind];
+      const size = nodeSize(node, options);
       positions[node.id] = { x, y };
       y += size.height + rowGap;
       widest = Math.max(widest, size.width);

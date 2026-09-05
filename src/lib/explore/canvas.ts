@@ -134,7 +134,7 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
         kitId: analysis.kitId,
         language: analysis.language,
         revision: revision?.number ?? null,
-        codePreview: codePreviewOf(revision?.code ?? ""),
+        codePreview: codePreviewOf(revision?.code ?? "", 80),
         codeLines: revision?.code ? revision.code.split("\n").length : 0,
         latestRun: latest ? { id: latest.id, runNumber: latest.runNumber, status: latest.status } : null,
         active: latest ? ACTIVE_RUN.has(latest.status) : false,

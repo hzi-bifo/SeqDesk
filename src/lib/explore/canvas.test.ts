@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CANVAS_SIZES, layoutCanvas, pickPreviewColumns, type CanvasGraph } from "./canvas-layout";
+import { CANVAS_SIZES, CANVAS_EXPANDED_DATASET, layoutCanvas, pickPreviewColumns, type CanvasGraph } from "./canvas-layout";
 
 const columns = [
   { key: "sample_db_id", label: "Sample record", type: "string" as const },
@@ -63,7 +63,7 @@ describe("layoutCanvas", () => {
   it("reserves more room for expanded datasets", () => {
     const collapsed = layoutCanvas({ ...graph, nodes: [graph.nodes[1], graph.nodes[3]], edges: [] });
     const expanded = layoutCanvas({ ...graph, nodes: [graph.nodes[1], graph.nodes[3]], edges: [] }, { expanded: new Set(["dataset:d1"]) });
-    expect(expanded["dataset:d2"].y - collapsed["dataset:d2"].y).toBeGreaterThan(CANVAS_SIZES.dataset.height);
+    expect(expanded["dataset:d2"].y - collapsed["dataset:d2"].y).toBe(CANVAS_EXPANDED_DATASET.height - CANVAS_SIZES.dataset.height);
   });
 
   it("survives cycles", () => {
@@ -123,5 +123,15 @@ describe("originLabel", () => {
     expect(originLabel([{ type: "study", id: "s1" }], "samples")).toBe("Built from the study");
     expect(originLabel([{ type: "study", id: "s1" }], "sequencing")).toBe("Sequencing runs of the study");
     expect(originLabel([], "derived")).toBe("Written by an analysis");
+  });
+});
+
+describe("nodeSize", () => {
+  it("prefers a user size, then the expanded preset, then the default", async () => {
+    const { nodeSize, CANVAS_SIZES, CANVAS_EXPANDED_DATASET } = await import("./canvas-layout");
+    const node = { id: "dataset:d", data: { kind: "dataset" as const, datasetId: "d", name: "D", datasetKind: "samples", tableKind: null, sensitivity: "standard", origin: "", version: 1, rowCount: 1, columnCount: 1, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } };
+    expect(nodeSize(node)).toEqual(CANVAS_SIZES.dataset);
+    expect(nodeSize(node, { expanded: new Set(["dataset:d"]) })).toEqual(CANVAS_EXPANDED_DATASET);
+    expect(nodeSize(node, { expanded: new Set(["dataset:d"]), sizes: { "dataset:d": { width: 500, height: 300 } } })).toEqual({ width: 500, height: 300 });
   });
 });
