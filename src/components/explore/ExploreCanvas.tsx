@@ -42,6 +42,7 @@ import {
   Maximize2,
   Minimize2,
   Play,
+  Plus,
   Save,
   Settings2,
   Sparkle,
@@ -100,10 +101,14 @@ export interface KitSummary {
 /** What the report can be asked to include or drop from a card. */
 export type ReportTarget = { type: "figure"; analysisId: string; figureName: string; label: string } | { type: "table"; datasetId: string; label: string };
 
-type CardActions = {
+/** True when an arrow ends on this card, so its target dot can hide behind the arrowhead. */
+type Wired = { hasInput?: boolean };
+
+type CardActions = Wired & {
   scopeQuery: string;
   onPreset: (id: string, size: { width: number; height: number }) => void;
-  onAnalyse: (datasetId: string, kitId: string | null) => Promise<void>;
+  /** Start an analysis reading this table; `placeAt` puts the new card there (flow coordinates). */
+  onAnalyse: (datasetId: string, kitId: string | null, placeAt?: { x: number; y: number }) => Promise<void>;
   /** Inputs of existing analyses this table could be connected to. */
   connectTargets: ConnectTarget[];
   onConnect: (datasetId: string, target: ConnectTarget) => Promise<void>;
@@ -114,12 +119,13 @@ type CardActions = {
 };
 type DatasetNodeType = Node<CanvasDatasetData & CardActions & { hue: number }, "dataset">;
 type AnalysisNodeType = Node<
-  CanvasAnalysisData & { hue: number; scopeQuery: string; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void>; onSaveParams: (analysisId: string, params: Record<string, unknown>) => Promise<void> },
+  CanvasAnalysisData &
+    Wired & { hue: number; scopeQuery: string; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void>; onSaveParams: (analysisId: string, params: Record<string, unknown>) => Promise<void> },
   "analysis"
 >;
 type SourceNodeType = Node<CanvasSourceData, "source">;
-type FigureNodeType = Node<CanvasFigureData & { hue: number; scopeQuery: string; justUpdated?: boolean; onToggleReport: (target: ReportTarget) => Promise<void> }, "figure">;
-type PendingNodeType = Node<CanvasPendingData & { hue: number; scopeQuery: string }, "pending">;
+type FigureNodeType = Node<CanvasFigureData & Wired & { hue: number; scopeQuery: string; justUpdated?: boolean; onToggleReport: (target: ReportTarget) => Promise<void> }, "figure">;
+type PendingNodeType = Node<CanvasPendingData & Wired & { hue: number; scopeQuery: string }, "pending">;
 type CanvasFlowNode = DatasetNodeType | AnalysisNodeType | SourceNodeType | FigureNodeType | PendingNodeType;
 
 const MAX_FETCHED_ROWS = 200;
@@ -206,7 +212,7 @@ function OverflowChip({ children, colours }: { children: React.ReactNode; colour
  * pills that open on click. Resizing the card shows more columns across and
  * more rows down; rows beyond the preview are fetched as needed.
  */
-function DatasetNode({ id, data, width, height }: NodeProps<DatasetNodeType>) {
+function DatasetNode({ id, data, width, height, positionAbsoluteX, positionAbsoluteY }: NodeProps<DatasetNodeType>) {
   const size = { width: width ?? CANVAS_SIZES.dataset.width, height: height ?? CANVAS_SIZES.dataset.height };
   const expanded = size.width >= CANVAS_EXPANDED_DATASET.width - 1 && size.height >= CANVAS_EXPANDED_DATASET.height - 1;
   const headerHeight = data.origin ? 92 : 70;
@@ -241,7 +247,7 @@ function DatasetNode({ id, data, width, height }: NodeProps<DatasetNodeType>) {
     <div className={cn("relative flex h-full w-full flex-col rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
       <Resizer kind="dataset" />
       {data.refreshing && <RefreshingOverlay label="updating" />}
-      <Handle type="target" position={Position.Left} className={handleClass} />
+      <Handle type="target" position={Position.Left} className={cn(handleClass, data.hasInput && "!opacity-0")} />
       <div className="flex items-start gap-2 rounded-t-[7px] border-b px-3 py-2" style={{ background: colours.header }}>
         <Database className="mt-0.5 h-4 w-4 shrink-0" style={{ color: colours.strong }} />
         <div className="min-w-0 flex-1">
@@ -360,7 +366,7 @@ function DatasetNode({ id, data, width, height }: NodeProps<DatasetNodeType>) {
         <AnalyseMenu
           dataset={data}
           kits={data.kits}
-          onPick={(kitId) => data.onAnalyse(data.datasetId, kitId)}
+          onPick={(kitId) => data.onAnalyse(data.datasetId, kitId, { x: positionAbsoluteX + size.width + 80, y: positionAbsoluteY })}
           compact={compact}
           connectTargets={data.connectTargets}
           onConnect={(target) => data.onConnect(data.datasetId, target)}
@@ -392,7 +398,15 @@ function DatasetNode({ id, data, width, height }: NodeProps<DatasetNodeType>) {
           {compact ? "Open" : "Open table"} <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
-      <Handle type="source" position={Position.Right} className={cn(handleClass, "!h-3 !w-3 !bg-muted-foreground")} isConnectable title="Drag onto empty space to start an analysis from this table" />
+      <Handle
+        type="source"
+        position={Position.Right}
+        className={cn(handleClass, "!flex !h-4 !w-4 !items-center !justify-center !bg-muted-foreground hover:!bg-foreground")}
+        isConnectable
+        title="Drag onto the canvas to start an analysis from this table"
+      >
+        <Plus className="pointer-events-none h-3 w-3 text-background" aria-hidden />
+      </Handle>
     </div>
   );
 }
@@ -634,7 +648,7 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
   return (
     <div className="flex h-full w-full flex-col rounded-lg border bg-card shadow-sm" style={{ borderColor: colours.border }}>
       <Resizer kind="analysis" />
-      <Handle type="target" position={Position.Left} className={handleClass} />
+      <Handle type="target" position={Position.Left} className={cn(handleClass, data.hasInput && "!opacity-0")} />
       <div className="flex items-start gap-2 rounded-t-[7px] px-3 py-2" style={{ background: colours.header }}>
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" style={{ color: colours.strong }} />
         <div className="min-w-0 flex-1">
@@ -747,7 +761,7 @@ function FigureNode({ data, width, height }: NodeProps<FigureNodeType>) {
     <div className={cn("relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
       <Resizer kind="figure" />
       {data.refreshing && <RefreshingOverlay label="updating" />}
-      <Handle type="target" position={Position.Left} className={handleClass} />
+      <Handle type="target" position={Position.Left} className={cn(handleClass, data.hasInput && "!opacity-0")} />
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/30">
         {image ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -784,7 +798,7 @@ function PendingNode({ data }: NodeProps<PendingNodeType>) {
   return (
     <div className="flex h-full w-full flex-col overflow-hidden rounded-lg border border-dashed bg-card shadow-sm" style={{ borderColor: colours.border }}>
       <Resizer kind="pending" />
-      <Handle type="target" position={Position.Left} className={handleClass} />
+      <Handle type="target" position={Position.Left} className={cn(handleClass, data.hasInput && "!opacity-0")} />
       <div className="min-h-0 flex-1 space-y-2 p-3">
         <Skeleton className="h-[60%] w-full" />
         <div className="flex gap-2">
@@ -899,7 +913,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
   const appliedArrangeRef = useRef(0);
   const focusedRef = useRef<string | null>(null);
   const connectingFromRef = useRef<string | null>(null);
-  const [analyseAt, setAnalyseAt] = useState<{ datasetId: string; x: number; y: number; from: { x: number; y: number } | null; hue: number | null } | null>(null);
+  const [analyseAt, setAnalyseAt] = useState<{ datasetId: string; x: number; y: number; flow: { x: number; y: number } | null; from: { x: number; y: number } | null; hue: number | null } | null>(null);
   const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
 
   useEffect(() => {
@@ -932,15 +946,19 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
 
   /** Start an analysis whose first input is this table; the compute card appears next to it. */
   const createAnalysis = useCallback(
-    async (datasetId: string, kitId: string | null) => {
+    async (datasetId: string, kitId: string | null, placeAt?: { x: number; y: number }) => {
       const kit = kitId ? kits.find((entry) => entry.id === kitId) : null;
       try {
-        await postJson<{ analysis: { id: string } }>("/api/explore/analyses", {
+        const result = await postJson<{ analysis: { id: string } }>("/api/explore/analyses", {
           targetKey: scope,
           kitId,
           language: kit?.language ?? "python",
           inputs: [{ alias: kit?.inputs[0]?.alias ?? "table", datasetId }],
         });
+        if (placeAt) {
+          // The new card appears where it was asked for, not where the layout would put it.
+          writeLayout(scope, { ...readLayout(scope), [`analysis:${result.analysis.id}`]: { x: placeAt.x, y: placeAt.y } });
+        }
         toast.success(kit ? `${kit.name} added; press Run on its card` : "Blank analysis added; open Code to write it");
         await mutate();
       } catch (err) {
@@ -1080,7 +1098,9 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
     const handleRect = handle?.getBoundingClientRect();
     const fromPoint = handleRect ? { x: handleRect.left + handleRect.width / 2 - rect.left, y: handleRect.top + handleRect.height / 2 - rect.top } : null;
     const hue = (nodes.find((node) => node.id === from)?.data as { hue?: number } | undefined)?.hue ?? null;
-    setAnalyseAt({ datasetId: from.slice("dataset:".length), x, y, from: fromPoint, hue });
+    const dropped = instanceRef.current?.screenToFlowPosition({ x: point.clientX, y: point.clientY }) ?? null;
+    const flow = dropped ? { x: dropped.x - CANVAS_SIZES.analysis.width / 2, y: dropped.y - CANVAS_SIZES.analysis.height / 2 } : null;
+    setAnalyseAt({ datasetId: from.slice("dataset:".length), x, y, flow, from: fromPoint, hue });
     },
     [nodes]
   );
@@ -1126,12 +1146,14 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
       occupied.push({ ...position, ...size });
       return position;
     };
+    const wired = new Set(graph.edges.map((edge) => edge.target));
     return graph.nodes.map((node) => {
       const position = settle(node);
       const size = nodeSize(node, { sizes });
       const hue = hues[node.id] ?? COMPUTE_HUE;
       const base = { id: node.id, position, width: size.width, height: size.height };
       const justUpdated = fresh.has(node.id);
+      const hasInput = wired.has(node.id);
       if (node.data.kind === "dataset") {
         return {
           ...base,
@@ -1141,6 +1163,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
             hue,
             scopeQuery,
             justUpdated,
+            hasInput,
             kits,
             connectTargets: connectTargetsFor(node.data.datasetId),
             onPreset: applyPreset,
@@ -1151,10 +1174,10 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
         } as DatasetNodeType;
       }
       if (node.data.kind === "analysis") {
-        return { ...base, type: "analysis", data: { ...node.data, hue, scopeQuery, onOpenCode: openCode, onRun: runAnalysis, onSaveParams: saveParams } } as AnalysisNodeType;
+        return { ...base, type: "analysis", data: { ...node.data, hue, scopeQuery, hasInput, onOpenCode: openCode, onRun: runAnalysis, onSaveParams: saveParams } } as AnalysisNodeType;
       }
-      if (node.data.kind === "figure") return { ...base, type: "figure", data: { ...node.data, hue, scopeQuery, justUpdated, onToggleReport: toggleReport } } as FigureNodeType;
-      if (node.data.kind === "pending") return { ...base, type: "pending", data: { ...node.data, hue, scopeQuery } } as PendingNodeType;
+      if (node.data.kind === "figure") return { ...base, type: "figure", data: { ...node.data, hue, scopeQuery, justUpdated, hasInput, onToggleReport: toggleReport } } as FigureNodeType;
+      if (node.data.kind === "pending") return { ...base, type: "pending", data: { ...node.data, hue, scopeQuery, hasInput } } as PendingNodeType;
       return { ...base, type: "source", data: node.data } as SourceNodeType;
     });
   }, [graph, applyPreset, openCode, runAnalysis, saveParams, createAnalysis, connectTargetsFor, connectInput, toggleReport, kits, fresh, scope, scopeQuery, arrangeVersion]);
@@ -1329,8 +1352,9 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
                 void connectInput(analyseDataset.datasetId, target);
               }}
               onPick={(kitId) => {
+                const placeAt = analyseAt.flow ?? undefined;
                 setAnalyseAt(null);
-                void createAnalysis(analyseDataset.datasetId, kitId);
+                void createAnalysis(analyseDataset.datasetId, kitId, placeAt);
               }}
             />
           </DropdownMenuContent>
