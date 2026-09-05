@@ -127,7 +127,7 @@ const COLUMN_WIDTH = CANVAS_COLUMN_WIDTH;
 const ROW_HEIGHT = 22;
 const CODE_LINE_HEIGHT = 14;
 
-const handleClass = "!h-2 !w-2 !border-0 !bg-muted-foreground/60";
+const handleClass = "!h-2 !w-2 !border-0 !bg-muted-foreground/70";
 const resizerLine = "!border-transparent";
 const resizerHandle = "!h-2.5 !w-2.5 !rounded-sm !border !border-muted-foreground/60 !bg-card";
 
@@ -392,7 +392,7 @@ function DatasetNode({ id, data, width, height }: NodeProps<DatasetNodeType>) {
           {compact ? "Open" : "Open table"} <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
-      <Handle type="source" position={Position.Right} className={cn(handleClass, "!h-3 !w-3 !bg-emerald-600")} isConnectable title="Drag onto empty space to start an analysis from this table" />
+      <Handle type="source" position={Position.Right} className={cn(handleClass, "!h-3 !w-3 !bg-muted-foreground")} isConnectable title="Drag onto empty space to start an analysis from this table" />
     </div>
   );
 }
@@ -432,7 +432,7 @@ function AnalyseMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[11px] font-medium hover:bg-muted" title="Start an analysis that reads this table" aria-label="Analyse" disabled={busy}>
+        <button type="button" className="nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border bg-card px-1.5 py-0.5 text-[10px] font-medium hover:bg-muted" title="Start an analysis that reads this table" aria-label="Analyse" disabled={busy}>
           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
           {!compact && "Analyse"}
         </button>
@@ -531,7 +531,7 @@ function ReportToggle({ inReport, onToggle, compact = false, colours }: { inRepo
       type="button"
       onClick={() => void toggle()}
       disabled={busy}
-      className={cn("nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-medium hover:brightness-95", inReport ? "border-transparent bg-secondary" : "bg-card text-muted-foreground")}
+      className={cn("nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-medium hover:brightness-95", inReport ? "border-transparent bg-secondary" : "bg-card text-muted-foreground")}
       style={inReport && colours ? { background: colours.chip, color: colours.strong } : undefined}
       title={inReport ? "Shown on the report page; click to take it off" : "Not on the report page; click to add it"}
       aria-label={inReport ? "In report" : "Add to report"}
@@ -650,7 +650,7 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
           <button
             type="button"
             onClick={() => setShowParams((value) => !value)}
-            className={cn("nodrag inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] hover:bg-muted hover:text-foreground", showParams ? "bg-secondary text-foreground" : "text-muted-foreground")}
+            className={cn("nodrag inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] hover:bg-muted hover:text-foreground", showParams ? "bg-secondary text-foreground" : "bg-card text-muted-foreground")}
             title="Parameters of this analysis"
             aria-pressed={showParams}
           >
@@ -660,7 +660,7 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
         <button
           type="button"
           onClick={() => data.onOpenCode(data.analysisId)}
-          className="nodrag inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+          className="nodrag inline-flex items-center gap-1 rounded-full border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
           title="Show and edit the code that turns the inputs into the outputs"
         >
           <Code2 className="h-3.5 w-3.5" /> Code
@@ -695,7 +695,7 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
           type="button"
           onClick={() => void run()}
           disabled={data.active || starting}
-          className="nodrag inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-white disabled:opacity-60"
+          className="nodrag inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-white disabled:opacity-60"
           style={{ background: colours.strong }}
           title={data.active ? "A run is in progress" : "Run the current revision"}
         >
@@ -1144,7 +1144,8 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
     const hues = assignCanvasHues(graph);
     return graph.edges.map((edge) => {
       const hue = hues[edge.source] ?? hues[edge.target] ?? null;
-      const stroke = hue === null ? "var(--border)" : tint(hue).stroke;
+      // Lines stay neutral so the card colours carry the meaning.
+      const stroke = hue === null ? "var(--border)" : "var(--muted-foreground)";
       return {
         id: edge.id,
         source: edge.source,
@@ -1286,11 +1287,11 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
           <path
             d={`M${analyseAt.from.x},${analyseAt.from.y} C${(analyseAt.from.x + analyseAt.x) / 2},${analyseAt.from.y} ${(analyseAt.from.x + analyseAt.x) / 2},${analyseAt.y} ${analyseAt.x},${analyseAt.y}`}
             fill="none"
-            stroke={typeof analyseAt.hue === "number" ? tint(analyseAt.hue).stroke : "var(--muted-foreground)"}
+            stroke="var(--muted-foreground)"
             strokeWidth="1.5"
             strokeDasharray="5 4"
           />
-          <circle cx={analyseAt.x} cy={analyseAt.y} r="4" fill={typeof analyseAt.hue === "number" ? tint(analyseAt.hue).stroke : "var(--muted-foreground)"} />
+          <circle cx={analyseAt.x} cy={analyseAt.y} r="4" fill="var(--muted-foreground)" />
         </svg>
       )}
       {analyseAt && analyseDataset?.kind === "dataset" && (
