@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { ArrowDown, ArrowUp, Copy, Download, ExternalLink, LayoutGrid, Loader2, Plus, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Unlink, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, ExternalLink, LayoutGrid, Loader2, Plus, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Unlink, X } from "lucide-react";
 import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
@@ -1107,15 +1107,15 @@ function ViewBlockView({ block, table, scopeQuery, reportId, filters, active }: 
 }
 
 /**
- * Two ways out of the app: the page as one HTML file, and a link that opens
- * the live page for anyone who has it. Both carry the page filters as set.
+ * The way out of the app: a link that opens the live page for anyone who has
+ * it, carrying the page filters as set. (A downloadable HTML file was tried
+ * and set aside until sharing has proper access control.)
  */
 function SharePopover({ reportId, share, canEdit, filters, active, onChanged }: { reportId: string; share: ReportShare | null; canEdit: boolean; filters: ReportFilter[]; active: ActiveFilters; onChanged: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
   const query = new URLSearchParams();
   for (const filter of filters) for (const value of active[filter.id] ?? []) query.append(`f.${filter.id}`, value);
   const hasActive = query.size > 0;
-  const exportHref = `/api/explore/reports/${encodeURIComponent(reportId)}/export${hasActive ? `?${query.toString()}` : ""}`;
   const sharePath = share ? `/share/reports/${share.token}${hasActive ? `?${query.toString()}` : ""}` : null;
   const shareUrl = () => `${window.location.origin}${sharePath ?? ""}`;
   const create = async () => {
@@ -1158,22 +1158,12 @@ function SharePopover({ reportId, share, canEdit, filters, active, onChanged }: 
           Share
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 space-y-3 text-sm">
+      <PopoverContent align="end" className="w-80 text-sm">
         <div>
-          <p className="font-medium">Download</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">One HTML file with the page as it is now{hasActive ? ", with the current filters" : ""}. Figures stay interactive; it opens without SeqDesk.</p>
-          <Button asChild variant="outline" size="sm" className="mt-2">
-            <a href={exportHref} download>
-              <Download className="mr-2 h-4 w-4" />
-              Download HTML
-            </a>
-          </Button>
-        </div>
-        <div className="border-t pt-3">
           <p className="font-medium">Share link</p>
           {share ? (
             <>
-              <p className="mt-0.5 text-xs text-muted-foreground">Anyone with the link reads the live page without signing in. Shared since {formatDateTime(share.publishedAt)}.</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Anyone with the link reads the live page without signing in{hasActive ? ", with the current filters" : ""}. Shared since {formatDateTime(share.publishedAt)}.</p>
               <code className="mt-2 block truncate rounded bg-muted px-2 py-1 text-xs" title={sharePath ?? undefined}>{sharePath}</code>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" onClick={() => void copy()}>
