@@ -9,13 +9,11 @@ import {
   Handle,
   MarkerType,
   MiniMap,
-  NodeResizeControl,
   NodeResizer,
   Position,
   ReactFlow,
   useEdgesState,
   useNodesState,
-  useViewport,
   type Edge,
   type EdgeMouseHandler,
   type Node,
@@ -155,35 +153,10 @@ function tint(hue: number) {
 }
 
 /** Resize handles for one card; shown while the card is selected. */
-function Resizer({ kind, selected, colour }: { kind: CanvasNodeKind; selected: boolean; colour: string }) {
+function Resizer({ kind }: { kind: CanvasNodeKind }) {
   const min = CANVAS_MIN_SIZES[kind];
-  // React Flow keeps resize controls the same size on screen whatever the zoom;
-  // the corner should shrink with its card instead, and go away when the card is
-  // too small to resize by hand.
-  const { zoom } = useViewport();
-  return (
-    <>
-      <NodeResizer isVisible={selected} minWidth={min.width} minHeight={min.height} lineClassName={resizerLine} handleClassName={resizerHandle} />
-      {/* The card's own corner is the handle: a thicker stretch of border, no icon. */}
-      {zoom >= 0.35 && (
-        <NodeResizeControl
-          position="bottom-right"
-          minWidth={min.width}
-          minHeight={min.height}
-          className="group/grip !h-4 !w-4 !border-0 !bg-transparent"
-          // React Flow centres its controls on the corner; keep this one inside the card.
-          style={{ right: 0, bottom: 0, transform: "none", cursor: "nwse-resize" }}
-        >
-          <span
-            className="absolute inset-0 rounded-br-lg opacity-70 transition-opacity group-hover/grip:opacity-100"
-            style={{ borderRight: `2px solid ${colour}`, borderBottom: `2px solid ${colour}`, transform: `scale(${Math.min(1, zoom)})`, transformOrigin: "100% 100%" }}
-            title="Drag to resize"
-            aria-hidden
-          />
-        </NodeResizeControl>
-      )}
-    </>
-  );
+  // Always rendered; globals.css shows the handles while the card is hovered or selected.
+  return <NodeResizer isVisible minWidth={min.width} minHeight={min.height} lineClassName={resizerLine} handleClassName={resizerHandle} />;
 }
 
 function SourceNode({ data }: NodeProps<SourceNodeType>) {
@@ -207,7 +180,7 @@ function OverflowChip({ children }: { children: React.ReactNode }) {
  * pills that open on click. Resizing the card shows more columns across and
  * more rows down; rows beyond the preview are fetched as needed.
  */
-function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNodeType>) {
+function DatasetNode({ id, data, width, height }: NodeProps<DatasetNodeType>) {
   const size = { width: width ?? CANVAS_SIZES.dataset.width, height: height ?? CANVAS_SIZES.dataset.height };
   const expanded = size.width >= CANVAS_EXPANDED_DATASET.width - 1 && size.height >= CANVAS_EXPANDED_DATASET.height - 1;
   const headerHeight = data.origin ? 92 : 70;
@@ -240,10 +213,10 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
 
   return (
     <div className={cn("relative flex h-full w-full flex-col rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
-      <Resizer kind="dataset" selected={Boolean(selected)} colour={colours.border} />
+      <Resizer kind="dataset" />
       {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={handleClass} />
-      <div className="flex items-start gap-2 border-b px-3 py-2" style={{ background: colours.header }}>
+      <div className="flex items-start gap-2 rounded-t-[7px] border-b px-3 py-2" style={{ background: colours.header }}>
         <Database className="mt-0.5 h-4 w-4 shrink-0" style={{ color: colours.strong }} />
         <div className="min-w-0 flex-1">
           <Link href={`/explore/datasets/${data.datasetId}${data.scopeQuery}`} className="block truncate text-sm font-medium hover:underline" title={data.name}>
@@ -610,7 +583,7 @@ function ParamsMini({ schema, values, onApply }: { schema: CanvasParamsSchema; v
 
 
 /** The compute card: kit, revision, run control and as many code lines as fit. */
-function AnalysisNode({ data, selected, height }: NodeProps<AnalysisNodeType>) {
+function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
   const status = data.latestRun?.status;
   const colours = tint(data.hue);
   const [starting, setStarting] = useState(false);
@@ -632,9 +605,9 @@ function AnalysisNode({ data, selected, height }: NodeProps<AnalysisNodeType>) {
   };
   return (
     <div className="flex h-full w-full flex-col rounded-lg border bg-card shadow-sm" style={{ borderColor: colours.border }}>
-      <Resizer kind="analysis" selected={Boolean(selected)} colour={colours.border} />
+      <Resizer kind="analysis" />
       <Handle type="target" position={Position.Left} className={handleClass} />
-      <div className="flex items-start gap-2 px-3 py-2" style={{ background: colours.header }}>
+      <div className="flex items-start gap-2 rounded-t-[7px] px-3 py-2" style={{ background: colours.header }}>
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" style={{ color: colours.strong }} />
         <div className="min-w-0 flex-1">
           <Link href={`/explore/analyses/${data.analysisId}${data.scopeQuery}`} className="block truncate text-sm font-medium hover:underline" title={data.name}>{data.name}</Link>
@@ -733,14 +706,14 @@ function PlotlyThumbnail({ url, height }: { url: string; height: number }) {
   );
 }
 
-function FigureNode({ data, selected, width, height }: NodeProps<FigureNodeType>) {
+function FigureNode({ data, width, height }: NodeProps<FigureNodeType>) {
   const image = data.thumbnailUrl ?? (data.format === "png" || data.format === "svg" ? data.url : null);
   const colours = tint(data.hue);
   const compact = (width ?? CANVAS_SIZES.figure.width) < 340;
   const area = Math.max(80, (height ?? CANVAS_SIZES.figure.height) - 34);
   return (
     <div className={cn("relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
-      <Resizer kind="figure" selected={Boolean(selected)} colour={colours.border} />
+      <Resizer kind="figure" />
       {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={handleClass} />
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/30">
@@ -774,11 +747,11 @@ function FigureNode({ data, selected, width, height }: NodeProps<FigureNodeType>
 }
 
 /** Where the outputs of a run will appear once it finishes. */
-function PendingNode({ data, selected }: NodeProps<PendingNodeType>) {
+function PendingNode({ data }: NodeProps<PendingNodeType>) {
   const colours = tint(data.hue);
   return (
     <div className="flex h-full w-full flex-col overflow-hidden rounded-lg border border-dashed bg-card shadow-sm" style={{ borderColor: colours.border }}>
-      <Resizer kind="pending" selected={Boolean(selected)} colour={colours.border} />
+      <Resizer kind="pending" />
       <Handle type="target" position={Position.Left} className={handleClass} />
       <div className="min-h-0 flex-1 space-y-2 p-3">
         <Skeleton className="h-[60%] w-full" />
