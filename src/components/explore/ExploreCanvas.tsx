@@ -170,12 +170,13 @@ function Resizer({ kind, selected, colour }: { kind: CanvasNodeKind; selected: b
           position="bottom-right"
           minWidth={min.width}
           minHeight={min.height}
-          className="group/grip !h-6 !w-6 !border-0 !bg-transparent"
-          style={{ right: 0, bottom: 0, cursor: "nwse-resize" }}
+          className="group/grip !h-4 !w-4 !border-0 !bg-transparent"
+          // React Flow centres its controls on the corner; keep this one inside the card.
+          style={{ right: 0, bottom: 0, transform: "none", cursor: "nwse-resize" }}
         >
           <span
-            className="absolute inset-0 rounded-br-lg opacity-60 transition-opacity group-hover/grip:opacity-100"
-            style={{ borderRight: `3px solid ${colour}`, borderBottom: `3px solid ${colour}`, transform: `scale(${Math.min(1, zoom)})`, transformOrigin: "100% 100%" }}
+            className="absolute inset-0 rounded-br-lg opacity-70 transition-opacity group-hover/grip:opacity-100"
+            style={{ borderRight: `2px solid ${colour}`, borderBottom: `2px solid ${colour}`, transform: `scale(${Math.min(1, zoom)})`, transformOrigin: "100% 100%" }}
             title="Drag to resize"
             aria-hidden
           />
@@ -873,7 +874,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
   const appliedArrangeRef = useRef(0);
   const focusedRef = useRef<string | null>(null);
   const connectingFromRef = useRef<string | null>(null);
-  const [analyseAt, setAnalyseAt] = useState<{ datasetId: string; x: number; y: number } | null>(null);
+  const [analyseAt, setAnalyseAt] = useState<{ datasetId: string; x: number; y: number; from: { x: number; y: number } | null; hue: number | null } | null>(null);
   const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
 
   useEffect(() => {
@@ -1036,7 +1037,8 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
   const onConnectStart: OnConnectStart = useCallback((_event, params) => {
     connectingFromRef.current = params.handleType === "source" && params.nodeId?.startsWith("dataset:") ? params.nodeId : null;
   }, []);
-  const onConnectEnd: OnConnectEnd = useCallback((event) => {
+  const onConnectEnd: OnConnectEnd = useCallback(
+    (event) => {
     const from = connectingFromRef.current;
     connectingFromRef.current = null;
     if (!from || !containerRef.current) return;
@@ -1047,8 +1049,15 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
     // Keep the menu inside the canvas.
     const x = Math.min(point.clientX - rect.left, Math.max(0, rect.width - 330));
     const y = Math.min(point.clientY - rect.top, Math.max(0, rect.height - 320));
-    setAnalyseAt({ datasetId: from.slice("dataset:".length), x, y });
-  }, []);
+    // Where the drag started, so the line can stay while the menu is open.
+    const handle = containerRef.current.querySelector<HTMLElement>(`.react-flow__node[data-id="${from}"] .react-flow__handle.source`);
+    const handleRect = handle?.getBoundingClientRect();
+    const fromPoint = handleRect ? { x: handleRect.left + handleRect.width / 2 - rect.left, y: handleRect.top + handleRect.height / 2 - rect.top } : null;
+    const hue = (nodes.find((node) => node.id === from)?.data as { hue?: number } | undefined)?.hue ?? null;
+    setAnalyseAt({ datasetId: from.slice("dataset:".length), x, y, from: fromPoint, hue });
+    },
+    [nodes]
+  );
 
   /** Size presets from the card's own button (expand, collapse). */
   const applyPreset = useCallback(
@@ -1265,6 +1274,19 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
           />
         )}
       </ReactFlow>
+      {analyseAt?.from && (
+        // The line the drag drew stays until the menu is answered.
+        <svg className="pointer-events-none absolute inset-0 z-10 h-full w-full" aria-hidden>
+          <path
+            d={`M${analyseAt.from.x},${analyseAt.from.y} C${(analyseAt.from.x + analyseAt.x) / 2},${analyseAt.from.y} ${(analyseAt.from.x + analyseAt.x) / 2},${analyseAt.y} ${analyseAt.x},${analyseAt.y}`}
+            fill="none"
+            stroke={typeof analyseAt.hue === "number" ? tint(analyseAt.hue).stroke : "var(--muted-foreground)"}
+            strokeWidth="1.5"
+            strokeDasharray="5 4"
+          />
+          <circle cx={analyseAt.x} cy={analyseAt.y} r="4" fill={typeof analyseAt.hue === "number" ? tint(analyseAt.hue).stroke : "var(--muted-foreground)"} />
+        </svg>
+      )}
       {analyseAt && analyseDataset?.kind === "dataset" && (
         <DropdownMenu open onOpenChange={(open) => !open && setAnalyseAt(null)}>
           <DropdownMenuTrigger asChild>
