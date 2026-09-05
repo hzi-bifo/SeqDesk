@@ -697,7 +697,7 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
           disabled={data.active || starting}
           className="nodrag inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-white disabled:opacity-60"
           style={{ background: colours.strong }}
-          title={data.active ? "A run is in progress" : "Run the current revision"}
+          title={data.active ? "A run is in progress" : "Run this analysis; analyses that read its outputs follow when the outputs change"}
         >
           {data.active || starting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
           {data.active ? "Running" : starting ? "Starting" : "Run"}
@@ -843,29 +843,49 @@ export interface ExploreCanvasProps {
  * scope in the browser; "Arrange" recomputes the layered layout.
  */
 export function ExploreCanvas({ scope, className, fillViewport = false, focusNodeId = null }: ExploreCanvasProps) {
-  // Outputs a run just rewrote glow for a few seconds so the eye lands on what changed.
+  // Outputs a run just rewrote glow for a few seconds so the eye lands on what
+  // changed, and the analyses reading those outputs run again (x -> y -> z).
   const statusRef = useRef<Map<string, string>>(new Map());
+  const refreshRef = useRef<() => Promise<unknown>>(async () => undefined);
   const [fresh, setFresh] = useState<Set<string>>(() => new Set());
-  const noteFinishedRuns = useCallback((latest: CanvasGraph) => {
-    const next = new Set<string>();
-    for (const node of latest.nodes) {
-      if (node.data.kind !== "analysis") continue;
-      const previous = statusRef.current.get(node.id);
-      const current = node.data.latestRun?.status ?? "";
-      if (previous && ["pending", "queued", "running"].includes(previous) && current === "completed") {
-        for (const edge of latest.edges) if (edge.source === node.id) next.add(edge.target);
+  const cascade = useCallback(async (runId: string, analysisName: string) => {
+    try {
+      const result = await postJson<{ started: Array<{ name: string }>; changedDatasets: string[] }>(`/api/explore/runs/${runId}/cascade`, {});
+      if (result.started.length > 0) {
+        toast.info(`${analysisName} changed its outputs; running ${result.started.map((entry) => entry.name).join(", ")} next`);
+        await refreshRef.current();
       }
-      statusRef.current.set(node.id, current);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not run the analyses downstream");
     }
-    if (next.size === 0) return;
-    setFresh((existing) => new Set([...existing, ...next]));
-    setTimeout(() => setFresh((existing) => new Set([...existing].filter((id) => !next.has(id)))), 8000);
   }, []);
+  const noteFinishedRuns = useCallback(
+    (latest: CanvasGraph) => {
+      const next = new Set<string>();
+      for (const node of latest.nodes) {
+        if (node.data.kind !== "analysis") continue;
+        const previous = statusRef.current.get(node.id);
+        const current = node.data.latestRun?.status ?? "";
+        if (previous && ["pending", "queued", "running"].includes(previous) && current === "completed") {
+          for (const edge of latest.edges) if (edge.source === node.id) next.add(edge.target);
+          if (node.data.latestRun) void cascade(node.data.latestRun.id, node.data.name);
+        }
+        statusRef.current.set(node.id, current);
+      }
+      if (next.size === 0) return;
+      setFresh((existing) => new Set([...existing, ...next]));
+      setTimeout(() => setFresh((existing) => new Set([...existing].filter((id) => !next.has(id)))), 8000);
+    },
+    [cascade]
+  );
   const { data: graph, error, isLoading, mutate } = useSWR<CanvasGraph>(`/api/explore/canvas?targetKey=${encodeURIComponent(scope)}`, fetcher, {
     // Poll quickly while something is computing so skeletons turn into outputs on their own.
     refreshInterval: (latest) => (latest?.nodes.some((node) => node.data.kind === "analysis" && node.data.active) ? 3000 : 15000),
     onSuccess: noteFinishedRuns,
   });
+  useEffect(() => {
+    refreshRef.current = () => mutate();
+  }, [mutate]);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [arrangeVersion, setArrangeVersion] = useState(0);
