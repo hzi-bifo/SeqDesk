@@ -2,7 +2,7 @@
   "kitVersion": 1,
   "id": "taxon-composition",
   "name": "Taxon composition",
-  "description": "Relative abundance composition from a long taxon profile table. Counts are converted to per-sample relative abundance, taxa on curation lists with the artifact role are removed and abundances renormalised, and the top_n taxa plus Other are drawn as stacked bars per sample (ordered by group, subject and timepoint when mapped). Also writes the long composition table and a per-taxon prevalence table.",
+  "description": "Relative abundance composition from a long taxon profile table. Counts are converted to per-sample relative abundance, taxa on curation lists with the artifact role are removed and abundances renormalised, and the top_n taxa plus Other are drawn as stacked bars per sample (ordered by group, subject and timepoint when mapped), or as the mean composition per group for large cohorts. Also writes the long composition table and a per-taxon prevalence table.",
   "language": "python",
   "environment": "seqdesk-explore-python",
   "entrypoint": "analysis.py",
@@ -12,8 +12,18 @@
       "label": "Taxon profiles (long)",
       "description": "One row per taxon per sample with read counts, such as a MetaxPath sample profile or a Bracken report dataset.",
       "tableKind": "taxon-profile-long",
-      "requiredRoles": ["sample", "taxon", "count"],
-      "optionalRoles": ["group", "subject", "timepoint", "taxon_id", "rank"]
+      "requiredRoles": [
+        "sample",
+        "taxon",
+        "count"
+      ],
+      "optionalRoles": [
+        "group",
+        "subject",
+        "timepoint",
+        "taxon_id",
+        "rank"
+      ]
     }
   ],
   "params": {
@@ -40,16 +50,44 @@
         "title": "Taxonomic rank",
         "description": "When the table maps a rank role, keep only rows of this rank (falls back to the most frequent rank when absent). Leave empty to use every row.",
         "default": "species"
+      },
+      "per_group": {
+        "type": "string",
+        "title": "Bars per",
+        "description": "sample: one bar per sample; group: the mean composition per value of the group role; auto: per group once the table has more than 120 samples.",
+        "default": "auto",
+        "enum": [
+          "auto",
+          "sample",
+          "group"
+        ]
       }
     }
   },
   "outputs": [
-    { "name": "composition_plot", "kind": "figure", "description": "Stacked relative abundance bars of the top taxa plus Other per sample." },
-    { "name": "composition", "kind": "table", "description": "Long table of sample, taxon, count and renormalised relative abundance." },
-    { "name": "prevalence", "kind": "table", "description": "Per taxon: prevalence, mean and maximum relative abundance, total reads." }
+    {
+      "name": "composition_plot",
+      "kind": "figure",
+      "description": "Stacked relative abundance bars of the top taxa plus Other per sample."
+    },
+    {
+      "name": "composition",
+      "kind": "table",
+      "description": "Long table of sample, taxon, count and renormalised relative abundance."
+    },
+    {
+      "name": "prevalence",
+      "kind": "table",
+      "description": "Per taxon: prevalence, mean and maximum relative abundance, total reads."
+    }
   ],
   "citation": "Built with pandas (McKinney 2010; The pandas development team, https://pandas.pydata.org), NumPy (Harris et al. 2020, https://numpy.org) and Plotly (Plotly Technologies Inc., https://plotly.com/python/). Artifact removal and renormalisation follow the INDIVO Explorer reference (microbiome()). See README.md for details.",
-  "tags": ["microbiome", "composition", "relative-abundance", "taxon-profile"],
+  "tags": [
+    "microbiome",
+    "composition",
+    "relative-abundance",
+    "taxon-profile"
+  ],
   "provider": "SeqDesk",
   "version": "1.0.0"
 }

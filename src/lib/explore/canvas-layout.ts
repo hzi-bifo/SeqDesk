@@ -250,24 +250,55 @@ export function layoutCanvas(graph: CanvasGraph, options: LayoutOptions = {}): R
   };
   for (const node of graph.nodes) rankOf(node.id);
 
-  const columns = new Map<number, CanvasNode[]>();
+  // Column x positions: the widest card of each rank plus the gap.
+  const widths = new Map<number, number>();
   for (const node of graph.nodes) {
     const value = rank.get(node.id) ?? 0;
-    columns.set(value, [...(columns.get(value) ?? []), node]);
+    widths.set(value, Math.max(widths.get(value) ?? 0, nodeSize(node, options).width));
   }
-  const positions: Record<string, { x: number; y: number }> = {};
+  const xOfRank = new Map<number, number>();
   let x = 0;
-  for (const value of [...columns.keys()].sort((a, b) => a - b)) {
-    const column = columns.get(value)!;
-    let y = 0;
-    let widest = 0;
-    for (const node of column) {
-      const size = nodeSize(node, options);
-      positions[node.id] = { x, y };
-      y += size.height + rowGap;
-      widest = Math.max(widest, size.width);
+  for (const value of [...widths.keys()].sort((a, b) => a - b)) {
+    xOfRank.set(value, x);
+    x += (widths.get(value) ?? 0) + columnGap;
+  }
+
+  // Families: every node hangs from one primary parent (its first input of a
+  // lower rank), so an analysis sits at the top of the block of its outputs
+  // and a table at the top of the block of everything made from it.
+  const byId = new Map(graph.nodes.map((node) => [node.id, node] as const));
+  const children = new Map<string, string[]>();
+  const roots: string[] = [];
+  for (const node of graph.nodes) {
+    const own = rank.get(node.id) ?? 0;
+    const parent = (incoming.get(node.id) ?? []).find((candidate) => (rank.get(candidate) ?? 0) < own) ?? null;
+    if (parent) children.set(parent, [...(children.get(parent) ?? []), node.id]);
+    else roots.push(node.id);
+  }
+  const heights = new Map<string, number>();
+  const blockHeight = (id: string): number => {
+    const cached = heights.get(id);
+    if (cached !== undefined) return cached;
+    const own = nodeSize(byId.get(id)!, options).height;
+    const below = children.get(id) ?? [];
+    const stacked = below.reduce((total, child, index) => total + blockHeight(child) + (index > 0 ? rowGap : 0), 0);
+    const value = Math.max(own, stacked);
+    heights.set(id, value);
+    return value;
+  };
+  const positions: Record<string, { x: number; y: number }> = {};
+  const place = (id: string, top: number) => {
+    positions[id] = { x: xOfRank.get(rank.get(id) ?? 0) ?? 0, y: top };
+    let cursor = top;
+    for (const child of children.get(id) ?? []) {
+      place(child, cursor);
+      cursor += blockHeight(child) + rowGap;
     }
-    x += widest + columnGap;
+  };
+  let cursor = 0;
+  for (const root of roots) {
+    place(root, cursor);
+    cursor += blockHeight(root) + rowGap;
   }
   return positions;
 }

@@ -63,6 +63,9 @@ def main() -> None:
     rank_col = sx.role_column(df, "rank", required=False)
 
     top_n = int(clamp(int(sx.param("top_n", 15) or 15), 1, 60))
+    per_group = str(sx.param("per_group", "auto") or "auto")
+    if per_group not in ("auto", "sample", "group"):
+        per_group = "auto"
     min_ra = clamp(float(sx.param("min_relative_abundance_pct", 0) or 0), 0, 100)
     rank_param = str(sx.param("rank", "species") or "").strip()
 
@@ -176,20 +179,44 @@ def main() -> None:
     shown = matrix[top_taxa].sum(axis=1) if top_taxa else pd.Series(0.0, index=matrix.index)
     other = (100.0 - shown).clip(lower=0.0)
 
-    hover_parts = [f"{column}=%{{customdata[{index}]}}" for index, column in enumerate(meta_cols)]
-    customdata = samples[meta_cols].astype(object).where(samples[meta_cols].notna(), "").values.tolist() if meta_cols else None
-    hovertemplate = "<b>%{x}</b><br>" + ("<br>".join(hover_parts) + "<br>" if hover_parts else "") + "%{fullData.name}: %{y:.2f}%<extra></extra>"
-    labels = [label_of[sample] for sample in sample_order]
-    fig = go.Figure()
-    colors = palette(len(top_taxa))
-    for index, taxon in enumerate(top_taxa):
-        fig.add_trace(go.Bar(x=labels, y=matrix[taxon].tolist(), name=taxon, marker_color=colors[index], customdata=customdata, hovertemplate=hovertemplate))
-    fig.add_trace(go.Bar(x=labels, y=other.tolist(), name=OTHER_LABEL, marker_color=OTHER_COLOR, customdata=customdata, hovertemplate=hovertemplate))
     subtitle = f"top {len(top_taxa)} taxa by mean relative abundance" + (", artifacts removed" if removed_taxa else "")
+    colors = palette(len(top_taxa))
+    fig = go.Figure()
+    draw_per_group = group_col and (per_group == "group" or (per_group == "auto" and n_samples > 120))
+    if draw_per_group:
+        # Large cohorts: one bar per group with the mean composition, readable at any size.
+        group_of = samples.set_index(sample_col)[group_col].astype(object).map(lambda value: "(none)" if value is None else str(value))
+        group_labels = group_of.reindex(sample_order).tolist()
+        group_order = list(dict.fromkeys(group_labels))
+        by_group = matrix.groupby(pd.Series(group_labels, index=matrix.index), sort=False).mean().reindex(group_order)
+        other_by_group = pd.Series(other.to_numpy(), index=matrix.index).groupby(pd.Series(group_labels, index=matrix.index), sort=False).mean().reindex(group_order)
+        counts = pd.Series(group_labels).value_counts().reindex(group_order)
+        x_labels = [f"{label} (n={int(counts[label])})" for label in group_order]
+        for index, taxon in enumerate(top_taxa):
+            fig.add_trace(go.Bar(x=x_labels, y=by_group[taxon].tolist(), name=taxon, marker_color=colors[index], hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:.2f}%<extra></extra>"))
+        fig.add_trace(go.Bar(x=x_labels, y=other_by_group.tolist(), name=OTHER_LABEL, marker_color=OTHER_COLOR, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:.2f}%<extra></extra>"))
+        fig.update_layout(title=f"Mean taxon composition per {group_col} ({subtitle})", xaxis_title=group_col)
+        fig.update_xaxes(type="category")
+        sx.note(f"{n_samples} samples: the figure shows the mean composition per {group_col}; set per_group to sample for one bar per sample.")
+        figure_description = f"Mean relative abundance of the {subtitle} per {group_col}, with the number of samples per bar."
+    else:
+        hover_parts = [f"{column}=%{{customdata[{index}]}}" for index, column in enumerate(meta_cols)]
+        customdata = samples[meta_cols].astype(object).where(samples[meta_cols].notna(), "").values.tolist() if meta_cols else None
+        hovertemplate = "<b>%{x}</b><br>" + ("<br>".join(hover_parts) + "<br>" if hover_parts else "") + "%{fullData.name}: %{y:.2f}%<extra></extra>"
+        labels = [label_of[sample] for sample in sample_order]
+        for index, taxon in enumerate(top_taxa):
+            fig.add_trace(go.Bar(x=labels, y=matrix[taxon].tolist(), name=taxon, marker_color=colors[index], customdata=customdata, hovertemplate=hovertemplate))
+        fig.add_trace(go.Bar(x=labels, y=other.tolist(), name=OTHER_LABEL, marker_color=OTHER_COLOR, customdata=customdata, hovertemplate=hovertemplate))
+        fig.update_layout(title=f"Taxon composition ({subtitle})", xaxis_title="Sample")
+        fig.update_xaxes(type="category", tickangle=-45)
+        if group_col:
+            boundaries = samples[group_col].astype(object).map(lambda value: "" if value is None else str(value)).tolist()
+            for index in range(1, len(boundaries)):
+                if boundaries[index] != boundaries[index - 1]:
+                    fig.add_vline(x=index - 0.5, line_color="#666", line_width=1, line_dash="dot")
+        figure_description = f"Stacked relative abundance of the {subtitle}; samples ordered by " + (", ".join(meta_cols) if meta_cols else "sample") + "."
     fig.update_layout(
-        title=f"Taxon composition ({subtitle})",
         barmode="stack",
-        xaxis_title="Sample",
         yaxis_title="Relative abundance (%)",
         yaxis_range=[0, 100],
         legend_title_text="Taxon",
@@ -197,18 +224,7 @@ def main() -> None:
         margin=dict(l=50, r=20, t=60, b=100),
         height=520,
     )
-    fig.update_xaxes(type="category", tickangle=-45)
-    if group_col:
-        boundaries = samples[group_col].astype(object).map(lambda value: "" if value is None else str(value)).tolist()
-        for index in range(1, len(boundaries)):
-            if boundaries[index] != boundaries[index - 1]:
-                fig.add_vline(x=index - 0.5, line_color="#666", line_width=1, line_dash="dot")
-    sx.save_figure(
-        fig,
-        "composition_plot",
-        title="Taxon composition",
-        description=f"Stacked relative abundance of the {subtitle}; samples ordered by " + (", ".join(meta_cols) if meta_cols else "sample") + ".",
-    )
+    sx.save_figure(fig, "composition_plot", title="Taxon composition", description=figure_description)
 
     # ------------------------------------------------------------------ #
     #  Tables

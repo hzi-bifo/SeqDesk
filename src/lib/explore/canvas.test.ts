@@ -66,6 +66,33 @@ describe("layoutCanvas", () => {
     expect(expanded["dataset:d2"].y - collapsed["dataset:d2"].y).toBe(CANVAS_EXPANDED_DATASET.height - CANVAS_SIZES.dataset.height);
   });
 
+  it("keeps the outputs of an analysis together and starts each analysis at the top of its block", () => {
+    const two: CanvasGraph = {
+      nodes: [
+        graph.nodes[1],
+        graph.nodes[2],
+        { id: "analysis:a2", data: { kind: "analysis", analysisId: "a2", name: "Second", kitId: null, language: "python", revision: 1, codePreview: "", codeLines: 0, latestRun: null, active: false } },
+        { id: "figure:r1:one", data: { kind: "figure", artifactId: "f1", runId: "r1", name: "one", format: "png", url: "/1", thumbnailUrl: null } },
+        { id: "figure:r1:two", data: { kind: "figure", artifactId: "f2", runId: "r1", name: "two", format: "png", url: "/2", thumbnailUrl: null } },
+        { id: "figure:r2:three", data: { kind: "figure", artifactId: "f3", runId: "r2", name: "three", format: "png", url: "/3", thumbnailUrl: null } },
+      ],
+      edges: [
+        { id: "i1", source: "dataset:d1", target: "analysis:a1" },
+        { id: "i2", source: "dataset:d1", target: "analysis:a2" },
+        { id: "o1", source: "analysis:a1", target: "figure:r1:one" },
+        { id: "o2", source: "analysis:a1", target: "figure:r1:two" },
+        { id: "o3", source: "analysis:a2", target: "figure:r2:three" },
+      ],
+    };
+    const positions = layoutCanvas(two);
+    expect(positions["figure:r1:one"].y).toBe(positions["analysis:a1"].y);
+    expect(positions["figure:r1:two"].y).toBeGreaterThan(positions["figure:r1:one"].y);
+    // The second analysis starts below the whole block of the first one.
+    expect(positions["analysis:a2"].y).toBeGreaterThan(positions["figure:r1:two"].y);
+    expect(positions["figure:r2:three"].y).toBe(positions["analysis:a2"].y);
+    expect(positions["dataset:d1"].y).toBe(0);
+  });
+
   it("survives cycles", () => {
     const cyclic: CanvasGraph = { nodes: graph.nodes.slice(1, 3), edges: [{ id: "a", source: "dataset:d1", target: "analysis:a1" }, { id: "b", source: "analysis:a1", target: "dataset:d1" }] };
     expect(() => layoutCanvas(cyclic)).not.toThrow();

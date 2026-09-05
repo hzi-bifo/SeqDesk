@@ -26,7 +26,10 @@ The steps follow the INDIVO Explorer reference implementation
    `top_n` are drawn individually and the rest is summed into "Other".
 
 Samples are ordered by `group`, then `subject`, then `timepoint` (numeric when
-possible), then label; group boundaries are marked in the figure. Sample labels
+possible), then label; group boundaries are marked in the figure. With more
+than 120 samples (`per_group` = `auto`), or when `per_group` = `group`, the
+figure shows the mean composition per group instead of one bar per sample,
+with the number of samples in each bar's label. Sample labels
 come from a `sample_id` column when present, otherwise from the sample role.
 
 ## Input
