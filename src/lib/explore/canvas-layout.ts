@@ -20,6 +20,8 @@ export type CanvasDatasetData = {
   datasetKind: string;
   tableKind: string | null;
   sensitivity: string;
+  /** Where the data came from, shown on the card instead of a separate source box. */
+  origin: string;
   version: number | null;
   rowCount: number;
   columnCount: number;

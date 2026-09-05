@@ -19,7 +19,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Activity, Code2, Database, ExternalLink, FlaskConical, Grid3x3, Image as ImageIcon, LayoutGrid, Map as MapIcon, Maximize2, Minimize2, Play, Sparkle, X } from "lucide-react";
+import { Activity, Code2, Database, ExternalLink, FlaskConical, Grid3x3, Image as ImageIcon, Info, LayoutGrid, Map as MapIcon, Maximize2, Minimize2, Play, Sparkle, X } from "lucide-react";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import { CodeEditor } from "@/components/explore/CodeEditor";
 import { Badge } from "@/components/ui/badge";
@@ -110,6 +110,7 @@ function DatasetNode({ id, data }: NodeProps<DatasetNodeType>) {
           <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
             <span className="tabular-nums">{data.rowCount.toLocaleString()} rows × {data.columnCount} columns</span>
             {data.version !== null && <span>v{data.version}</span>}
+            {data.origin && <span className="basis-full truncate" title={data.origin}>{data.origin}</span>}
             <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">{DATASET_KIND_DEFINITIONS[data.datasetKind as keyof typeof DATASET_KIND_DEFINITIONS]?.label ?? data.datasetKind}</Badge>
             {data.sensitivity !== "standard" && <Badge variant="outline" className="px-1.5 py-0 text-[10px]">{data.sensitivity}</Badge>}
           </div>
@@ -423,6 +424,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
   return (
     <div ref={containerRef} className={cn("relative w-full overflow-hidden rounded-lg border bg-muted/20", className)} style={{ height: fillViewport ? height : 640 }}>
       <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+        <CanvasLegend />
         <Button size="sm" variant="outline" onClick={() => setMinimap(minimap === "shown" ? "hidden" : "shown")} title={minimap === "shown" ? "Hide the overview map" : "Show the overview map"} aria-pressed={minimap === "shown"}>
           <MapIcon className="mr-2 h-4 w-4" />
           Overview
@@ -432,7 +434,6 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
           Arrange
         </Button>
       </div>
-      <CanvasLegend />
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -469,21 +470,40 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
   );
 }
 
-/** What the colours mean; inputs turn into outputs a third of the wheel further along. */
+const LEGEND_ENTRIES: Array<{ hue: number; label: string; note: string }> = [
+  { hue: 140, label: "Inputs", note: "from your data, imports and pipeline runs; a pipeline re-run refreshes them" },
+  { hue: COMPUTE_HUE, label: "Compute", note: "code that turns inputs into outputs; click an arrow to read it" },
+  { hue: 260, label: "Outputs", note: "written by compute; the hue is the input hue turned a third of the wheel" },
+];
+
+/** Three colour dots and an info button; the explanation opens on demand so it never covers cards. */
 function CanvasLegend() {
-  const entries: Array<{ hue: number; label: string; note: string }> = [
-    { hue: 140, label: "Inputs", note: "from your data, imports and pipeline runs; a pipeline re-run refreshes them" },
-    { hue: COMPUTE_HUE, label: "Compute", note: "code that turns inputs into outputs, click an arrow to read it" },
-    { hue: 260, label: "Outputs", note: "written by compute; the hue is the input hue turned a third of the wheel" },
-  ];
+  const [open, setOpen] = useState(false);
   return (
-    <div className="absolute left-3 top-3 z-10 hidden max-w-[360px] rounded-md border bg-card/95 px-3 py-2 text-[11px] shadow-sm md:block">
-      {entries.map((entry) => (
-        <div key={entry.label} className="flex items-start gap-2 py-0.5">
-          <span className="mt-0.5 h-3 w-3 shrink-0 rounded-sm border" style={{ background: tint(entry.hue).header, borderColor: tint(entry.hue).border }} />
-          <span><span className="font-medium">{entry.label}</span> <span className="text-muted-foreground">{entry.note}</span></span>
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-label="What the colours mean"
+        title="What the colours mean"
+        className="inline-flex h-8 items-center gap-1.5 rounded-md border bg-card px-2 text-muted-foreground shadow-xs hover:bg-muted hover:text-foreground"
+      >
+        {LEGEND_ENTRIES.map((entry) => (
+          <span key={entry.label} className="h-2.5 w-2.5 rounded-full border" style={{ background: tint(entry.hue).header, borderColor: tint(entry.hue).border }} />
+        ))}
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-9 z-20 w-[340px] rounded-md border bg-card px-3 py-2 text-[11px] shadow-md" role="note">
+          {LEGEND_ENTRIES.map((entry) => (
+            <div key={entry.label} className="flex items-start gap-2 py-0.5">
+              <span className="mt-0.5 h-3 w-3 shrink-0 rounded-sm border" style={{ background: tint(entry.hue).header, borderColor: tint(entry.hue).border }} />
+              <span><span className="font-medium">{entry.label}</span> <span className="text-muted-foreground">{entry.note}</span></span>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }

@@ -37,9 +37,9 @@ describe("layoutCanvas", () => {
   const graph: CanvasGraph = {
     nodes: [
       { id: "source:study:s1", data: { kind: "source", sourceType: "study", label: "Cohort" } },
-      { id: "dataset:d1", data: { kind: "dataset", datasetId: "d1", name: "Samples", datasetKind: "samples", tableKind: null, sensitivity: "standard", version: 1, rowCount: 3, columnCount: 2, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } },
+      { id: "dataset:d1", data: { kind: "dataset", datasetId: "d1", name: "Samples", datasetKind: "samples", tableKind: null, sensitivity: "standard", origin: "", version: 1, rowCount: 3, columnCount: 2, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } },
       { id: "analysis:a1", data: { kind: "analysis", analysisId: "a1", name: "Summary", kitId: "table-summary", language: "python", revision: 1, codePreview: "print(1)", codeLines: 1, latestRun: null } },
-      { id: "dataset:d2", data: { kind: "dataset", datasetId: "d2", name: "Derived", datasetKind: "derived", tableKind: null, sensitivity: "standard", version: 1, rowCount: 1, columnCount: 1, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } },
+      { id: "dataset:d2", data: { kind: "dataset", datasetId: "d2", name: "Derived", datasetKind: "derived", tableKind: null, sensitivity: "standard", origin: "", version: 1, rowCount: 1, columnCount: 1, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } },
       { id: "figure:r1:overview", data: { kind: "figure", artifactId: "f1", runId: "r1", name: "overview", format: "plotly-json", url: "/x" } },
     ],
     edges: [
@@ -88,12 +88,12 @@ describe("assignCanvasHues", () => {
     const graph: CanvasGraph = {
       nodes: [
         { id: "source:study:s1", data: { kind: "source", sourceType: "study", label: "Cohort" } },
-        { id: "dataset:in", data: { kind: "dataset", datasetId: "in", name: "In", datasetKind: "pipeline-table", tableKind: null, sensitivity: "standard", version: 1, rowCount: 1, columnCount: 1, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } },
+        { id: "dataset:in", data: { kind: "dataset", datasetId: "in", name: "In", datasetKind: "pipeline-table", tableKind: null, sensitivity: "standard", origin: "", version: 1, rowCount: 1, columnCount: 1, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } },
         { id: "analysis:a", data: { kind: "analysis", analysisId: "a", name: "A", kitId: null, language: "python", revision: 1, codePreview: "", codeLines: 0, latestRun: null } },
-        { id: "dataset:out", data: { kind: "dataset", datasetId: "out", name: "Out", datasetKind: "derived", tableKind: null, sensitivity: "standard", version: 1, rowCount: 1, columnCount: 1, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } },
+        { id: "dataset:out", data: { kind: "dataset", datasetId: "out", name: "Out", datasetKind: "derived", tableKind: null, sensitivity: "standard", origin: "", version: 1, rowCount: 1, columnCount: 1, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } },
         { id: "figure:r:f", data: { kind: "figure", artifactId: "f", runId: "r", name: "f", format: "png", url: "/f" } },
         { id: "analysis:b", data: { kind: "analysis", analysisId: "b", name: "B", kitId: null, language: "python", revision: 1, codePreview: "", codeLines: 0, latestRun: null } },
-        { id: "dataset:out2", data: { kind: "dataset", datasetId: "out2", name: "Out 2", datasetKind: "derived", tableKind: null, sensitivity: "standard", version: 1, rowCount: 1, columnCount: 1, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } },
+        { id: "dataset:out2", data: { kind: "dataset", datasetId: "out2", name: "Out 2", datasetKind: "derived", tableKind: null, sensitivity: "standard", origin: "", version: 1, rowCount: 1, columnCount: 1, previewColumns: [], columns: [], roles: {}, previewRows: [], views: [] } },
       ],
       edges: [
         { id: "1", source: "source:study:s1", target: "dataset:in" },
@@ -111,5 +111,17 @@ describe("assignCanvasHues", () => {
     expect(hues["dataset:out"]).toBe(260);
     expect(hues["figure:r:f"]).toBe(260);
     expect(hues["dataset:out2"]).toBe(20);
+  });
+});
+
+describe("originLabel", () => {
+  it("describes where a dataset came from", async () => {
+    const { originLabel } = await import("./canvas");
+    expect(originLabel([{ type: "file", id: "x.tsv", label: "x.tsv" }], "external")).toBe("Imported from x.tsv");
+    expect(originLabel([{ type: "pipeline-run", id: "r1", label: "MET-1" }], "pipeline-table")).toBe("From pipeline run MET-1");
+    expect(originLabel([{ type: "pipeline-run", id: "r1" }, { type: "pipeline-run", id: "r2" }], "pipeline-table")).toBe("From 2 pipeline runs");
+    expect(originLabel([{ type: "study", id: "s1" }], "samples")).toBe("Built from the study");
+    expect(originLabel([{ type: "study", id: "s1" }], "sequencing")).toBe("Sequencing runs of the study");
+    expect(originLabel([], "derived")).toBe("Written by an analysis");
   });
 });

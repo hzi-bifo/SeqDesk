@@ -3,7 +3,7 @@ import { fetchDatasetRows } from "./datasets";
 import { parseInputBindings } from "./analyses";
 import { parseJsonObject, parseRoles, parseSchema } from "./schema";
 import type { ExploreProvenance, ExploreRoleMap } from "./types";
-import { pickPreviewColumns, PREVIEW_ROWS, type CanvasEdge, type CanvasFigureData, type CanvasGraph, type CanvasNode, type CanvasSourceData } from "./canvas-layout";
+import { pickPreviewColumns, PREVIEW_ROWS, type CanvasEdge, type CanvasFigureData, type CanvasGraph, type CanvasNode } from "./canvas-layout";
 
 export * from "./canvas-layout";
 
@@ -29,8 +29,18 @@ export function codePreviewOf(code: string, lines = 5): string {
   return picked.join("\n");
 }
 
-function sourceNodeId(type: string, id: string): string {
-  return `source:${type}:${id}`;
+/** One line saying where a dataset came from. */
+export function originLabel(sources: ExploreProvenance["sources"], datasetKind: string): string {
+  const file = sources.find((source) => source.type === "file");
+  if (file) return `Imported from ${file.label ?? file.id}`;
+  const runs = sources.filter((source) => source.type === "pipeline-run");
+  if (runs.length === 1) return `From pipeline run ${runs[0].label ?? runs[0].id}`;
+  if (runs.length > 1) return `From ${runs.length} pipeline runs`;
+  const study = sources.find((source) => source.type === "study");
+  if (study) return datasetKind === "sequencing" ? "Sequencing runs of the study" : "Built from the study";
+  const order = sources.find((source) => source.type === "order");
+  if (order) return datasetKind === "sequencing" ? "Sequencing runs of the order" : "Built from the sequencing order";
+  return datasetKind === "derived" ? "Written by an analysis" : "";
 }
 
 function provenanceSources(raw: string | null | undefined): ExploreProvenance["sources"] {
@@ -60,7 +70,6 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
 
   const nodes: CanvasNode[] = [];
   const edges: CanvasEdge[] = [];
-  const sourceNodes = new Map<string, CanvasSourceData>();
   const datasetNodeIds = new Set<string>();
   const runToAnalysis = new Map(runs.map((run) => [run.id, run.analysisId] as const));
   const latestRunByAnalysis = new Map<string, (typeof runs)[number]>();
@@ -77,6 +86,10 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
     const nodeId = `dataset:${dataset.id}`;
     datasetNodeIds.add(nodeId);
     const timelineReady = ["sample", "subject", "timepoint", "taxon", "count"].every((role) => Boolean(roles[role as keyof ExploreRoleMap]));
+    const sourceConfig = parseJsonObject(dataset.sourceConfig);
+    const producingRunId = typeof sourceConfig?.runId === "string" ? sourceConfig.runId : null;
+    const producingAnalysis = producingRunId ? runToAnalysis.get(producingRunId) : null;
+    const sources = provenanceSources(current?.provenance);
     nodes.push({
       id: nodeId,
       data: {
@@ -86,6 +99,7 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
         datasetKind: dataset.kind,
         tableKind: dataset.tableKind,
         sensitivity: dataset.sensitivity,
+        origin: producingAnalysis ? "Written by an analysis" : originLabel(sources, dataset.kind),
         version: current?.number ?? null,
         rowCount: current?.rowCount ?? 0,
         columnCount: schema.columns.length,
@@ -97,20 +111,8 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
       },
     });
 
-    const sourceConfig = parseJsonObject(dataset.sourceConfig);
-    const producingRunId = typeof sourceConfig?.runId === "string" ? sourceConfig.runId : null;
-    const producingAnalysis = producingRunId ? runToAnalysis.get(producingRunId) : null;
     if (producingAnalysis) {
       edges.push({ id: `wrote:${producingRunId}:${dataset.id}`, source: `analysis:${producingAnalysis}`, target: nodeId, label: "wrote" });
-      continue;
-    }
-    for (const source of provenanceSources(current?.provenance)) {
-      if (source.type === "artifact" || source.type === "analysis-run" || source.type === "sample") continue;
-      const id = sourceNodeId(source.type, source.id);
-      if (!sourceNodes.has(id)) {
-        sourceNodes.set(id, { kind: "source", sourceType: source.type, label: source.label ?? source.id });
-      }
-      edges.push({ id: `built:${id}:${dataset.id}`, source: id, target: nodeId, label: source.type === "file" ? "imported" : "built from" });
     }
   }
 
@@ -160,7 +162,6 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
     }
   }
 
-  for (const [id, data] of sourceNodes) nodes.unshift({ id, data });
   return { nodes, edges };
 }
 
