@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { Compass, Database, FlaskConical, Loader2, Plus, Upload } from "lucide-react";
+import { Compass, Database, FlaskConical, LayoutGrid, List, Loader2, Plus, Upload } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,8 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
+import { ExploreCanvas } from "@/components/explore/ExploreCanvas";
+import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import { DATASET_KIND_DEFINITIONS, TABLE_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
 import { fetcher, formatDateTime, postJson, SCOPE_STORAGE_KEY } from "@/lib/explore/client";
 import { isValidTargetKey } from "@/lib/explore/target-key";
@@ -43,6 +45,8 @@ interface AnalysisSummary {
   latestRun: { runNumber: string; status: string } | null;
 }
 
+const VIEW_STORAGE_KEY = "seqdesk:explore:view";
+
 export default function ExplorePage() {
   return (
     <Suspense fallback={<PageContainer><Skeleton className="h-8 w-48" /></PageContainer>}>
@@ -57,6 +61,7 @@ function ExploreHome() {
   const requestedScope = searchParams.get("scope");
   const [scope, setScope] = useState<string | null>(null);
   const [building, setBuilding] = useState<string | null>(null);
+  const [view, setView] = useStoredPreference<"list" | "canvas">(VIEW_STORAGE_KEY, "list", ["list", "canvas"]);
 
   const { data: scopesData, error: scopesError, isLoading: scopesLoading } = useSWR<{ scopes: ExploreScope[] }>(
     "/api/explore/scopes",
@@ -144,7 +149,15 @@ function ExploreHome() {
             with code you can read, or open them in a view.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <div className="flex rounded-md border text-xs" role="group" aria-label="View">
+            <button type="button" onClick={() => setView("list")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${view === "list" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={view === "list"}>
+              <List className="h-3.5 w-3.5" /> List
+            </button>
+            <button type="button" onClick={() => setView("canvas")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${view === "canvas" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={view === "canvas"}>
+              <LayoutGrid className="h-3.5 w-3.5" /> Canvas
+            </button>
+          </div>
           <span className="text-sm text-muted-foreground">Scope</span>
           {scopesLoading ? (
             <Skeleton className="h-9 w-64" />
@@ -176,7 +189,32 @@ function ExploreHome() {
         </div>
       )}
 
-      {activeScope && (
+      {activeScope && view === "canvas" && (
+        <div className="mt-6 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">
+              Every dataset, analysis and figure of this scope as a card, connected by where it came from. Expand a dataset card to see more of its table.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/explore/datasets/import?scope=${encodeURIComponent(activeScope.targetKey)}`}>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Import table
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline" disabled={datasets.length === 0}>
+                <Link href={`/explore/analyses/new?scope=${encodeURIComponent(activeScope.targetKey)}`}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  New analysis
+                </Link>
+              </Button>
+            </div>
+          </div>
+          <ExploreCanvas scope={activeScope.targetKey} fillViewport />
+        </div>
+      )}
+
+      {activeScope && view === "list" && (
         <div className="mt-8 space-y-10">
           <section>
             <div className="flex flex-wrap items-center justify-between gap-3">

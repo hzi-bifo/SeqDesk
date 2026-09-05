@@ -84,14 +84,22 @@ function NewAnalysisForm() {
     }
     return defaults;
   }, [kit]);
+  const requestedDatasetId = searchParams.get("dataset");
   const defaultBindings = useMemo(() => {
     const auto: Record<string, string> = {};
+    const requested = requestedDatasetId ? datasets.find((dataset) => dataset.id === requestedDatasetId) : undefined;
+    let requestedUsed = false;
     for (const input of inputs) {
+      if (requested && !requestedUsed && datasetFits(requested, input).ok) {
+        auto[input.alias] = requested.id;
+        requestedUsed = true;
+        continue;
+      }
       const match = datasets.find((dataset) => datasetFits(dataset, input).ok);
       if (match) auto[input.alias] = match.id;
     }
     return auto;
-  }, [inputs, datasets]);
+  }, [inputs, datasets, requestedDatasetId]);
   const params = useMemo(
     () => ({ ...defaultParams, ...(paramOverrides.kitId === kitId ? paramOverrides.values : {}) }),
     [defaultParams, paramOverrides, kitId]
