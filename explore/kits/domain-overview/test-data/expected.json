@@ -1,0 +1,38 @@
+{
+  "artifacts": [
+    {
+      "name": "domain_per_sample",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "domain_by_group",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "top_taxa_per_domain",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "domain_shares",
+      "kind": "figure",
+      "format": "plotly-json"
+    },
+    {
+      "name": "minor_domain_taxa",
+      "kind": "figure",
+      "format": "plotly-json"
+    }
+  ],
+  "metrics": {
+    "n_samples": 12,
+    "domain_column": "superkingdom",
+    "dominant_domain": "Bacteria",
+    "n_artifact_taxa_removed": 2
+  },
+  "notes_contain": [
+    "artifact"
+  ]
+}

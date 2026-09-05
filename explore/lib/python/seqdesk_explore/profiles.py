@@ -184,6 +184,15 @@ def emit_notes(prepared: PreparedProfile) -> None:
     sx.metric("n_samples_dropped", prepared.n_samples_dropped)
 
 
+def marked_label(taxon: str) -> str:
+    """The taxon with a marker in its curation-list colour, for legends and axis labels."""
+    memberships = sx.curated_memberships(taxon)
+    if not memberships:
+        return taxon
+    color = next((str(entry["color"]) for entry in memberships if entry.get("color")), None)
+    return f'<span style="color:{color}">&#9679;</span> {taxon}' if color else f"{taxon} (curated)"
+
+
 def shannon(row: np.ndarray) -> float:
     """Shannon entropy (natural log) of one sample's abundances."""
     p = np.asarray(row, float)

@@ -1,0 +1,40 @@
+{
+  "kitVersion": 1,
+  "id": "domain-overview",
+  "name": "Domain overview",
+  "description": "How reads split between bacteria, viruses, fungi and other domains. Uses a superkingdom (domain, kingdom) column of a long profile table to summarise every sample at the top of the taxonomy, compares the domains between groups and lists the most prevalent taxa of the smaller domains, so a virome or mycobiome check needs no extra table.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [
+    {
+      "alias": "profiles",
+      "label": "Taxon profiles (long)",
+      "description": "One row per taxon per sample with read counts and a column naming the taxon's superkingdom or domain. Group, subject and timepoint roles are carried into the per-sample table.",
+      "tableKind": "taxon-profile-long",
+      "requiredRoles": ["sample", "taxon", "count"],
+      "optionalRoles": ["group", "subject", "timepoint", "taxon_id", "rank"]
+    }
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "domain_column": { "type": "string", "title": "Domain column", "description": "The column naming each taxon's domain; auto picks superkingdom, domain or kingdom.", "default": "auto" },
+      "top_n": { "type": "integer", "title": "Taxa per domain", "description": "How many of the most prevalent taxa each domain lists.", "default": 10, "minimum": 3, "maximum": 50 },
+      "rank": { "type": "string", "title": "Taxonomic rank", "description": "When the table maps a rank role, use taxa of this rank only.", "default": "species" },
+      "min_reads": { "type": "number", "title": "Minimum reads per sample", "description": "Samples with fewer retained reads are dropped; 0 keeps every sample.", "default": 0, "minimum": 0 },
+      "remove_artifacts": { "type": "boolean", "title": "Remove curated artifacts", "description": "Drop taxa on curation lists with the artifact role first.", "default": true }
+    }
+  },
+  "outputs": [
+    { "name": "domain_per_sample", "kind": "table", "description": "One row per sample: share of reads and number of taxa per domain, the dominant domain, plus group, subject and timepoint." },
+    { "name": "domain_by_group", "kind": "table", "description": "Per group and domain: samples, samples with the domain, mean, median and maximum share." },
+    { "name": "top_taxa_per_domain", "kind": "table", "description": "The most prevalent taxa of every domain with prevalence, mean and maximum relative abundance and curated role." },
+    { "name": "domain_shares", "kind": "figure", "description": "Share of reads per domain as box plots per group." },
+    { "name": "minor_domain_taxa", "kind": "figure", "description": "The most prevalent taxa of the domains other than the largest one, such as viruses and fungi." }
+  ],
+  "citation": "Built with pandas, NumPy and Plotly. Domains follow the superkingdom of the NCBI Taxonomy (Schoch et al. 2020). See README.md.",
+  "tags": ["microbiome", "virome", "mycobiome", "superkingdom", "taxon-profile"],
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}

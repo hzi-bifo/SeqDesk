@@ -22,7 +22,28 @@
         "pytest"
       ]
     },
+    "community-signatures": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "community-stability": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
     "differential-abundance": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "domain-overview": {
       "tier": "required",
       "proofs": [
         "validate",
@@ -45,6 +66,13 @@
       ]
     },
     "taxon-composition": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "taxon-cooccurrence": {
       "tier": "required",
       "proofs": [
         "validate",

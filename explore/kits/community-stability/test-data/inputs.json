@@ -1,0 +1,55 @@
+{
+  "inputs": {
+    "profiles": {
+      "path": "inputs/profiles.tsv",
+      "schemaPath": "inputs/profiles.schema.json",
+      "tableKind": "taxon-profile-long",
+      "roles": {
+        "sample": "sample_db_id",
+        "subject": "subject",
+        "timepoint": "relDay",
+        "group": "sampletype",
+        "taxon": "speciesName",
+        "taxon_id": "speciesTaxID",
+        "rank": "taxRank",
+        "count": "numReads",
+        "value": "abundance"
+      },
+      "datasetId": "ds_profiles_test",
+      "versionId": "ds_profiles_test_v1",
+      "rowCount": 123,
+      "name": "MetaxPath per-sample profiles"
+    }
+  },
+  "params": {
+    "metric": "braycurtis",
+    "within_group_only": true,
+    "max_gap": 0,
+    "rank": "species",
+    "min_reads": 0,
+    "remove_artifacts": true
+  },
+  "outputDir": "outputs",
+  "run": {
+    "id": "run_alpha_test",
+    "runNumber": "EXP-20260905-102",
+    "analysisId": "analysis_alpha_test",
+    "revision": 1
+  },
+  "curation": {
+    "lists": [
+      {
+        "listId": "cur_artifacts",
+        "label": "Known artifacts",
+        "role": "artifact",
+        "site": null,
+        "tier": null,
+        "color": "#9E9E9E",
+        "entries": [
+          "Homo sapiens",
+          "Pseudomonas phage phiKZ"
+        ]
+      }
+    ]
+  }
+}

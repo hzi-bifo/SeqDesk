@@ -1,0 +1,40 @@
+{
+  "kitVersion": 1,
+  "id": "taxon-cooccurrence",
+  "name": "Taxon co-occurrence",
+  "description": "Which taxa are found together and which exclude each other. For the most prevalent taxa of a long profile table, every pair is scored on presence across samples: phi coefficient, lift and Fisher's exact test with Benjamini-Hochberg control. The heatmap clusters taxa by their co-occurrence so groups that travel together become visible.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [
+    {
+      "alias": "profiles",
+      "label": "Taxon profiles (long)",
+      "description": "One row per taxon per sample with read counts. A group role allows restricting the analysis to one group.",
+      "tableKind": "taxon-profile-long",
+      "requiredRoles": ["sample", "taxon", "count"],
+      "optionalRoles": ["group", "subject", "timepoint", "taxon_id", "rank"]
+    }
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "top_n": { "type": "integer", "title": "Taxa to compare", "description": "The most prevalent taxa that enter the pairwise comparison.", "default": 30, "minimum": 2, "maximum": 80 },
+      "min_prevalence_pct": { "type": "number", "title": "Minimum prevalence (%)", "description": "Taxa present in fewer samples are left out.", "default": 10, "minimum": 0, "maximum": 100 },
+      "group": { "type": "string", "title": "Restrict to group", "description": "A value of the group role; empty uses every sample.", "default": "" },
+      "q_threshold": { "type": "number", "title": "Significance (q)", "description": "Pairs with a Benjamini-Hochberg q below this are flagged.", "default": 0.05, "minimum": 0.0001, "maximum": 1 },
+      "rank": { "type": "string", "title": "Taxonomic rank", "description": "When the table maps a rank role, use taxa of this rank only.", "default": "species" },
+      "min_reads": { "type": "number", "title": "Minimum reads per sample", "description": "Samples with fewer retained reads are dropped; 0 keeps every sample.", "default": 0, "minimum": 0 },
+      "remove_artifacts": { "type": "boolean", "title": "Remove curated artifacts", "description": "Drop taxa on curation lists with the artifact role first.", "default": true }
+    }
+  },
+  "outputs": [
+    { "name": "cooccurrence_pairs", "kind": "table", "description": "One row per taxon pair: counts of the four presence combinations, phi, lift, Fisher p, q, relation and curated roles." },
+    { "name": "cooccurrence_heatmap", "kind": "figure", "description": "Phi between every pair of the compared taxa, taxa ordered by clustering." },
+    { "name": "strongest_pairs", "kind": "figure", "description": "The pairs with the smallest q as bars of phi: blue co-occur, red exclude." }
+  ],
+  "citation": "Built with pandas, NumPy, SciPy (Virtanen et al. 2020) and Plotly. Phi coefficient (Yule 1912), Fisher's exact test (Fisher 1922), Benjamini-Hochberg (1995); average-linkage clustering of 1 - phi. See README.md.",
+  "tags": ["microbiome", "co-occurrence", "network", "taxon-profile"],
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}

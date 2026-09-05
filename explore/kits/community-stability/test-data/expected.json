@@ -1,0 +1,32 @@
+{
+  "artifacts": [
+    {
+      "name": "sample_pairs",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "subject_stability",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "turnover_vs_gap",
+      "kind": "figure",
+      "format": "plotly-json"
+    },
+    {
+      "name": "stability_by_group",
+      "kind": "figure",
+      "format": "plotly-json"
+    }
+  ],
+  "metrics": {
+    "n_samples": 12,
+    "metric": "braycurtis",
+    "n_artifact_taxa_removed": 2
+  },
+  "notes_contain": [
+    "artifact"
+  ]
+}
