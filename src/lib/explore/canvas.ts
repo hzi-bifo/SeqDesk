@@ -6,7 +6,7 @@ import { viewRoleHints } from "./dataset-kinds";
 import { parseStoredBlocks } from "./report-blocks";
 import { parseJsonObject, parseRoles, parseSchema } from "./schema";
 import type { ExploreProvenance, ExploreRoleMap } from "./types";
-import { pickPreviewColumns, PREVIEW_ROWS, usedColumnKeys, type CanvasEdge, type CanvasFigureData, type CanvasGraph, type CanvasNode, type CanvasParamsSchema } from "./canvas-layout";
+import { BUILT_IN_VIEWS, pickPreviewColumns, PREVIEW_ROWS, usedColumnKeys, type CanvasEdge, type CanvasFigureData, type CanvasGraph, type CanvasNode, type CanvasParamsSchema } from "./canvas-layout";
 
 const ACTIVE_RUN = new Set(["pending", "queued", "running"]);
 
@@ -78,6 +78,7 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
   const reportBlocks = storedReport ? parseStoredBlocks(storedReport.blocks) : null;
   const reportFigures = new Set(reportBlocks?.filter((block) => block.type === "figure").map((block) => `${block.analysisId}:${block.figureName}`) ?? []);
   const reportTables = new Set(reportBlocks?.filter((block) => block.type === "table").map((block) => block.datasetId) ?? []);
+  const reportViews = new Set(reportBlocks?.filter((block) => block.type === "view").map((block) => `${block.datasetId}:${block.view}`) ?? []);
   const figureInReport = (analysisId: string, name: string) => (reportBlocks ? reportFigures.has(`${analysisId}:${name}`) : true);
   const tableInReport = (datasetId: string, derived: boolean) => (reportBlocks ? reportTables.has(datasetId) : derived);
 
@@ -177,6 +178,25 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
 
     if (producingAnalysis) {
       edges.push({ id: `wrote:${producingAnalysis}:${dataset.id}`, source: `analysis:${producingAnalysis}`, target: nodeId, label: "wrote" });
+    }
+    // Built-in views are elements of their own: drawn from the table, placeable on the report.
+    if (timelineReady) {
+      for (const view of ["subject-timeline", "heatmap"] as const) {
+        const viewNodeId = `view:${dataset.id}:${view}`;
+        nodes.push({
+          id: viewNodeId,
+          data: {
+            kind: "view",
+            datasetId: dataset.id,
+            view,
+            name: BUILT_IN_VIEWS[view].label,
+            tableName: dataset.name,
+            url: `/explore/datasets/${dataset.id}/${view}`,
+            inReport: reportBlocks ? reportViews.has(`${dataset.id}:${view}`) : false,
+          },
+        });
+        edges.push({ id: viewNodeId, source: nodeId, target: viewNodeId, label: "built-in view" });
+      }
     }
   }
 

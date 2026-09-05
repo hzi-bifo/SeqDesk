@@ -83,7 +83,20 @@ const MetricBlockSchema = z
   })
   .strict();
 
-export const ReportBlockSchema = z.discriminatedUnion("type", [TextBlockSchema, FigureBlockSchema, TableBlockSchema, ChartBlockSchema, MetricBlockSchema]);
+export const BUILT_IN_VIEW_IDS = ["subject-timeline", "heatmap"] as const;
+
+const ViewBlockSchema = z
+  .object({
+    id: BlockId,
+    type: z.literal("view"),
+    datasetId: z.string().min(1).max(80),
+    view: z.enum(BUILT_IN_VIEW_IDS),
+    caption: z.string().max(500).optional(),
+    span: Span,
+  })
+  .strict();
+
+export const ReportBlockSchema = z.discriminatedUnion("type", [TextBlockSchema, FigureBlockSchema, TableBlockSchema, ChartBlockSchema, MetricBlockSchema, ViewBlockSchema]);
 export const ReportInputSchema = z.object({ title: z.string().trim().min(1).max(200), blocks: z.array(ReportBlockSchema).max(MAX_REPORT_BLOCKS) }).strict();
 
 export type ReportBlock = z.infer<typeof ReportBlockSchema>;
@@ -95,6 +108,10 @@ export function figureBlockId(analysisId: string, figureName: string): string {
 
 export function tableBlockId(datasetId: string): string {
   return `table:${datasetId}`;
+}
+
+export function viewBlockId(datasetId: string, view: string): string {
+  return `view:${datasetId}:${view}`;
 }
 
 /** Stored blocks are validated on the way out too: a block the code no longer understands is dropped, not crashed on. */

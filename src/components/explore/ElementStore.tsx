@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { cn } from "@/lib/utils";
 
 /** The little pictures on the tiles: a sketch of what the element will look like. */
-export type SketchKind = "text" | "histogram" | "bar" | "scatter" | "box" | "numbers" | "table" | "figure" | "samples" | "sequencing" | "pipeline" | "import" | "analysis";
+export type SketchKind = "text" | "histogram" | "bar" | "scatter" | "box" | "numbers" | "table" | "figure" | "samples" | "sequencing" | "pipeline" | "import" | "analysis" | "timeline" | "heatmap";
 
 export interface StoreItem {
   id: string;
@@ -183,6 +183,29 @@ function Sketch({ kind }: { kind: SketchKind }): ReactNode {
         <svg {...common}>
           <path d="M48 8v26M38 24l10 10 10-10" stroke={stroke} strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
           <path d="M14 40v6a2 2 0 0 0 2 2h64a2 2 0 0 0 2-2v-6" stroke={stroke} strokeWidth="2" fill="none" strokeLinecap="round" />
+        </svg>
+      );
+    case "timeline":
+      return (
+        <svg {...common}>
+          {[14, 28, 42].map((y, row) => (
+            <g key={row}>
+              <path d={`M12 ${y}h72`} stroke={stroke} strokeWidth="1" opacity="0.3" />
+              {[16, 30, 41, 58, 70, 82].filter((_, i) => (i + row) % 2 === 0 || row === 1).map((x) => (
+                <circle key={x} cx={x} cy={y} r="3" fill={stroke} opacity={0.5 + ((x + row) % 3) * 0.2} />
+              ))}
+            </g>
+          ))}
+        </svg>
+      );
+    case "heatmap":
+      return (
+        <svg {...common}>
+          {Array.from({ length: 5 }, (_, row) =>
+            Array.from({ length: 9 }, (_, col) => (
+              <rect key={`${row}-${col}`} x={8 + col * 9} y={6 + row * 9} width="8" height="8" rx="1" fill={stroke} opacity={0.15 + ((row * 3 + col * 5) % 7) * 0.12} />
+            ))
+          )}
         </svg>
       );
     case "analysis":

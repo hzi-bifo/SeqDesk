@@ -20,6 +20,9 @@ import {
 import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
+import { HeatmapView } from "@/components/explore/views/HeatmapView";
+import { SubjectTimelineOverview } from "@/components/explore/views/SubjectTimelineOverview";
+import { BUILT_IN_VIEWS, type BuiltInView } from "@/lib/explore/canvas-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -63,6 +66,7 @@ function toInput(report: ReportView): ReportInput {
         return { id: block.id, type: "chart", datasetId: block.datasetId, chart: block.chart, x: block.x, y: block.y, color: block.color, caption: block.caption, span: block.span };
       }
       if (block.type === "metric") return { id: block.id, type: "metric", datasetId: block.datasetId, column: block.column, stats: block.stats, label: block.label, span: block.span };
+      if (block.type === "view") return { id: block.id, type: "view", datasetId: block.datasetId, view: block.view, caption: block.caption, span: block.span };
       return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
     }),
   };
@@ -116,6 +120,7 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
   const blocks: ReportBlock[] = draft ? draft.blocks : report.blocks;
   const usedFigures = new Set(blocks.filter((block) => block.type === "figure").map((block) => figureKey(block.analysisId, block.figureName)));
   const usedTables = new Set(blocks.filter((block) => block.type === "table").map((block) => block.datasetId));
+  const usedViews = new Set(blocks.filter((block) => block.type === "view").map((block) => `${block.datasetId}:${block.view}`));
 
   const update = (mutator: (blocks: ReportBlock[]) => ReportBlock[]) =>
     setDraft((current) => (current ? { ...current, blocks: mutator(current.blocks) } : current));
@@ -143,6 +148,26 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
         { id: "box", title: "Box plot", hint: "A numeric column per group", sketch: "box", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "box" } as ReportBlock) },
         { id: "metric", title: "Numbers", hint: "Count, mean, min, max of one column", sketch: "numbers", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock(defaultMetricBlock(report.outputs.tables)) },
       ],
+    },
+    {
+      label: "Built-in views",
+      empty: "Map sample, subject, timepoint, taxon and count roles on a table to unlock these.",
+      items: (["subject-timeline", "heatmap"] as const).flatMap((view) =>
+        report.outputs.tables
+          .filter((table) => table.views.includes(view))
+          .map((table) => {
+            const used = usedViews.has(`${table.datasetId}:${view}`);
+            return {
+              id: `${table.datasetId}:${view}`,
+              title: BUILT_IN_VIEWS[view].label,
+              hint: table.name,
+              sketch: view === "heatmap" ? ("heatmap" as const) : ("timeline" as const),
+              badge: used ? "added" : undefined,
+              disabled: used,
+              onSelect: () => addBlock({ id: `view:${table.datasetId}:${view}`, type: "view", datasetId: table.datasetId, view, caption: `${BUILT_IN_VIEWS[view].label} of ${table.name}`, span: 2 }),
+            };
+          })
+      ),
     },
     {
       label: "Figures from your analyses",
@@ -318,7 +343,7 @@ interface ReportBlockCardProps {
   tables: ReportTable[];
 }
 
-const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers" };
+const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View" };
 
 function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, tables }: ReportBlockCardProps) {
   const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
@@ -376,6 +401,14 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
             <Caption editing={editing} value={block.caption ?? ""} fallback={chartTitle(block, tables)} onChange={(caption) => onPatch({ caption })} />
             {editing && <ChartControls block={block} tables={tables} onPatch={onPatch} />}
             <ChartBlockView block={block} table={tables.find((table) => table.datasetId === block.datasetId) ?? null} />
+          </>
+        )}
+
+        {block.type === "view" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={viewTitle(block, tables)} onChange={(caption) => onPatch({ caption })} />
+            {editing && <ViewControls block={block} tables={tables} onPatch={onPatch} />}
+            <ViewBlockView block={block} table={tables.find((table) => table.datasetId === block.datasetId) ?? null} scopeQuery={scopeQuery} />
           </>
         )}
 
@@ -718,6 +751,72 @@ function MetricBlockView({ block, table }: { block: MetricBlock; table: ReportTa
         {table.name}
         {data.total > data.rows.length ? `, first ${data.rows.length.toLocaleString()} of ${data.total.toLocaleString()} rows` : ""}
       </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Built-in views: the subject timeline and the heatmap, drawn from a table.
+// ---------------------------------------------------------------------------
+
+type ViewBlock = Extract<ReportBlock, { type: "view" }>;
+
+function viewTitle(block: ViewBlock, tables: ReportTable[]): string {
+  const table = tables.find((entry) => entry.datasetId === block.datasetId);
+  return `${BUILT_IN_VIEWS[block.view].label}${table ? ` of ${table.name}` : ""}`;
+}
+
+function ViewControls({ block, tables, onPatch }: { block: ViewBlock; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  const candidates = tables.filter((table) => table.views.length > 0);
+  const patch = (values: Partial<ViewBlock>) => onPatch(values as Partial<ReportBlock>);
+  return (
+    <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-2">
+      <label className="space-y-1 text-[11px] text-muted-foreground">
+        <span>Table</span>
+        <TableSelect value={block.datasetId} tables={candidates} onChange={(datasetId) => patch({ datasetId })} />
+      </label>
+      <label className="space-y-1 text-[11px] text-muted-foreground">
+        <span>View</span>
+        <Select value={block.view} onValueChange={(view) => patch({ view: view as BuiltInView })}>
+          <SelectTrigger className="h-8 text-xs" aria-label="View"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {(Object.entries(BUILT_IN_VIEWS) as Array<[BuiltInView, { label: string; description: string }]>).map(([id, meta]) => (
+              <SelectItem key={id} value={id}>
+                {meta.label}
+                <span className="ml-1.5 text-xs text-muted-foreground">{meta.description}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </label>
+    </div>
+  );
+}
+
+function ViewBlockView({ block, table, scopeQuery }: { block: ViewBlock; table: ReportTable | null; scopeQuery: string }) {
+  if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
+  if (!table.views.includes(block.view)) {
+    return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{table.name} lacks the roles this view needs (sample, subject, timepoint, taxon and count).</div>;
+  }
+  return (
+    <div>
+      {block.view === "heatmap" ? (
+        <HeatmapView datasetId={block.datasetId} height={420} />
+      ) : (
+        <div className="max-h-[420px] overflow-y-auto rounded-md border">
+          <SubjectTimelineOverview datasetId={block.datasetId} />
+        </div>
+      )}
+      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+        <span>{table.name}</span>
+        <span className="flex-1" />
+        <Link href={`/explore${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`view:${block.datasetId}:${block.view}`)}`} className="inline-flex items-center gap-1 hover:underline">
+          <LayoutGrid className="h-3 w-3" /> Show on canvas
+        </Link>
+        <Link href={`/explore/datasets/${block.datasetId}/${block.view}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">
+          Open <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
     </div>
   );
 }

@@ -18,7 +18,14 @@ export interface CanvasRoleHint {
   missing: ExploreRole[];
 }
 
-export type CanvasNodeKind = "source" | "dataset" | "analysis" | "figure" | "pending";
+export type CanvasNodeKind = "source" | "dataset" | "analysis" | "figure" | "pending" | "view";
+
+/** The views SeqDesk draws from a table without an analysis. */
+export type BuiltInView = "subject-timeline" | "heatmap";
+export const BUILT_IN_VIEWS: Record<BuiltInView, { label: string; description: string }> = {
+  "subject-timeline": { label: "Subject timeline", description: "Sampling days and community composition per subject" },
+  heatmap: { label: "Heatmap", description: "Taxa by samples, ordered by specimen type, subject and day" },
+};
 
 export type CanvasSourceData = {
   kind: "source";
@@ -96,6 +103,19 @@ export type CanvasFigureData = {
   refreshing?: boolean;
 }
 
+/** A built-in view drawn straight from a table: no analysis, no run, always current. */
+export type CanvasViewData = {
+  kind: "view";
+  datasetId: string;
+  view: BuiltInView;
+  name: string;
+  /** Name of the table it reads. */
+  tableName: string;
+  url: string;
+  /** True when the report page shows this view. */
+  inReport?: boolean;
+};
+
 /** Placeholder for outputs of a run that has not finished yet. */
 export type CanvasPendingData = {
   kind: "pending";
@@ -105,7 +125,7 @@ export type CanvasPendingData = {
   status: string;
 }
 
-export type CanvasNodeData = CanvasSourceData | CanvasDatasetData | CanvasAnalysisData | CanvasFigureData | CanvasPendingData;
+export type CanvasNodeData = CanvasSourceData | CanvasDatasetData | CanvasAnalysisData | CanvasFigureData | CanvasPendingData | CanvasViewData;
 
 export interface CanvasNode {
   id: string;
@@ -178,6 +198,7 @@ export const CANVAS_SIZES: Record<CanvasNodeKind, { width: number; height: numbe
   analysis: { width: 300, height: 190 },
   figure: { width: 280, height: 210 },
   pending: { width: 280, height: 210 },
+  view: { width: 300, height: 230 },
 };
 export const CANVAS_EXPANDED_DATASET = { width: 680, height: 480 };
 export const CANVAS_MIN_SIZES: Record<CanvasNodeKind, { width: number; height: number }> = {
@@ -186,6 +207,7 @@ export const CANVAS_MIN_SIZES: Record<CanvasNodeKind, { width: number; height: n
   analysis: { width: 240, height: 130 },
   figure: { width: 180, height: 140 },
   pending: { width: 180, height: 140 },
+  view: { width: 220, height: 150 },
 };
 
 /** The size a node renders at: user size, else expanded preset, else the default. */
@@ -196,7 +218,7 @@ export function nodeSize(node: CanvasNode, options: Pick<LayoutOptions, "expande
   return CANVAS_SIZES[node.data.kind];
 }
 
-const BASE_RANK: Record<CanvasNodeKind, number> = { source: 0, dataset: 1, analysis: 2, figure: 3, pending: 3 };
+const BASE_RANK: Record<CanvasNodeKind, number> = { source: 0, dataset: 1, analysis: 2, figure: 3, pending: 3, view: 2 };
 
 /**
  * Rank every node by the longest path from a root, never below the base rank
@@ -301,6 +323,11 @@ export function assignCanvasHues(graph: CanvasGraph): Record<string, number | nu
       value = COMPUTE_HUE;
     } else if (node.data.kind === "figure" || node.data.kind === "pending") {
       value = outputHue(id);
+    } else if (node.data.kind === "view") {
+      // Drawn from the table directly: the table's hue turned like any output.
+      const table = (incoming.get(id) ?? []).find((parent) => byId.get(parent)?.data.kind === "dataset");
+      const tableHue = table ? hueOf(table) : null;
+      value = ((tableHue ?? 250) + OUTPUT_TURN) % 360;
     } else {
       const producer = (incoming.get(id) ?? []).find((parent) => byId.get(parent)?.data.kind === "analysis");
       value = producer ? outputHue(id) : ROOT_DATASET_HUES[node.data.datasetKind] ?? 250;

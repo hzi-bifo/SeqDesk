@@ -14,6 +14,7 @@ import type { ExploreColumn, ExploreRowData } from "./types";
 export const REPORT_TABLE_ROWS = 12;
 export {
   figureBlockId,
+  viewBlockId,
   MAX_REPORT_BLOCKS,
   parseStoredBlocks,
   ReportBlockSchema,
@@ -48,6 +49,8 @@ export interface ReportTable {
   latestWrite: { runNumber: string; changed: boolean } | null;
   /** Columns a chart or a numbers block can pick from. */
   columns: ExploreColumn[];
+  /** Built-in views the table's roles allow. */
+  views: string[];
 }
 
 /** What a chart or numbers block needs to know about its table; the rows come from the rows API. */
@@ -79,7 +82,8 @@ export type ResolvedReportBlock =
   | (Extract<ReportBlock, { type: "figure" }> & { figure: ReportFigure | null })
   | (Extract<ReportBlock, { type: "table" }> & { table: ReportTableContent | null })
   | (Extract<ReportBlock, { type: "chart" }> & { table: ReportTableMeta | null })
-  | (Extract<ReportBlock, { type: "metric" }> & { table: ReportTableMeta | null });
+  | (Extract<ReportBlock, { type: "metric" }> & { table: ReportTableMeta | null })
+  | (Extract<ReportBlock, { type: "view" }> & { table: ReportTableMeta | null; available: boolean });
 
 export interface ReportView {
   id: string | null;
@@ -131,6 +135,7 @@ export async function collectReportOutputs(targetKey: string): Promise<ReportOut
         version: node.data.version,
         latestWrite: node.data.latestWrite ?? null,
         columns: node.data.columns.filter((column) => !column.key.endsWith("_db_id")),
+        views: node.data.views,
       });
     }
   }
@@ -185,6 +190,7 @@ export async function resolveReportBlocks(blocks: ReportBlock[], outputs: Report
       if (block.type === "text") return block;
       if (block.type === "figure") return { ...block, figure: figureByKey.get(`${block.analysisId}:${block.figureName}`) ?? null };
       if (block.type === "chart" || block.type === "metric") return { ...block, table: metaOf(block.datasetId) };
+      if (block.type === "view") return { ...block, table: metaOf(block.datasetId), available: Boolean(tableById.get(block.datasetId)?.views.includes(block.view)) };
       return { ...block, table: tableById.has(block.datasetId) ? await loadTable(block.datasetId, block.rows ?? REPORT_TABLE_ROWS) : null };
     })
   );

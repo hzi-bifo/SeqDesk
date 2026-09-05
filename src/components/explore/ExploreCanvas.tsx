@@ -41,6 +41,7 @@ import {
   Map as MapIcon,
   Maximize2,
   Minimize2,
+  MoreHorizontal,
   Play,
   Plus,
   Save,
@@ -51,6 +52,8 @@ import {
   X,
 } from "lucide-react";
 import { AddDataMenu } from "@/components/explore/AddDataMenu";
+import { HeatmapView } from "@/components/explore/views/HeatmapView";
+import { SubjectTimelineOverview } from "@/components/explore/views/SubjectTimelineOverview";
 import { CodeEditor } from "@/components/explore/CodeEditor";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { Badge } from "@/components/ui/badge";
@@ -81,9 +84,11 @@ import {
   type CanvasParamsSchema,
   type CanvasPendingData,
   type CanvasSourceData,
+  type CanvasViewData,
+  type BuiltInView,
 } from "@/lib/explore/canvas-layout";
 import { DATASET_KIND_DEFINITIONS, TABLE_KIND_DEFINITIONS, datasetFitsInput } from "@/lib/explore/dataset-kinds";
-import { figureBlockId, tableBlockId, type ReportBlock } from "@/lib/explore/report-blocks";
+import { figureBlockId, tableBlockId, viewBlockId, type ReportBlock } from "@/lib/explore/report-blocks";
 import type { ReportView } from "@/lib/explore/reports";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import type { ExploreRole, ExploreRowRecord } from "@/lib/explore/types";
@@ -99,12 +104,19 @@ export interface KitSummary {
 }
 
 /** What the report can be asked to include or drop from a card. */
-export type ReportTarget = { type: "figure"; analysisId: string; figureName: string; label: string } | { type: "table"; datasetId: string; label: string };
+export type ReportTarget =
+  | { type: "figure"; analysisId: string; figureName: string; label: string }
+  | { type: "table"; datasetId: string; label: string }
+  | { type: "view"; datasetId: string; view: BuiltInView; label: string };
+
+/** Delete a table or an analysis from the "..." menu of its card. */
+type Deletable = { onDelete: (kind: "dataset" | "analysis", id: string, name: string) => Promise<void> };
 
 /** True when an arrow ends on this card, so its target dot can hide behind the arrowhead. */
 type Wired = { hasInput?: boolean };
 
-type CardActions = Wired & {
+type CardActions = Wired &
+  Deletable & {
   scopeQuery: string;
   onPreset: (id: string, size: { width: number; height: number }) => void;
   /** Start an analysis reading this table; `placeAt` puts the new card there (flow coordinates). */
@@ -120,13 +132,15 @@ type CardActions = Wired & {
 type DatasetNodeType = Node<CanvasDatasetData & CardActions & { hue: number }, "dataset">;
 type AnalysisNodeType = Node<
   CanvasAnalysisData &
-    Wired & { hue: number; scopeQuery: string; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void>; onSaveParams: (analysisId: string, params: Record<string, unknown>) => Promise<void> },
+    Wired &
+    Deletable & { hue: number; scopeQuery: string; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void>; onSaveParams: (analysisId: string, params: Record<string, unknown>) => Promise<void> },
   "analysis"
 >;
+type ViewNodeType = Node<CanvasViewData & Wired & { hue: number; scopeQuery: string; onToggleReport: (target: ReportTarget) => Promise<void> }, "view">;
 type SourceNodeType = Node<CanvasSourceData, "source">;
 type FigureNodeType = Node<CanvasFigureData & Wired & { hue: number; scopeQuery: string; justUpdated?: boolean; onToggleReport: (target: ReportTarget) => Promise<void> }, "figure">;
 type PendingNodeType = Node<CanvasPendingData & Wired & { hue: number; scopeQuery: string }, "pending">;
-type CanvasFlowNode = DatasetNodeType | AnalysisNodeType | SourceNodeType | FigureNodeType | PendingNodeType;
+type CanvasFlowNode = DatasetNodeType | AnalysisNodeType | SourceNodeType | FigureNodeType | PendingNodeType | ViewNodeType;
 
 const MAX_FETCHED_ROWS = 200;
 const COLUMN_WIDTH = CANVAS_COLUMN_WIDTH;
@@ -205,6 +219,36 @@ function OverflowChip({ children, colours }: { children: React.ReactNode; colour
   return <CardChip colours={colours}>{children}</CardChip>;
 }
 
+/** The "..." menu every card carries: open, report and delete actions. */
+function CardMenu({ items }: { items: Array<{ label: string; href?: string; onSelect?: () => void; destructive?: boolean; external?: boolean }> }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className="nodrag rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="More actions" title="More actions">
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        {items.map((item) =>
+          item.href ? (
+            <DropdownMenuItem key={item.label} asChild>
+              {item.external ? (
+                <a href={item.href} target="_blank" rel="noreferrer">{item.label}</a>
+              ) : (
+                <Link href={item.href}>{item.label}</Link>
+              )}
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem key={item.label} onSelect={item.onSelect} className={item.destructive ? "text-destructive focus:text-destructive" : undefined}>
+              {item.label}
+            </DropdownMenuItem>
+          )
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /**
  * A dataset card: a real fragment of the table plus chips that say how much
  * is hidden on each axis. Columns worth seeing (the preview picks and every
@@ -279,11 +323,22 @@ function DatasetNode({ id, data, width, height, positionAbsoluteX, positionAbsol
           type="button"
           onClick={() => data.onPreset(id, expanded ? CANVAS_SIZES.dataset : CANVAS_EXPANDED_DATASET)}
           className="nodrag rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-          aria-label={expanded ? "Collapse dataset" : "Expand dataset"}
+          aria-label={expanded ? "Collapse table" : "Expand table"}
           title={expanded ? "Back to the small card" : "Grow the card; drag a corner for any other size"}
         >
           {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </button>
+        <CardMenu
+          items={[
+            { label: "Open table", href: `/explore/datasets/${data.datasetId}${data.scopeQuery}` },
+            { label: "Columns and roles", href: `/explore/datasets/${data.datasetId}${data.scopeQuery}&tab=columns` },
+            { label: "Edits", href: `/explore/datasets/${data.datasetId}${data.scopeQuery}&tab=edits` },
+            ...(data.datasetKind === "derived"
+              ? [{ label: data.inReport ? "Take off the report" : "Add to the report", onSelect: () => void data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name }) }]
+              : []),
+            { label: "Delete table", destructive: true, onSelect: () => void data.onDelete("dataset", data.datasetId, data.name) },
+          ]}
+        />
       </div>
       <div className="nodrag nowheel min-h-0 flex-1 overflow-hidden">
         <table className="w-full text-[11px]">
@@ -382,16 +437,6 @@ function DatasetNode({ id, data, width, height, positionAbsoluteX, positionAbsol
             aria-label={roleHintText(data.roleHints)}
           >
             <Tags className="h-3.5 w-3.5" />
-          </Link>
-        )}
-        {data.views.includes("subject-timeline") && (
-          <Link href={`/explore/datasets/${data.datasetId}/subject-timeline${data.scopeQuery}`} className="nodrag rounded p-1 text-muted-foreground hover:text-foreground" title="Subject timeline">
-            <Activity className="h-3.5 w-3.5" />
-          </Link>
-        )}
-        {data.views.includes("heatmap") && (
-          <Link href={`/explore/datasets/${data.datasetId}/heatmap${data.scopeQuery}`} className="nodrag rounded p-1 text-muted-foreground hover:text-foreground" title="Heatmap">
-            <Grid3x3 className="h-3.5 w-3.5" />
           </Link>
         )}
         <Link href={`/explore/datasets/${data.datasetId}${data.scopeQuery}`} className="nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] font-medium hover:underline" title="Open the table">
@@ -679,6 +724,15 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
         >
           <Code2 className="h-3.5 w-3.5" /> Code
         </button>
+        <CardMenu
+          items={[
+            { label: "Open analysis", href: `/explore/analyses/${data.analysisId}${data.scopeQuery}` },
+            { label: "Show code", onSelect: () => data.onOpenCode(data.analysisId) },
+            ...(data.active ? [] : [{ label: "Run", onSelect: () => void data.onRun(data.analysisId) }]),
+            ...(data.latestRun ? [{ label: "Open latest run", href: `/explore/runs/${data.latestRun.id}${data.scopeQuery}` }] : []),
+            { label: "Delete analysis", destructive: true, onSelect: () => void data.onDelete("analysis", data.analysisId, data.name) },
+          ]}
+        />
       </div>
       <button
         type="button"
@@ -780,12 +834,63 @@ function FigureNode({ data, width, height }: NodeProps<FigureNodeType>) {
         {data.analysisId && (
           <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "figure", analysisId: data.analysisId!, figureName: data.name, label: data.name })} compact={compact} colours={colours} />
         )}
+        <CardMenu
+          items={[
+            { label: "Open run", href: `/explore/runs/${data.runId}${data.scopeQuery}` },
+            { label: "Open figure file", href: data.url, external: true },
+            ...(data.analysisId
+              ? [{ label: data.inReport ? "Take off the report" : "Add to the report", onSelect: () => void data.onToggleReport({ type: "figure", analysisId: data.analysisId!, figureName: data.name, label: data.name }) }]
+              : []),
+          ]}
+        />
         <Link
           href={`/explore/runs/${data.runId}${data.scopeQuery}`}
           className="nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap hover:underline"
           title={`${data.runNumber ?? "Run"}${data.unchanged ? ": the latest run produced the same figure as the run before it" : ": open the run that wrote this figure"}`}
         >
           {compact ? "Run" : (data.runNumber ?? "Run")} <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/** A built-in view drawn from a table: always current, no run needed, placeable on the report. */
+function ViewNode({ data, width, height }: NodeProps<ViewNodeType>) {
+  const colours = tint(data.hue);
+  const compact = (width ?? CANVAS_SIZES.view.width) < 340;
+  const body = Math.max(60, (height ?? CANVAS_SIZES.view.height) - 44 - 34);
+  const target: ReportTarget = { type: "view", datasetId: data.datasetId, view: data.view, label: `${data.name} of ${data.tableName}` };
+  return (
+    <div className="relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm" style={{ borderColor: colours.border }}>
+      <Resizer kind="view" />
+      <Handle type="target" position={Position.Left} className={cn(handleClass, data.hasInput && "!opacity-0")} />
+      <div className="flex items-center gap-2 px-3 py-2" style={{ background: colours.header }}>
+        {data.view === "heatmap" ? <Grid3x3 className="h-4 w-4 shrink-0" style={{ color: colours.strong }} /> : <Activity className="h-4 w-4 shrink-0" style={{ color: colours.strong }} />}
+        <div className="min-w-0 flex-1">
+          <Link href={`${data.url}${data.scopeQuery}`} className="block truncate text-sm font-medium hover:underline" title={data.name}>{data.name}</Link>
+          <div className="truncate text-[11px] text-muted-foreground" title={data.tableName}>built-in view of {data.tableName}</div>
+        </div>
+        <CardMenu
+          items={[
+            { label: "Open view", href: `${data.url}${data.scopeQuery}` },
+            { label: data.inReport ? "Take off the report" : "Add to the report", onSelect: () => void data.onToggleReport(target) },
+          ]}
+        />
+      </div>
+      <div className="nodrag nowheel min-h-0 flex-1 overflow-hidden bg-muted/30">
+        {data.view === "heatmap" ? (
+          <HeatmapView datasetId={data.datasetId} compact height={body} />
+        ) : (
+          <SubjectTimelineOverview datasetId={data.datasetId} compact limit={Math.max(3, Math.floor((body - 26) / 18))} className="overflow-hidden" />
+        )}
+      </div>
+      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px]" style={{ background: colours.header }}>
+        <span className="min-w-0 truncate text-muted-foreground">always current</span>
+        <span className="flex-1" />
+        <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport(target)} compact={compact} colours={colours} />
+        <Link href={`${data.url}${data.scopeQuery}`} className="nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap hover:underline" title="Open the full view">
+          Open <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
     </div>
@@ -816,7 +921,7 @@ function PendingNode({ data }: NodeProps<PendingNodeType>) {
   );
 }
 
-const nodeTypes = { source: SourceNode, dataset: DatasetNode, analysis: AnalysisNode, figure: FigureNode, pending: PendingNode };
+const nodeTypes = { source: SourceNode, dataset: DatasetNode, analysis: AnalysisNode, figure: FigureNode, pending: PendingNode, view: ViewNode };
 
 /** Per-card position and size; Arrange drops the positions and keeps the sizes. */
 type StoredLayout = Record<string, { x?: number; y?: number; width?: number; height?: number }>;
@@ -1014,6 +1119,25 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
     [graph, mutate]
   );
 
+  /** Delete a table or an analysis from its card, after a confirmation. */
+  const deleteCard = useCallback(
+    async (kind: "dataset" | "analysis", id: string, name: string) => {
+      const question = kind === "dataset" ? `Delete the table "${name}" with all its versions and edits?` : `Delete the analysis "${name}" with all its versions and runs?`;
+      if (!window.confirm(question)) return;
+      try {
+        await postJson(`/api/explore/${kind === "dataset" ? "datasets" : "analyses"}/${id}`, undefined, "DELETE");
+        const layout = readLayout(scope);
+        delete layout[`${kind}:${id}`];
+        writeLayout(scope, layout);
+        toast.success(kind === "dataset" ? "Table deleted" : "Analysis deleted");
+        await mutate();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not delete");
+      }
+    },
+    [mutate, scope]
+  );
+
   /** Parameters changed on a card become a new version of the analysis. */
   const saveParams = useCallback(
     async (analysisId: string, params: Record<string, unknown>) => {
@@ -1039,9 +1163,10 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
           if (block.type === "figure") return { id: block.id, type: "figure", analysisId: block.analysisId, figureName: block.figureName, caption: block.caption, span: block.span };
           if (block.type === "chart") return { id: block.id, type: "chart", datasetId: block.datasetId, chart: block.chart, x: block.x, y: block.y, color: block.color, caption: block.caption, span: block.span };
           if (block.type === "metric") return { id: block.id, type: "metric", datasetId: block.datasetId, column: block.column, stats: block.stats, label: block.label, span: block.span };
+          if (block.type === "view") return { id: block.id, type: "view", datasetId: block.datasetId, view: block.view, caption: block.caption, span: block.span };
           return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
         });
-        const id = target.type === "figure" ? figureBlockId(target.analysisId, target.figureName) : tableBlockId(target.datasetId);
+        const id = target.type === "figure" ? figureBlockId(target.analysisId, target.figureName) : target.type === "view" ? viewBlockId(target.datasetId, target.view) : tableBlockId(target.datasetId);
         const present = blocks.some((block) => block.id === id);
         const next = present
           ? blocks.filter((block) => block.id !== id)
@@ -1049,7 +1174,9 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
               ...blocks,
               target.type === "figure"
                 ? ({ id, type: "figure", analysisId: target.analysisId, figureName: target.figureName, caption: target.label, span: 1 } as ReportBlock)
-                : ({ id, type: "table", datasetId: target.datasetId, caption: target.label, span: 2 } as ReportBlock),
+                : target.type === "view"
+                  ? ({ id, type: "view", datasetId: target.datasetId, view: target.view, caption: target.label, span: 2 } as ReportBlock)
+                  : ({ id, type: "table", datasetId: target.datasetId, caption: target.label, span: 2 } as ReportBlock),
             ];
         await postJson(key, { title: report.title, blocks: next }, "PUT");
         toast.success(present ? `${target.label} taken off the report` : `${target.label} added to the report`);
@@ -1170,17 +1297,19 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
             onAnalyse: createAnalysis,
             onConnect: connectInput,
             onToggleReport: toggleReport,
+            onDelete: deleteCard,
           },
         } as DatasetNodeType;
       }
       if (node.data.kind === "analysis") {
-        return { ...base, type: "analysis", data: { ...node.data, hue, scopeQuery, hasInput, onOpenCode: openCode, onRun: runAnalysis, onSaveParams: saveParams } } as AnalysisNodeType;
+        return { ...base, type: "analysis", data: { ...node.data, hue, scopeQuery, hasInput, onOpenCode: openCode, onRun: runAnalysis, onSaveParams: saveParams, onDelete: deleteCard } } as AnalysisNodeType;
       }
       if (node.data.kind === "figure") return { ...base, type: "figure", data: { ...node.data, hue, scopeQuery, justUpdated, hasInput, onToggleReport: toggleReport } } as FigureNodeType;
       if (node.data.kind === "pending") return { ...base, type: "pending", data: { ...node.data, hue, scopeQuery, hasInput } } as PendingNodeType;
+      if (node.data.kind === "view") return { ...base, type: "view", data: { ...node.data, hue, scopeQuery, hasInput, onToggleReport: toggleReport } } as ViewNodeType;
       return { ...base, type: "source", data: node.data } as SourceNodeType;
     });
-  }, [graph, applyPreset, openCode, runAnalysis, saveParams, createAnalysis, connectTargetsFor, connectInput, toggleReport, kits, fresh, scope, scopeQuery, arrangeVersion]);
+  }, [graph, applyPreset, openCode, runAnalysis, saveParams, createAnalysis, connectTargetsFor, connectInput, toggleReport, deleteCard, kits, fresh, scope, scopeQuery, arrangeVersion]);
 
   const flowEdges = useMemo<Edge[]>(() => {
     if (!graph) return [];

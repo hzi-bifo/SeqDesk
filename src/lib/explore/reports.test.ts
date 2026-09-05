@@ -7,8 +7,8 @@ const outputs: ReportOutputs = {
     { analysisId: "a2", analysisName: "Composition", figureName: "bars", runId: "r3", runNumber: "EXP-3", format: "png", url: "/g", thumbnailUrl: null, unchanged: false },
   ],
   tables: [
-    { datasetId: "d-out", name: "Column summary (Table summary)", kind: "derived", output: true, rowCount: 15, columnCount: 14, version: 2, latestWrite: { runNumber: "EXP-2", changed: false }, columns: [] },
-    { datasetId: "d-in", name: "Samples", kind: "samples", output: false, rowCount: 120, columnCount: 35, version: 1, latestWrite: null, columns: [{ key: "reads", label: "Reads", type: "number" }] },
+    { datasetId: "d-out", name: "Column summary (Table summary)", kind: "derived", output: true, rowCount: 15, columnCount: 14, version: 2, latestWrite: { runNumber: "EXP-2", changed: false }, columns: [], views: [] },
+    { datasetId: "d-in", name: "Samples", kind: "samples", output: false, rowCount: 120, columnCount: 35, version: 1, latestWrite: null, columns: [{ key: "reads", label: "Reads", type: "number" }], views: ["subject-timeline", "heatmap"] },
   ],
 };
 
@@ -42,6 +42,8 @@ describe("resolveReportBlocks", () => {
         { id: "tab-foreign", type: "table", datasetId: "other-scope" },
         { id: "chart", type: "chart", datasetId: "d-in", chart: "histogram", x: "reads" },
         { id: "metric-foreign", type: "metric", datasetId: "other-scope", column: "reads", stats: ["mean"] },
+        { id: "view", type: "view", datasetId: "d-in", view: "heatmap" },
+        { id: "view-no-roles", type: "view", datasetId: "d-out", view: "heatmap" },
       ],
       outputs,
       async (datasetId, limit) => {
@@ -58,6 +60,9 @@ describe("resolveReportBlocks", () => {
     // Charts and numbers carry the table's columns; their rows come from the rows API on the page.
     expect(resolved[5]).toMatchObject({ type: "chart", table: { name: "Samples", columns: [{ key: "reads" }], rowCount: 120 } });
     expect(resolved[6]).toMatchObject({ type: "metric", table: null });
+    // Built-in views resolve to their table and say whether the table's roles allow them.
+    expect(resolved[7]).toMatchObject({ type: "view", available: true, table: { name: "Samples" } });
+    expect(resolved[8]).toMatchObject({ type: "view", available: false });
     expect(loaded).toEqual(["d-out:5"]);
   });
 });
@@ -73,9 +78,11 @@ describe("report validation", () => {
           { id: "c", type: "table", datasetId: "d", rows: 10 },
           { id: "d", type: "chart", datasetId: "d", chart: "scatter", x: "a", y: "b", color: "c" },
           { id: "e", type: "metric", datasetId: "d", column: "a", stats: ["count", "mean"] },
+          { id: "f", type: "view", datasetId: "d", view: "subject-timeline" },
         ],
       }).success
     ).toBe(true);
+    expect(ReportInputSchema.safeParse({ title: "x", blocks: [{ id: "a", type: "view", datasetId: "d", view: "sunburst" }] }).success).toBe(false);
     expect(ReportInputSchema.safeParse({ title: "x", blocks: [{ id: "a", type: "chart", datasetId: "d", chart: "pie", x: "a" }] }).success).toBe(false);
     expect(ReportInputSchema.safeParse({ title: "x", blocks: [{ id: "a", type: "metric", datasetId: "d", column: "a", stats: [] }] }).success).toBe(false);
     expect(ReportInputSchema.safeParse({ title: "", blocks: [] }).success).toBe(false);

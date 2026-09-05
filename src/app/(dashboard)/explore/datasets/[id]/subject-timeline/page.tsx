@@ -11,17 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
+import { OTHER_COLOR, PALETTE, SubjectTimelineOverview, type SubjectsResponse } from "@/components/explore/views/SubjectTimelineOverview";
 import { fetcher } from "@/lib/explore/client";
 import type { ExploreDatasetDetail } from "@/lib/explore/types";
-import type { SubjectCompositionPayload, SubjectHighlightsPayload, SubjectsTablePayload } from "@/lib/explore/views/subject-timeline/types";
-
-type SubjectsResponse = SubjectsTablePayload & { cacheToken: string; groups: string[]; dropped: { missingKeys: number; control: number; isolate: number } };
-
-const PALETTE = [
-  "#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B3", "#937860", "#DA8BC3", "#8C8C8C", "#CCB974", "#64B5CD",
-  "#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E377C2", "#7F7F7F", "#BCBD22",
-];
-const OTHER_COLOR = "#d9d9d9";
+import type { SubjectCompositionPayload, SubjectHighlightsPayload } from "@/lib/explore/views/subject-timeline/types";
 
 export default function SubjectTimelinePage() {
   const params = useParams<{ id: string }>();
@@ -40,11 +33,6 @@ export default function SubjectTimelinePage() {
   const activeRow = subjects?.patients.find((row) => row.patient === activeSubject) ?? null;
   const activeGroups = groups.filter((group) => activeRow?.sampletypes.includes(group));
   const { data: highlights } = useSWR<SubjectHighlightsPayload>(activeSubject ? `${base}?part=highlights&subject=${encodeURIComponent(activeSubject)}${groupsParam}` : null, fetcher);
-
-  const visible = useMemo(() => {
-    const lower = query.trim().toLowerCase();
-    return (subjects?.patients ?? []).filter((row) => !lower || row.patient.toLowerCase().includes(lower));
-  }, [subjects, query]);
 
   if (subjectsError) {
     return (
@@ -91,34 +79,7 @@ export default function SubjectTimelinePage() {
           <div className="border-b p-2">
             <Input placeholder="Find a subject" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Find a subject" />
           </div>
-          <div className="max-h-[70vh] overflow-y-auto">
-            {!subjects ? (
-              <div className="space-y-2 p-3"><Skeleton className="h-6 w-full" /><Skeleton className="h-6 w-full" /></div>
-            ) : (
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-1.5 font-medium">Subject</th>
-                    <th className="px-2 py-1.5 text-right font-medium">Days</th>
-                    <th className="px-2 py-1.5 text-right font-medium">Span</th>
-                    <th className="px-2 py-1.5 font-medium">Timeline</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((row) => (
-                    <tr key={row.patient} className={`cursor-pointer border-t ${row.patient === activeSubject ? "bg-secondary" : "hover:bg-muted/30"}`} onClick={() => setSubject(row.patient)}>
-                      <td className="px-3 py-1.5 font-medium">{row.patient}{row.site ? <span className="ml-1 text-xs text-muted-foreground">{row.site}</span> : null}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{row.n_days}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums">{row.span}</td>
-                      <td className="px-2 py-1.5">
-                        <MiniTimeline row={row} dayMin={subjects.day_min} dayMax={subjects.day_max} groups={groups} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+          <SubjectTimelineOverview datasetId={id} filter={query} activeSubject={activeSubject} onSelect={setSubject} className="max-h-[70vh] overflow-y-auto" />
         </div>
 
         <div className="min-w-0 space-y-6">
@@ -146,20 +107,6 @@ export default function SubjectTimelinePage() {
         </div>
       </div>
     </PageContainer>
-  );
-}
-
-function MiniTimeline({ row, dayMin, dayMax, groups }: { row: SubjectsTablePayload["patients"][number]; dayMin: number; dayMax: number; groups: string[] }) {
-  const span = Math.max(dayMax - dayMin, 1);
-  return (
-    <svg viewBox="0 0 120 12" className="h-3 w-28" aria-hidden="true">
-      <line x1="0" y1="6" x2="120" y2="6" stroke="currentColor" strokeOpacity="0.15" />
-      {groups.map((group, groupIndex) =>
-        (row.days_by_sampletype[group] ?? []).map((day) => (
-          <circle key={`${group}-${day}`} cx={((day - dayMin) / span) * 116 + 2} cy={groupIndex === 0 ? 4 : 8} r="2" fill={PALETTE[groupIndex % PALETTE.length]} />
-        ))
-      )}
-    </svg>
   );
 }
 
