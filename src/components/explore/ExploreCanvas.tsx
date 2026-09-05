@@ -15,6 +15,7 @@ import {
   ReactFlow,
   useEdgesState,
   useNodesState,
+  useViewport,
   type Edge,
   type EdgeMouseHandler,
   type Node,
@@ -153,22 +154,33 @@ function tint(hue: number) {
 /** Resize handles for one card; shown while the card is selected. */
 function Resizer({ kind, selected }: { kind: CanvasNodeKind; selected: boolean }) {
   const min = CANVAS_MIN_SIZES[kind];
+  // React Flow keeps resize controls the same size on screen whatever the zoom;
+  // the grip should shrink with its card instead, and go away when the card is
+  // too small to resize by hand.
+  const { zoom } = useViewport();
   return (
     <>
       <NodeResizer isVisible={selected} minWidth={min.width} minHeight={min.height} lineClassName={resizerLine} handleClassName={resizerHandle} />
       {/* A grip that is always there, so resizing does not need the card selected first. */}
-      <NodeResizeControl
-        position="bottom-right"
-        minWidth={min.width}
-        minHeight={min.height}
-        className="!h-5 !w-5 !border-0 !bg-transparent"
-        style={{ right: 0, bottom: 0, cursor: "nwse-resize" }}
-      >
-        <svg viewBox="0 0 20 20" className="h-5 w-5 text-muted-foreground/50 transition-colors hover:text-foreground" aria-hidden>
-          <title>Drag to resize</title>
-          <path d="M17 9 9 17M17 13l-4 4M17 5 5 17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
-        </svg>
-      </NodeResizeControl>
+      {zoom >= 0.35 && (
+        <NodeResizeControl
+          position="bottom-right"
+          minWidth={min.width}
+          minHeight={min.height}
+          className="!h-5 !w-5 !border-0 !bg-transparent"
+          style={{ right: 0, bottom: 0, cursor: "nwse-resize" }}
+        >
+          <svg
+            viewBox="0 0 20 20"
+            className="h-5 w-5 text-muted-foreground/50 transition-colors hover:text-foreground"
+            style={{ transform: `scale(${Math.min(1, zoom)})`, transformOrigin: "100% 100%" }}
+            aria-hidden
+          >
+            <title>Drag to resize</title>
+            <path d="M17 9 9 17M17 13l-4 4M17 5 5 17" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+          </svg>
+        </NodeResizeControl>
+      )}
     </>
   );
 }
