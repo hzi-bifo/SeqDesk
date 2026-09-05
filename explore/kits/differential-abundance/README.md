@@ -24,9 +24,11 @@ descriptive screen: samples of one subject are treated as independent.
 
 ## Outputs
 
-`differential_abundance` (roles: taxon, taxon_id) is a table sorted by q; the
-volcano plot is a Plotly figure. Metrics: the two groups and their sizes, taxa
-tested and taxa significant.
+`differential_abundance` (roles: taxon, taxon_id) is a table sorted by q; each
+row also carries `curated_role` and `curated_lists`, the curation lists of the
+scope the taxon is on. The volcano plot is a Plotly figure that draws listed
+taxa as diamonds. Metrics: the two groups and their sizes, taxa tested, taxa
+significant and significant taxa on a list.
 
 ## Citation
 

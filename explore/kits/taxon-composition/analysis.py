@@ -51,6 +51,15 @@ def palette(n: int) -> list[str]:
     return [colors[index % len(colors)] for index in range(n)]
 
 
+def legend_name(taxon: str) -> str:
+    """The taxon name with a marker in its list colour when it is on a curation list."""
+    memberships = sx.curated_memberships(taxon)
+    if not memberships:
+        return taxon
+    color = next((str(entry["color"]) for entry in memberships if entry.get("color")), None)
+    return f'<span style="color:{color}">&#9679;</span> {taxon}' if color else f"{taxon} (curated)"
+
+
 def main() -> None:
     df = sx.load_dataset("profiles")
     sample_col = sx.role_column(df, "sample")
@@ -193,7 +202,7 @@ def main() -> None:
         counts = pd.Series(group_labels).value_counts().reindex(group_order)
         x_labels = [f"{label} (n={int(counts[label])})" for label in group_order]
         for index, taxon in enumerate(top_taxa):
-            fig.add_trace(go.Bar(x=x_labels, y=by_group[taxon].tolist(), name=taxon, marker_color=colors[index], hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:.2f}%<extra></extra>"))
+            fig.add_trace(go.Bar(x=x_labels, y=by_group[taxon].tolist(), name=legend_name(taxon), marker_color=colors[index], hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:.2f}%<extra></extra>"))
         fig.add_trace(go.Bar(x=x_labels, y=other_by_group.tolist(), name=OTHER_LABEL, marker_color=OTHER_COLOR, hovertemplate="<b>%{x}</b><br>%{fullData.name}: %{y:.2f}%<extra></extra>"))
         fig.update_layout(title=f"Mean taxon composition per {group_col} ({subtitle})", xaxis_title=group_col)
         fig.update_xaxes(type="category")
@@ -205,7 +214,7 @@ def main() -> None:
         hovertemplate = "<b>%{x}</b><br>" + ("<br>".join(hover_parts) + "<br>" if hover_parts else "") + "%{fullData.name}: %{y:.2f}%<extra></extra>"
         labels = [label_of[sample] for sample in sample_order]
         for index, taxon in enumerate(top_taxa):
-            fig.add_trace(go.Bar(x=labels, y=matrix[taxon].tolist(), name=taxon, marker_color=colors[index], customdata=customdata, hovertemplate=hovertemplate))
+            fig.add_trace(go.Bar(x=labels, y=matrix[taxon].tolist(), name=legend_name(taxon), marker_color=colors[index], customdata=customdata, hovertemplate=hovertemplate))
         fig.add_trace(go.Bar(x=labels, y=other.tolist(), name=OTHER_LABEL, marker_color=OTHER_COLOR, customdata=customdata, hovertemplate=hovertemplate))
         fig.update_layout(title=f"Taxon composition ({subtitle})", xaxis_title="Sample")
         fig.update_xaxes(type="category", tickangle=-45)
@@ -224,6 +233,11 @@ def main() -> None:
         margin=dict(l=50, r=20, t=60, b=100),
         height=520,
     )
+    curated_top = [taxon for taxon in top_taxa if sx.curated_memberships(taxon)]
+    if curated_top:
+        figure_description += " Taxa on curation lists carry a marker in the list colour."
+        shown_curated = ", ".join(curated_top[:8]) + (" and more" if len(curated_top) > 8 else "")
+        sx.note(f"{len(curated_top)} of the {len(top_taxa)} shown taxa are on curation lists (marked in the legend): {shown_curated}.")
     sx.save_figure(fig, "composition_plot", title="Taxon composition", description=figure_description)
 
     # ------------------------------------------------------------------ #
@@ -262,6 +276,9 @@ def main() -> None:
     prevalence["max_relative_abundance_pct"] = by_taxon[RA_COLUMN].max()
     prevalence["total_reads"] = by_taxon[count_col].sum()
     prevalence["is_top"] = prevalence.index.isin(top_taxa)
+    memberships_of = {taxon: sx.curated_memberships(taxon) for taxon in prevalence.index}
+    prevalence["curated_role"] = [memberships_of[taxon][0]["role"] if memberships_of[taxon] else None for taxon in prevalence.index]
+    prevalence["curated_lists"] = ["; ".join(str(entry.get("label") or entry.get("listId")) for entry in memberships_of[taxon]) or None for taxon in prevalence.index]
     prevalence = prevalence.sort_values(["mean_relative_abundance_pct", "prevalence_pct"], ascending=[False, False], kind="stable").reset_index()
     prevalence_roles = {"taxon": taxon_col, "value": "mean_relative_abundance_pct"}
     if taxon_id_col:
@@ -270,7 +287,7 @@ def main() -> None:
         prevalence,
         "prevalence",
         title="Taxon prevalence",
-        description="Per taxon: number and share of samples where it is present, mean and maximum relative abundance, total reads.",
+        description="Per taxon: number and share of samples where it is present, mean and maximum relative abundance, total reads, and the curation lists it is on.",
         roles=prevalence_roles,
     )
 
@@ -287,6 +304,7 @@ def main() -> None:
     sx.metric("n_samples_dropped_empty", n_dropped_samples)
     sx.metric("n_rows_below_min_ra", n_below)
     sx.metric("top_n_effective", len(top_taxa))
+    sx.metric("n_curated_taxa_present", int(sum(1 for entry in memberships_of.values() if entry)))
     sx.metric("mean_top_n_coverage_pct", finite(shown.mean()))
     if group_col:
         sx.metric("n_groups", int(samples[group_col].dropna().nunique()))

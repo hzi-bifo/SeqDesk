@@ -124,6 +124,22 @@ const SubjectBlockSchema = z
   })
   .strict();
 
+/** Organisms of interest: the taxa on the scope's curation lists that a long profile table contains. */
+const CuratedBlockSchema = z
+  .object({
+    id: BlockId,
+    type: z.literal("curated"),
+    datasetId: z.string().min(1).max(80),
+    /** Which lists count: pathogen (default), flora, or every list. */
+    role: z.enum(["pathogen", "flora", "all"]).optional(),
+    /** Restrict to these lists by id; absent or empty means every list of the role. */
+    lists: z.array(z.string().min(1).max(64)).max(20).optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+    caption: z.string().max(500).optional(),
+    span: Span,
+  })
+  .strict();
+
 /** A number an analysis recorded with its latest run, shown as a summary card. */
 const RunMetricBlockSchema = z
   .object({
@@ -145,6 +161,7 @@ export const ReportBlockSchema = z.discriminatedUnion("type", [
   ViewBlockSchema,
   TaxonExplorerBlockSchema,
   SubjectBlockSchema,
+  CuratedBlockSchema,
   RunMetricBlockSchema,
 ]);
 

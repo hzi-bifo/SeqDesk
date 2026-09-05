@@ -99,6 +99,7 @@ export type ResolvedReportBlock =
   | (Extract<ReportBlock, { type: "view" }> & { table: ReportTableMeta | null; available: boolean })
   | (Extract<ReportBlock, { type: "taxon-explorer" }> & { table: ReportTableMeta | null })
   | (Extract<ReportBlock, { type: "subject" }> & { table: ReportTableMeta | null })
+  | (Extract<ReportBlock, { type: "curated" }> & { table: ReportTableMeta | null })
   | (Extract<ReportBlock, { type: "run-metric" }> & { analysis: ReportAnalysis | null });
 
 export interface ReportView {
@@ -215,7 +216,7 @@ export async function resolveReportBlocks(blocks: ReportBlock[], outputs: Report
       if (block.type === "figure") return { ...block, figure: figureByKey.get(`${block.analysisId}:${block.figureName}`) ?? null };
       if (block.type === "chart" || block.type === "metric") return { ...block, table: metaOf(block.datasetId) };
       if (block.type === "view") return { ...block, table: metaOf(block.datasetId), available: Boolean(tableById.get(block.datasetId)?.views.includes(block.view)) };
-      if (block.type === "taxon-explorer" || block.type === "subject") return { ...block, table: metaOf(block.datasetId) };
+      if (block.type === "taxon-explorer" || block.type === "subject" || block.type === "curated") return { ...block, table: metaOf(block.datasetId) };
       if (block.type === "run-metric") return { ...block, analysis: outputs.analyses.find((analysis) => analysis.analysisId === block.analysisId) ?? null };
       return { ...block, table: tableById.has(block.datasetId) ? await loadTable(block.datasetId, block.rows ?? REPORT_TABLE_ROWS) : null };
     })

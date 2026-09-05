@@ -40,3 +40,28 @@ describe("computeHeatmap", () => {
     expect(payload.taxa[0].taxon).toBe("E. coli");
   });
 });
+
+describe("curated marks", () => {
+  const memberships = {
+    "e. coli": [
+      { listId: "urine_flora", label: "Urine flora", role: "flora" as const, site: "Urine", tier: "flora", color: "#2E8B57" },
+      { listId: "ascites_verified", label: "Ascites pathogen", role: "pathogen" as const, site: "Ascites", tier: "verified", color: "#C0392B" },
+      { listId: "urine_verified", label: "Urine pathogen", role: "pathogen" as const, site: "Urine", tier: "verified", color: "#C0392B" },
+    ],
+    toxoplasma: [{ listId: "artifacts", label: "Artifacts", role: "artifact" as const, site: null, tier: null, color: null }],
+  };
+
+  it("marks taxa with the pathogen list of the current group, and never with artifact lists", () => {
+    const urine = computeHeatmap(rows, { memberships, group: "Urine" });
+    expect(urine.taxa.find((taxon) => taxon.taxon === "E. coli")?.curated).toMatchObject({ listId: "urine_verified", role: "pathogen" });
+    expect(urine.taxa.find((taxon) => taxon.taxon === "Toxoplasma")?.curated).toBeNull();
+    const ascites = computeHeatmap(rows, { memberships, group: "Ascites" });
+    expect(ascites.taxa.find((taxon) => taxon.taxon === "K. pneumoniae")?.curated).toBeNull();
+  });
+
+  it("prefers pathogen lists over flora lists without a group, and leaves taxa unmarked without lists", () => {
+    const all = computeHeatmap(rows, { memberships });
+    expect(all.taxa.find((taxon) => taxon.taxon === "E. coli")?.curated?.role).toBe("pathogen");
+    expect(computeHeatmap(rows).taxa[0]).not.toHaveProperty("curated");
+  });
+});

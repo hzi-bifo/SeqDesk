@@ -52,7 +52,7 @@ come from a `sample_id` column when present, otherwise from the sample role.
 | --- | --- | --- |
 | `composition_plot` | figure | stacked relative abundance bars per sample (top taxa plus Other) |
 | `composition` | table (`taxon-profile-long`) | sample, metadata roles, taxon, taxon id, count and `relative_abundance_pct`; roles are carried over so the table can be attached as a new dataset |
-| `prevalence` | table | per taxon: `n_samples_present`, `prevalence_pct`, `mean_relative_abundance_pct` (over all samples), `mean_relative_abundance_when_present_pct`, `max_relative_abundance_pct`, `total_reads`, `is_top` |
+| `prevalence` | table | per taxon: `n_samples_present`, `prevalence_pct`, `mean_relative_abundance_pct` (over all samples), `mean_relative_abundance_when_present_pct`, `max_relative_abundance_pct`, `total_reads`, `is_top`, `curated_role` and `curated_lists` (the curation lists of the scope the taxon is on) |
 
 Metrics: `n_samples`, `n_taxa`, `n_rows_input`, `n_rows_retained`,
 `n_nondetections_dropped`, `n_artifact_taxa_removed`, `artifact_reads_pct`,

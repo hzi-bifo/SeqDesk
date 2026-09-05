@@ -85,6 +85,8 @@ __all__ = [
     "curation_lists",
     "curated_names",
     "taxon_key",
+    "curated_memberships",
+    "curated_role",
     "load_schema",
     "load_dataset",
     "role_column",
@@ -120,6 +122,7 @@ class _State:
         self.finished = False
         self.dirty = False
         self.png_warning_given = False
+        self.curation_index: dict[str, list[dict[str, Any]]] | None = None
 
 
 _state = _State()
@@ -248,6 +251,51 @@ def taxon_key(value: Any) -> str:
     """Canonical key for matching taxon names against curation lists
     (whitespace-trimmed, case-folded), as INDIVO does."""
     return str(value).strip().casefold()
+
+
+_ROLE_ORDER = {"pathogen": 0, "flora": 1, "artifact": 2}
+
+
+def _curation_index() -> dict[str, list[dict[str, Any]]]:
+    """``taxon_key`` -> the lists that name it, built once per run."""
+    if _state.curation_index is None:
+        index: dict[str, list[dict[str, Any]]] = {}
+        for entry in curation_lists():
+            membership = {
+                "listId": entry.get("listId"),
+                "label": entry.get("label"),
+                "role": entry.get("role"),
+                "site": entry.get("site"),
+                "tier": entry.get("tier"),
+                "color": entry.get("color"),
+            }
+            for name in entry.get("entries") or []:
+                if isinstance(name, str) and name.strip():
+                    index.setdefault(taxon_key(name), []).append(membership)
+        _state.curation_index = index
+    return _state.curation_index
+
+
+def curated_memberships(name: Any, *, site: str | None = None) -> list[dict[str, Any]]:
+    """The curation lists ``name`` is on (matched with :func:`taxon_key`), each as
+    ``{"listId", "label", "role", "site", "tier", "color"}``.  Pathogen lists come
+    first, then flora, then artifact; with ``site`` given, lists for that site or
+    for no site come before lists for other sites."""
+    found = _curation_index().get(taxon_key(name), [])
+
+    def order(item: dict[str, Any]) -> tuple[int, int, str]:
+        other_site = 1 if site is not None and item.get("site") not in (None, site) else 0
+        return (_ROLE_ORDER.get(str(item.get("role")), 9), other_site, str(item.get("label") or ""))
+
+    return sorted(found, key=order)
+
+
+def curated_role(name: Any, *, site: str | None = None) -> str | None:
+    """The most relevant curated role of ``name`` (pathogen before flora before
+    artifact), or None when it is on no list."""
+    memberships = curated_memberships(name, site=site)
+    role = memberships[0].get("role") if memberships else None
+    return str(role) if role else None
 
 
 def _resolve_input_file(entry_path: Any, alias: str, what: str) -> Path:

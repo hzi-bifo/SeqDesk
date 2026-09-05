@@ -320,6 +320,24 @@ export function subjectComposition(
   };
 }
 
+/**
+ * The list each shown taxon is marked with: pathogen before flora, the group's
+ * site before other sites. Added to the composition payload by the API route,
+ * outside the INDIVO parity of `subjectComposition`.
+ */
+export function curatedMarks(taxa: readonly string[], curation: SubjectTimelineCuration, group: string): NonNullable<SubjectCompositionPayload["curated"]> {
+  const out: NonNullable<SubjectCompositionPayload["curated"]> = {};
+  const rank = (membership: CuratedMembership) =>
+    (membership.role === "pathogen" ? 0 : 2) + (membership.site && membership.site.toLowerCase() !== group.toLowerCase() ? 1 : 0);
+  for (const taxon of taxa) {
+    const memberships = (curation.memberships[taxonKey(taxon)] ?? []).filter((membership) => membership.role !== "artifact");
+    if (memberships.length === 0) continue;
+    const [best] = [...memberships].sort((a, b) => rank(a) - rank(b));
+    out[taxon] = { role: best.role as "pathogen" | "flora", label: best.label, color: best.color };
+  }
+  return out;
+}
+
 // --------------------------------------------------------------------------- //
 //  patient_highlights
 // --------------------------------------------------------------------------- //

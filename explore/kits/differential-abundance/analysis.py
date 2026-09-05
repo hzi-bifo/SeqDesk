@@ -85,6 +85,8 @@ def main() -> None:
         table["q_value"] = bh_fdr(table["p_value"].to_numpy(dtype=float))
         table["significant"] = table["q_value"] < q_threshold
         table["higher_in"] = np.where(table["log2_fold_change"] > 0, group_a, np.where(table["log2_fold_change"] < 0, group_b, "neither"))
+        table["curated_role"] = table[prepared.taxon_col].map(sx.curated_role)
+        table["curated_lists"] = table[prepared.taxon_col].map(lambda taxon: "; ".join(str(entry.get("label") or entry.get("listId")) for entry in sx.curated_memberships(taxon)) or None)
         if prepared.taxon_id_col:
             ids = prepared.long.drop_duplicates(prepared.taxon_col).set_index(prepared.taxon_col)[prepared.taxon_id_col]
             table.insert(1, prepared.taxon_id_col, table[prepared.taxon_col].map(ids))
@@ -92,7 +94,7 @@ def main() -> None:
     roles = {"taxon": prepared.taxon_col, "value": "log2_fold_change"}
     if prepared.taxon_id_col and prepared.taxon_id_col in table.columns:
         roles["taxon_id"] = prepared.taxon_id_col
-    sx.save_table(table, "differential_abundance", title=f"Differential abundance: {group_a} versus {group_b}", description=f"Per taxon: prevalence and mean relative abundance in {group_a} and {group_b}, log2 fold change (A over B), Mann-Whitney U, p and BH q.", roles=roles)
+    sx.save_table(table, "differential_abundance", title=f"Differential abundance: {group_a} versus {group_b}", description=f"Per taxon: prevalence and mean relative abundance in {group_a} and {group_b}, log2 fold change (A over B), Mann-Whitney U, p and BH q, and the curation lists the taxon is on.", roles=roles)
 
     # ------------------------------------------------------------------ #
     #  Volcano
@@ -111,8 +113,8 @@ def main() -> None:
                     y=part["neg_log10_p"],
                     mode="markers",
                     name=name,
-                    marker=dict(size=7, color=colour, opacity=0.85),
-                    text=part[prepared.taxon_col],
+                    marker=dict(size=7, color=colour, opacity=0.85, symbol=["diamond" if isinstance(role, str) and role else "circle" for role in part["curated_role"]]),
+                    text=part[prepared.taxon_col] + part["curated_role"].map(lambda role: f" ({role} list)" if isinstance(role, str) and role else ""),
                     customdata=part[["q_value"]].to_numpy(),
                     hovertemplate="%{text}<br>log2 FC: %{x:.2f}<br>p: %{y:.2f} (-log10)<br>q: %{customdata[0]:.3g}<extra></extra>",
                 )
@@ -130,7 +132,7 @@ def main() -> None:
         margin=dict(l=60, r=20, t=60, b=60),
         height=480,
     )
-    sx.save_figure(fig, "volcano", title="Volcano plot", description=f"Every tested taxon: log2 fold change of the mean relative abundance ({group_a} over {group_b}) against -log10 p; red when q below {q_threshold:g}.")
+    sx.save_figure(fig, "volcano", title="Volcano plot", description=f"Every tested taxon: log2 fold change of the mean relative abundance ({group_a} over {group_b}) against -log10 p; red when q below {q_threshold:g}, diamonds for taxa on curation lists.")
 
     # ------------------------------------------------------------------ #
     #  Metrics
@@ -141,6 +143,7 @@ def main() -> None:
     sx.metric("n_samples_b", int(len(b_idx)))
     sx.metric("n_taxa_tested", int(len(table)) if not table.empty else 0)
     sx.metric("n_significant", int(table["significant"].sum()) if not table.empty and "significant" in table else 0)
+    sx.metric("n_significant_curated", int((table["significant"] & table["curated_role"].notna()).sum()) if not table.empty and "curated_role" in table else 0)
     sx.finish()
 
 

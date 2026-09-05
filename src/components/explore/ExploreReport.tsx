@@ -20,7 +20,7 @@ import {
 import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
-import { FilterBar, filtersApply, RunMetricView, SubjectView, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
+import { CuratedOrganismsView, FilterBar, filtersApply, RunMetricView, SubjectView, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
 import { HeatmapView, type HeatmapOptions } from "@/components/explore/views/HeatmapView";
 import { SubjectTimelineOverview } from "@/components/explore/views/SubjectTimelineOverview";
 import { BUILT_IN_VIEWS, type BuiltInView } from "@/lib/explore/canvas-layout";
@@ -48,6 +48,9 @@ interface ExploreReportProps {
 
 type ReportResponse = { report: ReportView };
 
+/** Tables the organism blocks can read: long profiles with sample, taxon and count roles. */
+const profileTable = (table: ReportTable): boolean => Boolean(table.roles.sample && table.roles.taxon && table.roles.count);
+
 function newBlockId(prefix: string): string {
   return `${prefix}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -73,6 +76,7 @@ function toInput(report: ReportView): ReportInput {
       if (block.type === "view") return { id: block.id, type: "view", datasetId: block.datasetId, view: block.view, options: block.options, caption: block.caption, span: block.span };
       if (block.type === "taxon-explorer") return { id: block.id, type: "taxon-explorer", datasetId: block.datasetId, taxon: block.taxon, caption: block.caption, span: block.span };
       if (block.type === "subject") return { id: block.id, type: "subject", datasetId: block.datasetId, subject: block.subject, measure: block.measure, caption: block.caption, span: block.span };
+      if (block.type === "curated") return { id: block.id, type: "curated", datasetId: block.datasetId, role: block.role, lists: block.lists, limit: block.limit, caption: block.caption, span: block.span };
       if (block.type === "run-metric") return { id: block.id, type: "run-metric", analysisId: block.analysisId, metrics: block.metrics, label: block.label, span: block.span };
       return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
     }),
@@ -190,6 +194,17 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
           onSelect: () => {
             const table = report.outputs.tables.find((entry) => entry.views.includes("subject-timeline"));
             if (table) addBlock({ id: newBlockId("subject"), type: "subject", datasetId: table.datasetId, span: 2 });
+          },
+        },
+        {
+          id: "curated",
+          title: "Organisms of interest",
+          hint: "Which listed organisms occur, how often, in whom",
+          sketch: "list",
+          disabled: !report.outputs.tables.some(profileTable),
+          onSelect: () => {
+            const table = report.outputs.tables.find(profileTable);
+            if (table) addBlock({ id: newBlockId("curated"), type: "curated", datasetId: table.datasetId, role: "pathogen", span: 2 });
           },
         },
       ],
@@ -373,6 +388,7 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
               onMove={(delta) => moveBlock(block.id, delta)}
               onRemove={() => removeBlock(block.id)}
               scopeQuery={scopeQuery}
+              scope={scope}
               tables={report.outputs.tables}
               analyses={report.outputs.analyses}
               analysis={block.type === "run-metric" ? (analysisById.get(block.analysisId) ?? null) : null}
@@ -406,11 +422,13 @@ interface ReportBlockCardProps {
   analysis: ReportAnalysis | null;
   filters: ReportFilter[];
   active: ActiveFilters;
+  /** The scope, for blocks that read scope-level data such as the curation lists. */
+  scope: string;
 }
 
-const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", "run-metric": "Run numbers" };
+const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Run numbers" };
 
-function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, tables, analyses, analysis, filters, active }: ReportBlockCardProps) {
+function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, tables, analyses, analysis, filters, active, scope }: ReportBlockCardProps) {
   const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
   const label = BLOCK_LABELS[block.type];
   const blockTable = "datasetId" in block ? (tables.find((table) => table.datasetId === block.datasetId) ?? null) : null;
@@ -519,6 +537,18 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
             )}
             {blockTable ? (
               <SubjectView table={blockTable} subject={block.subject ?? null} measure={block.measure ?? "ra"} onPickSubject={(subject) => onPatch({ subject } as Partial<ReportBlock>)} filters={filters} active={active} editing={editing} />
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>
+            )}
+          </>
+        )}
+
+        {block.type === "curated" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={`Organisms of interest${blockTable ? `: ${blockTable.name}` : ""}`} onChange={(caption) => onPatch({ caption })} />
+            {editing && <CuratedControls block={block} tables={tables.filter(profileTable)} onPatch={onPatch} />}
+            {blockTable ? (
+              <CuratedOrganismsView table={blockTable} scope={scope} role={block.role ?? "pathogen"} lists={block.lists} limit={block.limit ?? 25} filters={filters} active={active} />
             ) : (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>
             )}
@@ -706,6 +736,39 @@ function TableOnlyControls({ value, tables, onChange }: { value: string; tables:
       <label className="space-y-1 text-[11px] text-muted-foreground">
         <span>Table</span>
         <TableSelect value={value} tables={tables} onChange={onChange} />
+      </label>
+    </div>
+  );
+}
+
+function CuratedControls({ block, tables, onPatch }: { block: Extract<ReportBlock, { type: "curated" }>; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  return (
+    <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-3">
+      <label className="space-y-1 text-[11px] text-muted-foreground">
+        <span>Table</span>
+        <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => onPatch({ datasetId } as Partial<ReportBlock>)} />
+      </label>
+      <label className="space-y-1 text-[11px] text-muted-foreground">
+        <span>Lists</span>
+        <Select value={block.role ?? "pathogen"} onValueChange={(role) => onPatch({ role } as Partial<ReportBlock>)}>
+          <SelectTrigger className="h-8 text-xs" aria-label="Lists"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="pathogen">Pathogen lists</SelectItem>
+            <SelectItem value="flora">Flora lists</SelectItem>
+            <SelectItem value="all">Every list</SelectItem>
+          </SelectContent>
+        </Select>
+      </label>
+      <label className="space-y-1 text-[11px] text-muted-foreground">
+        <span>Show at most</span>
+        <Select value={String(block.limit ?? 25)} onValueChange={(limit) => onPatch({ limit: Number(limit) } as Partial<ReportBlock>)}>
+          <SelectTrigger className="h-8 text-xs" aria-label="Show at most"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {[10, 25, 50, 100].map((entry) => (
+              <SelectItem key={entry} value={String(entry)}>{entry} organisms</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </label>
     </div>
   );

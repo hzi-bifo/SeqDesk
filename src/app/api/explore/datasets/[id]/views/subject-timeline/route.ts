@@ -5,7 +5,7 @@ import { computeDatasetCacheToken, fetchAllDatasetRows, getDatasetRecord } from 
 import { applyEditsToRows, listActiveEdits } from "@/lib/explore/edits";
 import { parseRoles, parseSchema } from "@/lib/explore/schema";
 import { adaptRowsForSubjectTimeline, curationFromLists } from "@/lib/explore/views/subject-timeline/adapter";
-import { subjectComposition, subjectHighlights, subjectsTable } from "@/lib/explore/views/subject-timeline/compute";
+import { curatedMarks, subjectComposition, subjectHighlights, subjectsTable } from "@/lib/explore/views/subject-timeline/compute";
 import type { SubjectTimelineRow } from "@/lib/explore/views/subject-timeline/types";
 import { ExploreRouteError, exploreErrorResponse, requireExploreSession } from "../../../../_shared";
 
@@ -72,7 +72,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (!subject) throw new ExploreRouteError(400, "subject is required");
     if (part === "composition") {
       const group = params.get("group") ?? options.primaryGroups[0] ?? "All";
-      return NextResponse.json({ cacheToken: token, ...subjectComposition(adapted.rows, subject, group, curation, options) });
+      const composition = subjectComposition(adapted.rows, subject, group, curation, options);
+      return NextResponse.json({ cacheToken: token, ...composition, curated: curatedMarks(composition.taxa, curation, group) });
     }
     if (part === "highlights") {
       return NextResponse.json({ cacheToken: token, ...subjectHighlights(adapted.rows, subject, curation, options) });

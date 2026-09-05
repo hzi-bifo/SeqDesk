@@ -104,6 +104,18 @@ describe("report validation", () => {
     expect(ReportInputSchema.safeParse({ title: "x", blocks: many }).success).toBe(false);
   });
 
+  it("accepts organism blocks with a list role and a limit", () => {
+    const parsed = ReportInputSchema.safeParse({
+      title: "R",
+      blocks: [
+        { id: "c1", type: "curated", datasetId: "d1", role: "pathogen", limit: 25, span: 2 },
+        { id: "c2", type: "curated", datasetId: "d1", lists: ["urine_verified"], caption: "Uropathogens" },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+    expect(ReportInputSchema.safeParse({ title: "R", blocks: [{ id: "c3", type: "curated", datasetId: "d1", role: "everything" }] }).success).toBe(false);
+  });
+
   it("drops stored blocks it no longer understands instead of failing the page", () => {
     const blocks = parseStoredBlocks([{ id: "a", type: "text", markdown: "ok" }, { id: "b", type: "widget" }, "junk"]);
     expect(blocks).toEqual([{ id: "a", type: "text", markdown: "ok" }]);

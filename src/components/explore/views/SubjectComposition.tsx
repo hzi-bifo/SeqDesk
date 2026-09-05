@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { fetcher } from "@/lib/explore/client";
 import type { SubjectCompositionPayload } from "@/lib/explore/views/subject-timeline/types";
+import { curatedLabel } from "./HeatmapView";
 import { OTHER_COLOR, PALETTE } from "./SubjectTimelineOverview";
 
 /**
@@ -39,7 +40,7 @@ export function SubjectCompositionPanel({
   const stacked = measure === "ra" ? data.stacked : data.stacked_reads;
   const traces = data.taxa.map((taxon, index) => ({
     type: "bar",
-    name: taxon,
+    name: curatedLabel(taxon, data.curated?.[taxon]),
     x: data.days.map((day) => `Day ${day}`),
     y: stacked[taxon] ?? [],
     marker: { color: taxon === "Other" ? OTHER_COLOR : PALETTE[index % PALETTE.length] },

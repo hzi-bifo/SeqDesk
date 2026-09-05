@@ -117,6 +117,8 @@ export interface SubjectCompositionPayload {
   n_libraries: number;
   day_support: DaySupportEntry[];
   aggregation: CompositionAggregation;
+  /** The curation list each shown taxon is marked with (pathogen or flora lists only). */
+  curated?: Record<string, { role: "pathogen" | "flora"; label: string; color: string | null }>;
 }
 
 /** A curated taxon's peak library-level detection (analysis.patient_highlights _role_hit). */

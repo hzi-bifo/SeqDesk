@@ -1,4 +1,4 @@
-import type { SubjectTimelineRow } from "../subject-timeline/types";
+import type { CuratedMembership, SubjectTimelineRow } from "../subject-timeline/types";
 
 export interface HeatmapOptions {
   /** Restrict to one group (specimen type); null uses every row. */
@@ -11,11 +11,22 @@ export interface HeatmapOptions {
   order?: "prevalence" | "abundance";
   /** Taxa removed before renormalization (curated artifacts). */
   artifacts?: string[];
+  /** Curation lists by lower-cased taxon name; when given, each taxon carries the list it is marked with. */
+  memberships?: Record<string, CuratedMembership[]>;
+}
+
+/** The curation list a taxon is marked with in the views. */
+export interface HeatmapCurated {
+  listId: string;
+  role: "pathogen" | "flora";
+  label: string;
+  tier: string | null;
+  color: string | null;
 }
 
 export interface HeatmapPayload {
   samples: Array<{ sample: string; subject: string; group: string; timepoint: number; site: string | null }>;
-  taxa: Array<{ taxon: string; prevalence: number; meanRa: number }>;
+  taxa: Array<{ taxon: string; prevalence: number; meanRa: number; curated?: HeatmapCurated | null }>;
   /** taxa x samples matrix in the order of `taxa` and `samples`; null where absent. */
   values: Array<Array<number | null>>;
   value: "ra" | "log10_ra" | "reads";
@@ -23,6 +34,23 @@ export interface HeatmapPayload {
 }
 
 const LOG_PSEUDOCOUNT = 0.01;
+const ROLE_ORDER: Record<string, number> = { pathogen: 0, flora: 1 };
+
+function siteRank(membership: CuratedMembership, group: string | null | undefined): number {
+  return !membership.site || !group || membership.site.toLowerCase() === group.toLowerCase() ? 0 : 1;
+}
+
+/**
+ * The list a taxon is marked with: pathogen lists before flora lists, lists for
+ * the current group (site) before lists for other sites. Artifact lists never
+ * mark a taxon; their taxa are removed instead.
+ */
+export function pickMembership(memberships: readonly CuratedMembership[] | undefined, group?: string | null): HeatmapCurated | null {
+  const candidates = (memberships ?? []).filter((membership) => membership.role === "pathogen" || membership.role === "flora");
+  if (candidates.length === 0) return null;
+  const [best] = [...candidates].sort((a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || siteRank(a, group) - siteRank(b, group));
+  return { listId: best.listId, role: best.role as "pathogen" | "flora", label: best.label, tier: best.tier, color: best.color };
+}
 
 /**
  * A taxa-by-samples matrix for the heatmap view. Relative abundance is
@@ -87,7 +115,12 @@ export function computeHeatmap(rows: readonly SubjectTimelineRow[], options: Hea
 
   return {
     samples,
-    taxa: taxa.map((entry) => ({ ...entry, prevalence: Math.round(entry.prevalence * 1000) / 1000, meanRa: Math.round(entry.meanRa * 1000) / 1000 })),
+    taxa: taxa.map((entry) => ({
+      ...entry,
+      prevalence: Math.round(entry.prevalence * 1000) / 1000,
+      meanRa: Math.round(entry.meanRa * 1000) / 1000,
+      ...(options.memberships ? { curated: pickMembership(options.memberships[entry.taxon.trim().toLowerCase()], options.group) } : {}),
+    })),
     values,
     value,
     nSamplesTotal: nSamples,

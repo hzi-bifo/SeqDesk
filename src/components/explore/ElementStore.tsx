@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { cn } from "@/lib/utils";
 
 /** The little pictures on the tiles: a sketch of what the element will look like. */
-export type SketchKind = "text" | "histogram" | "bar" | "scatter" | "box" | "numbers" | "table" | "figure" | "samples" | "sequencing" | "pipeline" | "import" | "analysis" | "timeline" | "heatmap";
+export type SketchKind = "text" | "histogram" | "bar" | "scatter" | "box" | "numbers" | "table" | "figure" | "samples" | "sequencing" | "pipeline" | "import" | "analysis" | "timeline" | "heatmap" | "list";
 
 export interface StoreItem {
   id: string;
@@ -147,6 +147,23 @@ function Sketch({ kind }: { kind: SketchKind }): ReactNode {
               <path d={`M${x} ${top - 6}v${h + 12}`} />
               <rect x={x - 9} y={top} width="18" height={h} fill="currentColor" fillOpacity="0.15" />
               <path d={`M${x - 9} ${top + h / 2}h18`} />
+            </g>
+          ))}
+        </svg>
+      );
+    case "list":
+      return (
+        <svg {...common}>
+          {[
+            ["#C0392B", 40, 22],
+            ["#E0A800", 34, 14],
+            ["#2E8B57", 30, 9],
+            ["#C0392B", 24, 5],
+          ].map(([color, name, bar], i) => (
+            <g key={i}>
+              <circle cx="13" cy={12 + i * 11} r="3" fill={String(color)} opacity="0.9" />
+              <rect x="21" y={10 + i * 11} width={Number(name)} height="4" rx="2" fill={stroke} opacity="0.6" />
+              <rect x="66" y={10 + i * 11} width={Number(bar)} height="4" rx="2" fill={stroke} opacity="0.3" />
             </g>
           ))}
         </svg>

@@ -41,6 +41,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       value: valueParam === "ra" || valueParam === "reads" ? valueParam : "log10_ra",
       order: params.get("order") === "abundance" ? "abundance" : "prevalence",
       artifacts: curation.artifacts,
+      memberships: curation.memberships,
     });
     const groups = [...new Set(adapted.rows.map((row) => row.group))].sort();
     return NextResponse.json({ cacheToken: await computeDatasetCacheToken(id), groups, ...payload });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { Filter, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -436,4 +437,219 @@ export function metricLabel(key: string): string {
 /** Median of a numeric column over rows, for callers that want one number. */
 export function medianOf(rows: ExploreRowData[], key: string): number | null {
   return median(rows.map((row) => toNumber(row[key])).filter((value): value is number => value !== null));
+}
+
+// ---------------------------------------------------------------------------
+// Organisms of interest: the curated taxa a long profile table contains
+// ---------------------------------------------------------------------------
+
+export interface CurationListSummary {
+  listId: string;
+  label: string;
+  role: "pathogen" | "flora" | "artifact";
+  site: string | null;
+  tier: string | null;
+  color: string | null;
+  entries: Array<{ name: string }>;
+}
+
+/** The curation lists of a scope, shared by every block that marks organisms. */
+export function useCurationLists(scope: string | null) {
+  return useSWR<{ lists: CurationListSummary[] }>(scope ? `/api/explore/curation?targetKey=${encodeURIComponent(scope)}` : null, fetcher, { revalidateOnFocus: false });
+}
+
+export type CuratedRoleFilter = "pathogen" | "flora" | "all";
+
+interface CuratedHit {
+  name: string;
+  lists: CurationListSummary[];
+  samples: Set<string>;
+  subjects: Set<string>;
+  groups: Map<string, Set<string>>;
+  peak: number;
+  peakGroup: string | null;
+}
+
+export function listColor(list: { role: string; color: string | null }): string {
+  return list.color ?? (list.role === "pathogen" ? "#C0392B" : list.role === "flora" ? "#2E8B57" : "#8C8C8C");
+}
+
+function ListChip({ list }: { list: CurationListSummary }) {
+  const color = listColor(list);
+  const text = list.tier ? `${list.site ? `${list.site} ` : ""}${list.tier}` : list.label;
+  return (
+    <span className="whitespace-nowrap rounded-full px-1.5 text-xs" style={{ background: `${color}22`, color }} title={list.label}>
+      {text}
+    </span>
+  );
+}
+
+/**
+ * Which organisms of the scope's curation lists occur in the table, how often,
+ * in whom and where, and how abundant they get. Computed in the browser from the
+ * whole table, so the page filters apply. Any long profile with sample, taxon
+ * and count roles works; group and subject roles add columns.
+ */
+export function CuratedOrganismsView({
+  table,
+  scope,
+  role = "pathogen",
+  lists,
+  limit = 25,
+  filters,
+  active,
+}: {
+  table: ReportTable;
+  scope: string;
+  role?: CuratedRoleFilter;
+  lists?: string[];
+  limit?: number;
+  filters: ReportFilter[];
+  active: ActiveFilters;
+}) {
+  const roles = table.roles;
+  const ready = Boolean(roles.sample && roles.taxon && roles.count);
+  const { data: frame, error } = useTableFrame(ready ? table.datasetId : null);
+  const { data: curation, error: curationError } = useCurationLists(scope);
+  const rows = useMemo(() => (frame ? filteredRows(frame, filters, active) : []), [frame, filters, active]);
+  const ra = useMemo(() => (roles.sample && roles.count ? relativeAbundance(rows, roles.sample, roles.count) : new Map<ExploreRowData, number>()), [rows, roles.sample, roles.count]);
+  const index = useMemo(() => {
+    const out = new Map<string, CurationListSummary[]>();
+    for (const list of curation?.lists ?? []) {
+      if (list.role === "artifact") continue;
+      if (role !== "all" && list.role !== role) continue;
+      if (lists && lists.length > 0 && !lists.includes(list.listId)) continue;
+      for (const entry of list.entries) {
+        const key = entry.name.trim().toLowerCase();
+        if (!key) continue;
+        const bucket = out.get(key) ?? [];
+        if (!bucket.includes(list)) bucket.push(list);
+        out.set(key, bucket);
+      }
+    }
+    return out;
+  }, [curation, role, lists]);
+
+  if (!ready) return <p className="text-sm text-muted-foreground">{table.name} needs sample, taxon and count roles for organisms of interest.</p>;
+  if (error || curationError) return <p className="text-sm text-destructive">Could not load the table or the curation lists.</p>;
+  if (!frame || !curation) return <Skeleton className="h-40 w-full" />;
+
+  const sampleKey = roles.sample!;
+  const taxonKey = roles.taxon!;
+  const groupKey = roles.group ?? null;
+  const subjectKey = roles.subject ?? null;
+  const allSamples = new Set<string>();
+  const hits = new Map<string, CuratedHit>();
+  for (const row of rows) {
+    const value = ra.get(row);
+    if (value === undefined) continue;
+    const sample = cellText(row[sampleKey]);
+    allSamples.add(sample);
+    if (value <= 0) continue;
+    const name = cellText(row[taxonKey]);
+    const key = name.trim().toLowerCase();
+    const matched = index.get(key);
+    if (!matched) continue;
+    const hit = hits.get(key) ?? { name, lists: matched, samples: new Set<string>(), subjects: new Set<string>(), groups: new Map<string, Set<string>>(), peak: 0, peakGroup: null };
+    hit.samples.add(sample);
+    if (subjectKey) hit.subjects.add(cellText(row[subjectKey]));
+    const group = groupKey ? cellText(row[groupKey]) || "(none)" : null;
+    if (group) {
+      const set = hit.groups.get(group) ?? new Set<string>();
+      set.add(sample);
+      hit.groups.set(group, set);
+    }
+    if (value > hit.peak) {
+      hit.peak = value;
+      hit.peakGroup = group;
+    }
+    hits.set(key, hit);
+  }
+  const ranked = [...hits.values()].sort((a, b) => b.samples.size - a.samples.size || b.peak - a.peak || a.name.localeCompare(b.name));
+  const shown = ranked.slice(0, limit);
+  const roleLabel = role === "all" ? "listed" : role;
+  const curationHref = `/explore/curation?scope=${encodeURIComponent(scope)}`;
+
+  if (index.size === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        This scope has no {role === "all" ? "curation" : role} lists yet.{" "}
+        <Link href={curationHref} className="underline">Curated lists</Link> decide which organisms appear here.
+      </p>
+    );
+  }
+
+  return (
+    <div>
+      <p className="mb-2 text-sm text-muted-foreground">
+        <span className="font-medium text-foreground">{ranked.length}</span> of {index.size} {roleLabel} organisms occur in {allSamples.size.toLocaleString()} samples
+        {ranked.length > shown.length ? `; the ${shown.length} most frequent are shown` : ""}.
+      </p>
+      {shown.length === 0 ? (
+        <p className="text-sm text-muted-foreground">None of the listed organisms occurs in the rows the page filters leave.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs text-muted-foreground">
+                <th className="py-1 pr-3 font-medium">Organism</th>
+                <th className="py-1 pr-3 font-medium">Lists</th>
+                <th className="py-1 pr-3 text-right font-medium">Samples</th>
+                {subjectKey && <th className="py-1 pr-3 text-right font-medium">Subjects</th>}
+                {groupKey && <th className="py-1 pr-3 font-medium">Per {columnLabel(frame.columns, groupKey).toLowerCase()}</th>}
+                <th className="py-1 text-right font-medium">Peak RA %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((hit) => {
+                const share = allSamples.size ? (100 * hit.samples.size) / allSamples.size : 0;
+                return (
+                  <tr key={hit.name} className="border-b align-top last:border-0">
+                    <td className="py-1 pr-3 font-medium">{hit.name}</td>
+                    <td className="py-1 pr-3">
+                      <div className="flex flex-wrap gap-1">{hit.lists.map((list) => <ListChip key={list.listId} list={list} />)}</div>
+                    </td>
+                    <td className="py-1 pr-3 text-right tabular-nums">
+                      <div className="flex items-center justify-end gap-2">
+                        <span className="inline-block h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                          <span className="block h-full rounded-full bg-foreground/50" style={{ width: `${Math.max(2, share)}%` }} />
+                        </span>
+                        <span className="whitespace-nowrap">
+                          {hit.samples.size} <span className="text-xs text-muted-foreground">({share.toFixed(0)} %)</span>
+                        </span>
+                      </div>
+                    </td>
+                    {subjectKey && <td className="py-1 pr-3 text-right tabular-nums">{hit.subjects.size}</td>}
+                    {groupKey && (
+                      <td className="py-1 pr-3">
+                        <div className="flex flex-wrap gap-1">
+                          {[...hit.groups.entries()]
+                            .sort((a, b) => b[1].size - a[1].size)
+                            .map(([group, samples]) => (
+                              <span key={group} className="whitespace-nowrap rounded-full border px-1.5 text-xs">
+                                {group} <span className="text-muted-foreground">{samples.size}</span>
+                              </span>
+                            ))}
+                        </div>
+                      </td>
+                    )}
+                    <td className="whitespace-nowrap py-1 text-right tabular-nums">
+                      {hit.peak.toFixed(hit.peak >= 10 ? 0 : 2)}
+                      {hit.peakGroup && groupKey ? <span className="ml-1 text-xs text-muted-foreground">{hit.peakGroup}</span> : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {table.name}
+        {frame.truncated ? `, first ${frame.rows.length.toLocaleString()} of ${frame.total.toLocaleString()} rows` : ""}
+        {filtersApply(table, filters, active) ? ", page filters applied" : ""}.{" "}
+        <Link href={curationHref} className="underline">Curated lists</Link>
+      </p>
+    </div>
+  );
 }
