@@ -147,10 +147,12 @@ function tint(hue: number) {
   return {
     border: `hsl(${hue} 45% 62%)`,
     header: `hsl(${hue} 55% 95%)`,
+    chip: `hsl(${hue} 50% 88%)`,
     strong: `hsl(${hue} 50% 38%)`,
     stroke: `hsl(${hue} 45% 55%)`,
   };
 }
+type Tint = ReturnType<typeof tint>;
 
 /** Resize handles for one card; shown while the card is selected. */
 function Resizer({ kind }: { kind: CanvasNodeKind }) {
@@ -169,8 +171,32 @@ function SourceNode({ data }: NodeProps<SourceNodeType>) {
   );
 }
 
-function OverflowChip({ children }: { children: React.ReactNode }) {
-  return <span className="whitespace-nowrap rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{children}</span>;
+/** A small label in the card's own colour: filled for facts, dashed for "nothing new". */
+function CardChip({ children, colours, variant = "filled", title }: { children: React.ReactNode; colours?: Tint; variant?: "filled" | "outline" | "dashed"; title?: string }) {
+  const style = colours
+    ? variant === "filled"
+      ? { background: colours.chip, color: colours.strong }
+      : { borderColor: colours.border, color: colours.strong }
+    : undefined;
+  return (
+    <span
+      className={cn(
+        "whitespace-nowrap rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+        variant === "filled" && !colours && "bg-muted text-muted-foreground",
+        variant === "outline" && "border",
+        variant === "dashed" && "border border-dashed",
+        variant !== "filled" && !colours && "text-muted-foreground"
+      )}
+      style={style}
+      title={title}
+    >
+      {children}
+    </span>
+  );
+}
+
+function OverflowChip({ children, colours }: { children: React.ReactNode; colours?: Tint }) {
+  return <CardChip colours={colours}>{children}</CardChip>;
 }
 
 /**
@@ -226,11 +252,12 @@ function DatasetNode({ id, data, width, height }: NodeProps<DatasetNodeType>) {
             <span className="tabular-nums">{data.rowCount.toLocaleString()} rows × {data.columnCount} columns</span>
             {data.version !== null && <span>v{data.version}</span>}
             {data.origin && <span className="basis-full truncate" title={data.origin}>{data.origin}</span>}
-            <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">{DATASET_KIND_DEFINITIONS[data.datasetKind as keyof typeof DATASET_KIND_DEFINITIONS]?.label ?? data.datasetKind}</Badge>
-            {data.sensitivity !== "standard" && <Badge variant="outline" className="px-1.5 py-0 text-[10px]">{data.sensitivity}</Badge>}
+            <CardChip colours={colours}>{DATASET_KIND_DEFINITIONS[data.datasetKind as keyof typeof DATASET_KIND_DEFINITIONS]?.label ?? data.datasetKind}</CardChip>
+            {data.sensitivity !== "standard" && <CardChip colours={colours} variant="outline">{data.sensitivity}</CardChip>}
             {data.latestWrite && (
-              <span
-                className={cn("rounded-full border px-1.5 py-0 text-[10px]", data.latestWrite.changed ? "border-transparent bg-secondary text-foreground" : "border-dashed")}
+              <CardChip
+                colours={colours}
+                variant={data.latestWrite.changed ? "filled" : "dashed"}
                 title={
                   data.latestWrite.changed
                     ? `The latest run, ${data.latestWrite.runNumber}, wrote this version`
@@ -238,7 +265,7 @@ function DatasetNode({ id, data, width, height }: NodeProps<DatasetNodeType>) {
                 }
               >
                 {data.latestWrite.changed ? `updated by ${data.latestWrite.runNumber}` : `unchanged in ${data.latestWrite.runNumber}`}
-              </span>
+              </CardChip>
             )}
           </div>
         </div>
@@ -326,9 +353,9 @@ function DatasetNode({ id, data, width, height }: NodeProps<DatasetNodeType>) {
           </tbody>
         </table>
       </div>
-      <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-t px-3 py-1.5">
-        {hiddenRows > 0 ? <OverflowChip>+{hiddenRows.toLocaleString()} rows</OverflowChip> : <span className="text-[10px] text-muted-foreground">all rows</span>}
-        {hiddenColumns > 0 ? <OverflowChip>+{hiddenColumns} columns</OverflowChip> : <span className="text-[10px] text-muted-foreground">all columns</span>}
+      <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-b-[7px] border-t px-3 py-1.5" style={{ background: colours.header }}>
+        {hiddenRows > 0 ? <OverflowChip colours={colours}>+{hiddenRows.toLocaleString()} rows</OverflowChip> : <span className="text-[10px]" style={{ color: colours.strong }}>all rows</span>}
+        {hiddenColumns > 0 ? <OverflowChip colours={colours}>+{hiddenColumns} columns</OverflowChip> : <span className="text-[10px]" style={{ color: colours.strong }}>all columns</span>}
         <span className="flex-1" />
         <AnalyseMenu
           dataset={data}
@@ -339,7 +366,7 @@ function DatasetNode({ id, data, width, height }: NodeProps<DatasetNodeType>) {
           onConnect={(target) => data.onConnect(data.datasetId, target)}
         />
         {data.datasetKind === "derived" && (
-          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name })} compact={compact} />
+          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name })} compact={compact} colours={colours} />
         )}
         {data.views.length === 0 && data.roleHints && data.roleHints.length > 0 && (
           <Link
@@ -489,7 +516,7 @@ function AnalyseList({
 }
 
 /** Put an output on the report page, or take it off. */
-function ReportToggle({ inReport, onToggle, compact = false }: { inReport: boolean; onToggle: () => Promise<void>; compact?: boolean }) {
+function ReportToggle({ inReport, onToggle, compact = false, colours }: { inReport: boolean; onToggle: () => Promise<void>; compact?: boolean; colours?: Tint }) {
   const [busy, setBusy] = useState(false);
   const toggle = async () => {
     setBusy(true);
@@ -504,7 +531,8 @@ function ReportToggle({ inReport, onToggle, compact = false }: { inReport: boole
       type="button"
       onClick={() => void toggle()}
       disabled={busy}
-      className={cn("nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-medium hover:bg-muted", inReport ? "border-transparent bg-secondary" : "text-muted-foreground")}
+      className={cn("nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded border px-1.5 py-0.5 text-[10px] font-medium hover:brightness-95", inReport ? "border-transparent bg-secondary" : "bg-card text-muted-foreground")}
+      style={inReport && colours ? { background: colours.chip, color: colours.strong } : undefined}
       title={inReport ? "Shown on the report page; click to take it off" : "Not on the report page; click to add it"}
       aria-label={inReport ? "In report" : "Add to report"}
       aria-pressed={inReport}
@@ -662,7 +690,7 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
           <pre className="mt-0.5 max-h-12 overflow-hidden whitespace-pre-wrap break-all font-mono leading-4">{errorLines.join("\n")}</pre>
         </div>
       )}
-      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px]">
+      <div className="flex items-center gap-2 rounded-b-[7px] border-t px-3 py-1.5 text-[11px]" style={{ background: colours.header }}>
         <button
           type="button"
           onClick={() => void run()}
@@ -676,7 +704,11 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
         </button>
         {data.latestRun ? (
           <>
-            <Badge variant={status === "completed" ? "secondary" : status === "failed" ? "destructive" : "outline"} className="px-1.5 py-0 text-[10px]">{status}</Badge>
+            {status === "failed" ? (
+              <Badge variant="destructive" className="px-1.5 py-0 text-[10px]">{status}</Badge>
+            ) : (
+              <CardChip colours={colours} variant={status === "completed" ? "filled" : "outline"}>{status}</CardChip>
+            )}
             <Link href={`/explore/runs/${data.latestRun.id}${data.scopeQuery}`} className="nodrag truncate text-muted-foreground hover:underline">{data.latestRun.runNumber}</Link>
           </>
         ) : (
@@ -726,13 +758,13 @@ function FigureNode({ data, width, height }: NodeProps<FigureNodeType>) {
           <ImageIcon className="h-8 w-8 text-muted-foreground/60" />
         )}
       </div>
-      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px]">
+      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px]" style={{ background: colours.header }}>
         <span className="min-w-0 truncate font-medium" title={`${data.name}, ${data.format === "plotly-json" ? "interactive" : data.format}`}>{data.name}</span>
         {!compact && <span className="shrink-0 text-muted-foreground">{data.format === "plotly-json" ? "interactive" : data.format}</span>}
         <span className="flex-1" />
-        {data.unchanged && !compact && <OverflowChip>unchanged</OverflowChip>}
+        {data.unchanged && !compact && <CardChip colours={colours} variant="dashed">unchanged</CardChip>}
         {data.analysisId && (
-          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "figure", analysisId: data.analysisId!, figureName: data.name, label: data.name })} compact={compact} />
+          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "figure", analysisId: data.analysisId!, figureName: data.name, label: data.name })} compact={compact} colours={colours} />
         )}
         <Link
           href={`/explore/runs/${data.runId}${data.scopeQuery}`}
@@ -760,7 +792,7 @@ function PendingNode({ data }: NodeProps<PendingNodeType>) {
           <Skeleton className="h-3 w-1/4" />
         </div>
       </div>
-      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px] text-muted-foreground">
+      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px] text-muted-foreground" style={{ background: colours.header }}>
         <Loader2 className="h-3 w-3 animate-spin" />
         <span className="truncate">{data.status === "queued" ? "Queued" : "Computing"} outputs of {data.runNumber}</span>
         <span className="flex-1" />
@@ -1000,7 +1032,8 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
     if (!target?.measured?.width) return;
     focusedRef.current = id;
     instance.updateNode(id, { selected: true });
-    void instance.fitView({ nodes: [{ id }], duration: 600, maxZoom: 1, padding: 0.6 });
+    // After React Flow's own first fit, which would otherwise win.
+    setTimeout(() => void instance.fitView({ nodes: [{ id }], duration: 600, maxZoom: 1, padding: 0.6 }), 250);
   }, [focusNodeId]);
   useEffect(() => {
     focusRequestedCard();
