@@ -903,15 +903,20 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
     [mutate, scope]
   );
 
-  // Pan to the card a report link asked for, once it exists.
+  // Pan to the card a report link asked for, once React Flow has measured it.
+  const focusRequestedCard = useCallback(() => {
+    const id = focusNodeId;
+    const instance = instanceRef.current;
+    if (!id || !instance || focusedRef.current === id) return;
+    const target = instance.getNodes().find((node) => node.id === id);
+    if (!target?.measured?.width) return;
+    focusedRef.current = id;
+    instance.updateNode(id, { selected: true });
+    void instance.fitView({ nodes: [{ id }], duration: 600, maxZoom: 1, padding: 0.6 });
+  }, [focusNodeId]);
   useEffect(() => {
-    if (!focusNodeId || focusedRef.current === focusNodeId) return;
-    if (!nodes.some((node) => node.id === focusNodeId)) return;
-    focusedRef.current = focusNodeId;
-    setNodes((current) => current.map((node) => ({ ...node, selected: node.id === focusNodeId }) as CanvasFlowNode));
-    const timer = setTimeout(() => void instanceRef.current?.fitView({ nodes: [{ id: focusNodeId }], duration: 600, maxZoom: 1, padding: 0.6 }), 50);
-    return () => clearTimeout(timer);
-  }, [focusNodeId, nodes, setNodes]);
+    focusRequestedCard();
+  }, [nodes, focusRequestedCard]);
 
   // Dragging from a table's handle onto empty canvas opens the Analyse menu there.
   const onConnectStart: OnConnectStart = useCallback((_event, params) => {
@@ -1112,6 +1117,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
         onConnectEnd={onConnectEnd}
         onInit={(instance) => {
           instanceRef.current = instance;
+          focusRequestedCard();
         }}
         deleteKeyCode={null}
         proOptions={{ hideAttribution: true }}
