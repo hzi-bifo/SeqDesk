@@ -91,13 +91,81 @@ const ViewBlockSchema = z
     type: z.literal("view"),
     datasetId: z.string().min(1).max(80),
     view: z.enum(BUILT_IN_VIEW_IDS),
+    /** View-specific choices, for example the heatmap's value, order and taxa count. */
+    options: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
     caption: z.string().max(500).optional(),
     span: Span,
   })
   .strict();
 
-export const ReportBlockSchema = z.discriminatedUnion("type", [TextBlockSchema, FigureBlockSchema, TableBlockSchema, ChartBlockSchema, MetricBlockSchema, ViewBlockSchema]);
-export const ReportInputSchema = z.object({ title: z.string().trim().min(1).max(200), blocks: z.array(ReportBlockSchema).max(MAX_REPORT_BLOCKS) }).strict();
+/** One organism of a long profile table: prevalence and abundance per group, carriers on the timeline. */
+const TaxonExplorerBlockSchema = z
+  .object({
+    id: BlockId,
+    type: z.literal("taxon-explorer"),
+    datasetId: z.string().min(1).max(80),
+    /** The organism shown first; readers can pick another. */
+    taxon: z.string().max(200).optional(),
+    caption: z.string().max(500).optional(),
+    span: Span,
+  })
+  .strict();
+
+/** One subject of a long profile table: its composition over time per group. */
+const SubjectBlockSchema = z
+  .object({
+    id: BlockId,
+    type: z.literal("subject"),
+    datasetId: z.string().min(1).max(80),
+    subject: z.string().max(200).optional(),
+    measure: z.enum(["ra", "reads"]).optional(),
+    caption: z.string().max(500).optional(),
+    span: Span,
+  })
+  .strict();
+
+/** A number an analysis recorded with its latest run, shown as a summary card. */
+const RunMetricBlockSchema = z
+  .object({
+    id: BlockId,
+    type: z.literal("run-metric"),
+    analysisId: z.string().min(1).max(80),
+    metrics: z.array(z.string().min(1).max(120)).min(1).max(4),
+    label: z.string().max(200).optional(),
+    span: Span,
+  })
+  .strict();
+
+export const ReportBlockSchema = z.discriminatedUnion("type", [
+  TextBlockSchema,
+  FigureBlockSchema,
+  TableBlockSchema,
+  ChartBlockSchema,
+  MetricBlockSchema,
+  ViewBlockSchema,
+  TaxonExplorerBlockSchema,
+  SubjectBlockSchema,
+  RunMetricBlockSchema,
+]);
+
+/** A page-level filter: a column of a table; every block reading a table with that column honours it. */
+export const ReportFilterSchema = z
+  .object({
+    id: z.string().min(1).max(120),
+    datasetId: z.string().min(1).max(80),
+    column: z.string().min(1).max(200),
+    label: z.string().max(120).optional(),
+  })
+  .strict();
+export type ReportFilter = z.infer<typeof ReportFilterSchema>;
+export const MAX_REPORT_FILTERS = 6;
+export const ReportInputSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    blocks: z.array(ReportBlockSchema).max(MAX_REPORT_BLOCKS),
+    filters: z.array(ReportFilterSchema).max(MAX_REPORT_FILTERS).optional(),
+  })
+  .strict();
 
 export type ReportBlock = z.infer<typeof ReportBlockSchema>;
 export type ReportInput = z.infer<typeof ReportInputSchema>;

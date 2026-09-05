@@ -82,6 +82,9 @@ export type CanvasAnalysisData = {
   paramsSchema?: CanvasParamsSchema | null;
   /** Input bindings of the current revision. */
   inputs?: Array<{ alias: string; datasetId: string }>;
+  /** Numbers the latest finished run recorded (sx.metric), for summary cards. */
+  metrics?: Record<string, string | number | boolean | null>;
+  metricsRunNumber?: string;
 }
 
 export type CanvasFigureData = {

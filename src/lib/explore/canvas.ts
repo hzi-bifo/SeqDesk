@@ -53,6 +53,18 @@ function provenanceSources(raw: string | null | undefined): ExploreProvenance["s
   return Array.isArray(parsed?.sources) ? parsed!.sources : [];
 }
 
+/** The metrics a run recorded, flattened to values a card can show. */
+function runMetrics(results: string | null | undefined): Record<string, string | number | boolean | null> | undefined {
+  const parsed = parseJsonObject(results);
+  const metrics = parsed && typeof parsed.metrics === "object" && parsed.metrics ? (parsed.metrics as Record<string, unknown>) : null;
+  if (!metrics) return undefined;
+  const flat: Record<string, string | number | boolean | null> = {};
+  for (const [key, value] of Object.entries(metrics)) {
+    if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") flat[key] = value;
+  }
+  return flat;
+}
+
 /** Assemble the graph of one scope from the database. */
 export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
   const [datasets, analyses, runs] = await Promise.all([
@@ -219,6 +231,8 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
           ? { id: latest.id, runNumber: latest.runNumber, status: latest.status, errorTail: latest.errorTail, completedAt: latest.completedAt?.toISOString() ?? null }
           : null,
         active: latest ? ACTIVE_RUN.has(latest.status) : false,
+        metrics: runMetrics(completedByAnalysis.get(analysis.id)?.[0]?.results),
+        metricsRunNumber: completedByAnalysis.get(analysis.id)?.[0]?.runNumber,
         params: parseJsonObject(revision?.params) ?? {},
         paramsSchema: ((analysis.kitId ? kits.get(analysis.kitId)?.manifest.params : null) ?? null) as CanvasParamsSchema | null,
         inputs: parseInputBindings(revision?.inputs).map((binding) => ({ alias: binding.alias, datasetId: binding.datasetId })),

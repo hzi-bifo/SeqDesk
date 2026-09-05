@@ -948,7 +948,8 @@ model ExploreReport {
   id          String    @id @default(cuid())
   targetKey   String
   title       String
-  blocks      Json      // ordered report blocks: text (markdown), figure (analysis + figure name), table (dataset)
+  blocks      Json      // ordered report blocks: text (markdown), figure (analysis + figure name), table (dataset), ...
+  settings    Json?     // page-level settings: filters over table columns that every block honours
   createdById String
   publishedAt DateTime? // reserved for sharing: set when a share link is issued
   shareToken  String?   @unique

@@ -1163,7 +1163,10 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
           if (block.type === "figure") return { id: block.id, type: "figure", analysisId: block.analysisId, figureName: block.figureName, caption: block.caption, span: block.span };
           if (block.type === "chart") return { id: block.id, type: "chart", datasetId: block.datasetId, chart: block.chart, x: block.x, y: block.y, color: block.color, caption: block.caption, span: block.span };
           if (block.type === "metric") return { id: block.id, type: "metric", datasetId: block.datasetId, column: block.column, stats: block.stats, label: block.label, span: block.span };
-          if (block.type === "view") return { id: block.id, type: "view", datasetId: block.datasetId, view: block.view, caption: block.caption, span: block.span };
+          if (block.type === "view") return { id: block.id, type: "view", datasetId: block.datasetId, view: block.view, options: block.options, caption: block.caption, span: block.span };
+          if (block.type === "taxon-explorer") return { id: block.id, type: "taxon-explorer", datasetId: block.datasetId, taxon: block.taxon, caption: block.caption, span: block.span };
+          if (block.type === "subject") return { id: block.id, type: "subject", datasetId: block.datasetId, subject: block.subject, measure: block.measure, caption: block.caption, span: block.span };
+          if (block.type === "run-metric") return { id: block.id, type: "run-metric", analysisId: block.analysisId, metrics: block.metrics, label: block.label, span: block.span };
           return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
         });
         const id = target.type === "figure" ? figureBlockId(target.analysisId, target.figureName) : target.type === "view" ? viewBlockId(target.datasetId, target.view) : tableBlockId(target.datasetId);
@@ -1178,7 +1181,7 @@ export function ExploreCanvas({ scope, className, fillViewport = false, focusNod
                   ? ({ id, type: "view", datasetId: target.datasetId, view: target.view, caption: target.label, span: 2 } as ReportBlock)
                   : ({ id, type: "table", datasetId: target.datasetId, caption: target.label, span: 2 } as ReportBlock),
             ];
-        await postJson(key, { title: report.title, blocks: next }, "PUT");
+        await postJson(key, { title: report.title, blocks: next, filters: report.filters }, "PUT");
         toast.success(present ? `${target.label} taken off the report` : `${target.label} added to the report`);
         await mutate();
       } catch (err) {

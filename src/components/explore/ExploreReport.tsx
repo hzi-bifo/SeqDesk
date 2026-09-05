@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import {
@@ -20,7 +20,8 @@ import {
 import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
-import { HeatmapView } from "@/components/explore/views/HeatmapView";
+import { FilterBar, filtersApply, RunMetricView, SubjectView, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
+import { HeatmapView, type HeatmapOptions } from "@/components/explore/views/HeatmapView";
 import { SubjectTimelineOverview } from "@/components/explore/views/SubjectTimelineOverview";
 import { BUILT_IN_VIEWS, type BuiltInView } from "@/lib/explore/canvas-layout";
 import { Button } from "@/components/ui/button";
@@ -32,9 +33,11 @@ import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { fetcher, formatCell, formatDateTime, postJson } from "@/lib/explore/client";
 import { CHART_KINDS, CHART_KIND_LABELS, METRIC_STATS, METRIC_STAT_LABELS, type ChartKind, type MetricStat } from "@/lib/explore/report-blocks";
-import { buildChart, computeStats, formatStat, numericColumns, WIDGET_ROW_LIMIT } from "@/lib/explore/report-widgets";
-import type { ReportBlock, ReportFigure, ReportInput, ReportTable, ReportTableContent, ReportView, ResolvedReportBlock } from "@/lib/explore/reports";
-import type { ExploreColumn, ExploreRowRecord } from "@/lib/explore/types";
+import { buildChart, computeStats, formatStat, numericColumns } from "@/lib/explore/report-widgets";
+import type { ActiveFilters } from "@/lib/explore/frame";
+import type { ReportFilter } from "@/lib/explore/report-blocks";
+import type { ReportAnalysis, ReportBlock, ReportFigure, ReportInput, ReportTable, ReportTableContent, ReportView, ResolvedReportBlock } from "@/lib/explore/reports";
+import type { ExploreColumn } from "@/lib/explore/types";
 
 interface ExploreReportProps {
   scope: string;
@@ -57,6 +60,7 @@ function figureKey(analysisId: string, figureName: string): string {
 function toInput(report: ReportView): ReportInput {
   return {
     title: report.title,
+    filters: report.filters,
     blocks: report.blocks.map((block): ReportBlock => {
       if (block.type === "text") return { id: block.id, type: "text", markdown: block.markdown, span: block.span };
       if (block.type === "figure") {
@@ -66,7 +70,10 @@ function toInput(report: ReportView): ReportInput {
         return { id: block.id, type: "chart", datasetId: block.datasetId, chart: block.chart, x: block.x, y: block.y, color: block.color, caption: block.caption, span: block.span };
       }
       if (block.type === "metric") return { id: block.id, type: "metric", datasetId: block.datasetId, column: block.column, stats: block.stats, label: block.label, span: block.span };
-      if (block.type === "view") return { id: block.id, type: "view", datasetId: block.datasetId, view: block.view, caption: block.caption, span: block.span };
+      if (block.type === "view") return { id: block.id, type: "view", datasetId: block.datasetId, view: block.view, options: block.options, caption: block.caption, span: block.span };
+      if (block.type === "taxon-explorer") return { id: block.id, type: "taxon-explorer", datasetId: block.datasetId, taxon: block.taxon, caption: block.caption, span: block.span };
+      if (block.type === "subject") return { id: block.id, type: "subject", datasetId: block.datasetId, subject: block.subject, measure: block.measure, caption: block.caption, span: block.span };
+      if (block.type === "run-metric") return { id: block.id, type: "run-metric", analysisId: block.analysisId, metrics: block.metrics, label: block.label, span: block.span };
       return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
     }),
   };
@@ -99,6 +106,7 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
   const [draft, setDraft] = useState<ReportInput | null>(null);
   const [saving, setSaving] = useState(false);
   const [storeOpen, setStoreOpen] = useState(false);
+  const [active, setActive] = useState<ActiveFilters>({});
   const report = data?.report;
 
   if (error) return <p className="mt-6 text-sm text-destructive">Could not load the report: {String(error.message)}</p>;
@@ -118,6 +126,10 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
   const figureByKey = new Map(report.outputs.figures.map((figure) => [figureKey(figure.analysisId, figure.figureName), figure] as const));
   const tableById = new Map(report.outputs.tables.map((table) => [table.datasetId, table] as const));
   const blocks: ReportBlock[] = draft ? draft.blocks : report.blocks;
+  const filters: ReportFilter[] = draft ? (draft.filters ?? []) : report.filters;
+  const setFilters = (next: ReportFilter[]) => setDraft((current) => (current ? { ...current, filters: next } : current));
+  const analysisById = new Map(report.outputs.analyses.map((analysis) => [analysis.analysisId, analysis] as const));
+  const headings = blocks.flatMap((block) => (block.type === "text" ? block.markdown.split("\n").filter((line) => /^##\s+/.test(line)).slice(0, 1).map((line) => ({ id: block.id, title: line.replace(/^##\s+/, "").trim() })) : []));
   const usedFigures = new Set(blocks.filter((block) => block.type === "figure").map((block) => figureKey(block.analysisId, block.figureName)));
   const usedTables = new Set(blocks.filter((block) => block.type === "table").map((block) => block.datasetId));
   const usedViews = new Set(blocks.filter((block) => block.type === "view").map((block) => `${block.datasetId}:${block.view}`));
@@ -147,6 +159,39 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
         { id: "scatter", title: "Dot plot", hint: "Two numeric columns against each other", sketch: "scatter", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "scatter" } as ReportBlock) },
         { id: "box", title: "Box plot", hint: "A numeric column per group", sketch: "box", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "box" } as ReportBlock) },
         { id: "metric", title: "Numbers", hint: "Count, mean, min, max of one column", sketch: "numbers", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock(defaultMetricBlock(report.outputs.tables)) },
+        {
+          id: "run-metric",
+          title: "Run numbers",
+          hint: "Numbers an analysis recorded, as cards",
+          sketch: "numbers",
+          disabled: !report.outputs.analyses.some((analysis) => Object.keys(analysis.metrics).length > 0),
+          onSelect: () => {
+            const analysis = report.outputs.analyses.find((entry) => Object.keys(entry.metrics).length > 0);
+            if (analysis) addBlock({ id: newBlockId("run-metric"), type: "run-metric", analysisId: analysis.analysisId, metrics: Object.keys(analysis.metrics).filter((key) => typeof analysis.metrics[key] === "number").slice(0, 4), span: 2 });
+          },
+        },
+        {
+          id: "taxon-explorer",
+          title: "Taxon explorer",
+          hint: "Pick an organism: prevalence, abundance, carriers",
+          sketch: "scatter",
+          disabled: !report.outputs.tables.some((table) => table.roles.sample && table.roles.taxon && table.roles.count),
+          onSelect: () => {
+            const table = report.outputs.tables.find((entry) => entry.roles.sample && entry.roles.taxon && entry.roles.count);
+            if (table) addBlock({ id: newBlockId("taxon"), type: "taxon-explorer", datasetId: table.datasetId, span: 2 });
+          },
+        },
+        {
+          id: "subject",
+          title: "Subject",
+          hint: "Pick a subject: composition over time",
+          sketch: "timeline",
+          disabled: !report.outputs.tables.some((table) => table.views.includes("subject-timeline")),
+          onSelect: () => {
+            const table = report.outputs.tables.find((entry) => entry.views.includes("subject-timeline"));
+            if (table) addBlock({ id: newBlockId("subject"), type: "subject", datasetId: table.datasetId, span: 2 });
+          },
+        },
       ],
     },
     {
@@ -290,6 +335,18 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
           ))}
       </div>
 
+      <FilterBar filters={filters} tables={report.outputs.tables} active={active} onActiveChange={setActive} editing={editing} onFiltersChange={editing ? setFilters : undefined} />
+
+      {!editing && headings.length > 1 && (
+        <nav className="mt-4 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground" aria-label="Contents">
+          {headings.map((heading) => (
+            <a key={heading.id} href={`#${heading.id}`} className="hover:text-foreground hover:underline">
+              {heading.title}
+            </a>
+          ))}
+        </nav>
+      )}
+
       {!hasOutputs && !editing && (
         <div className="mt-6 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           <p>Nothing to report yet. Outputs are made on the canvas: connect a dataset to an analysis and run it, and its figures and tables land here.</p>
@@ -317,6 +374,10 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
               onRemove={() => removeBlock(block.id)}
               scopeQuery={scopeQuery}
               tables={report.outputs.tables}
+              analyses={report.outputs.analyses}
+              analysis={block.type === "run-metric" ? (analysisById.get(block.analysisId) ?? null) : null}
+              filters={filters}
+              active={active}
             />
           ))}
           {editing && blocks.length === 0 && (
@@ -341,15 +402,21 @@ interface ReportBlockCardProps {
   onRemove: () => void;
   scopeQuery: string;
   tables: ReportTable[];
+  analyses: ReportAnalysis[];
+  analysis: ReportAnalysis | null;
+  filters: ReportFilter[];
+  active: ActiveFilters;
 }
 
-const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View" };
+const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", "run-metric": "Run numbers" };
 
-function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, tables }: ReportBlockCardProps) {
+function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, tables, analyses, analysis, filters, active }: ReportBlockCardProps) {
   const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
   const label = BLOCK_LABELS[block.type];
+  const blockTable = "datasetId" in block ? (tables.find((table) => table.datasetId === block.datasetId) ?? null) : null;
+  const narrowed = filtersApply(blockTable, filters, active);
   return (
-    <section className={cn("min-w-0 rounded-lg border bg-card", span === 2 && "md:col-span-2")} aria-label={`${label} block`}>
+    <section id={block.id} className={cn("min-w-0 scroll-mt-4 rounded-lg border bg-card", span === 2 && "md:col-span-2")} aria-label={`${label} block`}>
       {editing && (
         <div className="flex items-center gap-1 border-b bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
           <span className="font-medium">{label}</span>
@@ -389,7 +456,12 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
           <>
             <Caption editing={editing} value={block.caption ?? ""} fallback={block.figureName} onChange={(caption) => onPatch({ caption })} />
             {figure ? (
-              <FigureContent figure={figure} scopeQuery={scopeQuery} />
+              <>
+                {Object.values(active).some((values) => values.length > 0) && (
+                  <p className="mb-1 text-[11px] text-muted-foreground">Drawn by the analysis run; page filters do not change it.</p>
+                )}
+                <FigureContent figure={figure} scopeQuery={scopeQuery} />
+              </>
             ) : (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This figure is not produced by the analysis any more.</div>
             )}
@@ -400,7 +472,7 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
           <>
             <Caption editing={editing} value={block.caption ?? ""} fallback={chartTitle(block, tables)} onChange={(caption) => onPatch({ caption })} />
             {editing && <ChartControls block={block} tables={tables} onPatch={onPatch} />}
-            <ChartBlockView block={block} table={tables.find((table) => table.datasetId === block.datasetId) ?? null} />
+            <ChartBlockView block={block} table={blockTable} filters={filters} active={active} />
           </>
         )}
 
@@ -408,7 +480,56 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
           <>
             <Caption editing={editing} value={block.caption ?? ""} fallback={viewTitle(block, tables)} onChange={(caption) => onPatch({ caption })} />
             {editing && <ViewControls block={block} tables={tables} onPatch={onPatch} />}
-            <ViewBlockView block={block} table={tables.find((table) => table.datasetId === block.datasetId) ?? null} scopeQuery={scopeQuery} />
+            <ViewBlockView block={block} table={blockTable} scopeQuery={scopeQuery} filters={filters} active={active} />
+          </>
+        )}
+
+        {block.type === "taxon-explorer" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={`Taxon explorer${blockTable ? `: ${blockTable.name}` : ""}`} onChange={(caption) => onPatch({ caption })} />
+            {editing && <TableOnlyControls value={block.datasetId} tables={tables.filter((table) => table.roles.sample && table.roles.taxon && table.roles.count)} onChange={(datasetId) => onPatch({ datasetId, taxon: undefined } as Partial<ReportBlock>)} />}
+            {blockTable ? (
+              <TaxonExplorerView table={blockTable} taxon={block.taxon ?? null} onPickTaxon={(taxon) => onPatch({ taxon } as Partial<ReportBlock>)} filters={filters} active={active} editing={editing} />
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>
+            )}
+          </>
+        )}
+
+        {block.type === "subject" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={`Subject${blockTable ? `: ${blockTable.name}` : ""}`} onChange={(caption) => onPatch({ caption })} />
+            {editing && (
+              <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-2">
+                <label className="space-y-1 text-[11px] text-muted-foreground">
+                  <span>Table</span>
+                  <TableSelect value={block.datasetId} tables={tables.filter((table) => table.views.includes("subject-timeline"))} onChange={(datasetId) => onPatch({ datasetId, subject: undefined } as Partial<ReportBlock>)} />
+                </label>
+                <label className="space-y-1 text-[11px] text-muted-foreground">
+                  <span>Measure</span>
+                  <Select value={block.measure ?? "ra"} onValueChange={(measure) => onPatch({ measure } as Partial<ReportBlock>)}>
+                    <SelectTrigger className="h-8 text-xs" aria-label="Measure"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ra">Relative abundance</SelectItem>
+                      <SelectItem value="reads">Reads</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
+            )}
+            {blockTable ? (
+              <SubjectView table={blockTable} subject={block.subject ?? null} measure={block.measure ?? "ra"} onPickSubject={(subject) => onPatch({ subject } as Partial<ReportBlock>)} filters={filters} active={active} editing={editing} />
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>
+            )}
+          </>
+        )}
+
+        {block.type === "run-metric" && (
+          <>
+            <Caption editing={editing} value={block.label ?? ""} fallback={analysis ? `${analysis.name} in numbers` : "Run numbers"} onChange={(label) => onPatch({ label } as Partial<ReportBlock>)} />
+            {editing && <RunMetricControls block={block} analyses={analyses} onPatch={onPatch} />}
+            <RunMetricView analysis={analysis} metrics={block.metrics} />
           </>
         )}
 
@@ -416,14 +537,16 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
           <>
             <Caption editing={editing} value={block.label ?? ""} fallback={metricTitle(block, tables)} onChange={(label) => onPatch({ label })} />
             {editing && <MetricControls block={block} tables={tables} onPatch={onPatch} />}
-            <MetricBlockView block={block} table={tables.find((table) => table.datasetId === block.datasetId) ?? null} />
+            <MetricBlockView block={block} table={blockTable} filters={filters} active={active} />
           </>
         )}
 
         {block.type === "table" && (
           <>
             <Caption editing={editing} value={block.caption ?? ""} fallback={tableInfo?.name ?? "Table"} onChange={(caption) => onPatch({ caption })} />
-            {resolved && resolved.type === "table" && resolved.table ? (
+            {narrowed && blockTable ? (
+              <FilteredTableContent table={blockTable} rows={block.rows ?? 12} filters={filters} active={active} scopeQuery={scopeQuery} />
+            ) : resolved && resolved.type === "table" && resolved.table ? (
               <TableContent table={resolved.table} scopeQuery={scopeQuery} />
             ) : tableInfo ? (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
@@ -483,7 +606,7 @@ function FigureContent({ figure, scopeQuery }: { figure: ReportFigure; scopeQuer
   );
 }
 
-function TableContent({ table, scopeQuery }: { table: ReportTableContent; scopeQuery: string }) {
+function TableContent({ table, scopeQuery, note }: { table: ReportTableContent; scopeQuery: string; note?: string }) {
   return (
     <div>
       <div className="overflow-x-auto rounded-md border">
@@ -519,8 +642,7 @@ function TableContent({ table, scopeQuery }: { table: ReportTableContent; scopeQ
       </div>
       <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
         <span className="tabular-nums">
-          {Math.min(table.rows.length, table.rowCount).toLocaleString()} of {table.rowCount.toLocaleString()} rows, {table.columnCount} columns
-          {table.version ? `, v${table.version}` : ""}
+          {note ?? `${Math.min(table.rows.length, table.rowCount).toLocaleString()} of ${table.rowCount.toLocaleString()} rows, ${table.columnCount} columns${table.version ? `, v${table.version}` : ""}`}
         </span>
         <span className="flex-1" />
         <Link href={`/explore${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`dataset:${table.datasetId}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at this table's card">
@@ -578,9 +700,68 @@ function metricTitle(block: MetricBlock, tables: ReportTable[]): string {
   return `${columnLabel(table?.columns ?? [], block.column)}${table ? ` (${table.name})` : ""}`;
 }
 
-/** The first rows of a table, enough for a chart or a summary; the caller notes when the table is longer. */
-function useTableRows(datasetId: string | null) {
-  return useSWR<{ rows: ExploreRowRecord[]; total: number }>(datasetId ? `/api/explore/datasets/${datasetId}/rows?limit=${WIDGET_ROW_LIMIT}` : null, fetcher);
+function TableOnlyControls({ value, tables, onChange }: { value: string; tables: ReportTable[]; onChange: (datasetId: string) => void }) {
+  return (
+    <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-2">
+      <label className="space-y-1 text-[11px] text-muted-foreground">
+        <span>Table</span>
+        <TableSelect value={value} tables={tables} onChange={onChange} />
+      </label>
+    </div>
+  );
+}
+
+function RunMetricControls({ block, analyses, onPatch }: { block: Extract<ReportBlock, { type: "run-metric" }>; analyses: ReportAnalysis[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  const analysis = analyses.find((entry) => entry.analysisId === block.analysisId);
+  const keys = analysis ? Object.keys(analysis.metrics) : [];
+  const toggle = (key: string) => {
+    const next = block.metrics.includes(key) ? block.metrics.filter((entry) => entry !== key) : [...block.metrics, key].slice(-4);
+    if (next.length > 0) onPatch({ metrics: next } as Partial<ReportBlock>);
+  };
+  return (
+    <div className="mb-3 space-y-2 rounded-md border bg-muted/30 p-2">
+      <label className="space-y-1 text-[11px] text-muted-foreground">
+        <span>Analysis</span>
+        <Select value={block.analysisId} onValueChange={(analysisId) => { const target = analyses.find((entry) => entry.analysisId === analysisId); onPatch({ analysisId, metrics: Object.keys(target?.metrics ?? {}).slice(0, 4) } as Partial<ReportBlock>); }}>
+          <SelectTrigger className="h-8 text-xs" aria-label="Analysis"><SelectValue placeholder="Choose an analysis" /></SelectTrigger>
+          <SelectContent>
+            {analyses.filter((entry) => Object.keys(entry.metrics).length > 0).map((entry) => (
+              <SelectItem key={entry.analysisId} value={entry.analysisId}>{entry.name}<span className="ml-1.5 text-xs text-muted-foreground">{entry.runNumber}</span></SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </label>
+      <div className="flex flex-wrap gap-1" role="group" aria-label="Numbers to show">
+        {keys.map((key) => (
+          <button key={key} type="button" onClick={() => toggle(key)} aria-pressed={block.metrics.includes(key)} className={cn("rounded-full border px-2 py-0.5 text-[11px]", block.metrics.includes(key) ? "border-transparent bg-secondary font-medium" : "text-muted-foreground hover:bg-muted")} title={String(analysis?.metrics[key])}>
+            {key}
+          </button>
+        ))}
+        <span className="self-center text-[10px] text-muted-foreground">up to four</span>
+      </div>
+    </div>
+  );
+}
+
+/** The whole table for a block, with the page filters that apply to it already removed. */
+function useFilteredTable(table: ReportTable | null, filters: ReportFilter[], active: ActiveFilters) {
+  const { data, error } = useTableFrame(table ? table.datasetId : null);
+  const rows = useMemo(() => (data ? filteredRows(data, filters, active) : []), [data, filters, active]);
+  return { frame: data, rows, error };
+}
+
+/** A table block while page filters narrow it: the first rows that pass, from the whole table. */
+function FilteredTableContent({ table, rows, filters, active, scopeQuery }: { table: ReportTable; rows: number; filters: ReportFilter[]; active: ActiveFilters; scopeQuery: string }) {
+  const { frame, rows: kept, error } = useFilteredTable(table, filters, active);
+  if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
+  if (!frame) return <Skeleton className="h-40 w-full" />;
+  return (
+    <TableContent
+      table={{ datasetId: table.datasetId, name: table.name, version: frame.version, columns: frame.columns, rows: kept.slice(0, rows), rowCount: kept.length, columnCount: frame.columns.length }}
+      scopeQuery={scopeQuery}
+      note={`${kept.length.toLocaleString()} of ${frame.total.toLocaleString()} rows pass the page filters`}
+    />
+  );
 }
 
 function TableSelect({ value, tables, onChange }: { value: string; tables: ReportTable[]; onChange: (datasetId: string) => void }) {
@@ -665,18 +846,14 @@ function ChartControls({ block, tables, onPatch }: { block: ChartBlock; tables: 
   );
 }
 
-function ChartBlockView({ block, table }: { block: ChartBlock; table: ReportTable | null }) {
-  const { data, error } = useTableRows(table && block.x ? table.datasetId : null);
+function ChartBlockView({ block, table, filters, active }: { block: ChartBlock; table: ReportTable | null; filters: ReportFilter[]; active: ActiveFilters }) {
+  const { frame, rows, error } = useFilteredTable(table && block.x ? table : null, filters, active);
   if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
   if (!block.x) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a column.</div>;
   if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
-  if (!data) return <Skeleton className="h-64 w-full" />;
-  const result = buildChart(
-    data.rows.map((row) => row.data),
-    table.columns,
-    { chart: block.chart, x: block.x, y: block.y, color: block.color },
-    data.total
-  );
+  if (!frame) return <Skeleton className="h-64 w-full" />;
+  const narrowed = filtersApply(table, filters, active);
+  const result = buildChart(rows, table.columns, { chart: block.chart, x: block.x, y: block.y, color: block.color }, frame.truncated ? frame.total : undefined);
   return (
     <div>
       {result.data.length > 0 ? (
@@ -685,7 +862,10 @@ function ChartBlockView({ block, table }: { block: ChartBlock; table: ReportTabl
         <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{result.notes[0] ?? "Nothing to draw yet."}</div>
       )}
       {result.data.length > 0 && result.notes.length > 0 && <p className="mt-1 text-[11px] text-muted-foreground">{result.notes.join(" ")}</p>}
-      <p className="mt-1 text-[11px] text-muted-foreground">{table.name}</p>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {table.name}
+        {narrowed ? `, ${rows.length.toLocaleString()} rows after page filters` : ""}
+      </p>
     </div>
   );
 }
@@ -727,16 +907,14 @@ function MetricControls({ block, tables, onPatch }: { block: MetricBlock; tables
   );
 }
 
-function MetricBlockView({ block, table }: { block: MetricBlock; table: ReportTable | null }) {
-  const { data, error } = useTableRows(table && block.column ? table.datasetId : null);
+function MetricBlockView({ block, table, filters, active }: { block: MetricBlock; table: ReportTable | null; filters: ReportFilter[]; active: ActiveFilters }) {
+  const { frame, rows, error } = useFilteredTable(table && block.column ? table : null, filters, active);
   if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
   if (!block.column) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a column.</div>;
   if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
-  if (!data) return <Skeleton className="h-20 w-full" />;
-  const stats = computeStats(
-    data.rows.map((row) => row.data),
-    block.column
-  );
+  if (!frame) return <Skeleton className="h-20 w-full" />;
+  const narrowed = filtersApply(table, filters, active);
+  const stats = computeStats(rows, block.column);
   return (
     <div>
       <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(4, block.stats.length)}, minmax(0, 1fr))` }}>
@@ -749,7 +927,8 @@ function MetricBlockView({ block, table }: { block: MetricBlock; table: ReportTa
       </div>
       <p className="mt-1 text-[11px] text-muted-foreground">
         {table.name}
-        {data.total > data.rows.length ? `, first ${data.rows.length.toLocaleString()} of ${data.total.toLocaleString()} rows` : ""}
+        {frame.truncated ? `, first ${frame.rows.length.toLocaleString()} of ${frame.total.toLocaleString()} rows` : ""}
+        {narrowed ? `, ${rows.length.toLocaleString()} rows after page filters` : ""}
       </p>
     </div>
   );
@@ -769,8 +948,43 @@ function viewTitle(block: ViewBlock, tables: ReportTable[]): string {
 function ViewControls({ block, tables, onPatch }: { block: ViewBlock; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
   const candidates = tables.filter((table) => table.views.length > 0);
   const patch = (values: Partial<ViewBlock>) => onPatch(values as Partial<ReportBlock>);
+  const options = block.options ?? {};
+  const setOption = (key: string, value: string | number) => patch({ options: { ...options, [key]: value } });
   return (
     <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-2">
+      {block.view === "heatmap" && (
+        <>
+          <label className="space-y-1 text-[11px] text-muted-foreground">
+            <span>Values</span>
+            <Select value={String(options.value ?? "log10_ra")} onValueChange={(value) => setOption("value", value)}>
+              <SelectTrigger className="h-8 text-xs" aria-label="Heatmap values"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="log10_ra">log10 abundance</SelectItem>
+                <SelectItem value="ra">Relative abundance</SelectItem>
+                <SelectItem value="reads">Reads</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="space-y-1 text-[11px] text-muted-foreground">
+            <span>Taxa and order</span>
+            <div className="flex gap-1">
+              <Select value={String(options.nTaxa ?? 35)} onValueChange={(value) => setOption("nTaxa", Number(value))}>
+                <SelectTrigger className="h-8 text-xs" aria-label="Number of taxa"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["20", "35", "50", "80", "120"].map((entry) => <SelectItem key={entry} value={entry}>{entry} taxa</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={String(options.order ?? "prevalence")} onValueChange={(value) => setOption("order", value)}>
+                <SelectTrigger className="h-8 text-xs" aria-label="Taxon order"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="prevalence">by prevalence</SelectItem>
+                  <SelectItem value="abundance">by abundance</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </label>
+        </>
+      )}
       <label className="space-y-1 text-[11px] text-muted-foreground">
         <span>Table</span>
         <TableSelect value={block.datasetId} tables={candidates} onChange={(datasetId) => patch({ datasetId })} />
@@ -793,22 +1007,35 @@ function ViewControls({ block, tables, onPatch }: { block: ViewBlock; tables: Re
   );
 }
 
-function ViewBlockView({ block, table, scopeQuery }: { block: ViewBlock; table: ReportTable | null; scopeQuery: string }) {
+function ViewBlockView({ block, table, scopeQuery, filters, active }: { block: ViewBlock; table: ReportTable | null; scopeQuery: string; filters: ReportFilter[]; active: ActiveFilters }) {
   if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
   if (!table.views.includes(block.view)) {
     return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{table.name} lacks the roles this view needs (sample, subject, timepoint, taxon and count).</div>;
   }
+  // A page filter on the table's group column narrows the heatmap to that group.
+  const groupFilter = filters.find((filter) => filter.datasetId === table.datasetId && filter.column === table.roles.group && (active[filter.id]?.length ?? 0) > 0);
+  const options = block.options ?? {};
+  const heatmapOptions: HeatmapOptions = {
+    group: groupFilter ? active[groupFilter.id][0] : null,
+    value: (options.value as HeatmapOptions["value"]) ?? "log10_ra",
+    order: (options.order as HeatmapOptions["order"]) ?? "prevalence",
+    nTaxa: typeof options.nTaxa === "number" ? options.nTaxa : 35,
+  };
   return (
     <div>
       {block.view === "heatmap" ? (
-        <HeatmapView datasetId={block.datasetId} height={420} />
+        <HeatmapView datasetId={block.datasetId} height={420} options={heatmapOptions} />
       ) : (
         <div className="max-h-[420px] overflow-y-auto rounded-md border">
           <SubjectTimelineOverview datasetId={block.datasetId} />
         </div>
       )}
       <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-        <span>{table.name}</span>
+        <span>
+          {table.name}
+          {block.view === "heatmap" && groupFilter ? `, ${frameColumnLabel(table.columns, groupFilter.column)}: ${heatmapOptions.group}` : ""}
+          {block.view !== "heatmap" && filtersApply(table, filters, active) ? ", page filters do not apply to this view" : ""}
+        </span>
         <span className="flex-1" />
         <Link href={`/explore${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`view:${block.datasetId}:${block.view}`)}`} className="inline-flex items-center gap-1 hover:underline">
           <LayoutGrid className="h-3 w-3" /> Show on canvas

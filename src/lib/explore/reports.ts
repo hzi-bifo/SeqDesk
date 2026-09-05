@@ -15,6 +15,8 @@ export const REPORT_TABLE_ROWS = 12;
 export {
   figureBlockId,
   viewBlockId,
+  ReportFilterSchema,
+  type ReportFilter,
   MAX_REPORT_BLOCKS,
   parseStoredBlocks,
   ReportBlockSchema,
@@ -23,7 +25,8 @@ export {
   type ReportBlock,
   type ReportInput,
 } from "./report-blocks";
-import { figureBlockId, parseStoredBlocks, ReportInputSchema, tableBlockId, type ReportBlock } from "./report-blocks";
+import { figureBlockId, parseStoredBlocks, ReportFilterSchema, ReportInputSchema, tableBlockId, type ReportBlock, type ReportFilter } from "./report-blocks";
+import type { ExploreRoleMap } from "./types";
 
 export interface ReportFigure {
   analysisId: string;
@@ -51,6 +54,15 @@ export interface ReportTable {
   columns: ExploreColumn[];
   /** Built-in views the table's roles allow. */
   views: string[];
+  roles: ExploreRoleMap;
+}
+
+/** An analysis and the numbers its latest finished run recorded. */
+export interface ReportAnalysis {
+  analysisId: string;
+  name: string;
+  runNumber: string | null;
+  metrics: Record<string, string | number | boolean | null>;
 }
 
 /** What a chart or numbers block needs to know about its table; the rows come from the rows API. */
@@ -65,6 +77,7 @@ export interface ReportTableMeta {
 export interface ReportOutputs {
   figures: ReportFigure[];
   tables: ReportTable[];
+  analyses: ReportAnalysis[];
 }
 
 export interface ReportTableContent {
@@ -83,11 +96,16 @@ export type ResolvedReportBlock =
   | (Extract<ReportBlock, { type: "table" }> & { table: ReportTableContent | null })
   | (Extract<ReportBlock, { type: "chart" }> & { table: ReportTableMeta | null })
   | (Extract<ReportBlock, { type: "metric" }> & { table: ReportTableMeta | null })
-  | (Extract<ReportBlock, { type: "view" }> & { table: ReportTableMeta | null; available: boolean });
+  | (Extract<ReportBlock, { type: "view" }> & { table: ReportTableMeta | null; available: boolean })
+  | (Extract<ReportBlock, { type: "taxon-explorer" }> & { table: ReportTableMeta | null })
+  | (Extract<ReportBlock, { type: "subject" }> & { table: ReportTableMeta | null })
+  | (Extract<ReportBlock, { type: "run-metric" }> & { analysis: ReportAnalysis | null });
 
 export interface ReportView {
   id: string | null;
   title: string;
+  /** Page filters: columns readers can narrow every block by. */
+  filters: ReportFilter[];
   /** True when nothing is saved yet and the blocks were assembled from the outputs. */
   draft: boolean;
   updatedAt: string | null;
@@ -108,7 +126,12 @@ export class ExploreReportError extends Error {
 export async function collectReportOutputs(targetKey: string): Promise<ReportOutputs> {
   const graph = await loadCanvasGraph(targetKey);
   const analysisNames = new Map<string, string>();
-  for (const node of graph.nodes) if (node.data.kind === "analysis") analysisNames.set(node.data.analysisId, node.data.name);
+  const analyses: ReportAnalysis[] = [];
+  for (const node of graph.nodes) {
+    if (node.data.kind !== "analysis") continue;
+    analysisNames.set(node.data.analysisId, node.data.name);
+    analyses.push({ analysisId: node.data.analysisId, name: node.data.name, runNumber: node.data.metricsRunNumber ?? null, metrics: node.data.metrics ?? {} });
+  }
   const figures: ReportFigure[] = [];
   const tables: ReportTable[] = [];
   for (const node of graph.nodes) {
@@ -136,11 +159,12 @@ export async function collectReportOutputs(targetKey: string): Promise<ReportOut
         latestWrite: node.data.latestWrite ?? null,
         columns: node.data.columns.filter((column) => !column.key.endsWith("_db_id")),
         views: node.data.views,
+        roles: node.data.roles,
       });
     }
   }
   tables.sort((a, b) => Number(b.output) - Number(a.output));
-  return { figures, tables };
+  return { figures, tables, analyses };
 }
 
 /** The draft shown before anything is saved: a short intro, every figure, every output table. */
@@ -191,6 +215,8 @@ export async function resolveReportBlocks(blocks: ReportBlock[], outputs: Report
       if (block.type === "figure") return { ...block, figure: figureByKey.get(`${block.analysisId}:${block.figureName}`) ?? null };
       if (block.type === "chart" || block.type === "metric") return { ...block, table: metaOf(block.datasetId) };
       if (block.type === "view") return { ...block, table: metaOf(block.datasetId), available: Boolean(tableById.get(block.datasetId)?.views.includes(block.view)) };
+      if (block.type === "taxon-explorer" || block.type === "subject") return { ...block, table: metaOf(block.datasetId) };
+      if (block.type === "run-metric") return { ...block, analysis: outputs.analyses.find((analysis) => analysis.analysisId === block.analysisId) ?? null };
       return { ...block, table: tableById.has(block.datasetId) ? await loadTable(block.datasetId, block.rows ?? REPORT_TABLE_ROWS) : null };
     })
   );
@@ -216,6 +242,18 @@ async function loadTableContent(datasetId: string, limit: number): Promise<Repor
   };
 }
 
+/** Page filters as stored in settings; anything unreadable is dropped. */
+export function parseStoredFilters(raw: unknown): ReportFilter[] {
+  const settings = raw && typeof raw === "object" ? (raw as { filters?: unknown }) : null;
+  if (!settings || !Array.isArray(settings.filters)) return [];
+  const filters: ReportFilter[] = [];
+  for (const entry of settings.filters) {
+    const parsed = ReportFilterSchema.safeParse(entry);
+    if (parsed.success) filters.push(parsed.data);
+  }
+  return filters;
+}
+
 export async function getReportView(targetKey: string, scopeLabel: string): Promise<ReportView> {
   const outputs = await collectReportOutputs(targetKey);
   const stored = await db.exploreReport.findFirst({ where: { targetKey }, orderBy: { createdAt: "asc" } });
@@ -223,6 +261,7 @@ export async function getReportView(targetKey: string, scopeLabel: string): Prom
   return {
     id: stored?.id ?? null,
     title: stored?.title ?? scopeLabel,
+    filters: stored ? parseStoredFilters(stored.settings) : [],
     draft: !stored,
     updatedAt: stored ? stored.updatedAt.toISOString() : null,
     blocks: await resolveReportBlocks(blocks, outputs, loadTableContent),
@@ -243,11 +282,12 @@ export async function saveReport(targetKey: string, raw: unknown, userId: string
     ids.add(block.id);
   }
   const blocks = parsed.data.blocks as unknown as Prisma.InputJsonValue;
+  const settings = { filters: parsed.data.filters ?? [] } as unknown as Prisma.InputJsonValue;
   const existing = await db.exploreReport.findFirst({ where: { targetKey }, orderBy: { createdAt: "asc" } });
   if (existing) {
-    await db.exploreReport.update({ where: { id: existing.id }, data: { title: parsed.data.title, blocks } });
+    await db.exploreReport.update({ where: { id: existing.id }, data: { title: parsed.data.title, blocks, settings } });
   } else {
-    await db.exploreReport.create({ data: { targetKey, title: parsed.data.title, blocks, createdById: userId } });
+    await db.exploreReport.create({ data: { targetKey, title: parsed.data.title, blocks, settings, createdById: userId } });
   }
   return getReportView(targetKey, scopeLabel);
 }

@@ -7,9 +7,10 @@ const outputs: ReportOutputs = {
     { analysisId: "a2", analysisName: "Composition", figureName: "bars", runId: "r3", runNumber: "EXP-3", format: "png", url: "/g", thumbnailUrl: null, unchanged: false },
   ],
   tables: [
-    { datasetId: "d-out", name: "Column summary (Table summary)", kind: "derived", output: true, rowCount: 15, columnCount: 14, version: 2, latestWrite: { runNumber: "EXP-2", changed: false }, columns: [], views: [] },
-    { datasetId: "d-in", name: "Samples", kind: "samples", output: false, rowCount: 120, columnCount: 35, version: 1, latestWrite: null, columns: [{ key: "reads", label: "Reads", type: "number" }], views: ["subject-timeline", "heatmap"] },
+    { datasetId: "d-out", name: "Column summary (Table summary)", kind: "derived", output: true, rowCount: 15, columnCount: 14, version: 2, latestWrite: { runNumber: "EXP-2", changed: false }, columns: [], views: [], roles: {} },
+    { datasetId: "d-in", name: "Samples", kind: "samples", output: false, rowCount: 120, columnCount: 35, version: 1, latestWrite: null, columns: [{ key: "reads", label: "Reads", type: "number" }], views: ["subject-timeline", "heatmap"], roles: { sample: "sample" } },
   ],
+  analyses: [{ analysisId: "a1", name: "Table summary", runNumber: "EXP-2", metrics: { n_samples: 12, permanova_p: 0.001 } }],
 };
 
 describe("suggestReportBlocks", () => {
@@ -23,7 +24,7 @@ describe("suggestReportBlocks", () => {
   });
 
   it("explains what to do when nothing has been computed", () => {
-    const blocks = suggestReportBlocks({ figures: [], tables: [] });
+    const blocks = suggestReportBlocks({ figures: [], tables: [], analyses: [] });
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({ type: "text" });
     expect((blocks[0] as { markdown: string }).markdown).toContain("Run one on the canvas");
@@ -44,6 +45,9 @@ describe("resolveReportBlocks", () => {
         { id: "metric-foreign", type: "metric", datasetId: "other-scope", column: "reads", stats: ["mean"] },
         { id: "view", type: "view", datasetId: "d-in", view: "heatmap" },
         { id: "view-no-roles", type: "view", datasetId: "d-out", view: "heatmap" },
+        { id: "metric", type: "run-metric", analysisId: "a1", metrics: ["n_samples"] },
+        { id: "metric-gone", type: "run-metric", analysisId: "zzz", metrics: ["n_samples"] },
+        { id: "taxon", type: "taxon-explorer", datasetId: "d-in" },
       ],
       outputs,
       async (datasetId, limit) => {
@@ -63,6 +67,9 @@ describe("resolveReportBlocks", () => {
     // Built-in views resolve to their table and say whether the table's roles allow them.
     expect(resolved[7]).toMatchObject({ type: "view", available: true, table: { name: "Samples" } });
     expect(resolved[8]).toMatchObject({ type: "view", available: false });
+    expect(resolved[9]).toMatchObject({ type: "run-metric", analysis: { runNumber: "EXP-2", metrics: { n_samples: 12 } } });
+    expect(resolved[10]).toMatchObject({ type: "run-metric", analysis: null });
+    expect(resolved[11]).toMatchObject({ type: "taxon-explorer", table: { name: "Samples" } });
     expect(loaded).toEqual(["d-out:5"]);
   });
 });
@@ -78,10 +85,15 @@ describe("report validation", () => {
           { id: "c", type: "table", datasetId: "d", rows: 10 },
           { id: "d", type: "chart", datasetId: "d", chart: "scatter", x: "a", y: "b", color: "c" },
           { id: "e", type: "metric", datasetId: "d", column: "a", stats: ["count", "mean"] },
-          { id: "f", type: "view", datasetId: "d", view: "subject-timeline" },
+          { id: "f", type: "view", datasetId: "d", view: "subject-timeline", options: { nTaxa: 20, value: "ra" } },
+          { id: "g", type: "taxon-explorer", datasetId: "d", taxon: "Escherichia coli" },
+          { id: "h", type: "subject", datasetId: "d", subject: "A001", measure: "reads" },
+          { id: "i", type: "run-metric", analysisId: "a", metrics: ["n_samples", "permanova_group_p"], label: "Cohort" },
         ],
+        filters: [{ id: "flt", datasetId: "d", column: "specimen_type", label: "Specimen" }],
       }).success
     ).toBe(true);
+    expect(ReportInputSchema.safeParse({ title: "x", blocks: [], filters: [{ id: "flt", datasetId: "d" }] }).success).toBe(false);
     expect(ReportInputSchema.safeParse({ title: "x", blocks: [{ id: "a", type: "view", datasetId: "d", view: "sunburst" }] }).success).toBe(false);
     expect(ReportInputSchema.safeParse({ title: "x", blocks: [{ id: "a", type: "chart", datasetId: "d", chart: "pie", x: "a" }] }).success).toBe(false);
     expect(ReportInputSchema.safeParse({ title: "x", blocks: [{ id: "a", type: "metric", datasetId: "d", column: "a", stats: [] }] }).success).toBe(false);
@@ -96,5 +108,11 @@ describe("report validation", () => {
     const blocks = parseStoredBlocks([{ id: "a", type: "text", markdown: "ok" }, { id: "b", type: "widget" }, "junk"]);
     expect(blocks).toEqual([{ id: "a", type: "text", markdown: "ok" }]);
     expect(parseStoredBlocks(null)).toEqual([]);
+  });
+
+  it("reads page filters from the stored settings and drops broken ones", async () => {
+    const { parseStoredFilters } = await import("./reports");
+    expect(parseStoredFilters({ filters: [{ id: "a", datasetId: "d", column: "site" }, { id: "b" }] })).toEqual([{ id: "a", datasetId: "d", column: "site" }]);
+    expect(parseStoredFilters(null)).toEqual([]);
   });
 });
