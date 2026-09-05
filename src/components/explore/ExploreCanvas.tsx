@@ -21,6 +21,7 @@ import {
   type OnConnectEnd,
   type OnConnectStart,
   type ReactFlowInstance,
+  getNodesBounds,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -28,6 +29,8 @@ import {
   AlertTriangle,
   BookmarkCheck,
   BookmarkPlus,
+  ChevronDown,
+  ChevronRight,
   Code2,
   Database,
   ExternalLink,
@@ -133,7 +136,21 @@ type DatasetNodeType = Node<CanvasDatasetData & CardActions & { hue: number }, "
 type AnalysisNodeType = Node<
   CanvasAnalysisData &
     Wired &
-    Deletable & { hue: number; scopeQuery: string; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void>; onSaveParams: (analysisId: string, params: Record<string, unknown>) => Promise<void> },
+    Deletable & {
+      hue: number;
+      scopeQuery: string;
+      /** What the template does, shown instead of raw code on template steps. */
+      kitDescription: string | null;
+      /** Names of the tables this step reads. */
+      inputNames: string[];
+      /** Figures and tables this step has produced, and whether the canvas hides them. */
+      outputCount: number;
+      outputsHidden: boolean;
+      onToggleOutputs: (analysisId: string) => void;
+      onOpenCode: (analysisId: string) => void;
+      onRun: (analysisId: string) => Promise<void>;
+      onSaveParams: (analysisId: string, params: Record<string, unknown>) => Promise<void>;
+    },
   "analysis"
 >;
 type ViewNodeType = Node<CanvasViewData & Wired & { hue: number; scopeQuery: string; onToggleReport: (target: ReportTarget) => Promise<void> }, "view">;
@@ -682,6 +699,12 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
   const visibleLines = Math.max(1, Math.floor(((height ?? CANVAS_SIZES.analysis.height) - reserved) / CODE_LINE_HEIGHT));
   const lines = data.codePreview ? data.codePreview.split("\n") : [];
   const shown = lines.slice(0, visibleLines);
+  // Template steps say what they do; only blank scripts show their code on the card.
+  const paramSummary = Object.entries(data.params ?? {})
+    .filter(([, value]) => value !== null && value !== undefined && value !== "" && typeof value !== "object")
+    .slice(0, 4)
+    .map(([key, value]) => `${key} ${String(value)}`);
+  const descriptionLines = Math.max(1, Math.floor(((height ?? CANVAS_SIZES.analysis.height) - reserved - (data.inputNames.length ? 16 : 0) - (paramSummary.length ? 20 : 0)) / 16));
   const run = async () => {
     setStarting(true);
     try {
@@ -734,17 +757,35 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
           ]}
         />
       </div>
-      <button
-        type="button"
-        onClick={() => data.onOpenCode(data.analysisId)}
-        className="nodrag nowheel block min-h-0 w-full flex-1 overflow-hidden border-t bg-muted/40 px-3 py-2 text-left"
-        title="Show the full code"
-      >
-        <pre className="whitespace-pre font-mono text-[10px] leading-[14px] text-muted-foreground">
-          {shown.length ? shown.join("\n") : "(no code yet)"}
-          {lines.length > shown.length ? `\n… ${data.codeLines - shown.length} more lines` : ""}
-        </pre>
-      </button>
+      {data.kitDescription ? (
+        <div className="nodrag nowheel min-h-0 flex-1 overflow-hidden border-t px-3 py-2 text-[11px] leading-4">
+          {data.inputNames.length > 0 && (
+            <p className="truncate text-muted-foreground" title={data.inputNames.join(", ")}>
+              <span className="font-medium text-foreground">Reads</span> {data.inputNames.join(", ")}
+            </p>
+          )}
+          <p className="text-muted-foreground" style={{ display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: descriptionLines, overflow: "hidden" }}>
+            {data.kitDescription}
+          </p>
+          {paramSummary.length > 0 && (
+            <p className="mt-1 truncate text-muted-foreground" title={paramSummary.join(", ")}>
+              <span className="font-medium text-foreground">With</span> {paramSummary.join(", ")}
+            </p>
+          )}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => data.onOpenCode(data.analysisId)}
+          className="nodrag nowheel block min-h-0 w-full flex-1 overflow-hidden border-t bg-muted/40 px-3 py-2 text-left"
+          title="Show the full code"
+        >
+          <pre className="whitespace-pre font-mono text-[10px] leading-[14px] text-muted-foreground">
+            {shown.length ? shown.join("\n") : "(no code yet)"}
+            {lines.length > shown.length ? `\n… ${data.codeLines - shown.length} more lines` : ""}
+          </pre>
+        </button>
+      )}
       {showParams && hasParams && data.paramsSchema && (
         <ParamsMini schema={data.paramsSchema} values={data.params ?? {}} onApply={(values) => data.onSaveParams(data.analysisId, values)} />
       )}
@@ -783,6 +824,18 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
           <span className="text-muted-foreground">not run yet</span>
         )}
         <span className="flex-1" />
+        {data.outputCount > 0 && (
+          <button
+            type="button"
+            onClick={() => data.onToggleOutputs(data.analysisId)}
+            className="nodrag inline-flex items-center gap-0.5 rounded-full border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+            title={data.outputsHidden ? "Show the figures and tables this step produced" : "Hide the outputs of this step"}
+            aria-expanded={!data.outputsHidden}
+          >
+            {data.outputsHidden ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            {data.outputCount} output{data.outputCount === 1 ? "" : "s"}
+          </button>
+        )}
         <Link href={`/explore/analyses/${data.analysisId}${data.scopeQuery}`} className="nodrag inline-flex items-center gap-1 font-medium hover:underline">Open <ExternalLink className="h-3 w-3" /></Link>
       </div>
       <Handle type="source" position={Position.Right} className={handleClass} />
@@ -930,6 +983,80 @@ function storageKey(scope: string): string {
   return `seqdesk:explore:canvas:${scope}`;
 }
 
+/** Which steps show their outputs on the canvas; absent means the default for the graph size. */
+function readExpanded(layoutKey: string, focusNodeId: string | null): { expanded: Record<string, boolean>; seen: boolean } {
+  let stored: Record<string, boolean> | null = null;
+  if (typeof window !== "undefined") {
+    try {
+      const raw = window.localStorage.getItem(`seqdesk:explore:canvas:expanded:${layoutKey}`);
+      const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+      if (parsed && typeof parsed === "object") stored = parsed as Record<string, boolean>;
+    } catch {
+      stored = null;
+    }
+  }
+  // A link to an output card opens the step that made it.
+  const focusedAnalysis = focusNodeId?.match(/^(?:figure|pending):([^:]+)/)?.[1];
+  const expanded = focusedAnalysis ? { ...(stored ?? {}), [focusedAnalysis]: true } : (stored ?? {});
+  return { expanded, seen: stored !== null };
+}
+
+function writeExpanded(layoutKey: string, expanded: Record<string, boolean>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(`seqdesk:explore:canvas:expanded:${layoutKey}`, JSON.stringify(expanded));
+  } catch {
+    // Storage full or blocked: the choice lasts for the session only.
+  }
+}
+
+/** Every card upstream and downstream of one card, itself included. */
+function lineageOf(graph: CanvasGraph, id: string): Set<string> {
+  const related = new Set<string>([id]);
+  const walk = (start: string, direction: "up" | "down") => {
+    const queue = [start];
+    while (queue.length) {
+      const current = queue.pop()!;
+      for (const edge of graph.edges) {
+        const next = direction === "up" ? (edge.target === current ? edge.source : null) : edge.source === current ? edge.target : null;
+        if (next && !related.has(next)) {
+          related.add(next);
+          queue.push(next);
+        }
+      }
+    }
+  };
+  walk(id, "up");
+  walk(id, "down");
+  return related;
+}
+
+/** Graphs with more cards than this start with the outputs of every step folded away. */
+const COLLAPSE_OUTPUTS_ABOVE = 14;
+
+/** Cards stay readable: never further out than this. */
+const READABLE_ZOOM = 0.5;
+
+/**
+ * Show the whole graph when it fits at a readable zoom; otherwise start at its
+ * top left corner, where the data comes in, instead of centring on the middle.
+ */
+function showGraph(instance: ReactFlowInstance<CanvasFlowNode, Edge>, duration = 300): void {
+  const nodes = instance.getNodes();
+  if (nodes.length === 0) return;
+  const bounds = getNodesBounds(nodes);
+  const container = document.querySelector<HTMLElement>(".react-flow");
+  const width = container?.clientWidth ?? 1200;
+  const height = container?.clientHeight ?? 640;
+  const zoomToFit = Math.min((width - 48) / Math.max(bounds.width, 1), (height - 96) / Math.max(bounds.height, 1));
+  if (zoomToFit >= READABLE_ZOOM) {
+    void instance.fitView({ padding: 0.15, maxZoom: 1, minZoom: READABLE_ZOOM, duration });
+    return;
+  }
+  const zoom = READABLE_ZOOM;
+  void instance.setViewport({ x: 24 - bounds.x * zoom, y: 72 - bounds.y * zoom, zoom }, { duration });
+}
+
 function readLayout(scope: string): StoredLayout {
   try {
     const raw = window.localStorage.getItem(storageKey(scope));
@@ -970,6 +1097,9 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
   // changed, and the analyses reading those outputs run again (x -> y -> z).
   const statusRef = useRef<Map<string, string>>(new Map());
   const refreshRef = useRef<() => Promise<unknown>>(async () => undefined);
+  const arrangeRef = useRef<() => void>(() => undefined);
+  // Positions stored before outputs could fold spread the folded pipeline thin; the first folded view is laid out again once.
+  const foldSeenRef = useRef<boolean>(readExpanded(layoutKey, focusNodeId).seen);
   const [fresh, setFresh] = useState<Set<string>>(() => new Set());
   const cascade = useCallback(async (runId: string, analysisName: string) => {
     try {
@@ -984,6 +1114,13 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
   }, []);
   const noteFinishedRuns = useCallback(
     (latest: CanvasGraph) => {
+      if (!foldSeenRef.current) {
+        foldSeenRef.current = true;
+        if (latest.nodes.length > COLLAPSE_OUTPUTS_ABOVE) {
+          writeExpanded(layoutKey, {});
+          arrangeRef.current();
+        }
+      }
       const next = new Set<string>();
       for (const node of latest.nodes) {
         if (node.data.kind !== "analysis") continue;
@@ -999,7 +1136,7 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
       setFresh((existing) => new Set([...existing, ...next]));
       setTimeout(() => setFresh((existing) => new Set([...existing].filter((id) => !next.has(id)))), 8000);
     },
-    [cascade]
+    [cascade, layoutKey]
   );
   const { data: graph, error, isLoading, mutate } = useSWR<CanvasGraph>(`/api/explore/canvas?targetKey=${encodeURIComponent(scope)}&reportId=${encodeURIComponent(reportId)}`, fetcher, {
     // Poll quickly while something is computing so skeletons turn into outputs on their own.
@@ -1014,6 +1151,9 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
   const [arrangeVersion, setArrangeVersion] = useState(0);
   const [openAnalysisId, setOpenAnalysisId] = useState<string | null>(null);
   const [minimap, setMinimap] = useStoredPreference<"shown" | "hidden">("seqdesk:explore:canvas:minimap", "shown", ["shown", "hidden"]);
+  // Which steps show their outputs; a big graph starts folded so the pipeline itself is what you see.
+  const [expandedState, setExpandedState] = useState<Record<string, boolean>>(() => readExpanded(layoutKey, focusNodeId).expanded);
+  const [hovered, setHovered] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [height, setHeight] = useState<number>(640);
   const { data: kitsData } = useSWR<{ kits: KitSummary[] }>("/api/explore/kits", fetcher);
@@ -1249,21 +1389,85 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
     [setNodes]
   );
 
+  const defaultCollapsed = (graph?.nodes.length ?? 0) > COLLAPSE_OUTPUTS_ABOVE;
+  const outputsHidden = useCallback((analysisId: string) => !(expandedState[analysisId] ?? !defaultCollapsed), [expandedState, defaultCollapsed]);
+  const toggleOutputs = useCallback(
+    (analysisId: string) => {
+      setExpandedState((current) => {
+        const next = { ...current, [analysisId]: !(current[analysisId] ?? !defaultCollapsed) };
+        writeExpanded(layoutKey, next);
+        return next;
+      });
+    },
+    [defaultCollapsed, layoutKey]
+  );
+
+  // The graph as drawn: a folded step keeps its figures, its pending placeholder,
+  // the tables nobody else reads and the views of those tables out of the picture.
+  const visibleGraph = useMemo<CanvasGraph | null>(() => {
+    if (!graph) return null;
+    const hidden = new Set<string>();
+    const readByAnalysis = new Set(graph.edges.filter((edge) => edge.target.startsWith("analysis:")).map((edge) => edge.source));
+    for (const node of graph.nodes) {
+      if (node.data.kind !== "analysis" || !outputsHidden(node.data.analysisId)) continue;
+      for (const edge of graph.edges) {
+        if (edge.source !== node.id) continue;
+        if (edge.target.startsWith("figure:") || edge.target.startsWith("pending:")) hidden.add(edge.target);
+        else if (edge.target.startsWith("dataset:") && !readByAnalysis.has(edge.target)) hidden.add(edge.target);
+      }
+    }
+    for (const node of graph.nodes) if (node.data.kind === "view" && hidden.has(`dataset:${node.data.datasetId}`)) hidden.add(node.id);
+    if (focusNodeId) hidden.delete(focusNodeId);
+    if (hidden.size === 0) return graph;
+    return { nodes: graph.nodes.filter((node) => !hidden.has(node.id)), edges: graph.edges.filter((edge) => !hidden.has(edge.source) && !hidden.has(edge.target)) };
+  }, [graph, outputsHidden, focusNodeId]);
+
+  /** Start every first step of the pipeline; the steps reading their outputs follow when the outputs change. */
+  const runAll = useCallback(async () => {
+    if (!graph) return;
+    const produced = new Set(graph.edges.filter((edge) => edge.id.startsWith("wrote:")).map((edge) => edge.target));
+    const roots = graph.nodes.filter((node) => node.data.kind === "analysis" && !node.data.active && (node.data.inputs ?? []).every((binding) => !produced.has(`dataset:${binding.datasetId}`)));
+    if (roots.length === 0) {
+      toast.info("Nothing to start: there are no steps, or the first ones are running already.");
+      return;
+    }
+    let started = 0;
+    for (const node of roots) {
+      if (node.data.kind !== "analysis") continue;
+      try {
+        await postJson(`/api/explore/analyses/${node.data.analysisId}/runs`, {});
+        started += 1;
+      } catch (err) {
+        toast.error(`${node.data.name}: ${err instanceof Error ? err.message : "could not start"}`);
+      }
+    }
+    if (started > 0) toast.success(`${started} step${started === 1 ? "" : "s"} started; the steps reading their outputs follow when the outputs change`);
+    await mutate();
+  }, [graph, mutate]);
+
   const flowNodes = useMemo<CanvasFlowNode[]>(() => {
-    if (!graph) return [];
+    if (!graph || !visibleGraph) return [];
     // Read again after Arrange dropped the positions (arrangeVersion changes then).
     const stored = arrangeVersion >= 0 ? readLayout(layoutKey) : {};
     const sizes: Record<string, { width: number; height: number }> = {};
     for (const [id, entry] of Object.entries(stored)) if (entry.width && entry.height) sizes[id] = { width: entry.width, height: entry.height };
-    const auto = layoutCanvas(graph, { sizes });
+    const auto = layoutCanvas(visibleGraph, { sizes });
     const hues = assignCanvasHues(graph);
+    const datasetNames = new Map(graph.nodes.flatMap((node) => (node.data.kind === "dataset" ? [[node.data.datasetId, node.data.name] as const] : [])));
+    const outputCounts = new Map<string, number>();
+    for (const edge of graph.edges) {
+      if (!edge.source.startsWith("analysis:")) continue;
+      if (edge.target.startsWith("figure:") || edge.target.startsWith("dataset:") || edge.target.startsWith("pending:")) {
+        outputCounts.set(edge.source, (outputCounts.get(edge.source) ?? 0) + 1);
+      }
+    }
     // Nodes the user placed keep their spot; new nodes take the computed slot
     // and move down until they no longer overlap a placed node.
     const placed = (id: string): { x: number; y: number } | null => {
       const entry = stored[id];
       return entry && typeof entry.x === "number" && typeof entry.y === "number" ? { x: entry.x, y: entry.y } : null;
     };
-    const occupied = graph.nodes.flatMap((node) => {
+    const occupied = visibleGraph.nodes.flatMap((node) => {
       const at = placed(node.id);
       return at ? [{ ...at, ...nodeSize(node, { sizes }) }] : [];
     });
@@ -1282,8 +1486,8 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
       occupied.push({ ...position, ...size });
       return position;
     };
-    const wired = new Set(graph.edges.map((edge) => edge.target));
-    return graph.nodes.map((node) => {
+    const wired = new Set(visibleGraph.edges.map((edge) => edge.target));
+    return visibleGraph.nodes.map((node) => {
       const position = settle(node);
       const size = nodeSize(node, { sizes });
       const hue = hues[node.id] ?? COMPUTE_HUE;
@@ -1311,19 +1515,38 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
         } as DatasetNodeType;
       }
       if (node.data.kind === "analysis") {
-        return { ...base, type: "analysis", data: { ...node.data, hue, scopeQuery, hasInput, onOpenCode: openCode, onRun: runAnalysis, onSaveParams: saveParams, onDelete: deleteCard } } as AnalysisNodeType;
+        const analysis = node.data;
+        return {
+          ...base,
+          type: "analysis",
+          data: {
+            ...analysis,
+            hue,
+            scopeQuery,
+            hasInput,
+            kitDescription: analysis.kitId ? (kits.find((kit) => kit.id === analysis.kitId)?.description ?? null) : null,
+            inputNames: (analysis.inputs ?? []).map((binding) => datasetNames.get(binding.datasetId) ?? binding.alias),
+            outputCount: outputCounts.get(node.id) ?? 0,
+            outputsHidden: outputsHidden(analysis.analysisId),
+            onToggleOutputs: toggleOutputs,
+            onOpenCode: openCode,
+            onRun: runAnalysis,
+            onSaveParams: saveParams,
+            onDelete: deleteCard,
+          },
+        } as AnalysisNodeType;
       }
       if (node.data.kind === "figure") return { ...base, type: "figure", data: { ...node.data, hue, scopeQuery, justUpdated, hasInput, onToggleReport: toggleReport } } as FigureNodeType;
       if (node.data.kind === "pending") return { ...base, type: "pending", data: { ...node.data, hue, scopeQuery, hasInput } } as PendingNodeType;
       if (node.data.kind === "view") return { ...base, type: "view", data: { ...node.data, hue, scopeQuery, hasInput, onToggleReport: toggleReport } } as ViewNodeType;
       return { ...base, type: "source", data: node.data } as SourceNodeType;
     });
-  }, [graph, applyPreset, openCode, runAnalysis, saveParams, createAnalysis, connectTargetsFor, connectInput, toggleReport, deleteCard, kits, fresh, scopeQuery, arrangeVersion, layoutKey]);
+  }, [graph, visibleGraph, applyPreset, openCode, runAnalysis, saveParams, createAnalysis, connectTargetsFor, connectInput, toggleReport, deleteCard, kits, fresh, scopeQuery, arrangeVersion, layoutKey, outputsHidden, toggleOutputs]);
 
   const flowEdges = useMemo<Edge[]>(() => {
-    if (!graph) return [];
+    if (!graph || !visibleGraph) return [];
     const hues = assignCanvasHues(graph);
-    return graph.edges.map((edge) => {
+    return visibleGraph.edges.map((edge) => {
       const hue = hues[edge.source] ?? hues[edge.target] ?? null;
       // Lines stay neutral so the card colours carry the meaning.
       const stroke = hue === null ? "var(--border)" : "var(--muted-foreground)";
@@ -1340,7 +1563,28 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
         interactionWidth: 24,
       };
     });
-  }, [graph]);
+  }, [graph, visibleGraph]);
+
+  // Hovering a card lights up where its data came from and where it goes; the rest steps back.
+  useEffect(() => {
+    if (!visibleGraph) return;
+    const related = hovered ? lineageOf(visibleGraph, hovered) : null;
+    setNodes((current) =>
+      current.map((node) => {
+        const dim = Boolean(related && !related.has(node.id));
+        if ((node.className === "canvas-dim") === dim) return node;
+        return { ...node, className: dim ? "canvas-dim" : undefined } as CanvasFlowNode;
+      })
+    );
+    setEdges((current) =>
+      current.map((edge) => {
+        const lit = Boolean(related && related.has(edge.source) && related.has(edge.target));
+        const nextClass = lit ? "canvas-lit" : related ? "canvas-dim" : undefined;
+        if (edge.className === nextClass && Boolean(edge.animated) === lit) return edge;
+        return { ...edge, className: nextClass, animated: lit };
+      })
+    );
+  }, [hovered, visibleGraph, setNodes, setEdges]);
 
   useEffect(() => {
     // Keep positions and sizes of nodes the user already touched; new nodes take the computed slot.
@@ -1376,12 +1620,18 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
   }, []);
 
   const arrange = useCallback(() => {
-    // Positions are recomputed; the sizes people chose stay.
+    // Positions are recomputed; the sizes people chose stay. The view follows once the cards have moved.
     const sizesOnly: StoredLayout = {};
     for (const [id, entry] of Object.entries(readLayout(layoutKey))) if (entry.width && entry.height) sizesOnly[id] = { width: entry.width, height: entry.height };
     writeLayout(layoutKey, sizesOnly);
     setArrangeVersion((value) => value + 1);
+    // Twice: once when the cards have moved, once more when their sizes are measured.
+    for (const delay of [350, 900]) setTimeout(() => instanceRef.current && showGraph(instanceRef.current), delay);
   }, [layoutKey]);
+
+  useEffect(() => {
+    arrangeRef.current = arrange;
+  }, [arrange]);
 
   if (error) return <p className="text-sm text-destructive">Could not load the canvas: {String(error.message)}</p>;
   if (isLoading && !graph) return <Skeleton className={cn("h-[560px] w-full", className)} />;
@@ -1420,6 +1670,12 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
           <MapIcon className="mr-2 h-4 w-4" />
           Overview
         </Button>
+        {graph?.nodes.some((node) => node.data.kind === "analysis") && (
+          <Button size="sm" variant="outline" onClick={() => void runAll()} title="Run every first step; the steps reading their outputs follow when the outputs change">
+            <Play className="mr-2 h-4 w-4" />
+            Run all
+          </Button>
+        )}
         <Button size="sm" variant="outline" onClick={arrange} title="Recompute the layout; card sizes are kept">
           <LayoutGrid className="mr-2 h-4 w-4" />
           Arrange
@@ -1432,9 +1688,9 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onEdgeClick={onEdgeClick}
+        onNodeMouseEnter={(_, node) => setHovered(node.id)}
+        onNodeMouseLeave={() => setHovered(null)}
         edgesFocusable
-        fitView
-        fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
         minZoom={0.2}
         maxZoom={1.5}
         nodesConnectable
@@ -1443,7 +1699,8 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
         onConnectEnd={onConnectEnd}
         onInit={(instance) => {
           instanceRef.current = instance;
-          focusRequestedCard();
+          if (focusNodeId) focusRequestedCard();
+          else setTimeout(() => showGraph(instance, 0), 50);
         }}
         deleteKeyCode={null}
         proOptions={{ hideAttribution: true }}
