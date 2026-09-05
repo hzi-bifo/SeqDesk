@@ -1,13 +1,15 @@
 "use client";
 
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 
-/** Markdown rendered with the app's type styles; used by report text blocks. */
+/** Markdown (GitHub flavour: tables, task lists, strikethrough) rendered with the app's type styles; used by report text blocks. */
 export function Markdown({ children, className }: { children: string; className?: string }) {
   return (
     <div className={cn("min-w-0 max-w-full text-sm leading-6", className)}>
       <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
         components={{
           h1: ({ children }) => <h1 className="mb-3 text-xl font-semibold">{children}</h1>,
           h2: ({ children }) => <h2 className="mb-2 mt-4 text-lg font-semibold">{children}</h2>,

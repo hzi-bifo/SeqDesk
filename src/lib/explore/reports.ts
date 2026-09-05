@@ -4,6 +4,7 @@
  * of an analysis updates the report in place. Without a saved report the page
  * shows a draft assembled from every output of the scope.
  */
+import { randomBytes } from "crypto";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { loadCanvasGraph } from "./canvas";
@@ -102,10 +103,17 @@ export type ResolvedReportBlock =
   | (Extract<ReportBlock, { type: "curated" }> & { table: ReportTableMeta | null })
   | (Extract<ReportBlock, { type: "run-metric" }> & { analysis: ReportAnalysis | null });
 
+/** A live share link: anyone with the token reads the page without signing in. */
+export interface ReportShare {
+  token: string;
+  publishedAt: string;
+}
+
 export interface ReportView {
   id: string;
   targetKey: string;
   title: string;
+  share: ReportShare | null;
   /** Page filters: columns readers can narrow every block by. */
   filters: ReportFilter[];
   /** True when nothing is saved yet and the blocks were assembled from the outputs. */
@@ -313,6 +321,7 @@ export async function getReportView(reportId: string): Promise<ReportView> {
     id: stored.id,
     targetKey: stored.targetKey,
     title: stored.title,
+    share: stored.shareToken && stored.publishedAt ? { token: stored.shareToken, publishedAt: stored.publishedAt.toISOString() } : null,
     filters: parseStoredFilters(stored.settings),
     draft,
     updatedAt: stored.updatedAt.toISOString(),
@@ -356,6 +365,28 @@ export async function resetReport(reportId: string): Promise<ReportView> {
   if (!existing) throw new ExploreReportError(404, "Report not found");
   await db.exploreReport.update({ where: { id: reportId }, data: { blocks: [], settings: { filters: [] } } });
   return getReportView(reportId);
+}
+
+/** Issue (or replace) the share link of a report. */
+export async function shareReport(reportId: string): Promise<ReportShare> {
+  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true } });
+  if (!existing) throw new ExploreReportError(404, "Report not found");
+  const token = randomBytes(18).toString("base64url");
+  const updated = await db.exploreReport.update({ where: { id: reportId }, data: { shareToken: token, publishedAt: new Date() }, select: { shareToken: true, publishedAt: true } });
+  return { token: updated.shareToken ?? token, publishedAt: (updated.publishedAt ?? new Date()).toISOString() };
+}
+
+/** Withdraw the share link; the old token stops working at once. */
+export async function unshareReport(reportId: string): Promise<void> {
+  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true } });
+  if (!existing) throw new ExploreReportError(404, "Report not found");
+  await db.exploreReport.update({ where: { id: reportId }, data: { shareToken: null, publishedAt: null } });
+}
+
+/** The report a share token opens, or null when the token is unknown or withdrawn. */
+export async function findSharedReportId(token: string): Promise<string | null> {
+  const report = await db.exploreReport.findFirst({ where: { shareToken: token, publishedAt: { not: null } }, select: { id: true } });
+  return report?.id ?? null;
 }
 
 /** Delete a report with its analysis steps and their runs; the scope's tables stay. */

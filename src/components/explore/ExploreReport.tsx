@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { ArrowDown, ArrowUp, ExternalLink, LayoutGrid, Loader2, Plus, RectangleHorizontal, RotateCcw, Square, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Download, ExternalLink, LayoutGrid, Loader2, Plus, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Unlink, X } from "lucide-react";
 import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
@@ -13,6 +13,7 @@ import { SubjectTimelineOverview } from "@/components/explore/views/SubjectTimel
 import { BUILT_IN_VIEWS, type BuiltInView } from "@/lib/explore/canvas-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,7 +24,7 @@ import { CHART_KINDS, CHART_KIND_LABELS, METRIC_STATS, METRIC_STAT_LABELS, type 
 import { buildChart, computeStats, formatStat, numericColumns } from "@/lib/explore/report-widgets";
 import type { ActiveFilters } from "@/lib/explore/frame";
 import type { ReportFilter } from "@/lib/explore/report-blocks";
-import type { ReportAnalysis, ReportBlock, ReportFigure, ReportInput, ReportTable, ReportTableContent, ReportView, ResolvedReportBlock } from "@/lib/explore/reports";
+import type { ReportAnalysis, ReportBlock, ReportFigure, ReportInput, ReportShare, ReportTable, ReportTableContent, ReportView, ResolvedReportBlock } from "@/lib/explore/reports";
 import type { ExploreColumn } from "@/lib/explore/types";
 
 interface ExploreReportProps {
@@ -306,8 +307,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
             Figures and tables follow the latest run of their analysis.
           </p>
         </div>
-        {canEdit &&
-          (editing ? (
+        {editing ? (
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={() => setStoreOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -331,14 +331,15 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              {!report.draft && (
+              {canEdit && !report.draft && (
                 <Button variant="ghost" size="sm" onClick={() => void reset()} title="Forget the saved page and start again from the current outputs">
                   <RotateCcw className="mr-2 h-4 w-4" />
                   Start over
                 </Button>
               )}
+              <SharePopover reportId={reportId} share={report.share} canEdit={canEdit} filters={filters} active={active} onChanged={() => mutate()} />
             </div>
-          ))}
+          )}
       </div>
 
       <FilterBar filters={filters} tables={report.outputs.tables} active={active} onActiveChange={setActive} editing={editing} onFiltersChange={editing ? setFilters : undefined} />
@@ -1102,5 +1103,104 @@ function ViewBlockView({ block, table, scopeQuery, reportId, filters, active }: 
         </Link>
       </div>
     </div>
+  );
+}
+
+/**
+ * Two ways out of the app: the page as one HTML file, and a link that opens
+ * the live page for anyone who has it. Both carry the page filters as set.
+ */
+function SharePopover({ reportId, share, canEdit, filters, active, onChanged }: { reportId: string; share: ReportShare | null; canEdit: boolean; filters: ReportFilter[]; active: ActiveFilters; onChanged: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  const query = new URLSearchParams();
+  for (const filter of filters) for (const value of active[filter.id] ?? []) query.append(`f.${filter.id}`, value);
+  const hasActive = query.size > 0;
+  const exportHref = `/api/explore/reports/${encodeURIComponent(reportId)}/export${hasActive ? `?${query.toString()}` : ""}`;
+  const sharePath = share ? `/share/reports/${share.token}${hasActive ? `?${query.toString()}` : ""}` : null;
+  const shareUrl = () => `${window.location.origin}${sharePath ?? ""}`;
+  const create = async () => {
+    setBusy(true);
+    try {
+      await postJson(`/api/explore/reports/${encodeURIComponent(reportId)}/share`, {});
+      await onChanged();
+      toast.success("Share link created");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not create the link");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stop = async () => {
+    setBusy(true);
+    try {
+      await postJson(`/api/explore/reports/${encodeURIComponent(reportId)}/share`, undefined, "DELETE");
+      await onChanged();
+      toast.success("Sharing stopped; the old link no longer works");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not stop sharing");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl());
+      toast.success("Link copied");
+    } catch {
+      toast.error("Could not copy; select the link and copy it by hand");
+    }
+  };
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm">
+          <Share2 className="mr-2 h-4 w-4" />
+          Share
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80 space-y-3 text-sm">
+        <div>
+          <p className="font-medium">Download</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">One HTML file with the page as it is now{hasActive ? ", with the current filters" : ""}. Figures stay interactive; it opens without SeqDesk.</p>
+          <Button asChild variant="outline" size="sm" className="mt-2">
+            <a href={exportHref} download>
+              <Download className="mr-2 h-4 w-4" />
+              Download HTML
+            </a>
+          </Button>
+        </div>
+        <div className="border-t pt-3">
+          <p className="font-medium">Share link</p>
+          {share ? (
+            <>
+              <p className="mt-0.5 text-xs text-muted-foreground">Anyone with the link reads the live page without signing in. Shared since {formatDateTime(share.publishedAt)}.</p>
+              <code className="mt-2 block truncate rounded bg-muted px-2 py-1 text-xs" title={sharePath ?? undefined}>{sharePath}</code>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => void copy()}>
+                  <Copy className="mr-2 h-4 w-4" />
+                  Copy link
+                </Button>
+                {canEdit && (
+                  <Button size="sm" variant="ghost" onClick={() => void stop()} disabled={busy}>
+                    <Unlink className="mr-2 h-4 w-4" />
+                    Stop sharing
+                  </Button>
+                )}
+              </div>
+            </>
+          ) : canEdit ? (
+            <>
+              <p className="mt-0.5 text-xs text-muted-foreground">Create a link that opens the live page without signing in. Anyone with the link can read it; stop sharing at any time.</p>
+              <Button size="sm" className="mt-2" onClick={() => void create()} disabled={busy}>
+                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
+                Create link
+              </Button>
+            </>
+          ) : (
+            <p className="mt-0.5 text-xs text-muted-foreground">This report has no share link.</p>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
