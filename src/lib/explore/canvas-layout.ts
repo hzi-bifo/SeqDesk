@@ -3,7 +3,20 @@
  * selection and the layered layout. No server imports here so the React Flow
  * component can use it.
  */
-import type { ExploreColumn, ExploreRoleMap, ExploreRowData } from "./types";
+import type { ExploreColumn, ExploreRole, ExploreRoleMap, ExploreRowData } from "./types";
+
+/** A JSON-schema-like description of an analysis' parameters, as kits declare it. */
+export interface CanvasParamsSchema {
+  type?: string;
+  properties?: Record<string, { type?: string | string[]; title?: string; description?: string; default?: unknown; enum?: Array<string | number>; minimum?: number; maximum?: number }>;
+  required?: string[];
+}
+
+/** A view the card cannot offer yet, and the roles that would unlock it. */
+export interface CanvasRoleHint {
+  view: "subject-timeline" | "heatmap";
+  missing: ExploreRole[];
+}
 
 export type CanvasNodeKind = "source" | "dataset" | "analysis" | "figure" | "pending";
 
@@ -36,6 +49,10 @@ export type CanvasDatasetData = {
   usedColumns?: Record<string, string[]>;
   /** For outputs: the latest finished run of the analysis writing this table and whether it changed the table. */
   latestWrite?: { runNumber: string; changed: boolean } | null;
+  /** Views the table cannot offer until more roles are mapped. */
+  roleHints?: CanvasRoleHint[];
+  /** For outputs: true when the report page shows this table. */
+  inReport?: boolean;
   /** True while the analysis that writes this dataset is running again. */
   refreshing?: boolean;
 }
@@ -50,9 +67,14 @@ export type CanvasAnalysisData = {
   /** First lines of the current revision, so the card reads as a function. */
   codePreview: string;
   codeLines: number;
-  latestRun: { id: string; runNumber: string; status: string } | null;
+  latestRun: { id: string; runNumber: string; status: string; errorTail?: string | null; completedAt?: string | null } | null;
   /** True while the latest run is pending, queued or running. */
   active: boolean;
+  /** Parameters of the current revision and the schema the kit declares for them. */
+  params?: Record<string, unknown>;
+  paramsSchema?: CanvasParamsSchema | null;
+  /** Input bindings of the current revision. */
+  inputs?: Array<{ alias: string; datasetId: string }>;
 }
 
 export type CanvasFigureData = {
@@ -69,6 +91,8 @@ export type CanvasFigureData = {
   runNumber?: string;
   /** True when the latest run wrote a byte-identical figure to the run before it. */
   unchanged?: boolean;
+  /** True when the report page shows this figure. */
+  inReport?: boolean;
   refreshing?: boolean;
 }
 

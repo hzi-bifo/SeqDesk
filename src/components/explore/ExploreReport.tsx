@@ -6,6 +6,7 @@ import useSWR from "swr";
 import {
   ArrowDown,
   ArrowUp,
+  BarChart3,
   ExternalLink,
   FileText,
   Image as ImageIcon,
@@ -15,6 +16,7 @@ import {
   Plus,
   RectangleHorizontal,
   RotateCcw,
+  Sigma,
   Square,
   Table2,
   Trash2,
@@ -32,12 +34,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { fetcher, formatCell, formatDateTime, postJson } from "@/lib/explore/client";
+import { CHART_KINDS, CHART_KIND_LABELS, METRIC_STATS, METRIC_STAT_LABELS, type ChartKind, type MetricStat } from "@/lib/explore/report-blocks";
+import { buildChart, computeStats, formatStat, numericColumns, WIDGET_ROW_LIMIT } from "@/lib/explore/report-widgets";
 import type { ReportBlock, ReportFigure, ReportInput, ReportTable, ReportTableContent, ReportView, ResolvedReportBlock } from "@/lib/explore/reports";
+import type { ExploreColumn, ExploreRowRecord } from "@/lib/explore/types";
 
 interface ExploreReportProps {
   scope: string;
@@ -65,6 +71,10 @@ function toInput(report: ReportView): ReportInput {
       if (block.type === "figure") {
         return { id: block.id, type: "figure", analysisId: block.analysisId, figureName: block.figureName, caption: block.caption, span: block.span };
       }
+      if (block.type === "chart") {
+        return { id: block.id, type: "chart", datasetId: block.datasetId, chart: block.chart, x: block.x, y: block.y, color: block.color, caption: block.caption, span: block.span };
+      }
+      if (block.type === "metric") return { id: block.id, type: "metric", datasetId: block.datasetId, column: block.column, stats: block.stats, label: block.label, span: block.span };
       return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
     }),
   };
@@ -201,6 +211,16 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
                   <DropdownMenuItem onSelect={() => addBlock({ id: newBlockId("text"), type: "text", markdown: "" })}>
                     <FileText className="mr-2 h-4 w-4" /> Text
                   </DropdownMenuItem>
+                  <DropdownMenuItem disabled={report.outputs.tables.length === 0} onSelect={() => addBlock(defaultChartBlock(report.outputs.tables))}>
+                    <BarChart3 className="mr-2 h-4 w-4" />
+                    <span className="flex-1">Chart from a table</span>
+                    <span className="ml-2 text-xs text-muted-foreground">no code needed</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={report.outputs.tables.length === 0} onSelect={() => addBlock(defaultMetricBlock(report.outputs.tables))}>
+                    <Sigma className="mr-2 h-4 w-4" />
+                    <span className="flex-1">Numbers from a column</span>
+                    <span className="ml-2 text-xs text-muted-foreground">count, mean, min, max</span>
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuLabel>Figures</DropdownMenuLabel>
                   {report.outputs.figures.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No analysis has drawn a figure yet.</div>}
@@ -288,6 +308,7 @@ export function ExploreReport({ scope, canEdit, onOpenCanvas }: ExploreReportPro
               onMove={(delta) => moveBlock(block.id, delta)}
               onRemove={() => removeBlock(block.id)}
               scopeQuery={scopeQuery}
+              tables={report.outputs.tables}
             />
           ))}
           {editing && blocks.length === 0 && (
@@ -311,11 +332,14 @@ interface ReportBlockCardProps {
   onMove: (delta: number) => void;
   onRemove: () => void;
   scopeQuery: string;
+  tables: ReportTable[];
 }
 
-function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery }: ReportBlockCardProps) {
-  const span = block.span ?? (block.type === "figure" ? 1 : 2);
-  const label = block.type === "text" ? "Text" : block.type === "figure" ? "Figure" : "Table";
+const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers" };
+
+function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, tables }: ReportBlockCardProps) {
+  const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
+  const label = BLOCK_LABELS[block.type];
   return (
     <section className={cn("min-w-0 rounded-lg border bg-card", span === 2 && "md:col-span-2")} aria-label={`${label} block`}>
       {editing && (
@@ -361,6 +385,22 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
             ) : (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This figure is not produced by the analysis any more.</div>
             )}
+          </>
+        )}
+
+        {block.type === "chart" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={chartTitle(block, tables)} onChange={(caption) => onPatch({ caption })} />
+            {editing && <ChartControls block={block} tables={tables} onPatch={onPatch} />}
+            <ChartBlockView block={block} table={tables.find((table) => table.datasetId === block.datasetId) ?? null} />
+          </>
+        )}
+
+        {block.type === "metric" && (
+          <>
+            <Caption editing={editing} value={block.label ?? ""} fallback={metricTitle(block, tables)} onChange={(label) => onPatch({ label })} />
+            {editing && <MetricControls block={block} tables={tables} onPatch={onPatch} />}
+            <MetricBlockView block={block} table={tables.find((table) => table.datasetId === block.datasetId) ?? null} />
           </>
         )}
 
@@ -416,6 +456,9 @@ function FigureContent({ figure, scopeQuery }: { figure: ReportFigure; scopeQuer
         <span>{figure.runNumber}</span>
         {figure.unchanged && <span>unchanged since the previous run</span>}
         <span className="flex-1" />
+        <Link href={`/explore${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`figure:${figure.analysisId}:${figure.figureName}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at the card that draws this figure">
+          <LayoutGrid className="h-3 w-3" /> Show on canvas
+        </Link>
         <Link href={`/explore/runs/${figure.runId}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">
           Run <ExternalLink className="h-3 w-3" />
         </Link>
@@ -464,10 +507,234 @@ function TableContent({ table, scopeQuery }: { table: ReportTableContent; scopeQ
           {table.version ? `, v${table.version}` : ""}
         </span>
         <span className="flex-1" />
+        <Link href={`/explore${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`dataset:${table.datasetId}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at this table's card">
+          <LayoutGrid className="h-3 w-3" /> Show on canvas
+        </Link>
         <Link href={`/explore/datasets/${table.datasetId}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">
           Open table <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Charts and numbers drawn straight from a table; no analysis needed.
+// ---------------------------------------------------------------------------
+
+type ChartBlock = Extract<ReportBlock, { type: "chart" }>;
+type MetricBlock = Extract<ReportBlock, { type: "metric" }>;
+
+function firstTable(tables: ReportTable[]): ReportTable | undefined {
+  return tables.find((table) => table.output && table.columns.length > 0) ?? tables.find((table) => table.columns.length > 0) ?? tables[0];
+}
+
+function defaultChartBlock(tables: ReportTable[]): ReportBlock {
+  const table = firstTable(tables);
+  const numeric = table ? numericColumns(table.columns) : [];
+  const x = numeric[0]?.key ?? table?.columns[0]?.key ?? "";
+  return { id: newBlockId("chart"), type: "chart", datasetId: table?.datasetId ?? "", chart: numeric.length > 0 ? "histogram" : "bar", x, span: 1 };
+}
+
+function defaultMetricBlock(tables: ReportTable[]): ReportBlock {
+  const table = firstTable(tables);
+  const numeric = table ? numericColumns(table.columns) : [];
+  const column = numeric[0]?.key ?? table?.columns[0]?.key ?? "";
+  return { id: newBlockId("metric"), type: "metric", datasetId: table?.datasetId ?? "", column, stats: numeric.length > 0 ? ["count", "mean", "min", "max"] : ["count", "distinct", "missing"], span: 1 };
+}
+
+function columnLabel(columns: ExploreColumn[], key: string | undefined): string {
+  if (!key) return "";
+  return columns.find((column) => column.key === key)?.label ?? key;
+}
+
+function chartTitle(block: ChartBlock, tables: ReportTable[]): string {
+  const table = tables.find((entry) => entry.datasetId === block.datasetId);
+  const columns = table?.columns ?? [];
+  const kind = CHART_KIND_LABELS[block.chart].label;
+  if (block.chart === "scatter") return `${columnLabel(columns, block.y)} by ${columnLabel(columns, block.x)}`;
+  if (block.chart === "box") return `${columnLabel(columns, block.y)} per ${columnLabel(columns, block.x)}`;
+  return `${kind} of ${columnLabel(columns, block.x)}`;
+}
+
+function metricTitle(block: MetricBlock, tables: ReportTable[]): string {
+  const table = tables.find((entry) => entry.datasetId === block.datasetId);
+  return `${columnLabel(table?.columns ?? [], block.column)}${table ? ` (${table.name})` : ""}`;
+}
+
+/** The first rows of a table, enough for a chart or a summary; the caller notes when the table is longer. */
+function useTableRows(datasetId: string | null) {
+  return useSWR<{ rows: ExploreRowRecord[]; total: number }>(datasetId ? `/api/explore/datasets/${datasetId}/rows?limit=${WIDGET_ROW_LIMIT}` : null, fetcher);
+}
+
+function TableSelect({ value, tables, onChange }: { value: string; tables: ReportTable[]; onChange: (datasetId: string) => void }) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-8 text-xs" aria-label="Table">
+        <SelectValue placeholder="Choose a table" />
+      </SelectTrigger>
+      <SelectContent>
+        {tables.map((table) => (
+          <SelectItem key={table.datasetId} value={table.datasetId}>
+            {table.name}
+            <span className="ml-1.5 text-xs text-muted-foreground">{table.output ? "output" : "input"}</span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function ColumnSelect({ value, columns, onChange, label, allowNone, numericFirst }: { value: string; columns: ExploreColumn[]; onChange: (key: string) => void; label: string; allowNone?: boolean; numericFirst?: boolean }) {
+  const ordered = numericFirst ? [...numericColumns(columns), ...columns.filter((column) => column.type !== "number")] : columns;
+  return (
+    <Select value={value || (allowNone ? "__none__" : undefined)} onValueChange={(next) => onChange(next === "__none__" ? "" : next)}>
+      <SelectTrigger className="h-8 text-xs" aria-label={label}>
+        <SelectValue placeholder={label} />
+      </SelectTrigger>
+      <SelectContent>
+        {allowNone && <SelectItem value="__none__">None</SelectItem>}
+        {ordered.map((column) => (
+          <SelectItem key={column.key} value={column.key}>
+            {column.label}
+            <span className="ml-1.5 text-xs text-muted-foreground">{column.type}</span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function ChartControls({ block, tables, onPatch }: { block: ChartBlock; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  const columns = tables.find((table) => table.datasetId === block.datasetId)?.columns ?? [];
+  const needsY = CHART_KIND_LABELS[block.chart].needsY;
+  const patch = (values: Partial<ChartBlock>) => onPatch(values as Partial<ReportBlock>);
+  return (
+    <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-2">
+      <label className="space-y-1 text-[11px] text-muted-foreground">
+        <span>Table</span>
+        <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => patch({ datasetId, x: "", y: undefined, color: undefined })} />
+      </label>
+      <label className="space-y-1 text-[11px] text-muted-foreground">
+        <span>Chart</span>
+        <Select value={block.chart} onValueChange={(chart) => patch({ chart: chart as ChartKind })}>
+          <SelectTrigger className="h-8 text-xs" aria-label="Chart type"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {CHART_KINDS.map((kind) => (
+              <SelectItem key={kind} value={kind}>
+                {CHART_KIND_LABELS[kind].label}
+                <span className="ml-1.5 text-xs text-muted-foreground">{CHART_KIND_LABELS[kind].description}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </label>
+      <label className="space-y-1 text-[11px] text-muted-foreground">
+        <span>{block.chart === "box" ? "Groups (x axis)" : block.chart === "scatter" ? "X axis" : "Column"}</span>
+        <ColumnSelect value={block.x} columns={columns} onChange={(x) => patch({ x })} label="Column" numericFirst={block.chart !== "box" && block.chart !== "bar"} />
+      </label>
+      {needsY && (
+        <label className="space-y-1 text-[11px] text-muted-foreground">
+          <span>{block.chart === "box" ? "Values (numeric)" : "Y axis (numeric)"}</span>
+          <ColumnSelect value={block.y ?? ""} columns={numericColumns(columns)} onChange={(y) => patch({ y })} label="Numeric column" />
+        </label>
+      )}
+      {block.chart !== "box" && (
+        <label className="space-y-1 text-[11px] text-muted-foreground">
+          <span>Colour by</span>
+          <ColumnSelect value={block.color ?? ""} columns={columns.filter((column) => column.type !== "number")} onChange={(color) => patch({ color: color || undefined })} label="Colour" allowNone />
+        </label>
+      )}
+    </div>
+  );
+}
+
+function ChartBlockView({ block, table }: { block: ChartBlock; table: ReportTable | null }) {
+  const { data, error } = useTableRows(table && block.x ? table.datasetId : null);
+  if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
+  if (!block.x) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a column.</div>;
+  if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
+  if (!data) return <Skeleton className="h-64 w-full" />;
+  const result = buildChart(
+    data.rows.map((row) => row.data),
+    table.columns,
+    { chart: block.chart, x: block.x, y: block.y, color: block.color },
+    data.total
+  );
+  return (
+    <div>
+      {result.data.length > 0 ? (
+        <PlotlyChart data={result.data} layout={result.layout} height={300} className="w-full" />
+      ) : (
+        <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{result.notes[0] ?? "Nothing to draw yet."}</div>
+      )}
+      {result.data.length > 0 && result.notes.length > 0 && <p className="mt-1 text-[11px] text-muted-foreground">{result.notes.join(" ")}</p>}
+      <p className="mt-1 text-[11px] text-muted-foreground">{table.name}</p>
+    </div>
+  );
+}
+
+function MetricControls({ block, tables, onPatch }: { block: MetricBlock; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  const columns = tables.find((table) => table.datasetId === block.datasetId)?.columns ?? [];
+  const patch = (values: Partial<MetricBlock>) => onPatch(values as Partial<ReportBlock>);
+  const toggle = (stat: MetricStat) => {
+    const next = block.stats.includes(stat) ? block.stats.filter((entry) => entry !== stat) : [...block.stats, stat].slice(-4);
+    if (next.length > 0) patch({ stats: next });
+  };
+  return (
+    <div className="mb-3 space-y-2 rounded-md border bg-muted/30 p-2">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="space-y-1 text-[11px] text-muted-foreground">
+          <span>Table</span>
+          <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => patch({ datasetId, column: "" })} />
+        </label>
+        <label className="space-y-1 text-[11px] text-muted-foreground">
+          <span>Column</span>
+          <ColumnSelect value={block.column} columns={columns} onChange={(column) => patch({ column })} label="Column" numericFirst />
+        </label>
+      </div>
+      <div className="flex flex-wrap gap-1" role="group" aria-label="Numbers to show">
+        {METRIC_STATS.map((stat) => (
+          <button
+            key={stat}
+            type="button"
+            onClick={() => toggle(stat)}
+            aria-pressed={block.stats.includes(stat)}
+            className={cn("rounded-full border px-2 py-0.5 text-[11px]", block.stats.includes(stat) ? "border-transparent bg-secondary font-medium" : "text-muted-foreground hover:bg-muted")}
+          >
+            {METRIC_STAT_LABELS[stat]}
+          </button>
+        ))}
+        <span className="self-center text-[10px] text-muted-foreground">up to four</span>
+      </div>
+    </div>
+  );
+}
+
+function MetricBlockView({ block, table }: { block: MetricBlock; table: ReportTable | null }) {
+  const { data, error } = useTableRows(table && block.column ? table.datasetId : null);
+  if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
+  if (!block.column) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a column.</div>;
+  if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
+  if (!data) return <Skeleton className="h-20 w-full" />;
+  const stats = computeStats(
+    data.rows.map((row) => row.data),
+    block.column
+  );
+  return (
+    <div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(4, block.stats.length)}, minmax(0, 1fr))` }}>
+        {block.stats.map((stat) => (
+          <div key={stat} className="rounded-md border bg-muted/20 px-3 py-2">
+            <div className="text-xl font-semibold tabular-nums">{formatStat(stats[stat])}</div>
+            <div className="text-[11px] text-muted-foreground">{METRIC_STAT_LABELS[stat]}</div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {table.name}
+        {data.total > data.rows.length ? `, first ${data.rows.length.toLocaleString()} of ${data.total.toLocaleString()} rows` : ""}
+      </p>
     </div>
   );
 }

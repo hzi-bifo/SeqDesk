@@ -5,7 +5,6 @@
  * shows a draft assembled from every output of the scope.
  */
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { db } from "@/lib/db";
 import { loadCanvasGraph } from "./canvas";
 import { fetchDatasetRows } from "./datasets";
@@ -13,37 +12,17 @@ import { parseSchema } from "./schema";
 import type { ExploreColumn, ExploreRowData } from "./types";
 
 export const REPORT_TABLE_ROWS = 12;
-export const MAX_REPORT_BLOCKS = 60;
-
-const BlockId = z.string().min(1).max(120);
-const Span = z.union([z.literal(1), z.literal(2)]).optional();
-const TextBlockSchema = z.object({ id: BlockId, type: z.literal("text"), markdown: z.string().max(20000), span: Span }).strict();
-const FigureBlockSchema = z
-  .object({
-    id: BlockId,
-    type: z.literal("figure"),
-    analysisId: z.string().min(1).max(80),
-    figureName: z.string().min(1).max(120),
-    caption: z.string().max(500).optional(),
-    span: Span,
-  })
-  .strict();
-const TableBlockSchema = z
-  .object({
-    id: BlockId,
-    type: z.literal("table"),
-    datasetId: z.string().min(1).max(80),
-    caption: z.string().max(500).optional(),
-    rows: z.number().int().min(1).max(50).optional(),
-    span: Span,
-  })
-  .strict();
-
-export const ReportBlockSchema = z.discriminatedUnion("type", [TextBlockSchema, FigureBlockSchema, TableBlockSchema]);
-export const ReportInputSchema = z.object({ title: z.string().trim().min(1).max(200), blocks: z.array(ReportBlockSchema).max(MAX_REPORT_BLOCKS) }).strict();
-
-export type ReportBlock = z.infer<typeof ReportBlockSchema>;
-export type ReportInput = z.infer<typeof ReportInputSchema>;
+export {
+  figureBlockId,
+  MAX_REPORT_BLOCKS,
+  parseStoredBlocks,
+  ReportBlockSchema,
+  ReportInputSchema,
+  tableBlockId,
+  type ReportBlock,
+  type ReportInput,
+} from "./report-blocks";
+import { figureBlockId, parseStoredBlocks, ReportInputSchema, tableBlockId, type ReportBlock } from "./report-blocks";
 
 export interface ReportFigure {
   analysisId: string;
@@ -67,6 +46,16 @@ export interface ReportTable {
   columnCount: number;
   version: number | null;
   latestWrite: { runNumber: string; changed: boolean } | null;
+  /** Columns a chart or a numbers block can pick from. */
+  columns: ExploreColumn[];
+}
+
+/** What a chart or numbers block needs to know about its table; the rows come from the rows API. */
+export interface ReportTableMeta {
+  datasetId: string;
+  name: string;
+  columns: ExploreColumn[];
+  rowCount: number;
 }
 
 /** Everything of a scope that a report can point at. */
@@ -88,7 +77,9 @@ export interface ReportTableContent {
 export type ResolvedReportBlock =
   | Extract<ReportBlock, { type: "text" }>
   | (Extract<ReportBlock, { type: "figure" }> & { figure: ReportFigure | null })
-  | (Extract<ReportBlock, { type: "table" }> & { table: ReportTableContent | null });
+  | (Extract<ReportBlock, { type: "table" }> & { table: ReportTableContent | null })
+  | (Extract<ReportBlock, { type: "chart" }> & { table: ReportTableMeta | null })
+  | (Extract<ReportBlock, { type: "metric" }> & { table: ReportTableMeta | null });
 
 export interface ReportView {
   id: string | null;
@@ -139,19 +130,12 @@ export async function collectReportOutputs(targetKey: string): Promise<ReportOut
         columnCount: node.data.columnCount,
         version: node.data.version,
         latestWrite: node.data.latestWrite ?? null,
+        columns: node.data.columns.filter((column) => !column.key.endsWith("_db_id")),
       });
     }
   }
   tables.sort((a, b) => Number(b.output) - Number(a.output));
   return { figures, tables };
-}
-
-export function figureBlockId(analysisId: string, figureName: string): string {
-  return `figure:${analysisId}:${figureName}`;
-}
-
-export function tableBlockId(datasetId: string): string {
-  return `table:${datasetId}`;
 }
 
 /** The draft shown before anything is saved: a short intro, every figure, every output table. */
@@ -191,12 +175,17 @@ export type ReportTableLoader = (datasetId: string, limit: number) => Promise<Re
  */
 export async function resolveReportBlocks(blocks: ReportBlock[], outputs: ReportOutputs, loadTable: ReportTableLoader): Promise<ResolvedReportBlock[]> {
   const figureByKey = new Map(outputs.figures.map((figure) => [`${figure.analysisId}:${figure.figureName}`, figure] as const));
-  const tableIds = new Set(outputs.tables.map((table) => table.datasetId));
+  const tableById = new Map(outputs.tables.map((table) => [table.datasetId, table] as const));
+  const metaOf = (datasetId: string): ReportTableMeta | null => {
+    const table = tableById.get(datasetId);
+    return table ? { datasetId, name: table.name, columns: table.columns, rowCount: table.rowCount } : null;
+  };
   return Promise.all(
     blocks.map(async (block): Promise<ResolvedReportBlock> => {
       if (block.type === "text") return block;
       if (block.type === "figure") return { ...block, figure: figureByKey.get(`${block.analysisId}:${block.figureName}`) ?? null };
-      return { ...block, table: tableIds.has(block.datasetId) ? await loadTable(block.datasetId, block.rows ?? REPORT_TABLE_ROWS) : null };
+      if (block.type === "chart" || block.type === "metric") return { ...block, table: metaOf(block.datasetId) };
+      return { ...block, table: tableById.has(block.datasetId) ? await loadTable(block.datasetId, block.rows ?? REPORT_TABLE_ROWS) : null };
     })
   );
 }
@@ -219,17 +208,6 @@ async function loadTableContent(datasetId: string, limit: number): Promise<Repor
     rowCount: current?.rowCount ?? 0,
     columnCount: columns.length,
   };
-}
-
-/** Stored blocks are validated on the way out too: a block the code no longer understands is dropped, not crashed on. */
-export function parseStoredBlocks(raw: unknown): ReportBlock[] {
-  if (!Array.isArray(raw)) return [];
-  const blocks: ReportBlock[] = [];
-  for (const entry of raw) {
-    const parsed = ReportBlockSchema.safeParse(entry);
-    if (parsed.success) blocks.push(parsed.data);
-  }
-  return blocks;
 }
 
 export async function getReportView(targetKey: string, scopeLabel: string): Promise<ReportView> {

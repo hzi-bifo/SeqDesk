@@ -18,13 +18,44 @@ import {
   type EdgeMouseHandler,
   type Node,
   type NodeProps,
+  type OnConnectEnd,
+  type OnConnectStart,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Activity, Code2, Database, ExternalLink, FlaskConical, FoldHorizontal, Grid3x3, Image as ImageIcon, Info, LayoutGrid, Loader2, Map as MapIcon, Maximize2, Minimize2, Play, Sparkle, X } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  BookmarkCheck,
+  BookmarkPlus,
+  Code2,
+  Database,
+  ExternalLink,
+  FlaskConical,
+  FoldHorizontal,
+  Grid3x3,
+  Image as ImageIcon,
+  Info,
+  LayoutGrid,
+  Loader2,
+  Map as MapIcon,
+  Maximize2,
+  Minimize2,
+  Play,
+  Save,
+  Settings2,
+  Sparkle,
+  Tags,
+  Wand2,
+  X,
+} from "lucide-react";
+import { AddDataMenu } from "@/components/explore/AddDataMenu";
 import { CodeEditor } from "@/components/explore/CodeEditor";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
@@ -46,18 +77,45 @@ import {
   type CanvasFigureData,
   type CanvasGraph,
   type CanvasNodeKind,
+  type CanvasParamsSchema,
   type CanvasPendingData,
   type CanvasSourceData,
 } from "@/lib/explore/canvas-layout";
-import { DATASET_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
+import { DATASET_KIND_DEFINITIONS, TABLE_KIND_DEFINITIONS, datasetFitsInput } from "@/lib/explore/dataset-kinds";
+import { figureBlockId, tableBlockId, type ReportBlock } from "@/lib/explore/report-blocks";
+import type { ReportView } from "@/lib/explore/reports";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import type { ExploreRole, ExploreRowRecord } from "@/lib/explore/types";
 
-type Sizing = { onPreset: (id: string, size: { width: number; height: number }) => void; scopeQuery: string };
-type DatasetNodeType = Node<CanvasDatasetData & Sizing & { hue: number }, "dataset">;
-type AnalysisNodeType = Node<CanvasAnalysisData & { hue: number; scopeQuery: string; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void> }, "analysis">;
+/** A kit as the kits API lists it; enough to tell whether a table fits its first input. */
+export interface KitSummary {
+  id: string;
+  name: string;
+  description: string;
+  language: "python" | "r";
+  inputs: Array<{ alias: string; label: string; tableKind?: string | null; requiredRoles: ExploreRole[]; optionalRoles: ExploreRole[]; optional?: boolean }>;
+  params?: CanvasParamsSchema;
+}
+
+/** What the report can be asked to include or drop from a card. */
+export type ReportTarget = { type: "figure"; analysisId: string; figureName: string; label: string } | { type: "table"; datasetId: string; label: string };
+
+type CardActions = {
+  scopeQuery: string;
+  onPreset: (id: string, size: { width: number; height: number }) => void;
+  onAnalyse: (datasetId: string, kitId: string | null) => Promise<void>;
+  onToggleReport: (target: ReportTarget) => Promise<void>;
+  kits: KitSummary[];
+  /** Set for a few seconds after a run rewrote this card. */
+  justUpdated?: boolean;
+};
+type DatasetNodeType = Node<CanvasDatasetData & CardActions & { hue: number }, "dataset">;
+type AnalysisNodeType = Node<
+  CanvasAnalysisData & { hue: number; scopeQuery: string; onOpenCode: (analysisId: string) => void; onRun: (analysisId: string) => Promise<void>; onSaveParams: (analysisId: string, params: Record<string, unknown>) => Promise<void> },
+  "analysis"
+>;
 type SourceNodeType = Node<CanvasSourceData, "source">;
-type FigureNodeType = Node<CanvasFigureData & { hue: number; scopeQuery: string }, "figure">;
+type FigureNodeType = Node<CanvasFigureData & { hue: number; scopeQuery: string; justUpdated?: boolean; onToggleReport: (target: ReportTarget) => Promise<void> }, "figure">;
 type PendingNodeType = Node<CanvasPendingData & { hue: number; scopeQuery: string }, "pending">;
 type CanvasFlowNode = DatasetNodeType | AnalysisNodeType | SourceNodeType | FigureNodeType | PendingNodeType;
 
@@ -149,7 +207,7 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
     });
 
   return (
-    <div className={cn("relative flex h-full w-full flex-col rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse")} style={{ borderColor: colours.border }}>
+    <div className={cn("relative flex h-full w-full flex-col rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
       <Resizer kind="dataset" selected={Boolean(selected)} />
       {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={handleClass} />
@@ -267,6 +325,20 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
         {hiddenRows > 0 ? <OverflowChip>+{hiddenRows.toLocaleString()} rows</OverflowChip> : <span className="text-[10px] text-muted-foreground">all rows</span>}
         {hiddenColumns > 0 ? <OverflowChip>+{hiddenColumns} columns</OverflowChip> : <span className="text-[10px] text-muted-foreground">all columns</span>}
         <span className="flex-1" />
+        <AnalyseMenu dataset={data} kits={data.kits} onPick={(kitId) => data.onAnalyse(data.datasetId, kitId)} />
+        {data.datasetKind === "derived" && (
+          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name })} />
+        )}
+        {data.views.length === 0 && data.roleHints && data.roleHints.length > 0 && (
+          <Link
+            href={`/explore/datasets/${data.datasetId}${data.scopeQuery}&tab=columns`}
+            className="nodrag rounded p-1 text-muted-foreground hover:text-foreground"
+            title={roleHintText(data.roleHints)}
+            aria-label={roleHintText(data.roleHints)}
+          >
+            <Tags className="h-3.5 w-3.5" />
+          </Link>
+        )}
         {data.views.includes("subject-timeline") && (
           <Link href={`/explore/datasets/${data.datasetId}/subject-timeline${data.scopeQuery}`} className="nodrag rounded p-1 text-muted-foreground hover:text-foreground" title="Subject timeline">
             <Activity className="h-3.5 w-3.5" />
@@ -281,17 +353,183 @@ function DatasetNode({ id, data, selected, width, height }: NodeProps<DatasetNod
           Open table <ExternalLink className="h-3 w-3" />
         </Link>
       </div>
-      <Handle type="source" position={Position.Right} className={handleClass} />
+      <Handle type="source" position={Position.Right} className={cn(handleClass, "!h-3 !w-3 !bg-emerald-600")} isConnectable title="Drag onto empty space to start an analysis from this table" />
     </div>
   );
 }
+
+function roleHintText(hints: NonNullable<CanvasDatasetData["roleHints"]>): string {
+  const hint = hints[0];
+  const view = hint.view === "subject-timeline" ? "the subject timeline" : "the heatmap";
+  const roles = hint.missing.map((role) => ROLE_LABELS[role].toLowerCase());
+  return `Map ${roles.length === 1 ? `a ${roles[0]} column` : `${roles.join(", ")} columns`} to enable ${view}`;
+}
+
+/** Start an analysis from this table: templates that fit it, or a blank script. */
+function AnalyseMenu({ dataset, kits, onPick }: { dataset: CanvasDatasetData; kits: KitSummary[]; onPick: (kitId: string | null) => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const pick = async (kitId: string | null) => {
+    setBusy(true);
+    try {
+      await onPick(kitId);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className="nodrag inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] font-medium hover:bg-muted" title="Start an analysis that reads this table" disabled={busy}>
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />} Analyse
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80">
+        <AnalyseList dataset={dataset} kits={kits} onPick={(kitId) => void pick(kitId)} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** The entries of the Analyse menu; also shown where a drag from a table ends. */
+function AnalyseList({ dataset, kits, onPick }: { dataset: CanvasDatasetData; kits: KitSummary[]; onPick: (kitId: string | null) => void }) {
+  return (
+    <>
+      <DropdownMenuLabel>Analyse {dataset.name}</DropdownMenuLabel>
+      {kits.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No templates installed.</div>}
+      {kits.map((kit) => {
+        const input = kit.inputs[0];
+        const fit = input ? datasetFitsInput({ tableKind: dataset.tableKind, roles: dataset.roles }, input) : ({ ok: true } as const);
+        const reason = fit.ok
+          ? null
+          : fit.reason === "table-kind"
+            ? `needs a ${TABLE_KIND_DEFINITIONS[fit.tableKind]?.label ?? fit.tableKind} table`
+            : `map ${fit.missing.map((role) => ROLE_LABELS[role].toLowerCase()).join(", ")} first`;
+        return (
+          <DropdownMenuItem key={kit.id} disabled={!fit.ok} onSelect={() => onPick(kit.id)} title={reason ?? kit.description}>
+            <FlaskConical className="mr-2 h-4 w-4 shrink-0" />
+            <div className="min-w-0">
+              <div className="truncate font-medium">{kit.name}</div>
+              <div className="truncate text-xs text-muted-foreground">{reason ?? kit.description}</div>
+            </div>
+          </DropdownMenuItem>
+        );
+      })}
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={() => onPick(null)}>
+        <Code2 className="mr-2 h-4 w-4 shrink-0" />
+        <div>
+          <div className="font-medium">Blank Python script</div>
+          <div className="text-xs text-muted-foreground">Starts with this table loaded; write the rest yourself</div>
+        </div>
+      </DropdownMenuItem>
+    </>
+  );
+}
+
+/** Put an output on the report page, or take it off. */
+function ReportToggle({ inReport, onToggle }: { inReport: boolean; onToggle: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      await onToggle();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={() => void toggle()}
+      disabled={busy}
+      className={cn("nodrag inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium hover:bg-muted", inReport ? "border-transparent bg-secondary" : "text-muted-foreground")}
+      title={inReport ? "Shown on the report page; click to take it off" : "Not on the report page; click to add it"}
+      aria-pressed={inReport}
+    >
+      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : inReport ? <BookmarkCheck className="h-3 w-3" /> : <BookmarkPlus className="h-3 w-3" />}
+      {inReport ? "In report" : "Add to report"}
+    </button>
+  );
+}
+
+/** Kit parameters, edited on the card; Apply saves them as a new version of the analysis. */
+function ParamsMini({ schema, values, onApply }: { schema: CanvasParamsSchema; values: Record<string, unknown>; onApply: (values: Record<string, unknown>) => Promise<void> }) {
+  const [draft, setDraft] = useState<Record<string, unknown>>(values);
+  const [busy, setBusy] = useState(false);
+  const properties = Object.entries(schema.properties ?? {});
+  const changed = properties.some(([key, property]) => String(draft[key] ?? property.default ?? "") !== String(values[key] ?? property.default ?? ""));
+  const apply = async () => {
+    setBusy(true);
+    try {
+      await onApply(draft);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="nodrag nowheel space-y-1 border-t bg-muted/20 px-3 py-1.5 text-[11px]">
+      {properties.map(([key, property]) => {
+        const type = Array.isArray(property.type) ? property.type.find((entry) => entry !== "null") : property.type;
+        const value = draft[key] ?? property.default ?? "";
+        const label = property.title ?? key;
+        if (property.enum) {
+          return (
+            <label key={key} className="flex items-center gap-2" title={property.description}>
+              <span className="w-1/2 truncate text-muted-foreground">{label}</span>
+              <select value={String(value)} onChange={(event) => setDraft({ ...draft, [key]: typeof property.enum?.[0] === "number" ? Number(event.target.value) : event.target.value })} className="h-6 flex-1 rounded border bg-background px-1">
+                {property.enum.map((option) => (
+                  <option key={String(option)} value={String(option)}>{String(option)}</option>
+                ))}
+              </select>
+            </label>
+          );
+        }
+        if (type === "boolean") {
+          return (
+            <label key={key} className="flex items-center gap-2" title={property.description}>
+              <span className="w-1/2 truncate text-muted-foreground">{label}</span>
+              <input type="checkbox" checked={Boolean(value)} onChange={(event) => setDraft({ ...draft, [key]: event.target.checked })} />
+            </label>
+          );
+        }
+        const numeric = type === "integer" || type === "number";
+        return (
+          <label key={key} className="flex items-center gap-2" title={property.description}>
+            <span className="w-1/2 truncate text-muted-foreground">{label}</span>
+            <Input
+              type={numeric ? "number" : "text"}
+              value={String(value)}
+              min={property.minimum}
+              max={property.maximum}
+              step={type === "integer" ? 1 : undefined}
+              onChange={(event) => setDraft({ ...draft, [key]: numeric ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value })}
+              className="h-6 flex-1 px-1.5 text-[11px]"
+            />
+          </label>
+        );
+      })}
+      <div className="flex justify-end">
+        <button type="button" onClick={() => void apply()} disabled={!changed || busy} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium hover:bg-muted disabled:opacity-50">
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />} Apply as new version
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
 
 /** The compute card: kit, revision, run control and as many code lines as fit. */
 function AnalysisNode({ data, selected, height }: NodeProps<AnalysisNodeType>) {
   const status = data.latestRun?.status;
   const colours = tint(data.hue);
   const [starting, setStarting] = useState(false);
-  const visibleLines = Math.max(2, Math.floor(((height ?? CANVAS_SIZES.analysis.height) - 104) / CODE_LINE_HEIGHT));
+  const [showParams, setShowParams] = useState(false);
+  const hasParams = Boolean(data.paramsSchema?.properties && Object.keys(data.paramsSchema.properties).length > 0);
+  const failed = status === "failed" && Boolean(data.latestRun?.errorTail);
+  const errorLines = failed ? (data.latestRun?.errorTail ?? "").trim().split("\n").filter(Boolean).slice(-3) : [];
+  const reserved = 104 + (failed ? 16 * errorLines.length + 24 : 0) + (showParams && hasParams ? 30 * Object.keys(data.paramsSchema?.properties ?? {}).length + 34 : 0);
+  const visibleLines = Math.max(1, Math.floor(((height ?? CANVAS_SIZES.analysis.height) - reserved) / CODE_LINE_HEIGHT));
   const lines = data.codePreview ? data.codePreview.split("\n") : [];
   const shown = lines.slice(0, visibleLines);
   const run = async () => {
@@ -312,16 +550,27 @@ function AnalysisNode({ data, selected, height }: NodeProps<AnalysisNodeType>) {
           <Link href={`/explore/analyses/${data.analysisId}${data.scopeQuery}`} className="block truncate text-sm font-medium hover:underline" title={data.name}>{data.name}</Link>
           <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
             <span className="capitalize">{data.language}</span>
-            {data.kitId && <span>kit {data.kitId}</span>}
-            {data.revision !== null && <span>revision {data.revision}</span>}
+            {data.kitId && <span>template {data.kitId}</span>}
+            {data.revision !== null && <span>version {data.revision}</span>}
             {data.codeLines > 0 && <span>{data.codeLines} lines</span>}
           </div>
         </div>
+        {hasParams && (
+          <button
+            type="button"
+            onClick={() => setShowParams((value) => !value)}
+            className={cn("nodrag inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] hover:bg-muted hover:text-foreground", showParams ? "bg-secondary text-foreground" : "text-muted-foreground")}
+            title="Parameters of this analysis"
+            aria-pressed={showParams}
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => data.onOpenCode(data.analysisId)}
           className="nodrag inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-          title="Show the code that turns the inputs into the outputs"
+          title="Show and edit the code that turns the inputs into the outputs"
         >
           <Code2 className="h-3.5 w-3.5" /> Code
         </button>
@@ -337,6 +586,19 @@ function AnalysisNode({ data, selected, height }: NodeProps<AnalysisNodeType>) {
           {lines.length > shown.length ? `\n… ${data.codeLines - shown.length} more lines` : ""}
         </pre>
       </button>
+      {showParams && hasParams && data.paramsSchema && (
+        <ParamsMini schema={data.paramsSchema} values={data.params ?? {}} onApply={(values) => data.onSaveParams(data.analysisId, values)} />
+      )}
+      {failed && data.latestRun && (
+        <div className="nodrag nowheel border-t bg-red-50 px-3 py-1.5 text-[10px] text-red-800 dark:bg-red-950/40 dark:text-red-200">
+          <div className="flex items-center gap-1 font-medium">
+            <AlertTriangle className="h-3 w-3" /> {data.latestRun.runNumber} failed
+            <span className="flex-1" />
+            <Link href={`/explore/runs/${data.latestRun.id}${data.scopeQuery}`} className="hover:underline">Logs</Link>
+          </div>
+          <pre className="mt-0.5 max-h-12 overflow-hidden whitespace-pre-wrap break-all font-mono leading-4">{errorLines.join("\n")}</pre>
+        </div>
+      )}
       <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px]">
         <button
           type="button"
@@ -351,8 +613,8 @@ function AnalysisNode({ data, selected, height }: NodeProps<AnalysisNodeType>) {
         </button>
         {data.latestRun ? (
           <>
-            <Badge variant={status === "completed" ? "secondary" : "outline"} className="px-1.5 py-0 text-[10px]">{status}</Badge>
-            <Link href={`/explore/runs/${data.latestRun.id}`} className="nodrag truncate text-muted-foreground hover:underline">{data.latestRun.runNumber}</Link>
+            <Badge variant={status === "completed" ? "secondary" : status === "failed" ? "destructive" : "outline"} className="px-1.5 py-0 text-[10px]">{status}</Badge>
+            <Link href={`/explore/runs/${data.latestRun.id}${data.scopeQuery}`} className="nodrag truncate text-muted-foreground hover:underline">{data.latestRun.runNumber}</Link>
           </>
         ) : (
           <span className="text-muted-foreground">not run yet</span>
@@ -386,7 +648,7 @@ function FigureNode({ data, selected, height }: NodeProps<FigureNodeType>) {
   const colours = tint(data.hue);
   const area = Math.max(80, (height ?? CANVAS_SIZES.figure.height) - 34);
   return (
-    <div className={cn("relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse")} style={{ borderColor: colours.border }}>
+    <div className={cn("relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
       <Resizer kind="figure" selected={Boolean(selected)} />
       {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={handleClass} />
@@ -405,6 +667,9 @@ function FigureNode({ data, selected, height }: NodeProps<FigureNodeType>) {
         <span className="shrink-0 text-muted-foreground">{data.format === "plotly-json" ? "interactive" : data.format}</span>
         <span className="flex-1" />
         {data.unchanged && <OverflowChip>unchanged</OverflowChip>}
+        {data.analysisId && (
+          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "figure", analysisId: data.analysisId!, figureName: data.name, label: data.name })} />
+        )}
         <Link
           href={`/explore/runs/${data.runId}${data.scopeQuery}`}
           className="nodrag inline-flex shrink-0 items-center gap-1 hover:underline"
@@ -443,7 +708,8 @@ function PendingNode({ data, selected }: NodeProps<PendingNodeType>) {
 
 const nodeTypes = { source: SourceNode, dataset: DatasetNode, analysis: AnalysisNode, figure: FigureNode, pending: PendingNode };
 
-type StoredLayout = Record<string, { x: number; y: number; width?: number; height?: number }>;
+/** Per-card position and size; Arrange drops the positions and keeps the sizes. */
+type StoredLayout = Record<string, { x?: number; y?: number; width?: number; height?: number }>;
 
 function storageKey(scope: string): string {
   return `seqdesk:explore:canvas:${scope}`;
@@ -471,6 +737,8 @@ export interface ExploreCanvasProps {
   className?: string;
   /** Grow to the bottom of the window instead of a fixed height. */
   fillViewport?: boolean;
+  /** A card to pan to and select once the graph is shown (from "Show on canvas" on the report). */
+  focusNodeId?: string | null;
 }
 
 /**
@@ -478,10 +746,29 @@ export interface ExploreCanvasProps {
  * resizable card, connected by their lineage. Positions and sizes are kept per
  * scope in the browser; "Arrange" recomputes the layered layout.
  */
-export function ExploreCanvas({ scope, className, fillViewport = false }: ExploreCanvasProps) {
+export function ExploreCanvas({ scope, className, fillViewport = false, focusNodeId = null }: ExploreCanvasProps) {
+  // Outputs a run just rewrote glow for a few seconds so the eye lands on what changed.
+  const statusRef = useRef<Map<string, string>>(new Map());
+  const [fresh, setFresh] = useState<Set<string>>(() => new Set());
+  const noteFinishedRuns = useCallback((latest: CanvasGraph) => {
+    const next = new Set<string>();
+    for (const node of latest.nodes) {
+      if (node.data.kind !== "analysis") continue;
+      const previous = statusRef.current.get(node.id);
+      const current = node.data.latestRun?.status ?? "";
+      if (previous && ["pending", "queued", "running"].includes(previous) && current === "completed") {
+        for (const edge of latest.edges) if (edge.source === node.id) next.add(edge.target);
+      }
+      statusRef.current.set(node.id, current);
+    }
+    if (next.size === 0) return;
+    setFresh((existing) => new Set([...existing, ...next]));
+    setTimeout(() => setFresh((existing) => new Set([...existing].filter((id) => !next.has(id)))), 8000);
+  }, []);
   const { data: graph, error, isLoading, mutate } = useSWR<CanvasGraph>(`/api/explore/canvas?targetKey=${encodeURIComponent(scope)}`, fetcher, {
     // Poll quickly while something is computing so skeletons turn into outputs on their own.
     refreshInterval: (latest) => (latest?.nodes.some((node) => node.data.kind === "analysis" && node.data.active) ? 3000 : 15000),
+    onSuccess: noteFinishedRuns,
   });
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -490,6 +777,14 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
   const [minimap, setMinimap] = useStoredPreference<"shown" | "hidden">("seqdesk:explore:canvas:minimap", "shown", ["shown", "hidden"]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [height, setHeight] = useState<number>(640);
+  const { data: kitsData } = useSWR<{ kits: KitSummary[] }>("/api/explore/kits", fetcher);
+  const kits = useMemo(() => kitsData?.kits ?? [], [kitsData]);
+  const instanceRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
+  const appliedArrangeRef = useRef(0);
+  const focusedRef = useRef<string | null>(null);
+  const connectingFromRef = useRef<string | null>(null);
+  const [analyseAt, setAnalyseAt] = useState<{ datasetId: string; x: number; y: number } | null>(null);
+  const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
 
   useEffect(() => {
     if (!fillViewport) return;
@@ -519,6 +814,101 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
     [mutate]
   );
 
+  /** Start an analysis whose first input is this table; the compute card appears next to it. */
+  const createAnalysis = useCallback(
+    async (datasetId: string, kitId: string | null) => {
+      const kit = kitId ? kits.find((entry) => entry.id === kitId) : null;
+      try {
+        await postJson<{ analysis: { id: string } }>("/api/explore/analyses", {
+          targetKey: scope,
+          kitId,
+          language: kit?.language ?? "python",
+          inputs: [{ alias: kit?.inputs[0]?.alias ?? "table", datasetId }],
+        });
+        toast.success(kit ? `${kit.name} added; press Run on its card` : "Blank analysis added; open Code to write it");
+        await mutate();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not create the analysis");
+      }
+    },
+    [kits, mutate, scope]
+  );
+
+  /** Parameters changed on a card become a new version of the analysis. */
+  const saveParams = useCallback(
+    async (analysisId: string, params: Record<string, unknown>) => {
+      try {
+        const result = await postJson<{ revision: { number: number } }>(`/api/explore/analyses/${analysisId}/revisions`, { params, message: "Parameters changed on the canvas" });
+        toast.success(`Saved as version ${result.revision.number}; press Run to apply`);
+        await mutate();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not save the parameters");
+      }
+    },
+    [mutate]
+  );
+
+  /** Add an output to the report page or take it off; a draft report is saved on first use. */
+  const toggleReport = useCallback(
+    async (target: ReportTarget) => {
+      const key = `/api/explore/reports?targetKey=${encodeURIComponent(scope)}`;
+      try {
+        const { report } = (await fetcher(key)) as { report: ReportView };
+        const blocks: ReportBlock[] = report.blocks.map((block) => {
+          if (block.type === "text") return { id: block.id, type: "text", markdown: block.markdown, span: block.span };
+          if (block.type === "figure") return { id: block.id, type: "figure", analysisId: block.analysisId, figureName: block.figureName, caption: block.caption, span: block.span };
+          if (block.type === "chart") return { id: block.id, type: "chart", datasetId: block.datasetId, chart: block.chart, x: block.x, y: block.y, color: block.color, caption: block.caption, span: block.span };
+          if (block.type === "metric") return { id: block.id, type: "metric", datasetId: block.datasetId, column: block.column, stats: block.stats, label: block.label, span: block.span };
+          return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
+        });
+        const id = target.type === "figure" ? figureBlockId(target.analysisId, target.figureName) : tableBlockId(target.datasetId);
+        const present = blocks.some((block) => block.id === id);
+        const next = present
+          ? blocks.filter((block) => block.id !== id)
+          : [
+              ...blocks,
+              target.type === "figure"
+                ? ({ id, type: "figure", analysisId: target.analysisId, figureName: target.figureName, caption: target.label, span: 1 } as ReportBlock)
+                : ({ id, type: "table", datasetId: target.datasetId, caption: target.label, span: 2 } as ReportBlock),
+            ];
+        await postJson(key, { title: report.title, blocks: next }, "PUT");
+        toast.success(present ? `${target.label} taken off the report` : `${target.label} added to the report`);
+        await mutate();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not change the report");
+      }
+    },
+    [mutate, scope]
+  );
+
+  // Pan to the card a report link asked for, once it exists.
+  useEffect(() => {
+    if (!focusNodeId || focusedRef.current === focusNodeId) return;
+    if (!nodes.some((node) => node.id === focusNodeId)) return;
+    focusedRef.current = focusNodeId;
+    setNodes((current) => current.map((node) => ({ ...node, selected: node.id === focusNodeId }) as CanvasFlowNode));
+    const timer = setTimeout(() => void instanceRef.current?.fitView({ nodes: [{ id: focusNodeId }], duration: 600, maxZoom: 1, padding: 0.6 }), 50);
+    return () => clearTimeout(timer);
+  }, [focusNodeId, nodes, setNodes]);
+
+  // Dragging from a table's handle onto empty canvas opens the Analyse menu there.
+  const onConnectStart: OnConnectStart = useCallback((_event, params) => {
+    connectingFromRef.current = params.handleType === "source" && params.nodeId?.startsWith("dataset:") ? params.nodeId : null;
+  }, []);
+  const onConnectEnd: OnConnectEnd = useCallback((event) => {
+    const from = connectingFromRef.current;
+    connectingFromRef.current = null;
+    if (!from || !containerRef.current) return;
+    const target = event.target as HTMLElement | null;
+    if (!target?.classList.contains("react-flow__pane")) return;
+    const point = "changedTouches" in event ? event.changedTouches[0] : event;
+    const rect = containerRef.current.getBoundingClientRect();
+    // Keep the menu inside the canvas.
+    const x = Math.min(point.clientX - rect.left, Math.max(0, rect.width - 330));
+    const y = Math.min(point.clientY - rect.top, Math.max(0, rect.height - 320));
+    setAnalyseAt({ datasetId: from.slice("dataset:".length), x, y });
+  }, []);
+
   /** Size presets from the card's own button (expand, collapse). */
   const applyPreset = useCallback(
     (id: string, size: { width: number; height: number }) => {
@@ -529,16 +919,25 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
 
   const flowNodes = useMemo<CanvasFlowNode[]>(() => {
     if (!graph) return [];
-    const stored = arrangeVersion === 0 ? readLayout(scope) : {};
+    // Read again after Arrange dropped the positions (arrangeVersion changes then).
+    const stored = arrangeVersion >= 0 ? readLayout(scope) : {};
     const sizes: Record<string, { width: number; height: number }> = {};
     for (const [id, entry] of Object.entries(stored)) if (entry.width && entry.height) sizes[id] = { width: entry.width, height: entry.height };
     const auto = layoutCanvas(graph, { sizes });
     const hues = assignCanvasHues(graph);
     // Nodes the user placed keep their spot; new nodes take the computed slot
     // and move down until they no longer overlap a placed node.
-    const occupied = graph.nodes.filter((node) => stored[node.id]).map((node) => ({ ...stored[node.id], ...nodeSize(node, { sizes }) }));
+    const placed = (id: string): { x: number; y: number } | null => {
+      const entry = stored[id];
+      return entry && typeof entry.x === "number" && typeof entry.y === "number" ? { x: entry.x, y: entry.y } : null;
+    };
+    const occupied = graph.nodes.flatMap((node) => {
+      const at = placed(node.id);
+      return at ? [{ ...at, ...nodeSize(node, { sizes }) }] : [];
+    });
     const settle = (node: CanvasGraph["nodes"][number]) => {
-      if (stored[node.id]) return { x: stored[node.id].x, y: stored[node.id].y };
+      const at = placed(node.id);
+      if (at) return at;
       const size = nodeSize(node, { sizes });
       const position = { ...(auto[node.id] ?? { x: 0, y: 0 }) };
       for (let guard = 0; guard < 50; guard += 1) {
@@ -551,20 +950,23 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
       occupied.push({ ...position, ...size });
       return position;
     };
-    // Links from cards keep the scope so the sidebar stays with the study or order.
-    const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
     return graph.nodes.map((node) => {
       const position = settle(node);
       const size = nodeSize(node, { sizes });
       const hue = hues[node.id] ?? COMPUTE_HUE;
       const base = { id: node.id, position, width: size.width, height: size.height };
-      if (node.data.kind === "dataset") return { ...base, type: "dataset", data: { ...node.data, hue, scopeQuery, onPreset: applyPreset } } as DatasetNodeType;
-      if (node.data.kind === "analysis") return { ...base, type: "analysis", data: { ...node.data, hue, scopeQuery, onOpenCode: openCode, onRun: runAnalysis } } as AnalysisNodeType;
-      if (node.data.kind === "figure") return { ...base, type: "figure", data: { ...node.data, hue, scopeQuery } } as FigureNodeType;
+      const justUpdated = fresh.has(node.id);
+      if (node.data.kind === "dataset") {
+        return { ...base, type: "dataset", data: { ...node.data, hue, scopeQuery, justUpdated, kits, onPreset: applyPreset, onAnalyse: createAnalysis, onToggleReport: toggleReport } } as DatasetNodeType;
+      }
+      if (node.data.kind === "analysis") {
+        return { ...base, type: "analysis", data: { ...node.data, hue, scopeQuery, onOpenCode: openCode, onRun: runAnalysis, onSaveParams: saveParams } } as AnalysisNodeType;
+      }
+      if (node.data.kind === "figure") return { ...base, type: "figure", data: { ...node.data, hue, scopeQuery, justUpdated, onToggleReport: toggleReport } } as FigureNodeType;
       if (node.data.kind === "pending") return { ...base, type: "pending", data: { ...node.data, hue, scopeQuery } } as PendingNodeType;
       return { ...base, type: "source", data: node.data } as SourceNodeType;
     });
-  }, [graph, applyPreset, openCode, runAnalysis, scope, arrangeVersion]);
+  }, [graph, applyPreset, openCode, runAnalysis, saveParams, createAnalysis, toggleReport, kits, fresh, scope, scopeQuery, arrangeVersion]);
 
   const flowEdges = useMemo<Edge[]>(() => {
     if (!graph) return [];
@@ -589,10 +991,12 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
 
   useEffect(() => {
     // Keep positions and sizes of nodes the user already touched; new nodes take the computed slot.
+    const rearranged = arrangeVersion !== appliedArrangeRef.current;
+    appliedArrangeRef.current = arrangeVersion;
     setNodes((current) => {
       const currentById = new Map(current.map((node) => [node.id, node] as const));
       return flowNodes.map((node) => {
-        const existing = arrangeVersion === 0 ? currentById.get(node.id) : undefined;
+        const existing = rearranged ? undefined : currentById.get(node.id);
         return existing ? ({ ...node, position: existing.position, width: existing.width ?? node.width, height: existing.height ?? node.height } as CanvasFlowNode) : node;
       });
     });
@@ -619,11 +1023,10 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
   }, []);
 
   const arrange = useCallback(() => {
-    try {
-      window.localStorage.removeItem(storageKey(scope));
-    } catch {
-      // ignore
-    }
+    // Positions are recomputed; the sizes people chose stay.
+    const sizesOnly: StoredLayout = {};
+    for (const [id, entry] of Object.entries(readLayout(scope))) if (entry.width && entry.height) sizesOnly[id] = { width: entry.width, height: entry.height };
+    writeLayout(scope, sizesOnly);
     setArrangeVersion((value) => value + 1);
   }, [scope]);
 
@@ -631,21 +1034,40 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
   if (isLoading && !graph) return <Skeleton className={cn("h-[560px] w-full", className)} />;
   if (graph && graph.nodes.length === 0) {
     return (
-      <div className={cn("rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground", className)}>
-        Nothing to show yet. Build or import a dataset and it appears here as a card.
+      <div className={cn("rounded-lg border border-dashed p-8", className)}>
+        <div className="mx-auto max-w-2xl">
+          <p className="text-base font-semibold">Start here</p>
+          <ol className="mt-4 grid gap-4 text-sm md:grid-cols-3">
+            <li className="rounded-lg border bg-card p-4">
+              <div className="flex items-center gap-2 font-medium"><span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-secondary text-xs">1</span> Add a table</div>
+              <p className="mt-1 text-muted-foreground">From the samples, the sequencing runs, a pipeline output, or a file of your own.</p>
+              <div className="mt-3"><AddDataMenu scope={scope} onBuilt={() => mutate()} withAnalysis={false} label="Add table" /></div>
+            </li>
+            <li className="rounded-lg border bg-card p-4">
+              <div className="flex items-center gap-2 font-medium"><span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-secondary text-xs">2</span> Analyse it</div>
+              <p className="mt-1 text-muted-foreground">Press Analyse on the table card, or drag from its right handle onto the canvas, and pick a template or a blank script.</p>
+            </li>
+            <li className="rounded-lg border bg-card p-4">
+              <div className="flex items-center gap-2 font-medium"><span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-secondary text-xs">3</span> Run and report</div>
+              <p className="mt-1 text-muted-foreground">Run writes figures and tables as cards; they land on the Report page for others to read.</p>
+            </li>
+          </ol>
+        </div>
       </div>
     );
   }
+  const analyseDataset = analyseAt ? graph?.nodes.find((node) => node.id === `dataset:${analyseAt.datasetId}`)?.data : null;
 
   return (
     <div ref={containerRef} className={cn("relative w-full overflow-hidden rounded-lg border bg-muted/20", className)} style={{ height: fillViewport ? height : 640 }}>
       <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+        <AddDataMenu scope={scope} onBuilt={() => mutate()} label="Add" variant="outline" />
         <CanvasLegend />
         <Button size="sm" variant="outline" onClick={() => setMinimap(minimap === "shown" ? "hidden" : "shown")} title={minimap === "shown" ? "Hide the overview map" : "Show the overview map"} aria-pressed={minimap === "shown"}>
           <MapIcon className="mr-2 h-4 w-4" />
           Overview
         </Button>
-        <Button size="sm" variant="outline" onClick={arrange} title="Recompute the layout and reset card sizes">
+        <Button size="sm" variant="outline" onClick={arrange} title="Recompute the layout; card sizes are kept">
           <LayoutGrid className="mr-2 h-4 w-4" />
           Arrange
         </Button>
@@ -662,7 +1084,13 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
         fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
         minZoom={0.2}
         maxZoom={1.5}
-        nodesConnectable={false}
+        nodesConnectable
+        isValidConnection={() => false}
+        onConnectStart={onConnectStart}
+        onConnectEnd={onConnectEnd}
+        onInit={(instance) => {
+          instanceRef.current = instance;
+        }}
         deleteKeyCode={null}
         proOptions={{ hideAttribution: true }}
       >
@@ -680,7 +1108,22 @@ export function ExploreCanvas({ scope, className, fillViewport = false }: Explor
           />
         )}
       </ReactFlow>
-      {openAnalysisId && <CodePanel analysisId={openAnalysisId} scopeQuery={`?scope=${encodeURIComponent(scope)}`} onClose={() => setOpenAnalysisId(null)} />}
+      {analyseAt && analyseDataset?.kind === "dataset" && (
+        <>
+          <div className="absolute inset-0 z-20" onClick={() => setAnalyseAt(null)} aria-hidden />
+          <div className="absolute z-30 w-80 rounded-md border bg-popover p-1 text-sm text-popover-foreground shadow-md" style={{ left: analyseAt.x, top: analyseAt.y }} role="menu" aria-label={`Analyse ${analyseDataset.name}`}>
+            <AnalyseList
+              dataset={analyseDataset}
+              kits={kits}
+              onPick={(kitId) => {
+                setAnalyseAt(null);
+                void createAnalysis(analyseDataset.datasetId, kitId);
+              }}
+            />
+          </div>
+        </>
+      )}
+      {openAnalysisId && <CodePanel analysisId={openAnalysisId} scopeQuery={scopeQuery} onClose={() => setOpenAnalysisId(null)} onChanged={() => mutate()} onRun={runAnalysis} />}
     </div>
   );
 }
@@ -717,6 +1160,7 @@ function CanvasLegend() {
               <span><span className="font-medium">{entry.label}</span> <span className="text-muted-foreground">{entry.note}</span></span>
             </div>
           ))}
+          <p className="mt-1 text-muted-foreground">Add tables with the Add button. Press Analyse on a table card, or drag from its green handle onto the canvas, to start an analysis that reads it.</p>
           <p className="mt-1 text-muted-foreground">Select a card and drag its corners to resize it; tables then show more rows and columns.</p>
           <p className="mt-1 text-muted-foreground">Column headers tinted like compute, with a dot, are the columns an analysis reads. A +N pill folds the columns in between; click it to open them.</p>
         </div>
@@ -726,13 +1170,43 @@ function CanvasLegend() {
 }
 
 /** Side panel with the current code of one analysis, opened from a card or an arrow. */
-function CodePanel({ analysisId, scopeQuery, onClose }: { analysisId: string; scopeQuery: string; onClose: () => void }) {
-  const { data, error } = useSWR<{ analysis: { name: string; description: string | null; language: "python" | "r"; code: string; currentRevision: { number: number } | null; kitId: string | null } }>(
+function CodePanel({
+  analysisId,
+  scopeQuery,
+  onClose,
+  onChanged,
+  onRun,
+}: {
+  analysisId: string;
+  scopeQuery: string;
+  onClose: () => void;
+  onChanged: () => Promise<unknown>;
+  onRun: (analysisId: string) => Promise<void>;
+}) {
+  const { data, error, mutate: mutateAnalysis } = useSWR<{ analysis: { name: string; description: string | null; language: "python" | "r"; code: string; currentRevision: { number: number } | null; kitId: string | null } }>(
     `/api/explore/analyses/${analysisId}`,
     fetcher
   );
   const analysis = data?.analysis;
   const [tab, setTab] = useState<"code" | "description">("code");
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState<"save" | "run" | null>(null);
+  const dirty = draft !== null && analysis !== undefined && draft !== analysis.code;
+  const save = async (thenRun: boolean) => {
+    if (draft === null) return;
+    setSaving(thenRun ? "run" : "save");
+    try {
+      const result = await postJson<{ revision: { number: number } }>(`/api/explore/analyses/${analysisId}/revisions`, { code: draft, message: "Edited on the canvas" });
+      toast.success(`Saved as version ${result.revision.number}`);
+      setDraft(null);
+      await Promise.all([mutateAnalysis(), onChanged()]);
+      if (thenRun) await onRun(analysisId);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save the code");
+    } finally {
+      setSaving(null);
+    }
+  };
   return (
     <div className="absolute inset-y-0 right-0 z-20 flex w-[min(560px,80%)] flex-col border-l bg-card shadow-xl" role="dialog" aria-label="Analysis code">
       <div className="flex items-center gap-2 border-b px-3 py-2">
@@ -741,7 +1215,7 @@ function CodePanel({ analysisId, scopeQuery, onClose }: { analysisId: string; sc
           <div className="truncate text-sm font-medium">{analysis?.name ?? "Loading"}</div>
           {analysis && (
             <div className="text-[11px] text-muted-foreground">
-              {analysis.language}{analysis.kitId ? `, kit ${analysis.kitId}` : ""}{analysis.currentRevision ? `, revision ${analysis.currentRevision.number}` : ""}
+              {analysis.language}{analysis.kitId ? `, template ${analysis.kitId}` : ""}{analysis.currentRevision ? `, version ${analysis.currentRevision.number}` : ""}{dirty ? ", unsaved changes" : ""}
             </div>
           )}
         </div>
@@ -763,7 +1237,9 @@ function CodePanel({ analysisId, scopeQuery, onClose }: { analysisId: string; sc
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {error && <p className="text-sm text-destructive">{String(error.message)}</p>}
         {!analysis && !error && <Skeleton className="h-64 w-full" />}
-        {analysis && tab === "code" && <CodeEditor value={analysis.code} language={analysis.language} readOnly height="100%" ariaLabel={`Code of ${analysis.name}`} />}
+        {analysis && tab === "code" && (
+          <CodeEditor value={draft ?? analysis.code} onChange={setDraft} language={analysis.language} height="100%" ariaLabel={`Code of ${analysis.name}`} />
+        )}
         {analysis && tab === "description" && (
           <div className="space-y-3 p-2 text-sm">
             {analysis.description && <p>{analysis.description}</p>}
@@ -773,7 +1249,17 @@ function CodePanel({ analysisId, scopeQuery, onClose }: { analysisId: string; sc
           </div>
         )}
       </div>
-      <p className="border-t px-3 py-2 text-[11px] text-muted-foreground">This code turns the connected inputs into the outputs on the canvas. Edit it from the analysis page; every change is a new revision.</p>
+      <div className="flex items-center gap-2 border-t px-3 py-2 text-[11px] text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate">This code turns the connected inputs into the outputs. Every save is a new version.</span>
+        <Button size="sm" variant="outline" onClick={() => void save(false)} disabled={!dirty || saving !== null}>
+          {saving === "save" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+          Save version
+        </Button>
+        <Button size="sm" onClick={() => void save(true)} disabled={!dirty || saving !== null}>
+          {saving === "run" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}
+          Save and run
+        </Button>
+      </div>
     </div>
   );
 }

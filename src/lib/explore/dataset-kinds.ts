@@ -1,4 +1,4 @@
-import type { ExploreDatasetKind, ExploreRole } from "./types";
+import type { ExploreDatasetKind, ExploreRole, ExploreRoleMap } from "./types";
 
 export interface ExploreDatasetKindDefinition {
   id: ExploreDatasetKind;
@@ -146,4 +146,37 @@ export function missingRequiredRoles(
   const kind = getTableKind(tableKindId);
   if (!kind) return [];
   return kind.requiredRoles.filter((role) => !roles[role]);
+}
+
+// ---------------------------------------------------------------------------
+// Fit checks shared by the analysis wizard and the canvas.
+// ---------------------------------------------------------------------------
+
+export type DatasetFit = { ok: true } | { ok: false; reason: "table-kind"; tableKind: string } | { ok: false; reason: "roles"; missing: ExploreRole[] };
+
+/** Whether a table can be bound to a kit input: right table kind, required roles mapped. */
+export function datasetFitsInput(
+  dataset: { tableKind: string | null; roles: ExploreRoleMap },
+  input: { tableKind?: string | null; requiredRoles: ExploreRole[] }
+): DatasetFit {
+  if (input.tableKind && dataset.tableKind !== input.tableKind) return { ok: false, reason: "table-kind", tableKind: input.tableKind };
+  const missing = input.requiredRoles.filter((role) => !dataset.roles[role]);
+  if (missing.length > 0) return { ok: false, reason: "roles", missing };
+  return { ok: true };
+}
+
+/** Roles each built-in view needs before a table can open in it. */
+export const VIEW_ROLE_REQUIREMENTS: Record<"subject-timeline" | "heatmap", ExploreRole[]> = {
+  "subject-timeline": ["sample", "subject", "timepoint", "taxon", "count"],
+  heatmap: ["sample", "subject", "timepoint", "taxon", "count"],
+};
+
+/** The views a table cannot offer yet and the roles that would unlock them. */
+export function viewRoleHints(roles: ExploreRoleMap): Array<{ view: "subject-timeline" | "heatmap"; missing: ExploreRole[] }> {
+  const hints: Array<{ view: "subject-timeline" | "heatmap"; missing: ExploreRole[] }> = [];
+  for (const [view, required] of Object.entries(VIEW_ROLE_REQUIREMENTS) as Array<["subject-timeline" | "heatmap", ExploreRole[]]>) {
+    const missing = required.filter((role) => !roles[role]);
+    if (missing.length > 0) hints.push({ view, missing });
+  }
+  return hints;
 }

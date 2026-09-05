@@ -160,7 +160,7 @@ function ImportForm() {
             />
           </div>
           <div>
-            <label className="text-sm font-medium" htmlFor="explore-import-name">Dataset name</label>
+            <label className="text-sm font-medium" htmlFor="explore-import-name">Table name</label>
             <Input id="explore-import-name" className="mt-1" value={name} placeholder={file ? file.name.replace(/\.[^.]+$/, "") : ""} onChange={(event) => setName(event.target.value)} />
           </div>
           <div>

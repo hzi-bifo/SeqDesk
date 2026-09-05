@@ -38,7 +38,7 @@ export function SidebarExploreNav({ collapsed }: SidebarExploreNavProps) {
       {!collapsed && (
         <span className="min-w-0 flex-1">
           <span className="block">Explore</span>
-          <span className="block truncate text-xs text-muted-foreground">Datasets, analyses and figures</span>
+          <span className="block truncate text-xs text-muted-foreground">Tables, analyses and the report</span>
         </span>
       )}
     </Link>

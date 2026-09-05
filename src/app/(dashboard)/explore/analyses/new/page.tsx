@@ -114,9 +114,9 @@ function NewAnalysisForm() {
   const problems = inputs
     .map((input) => {
       const datasetId = bindings[input.alias];
-      if (!datasetId) return input.optional ? null : `${input.label}: choose a dataset`;
+      if (!datasetId) return input.optional ? null : `${input.label}: choose a table`;
       const dataset = datasets.find((entry) => entry.id === datasetId);
-      if (!dataset) return `${input.label}: dataset not found`;
+      if (!dataset) return `${input.label}: table not found`;
       const fit = datasetFits(dataset, input);
       return fit.ok ? null : `${input.label}: ${fit.reason}`;
     })
@@ -159,7 +159,7 @@ function NewAnalysisForm() {
       </Link>
       <h1 className="mt-2 text-xl font-semibold">New analysis</h1>
       <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-        Pick a kit, connect the datasets it needs and set its parameters. The code of the kit is copied into your analysis, where you can read and change it.
+        Pick a template, connect the tables it needs and set its parameters. The code of the template is copied into your analysis, where you can read and change it.
       </p>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -184,11 +184,11 @@ function NewAnalysisForm() {
             onClick={() => setKitId(BLANK)}
             className={`w-full rounded-lg border border-dashed p-3 text-left transition-colors ${kitId === BLANK ? "border-primary bg-secondary" : "hover:bg-muted/40"}`}
           >
-            <div className="flex items-center gap-2 font-medium"><Code2 className="h-4 w-4" /> Blank Python analysis</div>
+            <div className="flex items-center gap-2 font-medium"><Code2 className="h-4 w-4" /> Blank Python script</div>
             <p className="mt-1 text-xs text-muted-foreground">Start from a minimal script that loads one table.</p>
           </button>
           {kitsData?.problems && kitsData.problems.length > 0 && (
-            <p className="text-xs text-amber-700">{kitsData.problems.length} kit{kitsData.problems.length === 1 ? "" : "s"} could not be loaded; check the server log.</p>
+            <p className="text-xs text-amber-700">{kitsData.problems.length} template{kitsData.problems.length === 1 ? "" : "s"} could not be loaded; check the server log.</p>
           )}
         </div>
 
@@ -238,7 +238,7 @@ function NewAnalysisForm() {
                     </div>
                     <div>
                       <Select value={bindings[input.alias] || NONE} onValueChange={(value) => setBindingValue(input.alias, value === NONE ? "" : value)}>
-                        <SelectTrigger aria-label={`${input.label} dataset`}><SelectValue placeholder="Choose a dataset" /></SelectTrigger>
+                        <SelectTrigger aria-label={`${input.label} table`}><SelectValue placeholder="Choose a table" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value={NONE}>not set</SelectItem>
                           {datasets.map((dataset) => (
@@ -282,11 +282,11 @@ function datasetFits(
   input: { tableKind?: string | null; requiredRoles: ExploreRole[] }
 ): { ok: boolean; reason?: string } {
   if (input.tableKind && dataset.tableKind !== input.tableKind) {
-    return { ok: false, reason: `needs a ${TABLE_KIND_DEFINITIONS[input.tableKind]?.label ?? input.tableKind} dataset` };
+    return { ok: false, reason: `needs a ${TABLE_KIND_DEFINITIONS[input.tableKind]?.label ?? input.tableKind} table` };
   }
   const missing = input.requiredRoles.filter((role) => !dataset.roles[role]);
   if (missing.length > 0) {
-    return { ok: false, reason: `set the ${missing.map((role) => ROLE_LABELS[role]).join(", ")} role on the dataset first` };
+    return { ok: false, reason: `set the ${missing.map((role) => ROLE_LABELS[role]).join(", ")} role on the table first` };
   }
   return { ok: true };
 }

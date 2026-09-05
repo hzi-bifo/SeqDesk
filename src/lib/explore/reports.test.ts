@@ -7,8 +7,8 @@ const outputs: ReportOutputs = {
     { analysisId: "a2", analysisName: "Composition", figureName: "bars", runId: "r3", runNumber: "EXP-3", format: "png", url: "/g", thumbnailUrl: null, unchanged: false },
   ],
   tables: [
-    { datasetId: "d-out", name: "Column summary (Table summary)", kind: "derived", output: true, rowCount: 15, columnCount: 14, version: 2, latestWrite: { runNumber: "EXP-2", changed: false } },
-    { datasetId: "d-in", name: "Samples", kind: "samples", output: false, rowCount: 120, columnCount: 35, version: 1, latestWrite: null },
+    { datasetId: "d-out", name: "Column summary (Table summary)", kind: "derived", output: true, rowCount: 15, columnCount: 14, version: 2, latestWrite: { runNumber: "EXP-2", changed: false }, columns: [] },
+    { datasetId: "d-in", name: "Samples", kind: "samples", output: false, rowCount: 120, columnCount: 35, version: 1, latestWrite: null, columns: [{ key: "reads", label: "Reads", type: "number" }] },
   ],
 };
 
@@ -40,6 +40,8 @@ describe("resolveReportBlocks", () => {
         { id: "f-gone", type: "figure", analysisId: "a1", figureName: "removed" },
         { id: "tab", type: "table", datasetId: "d-out", rows: 5 },
         { id: "tab-foreign", type: "table", datasetId: "other-scope" },
+        { id: "chart", type: "chart", datasetId: "d-in", chart: "histogram", x: "reads" },
+        { id: "metric-foreign", type: "metric", datasetId: "other-scope", column: "reads", stats: ["mean"] },
       ],
       outputs,
       async (datasetId, limit) => {
@@ -53,6 +55,9 @@ describe("resolveReportBlocks", () => {
     expect(resolved[3]).toMatchObject({ type: "table", table: { name: "Column summary" } });
     // A dataset outside the scope is never loaded, so a stored id cannot leak another scope's rows.
     expect(resolved[4]).toMatchObject({ type: "table", table: null });
+    // Charts and numbers carry the table's columns; their rows come from the rows API on the page.
+    expect(resolved[5]).toMatchObject({ type: "chart", table: { name: "Samples", columns: [{ key: "reads" }], rowCount: 120 } });
+    expect(resolved[6]).toMatchObject({ type: "metric", table: null });
     expect(loaded).toEqual(["d-out:5"]);
   });
 });
@@ -66,9 +71,13 @@ describe("report validation", () => {
           { id: "a", type: "text", markdown: "x" },
           { id: "b", type: "figure", analysisId: "a1", figureName: "f", span: 1 },
           { id: "c", type: "table", datasetId: "d", rows: 10 },
+          { id: "d", type: "chart", datasetId: "d", chart: "scatter", x: "a", y: "b", color: "c" },
+          { id: "e", type: "metric", datasetId: "d", column: "a", stats: ["count", "mean"] },
         ],
       }).success
     ).toBe(true);
+    expect(ReportInputSchema.safeParse({ title: "x", blocks: [{ id: "a", type: "chart", datasetId: "d", chart: "pie", x: "a" }] }).success).toBe(false);
+    expect(ReportInputSchema.safeParse({ title: "x", blocks: [{ id: "a", type: "metric", datasetId: "d", column: "a", stats: [] }] }).success).toBe(false);
     expect(ReportInputSchema.safeParse({ title: "", blocks: [] }).success).toBe(false);
     expect(ReportInputSchema.safeParse({ title: "x", blocks: [{ id: "a", type: "text", markdown: "x", extra: 1 }] }).success).toBe(false);
     expect(ReportInputSchema.safeParse({ title: "x", blocks: [{ id: "a", type: "video", url: "x" }] }).success).toBe(false);

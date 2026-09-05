@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import useSWR from "swr";
-import { ArrowLeft, GitCompare, Loader2, Play, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, GitCompare, Loader2, Play, RotateCcw, Save, Trash2 } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -76,9 +76,9 @@ export default function ExploreAnalysisPage() {
         await postJson(`${key}/revisions`, { code, params: extra?.params ?? paramValues, message: message.trim() || undefined });
         setMessage("");
         await mutate();
-        toast.success("New revision saved");
+        toast.success("New version saved");
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not save the revision");
+        toast.error(err instanceof Error ? err.message : "Could not save the version");
       } finally {
         setBusy(null);
       }
@@ -102,7 +102,7 @@ export default function ExploreAnalysisPage() {
   }, [dirty, key, code, paramValues, mutate, router]);
 
   const remove = useCallback(async () => {
-    if (!analysis || !window.confirm(`Delete "${analysis.name}" with all revisions and runs?`)) return;
+    if (!analysis || !window.confirm(`Delete "${analysis.name}" with all versions and runs?`)) return;
     setBusy("delete");
     try {
       await postJson(key, undefined, "DELETE");
@@ -125,6 +125,30 @@ export default function ExploreAnalysisPage() {
       }
     },
     [key, mutate]
+  );
+
+  /** Make an older revision current again: its code, parameters and inputs become a new revision. */
+  const restoreRevision = useCallback(
+    async (revision: RevisionSummary) => {
+      if (revision.code === undefined) {
+        toast.error("The code of this revision is not loaded");
+        return;
+      }
+      if (dirty && !window.confirm(`Discard the unsaved code changes and restore revision ${revision.number}?`)) return;
+      setBusy("restore");
+      try {
+        await postJson(`${key}/revisions`, { code: revision.code, params: revision.params, inputs: revision.inputs, message: `Restored revision ${revision.number}` });
+        setCode(revision.code);
+        setParamValues(revision.params);
+        await mutate();
+        toast.success(`Revision ${revision.number} restored as a new revision`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not restore the revision");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [dirty, key, mutate]
   );
 
   if (error) {
@@ -156,7 +180,7 @@ export default function ExploreAnalysisPage() {
                 environment {environment.status}, <Link href="/explore/environments" className="underline">manage</Link>
               </span>
             )}
-            {analysis.currentRevision && <span className="text-muted-foreground">revision {analysis.currentRevision.number}</span>}
+            {analysis.currentRevision && <span className="text-muted-foreground">version {analysis.currentRevision.number}</span>}
           </div>
           {analysis.description && <p className="mt-2 max-w-3xl text-sm text-muted-foreground">{analysis.description}</p>}
         </div>
@@ -202,7 +226,7 @@ export default function ExploreAnalysisPage() {
                   })}
                 </ul>
               ) : (
-                <p className="mt-2 text-muted-foreground">No datasets connected.</p>
+                <p className="mt-2 text-muted-foreground">No tables connected.</p>
               )}
             </div>
             <div className="rounded-lg border p-4 text-sm">
@@ -212,7 +236,7 @@ export default function ExploreAnalysisPage() {
                   <div className="flex items-center gap-2">
                     <Badge variant={STATUS_VARIANT[analysis.latestRun.status] ?? "outline"}>{analysis.latestRun.status}</Badge>
                     <Link href={`/explore/runs/${analysis.latestRun.id}?scope=${encodeURIComponent(analysis.targetKey)}`} className="hover:underline">{analysis.latestRun.runNumber}</Link>
-                    <span className="text-muted-foreground">revision {analysis.latestRun.revisionNumber}</span>
+                    <span className="text-muted-foreground">version {analysis.latestRun.revisionNumber}</span>
                   </div>
                   <div className="text-muted-foreground">{formatDateTime(analysis.latestRun.completedAt ?? analysis.latestRun.startedAt ?? analysis.latestRun.createdAt)}</div>
                   {latestRun?.results?.warnings && latestRun.results.warnings.length > 0 && (
@@ -242,13 +266,13 @@ export default function ExploreAnalysisPage() {
             <Input className="max-w-md" placeholder="What changed (optional)" value={message} onChange={(event) => setMessage(event.target.value)} />
             <Button variant="outline" onClick={() => void saveRevision()} disabled={busy !== null || !dirty}>
               {busy === "save" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              Save as new revision
+              Save as new version
             </Button>
             {dirty && <span className="text-xs text-muted-foreground">Unsaved changes; Run saves them first.</span>}
           </div>
           <div className="rounded-lg border">
             <div className="flex items-center justify-between border-b px-3 py-2">
-              <h3 className="text-sm font-semibold">Revisions</h3>
+              <h3 className="text-sm font-semibold">Versions</h3>
               {compare && (
                 <Button variant="ghost" size="sm" onClick={() => setCompare(null)}>Close comparison</Button>
               )}
@@ -260,13 +284,9 @@ export default function ExploreAnalysisPage() {
                   revision={revision}
                   current={revision.id === analysis.currentRevision?.id}
                   previous={analysis.revisions[index + 1] ?? null}
+                  busy={busy !== null}
                   onCompare={(a, b) => setCompare({ a, b })}
-                  onRestore={async () => {
-                    const restored = revision.code ?? code;
-                    setCode(restored);
-                    await postJson(`${key}/revisions`, { code: restored, message: `Restored revision ${revision.number}` }).catch(() => {});
-                    await mutate();
-                  }}
+                  onRestore={() => restoreRevision(revision)}
                 />
               ))}
             </ul>
@@ -276,7 +296,7 @@ export default function ExploreAnalysisPage() {
                   original={revisionCode(analysis, compare.a)}
                   modified={revisionCode(analysis, compare.b)}
                   language={analysis.language}
-                  labels={[`Revision ${revisionsById.get(compare.a)?.number ?? "?"}`, `Revision ${revisionsById.get(compare.b)?.number ?? "?"}`]}
+                  labels={[`Version ${revisionsById.get(compare.a)?.number ?? "?"}`, `Version ${revisionsById.get(compare.b)?.number ?? "?"}`]}
                 />
               </div>
             )}
@@ -285,7 +305,7 @@ export default function ExploreAnalysisPage() {
 
         <TabsContent value="runs" className="mt-4">
           {analysis.runs.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No runs yet. Press Run to execute the current revision.</p>
+            <p className="text-sm text-muted-foreground">No runs yet. Press Run to execute the current version.</p>
           ) : (
             <div className="overflow-x-auto rounded-lg border">
               <table className="w-full text-sm">
@@ -293,7 +313,7 @@ export default function ExploreAnalysisPage() {
                   <tr>
                     <th className="px-3 py-2 font-medium">Run</th>
                     <th className="px-3 py-2 font-medium">Status</th>
-                    <th className="px-3 py-2 font-medium">Revision</th>
+                    <th className="px-3 py-2 font-medium">Version</th>
                     <th className="px-3 py-2 font-medium">Mode</th>
                     <th className="px-3 py-2 font-medium">Started</th>
                     <th className="px-3 py-2 font-medium">Finished</th>
@@ -325,7 +345,7 @@ export default function ExploreAnalysisPage() {
               <ParamsForm schema={kit?.params ?? { type: "object", properties: Object.fromEntries(Object.keys(paramValues).map((k) => [k, {}])) }} values={paramValues} onChange={setParamValues} />
             </div>
             <Button className="mt-4" variant="outline" size="sm" onClick={() => void saveRevision({ params: paramValues })} disabled={busy !== null}>
-              Save parameters as new revision
+              Save parameters as new version
             </Button>
           </div>
           <div className="rounded-lg border p-4">
@@ -355,11 +375,14 @@ function RevisionRow({
   revision,
   current,
   previous,
+  busy,
   onCompare,
+  onRestore,
 }: {
   revision: RevisionSummary;
   current: boolean;
   previous: RevisionSummary | null;
+  busy: boolean;
   onCompare: (a: string, b: string) => void;
   onRestore: () => Promise<void>;
 }) {
@@ -373,6 +396,12 @@ function RevisionRow({
       {previous && (
         <Button variant="ghost" size="sm" onClick={() => onCompare(previous.id, revision.id)} title="Compare with the previous revision">
           <GitCompare className="h-4 w-4" />
+        </Button>
+      )}
+      {!current && (
+        <Button variant="ghost" size="sm" onClick={() => void onRestore()} disabled={busy} title="Make this revision current again, as a new revision">
+          <RotateCcw className="mr-1 h-4 w-4" />
+          Restore
         </Button>
       )}
     </li>

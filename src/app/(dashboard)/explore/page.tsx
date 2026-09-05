@@ -1,42 +1,24 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { BookOpen, Compass, Database, FileText, FlaskConical, Inbox, Info, LayoutGrid, List, Loader2, Pencil, Plus, Upload } from "lucide-react";
+import { BookOpen, Compass, Database, FileText, FlaskConical, Inbox, Info, LayoutGrid, List, Pencil, Plus, Upload } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toast } from "@/components/ui/toast";
+import { AddDataMenu } from "@/components/explore/AddDataMenu";
 import { ExploreCanvas } from "@/components/explore/ExploreCanvas";
 import { ExploreReport } from "@/components/explore/ExploreReport";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import { DATASET_KIND_DEFINITIONS, TABLE_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
-import { fetcher, formatDateTime, postJson, SCOPE_STORAGE_KEY } from "@/lib/explore/client";
+import { fetcher, formatDateTime, SCOPE_STORAGE_KEY } from "@/lib/explore/client";
 import { isValidTargetKey } from "@/lib/explore/target-key";
 import type { ExploreDatasetSummary, ExploreScope } from "@/lib/explore/types";
-
-interface PipelineTableSource {
-  pipelineId: string;
-  pipelineName: string;
-  outputId: string;
-  label: string;
-  tableKind: string;
-  scope: string;
-  runs: Array<{ id: string; runNumber: string; completedAt: string | null; selected: boolean; artifactCount: number }>;
-}
 
 interface AnalysisSummary {
   id: string;
@@ -62,8 +44,15 @@ function ExploreHome() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedScope = searchParams.get("scope");
-  const [scope, setScope] = useState<string | null>(null);
-  const [building, setBuilding] = useState<string | null>(null);
+  const requestedMode = searchParams.get("mode");
+  const requestedView = searchParams.get("view");
+  const requestedFocus = searchParams.get("focus");
+  // A link from the report ("Show on canvas") names the mode, the view and the
+  // card to focus. Those override the stored preference while they are in the
+  // URL; the next click on a toggle stores the choice and drops them.
+  const urlMode = requestedMode === "edit" || requestedMode === "report" ? requestedMode : null;
+  const urlView = requestedView === "canvas" || requestedView === "list" ? requestedView : null;
+  const [storedScope, setStoredScope] = useStoredPreference<string>(SCOPE_STORAGE_KEY, "");
   const [view, setView] = useStoredPreference<"list" | "canvas">(VIEW_STORAGE_KEY, "list", ["list", "canvas"]);
   // The report is the final page of a scope; list and canvas are where it is made.
   // Until the user picks, a scope with outputs or a saved report opens on the report.
@@ -75,36 +64,29 @@ function ExploreHome() {
   );
   const scopes = useMemo(() => scopesData?.scopes ?? [], [scopesData]);
 
+  // The scope comes from the URL, else from the last choice, else the first study or order.
+  const scope = useMemo(() => {
+    if (scopes.length === 0) return null;
+    const candidates = [requestedScope, storedScope].filter((value): value is string => Boolean(value && isValidTargetKey(value)));
+    return candidates.find((value) => scopes.some((entry) => entry.targetKey === value)) ?? scopes[0].targetKey;
+  }, [scopes, requestedScope, storedScope]);
+
+  // The URL names the scope so the sidebar shows the study or order it belongs to.
   useEffect(() => {
-    if (scopes.length === 0) return;
-    const stored = typeof window !== "undefined" ? window.localStorage.getItem(SCOPE_STORAGE_KEY) : null;
-    const candidates = [requestedScope, scope, stored].filter((value): value is string => Boolean(value && isValidTargetKey(value)));
-    const chosen = candidates.find((value) => scopes.some((entry) => entry.targetKey === value)) ?? scopes[0].targetKey;
-    if (chosen !== scope) setScope(chosen);
-    // The URL names the scope so the sidebar shows the study or order it belongs to.
-    if (chosen !== requestedScope) router.replace(`/explore?scope=${encodeURIComponent(chosen)}`);
-  }, [scopes, requestedScope, scope, router]);
+    if (scope && scope !== requestedScope) router.replace(`/explore?scope=${encodeURIComponent(scope)}`);
+  }, [scope, requestedScope, router]);
 
   const selectScope = useCallback(
     (value: string) => {
-      setScope(value);
-      try {
-        window.localStorage.setItem(SCOPE_STORAGE_KEY, value);
-      } catch {
-        // Storage may be unavailable; the URL still carries the scope.
-      }
+      setStoredScope(value);
       router.replace(`/explore?scope=${encodeURIComponent(value)}`);
     },
-    [router]
+    [router, setStoredScope]
   );
 
   const datasetsKey = scope ? `/api/explore/datasets?targetKey=${encodeURIComponent(scope)}` : null;
   const { data: datasetsData, mutate: mutateDatasets, isLoading: datasetsLoading } = useSWR<{ datasets: ExploreDatasetSummary[] }>(
     datasetsKey,
-    fetcher
-  );
-  const { data: sourcesData } = useSWR<{ pipelineTables: PipelineTableSource[] }>(
-    scope ? `/api/explore/datasets/sources?targetKey=${encodeURIComponent(scope)}` : null,
     fetcher
   );
   const { data: analysesData } = useSWR<{ analyses: AnalysisSummary[] }>(
@@ -121,40 +103,26 @@ function ExploreHome() {
   const reportReady = Boolean(
     reportData?.report && (reportData.report.id || reportData.report.outputs.figures.length > 0 || reportData.report.outputs.tables.some((table) => table.output))
   );
-  const effectiveMode: "report" | "edit" | null = mode === "auto" ? (reportData ? (reportReady ? "report" : "edit") : null) : mode;
+  const storedMode: "report" | "edit" | null = mode === "auto" ? (reportData ? (reportReady ? "report" : "edit") : null) : mode;
+  const effectiveMode = urlMode ?? storedMode;
+  const activeView = urlView ?? view;
+  const dropUrlOverrides = () => {
+    if ((urlMode || urlView || requestedFocus) && scope) router.replace(`/explore?scope=${encodeURIComponent(scope)}`);
+  };
+  const chooseMode = (value: "report" | "edit") => {
+    setMode(value);
+    dropUrlOverrides();
+  };
+  const chooseView = (value: "canvas" | "list") => {
+    setView(value);
+    dropUrlOverrides();
+  };
   const openCanvas = () => {
-    setMode("edit");
-    setView("canvas");
+    chooseMode("edit");
+    chooseView("canvas");
   };
   const datasets = datasetsData?.datasets ?? [];
-  const pipelineTables = sourcesData?.pipelineTables ?? [];
   const analyses = analysesData?.analyses ?? [];
-
-  const build = useCallback(
-    async (kind: "samples" | "sequencing" | "pipeline-table", options?: Record<string, unknown>, label?: string) => {
-      if (!scope) return;
-      const buildKey = `${kind}:${options?.pipelineId ?? ""}:${options?.outputId ?? ""}`;
-      setBuilding(buildKey);
-      try {
-        const result = await postJson<{ dataset: ExploreDatasetSummary; version: { number: number; rowCount: number; unchanged: boolean }; warnings: string[] }>(
-          "/api/explore/datasets/build",
-          { targetKey: scope, kind, options }
-        );
-        await mutateDatasets();
-        if (result.version.unchanged) {
-          toast.info(`${label ?? result.dataset.name} is already up to date (${result.version.rowCount} rows)`);
-        } else {
-          toast.success(`${label ?? result.dataset.name}: version ${result.version.number} with ${result.version.rowCount} rows`);
-        }
-        for (const warning of result.warnings) toast.warning(warning);
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Build failed");
-      } finally {
-        setBuilding(null);
-      }
-    },
-    [scope, mutateDatasets]
-  );
 
   return (
     <PageContainer className="pt-3 md:pt-3">
@@ -200,19 +168,19 @@ function ExploreHome() {
         )}
         <span className="h-5 w-px bg-border" aria-hidden />
         <div className="flex rounded-md border text-xs" role="group" aria-label="Mode">
-          <button type="button" onClick={() => setMode("report")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${effectiveMode === "report" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={effectiveMode === "report"} title="The final page: figures, tables and text for others">
+          <button type="button" onClick={() => chooseMode("report")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${effectiveMode === "report" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={effectiveMode === "report"} title="The final page: figures, tables and text for others">
             <FileText className="h-3.5 w-3.5" /> Report
           </button>
-          <button type="button" onClick={() => setMode("edit")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${effectiveMode === "edit" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={effectiveMode === "edit"} title="Where the report is made: datasets, analyses and their outputs">
+          <button type="button" onClick={() => chooseMode("edit")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${effectiveMode === "edit" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={effectiveMode === "edit"} title="Where the report is made: datasets, analyses and their outputs">
             <Pencil className="h-3.5 w-3.5" /> Edit
           </button>
         </div>
         {effectiveMode === "edit" && (
           <div className="flex rounded-md border text-xs" role="group" aria-label="View">
-            <button type="button" onClick={() => setView("canvas")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${view === "canvas" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={view === "canvas"} title="Cards connected by where the data came from">
+            <button type="button" onClick={() => chooseView("canvas")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${activeView === "canvas" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={activeView === "canvas"} title="Cards connected by where the data came from">
               <LayoutGrid className="h-3.5 w-3.5" /> Canvas
             </button>
-            <button type="button" onClick={() => setView("list")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${view === "list" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={view === "list"} title="Datasets and analyses as tables">
+            <button type="button" onClick={() => chooseView("list")} className={`inline-flex items-center gap-1 px-2 py-1.5 ${activeView === "list" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={activeView === "list"} title="Datasets and analyses as tables">
               <List className="h-3.5 w-3.5" /> List
             </button>
           </div>
@@ -220,16 +188,16 @@ function ExploreHome() {
         <span className="flex-1" />
         {activeScope && effectiveMode === "edit" && (
           <>
-            <Button asChild variant="outline" size="sm" className="h-8">
+            <Button asChild variant="outline" size="sm" className="h-8" title="Import a TSV, CSV or Excel file as a table">
               <Link href={`/explore/datasets/import?scope=${encodeURIComponent(activeScope.targetKey)}`}>
-                <Upload className="mr-1.5 h-3.5 w-3.5" />
-                Import table
+                <Upload className="h-3.5 w-3.5 lg:mr-1.5" />
+                <span className="hidden lg:inline">Import table</span>
               </Link>
             </Button>
-            <Button asChild size="sm" className="h-8">
+            <Button asChild size="sm" className="h-8" title="Start an analysis from a template or a blank script">
               <Link href={`/explore/analyses/new?scope=${encodeURIComponent(activeScope.targetKey)}`}>
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                New analysis
+                <Plus className="h-3.5 w-3.5 lg:mr-1.5" />
+                <span className="hidden lg:inline">New analysis</span>
               </Link>
             </Button>
           </>
@@ -243,11 +211,11 @@ function ExploreHome() {
           <PopoverContent align="end" className="w-80 text-xs">
             <p className="font-medium">Explore</p>
             <p className="mt-1 text-muted-foreground">
-              Bring study metadata, sequencing information and pipeline outputs together as datasets, analyse them with code you can read, and assemble the results into a report.
+              Bring study metadata, sequencing information and pipeline outputs together as tables, analyse them with code you can read, and assemble the results into a report.
             </p>
             <ul className="mt-2 space-y-1 text-muted-foreground">
               <li><span className="font-medium text-foreground">Report</span> is the final page for others: figures, tables and your text.</li>
-              <li><span className="font-medium text-foreground">Edit</span> is where it is made. <span className="font-medium text-foreground">Canvas</span> shows datasets, analyses and outputs as connected cards; <span className="font-medium text-foreground">List</span> shows them as tables.</li>
+              <li><span className="font-medium text-foreground">Edit</span> is where it is made. <span className="font-medium text-foreground">Canvas</span> shows tables, analyses and outputs as connected cards; <span className="font-medium text-foreground">List</span> lists them.</li>
             </ul>
           </PopoverContent>
         </Popover>
@@ -274,75 +242,22 @@ function ExploreHome() {
         <ExploreReport scope={activeScope.targetKey} canEdit={activeScope.access === "write"} onOpenCanvas={openCanvas} />
       )}
 
-      {activeScope && effectiveMode === "edit" && view === "canvas" && (
+      {activeScope && effectiveMode === "edit" && activeView === "canvas" && (
         <div className="mt-3">
-          <ExploreCanvas scope={activeScope.targetKey} fillViewport />
+          <ExploreCanvas scope={activeScope.targetKey} fillViewport focusNodeId={requestedFocus} />
         </div>
       )}
 
-      {activeScope && effectiveMode === "edit" && view === "list" && (
+      {activeScope && effectiveMode === "edit" && activeView === "list" && (
         <div className="mt-4 space-y-10">
           <section>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Database className="h-4 w-4 text-muted-foreground" />
-                <h2 className="text-base font-semibold">Datasets</h2>
+                <h2 className="text-base font-semibold">Tables</h2>
                 <span className="text-sm text-muted-foreground">{datasets.length}</span>
               </div>
-              <div className="flex items-center gap-2">
-                <Button asChild variant="outline" size="sm">
-                  <Link href={`/explore/datasets/import?scope=${encodeURIComponent(activeScope.targetKey)}`}>
-                    <Upload className="mr-2 h-4 w-4" />
-                    Import table
-                  </Link>
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button size="sm" disabled={building !== null}>
-                      {building ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-                      Build dataset
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-80">
-                    <DropdownMenuLabel>From SeqDesk data</DropdownMenuLabel>
-                    <DropdownMenuItem onSelect={() => void build("samples", undefined, "Samples")}>
-                      <div>
-                        <div className="font-medium">Samples</div>
-                        <div className="text-xs text-muted-foreground">{DATASET_KIND_DEFINITIONS.samples.description}</div>
-                      </div>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => void build("sequencing", undefined, "Sequencing")}>
-                      <div>
-                        <div className="font-medium">Sequencing</div>
-                        <div className="text-xs text-muted-foreground">{DATASET_KIND_DEFINITIONS.sequencing.description}</div>
-                      </div>
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel>From pipeline outputs</DropdownMenuLabel>
-                    {pipelineTables.length === 0 && (
-                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                        No completed pipeline run of this scope produced a table output yet.
-                      </div>
-                    )}
-                    {pipelineTables.map((source) => (
-                      <DropdownMenuItem
-                        key={`${source.pipelineId}:${source.outputId}`}
-                        onSelect={() =>
-                          void build("pipeline-table", { pipelineId: source.pipelineId, outputId: source.outputId }, source.label)
-                        }
-                      >
-                        <div>
-                          <div className="font-medium">{source.label}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {TABLE_KIND_DEFINITIONS[source.tableKind]?.label ?? source.tableKind} from {source.runs.length} completed run
-                            {source.runs.length === 1 ? "" : "s"}
-                          </div>
-                        </div>
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+              <AddDataMenu scope={activeScope.targetKey} onBuilt={() => mutateDatasets()} withAnalysis={false} label="Add table" />
             </div>
 
             {datasetsLoading ? (
@@ -352,7 +267,7 @@ function ExploreHome() {
               </div>
             ) : datasets.length === 0 ? (
               <div className="mt-4 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                No datasets yet. Build one from the samples, the sequencing runs or a pipeline output of this scope, or import a table.
+                No tables yet. Add one from the samples, the sequencing runs or a pipeline output of this scope, or import a file.
               </div>
             ) : (
               <div className="mt-4 overflow-x-auto rounded-lg border">
@@ -413,7 +328,7 @@ function ExploreHome() {
             </div>
             {analyses.length === 0 ? (
               <div className="mt-4 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                No analyses yet. Start one from a kit or with a blank Python script once a dataset exists.
+                No analyses yet. Press Analyse on a table card, or start one here from a template or a blank Python script.
               </div>
             ) : (
               <div className="mt-4 overflow-x-auto rounded-lg border">
@@ -433,7 +348,7 @@ function ExploreHome() {
                           <Link href={`/explore/analyses/${analysis.id}?scope=${encodeURIComponent(activeScope.targetKey)}`} className="font-medium hover:underline">
                             {analysis.name}
                           </Link>
-                          {analysis.kitId && <span className="ml-2 text-xs text-muted-foreground">from {analysis.kitId}</span>}
+                          {analysis.kitId && <span className="ml-2 text-xs text-muted-foreground">template {analysis.kitId}</span>}
                         </td>
                         <td className="px-3 py-2 capitalize text-muted-foreground">{analysis.language}</td>
                         <td className="px-3 py-2">

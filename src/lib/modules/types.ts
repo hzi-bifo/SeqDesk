@@ -134,7 +134,7 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
   {
     id: "explore",
     name: "Explore",
-    description: "Adds the Explore section: datasets assembled from study metadata, sequencing runs and pipeline outputs, code-visible analyses that run in managed environments, and built-in views for tables, subject timelines and figures.",
+    description: "Adds the Explore section: tables assembled from study metadata, sequencing runs and pipeline outputs, analyses with code you can read that run in managed environments, and a report page that gathers the figures and tables.",
     category: "analysis",
     featureLocation: "Sidebar > Explore",
   },

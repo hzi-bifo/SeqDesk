@@ -80,7 +80,7 @@ function CurationEditor() {
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Named organism lists of this scope. Pathogen and flora lists drive the highlights in views; artifact lists
             remove taxa from compositions and renormalize abundances. Edits apply immediately to every view and to new
-            analysis runs without rebuilding datasets.
+            analysis runs without rebuilding tables.
           </p>
         </div>
         <Button size="sm" variant="outline" onClick={() => setCreating(true)}>

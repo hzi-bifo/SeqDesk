@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Activity, ArrowLeft, Grid3x3, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
@@ -30,7 +30,18 @@ interface EditRecord {
 const NONE = "__none__";
 
 export default function ExploreDatasetPage() {
+  return (
+    <Suspense fallback={<PageContainer><Skeleton className="h-8 w-48" /></PageContainer>}>
+      <ExploreDatasetPageContent />
+    </Suspense>
+  );
+}
+
+function ExploreDatasetPageContent() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const initialTab = requestedTab && ["table", "columns", "provenance", "edits"].includes(requestedTab) ? requestedTab : "table";
   const router = useRouter();
   const id = params.id;
   const [hiddenColumns, setHiddenColumnsState] = useState<string[]>(() => readStored(`seqdesk:explore:dataset:${id}:hidden`, []));
@@ -179,11 +190,11 @@ export default function ExploreDatasetPage() {
 
   const remove = useCallback(async () => {
     if (!dataset) return;
-    if (!window.confirm(`Delete the dataset "${dataset.name}" with all its versions and edits?`)) return;
+    if (!window.confirm(`Delete the table "${dataset.name}" with all its versions and edits?`)) return;
     setBusy("delete");
     try {
       await postJson(detailKey, undefined, "DELETE");
-      toast.success("Dataset deleted");
+      toast.success("Table deleted");
       router.push(`/explore?scope=${encodeURIComponent(dataset.targetKey)}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Delete failed");
@@ -194,7 +205,7 @@ export default function ExploreDatasetPage() {
   if (detailError) {
     return (
       <PageContainer>
-        <p className="text-sm text-destructive">Could not load the dataset: {String(detailError.message)}</p>
+        <p className="text-sm text-destructive">Could not load the table: {String(detailError.message)}</p>
       </PageContainer>
     );
   }
@@ -266,7 +277,7 @@ export default function ExploreDatasetPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="table" className="mt-6">
+      <Tabs defaultValue={initialTab} className="mt-6">
         <TabsList>
           <TabsTrigger value="table">Table</TabsTrigger>
           <TabsTrigger value="columns">Columns and roles</TabsTrigger>
@@ -289,7 +300,7 @@ export default function ExploreDatasetPage() {
             density={density}
             onDensityChange={setDensity}
             exportFileName={`${dataset.name.replace(/[^A-Za-z0-9_-]+/g, "_")}.csv`}
-            emptyText="This dataset has no rows."
+            emptyText="This table has no rows."
           />
           {rowsData?.nextCursor && (
             <p className="mt-2 text-xs text-muted-foreground">Views and analyses always use every row, whatever is shown here.</p>
@@ -328,7 +339,7 @@ export default function ExploreDatasetPage() {
             <div className="rounded-lg border p-4">
               <h3 className="text-sm font-semibold">Roles</h3>
               <p className="mt-1 text-xs text-muted-foreground">
-                Roles tell views and analysis kits which column is the sample, the subject, the taxon and so on.
+                Roles tell views and analysis templates which column is the sample, the subject, the taxon and so on.
                 {tableKind && ` Required for ${tableKind.label}: ${tableKind.requiredRoles.map((role) => ROLE_LABELS[role]).join(", ")}.`}
               </p>
               <div className="mt-3 space-y-2">

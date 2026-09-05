@@ -97,7 +97,7 @@ export default function ExploreRunPage() {
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
             <Badge variant={run.status === "completed" ? "secondary" : "outline"}>{run.status}</Badge>
             {active && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-            <span className="text-muted-foreground">revision {run.revisionNumber}</span>
+            <span className="text-muted-foreground">version {run.revisionNumber}</span>
             {run.executionMode && <span className="text-muted-foreground">{run.executionMode}</span>}
             {run.exitCode !== null && <span className="text-muted-foreground">exit code {run.exitCode}</span>}
             <span className="text-muted-foreground">
@@ -163,7 +163,7 @@ export default function ExploreRunPage() {
                     <span className="text-xs text-muted-foreground">{artifact.fileName}{artifact.size !== null ? `, ${Math.round(artifact.size / 1024)} KB` : ""}</span>
                     <span className="flex-1" />
                     {artifact.derivedDatasetId && (
-                      <Link href={`/explore/datasets/${artifact.derivedDatasetId}`} className="text-sm underline">Open as dataset</Link>
+                      <Link href={`/explore/datasets/${artifact.derivedDatasetId}`} className="text-sm underline">Open as table</Link>
                     )}
                     <a href={`${artifact.url}?download=1`} className="text-sm underline" download>Download</a>
                   </li>
@@ -193,7 +193,7 @@ export default function ExploreRunPage() {
         </TabsContent>
 
         <TabsContent value="code" className="mt-4">
-          <p className="mb-2 text-xs text-muted-foreground">The exact code of revision {run.revisionNumber} that this run executed.</p>
+          <p className="mb-2 text-xs text-muted-foreground">The exact code of version {run.revisionNumber} that this run executed.</p>
           <CodeEditor value={run.code} language={run.analysis.language} readOnly height="520px" ariaLabel="Executed code" />
         </TabsContent>
       </Tabs>

@@ -2,9 +2,11 @@ import { db } from "@/lib/db";
 import { fetchDatasetRows } from "./datasets";
 import { parseInputBindings } from "./analyses";
 import { getKit } from "./kits/loader";
+import { viewRoleHints } from "./dataset-kinds";
+import { parseStoredBlocks } from "./report-blocks";
 import { parseJsonObject, parseRoles, parseSchema } from "./schema";
 import type { ExploreProvenance, ExploreRoleMap } from "./types";
-import { pickPreviewColumns, PREVIEW_ROWS, usedColumnKeys, type CanvasEdge, type CanvasFigureData, type CanvasGraph, type CanvasNode } from "./canvas-layout";
+import { pickPreviewColumns, PREVIEW_ROWS, usedColumnKeys, type CanvasEdge, type CanvasFigureData, type CanvasGraph, type CanvasNode, type CanvasParamsSchema } from "./canvas-layout";
 
 const ACTIVE_RUN = new Set(["pending", "queued", "running"]);
 
@@ -70,6 +72,14 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
       include: { artifacts: true, revision: { select: { number: true } } },
     }),
   ]);
+
+  // What the report page shows: the saved blocks, or (as a draft) every output.
+  const storedReport = await db.exploreReport.findFirst({ where: { targetKey }, orderBy: { createdAt: "asc" }, select: { blocks: true } });
+  const reportBlocks = storedReport ? parseStoredBlocks(storedReport.blocks) : null;
+  const reportFigures = new Set(reportBlocks?.filter((block) => block.type === "figure").map((block) => `${block.analysisId}:${block.figureName}`) ?? []);
+  const reportTables = new Set(reportBlocks?.filter((block) => block.type === "table").map((block) => block.datasetId) ?? []);
+  const figureInReport = (analysisId: string, name: string) => (reportBlocks ? reportFigures.has(`${analysisId}:${name}`) : true);
+  const tableInReport = (datasetId: string, derived: boolean) => (reportBlocks ? reportTables.has(datasetId) : derived);
 
   const nodes: CanvasNode[] = [];
   const edges: CanvasEdge[] = [];
@@ -159,6 +169,8 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
         views: timelineReady ? ["subject-timeline", "heatmap"] : [],
         usedColumns,
         latestWrite,
+        roleHints: viewRoleHints(roles),
+        inReport: tableInReport(dataset.id, dataset.kind === "derived"),
         ...(producerActive ? { refreshing: true } : {}),
       },
     });
@@ -183,8 +195,13 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
         revision: revision?.number ?? null,
         codePreview: codePreviewOf(revision?.code ?? "", 80),
         codeLines: revision?.code ? revision.code.split("\n").length : 0,
-        latestRun: latest ? { id: latest.id, runNumber: latest.runNumber, status: latest.status } : null,
+        latestRun: latest
+          ? { id: latest.id, runNumber: latest.runNumber, status: latest.status, errorTail: latest.errorTail, completedAt: latest.completedAt?.toISOString() ?? null }
+          : null,
         active: latest ? ACTIVE_RUN.has(latest.status) : false,
+        params: parseJsonObject(revision?.params) ?? {},
+        paramsSchema: ((analysis.kitId ? kits.get(analysis.kitId)?.manifest.params : null) ?? null) as CanvasParamsSchema | null,
+        inputs: parseInputBindings(revision?.inputs).map((binding) => ({ alias: binding.alias, datasetId: binding.datasetId })),
       },
     });
     const active = latest ? ACTIVE_RUN.has(latest.status) : false;
@@ -231,6 +248,7 @@ export async function loadCanvasGraph(targetKey: string): Promise<CanvasGraph> {
         url: artifactUrl(main),
         thumbnailUrl: entry.image ? artifactUrl(entry.image) : null,
         unchanged: Boolean(before && main.checksum && before.checksum === main.checksum),
+        inReport: figureInReport(analysis.id, name),
         ...(active ? { refreshing: true } : {}),
       };
       nodes.push({ id: figureNodeId, data });
