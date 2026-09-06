@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { ArrowDown, ArrowUp, Check, Copy, ExternalLink, Globe, LayoutGrid, Loader2, Plus, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Unlink, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Copy, ExternalLink, Globe, LayoutGrid, Loader2, Plus, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Undo2, Unlink } from "lucide-react";
 import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { RichTextEditor } from "@/components/explore/RichTextEditor";
@@ -95,15 +95,76 @@ function tableBlockOf(table: ReportTable): ReportBlock {
  * together with text. Read-only for viewers; editors arrange blocks, write
  * Markdown and pick which figures and tables to show.
  */
-export function ExploreReport({ reportId, scope, canEdit, editing: editRequested, onDone, onOpenCanvas }: ExploreReportProps) {
+export function ExploreReport({ reportId, scope, canEdit, editing: editRequested, onOpenCanvas }: ExploreReportProps) {
   const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
   const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
   const { data, error, isLoading, mutate } = useSWR<ReportResponse>(key, fetcher, { refreshInterval: 15000 });
   const [draft, setDraft] = useState<ReportInput | null>(null);
-  const [saving, setSaving] = useState(false);
+  // Changes save on their own a moment after they stop; Undo walks back through them.
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [history, setHistory] = useState<ReportInput[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const savedRef = useRef<string | null>(null);
+  const savedInputRef = useRef<ReportInput | null>(null);
   const [storeOpen, setStoreOpen] = useState(false);
   const [active, setActive] = useState<ActiveFilters>({});
   const report = data?.report;
+
+  const editingNow = editRequested && canEdit;
+
+  // Save a moment after the last change while editing.
+  useEffect(() => {
+    if (!editingNow || !draft || !report) return;
+    if (savedRef.current === null) {
+      savedInputRef.current = toInput(report);
+      savedRef.current = JSON.stringify(savedInputRef.current);
+    }
+    const payload = JSON.stringify(draft);
+    if (payload === savedRef.current) return;
+    const timer = setTimeout(() => {
+      setSaveState("saving");
+      void postJson<ReportResponse>(key, draft, "PUT")
+        .then(async (result) => {
+          // Every saved step is one Undo step.
+          const before = savedInputRef.current;
+          if (before) setHistory((entries) => [...entries.slice(-49), before]);
+          savedInputRef.current = draft;
+          savedRef.current = payload;
+          await mutate(result, { revalidate: false });
+          setSaveState("saved");
+          setDirty(false);
+        })
+        .catch((err) => {
+          setSaveState("error");
+          toast.error(err instanceof Error ? err.message : "Could not save the report");
+        });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [draft, editingNow, key, mutate, report]);
+
+  // Leaving the editor saves what is still pending and forgets the session.
+  useEffect(() => {
+    if (editingNow || !draft) return;
+    const payload = JSON.stringify(draft);
+    const pending = payload !== savedRef.current;
+    void (async () => {
+      if (pending) {
+        try {
+          const result = await postJson<ReportResponse>(key, draft, "PUT");
+          savedRef.current = payload;
+          await mutate(result, { revalidate: false });
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Could not save the report");
+        }
+      }
+      savedRef.current = null;
+      savedInputRef.current = null;
+      setDraft(null);
+      setHistory([]);
+      setDirty(false);
+      setSaveState("idle");
+    })();
+  }, [editingNow, draft, key, mutate]);
 
   if (error) return <p className="mt-6 text-sm text-destructive">Could not load the report: {String(error.message)}</p>;
   if (!report || (isLoading && !data)) {
@@ -118,7 +179,23 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const editing = editRequested && canEdit;
   // The working copy starts from the saved page and lives in state once something changes.
   const working: ReportInput | null = editing ? (draft ?? toInput(report)) : null;
-  const patchDraft = (fn: (current: ReportInput) => ReportInput) => setDraft((current) => fn(current ?? toInput(report)));
+  const patchDraft = (fn: (current: ReportInput) => ReportInput) => {
+    setDraft(fn(working ?? toInput(report)));
+    setDirty(true);
+  };
+  // Undo first drops what is not saved yet, then walks back one saved step at a time.
+  const undo = () => {
+    const lastSaved = savedInputRef.current;
+    if (draft && lastSaved && JSON.stringify(draft) !== savedRef.current) {
+      setDraft(lastSaved);
+      setDirty(false);
+      return;
+    }
+    const previous = history[history.length - 1];
+    if (!previous) return;
+    setHistory((entries) => entries.slice(0, -1));
+    setDraft(previous);
+  };
   const outputTables = report.outputs.tables.filter((table) => table.output);
   const hasOutputs = report.outputs.figures.length + outputTables.length > 0;
   const resolvedById = new Map(report.blocks.map((block) => [block.id, block] as const));
@@ -283,22 +360,6 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
     },
   ];
 
-  const save = async () => {
-    if (!working) return;
-    setSaving(true);
-    try {
-      const result = await postJson<ReportResponse>(key, working, "PUT");
-      await mutate(result, { revalidate: false });
-      setDraft(null);
-      toast.success("Report saved");
-      onDone();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not save the report");
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const reset = async () => {
     try {
       const result = await postJson<ReportResponse>(`${key}/reset`, {}, "POST");
@@ -344,14 +405,13 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
                 description="Build a block from a table, or place a figure or table an analysis produced."
                 groups={storeGroups}
               />
-              <Button variant="outline" size="sm" onClick={() => { setDraft(null); onDone(); }} disabled={saving}>
-                <X className="mr-2 h-4 w-4" />
-                Cancel
+              <Button variant="outline" size="sm" onClick={undo} disabled={history.length === 0 && !dirty} title="Take back the last change">
+                <Undo2 className="mr-2 h-4 w-4" />
+                Undo
               </Button>
-              <Button size="sm" onClick={() => void save()} disabled={saving}>
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Save
-              </Button>
+              <span className="min-w-16 text-xs text-muted-foreground" aria-live="polite">
+                {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : ""}
+              </span>
             </div>
           ) : (
             <div className="flex items-center gap-2">

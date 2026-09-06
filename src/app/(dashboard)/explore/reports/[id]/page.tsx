@@ -134,7 +134,7 @@ function ReportScreen() {
           </>
         )}
         <span className="flex-1" />
-        {mode === "edit" && canEdit && (
+        {mode === "edit" && canEdit && view !== "page" && (
           <>
             <Button asChild variant="outline" size="sm" className="h-8" title="Import a TSV, CSV or Excel file as a table">
               <Link href={`/explore/datasets/import${scopeQuery}`}>
@@ -148,11 +148,13 @@ function ReportScreen() {
                 <span className="hidden lg:inline">New analysis</span>
               </Link>
             </Button>
-            <Button size="sm" className="h-8" onClick={done} title="Back to the report">
-              <Check className="h-3.5 w-3.5 lg:mr-1.5" />
-              <span className="hidden lg:inline">Done</span>
-            </Button>
           </>
+        )}
+        {mode === "edit" && canEdit && (
+          <Button size="sm" className="h-8" onClick={done} title="Back to the report; changes are saved as you make them">
+            <Check className="h-3.5 w-3.5 lg:mr-1.5" />
+            <span className="hidden lg:inline">Done</span>
+          </Button>
         )}
         {mode === "report" && canEdit && (
           <Button size="sm" className="h-8" onClick={openEditor} title="Edit the page; the analysis steps are behind the Canvas tab">
