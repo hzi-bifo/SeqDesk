@@ -3,7 +3,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { promisify } from "util";
-import { carveOutDenies, type MountPlan, type SandboxPlatform, type SystemEntry } from "./mount-plan";
+import { carveOutDenies, carveOutListingDirs, type MountPlan, type SandboxPlatform, type SystemEntry } from "./mount-plan";
 
 const execFileAsync = promisify(execFile);
 const SYSTEM_DIRS = ["/usr", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64"];
@@ -133,9 +133,12 @@ export async function applyDarwinDenies(plan: MountPlan): Promise<MountPlan> {
     }
   }
   const denies = new Set<string>();
+  const listing = new Set<string>();
   for (const root of plan.denyRoots) {
     for (const deny of carveOutDenies(root, allowed, (dir) => listings.get(dir) ?? null)) denies.add(deny);
+    for (const dir of carveOutListingDirs(root, allowed, [plan.chdir])) listing.add(dir);
   }
   plan.denyRead = [...denies].sort();
+  plan.denyListing = [...listing].sort();
   return plan;
 }

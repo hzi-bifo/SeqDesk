@@ -1,6 +1,7 @@
 import path from "path";
 import { buildSeqDeskSlurmJobName } from "@/lib/pipelines/run-directory";
 import type { ExecutionSettings } from "@/lib/pipelines/execution-settings";
+import { CONTROL_SUBDIR, INNER_SCRIPT_NAME } from "./sandbox/mount-plan";
 
 /**
  * Shell wrappers for Explore analysis runs. They follow the pipeline wrapper
@@ -39,7 +40,7 @@ export interface RunScriptOptions {
 }
 
 /** The inner script runs the analysis; it is what the sandbox executes. */
-export const INNER_SCRIPT = "control/analysis.sh";
+export const INNER_SCRIPT = `${CONTROL_SUBDIR}/${INNER_SCRIPT_NAME}`;
 
 export function shellQuote(value: string): string {
   if (value === "") return "''";

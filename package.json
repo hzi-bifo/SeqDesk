@@ -3,7 +3,7 @@
   "version": "1.1.130",
   "description": "Sequencing-facility software for orders, standards-aware metadata, workflows, and data submission",
   "private": true,
-  "author": "Philipp M\u00fcnch",
+  "author": "Philipp Münch",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hzi-bifo/SeqDesk.git"
@@ -41,6 +41,7 @@
     "pipeline:monitor:once": "tsx scripts/pipeline-monitor.ts --once",
     "explore:monitor": "tsx scripts/explore-monitor.ts",
     "explore:monitor:once": "tsx scripts/explore-monitor.ts --once",
+    "explore:sandbox-probe": "tsx scripts/explore-sandbox-probe.ts",
     "explore:validate": "tsx scripts/validate-explore-kit.ts",
     "test:explore": "DATABASE_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' DIRECT_URL='postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public' SEQDESK_TEST_TIER=fast vitest run src/lib/explore src/app/api/explore src/components/explore src/components/layout/sidebar/SidebarExploreNav.test.tsx",
     "stream:monitor": "tsx scripts/stream-monitor.ts",

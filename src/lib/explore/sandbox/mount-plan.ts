@@ -22,9 +22,14 @@ export const MOUNT_PLAN_SCHEMA_VERSION = 1;
 export type SandboxPlatform = "linux" | "darwin";
 export type SandboxNetwork = "none" | "host";
 
-export type BindPurpose = "system" | "environment" | "condaPackages" | "extra" | "run";
+export type BindPurpose = "system" | "environment" | "condaPackages" | "extra" | "run" | "control" | "logs";
 
-const READ_ONLY_PURPOSES = new Set<BindPurpose>(["system", "environment", "condaPackages", "extra"]);
+const READ_ONLY_PURPOSES = new Set<BindPurpose>(["system", "environment", "condaPackages", "extra", "control", "logs"]);
+
+/** Inside the run folder: the wrapper's own files, which the analysis must not change. */
+export const CONTROL_SUBDIR = "control";
+export const LOGS_SUBDIR = "logs";
+export const INNER_SCRIPT_NAME = "analysis.sh";
 const READ_WRITE_PURPOSES = new Set<BindPurpose>(["run"]);
 
 const SYSTEM_DIRS = ["/usr", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64"];
@@ -40,6 +45,8 @@ export interface MountBind {
   dst: string;
   mode: "ro" | "rw";
   purpose: BindPurpose;
+  /** A single file rather than a directory. */
+  type?: "file" | "dir";
 }
 
 export type SystemMount = { type: "ro-bind"; src: string; dst: string } | { type: "symlink"; target: string; dst: string } | { type: "proc"; dst: string } | { type: "dev"; dst: string };
@@ -54,10 +61,14 @@ export interface MountPlan {
   home: string;
   system: SystemMount[];
   tmpfs: string[];
+  /** tmpfs mounted inside a bind, after it, to hide part of it (Linux). */
+  overlayTmpfs: string[];
   binds: MountBind[];
   /** Seatbelt only: the roots whose contents are private; carve-outs are computed by the host. */
   denyRoots: string[];
   denyRead: string[];
+  /** Seatbelt only: directories on the way to an allowed bind whose listing is denied (names of siblings stay hidden). */
+  denyListing: string[];
   darwinWriteRoots: string[];
 }
 
@@ -102,6 +113,7 @@ export function buildMountPlan(input: MountPlanInput): MountPlan {
 
   const system: SystemMount[] = [];
   const tmpfs: string[] = [];
+  const overlayTmpfs: string[] = [];
   const binds: MountBind[] = [];
 
   if (platform === "linux") {
@@ -118,6 +130,20 @@ export function buildMountPlan(input: MountPlanInput): MountPlan {
   }
 
   binds.push({ src: srcOf(runFolder), dst: runFolder, mode: "rw", purpose: "run" });
+  // The audit record, the inner script and the log are written by the wrapper
+  // outside the sandbox; inside they are read-only so the analysis cannot
+  // rewrite what the run page reports. The wrapper keeps the log open, so
+  // its own output still arrives through the inherited descriptors.
+  const controlDir = path.join(runFolder, CONTROL_SUBDIR);
+  const logsDir = path.join(runFolder, LOGS_SUBDIR);
+  if (platform === "linux") {
+    // A tmpfs over control/ hides the plan files; only the inner script is exposed.
+    overlayTmpfs.push(controlDir);
+    binds.push({ src: path.join(srcOf(runFolder), CONTROL_SUBDIR, INNER_SCRIPT_NAME), dst: path.join(controlDir, INNER_SCRIPT_NAME), mode: "ro", purpose: "control", type: "file" });
+  } else {
+    binds.push({ src: path.join(srcOf(runFolder), CONTROL_SUBDIR), dst: controlDir, mode: "ro", purpose: "control" });
+  }
+  binds.push({ src: path.join(srcOf(runFolder), LOGS_SUBDIR), dst: logsDir, mode: "ro", purpose: "logs" });
   binds.push({ src: srcOf(input.environmentPrefix), dst: input.environmentPrefix, mode: "ro", purpose: "environment" });
   for (const dir of uniqueStrings(input.condaPackageDirs ?? [])) {
     if (path.isAbsolute(dir)) binds.push({ src: srcOf(dir), dst: dir, mode: "ro", purpose: "condaPackages" });
@@ -139,13 +165,17 @@ export function buildMountPlan(input: MountPlanInput): MountPlan {
     home: path.join(runFolder, "home"),
     system,
     tmpfs,
+    overlayTmpfs,
     binds: sortBinds(binds),
     denyRoots:
       platform === "darwin"
         ? uniqueStrings([roots.runsRoot, roots.datasetsRoot, roots.exploreBase, roots.appDir, roots.hostHome].filter((value): value is string => Boolean(value)).map(srcOf))
         : [],
     denyRead: [],
-    darwinWriteRoots: platform === "darwin" ? uniqueStrings([roots.tmpRoot ?? "", "/private/tmp", "/tmp"]) : [],
+    denyListing: [],
+    // No shared temp on macOS either: TMPDIR points into the run folder, and
+    // a shared /tmp would be a channel between runs of the same user.
+    darwinWriteRoots: [],
   };
   validateMountPlan(plan, {
     runFolder: srcOf(runFolder),
@@ -208,7 +238,19 @@ export function renderBwrapArgs(plan: MountPlan): string[] {
     else if (entry.type === "dev") args.push("--dev", entry.dst);
   }
   for (const dst of plan.tmpfs) args.push("--tmpfs", dst);
-  for (const bind of plan.binds) args.push(bind.mode === "rw" ? "--bind" : "--ro-bind", bind.src, bind.dst);
+  // bubblewrap mounts in argument order: an overlay tmpfs goes after the bind
+  // it hides part of and before any bind that reaches inside it.
+  const pending = [...plan.overlayTmpfs];
+  for (const bind of plan.binds) {
+    for (const overlay of [...pending]) {
+      if (isWithin(bind.dst, overlay)) {
+        args.push("--tmpfs", overlay);
+        pending.splice(pending.indexOf(overlay), 1);
+      }
+    }
+    args.push(bind.mode === "rw" ? "--bind" : "--ro-bind", bind.src, bind.dst);
+  }
+  for (const overlay of pending) args.push("--tmpfs", overlay);
   args.push("--chdir", plan.chdir);
   return args;
 }
@@ -225,11 +267,25 @@ export function renderSeatbeltProfile(plan: MountPlan): string {
   else lines.push('(deny network-outbound (remote ip "localhost:*"))');
   const denyRead = [...plan.denyRead].sort().map(subpath);
   if (denyRead.length > 0) lines.push(`(deny file-read* ${denyRead.join(" ")})`);
+  // The directories leading to a bind stay traversable but not listable, so
+  // the names of what sits next to the run are not visible either.
+  const denyListing = [...plan.denyListing].sort().map(literal);
+  if (denyListing.length > 0) lines.push(`(deny file-read-data ${denyListing.join(" ")})`);
   const readAllow = plan.binds.map((bind) => subpath(bind.src));
   if (readAllow.length > 0) lines.push(`(allow file-read* ${readAllow.join(" ")})`);
   lines.push("(deny file-write*)");
   const writeAllow = ['(literal "/dev/null")', ...plan.darwinWriteRoots.map(subpath), ...plan.binds.filter((bind) => bind.mode === "rw").map((bind) => subpath(bind.src))];
   lines.push(`(allow file-write* ${writeAllow.join(" ")})`);
+  // Later rules win: the wrapper's files inside the writable run folder stay
+  // read-only, and the plan files (which list carved-out names) stay hidden
+  // apart from the inner script bash has to read.
+  const guarded = plan.binds.filter((bind) => bind.purpose === "control" || bind.purpose === "logs");
+  if (guarded.length > 0) lines.push(`(deny file-write* ${guarded.map((bind) => subpath(bind.src)).join(" ")})`);
+  const control = plan.binds.find((bind) => bind.purpose === "control");
+  if (control) {
+    lines.push(`(deny file-read* ${subpath(control.src)})`);
+    lines.push(`(allow file-read* ${literal(path.join(control.src, INNER_SCRIPT_NAME))})`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -262,6 +318,32 @@ export function carveOutDenies(root: string, allowedPaths: string[], listChildre
   return denies;
 }
 
+/**
+ * The directories walked from a root to each allowed path under it, the root
+ * included, minus the ancestors of `keepListable` paths: getcwd on macOS
+ * reads every parent directory of the working directory, so the run folder's
+ * ancestors must stay listable. Directories inside an allowed path are the
+ * run's own and are not returned either. Pure.
+ */
+export function carveOutListingDirs(root: string, allowedPaths: string[], keepListable: string[] = []): string[] {
+  const allowed = uniqueStrings(allowedPaths);
+  const dirs = new Set<string>();
+  for (const candidate of allowed.filter((entry) => isWithin(entry, root) && entry !== root)) {
+    let dir = root;
+    const walk = [dir];
+    for (const segment of path.relative(root, candidate).split(path.sep).filter(Boolean).slice(0, -1)) {
+      dir = path.join(dir, segment);
+      walk.push(dir);
+    }
+    for (const entry of walk) {
+      if (allowed.some((own) => isWithin(entry, own))) continue;
+      if (keepListable.some((keep) => isWithin(keep, entry))) continue;
+      dirs.add(entry);
+    }
+  }
+  return [...dirs];
+}
+
 export function mountPlanHash(plan: MountPlan): string {
   return createHash("sha256").update(JSON.stringify(plan)).digest("hex").slice(0, 16);
 }
@@ -289,6 +371,10 @@ function sortBinds(binds: MountBind[]): MountBind[] {
 export function isWithin(candidate: string | null | undefined, root: string | null | undefined): boolean {
   if (!candidate || !root) return false;
   return candidate === root || candidate.startsWith(root.endsWith("/") ? root : `${root}/`);
+}
+
+function literal(value: string): string {
+  return `(literal "${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}")`;
 }
 
 function subpath(value: string): string {

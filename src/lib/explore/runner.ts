@@ -184,6 +184,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
       sandbox = (await prepareRunSandbox({ runFolder, environmentPrefix: environment.prefixPath, settings: sandboxSettings })).sandbox;
     } catch (error) {
       if (error instanceof SandboxRefusedError) throw new ExploreRunError(409, error.message);
+      if (error instanceof Error && error.message.startsWith("Invalid mount plan")) throw new ExploreRunError(409, `The sandbox settings do not fit this installation: ${error.message}`);
       throw error;
     }
 
