@@ -81,6 +81,7 @@ describe("mount plans", () => {
     const profile = renderSeatbeltProfile(plan);
     expect(profile).toContain('(deny file-read-data (literal "/data/explore/environments"))');
     expect(profile).toContain("(deny network*)");
+    expect(profile).toContain("(deny appleevent-send)");
     expect(profile).toContain('(deny file-read* (subpath "/data/explore/datasets")');
     expect(profile).toMatch(/\(allow file-read\*[^\n]*\(subpath "\/data\/explore\/runs\/EXP-1--id-run1"\)/);
     expect(profile).toContain("(deny file-write*)");

@@ -263,6 +263,9 @@ export function renderBwrapArgs(plan: MountPlan): string[] {
 export function renderSeatbeltProfile(plan: MountPlan): string {
   if (plan.platform !== "darwin") throw new Error("Seatbelt profiles can only be rendered for macOS plans");
   const lines = ["(version 1)", "(allow default)"];
+  // Other applications must not act on the analysis's behalf: no Apple
+  // Events (osascript could ask Finder to read a file outside the sandbox).
+  lines.push("(deny appleevent-send)");
   if (plan.network === "none") lines.push("(deny network*)");
   else lines.push('(deny network-outbound (remote ip "localhost:*"))');
   const denyRead = [...plan.denyRead].sort().map(subpath);

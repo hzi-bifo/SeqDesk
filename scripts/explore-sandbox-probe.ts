@@ -69,6 +69,7 @@ function main(): number {
   if (options.tables) probes.push({ name: "list the tables storage", command: `ls '${options.tables}'`, expect: "blocked" });
   if (process.platform === "darwin") {
     probes.push({ name: "read a home file through the firmlink path", command: `f=$(ls -a '${home}' | while read -r n; do [ -f "${home}/$n" ] && echo "$n" && break; done); test -n "$f" && cat "/System/Volumes/Data${home}/$f" > /dev/null`, expect: "blocked" });
+    probes.push({ name: "read a home file through Finder (Apple Events)", command: `osascript -e 'tell application "Finder" to get name of every item of (POSIX file "${home}" as alias)' | grep .`, expect: "blocked" });
     probes.push({ name: "hard-link a home file into the run", command: `ln '${home}/.gitconfig' '${run}/tmp/.hl' && cat '${run}/tmp/.hl'`, expect: "blocked" });
   } else {
     probes.push({ name: "see other processes", command: `test "$(ps -e | wc -l)" -gt 8`, expect: "blocked" });
