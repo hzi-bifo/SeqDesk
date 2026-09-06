@@ -100,8 +100,8 @@ export function ElementStore({ open, onOpenChange, title, description, groups }:
 const stroke = "currentColor";
 
 /** Tiny decorative drawings; the accent colour follows the text colour of the tile. */
-function Sketch({ kind }: { kind: SketchKind }): ReactNode {
-  const common = { className: "h-14 w-24 text-foreground/70 transition-colors group-hover:text-foreground", viewBox: "0 0 96 56", "aria-hidden": true } as const;
+export function Sketch({ kind, className }: { kind: SketchKind; className?: string }): ReactNode {
+  const common = { className: className ?? "h-14 w-24 text-foreground/70 transition-colors group-hover:text-foreground", viewBox: "0 0 96 56", "aria-hidden": true } as const;
   switch (kind) {
     case "text":
       return (

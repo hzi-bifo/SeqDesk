@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import useSWR from "swr";
 import { ArrowDown, ArrowUp, Check, Copy, ExternalLink, Globe, LayoutGrid, Loader2, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Undo2, Unlink } from "lucide-react";
-import type { StoreGroup } from "@/components/explore/ElementStore";
+import { Sketch, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { insertIntoActiveEditor, RichTextEditor } from "@/components/explore/RichTextEditor";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
@@ -40,7 +40,7 @@ interface ExploreReportProps {
   onOpenCanvas: () => void;
   /** The right sidebar's body while editing; the panel with figures, tables and variables renders into it. */
   panelContainer?: HTMLElement | null;
-  /** A slot in the page's top bar; Undo and the save state render into it while editing. */
+  /** A slot in the page's top bar; Undo and the save state render into it while editing, Start over and Share otherwise. */
   actionsContainer?: HTMLElement | null;
 }
 
@@ -374,16 +374,28 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   return (
     <div className="mt-6">
       <div className="min-w-0">
-      {editing && actionsContainer && createPortal(
-        <>
-          <span className="min-w-14 text-right text-xs text-muted-foreground" aria-live="polite">
-            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : ""}
-          </span>
-          <Button variant="ghost" size="sm" className="h-8" onClick={undo} disabled={history.length === 0 && !dirty} title="Take back the last change">
-            <Undo2 className="h-3.5 w-3.5 lg:mr-1.5" />
-            <span className="hidden lg:inline">Undo</span>
-          </Button>
-        </>,
+      {actionsContainer && createPortal(
+        editing ? (
+          <>
+            <span className="min-w-14 text-right text-xs text-muted-foreground" aria-live="polite">
+              {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : ""}
+            </span>
+            <Button variant="ghost" size="sm" className="h-8" onClick={undo} disabled={history.length === 0 && !dirty} title="Take back the last change">
+              <Undo2 className="h-3.5 w-3.5 lg:mr-1.5" />
+              <span className="hidden lg:inline">Undo</span>
+            </Button>
+          </>
+        ) : (
+          <>
+            {canEdit && !report.draft && (
+              <Button variant="ghost" size="sm" className="h-8" onClick={() => void reset()} title="Forget the saved page and start again from the current outputs">
+                <RotateCcw className="h-3.5 w-3.5 lg:mr-1.5" />
+                <span className="hidden lg:inline">Start over</span>
+              </Button>
+            )}
+            <SharePopover reportId={reportId} share={report.share} canEdit={canEdit} filters={filters} active={active} onChanged={() => mutate()} />
+          </>
+        ),
         actionsContainer
       )}
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -405,17 +417,6 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
               : `Last changed ${formatDateTime(report.updatedAt)}`}
           </p>
         </div>
-        {!editing && (
-            <div className="flex items-center gap-2">
-              {canEdit && !report.draft && (
-                <Button variant="ghost" size="sm" onClick={() => void reset()} title="Forget the saved page and start again from the current outputs">
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  Start over
-                </Button>
-              )}
-              <SharePopover reportId={reportId} share={report.share} canEdit={canEdit} filters={filters} active={active} onChanged={() => mutate()} />
-            </div>
-          )}
       </div>
 
       <FilterBar filters={filters} tables={report.outputs.tables} active={active} onActiveChange={setActive} editing={editing} onFiltersChange={editing ? setFilters : undefined} />
@@ -520,9 +521,11 @@ function ReportSidePanel({ groups, variables }: { groups: StoreGroup[]; variable
                     >
                       {item.image ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={item.image} alt="" className="h-8 w-10 shrink-0 rounded border object-cover" />
+                        <img src={item.image} alt="" className="h-8 w-12 shrink-0 rounded border object-cover" />
                       ) : (
-                        <span className="h-8 w-10 shrink-0 rounded border bg-muted/40" aria-hidden />
+                        <span className="flex h-8 w-12 shrink-0 items-center justify-center rounded border bg-muted/30" aria-hidden>
+                          <Sketch kind={item.sketch ?? "table"} className="h-7 w-11 text-foreground/70" />
+                        </span>
                       )}
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs font-medium">{item.title}</span>
@@ -1348,8 +1351,8 @@ function SharePopover({ reportId, share, canEdit, filters, active, onChanged }: 
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Share2 className="mr-2 h-4 w-4" />
+        <Button variant="outline" size="sm" className="h-8">
+          <Share2 className="h-3.5 w-3.5 mr-1.5" />
           Share
         </Button>
       </PopoverTrigger>
