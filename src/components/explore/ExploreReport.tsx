@@ -79,7 +79,7 @@ function toInput(report: ReportView): ReportInput {
       if (block.type === "taxon-explorer") return { id: block.id, type: "taxon-explorer", datasetId: block.datasetId, taxon: block.taxon, caption: block.caption, span: block.span };
       if (block.type === "subject") return { id: block.id, type: "subject", datasetId: block.datasetId, subject: block.subject, measure: block.measure, caption: block.caption, span: block.span };
       if (block.type === "curated") return { id: block.id, type: "curated", datasetId: block.datasetId, role: block.role, lists: block.lists, limit: block.limit, caption: block.caption, span: block.span };
-      if (block.type === "run-metric") return { id: block.id, type: "run-metric", analysisId: block.analysisId, metrics: block.metrics, labels: block.labels, digits: block.digits, columns: block.columns, trend: block.trend, trends: block.trends, timeline: block.timeline, label: block.label, span: block.span };
+      if (block.type === "run-metric") return { id: block.id, type: "run-metric", analysisId: block.analysisId, metrics: block.metrics, figures: block.figures, order: block.order, labels: block.labels, digits: block.digits, units: block.units, targets: block.targets, columns: block.columns, trend: block.trend, trends: block.trends, timeline: block.timeline, label: block.label, span: block.span };
       return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
     }),
   };
@@ -247,17 +247,13 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
         { id: "bar", title: "Bar chart", hint: "How many rows have each value", sketch: "bar", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "bar" } as ReportBlock) },
         { id: "scatter", title: "Dot plot", hint: "Two numeric columns against each other", sketch: "scatter", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "scatter" } as ReportBlock) },
         { id: "box", title: "Box plot", hint: "A numeric column per group", sketch: "box", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "box" } as ReportBlock) },
-        { id: "metric", title: "Numbers", hint: "Count, mean, min, max of one column", sketch: "numbers", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock(defaultMetricBlock(report.outputs.tables)) },
         {
           id: "run-metric",
           title: "Key figures",
-          hint: "Numbers an analysis recorded, as cards with labels and trends",
+          hint: "Numbers as cards: from an analysis run or a table column, with units, targets and trends",
           sketch: "numbers",
-          disabled: !report.outputs.analyses.some((analysis) => Object.keys(analysis.metrics).length > 0),
-          onSelect: () => {
-            const analysis = report.outputs.analyses.find((entry) => Object.keys(entry.metrics).length > 0);
-            if (analysis) addBlock({ id: newBlockId("run-metric"), type: "run-metric", analysisId: analysis.analysisId, metrics: Object.keys(analysis.metrics).filter((key) => typeof analysis.metrics[key] === "number").slice(0, 4), span: 2 });
-          },
+          disabled: !report.outputs.analyses.some((analysis) => Object.keys(analysis.metrics).length > 0) && !report.outputs.tables.some((table) => table.columns.some((column) => column.type === "number")),
+          onSelect: () => addBlock(defaultKeyFiguresBlock(report.outputs.analyses, report.outputs.tables)),
         },
         {
           id: "taxon-explorer",
@@ -456,7 +452,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
               variables={variables}
               tables={report.outputs.tables}
               analyses={report.outputs.analyses}
-              analysis={block.type === "run-metric" ? (analysisById.get(block.analysisId) ?? null) : null}
+              analysis={block.type === "run-metric" && block.analysisId ? (analysisById.get(block.analysisId) ?? null) : null}
               filters={filters}
               active={active}
             />
@@ -737,11 +733,16 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
             {editing && <RunMetricControls block={block} analyses={analyses} tables={tables} onPatch={onPatch} />}
             <RunMetricView
               analysis={analysis}
+              tables={tables}
               timelineSource={analysisTimeline(analysis, tables)}
-              editing={editing && analysis ? { onPatch: (patch) => onPatch(patch as Partial<ReportBlock>), available: analysis.metrics } : null}
+              editing={editing ? { onPatch: (patch) => onPatch(patch as Partial<ReportBlock>), available: analysis?.metrics ?? {} } : null}
               metrics={block.metrics}
+              figures={block.figures}
+              order={block.order}
               labels={block.labels}
               digits={block.digits}
+              units={block.units}
+              targets={block.targets}
               columns={block.columns}
               trend={block.trend ?? "none"}
               trends={block.trends}
@@ -897,11 +898,14 @@ function defaultChartBlock(tables: ReportTable[]): ReportBlock {
   return { id: newBlockId("chart"), type: "chart", datasetId: table?.datasetId ?? "", chart: numeric.length > 0 ? "histogram" : "bar", x, span: 1 };
 }
 
-function defaultMetricBlock(tables: ReportTable[]): ReportBlock {
+/** A key figures block: the first analysis with numbers, else the row count of the first table. */
+function defaultKeyFiguresBlock(analyses: ReportAnalysis[], tables: ReportTable[]): ReportBlock {
+  const analysis = analyses.find((entry) => Object.keys(entry.metrics).length > 0);
+  if (analysis) return { id: newBlockId("run-metric"), type: "run-metric", analysisId: analysis.analysisId, metrics: Object.keys(analysis.metrics).filter((key) => typeof analysis.metrics[key] === "number").slice(0, 4), span: 2 };
   const table = firstTable(tables);
   const numeric = table ? numericColumns(table.columns) : [];
   const column = numeric[0]?.key ?? table?.columns[0]?.key ?? "";
-  return { id: newBlockId("metric"), type: "metric", datasetId: table?.datasetId ?? "", column, stats: numeric.length > 0 ? ["count", "mean", "min", "max"] : ["count", "distinct", "missing"], span: 1 };
+  return { id: newBlockId("run-metric"), type: "run-metric", metrics: [], figures: table ? [{ id: newBlockId("f").slice(-8), datasetId: table.datasetId, column, stat: "count" }] : [], span: 2 };
 }
 
 function columnLabel(columns: ExploreColumn[], key: string | undefined): string {
@@ -983,9 +987,10 @@ function RunMetricControls({ block, analyses, tables, onPatch }: { block: Extrac
       <div className="flex flex-wrap items-end gap-2">
         <label className="min-w-0 flex-1 space-y-1 text-[11px] text-muted-foreground">
           <span>Analysis</span>
-          <Select value={block.analysisId} onValueChange={(analysisId) => { const target = analyses.find((entry) => entry.analysisId === analysisId); patch({ analysisId, metrics: Object.keys(target?.metrics ?? {}).filter((key) => typeof target?.metrics[key] === "number").slice(0, 4), labels: undefined, digits: undefined, trends: undefined, timeline: undefined }); }}>
+          <Select value={block.analysisId ?? "none"} onValueChange={(analysisId) => { if (analysisId === "none") { patch({ analysisId: undefined, metrics: [], order: (block.order ?? []).filter((key) => key.startsWith("f:")) }); return; } const target = analyses.find((entry) => entry.analysisId === analysisId); patch({ analysisId, metrics: Object.keys(target?.metrics ?? {}).filter((key) => typeof target?.metrics[key] === "number").slice(0, 4), order: undefined, labels: undefined, digits: undefined, trends: undefined, timeline: undefined }); }}>
             <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Analysis"><SelectValue placeholder="Choose an analysis" /></SelectTrigger>
             <SelectContent>
+              <SelectItem value="none">No analysis (table figures only)</SelectItem>
               {analyses.filter((entry) => Object.keys(entry.metrics).length > 0).map((entry) => (
                 <SelectItem key={entry.analysisId} value={entry.analysisId}>{entry.name}<span className="ml-1.5 text-xs text-muted-foreground">{entry.runNumber}</span></SelectItem>
               ))}
@@ -1027,7 +1032,7 @@ function RunMetricControls({ block, analyses, tables, onPatch }: { block: Extrac
             )}
           </>
         ) : (
-          "Type on a card to rename it; the button on each card sets its decimals, trend and order."
+          "Type on a card to rename it; the button on each card sets its unit, decimals, target, trend and order. Add a figure from the run or from any table column."
         )}
       </p>
     </div>

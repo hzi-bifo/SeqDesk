@@ -15,8 +15,9 @@ import { applyRowFilter } from "./row-filter";
 import { METRIC_STAT_LABELS, type ReportFilter } from "./report-blocks";
 import { buildChart, computeStats, formatStat, WIDGET_ROW_LIMIT } from "./report-widgets";
 import { formatWithDigits, metricTrend, sparklinePoints, trendNote } from "./metric-trend";
-import { analysisTimeline, buildTimeline, parseMeasure, suggestMeasure, timelineNote } from "./time-axis";
-import { getReportView, type ReportView, type ResolvedReportBlock } from "./reports";
+import { analysisTimeline, buildTimeline, detectTimeAxis, parseMeasure, suggestMeasure, timelineNote } from "./time-axis";
+import { figureKeys, tableFigureKey, targetStatus, withUnit } from "./key-figures";
+import { getReportView, type ReportAnalysis, type ReportView, type ResolvedReportBlock } from "./reports";
 import { parseRoles, parseSchema } from "./schema";
 import { parseTargetKey } from "./target-key";
 import { buildVariables, resolveVariablesInMarkdown, type ReportVariables } from "./variables";
@@ -134,9 +135,9 @@ function htmlTable(columns: Array<{ key: string; label: string; type?: string }>
   return `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-function cards(entries: Array<{ label: string; value: string; note?: string | null; extra?: string }>, columns?: number): string {
+function cards(entries: Array<{ label: string; value: string; note?: string | null; extra?: string; status?: "met" | "low" | "high" | null }>, columns?: number): string {
   const style = columns ? ` style="grid-template-columns:repeat(${Math.max(1, Math.min(6, columns))},minmax(0,1fr))"` : "";
-  return `<div class="cards"${style}>${entries.map((entry) => `<div class="card"><div class="value">${escapeHtml(entry.value)}</div><div class="label">${escapeHtml(entry.label)}</div>${entry.extra ?? ""}${entry.note ? `<div class="note">${escapeHtml(entry.note)}</div>` : ""}</div>`).join("")}</div>`;
+  return `<div class="cards"${style}>${entries.map((entry) => `<div class="card${entry.status ? ` ${entry.status}` : ""}"><div class="value">${escapeHtml(entry.value)}</div><div class="label">${escapeHtml(entry.label)}</div>${entry.extra ?? ""}${entry.note ? `<div class="note">${escapeHtml(entry.note)}</div>` : ""}</div>`).join("")}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,29 +293,59 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
     }
     case "run-metric": {
       const analysis = block.analysis;
-      if (!analysis) return section(block, block.label ?? "Key figures", empty("This analysis is not in the report any more."));
+      if (block.metrics.length > 0 && !analysis) return section(block, block.label ?? "Key figures", empty("This analysis is not in the report any more."));
       const source = analysisTimeline(analysis, [...input.tables.values()]);
-      const entries = block.metrics.map((key) => {
-        const value = analysis.metrics[key];
+      const keys = figureKeys(block);
+      type Entry = { label: string; value: string; note?: string | null; extra?: string; status?: "met" | "low" | "high" | null };
+      const entries = keys.flatMap((key): Entry[] => {
+        const figure = (block.figures ?? []).find((entry) => tableFigureKey(entry) === key) ?? null;
+        const table = figure ? input.tables.get(figure.datasetId) ?? null : null;
+        let value: string | number | boolean | null | undefined;
+        let defaultLabel: string;
+        let history: ReportAnalysis["history"] | null = null;
+        let timeline: ReturnType<typeof analysisTimeline> = null;
+        if (figure) {
+          if (!table) return [{ label: figure.column, value: "n/a", note: "table missing" }];
+          value = computeStats(table.records.map((record) => record.data), figure.column)[figure.stat];
+          defaultLabel = `${METRIC_STAT_LABELS[figure.stat]} of ${columnLabel(table.columns, figure.column)}`;
+          const axis = detectTimeAxis(table.columns, table.roles);
+          timeline = axis ? { datasetId: table.datasetId, tableName: table.name, axis, roles: table.roles } : null;
+        } else {
+          if (!analysis) return [];
+          value = analysis.metrics[key];
+          defaultLabel = metricLabel(key);
+          history = analysis.history ?? null;
+          timeline = source;
+        }
         const digits = block.digits?.[key];
         const format = (amount: number) => formatWithDigits(amount, digits, formatStat);
-        const text = typeof value === "number" ? format(value) : formatValue(value) || "n/a";
+        const text = withUnit(typeof value === "number" ? format(value) : formatValue(value) || "n/a", block.units?.[key]);
         const mode = block.trends?.[key] ?? block.trend ?? "none";
-        const label = block.labels?.[key]?.trim() || metricLabel(key);
+        const label = block.labels?.[key]?.trim() || defaultLabel;
+        const target = targetStatus(typeof value === "number" ? value : null, block.targets?.[key], format);
+        const status = target?.status ?? null;
+        const notes: string[] = [];
+        if (target) notes.push(target.note);
+        let extra = "";
         if (mode === "timeline") {
-          const measure = source ? parseMeasure(block.timeline?.[key]) ?? suggestMeasure(key, source.roles) : null;
-          const table = source ? input.tables.get(source.datasetId) : null;
-          if (!source || !measure || !table) return { label, value: text, note: source ? "no measure along the timeline" : "no timeline in the analysis's tables" };
-          const series = buildTimeline(table.records.map((record) => record.data), source.axis, measure);
-          const points = sparklinePoints(series.buckets.map((bucket) => bucket.cumulative), 160, 24);
-          const spark = points.length >= 2 ? `<svg viewBox="0 0 160 24" class="spark" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points.map((point) => point.join(",")).join(" ")}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>` : "";
-          const note = timelineNote(series, format) ?? (series.buckets.length > 0 ? `${series.buckets[0].label} to ${series.buckets[series.buckets.length - 1].label}` : "");
-          return { label, value: text, note, extra: spark };
+          const measure = timeline ? parseMeasure(block.timeline?.[key]) ?? (figure ? (figure.stat === "count" ? { kind: "count" as const } : figure.stat === "missing" ? null : { kind: figure.stat, column: figure.column }) : suggestMeasure(key, timeline.roles)) : null;
+          const timelineTable = timeline ? input.tables.get(timeline.datasetId) : null;
+          if (timeline && measure && timelineTable) {
+            const series = buildTimeline(timelineTable.records.map((record) => record.data), timeline.axis, measure);
+            const points = sparklinePoints(series.buckets.map((bucket) => bucket.cumulative), 160, 24);
+            extra = points.length >= 2 ? `<svg viewBox="0 0 160 24" class="spark" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points.map((point) => point.join(",")).join(" ")}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>` : "";
+            const note = timelineNote(series, format) ?? (series.buckets.length > 0 ? `${series.buckets[0].label} to ${series.buckets[series.buckets.length - 1].label}` : "");
+            if (note) notes.push(note);
+          } else notes.push(timeline ? "no measure along the timeline" : "no timeline in this figure's table");
+        } else if (mode !== "none" && history) {
+          const movement = typeof value === "number" ? metricTrend(history, key, mode) : null;
+          const note = trendNote(movement, mode, format);
+          if (note) notes.push(note);
         }
-        const movement = typeof value === "number" ? metricTrend(analysis.history, key, mode) : null;
-        return { label, value: text, note: trendNote(movement, mode, format) };
+        return [{ label, value: text, note: notes.join("; ") || null, extra, status }];
       });
-      return section(block, block.label ?? `${analysis.name}: key figures`, cards(entries, block.columns), `${analysis.name}${analysis.runNumber ? `, ${analysis.runNumber}` : ""}`);
+      const footer = [analysis && block.metrics.length > 0 ? `${analysis.name}${analysis.runNumber ? `, ${analysis.runNumber}` : ""}` : null, ...new Set((block.figures ?? []).map((figure) => input.tables.get(figure.datasetId)?.name ?? "a table"))].filter(Boolean).join("; ");
+      return section(block, block.label ?? (analysis && block.metrics.length > 0 ? `${analysis.name}: key figures` : "Key figures"), cards(entries, block.columns), footer);
     }
     case "view": {
       const table = tableOf(block.datasetId);
@@ -717,6 +748,8 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
 .card .value{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
 .card .label{font-size:12px;color:var(--muted)}
 .card .spark{display:block;width:100%;height:24px;margin-top:4px;color:var(--muted)}
+.card.met{border-left:3px solid #16a34a}
+.card.low,.card.high{border-left:3px solid #d97706}
 .plot{width:100%}
 .pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media (max-width:820px){.pair{grid-template-columns:1fr}}

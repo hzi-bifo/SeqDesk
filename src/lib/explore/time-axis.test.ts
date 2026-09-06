@@ -61,4 +61,12 @@ describe("time in a table", () => {
     expect(series.total).toBe(23);
     expect(timelineNote(series, String)).toMatch(/in the last \d+ (months|weeks|days)$/);
   });
+
+  it("computes a statistic per bucket without accumulating", () => {
+    const rows = [{ timepoint: 1, v: 2 }, { timepoint: 2, v: 4 }, { timepoint: 40, v: 10 }, { timepoint: 41, v: "x" }];
+    const series = buildTimeline(rows, { column: "timepoint", kind: "day", label: "study day" }, { kind: "mean", column: "v" }, 2);
+    expect(series.buckets.map((bucket) => [bucket.value, bucket.cumulative])).toEqual([[3, 3], [10, 10]]);
+    expect(timelineNote(series, String)).toBe("+7 from day 0 to day 30");
+    expect(parseMeasure("median:v")).toEqual({ kind: "median", column: "v" });
+  });
 });

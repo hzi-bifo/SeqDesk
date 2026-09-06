@@ -157,12 +157,31 @@ const CuratedBlockSchema = z
  */
 const MetricKey = z.string().min(1).max(120);
 const TrendChoice = z.enum(["none", "previous", "history", "timeline"]);
+const TableFigureSchema = z
+  .object({
+    id: z.string().min(1).max(40),
+    datasetId: z.string().min(1).max(80),
+    column: z.string().min(1).max(120),
+    stat: z.enum(METRIC_STATS),
+  })
+  .strict();
+const FigureTargetSchema = z.object({ min: z.number().finite().optional(), max: z.number().finite().optional() }).strict();
 const RunMetricBlockSchema = z
   .object({
     id: BlockId,
     type: z.literal("run-metric"),
-    analysisId: z.string().min(1).max(80),
-    metrics: z.array(MetricKey).min(1).max(8),
+    /** The analysis whose run metrics the block shows; a block of table figures only has none. */
+    analysisId: z.string().max(80).optional(),
+    /** Run metrics, by key. */
+    metrics: z.array(MetricKey).max(8),
+    /** Statistics of table columns, each a card like a run metric; stored under the key f:<id>. */
+    figures: z.array(TableFigureSchema).max(8).optional(),
+    /** Display order over run keys and f:<id> keys; missing means run figures, then table figures. */
+    order: z.array(z.string().max(120)).max(16).optional(),
+    /** Units by key, shown after the number ("reads", "%"). */
+    units: z.record(MetricKey, z.string().max(24)).optional(),
+    /** Targets by key: the card shows whether the value is within them. */
+    targets: z.record(MetricKey, FigureTargetSchema).optional(),
     /** Card labels by metric key; a missing entry reads the key as words. */
     labels: z.record(MetricKey, z.string().max(80)).optional(),
     /** Decimals by metric key; a missing entry rounds for reading. */
@@ -178,7 +197,9 @@ const RunMetricBlockSchema = z
     label: z.string().max(200).optional(),
     span: Span,
   })
-  .strict();
+  .strict()
+  .refine((block) => block.metrics.length + (block.figures?.length ?? 0) > 0, { message: "A key figures block needs at least one figure" })
+  .refine((block) => block.metrics.length === 0 || Boolean(block.analysisId), { message: "Run figures need an analysis" });
 
 export const ReportBlockSchema = z.discriminatedUnion("type", [
   TextBlockSchema,

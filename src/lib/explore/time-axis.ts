@@ -36,7 +36,12 @@ export function detectTimeAxis(columns: ExploreColumn[], roles: ExploreRoleMap):
   return null;
 }
 
-export type TimelineMeasure = { kind: "distinct"; column: string } | { kind: "sum"; column: string } | { kind: "count" };
+export type TimelineMeasure = { kind: "distinct" | "sum" | "mean" | "median" | "min" | "max"; column: string } | { kind: "count" };
+
+/** Measures that add up over time; the others are computed per bucket. */
+export function isCumulative(measure: TimelineMeasure): boolean {
+  return measure.kind === "distinct" || measure.kind === "sum" || measure.kind === "count";
+}
 
 /** What a key figure named like n_subjects or total_reads counts in the table, when the roles say so. */
 export function suggestMeasure(key: string, roles: ExploreRoleMap): TimelineMeasure | null {
@@ -53,9 +58,9 @@ export function suggestMeasure(key: string, roles: ExploreRoleMap): TimelineMeas
 export function parseMeasure(text: string | null | undefined): TimelineMeasure | null {
   if (!text) return null;
   if (text === "count") return { kind: "count" };
-  const match = text.match(/^(distinct|sum):(.+)$/);
+  const match = text.match(/^(distinct|sum|mean|median|min|max):(.+)$/);
   if (!match) return null;
-  return { kind: match[1] as "distinct" | "sum", column: match[2] };
+  return { kind: match[1] as "distinct" | "sum" | "mean" | "median" | "min" | "max", column: match[2] };
 }
 
 export function measureText(measure: TimelineMeasure): string {
@@ -158,10 +163,17 @@ export function buildTimeline(rows: ExploreRowData[], axis: TimeAxis, measure: T
     const bucketRows = buckets.get(start)!.rows;
     let added = 0;
     if (measure.kind === "count") added = bucketRows.length;
-    else if (measure.kind === "sum") {
-      for (const row of bucketRows) {
-        const value = Number(row[measure.column]);
-        if (Number.isFinite(value)) added += value;
+    else if (measure.kind === "sum" || measure.kind === "mean" || measure.kind === "median" || measure.kind === "min" || measure.kind === "max") {
+      const numbers = bucketRows.map((row) => Number(row[measure.column])).filter((value) => Number.isFinite(value));
+      if (measure.kind === "sum") added = numbers.reduce((total, value) => total + value, 0);
+      else if (numbers.length === 0) added = Number.NaN;
+      else if (measure.kind === "mean") added = numbers.reduce((total, value) => total + value, 0) / numbers.length;
+      else if (measure.kind === "min") added = Math.min(...numbers);
+      else if (measure.kind === "max") added = Math.max(...numbers);
+      else {
+        const sorted = [...numbers].sort((a, b) => a - b);
+        const middle = Math.floor(sorted.length / 2);
+        added = sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
       }
     } else {
       for (const row of bucketRows) {
@@ -174,7 +186,9 @@ export function buildTimeline(rows: ExploreRowData[], axis: TimeAxis, measure: T
         }
       }
     }
-    running += added;
+    if (Number.isNaN(added)) continue;
+    // Per-bucket statistics do not accumulate: the curve shows the bucket's own value.
+    running = isCumulative(measure) ? running + added : added;
     result.push({ t: start, label: bucketLabel(start, axis, step), value: added, cumulative: running });
   }
   return { axis, measure, step, buckets: result, total: running, rowsWithoutTime };
@@ -184,6 +198,12 @@ export function buildTimeline(rows: ExploreRowData[], axis: TimeAxis, measure: T
 export function timelineNote(series: TimelineSeries, format: (value: number) => string): string | null {
   if (series.buckets.length < 2) return null;
   const last = series.buckets[series.buckets.length - 1];
+  if (!isCumulative(series.measure)) {
+    const first = series.buckets[0];
+    const change = last.value - first.value;
+    const sign = change > 0 ? "+" : change < 0 ? "−" : "±";
+    return `${sign}${format(Math.abs(change))} from ${first.label} to ${last.label}`;
+  }
   const recent = series.buckets.filter((bucket) => bucket.t > last.t - windowFor(series) * (series.axis.kind === "day" ? 1 : DAY_MS));
   const added = recent.reduce((sum, bucket) => sum + bucket.value, 0);
   const sign = added > 0 ? "+" : added < 0 ? "−" : "±";

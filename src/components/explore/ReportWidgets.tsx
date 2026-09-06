@@ -14,9 +14,11 @@ import { cn } from "@/lib/utils";
 import { fetcher, formatCell, ROLE_LABELS } from "@/lib/explore/client";
 import { applyFilters, cellText, distinctValues, groupBy, median, relativeAbundance, toNumber, type ActiveFilters } from "@/lib/explore/frame";
 import type { ReportFilter } from "@/lib/explore/report-blocks";
-import { formatStat } from "@/lib/explore/report-widgets";
+import { computeStats, formatStat } from "@/lib/explore/report-widgets";
+import { METRIC_STAT_LABELS, METRIC_STATS, type MetricStat } from "@/lib/explore/report-blocks";
+import { figureKeys, tableFigureKey, targetStatus, withUnit, type FigureTarget, type TableFigure, type TargetStatus } from "@/lib/explore/key-figures";
 import { formatWithDigits, metricTrend, sparklinePoints, trendNote, type TrendMode } from "@/lib/explore/metric-trend";
-import { measureText, parseMeasure, suggestMeasure, timelineNote, type AnalysisTimeline, type TimeAxis, type TimelineMeasure, type TimelineSeries } from "@/lib/explore/time-axis";
+import { detectTimeAxis, measureText, parseMeasure, suggestMeasure, timelineNote, type AnalysisTimeline, type TimeAxis, type TimelineMeasure, type TimelineSeries } from "@/lib/explore/time-axis";
 import type { ReportAnalysis, ReportTable } from "@/lib/explore/reports";
 import type { ExploreColumn, ExploreRowData } from "@/lib/explore/types";
 
@@ -409,8 +411,12 @@ export function SubjectView({
 
 export interface KeyFigureOptions {
   metrics: string[];
+  figures?: TableFigure[];
+  order?: string[];
   labels?: Record<string, string>;
   digits?: Record<string, number>;
+  units?: Record<string, string>;
+  targets?: Record<string, FigureTarget>;
   columns?: number;
   trend?: TrendMode;
   trends?: Record<string, TrendMode>;
@@ -428,104 +434,194 @@ export const MAX_KEY_FIGURES = 8;
 export const TREND_LABELS: Record<TrendMode, string> = { none: "No trend", previous: "Change since the previous run", history: "Sparkline over the run history", timeline: "Along the table's timeline" };
 const TREND_SHORT: Record<TrendMode, string> = { none: "none", previous: "previous run", history: "run history", timeline: "timeline" };
 const DIGIT_CHOICES = ["auto", "0", "1", "2", "3", "4"] as const;
+const STATUS_STRIPE: Record<TargetStatus, string> = { met: "border-l-[3px] border-l-emerald-500", low: "border-l-[3px] border-l-amber-500", high: "border-l-[3px] border-l-amber-500" };
 
 /** The trend a figure shows: its own choice, else the block's default. */
 export function figureTrend(options: Pick<KeyFigureOptions, "trend" | "trends">, key: string): TrendMode {
   return options.trends?.[key] ?? options.trend ?? "none";
 }
 
-/** What a figure counts along the table's timeline: the author's choice, else a suggestion from its name. */
-export function figureMeasure(options: Pick<KeyFigureOptions, "timeline">, key: string, source: AnalysisTimeline | null): TimelineMeasure | null {
+/** What a figure counts along the table's timeline: the author's choice, else a suggestion from its name, else the statistic itself for a table figure. */
+export function figureMeasure(options: Pick<KeyFigureOptions, "timeline">, key: string, source: AnalysisTimeline | null, figure?: TableFigure | null): TimelineMeasure | null {
   if (!source) return null;
-  return parseMeasure(options.timeline?.[key]) ?? suggestMeasure(key, source.roles);
+  const chosen = parseMeasure(options.timeline?.[key]);
+  if (chosen) return chosen;
+  if (figure) return figure.stat === "count" || figure.stat === "distinct" || figure.stat === "sum" || figure.stat === "mean" || figure.stat === "median" || figure.stat === "min" || figure.stat === "max" ? (figure.stat === "count" ? { kind: "count" } : { kind: figure.stat, column: figure.column }) : null;
+  return suggestMeasure(key, source.roles);
+}
+
+/** The timeline of one table, when it has one. */
+function tableTimeline(table: Pick<ReportTable, "datasetId" | "name" | "columns" | "roles"> | null | undefined): AnalysisTimeline | null {
+  if (!table) return null;
+  const axis = detectTimeAxis(table.columns, table.roles);
+  return axis ? { datasetId: table.datasetId, tableName: table.name, axis, roles: table.roles } : null;
 }
 
 /**
- * Key figures: the numbers an analysis recorded, as cards. Each card can
- * carry the author's label and decimals, and a trend: the change since the
- * previous run, a sparkline over the run history, or the figure along the
- * time axis of the table the analysis reads. While editing, the cards are
- * the editor: the label is typed on the card, a small button opens the
- * rest, and a dashed card adds a figure.
+ * Key figures: numbers as cards. A figure is a metric an analysis recorded
+ * with its run, or a statistic of a table column. Each card can carry the
+ * author's label, unit, decimals and target, and a trend: the change since
+ * the previous run, a sparkline over the run history, or the figure along
+ * the time axis of its table. While editing, the cards are the editor.
  */
-export function RunMetricView({ analysis, timelineSource, editing, ...options }: { analysis: ReportAnalysis | null; timelineSource: AnalysisTimeline | null; editing?: KeyFigureEditing | null } & KeyFigureOptions) {
-  const { metrics, columns } = options;
-  if (!analysis) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This analysis is gone.</div>;
-  if (!analysis.runNumber) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{analysis.name} has not finished a run yet.</div>;
-  const unused = editing ? Object.keys(editing.available).filter((key) => !metrics.includes(key)) : [];
-  const showAdd = editing && unused.length > 0 && metrics.length < MAX_KEY_FIGURES;
-  const cardCount = metrics.length + (showAdd ? 1 : 0);
+export function RunMetricView({ analysis, tables, timelineSource, editing, ...options }: { analysis: ReportAnalysis | null; tables: ReportTable[]; timelineSource: AnalysisTimeline | null; editing?: KeyFigureEditing | null } & KeyFigureOptions) {
+  const { metrics, figures = [], columns } = options;
+  const keys = figureKeys({ metrics, figures, order: options.order });
+  if (metrics.length > 0 && !analysis) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This analysis is gone.</div>;
+  const unused = editing && analysis ? Object.keys(editing.available).filter((key) => !metrics.includes(key)) : [];
+  const tablesWithNumbers = tables.filter((table) => table.columns.some((column) => column.type === "number"));
+  const showAdd = editing && keys.length < MAX_KEY_FIGURES && (unused.length > 0 || tablesWithNumbers.length > 0);
+  const cardCount = keys.length + (showAdd ? 1 : 0);
   const perRow = columns ?? Math.min(4, cardCount);
+  const addFigure = (figure: TableFigure) => editing?.onPatch({ figures: [...figures, figure], order: [...keys, tableFigureKey(figure)] });
   return (
     <div>
       <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(perRow, 6))}, minmax(0, 1fr))` }}>
-        {metrics.map((key, index) => (
-          <KeyFigureCard key={key} figureKey={key} index={index} analysis={analysis} timelineSource={timelineSource} options={options} editing={editing ?? null} />
-        ))}
-        {showAdd && editing && (
-          <Popover>
-            <PopoverTrigger asChild>
-              <button type="button" className="flex min-h-[4.5rem] items-center justify-center gap-1 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground hover:border-foreground/40 hover:text-foreground" aria-label="Add a figure">
-                <Plus className="h-3.5 w-3.5" />
-                Add a figure
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-64 p-1">
-              <p className="px-2 py-1 text-[11px] text-muted-foreground">Numbers {analysis.name} recorded</p>
-              {unused.map((key) => (
-                <button key={key} type="button" onClick={() => editing.onPatch({ metrics: [...metrics, key] })} className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs hover:bg-secondary">
-                  <span className="truncate">{metricLabel(key)}</span>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">{typeof editing.available[key] === "number" ? formatStat(editing.available[key] as number) : formatCell(editing.available[key])}</span>
-                </button>
-              ))}
-            </PopoverContent>
-          </Popover>
-        )}
+        {keys.map((key, index) => {
+          const figure = figures.find((entry) => tableFigureKey(entry) === key) ?? null;
+          if (figure) {
+            const table = tables.find((entry) => entry.datasetId === figure.datasetId) ?? null;
+            return <TableFigureCard key={key} figureKey={key} index={index} keys={keys} figure={figure} table={table} options={options} editing={editing ?? null} />;
+          }
+          if (!analysis) return null;
+          if (!analysis.runNumber) return <div key={key} className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">{analysis.name} has not finished a run yet.</div>;
+          return (
+            <KeyFigureCard key={key} figureKey={key} index={index} keys={keys} value={analysis.metrics[key]} defaultLabel={metricLabel(key)} history={analysis.history} timelineSource={timelineSource} figure={null} options={options} editing={editing ?? null} />
+          );
+        })}
+        {showAdd && editing && <AddFigureCard analysisName={analysis?.name ?? null} available={editing.available} unused={unused} tables={tablesWithNumbers} onAddRun={(key) => editing.onPatch({ metrics: [...metrics, key], order: [...keys, key] })} onAddTable={addFigure} />}
       </div>
       <p className="mt-1 text-[11px] text-muted-foreground">
-        {analysis.name}, {analysis.runNumber}
+        {[analysis && metrics.length > 0 ? `${analysis.name}, ${analysis.runNumber ?? "no run yet"}` : null, ...[...new Set(figures.map((figure) => tables.find((entry) => entry.datasetId === figure.datasetId)?.name ?? "a table"))]].filter(Boolean).join("; ")}
       </p>
     </div>
   );
 }
 
-function KeyFigureCard({ figureKey: key, index, analysis, timelineSource, options, editing }: { figureKey: string; index: number; analysis: ReportAnalysis; timelineSource: AnalysisTimeline | null; options: KeyFigureOptions; editing: KeyFigureEditing | null }) {
-  const { metrics, labels, digits } = options;
-  const value = analysis.metrics[key];
+/** The dashed card that adds a figure: a number of the run, or a statistic of a table column. */
+function AddFigureCard({ analysisName, available, unused, tables, onAddRun, onAddTable }: { analysisName: string | null; available: Record<string, string | number | boolean | null>; unused: string[]; tables: ReportTable[]; onAddRun: (key: string) => void; onAddTable: (figure: TableFigure) => void }) {
+  const [datasetId, setDatasetId] = useState<string>(tables[0]?.datasetId ?? "");
+  const table = tables.find((entry) => entry.datasetId === datasetId) ?? tables[0] ?? null;
+  const numeric = table ? table.columns.filter((column) => column.type === "number") : [];
+  const [column, setColumn] = useState<string>("");
+  const [stat, setStat] = useState<MetricStat>("mean");
+  const chosenColumn = numeric.some((entry) => entry.key === column) ? column : numeric[0]?.key ?? "";
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className="flex min-h-[4.5rem] items-center justify-center gap-1 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground hover:border-foreground/40 hover:text-foreground" aria-label="Add a figure">
+          <Plus className="h-3.5 w-3.5" />
+          Add a figure
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 p-2 text-xs">
+        {unused.length > 0 && (
+          <div className="mb-2">
+            <p className="px-1 py-1 text-[11px] text-muted-foreground">Numbers {analysisName} recorded</p>
+            <div className="max-h-40 overflow-y-auto">
+              {unused.map((key) => (
+                <button key={key} type="button" onClick={() => onAddRun(key)} className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left hover:bg-secondary">
+                  <span className="truncate">{metricLabel(key)}</span>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">{typeof available[key] === "number" ? formatStat(available[key] as number) : formatCell(available[key])}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {table && (
+          <div className={cn("space-y-1.5", unused.length > 0 && "border-t pt-2")}>
+            <p className="px-1 text-[11px] text-muted-foreground">A statistic of a table column</p>
+            <Select value={table.datasetId} onValueChange={setDatasetId}>
+              <SelectTrigger className="h-7 w-full text-[11px] [&>span]:truncate" aria-label="Table"><SelectValue /></SelectTrigger>
+              <SelectContent>{tables.map((entry) => <SelectItem key={entry.datasetId} value={entry.datasetId}>{entry.name}</SelectItem>)}</SelectContent>
+            </Select>
+            <div className="flex gap-1.5">
+              <Select value={chosenColumn} onValueChange={setColumn}>
+                <SelectTrigger className="h-7 min-w-0 flex-1 text-[11px] [&>span]:truncate" aria-label="Column"><SelectValue placeholder="Column" /></SelectTrigger>
+                <SelectContent>{numeric.map((entry) => <SelectItem key={entry.key} value={entry.key}>{entry.label ?? entry.key}</SelectItem>)}</SelectContent>
+              </Select>
+              <Select value={stat} onValueChange={(value) => setStat(value as MetricStat)}>
+                <SelectTrigger className="h-7 w-24 text-[11px]" aria-label="Statistic"><SelectValue /></SelectTrigger>
+                <SelectContent>{METRIC_STATS.map((entry) => <SelectItem key={entry} value={entry}>{METRIC_STAT_LABELS[entry]}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <button type="button" disabled={!chosenColumn} onClick={() => onAddTable({ id: Math.random().toString(36).slice(2, 10), datasetId: table.datasetId, column: chosenColumn, stat })} className="w-full rounded border px-2 py-1 hover:bg-secondary disabled:opacity-40">
+              Add {METRIC_STAT_LABELS[stat].toLowerCase()} of {chosenColumn || "a column"}
+            </button>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** A card for a statistic of a table column: loads that one column and computes the statistic. */
+function TableFigureCard({ figureKey: key, index, keys, figure, table, options, editing }: { figureKey: string; index: number; keys: string[]; figure: TableFigure; table: ReportTable | null; options: KeyFigureOptions; editing: KeyFigureEditing | null }) {
+  const { data, error } = useSWR<TableFrame>(table ? `/api/explore/datasets/${table.datasetId}/table?columns=${encodeURIComponent(figure.column)}` : null, fetcher, { revalidateOnFocus: false });
+  const defaultLabel = `${METRIC_STAT_LABELS[figure.stat]} of ${table ? columnLabel(table.columns, figure.column) : figure.column}`;
+  if (!table) return <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">This table is not in the scope any more.</div>;
+  if (error) return <div className="rounded-md border border-dashed px-3 py-2 text-xs text-destructive">Could not load {table.name}.</div>;
+  if (!data) return <Skeleton className="h-[4.5rem] w-full" />;
+  const value = computeStats(data.rows, figure.column)[figure.stat];
+  return (
+    <KeyFigureCard figureKey={key} index={index} keys={keys} value={value} defaultLabel={defaultLabel} history={null} timelineSource={tableTimeline(table)} figure={figure} options={options} editing={editing} footnote={data.truncated ? `first ${data.rows.length.toLocaleString()} of ${data.total.toLocaleString()} rows` : null} />
+  );
+}
+
+function KeyFigureCard({ figureKey: key, index, keys, value, defaultLabel, history, timelineSource, figure, options, editing, footnote = null }: { figureKey: string; index: number; keys: string[]; value: string | number | boolean | null | undefined; defaultLabel: string; history: ReportAnalysis["history"] | null; timelineSource: AnalysisTimeline | null; figure: TableFigure | null; options: KeyFigureOptions; editing: KeyFigureEditing | null; footnote?: string | null }) {
+  const { labels, digits, units, targets } = options;
   const format = (amount: number) => formatWithDigits(amount, digits?.[key], formatStat);
   const text = typeof value === "number" ? format(value) : value === null || value === undefined ? "n/a" : formatCell(value);
+  const shown = withUnit(text, units?.[key]);
   const mode = figureTrend(options, key);
-  const measure = mode === "timeline" ? figureMeasure(options, key, timelineSource) : null;
-  const movement = typeof value === "number" ? metricTrend(analysis.history, key, mode) : null;
+  const measure = mode === "timeline" ? figureMeasure(options, key, timelineSource, figure) : null;
+  const movement = typeof value === "number" && history ? metricTrend(history, key, mode) : null;
   const note = trendNote(movement, mode, format);
-  const label = labels?.[key]?.trim() || metricLabel(key);
-  const trendChoices: TrendMode[] = timelineSource ? ["none", "previous", "history", "timeline"] : ["none", "previous", "history"];
+  const label = labels?.[key]?.trim() || defaultLabel;
+  const target = targetStatus(typeof value === "number" ? value : null, targets?.[key], format);
+  const trendChoices: TrendMode[] = [...(figure ? ["none"] : ["none", "previous", "history"]), ...(timelineSource ? ["timeline"] : [])] as TrendMode[];
 
-  const setRecord = <T,>(field: "labels" | "digits" | "trends" | "timeline", entry: T | undefined) => {
+  const setRecord = <T,>(field: "labels" | "digits" | "trends" | "timeline" | "units" | "targets", entry: T | undefined) => {
     if (!editing) return;
     const record = { ...((options[field] as Record<string, T> | undefined) ?? {}) };
     if (entry === undefined) delete record[key];
     else record[key] = entry;
     editing.onPatch({ [field]: Object.keys(record).length > 0 ? record : undefined } as Partial<KeyFigureOptions>);
   };
+  const setTarget = (bound: "min" | "max", raw: string) => {
+    const current = { ...(targets?.[key] ?? {}) };
+    const parsed = raw.trim() === "" ? undefined : Number(raw);
+    if (parsed === undefined || Number.isFinite(parsed)) {
+      if (parsed === undefined) delete current[bound];
+      else current[bound] = parsed;
+    }
+    setRecord("targets", current.min === undefined && current.max === undefined ? undefined : current);
+  };
   const move = (direction: -1 | 1) => {
     if (!editing) return;
     const target = index + direction;
-    if (target < 0 || target >= metrics.length) return;
-    const next = [...metrics];
+    if (target < 0 || target >= keys.length) return;
+    const next = [...keys];
     [next[index], next[target]] = [next[target], next[index]];
-    editing.onPatch({ metrics: next });
+    editing.onPatch({ order: next });
+  };
+  const remove = () => {
+    if (!editing) return;
+    const patch: Partial<KeyFigureOptions> = { order: keys.filter((entry) => entry !== key) };
+    if (figure) patch.figures = (options.figures ?? []).filter((entry) => entry.id !== figure.id);
+    else patch.metrics = options.metrics.filter((entry) => entry !== key);
+    editing.onPatch(patch);
   };
 
   return (
-    <div className={cn("group relative rounded-md border bg-muted/20 px-3 py-2", editing && "hover:border-foreground/30")}>
+    <div className={cn("group relative rounded-md border bg-muted/20 px-3 py-2", target && STATUS_STRIPE[target.status], editing && "hover:border-foreground/30")}>
       <div className="flex items-end justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-xl font-semibold tabular-nums" title={typeof value === "number" ? String(value) : text}>{text}</div>
+          <div className="truncate text-xl font-semibold tabular-nums" title={typeof value === "number" ? String(value) : text}>{shown}</div>
           {editing ? (
             <input
               value={labels?.[key] ?? ""}
-              placeholder={metricLabel(key)}
+              placeholder={defaultLabel}
               onChange={(event) => setRecord("labels", event.target.value.trim() ? event.target.value : undefined)}
               className="w-full truncate border-0 border-b border-dashed border-transparent bg-transparent p-0 text-[11px] text-muted-foreground outline-none placeholder:text-muted-foreground/70 hover:border-muted-foreground/40 focus:border-foreground"
               aria-label={`Label for ${key}`}
@@ -537,37 +633,52 @@ function KeyFigureCard({ figureKey: key, index, analysis, timelineSource, option
         </div>
         {mode === "history" && movement && movement.series.length >= 2 && <Sparkline values={movement.series.map((point) => point.value)} />}
       </div>
+      {target && <div className={cn("mt-1 text-[11px]", target.status === "met" ? "text-emerald-700" : "text-amber-700")}>{target.note}</div>}
       {mode === "timeline" && timelineSource && measure && <TimelineSpark source={timelineSource} measure={measure} format={format} />}
       {mode === "timeline" && (!timelineSource || !measure) && (
-        <div className="mt-1 text-[11px] text-muted-foreground">{timelineSource ? "choose what this figure counts along the timeline" : "the analysis reads no table with a timeline"}</div>
+        <div className="mt-1 text-[11px] text-muted-foreground">{timelineSource ? "choose what this figure counts along the timeline" : "this figure's table has no timeline"}</div>
       )}
       {(mode === "previous" || mode === "history") && (
         <div className={cn("mt-1 line-clamp-2 text-[11px] tabular-nums", movement?.delta ? (movement.delta > 0 ? "text-emerald-700" : "text-rose-700") : "text-muted-foreground")} title={movement?.since ? `Compared with ${movement.since.runNumber}` : undefined}>
           {note}
         </div>
       )}
+      {footnote && <div className="mt-1 text-[10px] text-muted-foreground">{footnote}</div>}
       {editing && (
         <Popover>
           <PopoverTrigger asChild>
-            <button type="button" className="absolute right-1 top-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-foreground focus:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`Settings for ${label}`} title="Decimals, trend, order">
+            <button type="button" className="absolute right-1 top-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-foreground focus:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`Settings for ${label}`} title="Unit, decimals, target, trend, order">
               <Settings2 className="h-3.5 w-3.5" />
             </button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-72 space-y-3 p-3 text-xs">
+          <PopoverContent align="end" className="w-72 space-y-2.5 p-3 text-xs">
             <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-mono text-[11px] text-muted-foreground" title={key}>{key}</span>
+              <span className="truncate font-mono text-[11px] text-muted-foreground" title={key}>{figure ? `${figure.stat} of ${figure.column}` : key}</span>
               <span className="tabular-nums" title={value === null || value === undefined ? "n/a" : String(value)}>{text}</span>
             </div>
+            <label className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Unit</span>
+              <Input value={units?.[key] ?? ""} placeholder="reads, %, days" onChange={(event) => setRecord("units", event.target.value.trim() ? event.target.value : undefined)} className="h-7 w-40 text-[11px]" aria-label={`Unit for ${key}`} />
+            </label>
             {typeof value === "number" && (
               <label className="flex items-center justify-between gap-2">
                 <span className="text-muted-foreground">Decimals</span>
                 <Select value={digits?.[key] === undefined ? "auto" : String(digits[key])} onValueChange={(choice) => setRecord("digits", choice === "auto" ? undefined : Number.parseInt(choice, 10))}>
-                  <SelectTrigger className="h-7 w-24 text-[11px]" aria-label={`Decimals for ${key}`}><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="h-7 w-40 text-[11px]" aria-label={`Decimals for ${key}`}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {DIGIT_CHOICES.map((choice) => <SelectItem key={choice} value={choice}>{choice === "auto" ? "auto" : `${choice} dec.`}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </label>
+            )}
+            {typeof value === "number" && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground" title="The card shows whether the value is within the target">Target</span>
+                <div className="flex w-40 items-center gap-1">
+                  <Input type="number" defaultValue={targets?.[key]?.min ?? ""} placeholder="at least" onBlur={(event) => setTarget("min", event.target.value)} className="h-7 min-w-0 flex-1 px-1.5 text-[11px]" aria-label={`Minimum for ${key}`} />
+                  <Input type="number" defaultValue={targets?.[key]?.max ?? ""} placeholder="at most" onBlur={(event) => setTarget("max", event.target.value)} className="h-7 min-w-0 flex-1 px-1.5 text-[11px]" aria-label={`Maximum for ${key}`} />
+                </div>
+              </div>
             )}
             <label className="flex items-center justify-between gap-2">
               <span className="text-muted-foreground">Trend</span>
@@ -579,7 +690,7 @@ function KeyFigureCard({ figureKey: key, index, analysis, timelineSource, option
                 </SelectContent>
               </Select>
             </label>
-            {mode === "timeline" && timelineSource && (
+            {mode === "timeline" && timelineSource && !figure && (
               <label className="flex items-center justify-between gap-2">
                 <span className="text-muted-foreground">Counts</span>
                 <Select value={measure ? measureText(measure) : "none"} onValueChange={(choice) => setRecord("timeline", choice === "none" ? undefined : choice)}>
@@ -596,12 +707,12 @@ function KeyFigureCard({ figureKey: key, index, analysis, timelineSource, option
                 </Select>
               </label>
             )}
-            {mode === "timeline" && timelineSource && !options.timeline?.[key] && measure && <p className="text-[11px] text-muted-foreground">Suggested from the name; along the {timelineSource.axis.label}s of {timelineSource.tableName}.</p>}
+            {mode === "timeline" && timelineSource && measure && <p className="text-[11px] text-muted-foreground">{figure ? `${METRIC_STAT_LABELS[figure.stat]} per period` : options.timeline?.[key] ? "" : "Suggested from the name"} along the {timelineSource.axis.label}s of {timelineSource.tableName}.</p>}
             <div className="flex items-center gap-1 border-t pt-2">
               <button type="button" onClick={() => move(-1)} disabled={index === 0} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-30" aria-label="Move left"><ChevronLeft className="h-3.5 w-3.5" /></button>
-              <button type="button" onClick={() => move(1)} disabled={index === metrics.length - 1} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-30" aria-label="Move right"><ChevronRight className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => move(1)} disabled={index === keys.length - 1} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-30" aria-label="Move right"><ChevronRight className="h-3.5 w-3.5" /></button>
               <span className="flex-1" />
-              <button type="button" onClick={() => editing.onPatch({ metrics: metrics.filter((entry) => entry !== key) })} disabled={metrics.length === 1} className="inline-flex items-center gap-1 rounded px-2 py-1 text-muted-foreground hover:bg-secondary hover:text-destructive disabled:opacity-30" aria-label={`Remove ${label}`}>
+              <button type="button" onClick={remove} disabled={keys.length === 1} className="inline-flex items-center gap-1 rounded px-2 py-1 text-muted-foreground hover:bg-secondary hover:text-destructive disabled:opacity-30" aria-label={`Remove ${label}`}>
                 <Trash2 className="h-3.5 w-3.5" />
                 Remove
               </button>
