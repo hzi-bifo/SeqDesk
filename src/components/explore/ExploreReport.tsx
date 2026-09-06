@@ -106,10 +106,15 @@ function tableBlockOf(table: ReportTable): ReportBlock {
  * together with text. Read-only for viewers; editors arrange blocks, write
  * Markdown and pick which figures and tables to show.
  */
+const ACTIVE_RUN_STATUS = new Set(["pending", "queued", "running"]);
+
 export function ExploreReport({ reportId, scope, canEdit, editing: editRequested, onOpenCanvas, panelContainer = null, actionsContainer = null }: ExploreReportProps) {
   const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
   const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
-  const { data, error, isLoading, mutate } = useSWR<ReportResponse>(key, fetcher, { refreshInterval: 15000 });
+  // While an analysis runs, the page asks often so cited numbers and cards update the moment it finishes.
+  const { data, error, isLoading, mutate } = useSWR<ReportResponse>(key, fetcher, {
+    refreshInterval: (latest) => (latest?.report?.outputs.analyses.some((analysis) => analysis.latestRun && ACTIVE_RUN_STATUS.has(analysis.latestRun.status)) ? 3000 : 15000),
+  });
   const [draft, setDraft] = useState<ReportInput | null>(null);
   // Changes save on their own a moment after they stop; Undo walks back through them.
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error" | "conflict">("idle");

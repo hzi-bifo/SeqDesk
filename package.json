@@ -106,6 +106,7 @@
     "@tiptap/pm": "^3.31.3",
     "@tiptap/react": "^3.31.3",
     "@tiptap/starter-kit": "^3.31.3",
+    "@tiptap/suggestion": "^3.31.3",
     "@types/js-yaml": "^4.0.9",
     "@xyflow/react": "^12.10.0",
     "ag-grid-community": "^35.0.0",

@@ -7,6 +7,7 @@ import { Markdown } from "@tiptap/markdown";
 import { Bold, Code, FileCode2, Heading2, Heading3, Italic, Link2, List, ListOrdered, Quote, Sigma } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useReportVariables, VariableNode, VariablePicker } from "@/components/explore/VariableNode";
+import { VariableSuggestion } from "@/components/explore/VariableSuggestion";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -50,7 +51,7 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
   }, [onChange]);
 
   const editor = useEditor({
-    extensions: [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false } }), VariableNode, Markdown],
+    extensions: [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false } }), VariableNode, VariableSuggestion, Markdown],
     content: value,
     contentType: "markdown",
     immediatelyRender: false,
@@ -67,6 +68,11 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
       if (activeEditor?.isDestroyed) activeEditor = null;
     },
   });
+
+  // The editor is created once; the `@` list reads the report's variables from its storage.
+  useEffect(() => {
+    editor?.commands.setReportVariables(variables);
+  }, [editor, variables]);
 
   // A value set from outside (Cancel, the Markdown view) replaces what the editor shows.
   useEffect(() => {
@@ -122,7 +128,7 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
         {variables && editor && (
           <Popover>
             <PopoverTrigger asChild>
-              <button type="button" onMouseDown={(event) => event.preventDefault()} disabled={source || locked} className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" title="Insert a number an analysis recorded; it updates when the analysis runs again" aria-label="Insert a value">
+              <button type="button" onMouseDown={(event) => event.preventDefault()} disabled={source || locked} className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" title="Insert a number an analysis recorded; it updates when the analysis runs again. Typing @ in the text does the same." aria-label="Insert a value">
                 <Sigma className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Value</span>
               </button>
