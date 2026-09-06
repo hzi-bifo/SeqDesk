@@ -9,10 +9,12 @@ import { allocateRunNumber, parseInputBindings, serializeRun, type RunSummary } 
 import { fetchAllDatasetRows, getDatasetRecord } from "./datasets";
 import { applyEditsToRows, listActiveEdits } from "./edits";
 import { resolveReadyEnvironment } from "./environments";
-import { getHelperLibDir } from "./kits/loader";
+import { stageHelperLibrary } from "./kits/loader";
 import { parseSchema } from "./schema";
 import { resolveExploreStorage } from "./storage";
-import { generateLocalRunScript, generateSlurmRunScript } from "./run-script";
+import { generateInnerScript, generateLocalRunScript, generateSlurmRunScript, INNER_SCRIPT } from "./run-script";
+import { prepareRunSandbox, SandboxRefusedError } from "./sandbox/prepare";
+import { getSandboxSettings } from "./sandbox/settings";
 import type { ExploreCell } from "./types";
 
 export type ExecutionModeRequest = "default" | "local" | "slurm";
@@ -128,6 +130,10 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     throw new ExploreRunError(409, `Environment ${analysis.environmentName} is not built yet. A facility admin can build it under Explore environments.`);
   }
 
+  // One run of an analysis at a time: two would write the same output tables.
+  const active = await db.exploreAnalysisRun.findFirst({ where: { analysisId: analysis.id, status: { in: ["pending", "queued", "running"] } }, select: { runNumber: true } });
+  if (active) throw new ExploreRunError(409, `Run ${active.runNumber} of this analysis is still active. Wait for it or stop it first.`);
+
   const settings = await getExecutionSettings();
   const mode: "local" | "slurm" =
     input.executionMode === "local" || input.executionMode === "slurm" ? input.executionMode : settings.useSlurm ? "slurm" : "local";
@@ -166,6 +172,20 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     await fs.writeFile(path.join(runFolder, "params.json"), JSON.stringify(params, null, 2), "utf8");
     const entrypoint = analysis.language === "r" ? "analysis.R" : "analysis.py";
     await fs.writeFile(path.join(runFolder, entrypoint), revision.code, "utf8");
+    // The helper library travels with the run: SLURM nodes only share the run
+    // directory, and the copy records which helper version the run used.
+    const helperLibDir = await stageHelperLibrary(runFolder);
+
+    // The mount plan is written first: the wrapper is generated from it, and
+    // the run page shows it from the moment the run exists.
+    const sandboxSettings = await getSandboxSettings();
+    let sandbox;
+    try {
+      sandbox = (await prepareRunSandbox({ runFolder, environmentPrefix: environment.prefixPath, settings: sandboxSettings })).sandbox;
+    } catch (error) {
+      if (error instanceof SandboxRefusedError) throw new ExploreRunError(409, error.message);
+      throw error;
+    }
 
     const scriptOptions = {
       runId: run.id,
@@ -174,9 +194,15 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
       entrypoint,
       environmentPrefix: environment.prefixPath,
       condaPath: settings.condaPath,
-      helperLibDir: getHelperLibDir(),
+      helperLibDir,
       slurm: settings,
+      sandbox,
+      timeLimitHours: sandboxSettings.localTimeLimitHours,
     };
+    const innerPath = path.join(runFolder, INNER_SCRIPT);
+    await fs.mkdir(path.dirname(innerPath), { recursive: true });
+    await fs.writeFile(innerPath, generateInnerScript(scriptOptions), "utf8");
+    await fs.chmod(innerPath, 0o755);
     const script = mode === "slurm" ? generateSlurmRunScript(scriptOptions) : generateLocalRunScript(scriptOptions);
     const scriptPath = path.join(runFolder, "run.sh");
     await fs.writeFile(scriptPath, script, "utf8");

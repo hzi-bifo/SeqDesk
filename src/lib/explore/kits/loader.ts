@@ -24,6 +24,24 @@ export function getHelperLibDir(): string {
   return path.join(process.cwd(), "explore", "lib");
 }
 
+/**
+ * Copy the seqdesk_explore helper package into `<runFolder>/lib/python`.
+ * Compute nodes share the run directory but not the app checkout, so the
+ * wrapper must import the helper from inside the run folder; the copy also
+ * freezes the helper version a run used. Returns the staged lib directory.
+ */
+export async function stageHelperLibrary(runFolder: string): Promise<string> {
+  const source = path.join(getHelperLibDir(), "python", "seqdesk_explore");
+  const libDir = path.join(runFolder, "lib");
+  const target = path.join(libDir, "python", "seqdesk_explore");
+  await fs.rm(target, { recursive: true, force: true });
+  await fs.cp(source, target, {
+    recursive: true,
+    filter: (entry) => path.basename(entry) !== "__pycache__" && !entry.endsWith(".pyc"),
+  });
+  return libDir;
+}
+
 export interface KitLoadProblem {
   kitDir: string;
   message: string;

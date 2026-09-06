@@ -102,6 +102,23 @@ describe("finalizeExploreRun", () => {
     expect(JSON.parse(update.data.results).warnings).toEqual([]);
   });
 
+  it("records the outputs of a failed run but does not promote its tables", async () => {
+    await fs.writeFile(path.join(runFolder, "outputs", "summary.tsv"), "sample\tmean\nS1\t1\n");
+    await fs.writeFile(
+      path.join(runFolder, "outputs", "manifest.json"),
+      JSON.stringify({ manifestVersion: 1, artifacts: [{ name: "summary", kind: "table", format: "tsv", path: "outputs/summary.tsv", title: "Summary" }] })
+    );
+    await finalizeExploreRun("run1", 1);
+    // The partial table is still recorded, so it can be inspected from the run page.
+    expect(mocks.db.exploreArtifact.upsert).toHaveBeenCalledTimes(1);
+    expect(mocks.createDataset).not.toHaveBeenCalled();
+    expect(mocks.writeDatasetVersion).not.toHaveBeenCalled();
+    expect(mocks.db.exploreArtifact.update).not.toHaveBeenCalled();
+    const update = mocks.db.exploreAnalysisRun.updateMany.mock.calls[0][0];
+    expect(update.data.status).toBe("failed");
+    expect(JSON.parse(update.data.results)).toMatchObject({ tables: 1, warnings: [expect.stringMatching(/not promoted.*run failed/)] });
+  });
+
   it("writes a new version of the existing output dataset on a re-run", async () => {
     mocks.db.exploreDataset.findMany.mockResolvedValue([
       { id: "derived-existing", sourceConfig: JSON.stringify({ builder: "analysis-run", analysisId: "a1", artifactName: "summary", runId: "old" }) },

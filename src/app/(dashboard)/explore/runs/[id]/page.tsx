@@ -38,7 +38,8 @@ interface RunDetail {
   exitCode: number | null;
   createdAt: string;
   analysis: { id: string; name: string; targetKey: string; language: "python" | "r" };
-  results: { notes?: string[]; metrics?: Record<string, unknown>; warnings?: string[]; error?: string } | null;
+  results: { notes?: string[]; metrics?: Record<string, unknown>; warnings?: string[]; error?: string; sandbox?: { used: string; detail: string; planHash: string | null; network: string | null } | null } | null;
+  isolation: { tool: "bubblewrap" | "seatbelt" | "none"; mode: string; network: "none" | "host"; planHash: string | null; readable: string[]; writable: string[]; reason: string | null } | null;
   outputTail: string | null;
   errorTail: string | null;
   runFolder: string | null;
@@ -100,6 +101,7 @@ export default function ExploreRunPage() {
             <span className="text-muted-foreground">version {run.revisionNumber}</span>
             {run.executionMode && <span className="text-muted-foreground">{run.executionMode}</span>}
             {run.exitCode !== null && <span className="text-muted-foreground">exit code {run.exitCode}</span>}
+            <IsolationBadge run={run} />
             <span className="text-muted-foreground">
               {run.startedAt ? `started ${formatDateTime(run.startedAt)}` : run.queuedAt ? `queued ${formatDateTime(run.queuedAt)}` : ""}
               {run.completedAt ? `, finished ${formatDateTime(run.completedAt)}` : ""}
@@ -126,7 +128,12 @@ export default function ExploreRunPage() {
           <TabsTrigger value="outputs">Outputs ({run.artifacts.length})</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="code">Code</TabsTrigger>
+          <TabsTrigger value="isolation">Isolation</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="isolation" className="mt-4">
+          <IsolationPanel run={run} />
+        </TabsContent>
 
         <TabsContent value="outputs" className="mt-4 space-y-6">
           {run.artifacts.length === 0 && (
@@ -198,5 +205,63 @@ export default function ExploreRunPage() {
         </TabsContent>
       </Tabs>
     </PageContainer>
+  );
+}
+
+const TOOL_LABELS: Record<string, string> = { bubblewrap: "bubblewrap", seatbelt: "sandbox-exec", none: "not sandboxed", refused: "refused" };
+
+/** What confined the run: the wrapper's report once it ran, the plan before. */
+function IsolationBadge({ run }: { run: RunDetail }) {
+  const used = run.results?.sandbox?.used ?? null;
+  const planned = run.isolation?.tool ?? null;
+  if (!used && !planned) return null;
+  const confined = used ? used === "bubblewrap" || used === "seatbelt" : planned !== "none";
+  const label = used ? TOOL_LABELS[used] ?? used : planned ? `${TOOL_LABELS[planned] ?? planned}${planned === "none" ? "" : " planned"}` : "";
+  return (
+    <Badge variant={confined ? "secondary" : "outline"} title={confined ? "The analysis could only see its own run folder and its environment." : "The analysis ran with the server's own access to the filesystem."}>
+      {confined ? `sandboxed: ${label}` : label}
+    </Badge>
+  );
+}
+
+function IsolationPanel({ run }: { run: RunDetail }) {
+  const isolation = run.isolation;
+  const reported = run.results?.sandbox ?? null;
+  if (!isolation) {
+    return <p className="text-sm text-muted-foreground">This run was started before sandboxing existed; it ran with the server&apos;s own access to the filesystem.</p>;
+  }
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="rounded-lg border p-4">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+          <dt className="text-muted-foreground">Mechanism</dt>
+          <dd>{reported ? `${TOOL_LABELS[reported.used] ?? reported.used}${reported.detail ? ` (${reported.detail})` : ""}` : `${TOOL_LABELS[isolation.tool] ?? isolation.tool}${isolation.tool === "none" && isolation.reason ? ` (${isolation.reason})` : ", not run yet"}`}</dd>
+          <dt className="text-muted-foreground">Setting</dt>
+          <dd>{isolation.mode}</dd>
+          <dt className="text-muted-foreground">Network</dt>
+          <dd>{isolation.network === "none" ? "none: the analysis cannot open connections" : "the host network"}</dd>
+          {isolation.planHash && (
+            <>
+              <dt className="text-muted-foreground">Plan</dt>
+              <dd className="font-mono text-xs">{isolation.planHash}</dd>
+            </>
+          )}
+        </dl>
+        {isolation.reason && isolation.tool !== "none" && <p className="mt-2 text-xs text-amber-700">{isolation.reason}</p>}
+      </div>
+      {isolation.tool !== "none" && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-lg border p-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Writable</h3>
+            <ul className="mt-2 space-y-1 font-mono text-xs">{isolation.writable.map((entry) => <li key={entry}>{entry}</li>)}</ul>
+          </div>
+          <div className="rounded-lg border p-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Readable</h3>
+            <ul className="mt-2 space-y-1 font-mono text-xs">{isolation.readable.map((entry) => <li key={entry}>{entry}</li>)}</ul>
+            <p className="mt-2 text-xs text-muted-foreground">Nothing else exists inside the sandbox: not other runs, not the tables storage, not the application or the home directory.</p>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

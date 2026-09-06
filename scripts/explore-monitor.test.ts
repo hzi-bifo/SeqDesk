@@ -17,7 +17,7 @@ vi.mock("../src/lib/pipelines/queue-probe", async () => {
 });
 vi.mock("../src/lib/explore/run-finalize", () => ({ finalizeExploreRun: mocks.finalizeExploreRun }));
 
-import { syncExploreRun } from "./explore-monitor";
+import { MARKER_GRACE_MS, syncExploreRun } from "./explore-monitor";
 
 const base = { id: "run1", status: "running", runFolder: "/runs/EXP-1", queueJobId: "local-4242", createdAt: new Date(Date.now() - 5000), startedAt: new Date(Date.now() - 5000) };
 
@@ -62,6 +62,32 @@ describe("syncExploreRun", () => {
     const update = mocks.db.exploreAnalysisRun.updateMany.mock.calls[0][0];
     expect(update.data.status).toBe("running");
     expect(update.data.startedAt).toBeInstanceOf(Date);
+  });
+
+  it("waits for the marker after the scheduler reports completion, then fails the run", async () => {
+    mocks.inferPipelineExitCode.mockResolvedValue(null);
+    mocks.readIdentityCheckedQueueSnapshot.mockResolvedValue({ state: "COMPLETED", reason: null, source: "sacct", identityVerified: true });
+    const run = { ...base, id: "run-slurm", queueJobId: "777" };
+    const start = Date.now();
+    await syncExploreRun(run, { now: () => start });
+    await syncExploreRun(run, { now: () => start + MARKER_GRACE_MS - 1000 });
+    expect(mocks.db.exploreAnalysisRun.updateMany).not.toHaveBeenCalled();
+    expect(mocks.finalizeExploreRun).not.toHaveBeenCalled();
+
+    await syncExploreRun(run, { now: () => start + MARKER_GRACE_MS + 1000 });
+    const update = mocks.db.exploreAnalysisRun.updateMany.mock.calls[0][0];
+    expect(update.data.status).toBe("failed");
+    expect(update.data.errorTail).toMatch(/COMPLETED.*no exit marker appeared within 5 minutes/);
+  });
+
+  it("finalizes normally when the marker shows up during that wait", async () => {
+    mocks.inferPipelineExitCode.mockResolvedValueOnce(null).mockResolvedValueOnce(0);
+    mocks.readIdentityCheckedQueueSnapshot.mockResolvedValue({ state: "COMPLETED", reason: null, source: "sacct", identityVerified: true });
+    const run = { ...base, id: "run-late-marker", queueJobId: "778" };
+    await syncExploreRun(run);
+    await syncExploreRun(run);
+    expect(mocks.finalizeExploreRun).toHaveBeenCalledWith("run-late-marker", 0);
+    expect(mocks.db.exploreAnalysisRun.updateMany).not.toHaveBeenCalled();
   });
 
   it("fails runs that were never prepared after five minutes", async () => {

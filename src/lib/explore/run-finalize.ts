@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { readTail } from "@/lib/pipelines/nextflow";
 import { createDataset, writeDatasetVersion } from "./datasets";
 import { parseDelimited } from "./parsers/delimited";
+import { readRunIsolation, sandboxFromLog } from "./sandbox/prepare";
 import { inferSchema } from "./schema";
 import type { ExploreRole, ExploreRoleMap, ExploreSensitivity } from "./types";
 import { SENSITIVITY_RANK } from "./types";
@@ -40,8 +41,8 @@ async function sha256(filePath: string): Promise<string> {
 
 /**
  * Finalize a run whose wrapper wrote the exit marker: record artifacts from
- * outputs/manifest.json, promote result tables to derived datasets, store a
- * results summary and set the terminal status.
+ * outputs/manifest.json, promote result tables to derived datasets (only when
+ * the run succeeded), store a results summary and set the terminal status.
  */
 export async function finalizeExploreRun(runId: string, exitCode: number): Promise<void> {
   const run = await db.exploreAnalysisRun.findUnique({
@@ -106,20 +107,25 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
     else if (kind === "report") reports += 1;
     else if (kind === "table") {
       tables += 1;
-      if (format === "tsv" || format === "csv") {
-        try {
-          const derivedId = await promoteTable(run, artifact.id, absolute, {
-            artifactName: name,
-            name: typeof entry.title === "string" && entry.title.trim() ? entry.title.trim() : name,
-            format: format as "tsv" | "csv",
-            tableKind: typeof entry.table?.tableKind === "string" ? entry.table.tableKind : null,
-            roles: entry.table?.roles && typeof entry.table.roles === "object" ? (entry.table.roles as Record<string, string>) : {},
-            sensitivity,
-          });
-          await db.exploreArtifact.update({ where: { id: artifact.id }, data: { derivedDatasetId: derivedId } });
-        } catch (error) {
-          warnings.push(`Table ${name} could not be promoted to a dataset: ${error instanceof Error ? error.message : String(error)}`);
-        }
+      if (format !== "tsv" && format !== "csv") continue;
+      if (exitCode !== 0) {
+        // The file stays downloadable from the run page, but a failed run must
+        // not move a dataset's current version forward with a partial table.
+        warnings.push(`Table ${name} was not promoted to a dataset because the run failed.`);
+        continue;
+      }
+      try {
+        const derivedId = await promoteTable(run, artifact.id, absolute, {
+          artifactName: name,
+          name: typeof entry.title === "string" && entry.title.trim() ? entry.title.trim() : name,
+          format: format as "tsv" | "csv",
+          tableKind: typeof entry.table?.tableKind === "string" ? entry.table.tableKind : null,
+          roles: entry.table?.roles && typeof entry.table.roles === "object" ? (entry.table.roles as Record<string, string>) : {},
+          sensitivity,
+        });
+        await db.exploreArtifact.update({ where: { id: artifact.id }, data: { derivedDatasetId: derivedId } });
+      } catch (error) {
+        warnings.push(`Table ${name} could not be promoted to a dataset: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -128,8 +134,15 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
     readTail(path.join(runFolder, "logs", "pipeline.out")),
     readTail(path.join(runFolder, "logs", "pipeline.err")),
   ]);
+  const isolation = await readRunIsolation(runFolder);
+  const fullLog = await fs.readFile(path.join(runFolder, "logs", "pipeline.out"), "utf8").catch(() => null);
+  const reported = sandboxFromLog(fullLog);
+  if (isolation && isolation.tool !== "none" && reported && reported.used === "none") {
+    warnings.push(`The run was not sandboxed: ${reported.detail || "the sandbox tool was missing where the run executed"}.`);
+  }
   const results = {
     exitCode,
+    sandbox: reported ? { used: reported.used, detail: reported.detail, planHash: isolation?.planHash ?? null, network: isolation?.network ?? null } : null,
     figures,
     tables,
     reports,

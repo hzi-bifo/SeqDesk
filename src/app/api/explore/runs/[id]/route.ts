@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { serializeRun } from "@/lib/explore/analyses";
+import { readRunIsolation } from "@/lib/explore/sandbox/prepare";
 import { ExploreRouteError, exploreErrorResponse, loadAccessibleRun, requireExploreSession } from "../../_shared";
 
 export const runtime = "nodejs";
@@ -29,11 +30,13 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     } catch {
       results = null;
     }
+    const isolation = await readRunIsolation(run.runFolder);
     return NextResponse.json({
       run: {
         ...serializeRun(run),
         analysis: run.analysis,
         results,
+        isolation,
         outputTail: run.outputTail,
         errorTail: run.errorTail,
         runFolder: run.runFolder,
