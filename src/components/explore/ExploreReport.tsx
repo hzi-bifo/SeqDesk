@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import useSWR from "swr";
@@ -107,6 +107,10 @@ function tableBlockOf(table: ReportTable): ReportBlock {
  * Markdown and pick which figures and tables to show.
  */
 const ACTIVE_RUN_STATUS = new Set(["pending", "queued", "running"]);
+// Page filters are set aside until they are wired to the blocks properly:
+// the stored filter settings are kept, but nothing on the page applies them.
+const NO_FILTERS: ReportFilter[] = [];
+const NO_ACTIVE: ActiveFilters = {};
 
 export function ExploreReport({ reportId, scope, canEdit, editing: editRequested, onOpenCanvas, panelContainer = null, actionsContainer = null }: ExploreReportProps) {
   const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
@@ -123,7 +127,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   useFooterNote(data?.report && !data.report.draft ? `Report last changed ${formatDateTime(data.report.updatedAt)}` : null);
   const savedRef = useRef<string | null>(null);
   const savedInputRef = useRef<ReportInput | null>(null);
-  const active: ActiveFilters = useMemo(() => ({}), []);
+  const active = NO_ACTIVE;
   const report = data?.report;
 
   const editingNow = editRequested && canEdit;
@@ -184,6 +188,38 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
     })();
   }, [editingNow, draft, key, mutate, report, saveState]);
 
+  // The draft mutators are stable so memoized block cards keep their callbacks between renders.
+  const patchDraft = useCallback(
+    (fn: (current: ReportInput) => ReportInput) => {
+      if (!report) return;
+      setDraft((current) => fn(current ?? toInput(report)));
+      setDirty(true);
+    },
+    [report]
+  );
+  const update = useCallback((mutator: (blocks: ReportBlock[]) => ReportBlock[]) => patchDraft((current) => ({ ...current, blocks: mutator(current.blocks) })), [patchDraft]);
+  const patchBlock = useCallback((id: string, patch: Partial<ReportBlock>) => update((current) => current.map((block) => (block.id === id ? ({ ...block, ...patch } as ReportBlock) : block))), [update]);
+  const moveBlock = useCallback((id: string, delta: number) =>
+    update((current) => {
+      const index = current.findIndex((block) => block.id === id);
+      const target = index + delta;
+      if (index < 0 || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    }), [update]);
+  const removeBlock = useCallback((id: string) => update((current) => current.filter((block) => block.id !== id)), [update]);
+  // One stable set of callbacks per block, so a memoized card only re-renders when its own inputs change.
+  const blockIdsKey = (draft?.blocks ?? report?.blocks ?? []).map((block) => block.id).join("|");
+  const handlers = useMemo(() => {
+    const map = new Map<string, { onPatch: (patch: Partial<ReportBlock>) => void; onMove: (delta: number) => void; onRemove: () => void }>();
+    for (const id of blockIdsKey ? blockIdsKey.split("|") : []) {
+      map.set(id, { onPatch: (patch) => patchBlock(id, patch), onMove: (delta) => moveBlock(id, delta), onRemove: () => removeBlock(id) });
+    }
+    return map;
+  }, [blockIdsKey, patchBlock, moveBlock, removeBlock]);
+  const handlersFor = (id: string) => handlers.get(id) ?? { onPatch: (patch: Partial<ReportBlock>) => patchBlock(id, patch), onMove: (delta: number) => moveBlock(id, delta), onRemove: () => removeBlock(id) };
+
   if (error) return <p className="mt-6 text-sm text-destructive">Could not load the report: {String(error.message)}</p>;
   if (!report || (isLoading && !data)) {
     return (
@@ -197,10 +233,6 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const editing = editRequested && canEdit;
   // The working copy starts from the saved page and lives in state once something changes.
   const working: ReportInput | null = editing ? (draft ?? toInput(report)) : null;
-  const patchDraft = (fn: (current: ReportInput) => ReportInput) => {
-    setDraft(fn(working ?? toInput(report)));
-    setDirty(true);
-  };
   // Undo first drops what is not saved yet, then walks back one saved step at a time.
   const undo = () => {
     const lastSaved = savedInputRef.current;
@@ -220,29 +252,13 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const figureByKey = new Map(report.outputs.figures.map((figure) => [figureKey(figure.analysisId, figure.figureName), figure] as const));
   const tableById = new Map(report.outputs.tables.map((table) => [table.datasetId, table] as const));
   const blocks: ReportBlock[] = working ? working.blocks : report.blocks;
-  // Page filters are set aside until they are wired to the blocks properly:
-  // the stored filter settings are kept, but nothing on the page applies them.
-  const filters: ReportFilter[] = [];
+  const filters = NO_FILTERS;
   const analysisById = new Map(report.outputs.analyses.map((analysis) => [analysis.analysisId, analysis] as const));
   const headings = blocks.flatMap((block) => (block.type === "text" ? block.markdown.split("\n").filter((line) => /^##\s+/.test(line)).slice(0, 1).map((line) => ({ id: block.id, title: line.replace(/^##\s+/, "").trim() })) : []));
   const usedFigures = new Set(blocks.filter((block) => block.type === "figure").map((block) => figureKey(block.analysisId, block.figureName)));
   const usedTables = new Set(blocks.filter((block) => block.type === "table").map((block) => block.datasetId));
   const usedViews = new Set(blocks.filter((block) => block.type === "view").map((block) => `${block.datasetId}:${block.view}`));
 
-  const update = (mutator: (blocks: ReportBlock[]) => ReportBlock[]) =>
-    patchDraft((current) => ({ ...current, blocks: mutator(current.blocks) }));
-  const patchBlock = (id: string, patch: Partial<ReportBlock>) =>
-    update((current) => current.map((block) => (block.id === id ? ({ ...block, ...patch } as ReportBlock) : block)));
-  const moveBlock = (id: string, delta: number) =>
-    update((current) => {
-      const index = current.findIndex((block) => block.id === id);
-      const target = index + delta;
-      if (index < 0 || target < 0 || target >= current.length) return current;
-      const next = [...current];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  const removeBlock = (id: string) => update((current) => current.filter((block) => block.id !== id));
   const addBlock = (block: ReportBlock) => update((current) => (current.some((entry) => entry.id === block.id) ? current : [...current, block]));
   const storeGroups: StoreGroup[] = [
     {
@@ -451,9 +467,9 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
               editing={editing}
               first={index === 0}
               last={index === blocks.length - 1}
-              onPatch={(patch) => patchBlock(block.id, patch)}
-              onMove={(delta) => moveBlock(block.id, delta)}
-              onRemove={() => removeBlock(block.id)}
+              onPatch={handlersFor(block.id).onPatch}
+              onMove={handlersFor(block.id).onMove}
+              onRemove={handlersFor(block.id).onRemove}
               scopeQuery={scopeQuery} reportId={reportId}
               scope={scope}
               variables={variables}
@@ -605,7 +621,7 @@ interface ReportBlockCardProps {
 
 const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Dashboard numbers" };
 
-function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope, variables }: ReportBlockCardProps) {
+const ReportBlockCard = memo(function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope, variables }: ReportBlockCardProps) {
   const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
   const label = BLOCK_LABELS[block.type];
   const blockTable = "datasetId" in block ? (tables.find((table) => table.datasetId === block.datasetId) ?? null) : null;
@@ -783,7 +799,7 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
       </div>
     </section>
   );
-}
+});
 
 function Caption({ editing, value, fallback, onChange }: { editing: boolean; value: string; fallback: string; onChange: (value: string) => void }) {
   if (editing) {

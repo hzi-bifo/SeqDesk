@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
@@ -20,6 +20,9 @@ export function insertIntoActiveEditor(markdown: string): boolean {
   activeEditor.chain().focus().insertContent(markdown, { contentType: "markdown" }).run();
   return true;
 }
+
+/** How long typing may pause before the page is told about the change. */
+const EMIT_DELAY_MS = 300;
 
 /** Markdown the formatted view cannot hold yet (tables, task lists, raw HTML) is edited as source so nothing is lost. */
 export function needsMarkdownSource(markdown: string): boolean {
@@ -50,21 +53,40 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
     onChangeRef.current = onChange;
   }, [onChange]);
 
+  const pending = useRef<Editor | null>(null);
+  const emitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flush = useCallback(() => {
+    if (emitTimer.current) clearTimeout(emitTimer.current);
+    emitTimer.current = null;
+    const current = pending.current;
+    pending.current = null;
+    if (!current || current.isDestroyed) return;
+    const markdown = current.getMarkdown();
+    if (markdown === lastEmitted.current) return;
+    lastEmitted.current = markdown;
+    onChangeRef.current(markdown);
+  }, []);
+
   const editor = useEditor({
     extensions: [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false } }), VariableNode, VariableSuggestion, Markdown],
     content: value,
     contentType: "markdown",
     immediatelyRender: false,
     editorProps: { attributes: { class: "report-editor-content min-h-[6rem] px-4 py-3 text-sm leading-6 outline-none" } },
+    // Serializing to Markdown and re-rendering the page on every keystroke
+    // made typing lag; the page hears about a change once typing pauses,
+    // and at once when the block loses focus.
     onUpdate: ({ editor: current }) => {
-      const markdown = current.getMarkdown();
-      lastEmitted.current = markdown;
-      onChangeRef.current(markdown);
+      pending.current = current;
+      if (emitTimer.current) clearTimeout(emitTimer.current);
+      emitTimer.current = setTimeout(flush, EMIT_DELAY_MS);
     },
+    onBlur: () => flush(),
     onFocus: ({ editor: current }) => {
       activeEditor = current;
     },
     onDestroy: () => {
+      flush();
       if (activeEditor?.isDestroyed) activeEditor = null;
     },
   });
@@ -77,6 +99,7 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
   // A value set from outside (Cancel, the Markdown view) replaces what the editor shows.
   useEffect(() => {
     if (!editor || value === lastEmitted.current) return;
+    if (pending.current) return;
     lastEmitted.current = value;
     editor.commands.setContent(value, { contentType: "markdown", emitUpdate: false });
   }, [editor, value]);
