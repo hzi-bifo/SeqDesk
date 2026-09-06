@@ -19,13 +19,23 @@ const FigureBlockSchema = z
     span: Span,
   })
   .strict();
+/** A table of the scope as the page shows it: which columns, which rows, in what order, and what readers may do. */
 const TableBlockSchema = z
   .object({
     id: BlockId,
     type: z.literal("table"),
     datasetId: z.string().min(1).max(80),
     caption: z.string().max(500).optional(),
-    rows: z.number().int().min(1).max(50).optional(),
+    rows: z.number().int().min(1).max(500).optional(),
+    /** Columns to show, in this order; absent means every column. */
+    columns: z.array(z.string().min(1).max(200)).max(60).optional(),
+    sort: z.object({ column: z.string().min(1).max(200), direction: z.enum(["asc", "desc"]) }).strict().optional(),
+    /** A row filter in R notation, e.g. `specimen_type == "Urine" & q_value < 0.05`. */
+    filter: z.string().max(500).optional(),
+    /** What readers may do with the table. */
+    search: z.boolean().optional(),
+    sortable: z.boolean().optional(),
+    download: z.boolean().optional(),
     span: Span,
   })
   .strict();

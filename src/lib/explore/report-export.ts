@@ -11,6 +11,7 @@ import { fetchAllDatasetRows, getDatasetRecord } from "./datasets";
 import { applyEditsToRows, listActiveEdits } from "./edits";
 import { applyFilters, cellText, groupBy, relativeAbundance, toNumber, type ActiveFilters } from "./frame";
 import { renderMarkdownHtml } from "./markdown-html";
+import { applyRowFilter } from "./row-filter";
 import { METRIC_STAT_LABELS, type ReportFilter } from "./report-blocks";
 import { buildChart, computeStats, formatStat, WIDGET_ROW_LIMIT } from "./report-widgets";
 import { getReportView, type ReportView, type ResolvedReportBlock } from "./reports";
@@ -238,10 +239,32 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
     case "table": {
       const table = tableOf(block.datasetId);
       if (!table) return section(block, block.caption ?? "Table", empty("This table is not in the scope any more."));
-      const rows = filteredRows(table, filters, active);
+      let rows = filteredRows(table, filters, active);
+      let filterNote = "";
+      if (block.filter) {
+        try {
+          rows = applyRowFilter(rows, block.filter);
+          filterNote = ", row filter applied";
+        } catch {
+          filterNote = ", row filter could not be applied";
+        }
+      }
+      if (block.sort) {
+        const { column, direction } = block.sort;
+        rows = [...rows].sort((a, b) => {
+          const left = a[column];
+          const right = b[column];
+          const missingA = left === null || left === undefined || left === "";
+          const missingB = right === null || right === undefined || right === "";
+          if (missingA || missingB) return missingA && missingB ? 0 : missingA ? 1 : -1;
+          const order = typeof left === "number" && typeof right === "number" ? left - right : String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: "base" });
+          return direction === "asc" ? order : -order;
+        });
+      }
       const limit = Math.min(block.rows ?? 12, MAX_TABLE_ROWS);
-      const columns = table.columns.filter((column) => !column.key.endsWith("_db_id"));
-      return section(block, block.caption ?? table.name, htmlTable(columns, rows.slice(0, limit)), `${Math.min(limit, rows.length).toLocaleString("en-US")} of ${rows.length.toLocaleString("en-US")} rows, ${columns.length} columns${filtersApply(table, filters, active) ? ", page filters applied" : ""}`);
+      const all = table.columns.filter((column) => !column.key.endsWith("_db_id"));
+      const columns = block.columns && block.columns.length > 0 ? block.columns.map((key) => all.find((column) => column.key === key)).filter((column): column is ExploreColumn => Boolean(column)) : all;
+      return section(block, block.caption ?? table.name, htmlTable(columns, rows.slice(0, limit)), `${Math.min(limit, rows.length).toLocaleString("en-US")} of ${rows.length.toLocaleString("en-US")} rows, ${columns.length} columns${filtersApply(table, filters, active) ? ", page filters applied" : ""}${filterNote}`);
     }
     case "chart": {
       const table = tableOf(block.datasetId);

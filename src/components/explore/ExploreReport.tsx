@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import useSWR from "swr";
-import { ArrowDown, ArrowUp, Check, Copy, ExternalLink, Globe, LayoutGrid, Loader2, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Undo2, Unlink } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Copy, Download, ExternalLink, Globe, LayoutGrid, Loader2, RectangleHorizontal, Share2, Square, Trash2, Undo2, Unlink } from "lucide-react";
 import { Sketch, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { insertIntoActiveEditor, RichTextEditor } from "@/components/explore/RichTextEditor";
@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { fetcher, formatCell, formatDateTime, postJson } from "@/lib/explore/client";
+import { useFooterNote } from "@/components/layout/FooterNote";
 import { CHART_KINDS, CHART_KIND_LABELS, METRIC_STATS, METRIC_STAT_LABELS, type ChartKind, type MetricStat } from "@/lib/explore/report-blocks";
 import { buildChart, computeStats, formatStat, numericColumns } from "@/lib/explore/report-widgets";
 import type { ActiveFilters } from "@/lib/explore/frame";
@@ -28,6 +29,8 @@ import type { ReportFilter } from "@/lib/explore/report-blocks";
 import type { ReportAnalysis, ReportBlock, ReportFigure, ReportInput, ReportShare, ReportTable, ReportTableContent, ReportView, ResolvedReportBlock } from "@/lib/explore/reports";
 import type { ExploreColumn } from "@/lib/explore/types";
 import { buildVariables, formatVariableValue, variableReference, type ReportVariables, type VariableStep } from "@/lib/explore/variables";
+import { applyRowFilter, rowFilterProblem } from "@/lib/explore/row-filter";
+import type { ExploreRowData } from "@/lib/explore/types";
 
 interface ExploreReportProps {
   reportId: string;
@@ -110,6 +113,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [history, setHistory] = useState<ReportInput[]>([]);
   const [dirty, setDirty] = useState(false);
+  useFooterNote(data?.report && !data.report.draft ? `Report last changed ${formatDateTime(data.report.updatedAt)}` : null);
   const savedRef = useRef<string | null>(null);
   const savedInputRef = useRef<ReportInput | null>(null);
   const [active, setActive] = useState<ActiveFilters>({});
@@ -360,17 +364,6 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
     },
   ];
 
-  const reset = async () => {
-    try {
-      const result = await postJson<ReportResponse>(`${key}/reset`, {}, "POST");
-      await mutate(result, { revalidate: false });
-      setDraft(null);
-      toast.success("Report reset to the current outputs");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not reset the report");
-    }
-  };
-
   return (
     <div className="mt-6">
       <div className="min-w-0">
@@ -387,12 +380,6 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           </>
         ) : (
           <>
-            {canEdit && !report.draft && (
-              <Button variant="ghost" size="sm" className="h-8" onClick={() => void reset()} title="Forget the saved page and start again from the current outputs">
-                <RotateCcw className="h-3.5 w-3.5 lg:mr-1.5" />
-                <span className="hidden lg:inline">Start over</span>
-              </Button>
-            )}
             <SharePopover reportId={reportId} share={report.share} canEdit={canEdit} filters={filters} active={active} onChanged={() => mutate()} />
           </>
         ),
@@ -411,11 +398,11 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           ) : (
             <h2 className="text-2xl font-semibold tracking-tight">{report.title}</h2>
           )}
-          <p className="mt-1 text-sm text-muted-foreground">
-            {report.draft
-              ? "A draft assembled from every output of this report; nothing is saved until you edit the page."
-              : `Last changed ${formatDateTime(report.updatedAt)}`}
-          </p>
+          {report.draft && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              A draft assembled from every output of this report; nothing is saved until you edit the page.
+            </p>
+          )}
         </div>
       </div>
 
@@ -614,7 +601,6 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
   const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
   const label = BLOCK_LABELS[block.type];
   const blockTable = "datasetId" in block ? (tables.find((table) => table.datasetId === block.datasetId) ?? null) : null;
-  const narrowed = filtersApply(blockTable, filters, active);
   const actions = (
     <>
       <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground" onClick={() => onPatch({ span: span === 2 ? 1 : 2 })} title={span === 2 ? "Make half width" : "Make full width"} aria-label={span === 2 ? "Make half width" : "Make full width"}>
@@ -760,14 +746,11 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
         {block.type === "table" && (
           <>
             <Caption editing={editing} value={block.caption ?? ""} fallback={tableInfo?.name ?? "Table"} onChange={(caption) => onPatch({ caption })} />
-            {narrowed && blockTable ? (
-              <FilteredTableContent table={blockTable} rows={block.rows ?? 12} filters={filters} active={active} scopeQuery={scopeQuery} reportId={reportId} />
+            {editing && <TableControls block={block} tables={tables} onPatch={onPatch} />}
+            {blockTable ? (
+              <TableBlockView block={block} table={blockTable} filters={filters} active={active} scopeQuery={scopeQuery} reportId={reportId} />
             ) : resolved && resolved.type === "table" && resolved.table ? (
               <TableContent table={resolved.table} scopeQuery={scopeQuery} reportId={reportId} />
-            ) : tableInfo ? (
-              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                {tableInfo.name}: {tableInfo.rowCount.toLocaleString()} rows × {tableInfo.columnCount} columns. The rows appear once the report is saved.
-              </div>
             ) : (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This table is not available in this scope any more.</div>
             )}
@@ -1008,17 +991,222 @@ function useFilteredTable(table: ReportTable | null, filters: ReportFilter[], ac
   return { frame: data, rows, error };
 }
 
-/** A table block while page filters narrow it: the first rows that pass, from the whole table. */
-function FilteredTableContent({ table, rows, filters, active, scopeQuery, reportId }: { table: ReportTable; rows: number; filters: ReportFilter[]; active: ActiveFilters; scopeQuery: string; reportId: string }) {
-  const { frame, rows: kept, error } = useFilteredTable(table, filters, active);
+type TableBlock = Extract<ReportBlock, { type: "table" }>;
+
+const TABLE_BLOCK_FLAGS = ["search", "sortable", "download"] as const;
+
+function compareCells(a: ExploreRowData[string], b: ExploreRowData[string]): number {
+  const missingA = a === null || a === undefined || a === "";
+  const missingB = b === null || b === undefined || b === "";
+  if (missingA || missingB) return missingA && missingB ? 0 : missingA ? 1 : -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function csvOf(columns: ExploreColumn[], rows: ExploreRowData[]): string {
+  const cell = (value: ExploreRowData[string]) => {
+    const text = value === null || value === undefined ? "" : String(value);
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  return [columns.map((column) => cell(column.label)).join(","), ...rows.map((row) => columns.map((column) => cell(row[column.key])).join(","))].join("\n");
+}
+
+/**
+ * A table as the block presents it: the page filters, then the block's row
+ * filter, then what the reader searched, sorted by the block's or the
+ * reader's choice, the chosen columns, the first N rows. Readers get search,
+ * sorting and a CSV of what they see only where the editor allowed it.
+ */
+function TableBlockView({ block, table, filters, active, scopeQuery, reportId }: { block: TableBlock; table: ReportTable; filters: ReportFilter[]; active: ActiveFilters; scopeQuery: string; reportId: string }) {
+  const { frame, rows: pageRows, error } = useFilteredTable(table, filters, active);
+  const [query, setQuery] = useState("");
+  const [readerSort, setReaderSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
+  const filterProblem = useMemo(() => (block.filter ? rowFilterProblem(block.filter, frame?.columns.map((column) => column.key)) : null), [block.filter, frame]);
+  const filtered = useMemo(() => {
+    if (!frame) return [];
+    if (block.filter && !filterProblem) {
+      try {
+        return applyRowFilter(pageRows, block.filter);
+      } catch {
+        return pageRows;
+      }
+    }
+    return pageRows;
+  }, [frame, pageRows, block.filter, filterProblem]);
+  const columns = useMemo(() => {
+    const all = frame?.columns ?? [];
+    if (!block.columns || block.columns.length === 0) return all;
+    return block.columns.map((key) => all.find((column) => column.key === key)).filter((column): column is ExploreColumn => Boolean(column));
+  }, [frame, block.columns]);
+  const sort = readerSort ?? block.sort ?? null;
+  const shown = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    let rows = needle ? filtered.filter((row) => columns.some((column) => String(row[column.key] ?? "").toLowerCase().includes(needle))) : filtered;
+    if (sort && columns.some((column) => column.key === sort.column)) {
+      rows = [...rows].sort((a, b) => (sort.direction === "asc" ? 1 : -1) * compareCells(a[sort.column], b[sort.column]));
+    }
+    return rows;
+  }, [filtered, columns, query, sort]);
   if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
   if (!frame) return <Skeleton className="h-40 w-full" />;
+  const limit = block.rows ?? 12;
+  const narrowed = filtersApply(table, filters, active);
+  const parts: string[] = [];
+  if (narrowed) parts.push("page filters");
+  if (block.filter && !filterProblem) parts.push("row filter");
+  if (query.trim()) parts.push("search");
+  const note = `${Math.min(limit, shown.length).toLocaleString()} of ${shown.length.toLocaleString()} rows${parts.length ? ` after ${parts.join(", ")}` : ""}, ${columns.length} columns${frame.version ? `, v${frame.version}` : ""}`;
+  const download = () => {
+    const blob = new Blob([csvOf(columns, shown)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${(block.caption || table.name).replace(/[^A-Za-z0-9._-]+/g, "_")}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const toggleSort = (key: string) => {
+    if (!block.sortable) return;
+    setReaderSort((current) => (current?.column === key ? (current.direction === "asc" ? { column: key, direction: "desc" } : null) : { column: key, direction: "asc" }));
+  };
   return (
-    <TableContent
-      table={{ datasetId: table.datasetId, name: table.name, version: frame.version, columns: frame.columns, rows: kept.slice(0, rows), rowCount: kept.length, columnCount: frame.columns.length }}
-      scopeQuery={scopeQuery} reportId={reportId}
-      note={`${kept.length.toLocaleString()} of ${frame.total.toLocaleString()} rows pass the page filters`}
-    />
+    <div>
+      {filterProblem && <p className="mb-2 text-xs text-destructive">Row filter: {filterProblem}. Every row is shown.</p>}
+      {(block.search || block.download) && (
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          {block.search && <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search this table" className="h-8 max-w-xs text-xs" aria-label="Search this table" />}
+          <span className="flex-1" />
+          {block.download && (
+            <Button variant="outline" size="sm" className="h-8" onClick={download} title="The rows and columns shown, as CSV">
+              <Download className="mr-1.5 h-3.5 w-3.5" /> CSV
+            </Button>
+          )}
+        </div>
+      )}
+      <div className="overflow-x-auto rounded-md border">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/50 text-left">
+            <tr>
+              {columns.map((column) => {
+                const active = sort?.column === column.key;
+                return (
+                  <th key={column.key} className={cn("whitespace-nowrap px-2 py-1.5 font-medium", block.sortable && "cursor-pointer select-none hover:text-foreground")} title={block.sortable ? `Sort by ${column.label}` : column.key} onClick={() => toggleSort(column.key)} aria-sort={active ? (sort?.direction === "asc" ? "ascending" : "descending") : undefined}>
+                    {column.label}
+                    {active ? <span className="ml-1 text-muted-foreground">{sort?.direction === "asc" ? "▲" : "▼"}</span> : null}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {shown.slice(0, limit).map((row, index) => (
+              <tr key={index} className="border-t">
+                {columns.map((column) => (
+                  <td key={column.key} className={cn("whitespace-nowrap px-2 py-1", column.type === "number" && "text-right tabular-nums")}>
+                    {formatCell(row[column.key])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {shown.length === 0 && (
+              <tr>
+                <td className="px-2 py-3 text-muted-foreground" colSpan={Math.max(1, columns.length)}>No rows</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+        <span className="tabular-nums">{note}</span>
+        <span className="flex-1" />
+        <Link href={`/explore/reports/${encodeURIComponent(reportId)}${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`dataset:${table.datasetId}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at this table's card">
+          <LayoutGrid className="h-3 w-3" /> Show on canvas
+        </Link>
+        <Link href={`/explore/datasets/${table.datasetId}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">
+          Open table <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/** What the editor decides for a table block: columns, order, rows, the row filter, and what readers may do. */
+function TableControls({ block, tables, onPatch }: { block: TableBlock; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  const table = tables.find((entry) => entry.datasetId === block.datasetId) ?? null;
+  const columns = table?.columns ?? [];
+  const patch = (values: Partial<TableBlock>) => onPatch(values as Partial<ReportBlock>);
+  const [filterDraft, setFilterDraft] = useState(block.filter ?? "");
+  const problem = rowFilterProblem(filterDraft, columns.map((column) => column.key));
+  const chosen = block.columns && block.columns.length > 0 ? block.columns : null;
+  const toggleColumn = (key: string) => {
+    const current = chosen ?? columns.map((column) => column.key);
+    const next = current.includes(key) ? current.filter((entry) => entry !== key) : [...columns.map((column) => column.key).filter((entry) => current.includes(entry) || entry === key)];
+    patch({ columns: next.length === columns.length ? undefined : next });
+  };
+  return (
+    <div className="mb-3 space-y-2 border-b pb-3">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Table</span>
+          <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => patch({ datasetId, columns: undefined, sort: undefined, filter: undefined })} />
+        </label>
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Sort by</span>
+          <div className="flex gap-1">
+            <ColumnSelect value={block.sort?.column ?? ""} columns={columns} onChange={(column) => patch({ sort: column ? { column, direction: block.sort?.direction ?? "asc" } : undefined })} label="Sort column" allowNone />
+            <Select value={block.sort?.direction ?? "asc"} onValueChange={(direction) => block.sort && patch({ sort: { ...block.sort, direction: direction as "asc" | "desc" } })}>
+              <SelectTrigger className="h-8 w-24 min-w-0 text-xs" aria-label="Sort direction"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="asc">ascending</SelectItem>
+                <SelectItem value="desc">descending</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </label>
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Rows shown</span>
+          <Input type="number" min={1} max={500} value={block.rows ?? 12} onChange={(event) => patch({ rows: Math.min(500, Math.max(1, Number(event.target.value) || 12)) })} className="h-8 text-xs" aria-label="Rows shown" />
+        </label>
+      </div>
+      <div className="space-y-1 text-[11px] text-muted-foreground">
+        <span>Rows to keep, in R notation (empty keeps every row)</span>
+        <Input
+          value={filterDraft}
+          onChange={(event) => setFilterDraft(event.target.value)}
+          onBlur={() => {
+            if (!problem && filterDraft.trim() !== (block.filter ?? "")) patch({ filter: filterDraft.trim() || undefined });
+          }}
+          placeholder={columns.length > 1 ? `${columns[0].key} == "…" & ${columns[1].key} > 0` : 'column == "value"'}
+          className={cn("h-8 font-mono text-xs", problem && "border-destructive")}
+          aria-label="Row filter"
+        />
+        {problem ? <span className="text-destructive">{problem}</span> : <span>Comparisons, &amp; | !, %in% c(…), is.na(), grepl(), startsWith(). Applied when you leave the field.</span>}
+      </div>
+      {columns.length > 0 && (
+        <div className="space-y-1 text-[11px] text-muted-foreground">
+          <span>Columns{chosen ? ` (${chosen.length} of ${columns.length})` : " (all)"}</span>
+          <div className="flex flex-wrap gap-1">
+            {columns.map((column) => {
+              const on = !chosen || chosen.includes(column.key);
+              return (
+                <button key={column.key} type="button" onClick={() => toggleColumn(column.key)} className={cn("rounded-full border px-2 py-0.5 text-[11px]", on ? "bg-secondary text-foreground" : "text-muted-foreground line-through")} aria-pressed={on} title={column.key}>
+                  {column.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground">
+        <span>Readers may</span>
+        {TABLE_BLOCK_FLAGS.map((flag) => (
+          <label key={flag} className="inline-flex items-center gap-1.5">
+            <input type="checkbox" checked={Boolean(block[flag])} onChange={(event) => patch({ [flag]: event.target.checked || undefined } as Partial<TableBlock>)} className="h-3.5 w-3.5" />
+            {flag === "search" ? "search" : flag === "sortable" ? "sort by clicking a header" : "download as CSV"}
+          </label>
+        ))}
+      </div>
+    </div>
   );
 }
 
