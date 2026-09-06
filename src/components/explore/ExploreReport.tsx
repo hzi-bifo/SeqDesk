@@ -9,7 +9,7 @@ import { Sketch, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { insertIntoActiveEditor, RichTextEditor } from "@/components/explore/RichTextEditor";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
-import { CuratedOrganismsView, FilterBar, filtersApply, RunMetricView, SubjectView, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
+import { CuratedOrganismsView, filtersApply, RunMetricView, SubjectView, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
 import { HeatmapView, type HeatmapOptions } from "@/components/explore/views/HeatmapView";
 import { SubjectTimelineOverview } from "@/components/explore/views/SubjectTimelineOverview";
 import { BUILT_IN_VIEWS, type BuiltInView } from "@/lib/explore/canvas-layout";
@@ -116,7 +116,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   useFooterNote(data?.report && !data.report.draft ? `Report last changed ${formatDateTime(data.report.updatedAt)}` : null);
   const savedRef = useRef<string | null>(null);
   const savedInputRef = useRef<ReportInput | null>(null);
-  const [active, setActive] = useState<ActiveFilters>({});
+  const active: ActiveFilters = useMemo(() => ({}), []);
   const report = data?.report;
 
   const editingNow = editRequested && canEdit;
@@ -213,8 +213,9 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const figureByKey = new Map(report.outputs.figures.map((figure) => [figureKey(figure.analysisId, figure.figureName), figure] as const));
   const tableById = new Map(report.outputs.tables.map((table) => [table.datasetId, table] as const));
   const blocks: ReportBlock[] = working ? working.blocks : report.blocks;
-  const filters: ReportFilter[] = working ? (working.filters ?? []) : report.filters;
-  const setFilters = (next: ReportFilter[]) => patchDraft((current) => ({ ...current, filters: next }));
+  // Page filters are set aside until they are wired to the blocks properly:
+  // the stored filter settings are kept, but nothing on the page applies them.
+  const filters: ReportFilter[] = [];
   const analysisById = new Map(report.outputs.analyses.map((analysis) => [analysis.analysisId, analysis] as const));
   const headings = blocks.flatMap((block) => (block.type === "text" ? block.markdown.split("\n").filter((line) => /^##\s+/.test(line)).slice(0, 1).map((line) => ({ id: block.id, title: line.replace(/^##\s+/, "").trim() })) : []));
   const usedFigures = new Set(blocks.filter((block) => block.type === "figure").map((block) => figureKey(block.analysisId, block.figureName)));
@@ -384,9 +385,8 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
             </Button>
           </>
         ) : (
-          <>
-            <SharePopover reportId={reportId} share={report.share} canEdit={canEdit} filters={filters} active={active} onChanged={() => mutate()} />
-          </>
+          // Sharing is hidden until it is rethought; SharePopover stays for that.
+          null
         ),
         actionsContainer
       )}
@@ -410,8 +410,6 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           )}
         </div>
       </div>
-
-      <FilterBar filters={filters} tables={report.outputs.tables} active={active} onActiveChange={setActive} editing={editing} onFiltersChange={editing ? setFilters : undefined} />
 
       {!editing && headings.length > 1 && (
         <nav className="mt-5 rounded-lg border bg-muted/20 px-4 py-3" aria-label="Contents">
@@ -1533,6 +1531,7 @@ function ViewBlockView({ block, table, scopeQuery, reportId, filters, active }: 
  * it, carrying the page filters as set. (A downloadable HTML file was tried
  * and set aside until sharing has proper access control.)
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function SharePopover({ reportId, share, canEdit, filters, active, onChanged }: { reportId: string; share: ReportShare | null; canEdit: boolean; filters: ReportFilter[]; active: ActiveFilters; onChanged: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);

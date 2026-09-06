@@ -142,7 +142,8 @@ function cards(entries: Array<{ label: string; value: string }>): string {
 
 export function renderReportDocument(input: RenderInput): string {
   const { report, active } = input;
-  const filters = report.filters;
+  // Page filters are set aside for now (see ExploreReport); the shared page matches the app.
+  const filters: ReportFilter[] = [];
   const plots: Plot[] = [];
   const addPlot = (data: unknown[], layout: Record<string, unknown>, height: number): string => {
     const id = `plot-${plots.length + 1}`;

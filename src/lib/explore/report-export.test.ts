@@ -86,12 +86,11 @@ describe("renderReportDocument", () => {
     expect(JSON.parse(plotData)).toHaveLength(2);
   });
 
-  it("applies page filters and says so", () => {
+  it("sets page filters aside for now: every row is shown even when a filter is active", () => {
     const html = renderReportDocument(input({ active: { "f-site": ["Stool"] } }));
-    expect(html).toContain("Filtered: Site: Stool");
-    expect(html).toContain("<td>S3</td>");
-    expect(html).not.toContain("<td>S1</td>");
-    expect(html).toContain("1 of 1 rows, 3 columns, page filters applied");
+    expect(html).not.toContain("Filtered:");
+    expect(html).toContain("<td>S1</td>");
+    expect(html).not.toContain("page filters applied");
   });
 
   it("inlines the Plotly source when asked", () => {
