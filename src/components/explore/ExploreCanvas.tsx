@@ -1010,26 +1010,6 @@ function writeExpanded(layoutKey: string, expanded: Record<string, boolean>): vo
   }
 }
 
-/** Every card upstream and downstream of one card, itself included. */
-function lineageOf(graph: CanvasGraph, id: string): Set<string> {
-  const related = new Set<string>([id]);
-  const walk = (start: string, direction: "up" | "down") => {
-    const queue = [start];
-    while (queue.length) {
-      const current = queue.pop()!;
-      for (const edge of graph.edges) {
-        const next = direction === "up" ? (edge.target === current ? edge.source : null) : edge.source === current ? edge.target : null;
-        if (next && !related.has(next)) {
-          related.add(next);
-          queue.push(next);
-        }
-      }
-    }
-  };
-  walk(id, "up");
-  walk(id, "down");
-  return related;
-}
 
 /** Graphs with more cards than this start with the outputs of every step folded away. */
 const COLLAPSE_OUTPUTS_ABOVE = 14;
@@ -1153,7 +1133,6 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
   const [minimap, setMinimap] = useStoredPreference<"shown" | "hidden">("seqdesk:explore:canvas:minimap", "shown", ["shown", "hidden"]);
   // Which steps show their outputs; a big graph starts folded so the pipeline itself is what you see.
   const [expandedState, setExpandedState] = useState<Record<string, boolean>>(() => readExpanded(layoutKey, focusNodeId).expanded);
-  const [hovered, setHovered] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [height, setHeight] = useState<number>(640);
   const { data: kitsData } = useSWR<{ kits: KitSummary[] }>("/api/explore/kits", fetcher);
@@ -1565,26 +1544,6 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
     });
   }, [graph, visibleGraph]);
 
-  // Hovering a card lights up where its data came from and where it goes; the rest steps back.
-  useEffect(() => {
-    if (!visibleGraph) return;
-    const related = hovered ? lineageOf(visibleGraph, hovered) : null;
-    setNodes((current) =>
-      current.map((node) => {
-        const dim = Boolean(related && !related.has(node.id));
-        if ((node.className === "canvas-dim") === dim) return node;
-        return { ...node, className: dim ? "canvas-dim" : undefined } as CanvasFlowNode;
-      })
-    );
-    setEdges((current) =>
-      current.map((edge) => {
-        const lit = Boolean(related && related.has(edge.source) && related.has(edge.target));
-        const nextClass = lit ? "canvas-lit" : related ? "canvas-dim" : undefined;
-        if (edge.className === nextClass && Boolean(edge.animated) === lit) return edge;
-        return { ...edge, className: nextClass, animated: lit };
-      })
-    );
-  }, [hovered, visibleGraph, setNodes, setEdges]);
 
   useEffect(() => {
     // Keep positions and sizes of nodes the user already touched; new nodes take the computed slot.
@@ -1688,8 +1647,6 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onEdgeClick={onEdgeClick}
-        onNodeMouseEnter={(_, node) => setHovered(node.id)}
-        onNodeMouseLeave={() => setHovered(null)}
         edgesFocusable
         minZoom={0.2}
         maxZoom={1.5}

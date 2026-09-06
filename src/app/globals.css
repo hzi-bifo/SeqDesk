@@ -405,16 +405,3 @@
   opacity: 1;
 }
 
-/* Explore canvas: hovering a card lights up its lineage and steps the rest back. */
-.react-flow__node.canvas-dim {
-  opacity: 0.35;
-  transition: opacity 150ms ease;
-}
-.react-flow__edge.canvas-dim {
-  opacity: 0.25;
-  transition: opacity 150ms ease;
-}
-.react-flow__edge.canvas-lit .react-flow__edge-path {
-  stroke: var(--foreground) !important;
-  stroke-width: 2.5px !important;
-}

@@ -25,7 +25,6 @@ import { SidebarHeader } from "./SidebarHeader";
 import { SidebarEntitySwitcher } from "./SidebarEntitySwitcher";
 import { SidebarEntityNav } from "./SidebarEntityNav";
 import { WorkbenchSidebarNav } from "./WorkbenchSidebarNav";
-import { SidebarExploreNav } from "./SidebarExploreNav";
 import { SidebarFieldHelp } from "./SidebarFieldHelp";
 import { SidebarAdminNav } from "./SidebarAdminNav";
 import { SidebarSupportNav } from "./SidebarSupportNav";
@@ -226,9 +225,6 @@ export function Sidebar({ user, version }: SidebarProps) {
           {isWorkbenchMode ? (
             <nav className={cn("flex-1 overflow-y-auto p-3 pt-0", collapsed && "px-2")}>
               <WorkbenchSidebarNav collapsed={collapsed} />
-              <div className="pt-3">
-                <SidebarExploreNav collapsed={collapsed} />
-              </div>
             </nav>
           ) : (
             <>
@@ -244,9 +240,6 @@ export function Sidebar({ user, version }: SidebarProps) {
                   showAdminControls={showAdminControls}
                 />
               </nav>
-
-              {/* Explore section entry */}
-              <SidebarExploreNav collapsed={collapsed} />
 
               {/* Field Help Panel */}
               {focusedField && !collapsed && !suppressSidebarFieldHelp && (
