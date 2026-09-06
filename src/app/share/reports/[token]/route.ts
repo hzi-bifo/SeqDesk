@@ -12,6 +12,12 @@ interface RouteContext {
 
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,64}$/;
 
+// A shared page reads every table it shows; anyone with the link can ask
+// for it, so one rendering is served for a short while.
+const PAGE_CACHE_MS = 30_000;
+const PAGE_CACHE_MAX = 50;
+const pageCache = new Map<string, { at: number; html: string }>();
+
 /**
  * A shared report: the live page for anyone holding the link, no sign-in.
  * The page is rendered on the server and may only run its own inline
@@ -24,10 +30,22 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const reportId = await findSharedReportId(token);
   if (!reportId) return new NextResponse("This link is not valid any more.", { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
   try {
-    const { html } = await renderReportHtml(reportId, {
-      active: activeFiltersFromSearchParams(request.nextUrl.searchParams),
-      plotly: { src: "/share/assets/plotly.js" },
-    });
+    const cacheKey = `${reportId}?${request.nextUrl.searchParams.toString()}`;
+    const cached = pageCache.get(cacheKey);
+    let html: string;
+    if (cached && Date.now() - cached.at < PAGE_CACHE_MS) {
+      html = cached.html;
+    } else {
+      html = (await renderReportHtml(reportId, {
+        active: activeFiltersFromSearchParams(request.nextUrl.searchParams),
+        plotly: { src: "/share/assets/plotly.js" },
+      })).html;
+      if (pageCache.size >= PAGE_CACHE_MAX) {
+        const oldest = pageCache.keys().next().value;
+        if (oldest) pageCache.delete(oldest);
+      }
+      pageCache.set(cacheKey, { at: Date.now(), html });
+    }
     return new NextResponse(html, {
       headers: {
         "Content-Type": "text/html; charset=utf-8",

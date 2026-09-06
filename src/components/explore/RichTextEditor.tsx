@@ -24,9 +24,9 @@ export function insertIntoActiveEditor(markdown: string): boolean {
 /** How long typing may pause before the page is told about the change. */
 const EMIT_DELAY_MS = 300;
 
-/** Markdown the formatted view cannot hold yet (tables, task lists, raw HTML) is edited as source so nothing is lost. */
+/** Markdown the formatted view cannot hold yet (tables, task lists, raw HTML, images) is edited as source so nothing is lost. */
 export function needsMarkdownSource(markdown: string): boolean {
-  return /^\s*\|.*\|\s*$/m.test(markdown) || /^\s*[-*+]\s+\[[ xX]\]/m.test(markdown) || /<[a-zA-Z][^>]*>/.test(markdown);
+  return /^\s*\|.*\|\s*$/m.test(markdown) || /^\s*[-*+]\s+\[[ xX]\]/m.test(markdown) || /<[a-zA-Z][^>]*>/.test(markdown) || /!\[[^\]]*\]\(/.test(markdown);
 }
 
 interface RichTextEditorProps {
@@ -68,7 +68,7 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
   }, []);
 
   const editor = useEditor({
-    extensions: [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false } }), VariableNode, VariableSuggestion, Markdown],
+    extensions: [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false }, underline: false }), VariableNode, VariableSuggestion, Markdown],
     content: value,
     contentType: "markdown",
     immediatelyRender: false,
@@ -96,13 +96,39 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
     editor?.commands.setReportVariables(variables);
   }, [editor, variables]);
 
-  // A value set from outside (Cancel, the Markdown view) replaces what the editor shows.
+  // A value set from outside (Undo, the Markdown view) replaces what the editor shows.
   useEffect(() => {
     if (!editor || value === lastEmitted.current) return;
     if (pending.current) return;
     lastEmitted.current = value;
     editor.commands.setContent(value, { contentType: "markdown", emitUpdate: false });
   }, [editor, value]);
+
+  // The Markdown view types into local text and reports it like the formatted view does.
+  const [sourceText, setSourceText] = useState(value);
+  const sourceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const emitSource = useCallback(
+    (text: string) => {
+      if (sourceTimer.current) clearTimeout(sourceTimer.current);
+      sourceTimer.current = null;
+      if (text === lastEmitted.current) return;
+      lastEmitted.current = text;
+      onChangeRef.current(text);
+    },
+    []
+  );
+  const onSourceChange = (text: string) => {
+    setSourceText(text);
+    if (sourceTimer.current) clearTimeout(sourceTimer.current);
+    sourceTimer.current = setTimeout(() => emitSource(text), EMIT_DELAY_MS);
+  };
+  const showSource = source || locked;
+  // An outside change (Undo) while the Markdown view is open refreshes its text.
+  const [seenValue, setSeenValue] = useState(value);
+  if (value !== seenValue) {
+    setSeenValue(value);
+    if (showSource) setSourceText(value);
+  }
 
   const setLink = () => {
     if (!editor) return;
@@ -164,7 +190,10 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
         <span className="flex-1" />
         <button
           type="button"
-          onClick={() => setSource((current) => !current)}
+          onClick={() => {
+            if (!source) setSourceText(value);
+            setSource(!source);
+          }}
           disabled={locked}
           className={cn("inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-60", (source || locked) && "bg-secondary text-foreground")}
           title={locked ? "This block has a table, task list or HTML, which the formatted view cannot keep; it is edited as Markdown" : source ? "Back to the formatted view" : "Edit the Markdown source"}
@@ -180,7 +209,7 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
         )}
       </div>
       {source || locked ? (
-        <Textarea value={value} onChange={(event) => onChange(event.target.value)} rows={Math.min(24, Math.max(6, value.split("\n").length + 1))} className="rounded-t-none border-0 font-mono text-xs shadow-none focus-visible:ring-0" aria-label="Markdown source" />
+        <Textarea value={sourceText} onChange={(event) => onSourceChange(event.target.value)} onBlur={() => emitSource(sourceText)} rows={Math.min(24, Math.max(6, sourceText.split("\n").length + 1))} className="rounded-t-none border-0 font-mono text-xs shadow-none focus-visible:ring-0" aria-label="Markdown source" />
       ) : (
         <EditorContent editor={editor} />
       )}

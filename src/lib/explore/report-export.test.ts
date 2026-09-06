@@ -106,3 +106,51 @@ describe("activeFiltersFromSearchParams", () => {
     expect(escapeHtml('<a href="x">')).toBe("&lt;a href=&quot;x&quot;&gt;");
   });
 });
+
+describe("dashboard numbers on the shared page", () => {
+  const profile: ExportTable = {
+    datasetId: "d-time",
+    name: "Profiles",
+    columns: [
+      { key: "sample", label: "Sample", type: "string" as const },
+      { key: "timepoint", label: "Study day", type: "number" as const },
+      { key: "reads", label: "Reads", type: "number" as const },
+    ],
+    roles: { sample: "sample", timepoint: "timepoint", count: "reads" },
+    records: [
+      { rowIndex: 0, sampleId: "S1", subjectId: null, key: null, data: { sample: "S1", timepoint: 10, reads: 100 } },
+      { rowIndex: 1, sampleId: "S2", subjectId: null, key: null, data: { sample: "S2", timepoint: 40, reads: 300 } },
+      { rowIndex: 2, sampleId: "S3", subjectId: null, key: null, data: { sample: "S3", timepoint: 400, reads: 500 } },
+    ] as ExportTable["records"],
+  };
+
+  it("renders table figures with units and a timeline sparkline, and says when a table is gone", () => {
+    const base = report();
+    const view: ReportView = {
+      ...base,
+      blocks: [
+        {
+          id: "kf",
+          type: "run-metric",
+          metrics: [],
+          figures: [
+            { id: "g1", datasetId: "d-time", column: "reads", stat: "median" },
+            { id: "g2", datasetId: "d-gone", column: "x", stat: "count" },
+          ],
+          labels: { "f:g1": "Reads per sample" },
+          units: { "f:g1": "reads" },
+          trends: { "f:g1": "timeline" },
+          analysis: null,
+        } as ReportView["blocks"][number],
+      ],
+    };
+    const tables = new Map<string, ExportTable>([["d-time", profile]]);
+    const html = renderReportDocument(input({ report: view, tables }));
+    expect(html).toContain("300 reads");
+    expect(html).toContain("Reads per sample");
+    expect(html).toContain('class="spark"');
+    expect(html).toMatch(/from day \d+ to day \d+/);
+    expect(html).toContain("table missing");
+    expect(html).toContain("Profiles");
+  });
+});

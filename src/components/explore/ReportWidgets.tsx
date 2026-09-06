@@ -747,7 +747,7 @@ function TimelineSpark({ source, measure, format }: { source: AnalysisTimeline; 
 export function metricLabel(key: string): string {
   return key
     .split("_")
-    .map((part) => (part in ROLE_LABELS ? ROLE_LABELS[part as keyof typeof ROLE_LABELS] : part))
+    .map((part) => (part in ROLE_LABELS ? ROLE_LABELS[part as keyof typeof ROLE_LABELS].toLowerCase() : part))
     .join(" ");
 }
 

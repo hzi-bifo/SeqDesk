@@ -142,6 +142,8 @@ export const VariableSuggestion = Extension.create<Record<string, never>, Variab
         render: () => {
           let component: ReactRenderer<ListHandle> | null = null;
           let popup: HTMLDivElement | null = null;
+          // After Escape the list stays closed until the next @; Enter then does what it normally does.
+          let dismissed = false;
           const place = (props: SuggestionProps<Row, Row>) => {
             if (!popup) return;
             const rect = props.clientRect?.();
@@ -154,6 +156,7 @@ export const VariableSuggestion = Extension.create<Record<string, never>, Variab
           };
           return {
             onStart: (props) => {
+              dismissed = false;
               component = new ReactRenderer(SuggestionList, { props: { items: props.items, command: props.command, query: props.query }, editor: props.editor });
               popup = document.createElement("div");
               popup.className = "fixed z-50";
@@ -162,11 +165,14 @@ export const VariableSuggestion = Extension.create<Record<string, never>, Variab
               place(props);
             },
             onUpdate: (props) => {
+              if (dismissed) return;
               component?.updateProps({ items: props.items, command: props.command, query: props.query });
               place(props);
             },
             onKeyDown: (props) => {
+              if (dismissed) return false;
               if (props.event.key === "Escape") {
+                dismissed = true;
                 popup?.remove();
                 popup = null;
                 return true;

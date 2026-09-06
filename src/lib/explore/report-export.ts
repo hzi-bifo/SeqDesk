@@ -17,6 +17,7 @@ import { buildChart, computeStats, formatStat, WIDGET_ROW_LIMIT } from "./report
 import { formatWithDigits, metricTrend, sparklinePoints, trendNote } from "./metric-trend";
 import { analysisTimeline, buildTimeline, detectTimeAxis, parseMeasure, suggestMeasure, timelineNote } from "./time-axis";
 import { figureKeys, tableFigureKey, withUnit } from "./key-figures";
+import { ROLE_LABELS } from "./client";
 import { getReportView, type ReportAnalysis, type ReportView, type ResolvedReportBlock } from "./reports";
 import { parseRoles, parseSchema } from "./schema";
 import { parseTargetKey } from "./target-key";
@@ -96,7 +97,10 @@ function formatValue(value: unknown, type?: string): string {
 }
 
 function metricLabel(key: string): string {
-  return key.replace(/_/g, " ").replace(/\bpct\b/g, "%").trim();
+  return key
+    .split("_")
+    .map((part) => (part in ROLE_LABELS ? ROLE_LABELS[part as keyof typeof ROLE_LABELS].toLowerCase() : part === "pct" ? "%" : part))
+    .join(" ");
 }
 
 function columnLabel(columns: ExploreColumn[], key: string): string {
@@ -227,29 +231,29 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
     }
     case "figure": {
       const figure = block.figure;
-      if (!figure) return section(block, block.caption ?? block.figureName, empty("This figure is not produced by the analysis any more."));
+      if (!figure) return section(block, (block.caption?.trim() || undefined) ?? block.figureName, empty("This figure is not produced by the analysis any more."));
       const artifact = input.artifacts.get(`${block.analysisId}:${block.figureName}`) ?? null;
       const footer = `${figure.analysisName}, ${figure.runNumber}`;
-      if (!artifact) return section(block, block.caption ?? block.figureName, empty("The figure file could not be read."), footer);
+      if (!artifact) return section(block, (block.caption?.trim() || undefined) ?? block.figureName, empty("The figure file could not be read."), footer);
       if (artifact.format === "plotly-json") {
         try {
           const parsed = JSON.parse(artifact.content.toString("utf8")) as { data?: unknown[]; layout?: Record<string, unknown> };
           const layout = parsed.layout ?? {};
           const height = typeof layout.height === "number" ? Math.min(Math.max(layout.height, 240), 900) : 420;
-          return section(block, block.caption ?? block.figureName, addPlot(parsed.data ?? [], layout, height), footer);
+          return section(block, (block.caption?.trim() || undefined) ?? block.figureName, addPlot(parsed.data ?? [], layout, height), footer);
         } catch {
-          return section(block, block.caption ?? block.figureName, empty("The figure file is not valid Plotly JSON."), footer);
+          return section(block, (block.caption?.trim() || undefined) ?? block.figureName, empty("The figure file is not valid Plotly JSON."), footer);
         }
       }
       if (artifact.format === "png" || artifact.format === "svg") {
         const mime = artifact.format === "png" ? "image/png" : "image/svg+xml";
-        return section(block, block.caption ?? block.figureName, `<img src="data:${mime};base64,${artifact.content.toString("base64")}" alt="${escapeHtml(block.caption ?? block.figureName)}">`, footer);
+        return section(block, (block.caption?.trim() || undefined) ?? block.figureName, `<img src="data:${mime};base64,${artifact.content.toString("base64")}" alt="${escapeHtml((block.caption?.trim() || undefined) ?? block.figureName)}">`, footer);
       }
-      return section(block, block.caption ?? block.figureName, empty(`A ${artifact.format} figure is not included in the export.`), footer);
+      return section(block, (block.caption?.trim() || undefined) ?? block.figureName, empty(`A ${artifact.format} figure is not included in the export.`), footer);
     }
     case "table": {
       const table = tableOf(block.datasetId);
-      if (!table) return section(block, block.caption ?? "Table", empty("This table is not in the scope any more."));
+      if (!table) return section(block, (block.caption?.trim() || undefined) ?? "Table", empty("This table is not in the scope any more."));
       let rows = filteredRows(table, filters, active);
       let filterNote = "";
       if (block.filter) {
@@ -275,25 +279,25 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
       const limit = Math.min(block.rows ?? 12, MAX_TABLE_ROWS);
       const all = table.columns.filter((column) => !column.key.endsWith("_db_id"));
       const columns = block.columns && block.columns.length > 0 ? block.columns.map((key) => all.find((column) => column.key === key)).filter((column): column is ExploreColumn => Boolean(column)) : all;
-      return section(block, block.caption ?? table.name, htmlTable(columns, rows.slice(0, limit)), `${Math.min(limit, rows.length).toLocaleString("en-US")} of ${rows.length.toLocaleString("en-US")} rows, ${columns.length} columns${filtersApply(table, filters, active) ? ", page filters applied" : ""}${filterNote}`);
+      return section(block, (block.caption?.trim() || undefined) ?? table.name, htmlTable(columns, rows.slice(0, limit)), `${Math.min(limit, rows.length).toLocaleString("en-US")} of ${rows.length.toLocaleString("en-US")} rows, ${columns.length} columns${filtersApply(table, filters, active) ? ", page filters applied" : ""}${filterNote}`);
     }
     case "chart": {
       const table = tableOf(block.datasetId);
-      if (!table) return section(block, block.caption ?? "Chart", empty("This table is not in the scope any more."));
+      if (!table) return section(block, (block.caption?.trim() || undefined) ?? "Chart", empty("This table is not in the scope any more."));
       const rows = filteredRows(table, filters, active);
       const result = buildChart(rows.slice(0, WIDGET_ROW_LIMIT), table.columns, { chart: block.chart, x: block.x, y: block.y, color: block.color }, rows.length);
-      return section(block, block.caption ?? `${columnLabel(table.columns, block.x)} (${table.name})`, addPlot(result.data, result.layout, 340) + result.notes.map(note).join(""), filtersApply(table, filters, active) ? "Page filters applied" : undefined);
+      return section(block, (block.caption?.trim() || undefined) ?? `${columnLabel(table.columns, block.x)} (${table.name})`, addPlot(result.data, result.layout, 340) + result.notes.map(note).join(""), filtersApply(table, filters, active) ? "Page filters applied" : undefined);
     }
     case "metric": {
       const table = tableOf(block.datasetId);
-      if (!table) return section(block, block.label ?? "Numbers", empty("This table is not in the scope any more."));
+      if (!table) return section(block, (block.label?.trim() || undefined) ?? "Numbers", empty("This table is not in the scope any more."));
       const rows = filteredRows(table, filters, active);
       const stats = computeStats(rows, block.column);
-      return section(block, block.label ?? `${columnLabel(table.columns, block.column)} (${table.name})`, cards(block.stats.map((stat) => ({ label: METRIC_STAT_LABELS[stat], value: formatStat(stats[stat]) }))), `${rows.length.toLocaleString("en-US")} rows${filtersApply(table, filters, active) ? ", page filters applied" : ""}`);
+      return section(block, (block.label?.trim() || undefined) ?? `${columnLabel(table.columns, block.column)} (${table.name})`, cards(block.stats.map((stat) => ({ label: METRIC_STAT_LABELS[stat], value: formatStat(stats[stat]) }))), `${rows.length.toLocaleString("en-US")} rows${filtersApply(table, filters, active) ? ", page filters applied" : ""}`);
     }
     case "run-metric": {
       const analysis = block.analysis;
-      if (block.metrics.length > 0 && !analysis) return section(block, block.label ?? "Dashboard numbers", empty("This analysis is not in the report any more."));
+      if (block.metrics.length > 0 && !analysis) return section(block, (block.label?.trim() || undefined) ?? "Dashboard numbers", empty("This analysis is not in the report any more."));
       const source = analysisTimeline(analysis, [...input.tables.values()]);
       const keys = figureKeys(block);
       type Entry = { label: string; value: string; note?: string | null; extra?: string };
@@ -342,12 +346,12 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
         return [{ label, value: text, note: notes.join("; ") || null, extra }];
       });
       const footer = [analysis && block.metrics.length > 0 ? `${analysis.name}${analysis.runNumber ? `, ${analysis.runNumber}` : ""}` : null, ...new Set((block.figures ?? []).map((figure) => input.tables.get(figure.datasetId)?.name ?? "a table"))].filter(Boolean).join("; ");
-      return section(block, block.label ?? (analysis && block.metrics.length > 0 ? `${analysis.name} in numbers` : "Dashboard numbers"), cards(entries, block.columns), footer);
+      return section(block, (block.label?.trim() || undefined) ?? (analysis && block.metrics.length > 0 ? `${analysis.name} in numbers` : "Dashboard numbers"), cards(entries, block.columns), footer);
     }
     case "view": {
       const table = tableOf(block.datasetId);
-      if (!table) return section(block, block.caption ?? "View", empty("This table is not in the scope any more."));
-      if (!block.available) return section(block, block.caption ?? table.name, empty("The table no longer has the roles this view needs."));
+      if (!table) return section(block, (block.caption?.trim() || undefined) ?? "View", empty("This table is not in the scope any more."));
+      if (!block.available) return section(block, (block.caption?.trim() || undefined) ?? table.name, empty("The table no longer has the roles this view needs."));
       const adapted = adaptRowsForSubjectTimeline(filteredRecords(table, filters, active), table.roles, table.columns.map((column) => column.key));
       if (block.view === "heatmap") return renderHeatmap(block, table, adapted.rows, context);
       return renderSubjectTimeline(block, table, adapted.rows, context);
@@ -373,13 +377,13 @@ function renderHeatmap(block: Extract<ResolvedReportBlock, { type: "view" }>, ta
   const options = block.options ?? {};
   const value = options.value === "ra" || options.value === "reads" ? options.value : "log10_ra";
   const payload = computeHeatmap(rows, {
-    nTaxa: typeof options.nTaxa === "number" ? options.nTaxa : 35,
+    nTaxa: typeof options.nTaxa === "number" && Number.isFinite(options.nTaxa) ? Math.min(200, Math.max(1, Math.floor(options.nTaxa))) : 35,
     value,
     order: options.order === "abundance" ? "abundance" : "prevalence",
     artifacts: context.input.curation.artifacts,
     memberships: context.input.curation.memberships,
   });
-  if (payload.samples.length === 0) return section(block, block.caption ?? `Heatmap of ${table.name}`, empty("No samples match."));
+  if (payload.samples.length === 0) return section(block, (block.caption?.trim() || undefined) ?? `Heatmap of ${table.name}`, empty("No samples match."));
   const labels = payload.taxa.map((taxon) => (taxon.curated ? `<span style="color:${taxon.curated.color ?? "#C0392B"}">&#9679;</span> ${taxon.taxon}` : taxon.taxon));
   const plot = context.addPlot(
     [
@@ -404,13 +408,13 @@ function renderHeatmap(block: Extract<ResolvedReportBlock, { type: "view" }>, ta
   );
   const marked = new Map<string, { label: string; count: number }>();
   for (const taxon of payload.taxa) if (taxon.curated) marked.set(taxon.curated.listId, { label: taxon.curated.label, count: (marked.get(taxon.curated.listId)?.count ?? 0) + 1 });
-  return section(block, block.caption ?? `Heatmap of ${table.name}`, plot, `${payload.taxa.length} taxa across ${payload.nSamplesTotal} samples${marked.size ? `; marked: ${[...marked.values()].map((entry) => `${entry.label} (${entry.count})`).join(", ")}` : ""}${filtersApply(table, context.filters, context.active) ? "; page filters applied" : ""}`);
+  return section(block, (block.caption?.trim() || undefined) ?? `Heatmap of ${table.name}`, plot, `${payload.taxa.length} taxa across ${payload.nSamplesTotal} samples${marked.size ? `; marked: ${[...marked.values()].map((entry) => `${entry.label} (${entry.count})`).join(", ")}` : ""}${filtersApply(table, context.filters, context.active) ? "; page filters applied" : ""}`);
 }
 
 function renderSubjectTimeline(block: Extract<ResolvedReportBlock, { type: "view" }>, table: ExportTable, rows: Adapted, context: BlockContext): string {
   const groups = [...new Set(rows.map((row) => row.group))].sort();
   const payload = subjectsTable(rows, { primaryGroups: groups.slice(0, 2) });
-  if (payload.patients.length === 0) return section(block, block.caption ?? `Subject timeline of ${table.name}`, empty("No subjects match."));
+  if (payload.patients.length === 0) return section(block, (block.caption?.trim() || undefined) ?? `Subject timeline of ${table.name}`, empty("No subjects match."));
   const span = Math.max(payload.day_max - payload.day_min, 1);
   const shown = payload.patients.slice(0, MAX_SUBJECT_ROWS);
   const body = shown
@@ -426,12 +430,12 @@ function renderSubjectTimeline(block: Extract<ResolvedReportBlock, { type: "view
     })
     .join("");
   const legend = groups.map((group, index) => `<span class="chip" style="color:${GROUP_PALETTE[index % GROUP_PALETTE.length]}">&#9679; ${escapeHtml(group)}</span>`).join(" ");
-  return section(block, block.caption ?? `Subject timeline of ${table.name}`, `<p class="note">${legend}</p><div class="scroll"><table><thead><tr><th>Subject</th><th>Groups</th><th>Samples</th><th>Days</th><th>Span</th><th>Timeline (day ${payload.day_min} to ${payload.day_max})</th></tr></thead><tbody>${body}</tbody></table></div>`, `${payload.patients.length} subjects${shown.length < payload.patients.length ? `, the first ${shown.length} shown` : ""}${filtersApply(table, context.filters, context.active) ? ", page filters applied" : ""}`);
+  return section(block, (block.caption?.trim() || undefined) ?? `Subject timeline of ${table.name}`, `<p class="note">${legend}</p><div class="scroll"><table><thead><tr><th>Subject</th><th>Groups</th><th>Samples</th><th>Days</th><th>Span</th><th>Timeline (day ${payload.day_min} to ${payload.day_max})</th></tr></thead><tbody>${body}</tbody></table></div>`, `${payload.patients.length} subjects${shown.length < payload.patients.length ? `, the first ${shown.length} shown` : ""}${filtersApply(table, context.filters, context.active) ? ", page filters applied" : ""}`);
 }
 
 function renderTaxonExplorer(block: Extract<ResolvedReportBlock, { type: "taxon-explorer" }>, context: BlockContext): string {
   const table = context.tableOf(block.datasetId);
-  const title = block.caption ?? `Taxon explorer${table ? `: ${table.name}` : ""}`;
+  const title = (block.caption?.trim() || undefined) ?? `Taxon explorer${table ? `: ${table.name}` : ""}`;
   if (!table) return section(block, title, empty("This table is not in the scope any more."));
   const roles = table.roles;
   if (!roles.sample || !roles.taxon || !roles.count) return section(block, title, empty(`${table.name} needs sample, taxon and count roles for a taxon explorer.`));
@@ -490,7 +494,7 @@ function renderTaxonExplorer(block: Extract<ResolvedReportBlock, { type: "taxon-
 
 function renderSubject(block: Extract<ResolvedReportBlock, { type: "subject" }>, context: BlockContext): string {
   const table = context.tableOf(block.datasetId);
-  const title = block.caption ?? `Subject${table ? `: ${table.name}` : ""}`;
+  const title = (block.caption?.trim() || undefined) ?? `Subject${table ? `: ${table.name}` : ""}`;
   if (!table) return section(block, title, empty("This table is not in the scope any more."));
   const adapted = adaptRowsForSubjectTimeline(filteredRecords(table, context.filters, context.active), table.roles, table.columns.map((column) => column.key));
   if (adapted.missingRoles.length > 0) return section(block, title, empty(`${table.name} needs the roles ${adapted.missingRoles.join(", ")} for a subject view.`));
@@ -529,7 +533,7 @@ function renderSubject(block: Extract<ResolvedReportBlock, { type: "subject" }>,
 
 function renderCurated(block: Extract<ResolvedReportBlock, { type: "curated" }>, context: BlockContext): string {
   const table = context.tableOf(block.datasetId);
-  const title = block.caption ?? `Organisms of interest${table ? `: ${table.name}` : ""}`;
+  const title = (block.caption?.trim() || undefined) ?? `Organisms of interest${table ? `: ${table.name}` : ""}`;
   if (!table) return section(block, title, empty("This table is not in the scope any more."));
   const roles = table.roles;
   if (!roles.sample || !roles.taxon || !roles.count) return section(block, title, empty(`${table.name} needs sample, taxon and count roles for organisms of interest.`));
@@ -668,9 +672,24 @@ export async function readPlotlyBundle(): Promise<string | null> {
 /** Render one report to HTML with its live data. */
 export async function renderReportHtml(reportId: string, options: ExportOptions): Promise<{ html: string; title: string }> {
   const report = await getReportView(reportId);
+  // Only tables of the report's own scope are ever loaded: a block that names
+  // a table elsewhere (a stale id, or one typed into a saved page) renders as
+  // missing, exactly as it does in the app.
+  const inScope = new Set(report.outputs.tables.map((table) => table.datasetId));
   const datasetIds = new Set<string>();
-  for (const block of report.blocks) if ("datasetId" in block) datasetIds.add(block.datasetId);
-  for (const filter of report.filters) datasetIds.add(filter.datasetId);
+  const wanted = (datasetId: string | null | undefined) => {
+    if (datasetId && inScope.has(datasetId)) datasetIds.add(datasetId);
+  };
+  for (const block of report.blocks) {
+    if ("datasetId" in block) wanted(block.datasetId);
+    if (block.type === "run-metric") {
+      for (const figure of block.figures ?? []) wanted(figure.datasetId);
+      // A timeline trend reads the tables the analysis reads.
+      const usesTimeline = block.trend === "timeline" || Object.values(block.trends ?? {}).includes("timeline");
+      if (usesTimeline) for (const input of block.analysis?.inputs ?? []) wanted(input.datasetId);
+    }
+  }
+  for (const filter of report.filters) wanted(filter.datasetId);
   const tables = new Map<string, ExportTable>();
   for (const datasetId of datasetIds) {
     const table = await loadExportTable(datasetId);

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { applyEditsToRows, listActiveEdits } from "@/lib/explore/edits";
 import { requireTargetAccess } from "@/lib/explore/authorization";
 import { fetchAllDatasetRows, getDatasetRecord } from "@/lib/explore/datasets";
 import { parseSchema } from "@/lib/explore/schema";
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const columns = schema.columns.filter((column) => !column.key.endsWith("_db_id") && (!wanted || wanted.has(column.key)));
     const limitParam = Number.parseInt(request.nextUrl.searchParams.get("limit") ?? "", 10);
     const limit = Math.min(MAX_LIMIT, Number.isFinite(limitParam) && limitParam > 0 ? limitParam : DEFAULT_LIMIT);
-    const records = current ? await fetchAllDatasetRows(current.id) : [];
+    const records = current ? applyEditsToRows(await fetchAllDatasetRows(current.id), await listActiveEdits(dataset.id)) : [];
     const keys = columns.map((column) => column.key);
     const rows = records.slice(0, limit).map((record) => {
       if (!wanted) return record.data;

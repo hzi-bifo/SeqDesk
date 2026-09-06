@@ -4,10 +4,9 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { Check, ChevronRight, FileText, Info, LayoutGrid, List, NotebookText, PanelRight, PanelRightClose, Pencil, Plus, Upload } from "lucide-react";
+import { Check, ChevronRight, FileText, LayoutGrid, List, NotebookText, PanelRight, PanelRightClose, Pencil, Plus, Upload } from "lucide-react";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ExploreCanvas } from "@/components/explore/ExploreCanvas";
 import { ExploreListView } from "@/components/explore/ExploreListView";
@@ -186,29 +185,11 @@ function ReportScreen() {
             Edit
           </Button>
         )}
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="sm" className="h-8 w-8 px-0 text-muted-foreground" aria-label="About reports" title="About reports">
-              <Info className="h-4 w-4" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-80 text-xs">
-            <p className="font-medium">A report</p>
-            <p className="mt-1 text-muted-foreground">
-              The page is what others read: figures, tables and your text. Behind Edit are the analysis steps that produce them. Figures and tables follow the latest run of their analysis.
-            </p>
-            <ul className="mt-2 space-y-1 text-muted-foreground">
-              <li><span className="font-medium text-foreground">Page</span> is where the outputs are arranged with text and filters.</li>
-              <li><span className="font-medium text-foreground">Canvas</span> shows the tables of the scope, this report&apos;s analyses and their outputs as connected cards.</li>
-              <li><span className="font-medium text-foreground">List</span> lists tables and analysis steps.</li>
-            </ul>
-          </PopoverContent>
-        </Popover>
       </div>
 
-      {mode === "report" && <ExploreReport reportId={reportId} scope={scopeKey} canEdit={canEdit} editing={false} onDone={done} onOpenCanvas={openCanvas} actionsContainer={actionsEl} />}
-      {mode === "edit" && view === "page" && (
-        <ExploreReport reportId={reportId} scope={scopeKey} canEdit={canEdit} editing={canEdit} onDone={done} onOpenCanvas={openCanvas} panelContainer={drawer ? drawerEl : panelOpen ? panelEl : null} actionsContainer={actionsEl} />
+      {/* One instance for reading and editing, so leaving the editor saves what is still pending instead of unmounting it. */}
+      {(mode === "report" || (mode === "edit" && view === "page")) && (
+        <ExploreReport reportId={reportId} scope={scopeKey} canEdit={canEdit} editing={mode === "edit" && canEdit} onDone={done} onOpenCanvas={openCanvas} panelContainer={mode === "edit" ? (drawer ? drawerEl : panelOpen ? panelEl : null) : null} actionsContainer={actionsEl} />
       )}
       {mode === "edit" && view === "canvas" && (
         <div className="mt-3">

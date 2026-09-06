@@ -33,7 +33,10 @@ describe("time in a table", () => {
     expect(timeValue({ timepoint: 465 }, day)).toBe(465);
     expect(timeValue({ timepoint: "D465" }, day)).toBe(465);
     expect(timeValue({ timepoint: "" }, day)).toBeNull();
-    expect(timeValue({ when: "2026-03-02" }, { column: "when", kind: "date", label: "date" })).toBe(Date.parse("2026-03-02"));
+    expect(timeValue({ when: "2026-03-02" }, { column: "when", kind: "date", label: "date" })).toBe(Date.UTC(2026, 2, 2));
+    expect(timeValue({ when: 2026 }, { column: "when", kind: "date", label: "date" })).toBeNull();
+    expect(chooseStep(3 * 365, 12, "date")).toBe(365);
+    expect(chooseStep(200, 12, "date")).toBe(30);
   });
 
   it("buckets a cumulative distinct count over study days with a nice step", () => {

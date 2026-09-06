@@ -31,6 +31,7 @@ import type { ReportFilter } from "@/lib/explore/report-blocks";
 import type { ReportAnalysis, ReportBlock, ReportFigure, ReportInput, ReportShare, ReportTable, ReportTableContent, ReportView, ResolvedReportBlock } from "@/lib/explore/reports";
 import type { ExploreColumn } from "@/lib/explore/types";
 import { buildVariables, formatVariableValue, variableReference, type ReportVariables, type VariableStep } from "@/lib/explore/variables";
+import { toInput } from "@/lib/explore/report-input";
 import { applyRowFilter, rowFilterProblem } from "@/lib/explore/row-filter";
 import type { ExploreRowData } from "@/lib/explore/types";
 
@@ -63,29 +64,6 @@ function figureKey(analysisId: string, figureName: string): string {
 }
 
 /** The editable shape of a report: what the server stores, without the resolved content. */
-function toInput(report: ReportView): ReportInput {
-  return {
-    title: report.title,
-    filters: report.filters,
-    blocks: report.blocks.map((block): ReportBlock => {
-      if (block.type === "text") return { id: block.id, type: "text", markdown: block.markdown, span: block.span };
-      if (block.type === "figure") {
-        return { id: block.id, type: "figure", analysisId: block.analysisId, figureName: block.figureName, caption: block.caption, span: block.span };
-      }
-      if (block.type === "chart") {
-        return { id: block.id, type: "chart", datasetId: block.datasetId, chart: block.chart, x: block.x, y: block.y, color: block.color, caption: block.caption, span: block.span };
-      }
-      if (block.type === "metric") return { id: block.id, type: "metric", datasetId: block.datasetId, column: block.column, stats: block.stats, label: block.label, span: block.span };
-      if (block.type === "view") return { id: block.id, type: "view", datasetId: block.datasetId, view: block.view, options: block.options, caption: block.caption, span: block.span };
-      if (block.type === "taxon-explorer") return { id: block.id, type: "taxon-explorer", datasetId: block.datasetId, taxon: block.taxon, caption: block.caption, span: block.span };
-      if (block.type === "subject") return { id: block.id, type: "subject", datasetId: block.datasetId, subject: block.subject, measure: block.measure, caption: block.caption, span: block.span };
-      if (block.type === "curated") return { id: block.id, type: "curated", datasetId: block.datasetId, role: block.role, lists: block.lists, limit: block.limit, caption: block.caption, span: block.span };
-      if (block.type === "run-metric") return { id: block.id, type: "run-metric", analysisId: block.analysisId, metrics: block.metrics, figures: block.figures, order: block.order, labels: block.labels, digits: block.digits, units: block.units, targets: block.targets, columns: block.columns, trend: block.trend, trends: block.trends, timeline: block.timeline, label: block.label, span: block.span };
-      return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
-    }),
-  };
-}
-
 function figureBlockOf(figure: ReportFigure): ReportBlock {
   return {
     id: `figure:${figure.analysisId}:${figure.figureName}`,
@@ -122,6 +100,16 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const [draft, setDraft] = useState<ReportInput | null>(null);
   // Changes save on their own a moment after they stop; Undo walks back through them.
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error" | "conflict">("idle");
+  const saveStateRef = useRef(saveState);
+  useEffect(() => {
+    saveStateRef.current = saveState;
+  }, [saveState]);
+  const undoingRef = useRef(false);
+  const inFlightRef = useRef(false);
+  const followUpRef = useRef(false);
+  const failedPayloadRef = useRef<string | null>(null);
+  const baseUpdatedAtRef = useRef<string | null>(null);
+  const [saveTick, setSaveTick] = useState(0);
   const [history, setHistory] = useState<ReportInput[]>([]);
   const [dirty, setDirty] = useState(false);
   useFooterNote(data?.report && !data.report.draft ? `Report last changed ${formatDateTime(data.report.updatedAt)}` : null);
@@ -133,36 +121,65 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const editingNow = editRequested && canEdit;
   const variables = useMemo(() => buildVariables(data?.report?.outputs.analyses ?? []), [data]);
 
-  // Save a moment after the last change while editing.
+  // Save a moment after the last change while editing. One request at a
+  // time; the version a save must land on is the one the draft started from
+  // or the last own save, never a value a background poll brought in, so a
+  // poll cannot let one editor overwrite another.
   useEffect(() => {
-    if (!editingNow || !draft || !report || saveState === "conflict") return;
+    if (!editingNow || !draft || !report || saveStateRef.current === "conflict") return;
+    if (baseUpdatedAtRef.current && report.updatedAt && report.updatedAt !== baseUpdatedAtRef.current && !inFlightRef.current) {
+      // A poll brought a newer version while a draft exists: someone else saved, so this page stops overwriting.
+      const notice = setTimeout(() => {
+        setSaveState("conflict");
+        toast.error("This page was changed elsewhere; reload to see the latest version before editing further.");
+      }, 0);
+      return () => clearTimeout(notice);
+    }
     if (savedRef.current === null) {
       savedInputRef.current = toInput(report);
       savedRef.current = JSON.stringify(savedInputRef.current);
+      baseUpdatedAtRef.current = report.updatedAt ?? null;
     }
     const payload = JSON.stringify(draft);
-    if (payload === savedRef.current) return;
+    if (payload === savedRef.current || payload === failedPayloadRef.current) return;
     const timer = setTimeout(() => {
+      if (inFlightRef.current) {
+        // The draft moved on during a save: the effect runs again when that save resolves.
+        followUpRef.current = true;
+        return;
+      }
+      inFlightRef.current = true;
       setSaveState("saving");
-      void postJson<ReportResponse>(key, { ...draft, expectedUpdatedAt: report.updatedAt ?? undefined }, "PUT")
+      void postJson<ReportResponse>(key, { ...draft, expectedUpdatedAt: baseUpdatedAtRef.current ?? undefined }, "PUT")
         .then(async (result) => {
-          // Every saved step is one Undo step.
+          // Every saved step is one Undo step, except the save that an Undo itself causes.
           const before = savedInputRef.current;
-          if (before) setHistory((entries) => [...entries.slice(-49), before]);
+          if (before && !undoingRef.current) setHistory((entries) => [...entries.slice(-49), before]);
+          undoingRef.current = false;
           savedInputRef.current = draft;
           savedRef.current = payload;
+          baseUpdatedAtRef.current = result.report.updatedAt ?? baseUpdatedAtRef.current;
           await mutate(result, { revalidate: false });
           setSaveState("saved");
           setDirty(false);
         })
         .catch((err) => {
           const message = err instanceof Error ? err.message : "Could not save the report";
+          // The same draft is not sent again until it changes.
+          failedPayloadRef.current = payload;
           setSaveState(/changed elsewhere/.test(message) ? "conflict" : "error");
           toast.error(message);
+        })
+        .finally(() => {
+          inFlightRef.current = false;
+          if (followUpRef.current) {
+            followUpRef.current = false;
+            setSaveTick((tick) => tick + 1);
+          }
         });
     }, 700);
     return () => clearTimeout(timer);
-  }, [draft, editingNow, key, mutate, report, saveState]);
+  }, [draft, editingNow, key, mutate, report, saveTick]);
 
   // Leaving the editor saves what is still pending and forgets the session.
   useEffect(() => {
@@ -182,6 +199,8 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
       savedRef.current = null;
       savedInputRef.current = null;
       setDraft(null);
+      baseUpdatedAtRef.current = null;
+      failedPayloadRef.current = null;
       setHistory([]);
       setDirty(false);
       setSaveState("idle");
@@ -244,6 +263,8 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
     const previous = history[history.length - 1];
     if (!previous) return;
     setHistory((entries) => entries.slice(0, -1));
+    // Saving the restored state must not push the undone one back onto the history.
+    undoingRef.current = true;
     setDraft(previous);
   };
   const outputTables = report.outputs.tables.filter((table) => table.output);
@@ -1181,10 +1202,13 @@ function TableBlockView({ block, table, filters, active, scopeQuery, reportId }:
               {columns.map((column) => {
                 const active = sort?.column === column.key;
                 return (
-                  <th key={column.key} className={cn("whitespace-nowrap px-2 py-1.5 font-medium", block.sortable && "cursor-pointer select-none hover:text-foreground")} title={block.sortable ? `Sort by ${column.label}` : column.key} onClick={() => toggleSort(column.key)} aria-sort={active ? (sort?.direction === "asc" ? "ascending" : "descending") : undefined}>
+                  <th key={column.key} className="whitespace-nowrap px-2 py-1.5 font-medium" title={block.sortable ? `Sort by ${column.label}` : column.key} aria-sort={active ? (sort?.direction === "asc" ? "ascending" : "descending") : undefined}>{block.sortable ? <button type="button" onClick={() => toggleSort(column.key)} className="inline-flex items-center gap-1 rounded hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Sort by ${column.label}`}>
                     {column.label}
                     {active ? <span className="ml-1 text-muted-foreground">{sort?.direction === "asc" ? "▲" : "▼"}</span> : null}
-                  </th>
+                  </button> : <>
+                    {column.label}
+                    {active ? <span className="ml-1 text-muted-foreground">{sort?.direction === "asc" ? "▲" : "▼"}</span> : null}
+                  </>}</th>
                 );
               })}
             </tr>

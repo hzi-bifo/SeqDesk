@@ -370,13 +370,19 @@ export async function saveReport(reportId: string, raw: unknown): Promise<Report
   }
   const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true, updatedAt: true } });
   if (!existing) throw new ExploreReportError(404, "Report not found");
-  // Two editors: the second save of the same version is refused instead of overwriting the first.
-  if (parsed.data.expectedUpdatedAt && parsed.data.expectedUpdatedAt !== existing.updatedAt.toISOString()) {
-    throw new ExploreReportError(409, "This page was changed elsewhere since you opened it; reload to see the latest version before editing further.");
-  }
   const blocks = parsed.data.blocks as unknown as Prisma.InputJsonValue;
   const settings = { filters: parsed.data.filters ?? [] } as unknown as Prisma.InputJsonValue;
-  await db.exploreReport.update({ where: { id: reportId }, data: { title: parsed.data.title, blocks, settings } });
+  // Two editors: the write only lands on the version the editor saw, so the
+  // second save of the same version is refused instead of overwriting the first.
+  const expected = parsed.data.expectedUpdatedAt ? new Date(parsed.data.expectedUpdatedAt) : null;
+  if (expected && Number.isNaN(expected.getTime())) throw new ExploreReportError(400, "expectedUpdatedAt is not a date");
+  const written = await db.exploreReport.updateMany({
+    where: { id: reportId, ...(expected ? { updatedAt: expected } : {}) },
+    data: { title: parsed.data.title, blocks, settings },
+  });
+  if (written.count === 0) {
+    throw new ExploreReportError(409, "This page was changed elsewhere since you opened it; reload to see the latest version before editing further.");
+  }
   return getReportView(reportId);
 }
 

@@ -75,7 +75,13 @@ export function timeValue(row: ExploreRowData, axis: TimeAxis): number | null {
     const value = typeof raw === "number" ? raw : Number(String(raw).replace(/^d/i, ""));
     return Number.isFinite(value) ? value : null;
   }
-  const time = typeof raw === "number" ? raw : Date.parse(String(raw));
+  // A number in a date column is not a date we can place (years, spreadsheet serials).
+  if (typeof raw !== "string" && typeof raw !== "boolean") return null;
+  const text = String(raw).trim();
+  // Date-only text is a calendar day, not local midnight on the server.
+  const dateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) return Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+  const time = Date.parse(text);
   return Number.isFinite(time) ? time : null;
 }
 
@@ -103,12 +109,15 @@ export interface TimelineSeries {
 
 const DAY_MS = 86_400_000;
 const NICE_STEPS = [1, 7, 14, 30, 90, 180, 365, 730];
+/** Dates bucket by calendar unit, so only steps with a calendar meaning are used. */
+const CALENDAR_STEPS = [1, 7, 30, 365];
 
 /** A bucket width in days that gives roughly a dozen buckets over the span. */
-export function chooseStep(spanDays: number, target = 12): number {
+export function chooseStep(spanDays: number, target = 12, kind: TimeAxisKind = "day"): number {
   if (!(spanDays > 0)) return 1;
   const raw = spanDays / target;
-  return NICE_STEPS.find((step) => step >= raw) ?? Math.ceil(raw / 365) * 365;
+  const steps = kind === "date" ? CALENDAR_STEPS : NICE_STEPS;
+  return steps.find((step) => step >= raw) ?? (kind === "date" ? 365 : Math.ceil(raw / 365) * 365);
 }
 
 /** Calendar buckets for dates: years, months, weeks (from Monday) or days. */
@@ -146,7 +155,7 @@ export function buildTimeline(rows: ExploreRowData[], axis: TimeAxis, measure: T
   timed.sort((a, b) => a.t - b.t);
   const unit = axis.kind === "day" ? 1 : DAY_MS;
   const span = timed.length > 0 ? (timed[timed.length - 1].t - timed[0].t) / unit : 0;
-  const step = chooseStep(span, target);
+  const step = chooseStep(span, target, axis.kind);
   const width = step * unit;
   const origin = timed.length > 0 ? Math.floor(timed[0].t / width) * width : 0;
   const buckets = new Map<number, { rows: ExploreRowData[] }>();

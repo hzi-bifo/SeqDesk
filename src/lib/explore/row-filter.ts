@@ -43,8 +43,14 @@ export interface RowFilterOptions {
 }
 
 const MAX_PATTERN_LENGTH = 200;
-/** A quantified group that is itself quantified, the shape behind catastrophic backtracking. */
-const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)[+*{?]/;
+/**
+ * A repeated group, (…)+ (…)* (…){n,} (…)?, is refused outright: with
+ * alternation or nesting inside it, JavaScript's backtracking engine can
+ * take exponential time on a crafted cell, and a shared page evaluates the
+ * filter for anyone holding the link. Single characters and classes may be
+ * repeated freely.
+ */
+const REPEATED_GROUP = /(?<!\\)\)[+*?{]/;
 
 export class RowFilterError extends Error {}
 
@@ -299,7 +305,7 @@ function safePattern(pattern: string): RegExp {
   const cached = patternCache.get(pattern);
   if (cached) return cached;
   if (pattern.length > MAX_PATTERN_LENGTH) throw new RowFilterError(`grepl: the pattern is longer than ${MAX_PATTERN_LENGTH} characters`);
-  if (NESTED_QUANTIFIER.test(pattern)) throw new RowFilterError("grepl: a repeated group inside a repeat is not allowed; write the pattern without nested repeats");
+  if (REPEATED_GROUP.test(pattern)) throw new RowFilterError("grepl: a repeated group such as (ab)+ is not allowed; repeat single characters or classes instead");
   let compiled: RegExp;
   try {
     compiled = new RegExp(pattern, "i");

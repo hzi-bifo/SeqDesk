@@ -42,7 +42,11 @@ describe("row filters in R notation", () => {
     const options = { aliases: { "Specimen type": "specimen_type", Samples: "n_samples" } };
     expect(names(applyRowFilter(rows, '`Specimen type` == "Urine" & samples >= 10', options))).toEqual(["Escherichia"]);
     expect(rowFilterProblem('`specimen TYPE` == "Urine"', ["specimen_type"], options)).toBeNull();
-    expect(rowFilterProblem('grepl("(a+)+b", taxon)', ["taxon"])).toMatch(/nested repeats/);
+    expect(rowFilterProblem('grepl("(a+)+b", taxon)', ["taxon"])).toMatch(/repeated group/);
+    expect(rowFilterProblem('grepl("(a|aa)+$", taxon)', ["taxon"])).toMatch(/repeated group/);
+    expect(rowFilterProblem('grepl("(ab)?c", taxon)', ["taxon"])).toMatch(/repeated group/);
+    expect(rowFilterProblem('grepl("^(Escherichia|Klebsiella) [a-z]+$", taxon)', ["taxon"])).toBeNull();
+    expect(rowFilterProblem('grepl("a\\)+", taxon)', ["taxon"])).toBeNull();
     expect(rowFilterProblem(`grepl("${"a".repeat(201)}", taxon)`, ["taxon"])).toMatch(/longer than/);
     expect(rowFilterProblem('grepl("[", taxon)', ["taxon"])).toMatch(/not a valid pattern/);
   });
