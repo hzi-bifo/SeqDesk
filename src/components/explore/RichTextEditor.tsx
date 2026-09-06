@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
-import { Bold, Code, FileCode2, Heading2, Heading3, Italic, Link2, List, ListOrdered, Quote } from "lucide-react";
+import { Bold, Code, FileCode2, Heading2, Heading3, Italic, Link2, List, ListOrdered, Quote, Sigma } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useReportVariables, VariableNode, VariablePicker } from "@/components/explore/VariableNode";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +40,7 @@ interface RichTextEditorProps {
  * away for those who prefer the source.
  */
 export function RichTextEditor({ value, onChange, actions, className }: RichTextEditorProps) {
+  const variables = useReportVariables();
   const locked = needsMarkdownSource(value);
   const [source, setSource] = useState(() => needsMarkdownSource(value));
   const onChangeRef = useRef(onChange);
@@ -47,7 +50,7 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
   }, [onChange]);
 
   const editor = useEditor({
-    extensions: [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false } }), Markdown],
+    extensions: [StarterKit.configure({ heading: { levels: [1, 2, 3] }, link: { openOnClick: false } }), VariableNode, Markdown],
     content: value,
     contentType: "markdown",
     immediatelyRender: false,
@@ -116,6 +119,19 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
             <tool.icon className="h-3.5 w-3.5" />
           </button>
         ))}
+        {variables && editor && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button type="button" onMouseDown={(event) => event.preventDefault()} disabled={source || locked} className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40" title="Insert a number an analysis recorded; it updates when the analysis runs again" aria-label="Insert a value">
+                <Sigma className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Value</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-80 p-2">
+              <VariablePicker variables={variables} onPick={(ref) => editor.chain().focus().insertContent({ type: "variable", attrs: { ref, digits: null } }).insertContent(" ").run()} />
+            </PopoverContent>
+          </Popover>
+        )}
         <span className="flex-1" />
         <button
           type="button"

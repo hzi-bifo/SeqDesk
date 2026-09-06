@@ -8,6 +8,7 @@ import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, Copy, Download, Exte
 import { Sketch, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { insertIntoActiveEditor, RichTextEditor } from "@/components/explore/RichTextEditor";
+import { VariablesContext } from "@/components/explore/VariableNode";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { CuratedOrganismsView, filtersApply, metricLabel, RunMetricView, SubjectView, TREND_LABELS, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
 import { HeatmapView, type HeatmapOptions } from "@/components/explore/views/HeatmapView";
@@ -364,6 +365,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   ];
 
   return (
+    <VariablesContext.Provider value={variables}>
     <div className="mt-6">
       <div className="min-w-0">
       {actionsContainer && createPortal(
@@ -465,6 +467,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
       </div>
       {editing && panelContainer && createPortal(<ReportSidePanel groups={storeGroups} variables={variables} />, panelContainer)}
     </div>
+    </VariablesContext.Provider>
   );
 }
 
