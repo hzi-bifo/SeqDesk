@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { Filter, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Filter, Plus, Settings2, Trash2, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
@@ -416,6 +417,18 @@ export interface KeyFigureOptions {
   timeline?: Record<string, string>;
 }
 
+/** What the editor needs to change a figure in place. */
+export interface KeyFigureEditing {
+  onPatch: (patch: Partial<KeyFigureOptions>) => void;
+  /** Every number the run recorded, for the "add a figure" card. */
+  available: Record<string, string | number | boolean | null>;
+}
+
+export const MAX_KEY_FIGURES = 8;
+export const TREND_LABELS: Record<TrendMode, string> = { none: "No trend", previous: "Change since the previous run", history: "Sparkline over the run history", timeline: "Along the table's timeline" };
+const TREND_SHORT: Record<TrendMode, string> = { none: "none", previous: "previous run", history: "run history", timeline: "timeline" };
+const DIGIT_CHOICES = ["auto", "0", "1", "2", "3", "4"] as const;
+
 /** The trend a figure shows: its own choice, else the block's default. */
 export function figureTrend(options: Pick<KeyFigureOptions, "trend" | "trends">, key: string): TrendMode {
   return options.trends?.[key] ?? options.trend ?? "none";
@@ -431,48 +444,171 @@ export function figureMeasure(options: Pick<KeyFigureOptions, "timeline">, key: 
  * Key figures: the numbers an analysis recorded, as cards. Each card can
  * carry the author's label and decimals, and a trend: the change since the
  * previous run, a sparkline over the run history, or the figure along the
- * time axis of the table the analysis reads.
+ * time axis of the table the analysis reads. While editing, the cards are
+ * the editor: the label is typed on the card, a small button opens the
+ * rest, and a dashed card adds a figure.
  */
-export function RunMetricView({ analysis, timelineSource, ...options }: { analysis: ReportAnalysis | null; timelineSource: AnalysisTimeline | null } & KeyFigureOptions) {
-  const { metrics, labels, digits, columns } = options;
+export function RunMetricView({ analysis, timelineSource, editing, ...options }: { analysis: ReportAnalysis | null; timelineSource: AnalysisTimeline | null; editing?: KeyFigureEditing | null } & KeyFigureOptions) {
+  const { metrics, columns } = options;
   if (!analysis) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This analysis is gone.</div>;
   if (!analysis.runNumber) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{analysis.name} has not finished a run yet.</div>;
-  const perRow = columns ?? Math.min(4, metrics.length);
+  const unused = editing ? Object.keys(editing.available).filter((key) => !metrics.includes(key)) : [];
+  const showAdd = editing && unused.length > 0 && metrics.length < MAX_KEY_FIGURES;
+  const cardCount = metrics.length + (showAdd ? 1 : 0);
+  const perRow = columns ?? Math.min(4, cardCount);
   return (
     <div>
       <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(perRow, 6))}, minmax(0, 1fr))` }}>
-        {metrics.map((key) => {
-          const value = analysis.metrics[key];
-          const format = (amount: number) => formatWithDigits(amount, digits?.[key], formatStat);
-          const text = typeof value === "number" ? format(value) : value === null || value === undefined ? "n/a" : formatCell(value);
-          const mode = figureTrend(options, key);
-          const measure = mode === "timeline" ? figureMeasure(options, key, timelineSource) : null;
-          const movement = typeof value === "number" ? metricTrend(analysis.history, key, mode) : null;
-          const note = trendNote(movement, mode, format);
-          const label = labels?.[key]?.trim() || metricLabel(key);
-          return (
-            <div key={key} className="rounded-md border bg-muted/20 px-3 py-2">
-              <div className="flex items-end justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="truncate text-xl font-semibold tabular-nums" title={typeof value === "number" ? String(value) : text}>{text}</div>
-                  <div className="truncate text-[11px] text-muted-foreground" title={key}>{label}</div>
-                </div>
-                {mode === "history" && movement && movement.series.length >= 2 && <Sparkline values={movement.series.map((point) => point.value)} />}
-              </div>
-              {mode === "timeline" && timelineSource && measure && <TimelineSpark source={timelineSource} measure={measure} format={format} />}
-              {mode === "timeline" && (!timelineSource || !measure) && (
-                <div className="mt-1 truncate text-[11px] text-muted-foreground">{timelineSource ? "choose what this figure counts along the timeline" : "the analysis reads no table with a timeline"}</div>
-              )}
-              {(mode === "previous" || mode === "history") && (
-                <div className={cn("mt-1 truncate text-[11px] tabular-nums", movement?.delta ? (movement.delta > 0 ? "text-emerald-700" : "text-rose-700") : "text-muted-foreground")} title={movement?.since ? `Compared with ${movement.since.runNumber}` : undefined}>
-                  {note}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {metrics.map((key, index) => (
+          <KeyFigureCard key={key} figureKey={key} index={index} analysis={analysis} timelineSource={timelineSource} options={options} editing={editing ?? null} />
+        ))}
+        {showAdd && editing && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button type="button" className="flex min-h-[4.5rem] items-center justify-center gap-1 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground hover:border-foreground/40 hover:text-foreground" aria-label="Add a figure">
+                <Plus className="h-3.5 w-3.5" />
+                Add a figure
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-64 p-1">
+              <p className="px-2 py-1 text-[11px] text-muted-foreground">Numbers {analysis.name} recorded</p>
+              {unused.map((key) => (
+                <button key={key} type="button" onClick={() => editing.onPatch({ metrics: [...metrics, key] })} className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs hover:bg-secondary">
+                  <span className="truncate">{metricLabel(key)}</span>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">{typeof editing.available[key] === "number" ? formatStat(editing.available[key] as number) : formatCell(editing.available[key])}</span>
+                </button>
+              ))}
+            </PopoverContent>
+          </Popover>
+        )}
       </div>
-      <p className="mt-1 text-[11px] text-muted-foreground">{analysis.name}, {analysis.runNumber}</p>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {analysis.name}, {analysis.runNumber}
+      </p>
+    </div>
+  );
+}
+
+function KeyFigureCard({ figureKey: key, index, analysis, timelineSource, options, editing }: { figureKey: string; index: number; analysis: ReportAnalysis; timelineSource: AnalysisTimeline | null; options: KeyFigureOptions; editing: KeyFigureEditing | null }) {
+  const { metrics, labels, digits } = options;
+  const value = analysis.metrics[key];
+  const format = (amount: number) => formatWithDigits(amount, digits?.[key], formatStat);
+  const text = typeof value === "number" ? format(value) : value === null || value === undefined ? "n/a" : formatCell(value);
+  const mode = figureTrend(options, key);
+  const measure = mode === "timeline" ? figureMeasure(options, key, timelineSource) : null;
+  const movement = typeof value === "number" ? metricTrend(analysis.history, key, mode) : null;
+  const note = trendNote(movement, mode, format);
+  const label = labels?.[key]?.trim() || metricLabel(key);
+  const trendChoices: TrendMode[] = timelineSource ? ["none", "previous", "history", "timeline"] : ["none", "previous", "history"];
+
+  const setRecord = <T,>(field: "labels" | "digits" | "trends" | "timeline", entry: T | undefined) => {
+    if (!editing) return;
+    const record = { ...((options[field] as Record<string, T> | undefined) ?? {}) };
+    if (entry === undefined) delete record[key];
+    else record[key] = entry;
+    editing.onPatch({ [field]: Object.keys(record).length > 0 ? record : undefined } as Partial<KeyFigureOptions>);
+  };
+  const move = (direction: -1 | 1) => {
+    if (!editing) return;
+    const target = index + direction;
+    if (target < 0 || target >= metrics.length) return;
+    const next = [...metrics];
+    [next[index], next[target]] = [next[target], next[index]];
+    editing.onPatch({ metrics: next });
+  };
+
+  return (
+    <div className={cn("group relative rounded-md border bg-muted/20 px-3 py-2", editing && "hover:border-foreground/30")}>
+      <div className="flex items-end justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-xl font-semibold tabular-nums" title={typeof value === "number" ? String(value) : text}>{text}</div>
+          {editing ? (
+            <input
+              value={labels?.[key] ?? ""}
+              placeholder={metricLabel(key)}
+              onChange={(event) => setRecord("labels", event.target.value.trim() ? event.target.value : undefined)}
+              className="w-full truncate border-0 border-b border-dashed border-transparent bg-transparent p-0 text-[11px] text-muted-foreground outline-none placeholder:text-muted-foreground/70 hover:border-muted-foreground/40 focus:border-foreground"
+              aria-label={`Label for ${key}`}
+              title={`Click to rename; the number is ${key}`}
+            />
+          ) : (
+            <div className="truncate text-[11px] text-muted-foreground" title={key}>{label}</div>
+          )}
+        </div>
+        {mode === "history" && movement && movement.series.length >= 2 && <Sparkline values={movement.series.map((point) => point.value)} />}
+      </div>
+      {mode === "timeline" && timelineSource && measure && <TimelineSpark source={timelineSource} measure={measure} format={format} />}
+      {mode === "timeline" && (!timelineSource || !measure) && (
+        <div className="mt-1 text-[11px] text-muted-foreground">{timelineSource ? "choose what this figure counts along the timeline" : "the analysis reads no table with a timeline"}</div>
+      )}
+      {(mode === "previous" || mode === "history") && (
+        <div className={cn("mt-1 line-clamp-2 text-[11px] tabular-nums", movement?.delta ? (movement.delta > 0 ? "text-emerald-700" : "text-rose-700") : "text-muted-foreground")} title={movement?.since ? `Compared with ${movement.since.runNumber}` : undefined}>
+          {note}
+        </div>
+      )}
+      {editing && (
+        <Popover>
+          <PopoverTrigger asChild>
+            <button type="button" className="absolute right-1 top-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-foreground focus:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`Settings for ${label}`} title="Decimals, trend, order">
+              <Settings2 className="h-3.5 w-3.5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-72 space-y-3 p-3 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono text-[11px] text-muted-foreground" title={key}>{key}</span>
+              <span className="tabular-nums" title={value === null || value === undefined ? "n/a" : String(value)}>{text}</span>
+            </div>
+            {typeof value === "number" && (
+              <label className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">Decimals</span>
+                <Select value={digits?.[key] === undefined ? "auto" : String(digits[key])} onValueChange={(choice) => setRecord("digits", choice === "auto" ? undefined : Number.parseInt(choice, 10))}>
+                  <SelectTrigger className="h-7 w-24 text-[11px]" aria-label={`Decimals for ${key}`}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {DIGIT_CHOICES.map((choice) => <SelectItem key={choice} value={choice}>{choice === "auto" ? "auto" : `${choice} dec.`}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </label>
+            )}
+            <label className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">Trend</span>
+              <Select value={options.trends?.[key] ?? "default"} onValueChange={(choice) => setRecord("trends", choice === "default" ? undefined : (choice as TrendMode))}>
+                <SelectTrigger className="h-7 w-40 text-[11px] [&>span]:truncate" aria-label={`Trend for ${key}`}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Block default ({TREND_SHORT[options.trend ?? "none"]})</SelectItem>
+                  {trendChoices.map((choice) => <SelectItem key={choice} value={choice}>{TREND_LABELS[choice]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </label>
+            {mode === "timeline" && timelineSource && (
+              <label className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground">Counts</span>
+                <Select value={measure ? measureText(measure) : "none"} onValueChange={(choice) => setRecord("timeline", choice === "none" ? undefined : choice)}>
+                  <SelectTrigger className="h-7 w-40 text-[11px] [&>span]:truncate" aria-label={`Timeline measure for ${key}`}><SelectValue placeholder="Choose" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nothing yet</SelectItem>
+                    <SelectItem value="count">Rows</SelectItem>
+                    {(["subject", "sample", "taxon", "group"] as const).filter((role) => timelineSource.roles[role]).map((role) => (
+                      <SelectItem key={role} value={`distinct:${timelineSource.roles[role]}`}>Distinct {ROLE_LABELS[role] ?? role} ({timelineSource.roles[role]})</SelectItem>
+                    ))}
+                    {timelineSource.roles.count && <SelectItem value={`sum:${timelineSource.roles.count}`}>Sum of {timelineSource.roles.count}</SelectItem>}
+                    {timelineSource.roles.value && <SelectItem value={`sum:${timelineSource.roles.value}`}>Sum of {timelineSource.roles.value}</SelectItem>}
+                  </SelectContent>
+                </Select>
+              </label>
+            )}
+            {mode === "timeline" && timelineSource && !options.timeline?.[key] && measure && <p className="text-[11px] text-muted-foreground">Suggested from the name; along the {timelineSource.axis.label}s of {timelineSource.tableName}.</p>}
+            <div className="flex items-center gap-1 border-t pt-2">
+              <button type="button" onClick={() => move(-1)} disabled={index === 0} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-30" aria-label="Move left"><ChevronLeft className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => move(1)} disabled={index === metrics.length - 1} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-30" aria-label="Move right"><ChevronRight className="h-3.5 w-3.5" /></button>
+              <span className="flex-1" />
+              <button type="button" onClick={() => editing.onPatch({ metrics: metrics.filter((entry) => entry !== key) })} disabled={metrics.length === 1} className="inline-flex items-center gap-1 rounded px-2 py-1 text-muted-foreground hover:bg-secondary hover:text-destructive disabled:opacity-30" aria-label={`Remove ${label}`}>
+                <Trash2 className="h-3.5 w-3.5" />
+                Remove
+              </button>
+            </div>
+          </PopoverContent>
+        </Popover>
+      )}
     </div>
   );
 }
@@ -512,10 +648,7 @@ function TimelineSpark({ source, measure, format }: { source: AnalysisTimeline; 
         <polyline points={points.map((point) => point.join(",")).join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
         <circle cx={last[0]} cy={last[1]} r="2" fill="currentColor" />
       </svg>
-      <div className="flex justify-between gap-2 text-[10px] text-muted-foreground">
-        <span className="truncate">{first.label}</span>
-        <span className="truncate tabular-nums">{note ?? end.label}</span>
-      </div>
+      <div className="line-clamp-2 text-[10px] tabular-nums text-muted-foreground" title={`${first.label} to ${end.label}`}>{note ?? `${first.label} to ${end.label}`}</div>
     </div>
   );
 }

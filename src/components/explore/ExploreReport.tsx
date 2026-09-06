@@ -9,7 +9,7 @@ import { Sketch, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { insertIntoActiveEditor, RichTextEditor } from "@/components/explore/RichTextEditor";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
-import { CuratedOrganismsView, filtersApply, metricLabel, RunMetricView, SubjectView, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
+import { CuratedOrganismsView, filtersApply, metricLabel, RunMetricView, SubjectView, TREND_LABELS, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
 import { HeatmapView, type HeatmapOptions } from "@/components/explore/views/HeatmapView";
 import { SubjectTimelineOverview } from "@/components/explore/views/SubjectTimelineOverview";
 import { BUILT_IN_VIEWS, type BuiltInView } from "@/lib/explore/canvas-layout";
@@ -20,8 +20,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { exactValue, fetcher, formatCell, formatDateTime, postJson, ROLE_LABELS } from "@/lib/explore/client";
-import { analysisTimeline, measureText, parseMeasure, suggestMeasure } from "@/lib/explore/time-axis";
+import { exactValue, fetcher, formatCell, formatDateTime, postJson } from "@/lib/explore/client";
+import { analysisTimeline, suggestMeasure } from "@/lib/explore/time-axis";
 import { useFooterNote } from "@/components/layout/FooterNote";
 import { CHART_KINDS, CHART_KIND_LABELS, METRIC_STATS, METRIC_STAT_LABELS, type ChartKind, type MetricStat } from "@/lib/explore/report-blocks";
 import { buildChart, computeStats, formatStat, numericColumns } from "@/lib/explore/report-widgets";
@@ -735,7 +735,18 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
           <>
             <Caption editing={editing} value={block.label ?? ""} fallback={analysis ? `${analysis.name}: key figures` : "Key figures"} onChange={(label) => onPatch({ label } as Partial<ReportBlock>)} />
             {editing && <RunMetricControls block={block} analyses={analyses} tables={tables} onPatch={onPatch} />}
-            <RunMetricView analysis={analysis} timelineSource={analysisTimeline(analysis, tables)} metrics={block.metrics} labels={block.labels} digits={block.digits} columns={block.columns} trend={block.trend ?? "none"} trends={block.trends} timeline={block.timeline} />
+            <RunMetricView
+              analysis={analysis}
+              timelineSource={analysisTimeline(analysis, tables)}
+              editing={editing && analysis ? { onPatch: (patch) => onPatch(patch as Partial<ReportBlock>), available: analysis.metrics } : null}
+              metrics={block.metrics}
+              labels={block.labels}
+              digits={block.digits}
+              columns={block.columns}
+              trend={block.trend ?? "none"}
+              trends={block.trends}
+              timeline={block.timeline}
+            />
           </>
         )}
 
@@ -956,43 +967,21 @@ function CuratedControls({ block, tables, onPatch }: { block: Extract<ReportBloc
   );
 }
 
-const MAX_KEY_FIGURES = 8;
-const DIGIT_CHOICES = ["auto", "0", "1", "2", "3", "4"] as const;
 type TrendChoice = "none" | "previous" | "history" | "timeline";
-const TREND_LABELS: Record<TrendChoice, string> = { none: "No trend", previous: "Change since the previous run", history: "Sparkline over the run history", timeline: "Along the table's timeline" };
-const TREND_SHORT: Record<TrendChoice, string> = { none: "none", previous: "previous run", history: "run history", timeline: "timeline" };
 
-/** The editor of a key figures block: which numbers, how they are named and rounded, and which trend each shows. */
+/** The block-level row of a key figures block: the analysis, the default trend, the layout, and the timeline offer. The cards edit themselves. */
 function RunMetricControls({ block, analyses, tables, onPatch }: { block: Extract<ReportBlock, { type: "run-metric" }>; analyses: ReportAnalysis[]; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
   const analysis = analyses.find((entry) => entry.analysisId === block.analysisId);
-  const keys = analysis ? Object.keys(analysis.metrics) : [];
-  const unused = keys.filter((key) => !block.metrics.includes(key));
   const source = analysisTimeline(analysis, tables);
   const patch = (next: Partial<Extract<ReportBlock, { type: "run-metric" }>>) => onPatch(next as Partial<ReportBlock>);
-  const setMetrics = (metrics: string[]) => {
-    if (metrics.length > 0) patch({ metrics });
-  };
-  const move = (index: number, direction: -1 | 1) => {
-    const target = index + direction;
-    if (target < 0 || target >= block.metrics.length) return;
-    const next = [...block.metrics];
-    [next[index], next[target]] = [next[target], next[index]];
-    setMetrics(next);
-  };
-  const setRecord = <T,>(field: "labels" | "digits" | "trends" | "timeline", key: string, value: T | undefined) => {
-    const record = { ...((block[field] as Record<string, T> | undefined) ?? {}) };
-    if (value === undefined) delete record[key];
-    else record[key] = value;
-    patch({ [field]: Object.keys(record).length > 0 ? record : undefined } as Partial<Extract<ReportBlock, { type: "run-metric" }>>);
-  };
   // Figures the timeline can count without further choice: those named after a role.
   const suggestible = source ? block.metrics.filter((key) => suggestMeasure(key, source.roles)) : [];
   const timelineUnused = source && suggestible.length > 0 && block.trend !== "timeline" && !suggestible.every((key) => block.trends?.[key] === "timeline");
   const trendChoices: TrendChoice[] = source ? ["none", "previous", "history", "timeline"] : ["none", "previous", "history"];
   return (
     <div className="mb-3 space-y-2 border-b pb-3">
-      <div className="grid gap-2 sm:grid-cols-3">
-        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="min-w-0 flex-1 space-y-1 text-[11px] text-muted-foreground">
           <span>Analysis</span>
           <Select value={block.analysisId} onValueChange={(analysisId) => { const target = analyses.find((entry) => entry.analysisId === analysisId); patch({ analysisId, metrics: Object.keys(target?.metrics ?? {}).filter((key) => typeof target?.metrics[key] === "number").slice(0, 4), labels: undefined, digits: undefined, trends: undefined, timeline: undefined }); }}>
             <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Analysis"><SelectValue placeholder="Choose an analysis" /></SelectTrigger>
@@ -1004,102 +993,43 @@ function RunMetricControls({ block, analyses, tables, onPatch }: { block: Extrac
           </Select>
         </label>
         <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
-          <span>Trend for every figure</span>
+          <span>Trend for all cards</span>
           <Select value={block.trend ?? "none"} onValueChange={(trend) => patch({ trend: trend as TrendChoice })}>
-            <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Trend"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-8 w-52 min-w-0 text-xs [&>span]:truncate" aria-label="Trend"><SelectValue /></SelectTrigger>
             <SelectContent>
               {trendChoices.map((mode) => <SelectItem key={mode} value={mode}>{TREND_LABELS[mode]}</SelectItem>)}
             </SelectContent>
           </Select>
         </label>
         <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
-          <span>Cards per row</span>
+          <span>Per row</span>
           <Select value={block.columns ? String(block.columns) : "auto"} onValueChange={(value) => patch({ columns: value === "auto" ? undefined : Number.parseInt(value, 10) })}>
-            <SelectTrigger className="h-8 w-full min-w-0 text-xs" aria-label="Cards per row"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-8 w-28 min-w-0 text-xs" aria-label="Cards per row"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">As many as fit</SelectItem>
+              <SelectItem value="auto">As fit</SelectItem>
               {[1, 2, 3, 4, 5, 6].map((count) => <SelectItem key={count} value={String(count)}>{count}</SelectItem>)}
             </SelectContent>
           </Select>
         </label>
       </div>
-      {source && (
-        <p className="text-[11px] text-muted-foreground">
-          {analysis?.name} reads <span className="font-medium text-foreground">{source.tableName}</span>, which has a timeline ({source.axis.label}s in <span className="font-mono">{source.axis.column}</span>).
-          {timelineUnused && (
-            <>
-              {" "}
-              <button type="button" className="underline hover:text-foreground" onClick={() => { const trends = { ...(block.trends ?? {}) }; for (const key of suggestible) trends[key] = "timeline"; patch({ trends }); }}>
-                Show {suggestible.map((key) => block.labels?.[key]?.trim() || metricLabel(key)).join(", ")} along it
-              </button>
-              .
-            </>
-          )}
-        </p>
-      )}
-      <ul className="space-y-1" aria-label="Key figures">
-        {block.metrics.map((key, index) => {
-          const value = analysis?.metrics[key];
-          const own = block.trends?.[key];
-          const effective = own ?? block.trend ?? "none";
-          const measure = source ? parseMeasure(block.timeline?.[key]) ?? suggestMeasure(key, source.roles) : null;
-          return (
-            <li key={key} className="space-y-1 rounded-md border px-2 py-1">
-              <div className="flex items-center gap-1.5">
-                <span className="w-28 shrink-0 truncate font-mono text-[11px] text-muted-foreground" title={key}>{key}</span>
-                <span className="w-16 shrink-0 truncate text-right text-xs tabular-nums" title={value === null || value === undefined ? "n/a" : String(value)}>{typeof value === "number" ? formatStat(value) : value === null || value === undefined ? "n/a" : formatCell(value)}</span>
-                <Input value={block.labels?.[key] ?? ""} placeholder={metricLabel(key)} onChange={(event) => setRecord("labels", key, event.target.value.trim() ? event.target.value : undefined)} className="h-7 min-w-0 flex-1 text-xs" aria-label={`Label for ${key}`} />
-                {typeof value === "number" && (
-                  <Select value={block.digits?.[key] === undefined ? "auto" : String(block.digits[key])} onValueChange={(choice) => setRecord("digits", key, choice === "auto" ? undefined : Number.parseInt(choice, 10))}>
-                    <SelectTrigger className="h-7 w-[4.5rem] shrink-0 text-[11px]" aria-label={`Decimals for ${key}`}><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {DIGIT_CHOICES.map((choice) => <SelectItem key={choice} value={choice}>{choice === "auto" ? "auto" : `${choice} dec.`}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                )}
-                <Select value={own ?? "default"} onValueChange={(choice) => setRecord("trends", key, choice === "default" ? undefined : (choice as TrendChoice))}>
-                  <SelectTrigger className="h-7 w-[7.5rem] shrink-0 text-[11px] [&>span]:truncate" aria-label={`Trend for ${key}`}><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="default">Block default ({TREND_SHORT[block.trend ?? "none"]})</SelectItem>
-                    {trendChoices.map((mode) => <SelectItem key={mode} value={mode}>{TREND_LABELS[mode]}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <button type="button" onClick={() => move(index, -1)} disabled={index === 0} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-30" aria-label={`Move ${key} up`}><ChevronUp className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => move(index, 1)} disabled={index === block.metrics.length - 1} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-30" aria-label={`Move ${key} down`}><ChevronDown className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => setMetrics(block.metrics.filter((entry) => entry !== key))} disabled={block.metrics.length === 1} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-destructive disabled:opacity-30" aria-label={`Remove ${key}`}><Trash2 className="h-3.5 w-3.5" /></button>
-              </div>
-              {effective === "timeline" && source && (
-                <div className="flex items-center gap-1.5 pl-1 text-[11px] text-muted-foreground">
-                  <span>Counts along the {source.axis.label}s:</span>
-                  <Select value={measure ? measureText(measure) : "none"} onValueChange={(choice) => setRecord("timeline", key, choice === "none" ? undefined : choice)}>
-                    <SelectTrigger className="h-7 w-56 text-[11px] [&>span]:truncate" aria-label={`Timeline measure for ${key}`}><SelectValue placeholder="Choose" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Nothing yet</SelectItem>
-                      <SelectItem value="count">Rows</SelectItem>
-                      {(["subject", "sample", "taxon", "group"] as const).filter((role) => source.roles[role]).map((role) => (
-                        <SelectItem key={role} value={`distinct:${source.roles[role]}`}>Distinct {ROLE_LABELS[role] ?? role} ({source.roles[role]})</SelectItem>
-                      ))}
-                      {source.roles.count && <SelectItem value={`sum:${source.roles.count}`}>Sum of {source.roles.count}</SelectItem>}
-                      {source.roles.value && <SelectItem value={`sum:${source.roles.value}`}>Sum of {source.roles.value}</SelectItem>}
-                    </SelectContent>
-                  </Select>
-                  {!block.timeline?.[key] && measure && <span>(suggested from the name)</span>}
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-      {unused.length > 0 && block.metrics.length < MAX_KEY_FIGURES ? (
-        <Select value="" onValueChange={(key) => setMetrics([...block.metrics, key])}>
-          <SelectTrigger className="h-8 w-56 text-xs" aria-label="Add a figure"><SelectValue placeholder="Add a figure" /></SelectTrigger>
-          <SelectContent>
-            {unused.map((key) => <SelectItem key={key} value={key}>{key}<span className="ml-1.5 text-xs text-muted-foreground">{typeof analysis?.metrics[key] === "number" ? formatStat(analysis.metrics[key] as number) : String(analysis?.metrics[key] ?? "")}</span></SelectItem>)}
-          </SelectContent>
-        </Select>
-      ) : (
-        <p className="text-[10px] text-muted-foreground">{block.metrics.length >= MAX_KEY_FIGURES ? `Up to ${MAX_KEY_FIGURES} figures.` : "Every number of this run is shown."}</p>
-      )}
+      <p className="text-[11px] text-muted-foreground">
+        {source ? (
+          <>
+            {analysis?.name} reads <span className="font-medium text-foreground">{source.tableName}</span>, which has a timeline ({source.axis.label}s in <span className="font-mono">{source.axis.column}</span>).
+            {timelineUnused && (
+              <>
+                {" "}
+                <button type="button" className="underline hover:text-foreground" onClick={() => { const trends = { ...(block.trends ?? {}) }; for (const key of suggestible) trends[key] = "timeline"; patch({ trends }); }}>
+                  Show {suggestible.map((key) => block.labels?.[key]?.trim() || metricLabel(key)).join(", ")} along it
+                </button>
+                .
+              </>
+            )}
+          </>
+        ) : (
+          "Type on a card to rename it; the button on each card sets its decimals, trend and order."
+        )}
+      </p>
     </div>
   );
 }
