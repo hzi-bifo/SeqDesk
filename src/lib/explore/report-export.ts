@@ -16,6 +16,7 @@ import { buildChart, computeStats, formatStat, WIDGET_ROW_LIMIT } from "./report
 import { getReportView, type ReportView, type ResolvedReportBlock } from "./reports";
 import { parseRoles, parseSchema } from "./schema";
 import { parseTargetKey } from "./target-key";
+import { buildVariables, resolveVariablesInMarkdown, type ReportVariables } from "./variables";
 import { resolveContainedPath } from "./storage";
 import type { ExploreColumn, ExploreRoleMap, ExploreRowData, ExploreRowRecord } from "./types";
 import { computeHeatmap } from "./views/heatmap/compute";
@@ -142,8 +143,9 @@ export function renderReportDocument(input: RenderInput): string {
     return `<div class="plot" id="${id}" style="height:${height}px"></div>`;
   };
   const tableOf = (datasetId: string) => input.tables.get(datasetId) ?? null;
+  const variables = buildVariables(report.outputs.analyses);
 
-  const sections = report.blocks.map((block) => renderBlock(block, { input, filters, active, addPlot, tableOf }));
+  const sections = report.blocks.map((block) => renderBlock(block, { input, filters, active, addPlot, tableOf, variables }));
   const headings = report.blocks.flatMap((block) =>
     block.type === "text"
       ? block.markdown
@@ -196,6 +198,7 @@ interface BlockContext {
   active: ActiveFilters;
   addPlot: (data: unknown[], layout: Record<string, unknown>, height: number) => string;
   tableOf: (datasetId: string) => ExportTable | null;
+  variables: ReportVariables;
 }
 
 function section(block: ResolvedReportBlock, title: string | null, body: string, footer?: string): string {
@@ -207,7 +210,7 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
   const { input, filters, active, addPlot, tableOf } = context;
   switch (block.type) {
     case "text": {
-      const html = renderMarkdownHtml(block.markdown).replace(/<h2>/, `<h2 id="block-${escapeHtml(block.id)}">`);
+      const html = renderMarkdownHtml(resolveVariablesInMarkdown(block.markdown, context.variables)).replace(/<h2>/, `<h2 id="block-${escapeHtml(block.id)}">`);
       return `<section class="block span-${block.span ?? 2} prose">${html}</section>`;
     }
     case "figure": {

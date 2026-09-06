@@ -94,6 +94,7 @@ import { DATASET_KIND_DEFINITIONS, TABLE_KIND_DEFINITIONS, datasetFitsInput } fr
 import { figureBlockId, tableBlockId, viewBlockId, type ReportBlock } from "@/lib/explore/report-blocks";
 import type { ReportView } from "@/lib/explore/reports";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
+import { formatVariableValue } from "@/lib/explore/variables";
 import type { ExploreRole, ExploreRowRecord } from "@/lib/explore/types";
 
 /** A kit as the kits API lists it; enough to tell whether a table fits its first input. */
@@ -704,7 +705,12 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
     .filter(([, value]) => value !== null && value !== undefined && value !== "" && typeof value !== "object")
     .slice(0, 4)
     .map(([key, value]) => `${key} ${String(value)}`);
-  const descriptionLines = Math.max(1, Math.floor(((height ?? CANVAS_SIZES.analysis.height) - reserved - (data.inputNames.length ? 16 : 0) - (paramSummary.length ? 20 : 0)) / 16));
+  const defined = Object.entries(data.metrics ?? {})
+    .filter(([, value]) => typeof value === "number")
+    .slice(0, 4)
+    .map(([key, value]) => `${key} ${formatVariableValue(value as number)}`);
+  const definedCount = Object.keys(data.metrics ?? {}).length;
+  const descriptionLines = Math.max(1, Math.floor(((height ?? CANVAS_SIZES.analysis.height) - reserved - (data.inputNames.length ? 16 : 0) - (paramSummary.length ? 20 : 0) - (defined.length ? 16 : 0)) / 16));
   const run = async () => {
     setStarting(true);
     try {
@@ -770,6 +776,12 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
           {paramSummary.length > 0 && (
             <p className="mt-1 truncate text-muted-foreground" title={paramSummary.join(", ")}>
               <span className="font-medium text-foreground">With</span> {paramSummary.join(", ")}
+            </p>
+          )}
+          {defined.length > 0 && (
+            <p className="truncate text-muted-foreground" title={`Variables this step recorded with its latest run (${definedCount}); cite them in the page as \`r step.name\``}>
+              <span className="font-medium text-foreground">Defines</span> {defined.join(", ")}
+              {definedCount > defined.length ? ` +${definedCount - defined.length}` : ""}
             </p>
           )}
         </div>

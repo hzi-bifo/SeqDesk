@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import useSWR from "swr";
-import { ArrowDown, ArrowUp, Check, Copy, ExternalLink, Globe, LayoutGrid, Loader2, Plus, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Undo2, Unlink } from "lucide-react";
-import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore";
+import { ArrowDown, ArrowUp, Check, Copy, ExternalLink, Globe, LayoutGrid, Loader2, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Undo2, Unlink } from "lucide-react";
+import type { StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
-import { RichTextEditor } from "@/components/explore/RichTextEditor";
+import { insertIntoActiveEditor, RichTextEditor } from "@/components/explore/RichTextEditor";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { CuratedOrganismsView, FilterBar, filtersApply, RunMetricView, SubjectView, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
 import { HeatmapView, type HeatmapOptions } from "@/components/explore/views/HeatmapView";
@@ -26,6 +27,7 @@ import type { ActiveFilters } from "@/lib/explore/frame";
 import type { ReportFilter } from "@/lib/explore/report-blocks";
 import type { ReportAnalysis, ReportBlock, ReportFigure, ReportInput, ReportShare, ReportTable, ReportTableContent, ReportView, ResolvedReportBlock } from "@/lib/explore/reports";
 import type { ExploreColumn } from "@/lib/explore/types";
+import { buildVariables, formatVariableValue, variableReference, type ReportVariables, type VariableStep } from "@/lib/explore/variables";
 
 interface ExploreReportProps {
   reportId: string;
@@ -36,6 +38,10 @@ interface ExploreReportProps {
   onDone: () => void;
   /** Switch to the canvas, where outputs are made. */
   onOpenCanvas: () => void;
+  /** The right sidebar's body while editing; the panel with figures, tables and variables renders into it. */
+  panelContainer?: HTMLElement | null;
+  /** A slot in the page's top bar; Undo and the save state render into it while editing. */
+  actionsContainer?: HTMLElement | null;
 }
 
 type ReportResponse = { report: ReportView };
@@ -95,7 +101,7 @@ function tableBlockOf(table: ReportTable): ReportBlock {
  * together with text. Read-only for viewers; editors arrange blocks, write
  * Markdown and pick which figures and tables to show.
  */
-export function ExploreReport({ reportId, scope, canEdit, editing: editRequested, onOpenCanvas }: ExploreReportProps) {
+export function ExploreReport({ reportId, scope, canEdit, editing: editRequested, onOpenCanvas, panelContainer = null, actionsContainer = null }: ExploreReportProps) {
   const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
   const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
   const { data, error, isLoading, mutate } = useSWR<ReportResponse>(key, fetcher, { refreshInterval: 15000 });
@@ -106,11 +112,11 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const [dirty, setDirty] = useState(false);
   const savedRef = useRef<string | null>(null);
   const savedInputRef = useRef<ReportInput | null>(null);
-  const [storeOpen, setStoreOpen] = useState(false);
   const [active, setActive] = useState<ActiveFilters>({});
   const report = data?.report;
 
   const editingNow = editRequested && canEdit;
+  const variables = useMemo(() => buildVariables(data?.report?.outputs.analyses ?? []), [data]);
 
   // Save a moment after the last change while editing.
   useEffect(() => {
@@ -310,10 +316,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           title: "New analysis",
           hint: "On the canvas: pick a table, choose a template, run; its figures land here",
           sketch: "analysis" as const,
-          onSelect: () => {
-            setStoreOpen(false);
-            onOpenCanvas();
-          },
+          onSelect: () => onOpenCanvas(),
         },
         ...report.outputs.figures.map((figure) => {
         const used = usedFigures.has(figureKey(figure.analysisId, figure.figureName));
@@ -339,10 +342,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           title: "New table",
           hint: "On the canvas: bring one in from samples, sequencing, a pipeline or a file, or let an analysis write one",
           sketch: "import" as const,
-          onSelect: () => {
-            setStoreOpen(false);
-            onOpenCanvas();
-          },
+          onSelect: () => onOpenCanvas(),
         },
         ...report.outputs.tables.map((table) => {
         const used = usedTables.has(table.datasetId);
@@ -373,14 +373,28 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
 
   return (
     <div className="mt-6">
+      <div className="min-w-0">
+      {editing && actionsContainer && createPortal(
+        <>
+          <span className="min-w-14 text-right text-xs text-muted-foreground" aria-live="polite">
+            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : ""}
+          </span>
+          <Button variant="ghost" size="sm" className="h-8" onClick={undo} disabled={history.length === 0 && !dirty} title="Take back the last change">
+            <Undo2 className="h-3.5 w-3.5 lg:mr-1.5" />
+            <span className="hidden lg:inline">Undo</span>
+          </Button>
+        </>,
+        actionsContainer
+      )}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           {editing ? (
-            <Input
+            <input
               value={working?.title ?? report.title}
               onChange={(event) => patchDraft((current) => ({ ...current, title: event.target.value }))}
-              className="max-w-xl text-lg font-semibold"
+              className="-mx-2 w-full max-w-2xl rounded-md border border-transparent bg-transparent px-2 py-0.5 text-2xl font-semibold tracking-tight outline-none hover:border-border focus:border-border focus:bg-background"
               aria-label="Report title"
+              placeholder="Untitled report"
             />
           ) : (
             <h2 className="text-2xl font-semibold tracking-tight">{report.title}</h2>
@@ -388,32 +402,10 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           <p className="mt-1 text-sm text-muted-foreground">
             {report.draft
               ? "A draft assembled from every output of this report; nothing is saved until you edit the page."
-              : `Saved report, last changed ${formatDateTime(report.updatedAt)}.`}{" "}
-            Figures and tables follow the latest run of their analysis.
+              : `Last changed ${formatDateTime(report.updatedAt)}`}
           </p>
         </div>
-        {editing ? (
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setStoreOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Add block
-              </Button>
-              <ElementStore
-                open={storeOpen}
-                onOpenChange={setStoreOpen}
-                title="Add to the report"
-                description="Build a block from a table, or place a figure or table an analysis produced."
-                groups={storeGroups}
-              />
-              <Button variant="outline" size="sm" onClick={undo} disabled={history.length === 0 && !dirty} title="Take back the last change">
-                <Undo2 className="mr-2 h-4 w-4" />
-                Undo
-              </Button>
-              <span className="min-w-16 text-xs text-muted-foreground" aria-live="polite">
-                {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : ""}
-              </span>
-            </div>
-          ) : (
+        {!editing && (
             <div className="flex items-center gap-2">
               {canEdit && !report.draft && (
                 <Button variant="ghost" size="sm" onClick={() => void reset()} title="Forget the saved page and start again from the current outputs">
@@ -465,6 +457,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
               onRemove={() => removeBlock(block.id)}
               scopeQuery={scopeQuery} reportId={reportId}
               scope={scope}
+              variables={variables}
               tables={report.outputs.tables}
               analyses={report.outputs.analyses}
               analysis={block.type === "run-metric" ? (analysisById.get(block.analysisId) ?? null) : null}
@@ -473,10 +466,114 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
             />
           ))}
           {editing && blocks.length === 0 && (
-            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground md:col-span-2">The page is empty. Add a text block, a figure or a table.</div>
+            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground md:col-span-2">The page is empty. Add a text block, a figure or a table from the panel.</div>
           )}
         </div>
       )}
+      </div>
+      {editing && panelContainer && createPortal(<ReportSidePanel groups={storeGroups} variables={variables} />, panelContainer)}
+    </div>
+  );
+}
+
+/**
+ * What the canvas offers the page, always in view while editing: blocks to
+ * build, the figures, tables and views of the analysis steps, and the numbers
+ * the steps recorded, ready to be cited in the text.
+ */
+function ReportSidePanel({ groups, variables }: { groups: StoreGroup[]; variables: ReportVariables }) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const matches = (text: string) => !needle || text.toLowerCase().includes(needle);
+  const insertVariable = async (step: VariableStep, metric: string) => {
+    const reference = variableReference(step, metric);
+    if (insertIntoActiveEditor(reference)) return;
+    try {
+      await navigator.clipboard.writeText(reference);
+      toast.info(`${reference} copied; click into a text block and paste it`);
+    } catch {
+      toast.info(`Write ${reference} in a text block to show this value`);
+    }
+  };
+  const stepsWithNumbers = variables.steps.filter((step) => Object.keys(step.metrics).length > 0);
+  return (
+    <div className="space-y-4 p-3 text-sm">
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a figure, table or variable" className="h-8 text-xs" aria-label="Find in the panel" />
+      {groups.map((group) => {
+        const items = group.items.filter((item) => matches(`${item.title} ${item.hint ?? ""}`));
+        if (items.length === 0 && (needle || !group.empty)) return null;
+        return (
+          <section key={group.label}>
+            <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h3>
+            {items.length === 0 ? (
+              <p className="text-xs text-muted-foreground">{group.empty}</p>
+            ) : (
+              <ul className="space-y-0.5">
+                {items.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={item.onSelect}
+                      disabled={item.disabled}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-secondary disabled:cursor-default disabled:opacity-50"
+                      title={item.hint}
+                    >
+                      {item.image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={item.image} alt="" className="h-8 w-10 shrink-0 rounded border object-cover" />
+                      ) : (
+                        <span className="h-8 w-10 shrink-0 rounded border bg-muted/40" aria-hidden />
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-medium">{item.title}</span>
+                        {item.hint && <span className="block truncate text-[11px] text-muted-foreground">{item.hint}</span>}
+                      </span>
+                      {item.badge && <span className="shrink-0 rounded-full border px-1.5 text-[10px] text-muted-foreground">{item.badge}</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        );
+      })}
+      <section>
+        <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Variables</h3>
+        {stepsWithNumbers.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Steps record numbers with their runs; they appear here once a step has run.</p>
+        ) : (
+          <div className="space-y-2">
+            {stepsWithNumbers.map((step) => {
+              const entries = Object.entries(step.metrics).filter(([key]) => matches(`${step.slug}.${key} ${step.name}`));
+              if (entries.length === 0) return null;
+              return (
+                <div key={step.slug}>
+                  <p className="truncate px-2 text-[11px] text-muted-foreground" title={`${step.name}${step.runNumber ? `, ${step.runNumber}` : ""}`}>
+                    <span className="font-medium text-foreground">{step.name}</span>
+                    {step.runNumber ? ` ${step.runNumber}` : ""}
+                  </p>
+                  <ul>
+                    {entries.map(([key, value]) => (
+                      <li key={key}>
+                        <button
+                          type="button"
+                          onClick={() => void insertVariable(step, key)}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-0.5 text-left font-mono text-[11px] hover:bg-secondary"
+                          title={`Insert \`r ${step.slug}.${key}\` into the text block you are writing in`}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{key}</span>
+                          <span className="shrink-0 tabular-nums text-muted-foreground">{formatVariableValue(value)}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <p className="mt-2 px-2 text-[11px] text-muted-foreground">Cite a value in text as `r step.name`; add `| 2` for two decimals. Values follow the latest run.</p>
+      </section>
     </div>
   );
 }
@@ -501,11 +598,12 @@ interface ReportBlockCardProps {
   active: ActiveFilters;
   /** The scope, for blocks that read scope-level data such as the curation lists. */
   scope: string;
+  variables: ReportVariables;
 }
 
 const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Run numbers" };
 
-function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope }: ReportBlockCardProps) {
+function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope, variables }: ReportBlockCardProps) {
   const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
   const label = BLOCK_LABELS[block.type];
   const blockTable = "datasetId" in block ? (tables.find((table) => table.datasetId === block.datasetId) ?? null) : null;
@@ -546,7 +644,7 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
       <div className="p-4">
         {block.type === "text" &&
           (block.markdown.trim() ? (
-            <Markdown>{block.markdown}</Markdown>
+            <Markdown variables={variables} variableLinks={{ reportId, scopeQuery }}>{block.markdown}</Markdown>
           ) : (
             <p className="text-sm text-muted-foreground">Empty text block.</p>
           ))}

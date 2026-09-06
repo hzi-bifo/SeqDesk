@@ -1,12 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
 import { Bold, Code, FileCode2, Heading2, Heading3, Italic, Link2, List, ListOrdered, Quote } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+
+/** The text block that had focus last, so the side panel can insert into it. */
+let activeEditor: Editor | null = null;
+
+/** Insert Markdown where the writer last was; false when no text block has had focus. */
+export function insertIntoActiveEditor(markdown: string): boolean {
+  if (!activeEditor || activeEditor.isDestroyed) return false;
+  activeEditor.chain().focus().insertContent(markdown, { contentType: "markdown" }).run();
+  return true;
+}
 
 interface RichTextEditorProps {
   /** Markdown, the format the report stores. */
@@ -40,6 +50,12 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
       const markdown = current.getMarkdown();
       lastEmitted.current = markdown;
       onChangeRef.current(markdown);
+    },
+    onFocus: ({ editor: current }) => {
+      activeEditor = current;
+    },
+    onDestroy: () => {
+      if (activeEditor?.isDestroyed) activeEditor = null;
     },
   });
 

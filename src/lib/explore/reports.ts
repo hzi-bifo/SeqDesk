@@ -64,6 +64,12 @@ export interface ReportAnalysis {
   name: string;
   runNumber: string | null;
   metrics: Record<string, string | number | boolean | null>;
+  /** Where the numbers come from: template, run, tables read and parameters used. */
+  kitId?: string | null;
+  runId?: string | null;
+  completedAt?: string | null;
+  inputs?: Array<{ alias: string; datasetId: string; name: string }>;
+  params?: Record<string, unknown>;
 }
 
 /** What a chart or numbers block needs to know about its table; the rows come from the rows API. */
@@ -136,11 +142,22 @@ export class ExploreReportError extends Error {
 export async function collectReportOutputs(targetKey: string, reportId: string | null = null): Promise<ReportOutputs> {
   const graph = await loadCanvasGraph(targetKey, reportId);
   const analysisNames = new Map<string, string>();
+  const datasetNames = new Map(graph.nodes.flatMap((node) => (node.data.kind === "dataset" ? [[node.data.datasetId, node.data.name] as const] : [])));
   const analyses: ReportAnalysis[] = [];
   for (const node of graph.nodes) {
     if (node.data.kind !== "analysis") continue;
     analysisNames.set(node.data.analysisId, node.data.name);
-    analyses.push({ analysisId: node.data.analysisId, name: node.data.name, runNumber: node.data.metricsRunNumber ?? null, metrics: node.data.metrics ?? {} });
+    analyses.push({
+      analysisId: node.data.analysisId,
+      name: node.data.name,
+      runNumber: node.data.metricsRunNumber ?? null,
+      metrics: node.data.metrics ?? {},
+      kitId: node.data.kitId,
+      runId: node.data.metricsRunId ?? null,
+      completedAt: node.data.metricsCompletedAt ?? null,
+      inputs: (node.data.inputs ?? []).map((binding) => ({ alias: binding.alias, datasetId: binding.datasetId, name: datasetNames.get(binding.datasetId) ?? binding.alias })),
+      params: node.data.params ?? {},
+    });
   }
   const figures: ReportFigure[] = [];
   const tables: ReportTable[] = [];

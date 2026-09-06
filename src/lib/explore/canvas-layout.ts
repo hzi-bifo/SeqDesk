@@ -85,6 +85,8 @@ export type CanvasAnalysisData = {
   /** Numbers the latest finished run recorded (sx.metric), for summary cards. */
   metrics?: Record<string, string | number | boolean | null>;
   metricsRunNumber?: string;
+  metricsRunId?: string;
+  metricsCompletedAt?: string | null;
 }
 
 export type CanvasFigureData = {

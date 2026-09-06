@@ -256,6 +256,8 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         active: latest ? ACTIVE_RUN.has(latest.status) : false,
         metrics: runMetrics(completedByAnalysis.get(analysis.id)?.[0]?.results),
         metricsRunNumber: completedByAnalysis.get(analysis.id)?.[0]?.runNumber,
+        metricsRunId: completedByAnalysis.get(analysis.id)?.[0]?.id,
+        metricsCompletedAt: completedByAnalysis.get(analysis.id)?.[0]?.completedAt?.toISOString() ?? null,
         params: parseJsonObject(revision?.params) ?? {},
         paramsSchema: ((analysis.kitId ? kits.get(analysis.kitId)?.manifest.params : null) ?? null) as CanvasParamsSchema | null,
         inputs: parseInputBindings(revision?.inputs).map((binding) => ({ alias: binding.alias, datasetId: binding.datasetId })),
