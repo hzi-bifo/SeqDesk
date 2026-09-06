@@ -48,7 +48,7 @@ function ReportScreen() {
   const [actionsEl, setActionsEl] = useState<HTMLElement | null>(null);
 
   const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
-  const { data, error, mutate } = useSWR<{ report: ReportView }>(key, fetcher);
+  const { data, error } = useSWR<{ report: ReportView }>(key, fetcher);
   const { data: scopesData } = useSWR<{ scopes: ExploreScope[] }>("/api/explore/scopes", fetcher);
   const report = data?.report ?? null;
   const scope = report?.targetKey ?? (requestedScope || null);
@@ -101,26 +101,20 @@ function ReportScreen() {
   const done = () => go({ mode: "report" });
 
   return (
-    <div className="flex items-start">
-    <PageContainer className="min-w-0 flex-1 pt-3 md:pt-3">
+    <div className="flex items-start overflow-x-clip">
+    <PageContainer className="min-w-0 flex-1 overflow-x-clip pt-3 md:pt-3">
       {/* One slim bar: where you are, how you look at it, and the actions. The title lives in the document below. */}
       <div className="flex h-9 items-center gap-2">
-        <nav className="flex min-w-0 items-center gap-1.5 text-sm" aria-label="Breadcrumb">
+        <nav className="flex min-w-24 shrink items-center gap-1.5 overflow-hidden text-sm" aria-label="Breadcrumb">
           <Link href={`/explore${scopeQuery}`} className="inline-flex shrink-0 items-center gap-1.5 font-medium text-muted-foreground hover:text-foreground">
             <NotebookText className="h-4 w-4" />
             Reports
           </Link>
           {activeScope && (
-            <>
+            <span className="hidden shrink-0 items-center gap-1.5 xl:flex">
               <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="truncate font-medium text-muted-foreground" title={activeScope.label}>{activeScope.label}</span>
-            </>
-          )}
-          {mode === "edit" && (
-            <>
-              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="shrink-0 font-medium">Editing</span>
-            </>
+              <span className="max-w-56 truncate font-medium text-muted-foreground" title={activeScope.label}>{activeScope.label}</span>
+            </span>
           )}
         </nav>
         <span className="flex-1" />
@@ -163,10 +157,12 @@ function ReportScreen() {
             </Button>
           </>
         )}
+        {(mode === "report" || view === "page") && (
+          /* Filled by the page: Undo and the save state while editing, Start over and Share otherwise. */
+          <div ref={setActionsEl} className="flex items-center gap-1" />
+        )}
         {mode === "edit" && view === "page" && canEdit && (
           <>
-            {/* Undo and the save state come from the page editor. */}
-            <div ref={setActionsEl} className="flex items-center gap-1" />
             <Button variant="ghost" size="sm" className="h-8 w-8 px-0" onClick={() => setPanelPref(panelPref === "shown" ? "hidden" : "shown")} aria-pressed={panelPref === "shown"} aria-label={panelPref === "shown" ? "Hide the panel" : "Show the panel"} title="Show or hide the panel with figures, tables and variables">
               <PanelRight className="h-4 w-4" />
             </Button>
@@ -204,7 +200,7 @@ function ReportScreen() {
         </Popover>
       </div>
 
-      {mode === "report" && <ExploreReport reportId={reportId} scope={scopeKey} canEdit={canEdit} editing={false} onDone={done} onOpenCanvas={openCanvas} />}
+      {mode === "report" && <ExploreReport reportId={reportId} scope={scopeKey} canEdit={canEdit} editing={false} onDone={done} onOpenCanvas={openCanvas} actionsContainer={actionsEl} />}
       {mode === "edit" && view === "page" && (
         <ExploreReport reportId={reportId} scope={scopeKey} canEdit={canEdit} editing={canEdit} onDone={done} onOpenCanvas={openCanvas} panelContainer={panelOpen ? panelEl : null} actionsContainer={actionsEl} />
       )}

@@ -131,7 +131,7 @@ export function CuratedLegend({ taxa }: { taxa: Array<{ curated?: HeatmapCurated
     <span className="ml-1">
       Marked:{" "}
       {[...lists.values()].map((entry, index) => (
-        <span key={entry.label} className="whitespace-nowrap">
+        <span key={entry.label}>
           {index > 0 ? ", " : ""}
           <span style={{ color: entry.color ?? undefined }}>●</span> {entry.label} ({entry.count})
         </span>

@@ -178,7 +178,7 @@ export function renderReportDocument(input: RenderInput): string {
   <h1>${escapeHtml(report.title)}</h1>
   <p class="meta">Exported from SeqDesk on ${escapeHtml(input.generatedAt.toISOString().slice(0, 16).replace("T", " "))} UTC${report.updatedAt ? `; page last changed ${escapeHtml(report.updatedAt.slice(0, 10))}` : ""}. Figures and tables show the latest run of their analysis at export time.</p>
   ${activeFilters.length ? `<p class="filters">Filtered: ${escapeHtml(activeFilters.join("; "))}</p>` : ""}
-  ${headings.length > 1 ? `<nav class="toc">${headings.map((heading) => `<a href="#${escapeHtml(heading.id)}">${escapeHtml(heading.title)}</a>`).join("")}</nav>` : ""}
+  ${headings.length > 1 ? `<nav class="toc"><p class="toc-title">Contents</p><ol>${headings.map((heading) => `<li><a href="#${escapeHtml(heading.id)}">${escapeHtml(heading.title)}</a></li>`).join("")}</ol></nav>` : ""}
 </header>
 <main class="grid">
 ${sections.join("\n")}
@@ -631,7 +631,11 @@ header{padding-top:36px}
 h1{margin:6px 0 4px;font-size:28px;line-height:1.2;letter-spacing:-.01em}
 .meta,.filters{margin:4px 0;color:var(--muted);font-size:13px}
 .filters{color:var(--accent)}
-.toc{display:flex;flex-wrap:wrap;gap:6px 16px;margin:14px 0 0;font-size:13px}
+.toc{margin:16px 0 0;padding:10px 16px;border:1px solid var(--line);border-radius:8px;background:var(--soft);font-size:13px}
+.toc-title{margin:0 0 4px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.toc ol{margin:0;padding-left:1.4em;columns:2;column-gap:32px}
+@media (max-width:640px){.toc ol{columns:1}}
+.toc li{padding:2px 0;break-inside:avoid}
 .toc a{color:var(--accent);text-decoration:none}
 .toc a:hover{text-decoration:underline}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding-top:20px;padding-bottom:40px}

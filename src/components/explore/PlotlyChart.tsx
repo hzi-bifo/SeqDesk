@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, type ComponentType } from "react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 type PlotProps = {
   data: unknown[];
@@ -47,6 +48,27 @@ const CONFIG = { displaylogo: false, responsive: true, toImageButtonOptions: { f
 export function PlotlyChart({ data, layout, height = 360, onClick, className, staticPlot = false }: PlotlyChartProps) {
   const [Plot, setPlot] = useState<ComponentType<PlotProps> | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+
+  // Plotly listens to the window only; when the column changes width (a
+  // sidebar opens, a block changes span) the frame tells it to fit again.
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || typeof ResizeObserver === "undefined") return;
+    let last = frame.clientWidth;
+    let pending = 0;
+    const observer = new ResizeObserver(() => {
+      if (frame.clientWidth === last) return;
+      last = frame.clientWidth;
+      cancelAnimationFrame(pending);
+      pending = requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+    });
+    observer.observe(frame);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(pending);
+    };
+  }, [Plot]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,7 +87,7 @@ export function PlotlyChart({ data, layout, height = 360, onClick, className, st
   if (failed) return <p className="text-sm text-destructive">{failed}</p>;
   if (!Plot) return <Skeleton className={className} style={{ height }} />;
   return (
-    <div className={className}>
+    <div ref={frameRef} className={cn("min-w-0 overflow-hidden", className)}>
       <Plot
         data={data}
         layout={{ ...BASE_LAYOUT, ...layout, height, autosize: true }}

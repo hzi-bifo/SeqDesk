@@ -422,12 +422,16 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
       <FilterBar filters={filters} tables={report.outputs.tables} active={active} onActiveChange={setActive} editing={editing} onFiltersChange={editing ? setFilters : undefined} />
 
       {!editing && headings.length > 1 && (
-        <nav className="mt-4 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground" aria-label="Contents">
-          {headings.map((heading) => (
-            <a key={heading.id} href={`#${heading.id}`} className="hover:text-foreground hover:underline">
-              {heading.title}
-            </a>
-          ))}
+        <nav className="mt-5 rounded-lg border bg-muted/20 px-4 py-3" aria-label="Contents">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Contents</p>
+          <ol className="mt-1.5 columns-1 gap-x-8 text-sm sm:columns-2 lg:columns-3">
+            {headings.map((heading, index) => (
+              <li key={heading.id} className="flex gap-2 break-inside-avoid py-0.5">
+                <span className="w-5 shrink-0 text-right tabular-nums text-muted-foreground">{index + 1}.</span>
+                <a href={`#${heading.id}`} className="min-w-0 truncate hover:underline">{heading.title}</a>
+              </li>
+            ))}
+          </ol>
         </nav>
       )}
 
