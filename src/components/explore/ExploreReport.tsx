@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import useSWR from "swr";
-import { ArrowDown, ArrowUp, Check, Copy, Download, ExternalLink, Globe, LayoutGrid, Loader2, RectangleHorizontal, Share2, Square, Trash2, Undo2, Unlink } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, Copy, Download, ExternalLink, Globe, LayoutGrid, Loader2, RectangleHorizontal, Share2, Square, Trash2, Undo2, Unlink } from "lucide-react";
 import { Sketch, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { insertIntoActiveEditor, RichTextEditor } from "@/components/explore/RichTextEditor";
@@ -1136,20 +1136,35 @@ function TableControls({ block, tables, onPatch }: { block: TableBlock; tables: 
   const columns = table?.columns ?? [];
   const patch = (values: Partial<TableBlock>) => onPatch(values as Partial<ReportBlock>);
   const [filterDraft, setFilterDraft] = useState(block.filter ?? "");
+  const [open, setOpen] = useState(false);
   const problem = rowFilterProblem(filterDraft, columns.map((column) => column.key));
   const chosen = block.columns && block.columns.length > 0 ? block.columns : null;
+  const summary = [
+    `${block.rows ?? 12} rows`,
+    chosen ? `${chosen.length} of ${columns.length} columns` : "all columns",
+    block.sort ? `by ${columns.find((column) => column.key === block.sort?.column)?.label ?? block.sort.column} ${block.sort.direction === "asc" ? "↑" : "↓"}` : null,
+    block.filter ? `filter: ${block.filter}` : null,
+    [block.search && "search", block.sortable && "sort", block.download && "CSV"].filter(Boolean).length ? `readers: ${[block.search && "search", block.sortable && "sort", block.download && "CSV"].filter(Boolean).join(", ")}` : null,
+  ].filter(Boolean);
   const toggleColumn = (key: string) => {
     const current = chosen ?? columns.map((column) => column.key);
     const next = current.includes(key) ? current.filter((entry) => entry !== key) : [...columns.map((column) => column.key).filter((entry) => current.includes(entry) || entry === key)];
     patch({ columns: next.length === columns.length ? undefined : next });
   };
   return (
-    <div className="mb-3 space-y-2 border-b pb-3">
-      <div className="grid gap-2 sm:grid-cols-3">
-        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
-          <span>Table</span>
-          <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => patch({ datasetId, columns: undefined, sort: undefined, filter: undefined })} />
-        </label>
+    <div className="mb-3 border-b pb-3">
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+        <div className="min-w-0 flex-1 sm:max-w-xs">
+          <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => { setFilterDraft(""); patch({ datasetId, columns: undefined, sort: undefined, filter: undefined }); }} />
+        </div>
+        <span className="min-w-0 flex-1 truncate" title={summary.join(" · ")}>{summary.join(" · ")}</span>
+        <button type="button" onClick={() => setOpen((value) => !value)} className={cn("inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 hover:bg-secondary hover:text-foreground", open && "bg-secondary text-foreground")} aria-expanded={open}>
+          Options {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        </button>
+      </div>
+      {open && (
+      <div className="mt-2 space-y-2">
+      <div className="grid gap-2 sm:grid-cols-2">
         <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
           <span>Sort by</span>
           <div className="flex gap-1">
@@ -1206,6 +1221,8 @@ function TableControls({ block, tables, onPatch }: { block: TableBlock; tables: 
           </label>
         ))}
       </div>
+      </div>
+      )}
     </div>
   );
 }
