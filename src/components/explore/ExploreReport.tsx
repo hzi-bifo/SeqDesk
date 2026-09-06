@@ -243,18 +243,18 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
       label: "Build from a table",
       items: [
         { id: "text", title: "Text", hint: "Headings, paragraphs and lists in Markdown", sketch: "text", onSelect: () => addBlock({ id: newBlockId("text"), type: "text", markdown: "" }) },
-        { id: "histogram", title: "Histogram", hint: "How the values of a numeric column spread", sketch: "histogram", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "histogram" } as ReportBlock) },
-        { id: "bar", title: "Bar chart", hint: "How many rows have each value", sketch: "bar", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "bar" } as ReportBlock) },
-        { id: "scatter", title: "Dot plot", hint: "Two numeric columns against each other", sketch: "scatter", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "scatter" } as ReportBlock) },
-        { id: "box", title: "Box plot", hint: "A numeric column per group", sketch: "box", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "box" } as ReportBlock) },
         {
           id: "run-metric",
-          title: "Key figures",
-          hint: "Numbers as cards: from an analysis run or a table column, with units, targets and trends",
+          title: "Dashboard numbers",
+          hint: "Numbers as cards, from an analysis run or a table column, with units and trends",
           sketch: "numbers",
           disabled: !report.outputs.analyses.some((analysis) => Object.keys(analysis.metrics).length > 0) && !report.outputs.tables.some((table) => table.columns.some((column) => column.type === "number")),
           onSelect: () => addBlock(defaultKeyFiguresBlock(report.outputs.analyses, report.outputs.tables)),
         },
+        { id: "histogram", title: "Histogram", hint: "How the values of a numeric column spread", sketch: "histogram", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "histogram" } as ReportBlock) },
+        { id: "bar", title: "Bar chart", hint: "How many rows have each value", sketch: "bar", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "bar" } as ReportBlock) },
+        { id: "scatter", title: "Dot plot", hint: "Two numeric columns against each other", sketch: "scatter", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "scatter" } as ReportBlock) },
+        { id: "box", title: "Box plot", hint: "A numeric column per group", sketch: "box", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "box" } as ReportBlock) },
         {
           id: "taxon-explorer",
           title: "Taxon explorer",
@@ -595,7 +595,7 @@ interface ReportBlockCardProps {
   variables: ReportVariables;
 }
 
-const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Key figures" };
+const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Dashboard numbers" };
 
 function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope, variables }: ReportBlockCardProps) {
   const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
@@ -729,7 +729,7 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
 
         {block.type === "run-metric" && (
           <>
-            <Caption editing={editing} value={block.label ?? ""} fallback={analysis ? `${analysis.name}: key figures` : "Key figures"} onChange={(label) => onPatch({ label } as Partial<ReportBlock>)} />
+            <Caption editing={editing} value={block.label ?? ""} fallback={analysis ? `${analysis.name} in numbers` : "Dashboard numbers"} onChange={(label) => onPatch({ label } as Partial<ReportBlock>)} />
             {editing && <RunMetricControls block={block} analyses={analyses} tables={tables} onPatch={onPatch} />}
             <RunMetricView
               analysis={analysis}
@@ -898,7 +898,7 @@ function defaultChartBlock(tables: ReportTable[]): ReportBlock {
   return { id: newBlockId("chart"), type: "chart", datasetId: table?.datasetId ?? "", chart: numeric.length > 0 ? "histogram" : "bar", x, span: 1 };
 }
 
-/** A key figures block: the first analysis with numbers, else the row count of the first table. */
+/** A dashboard numbers block: the first analysis with numbers, else the row count of the first table. */
 function defaultKeyFiguresBlock(analyses: ReportAnalysis[], tables: ReportTable[]): ReportBlock {
   const analysis = analyses.find((entry) => Object.keys(entry.metrics).length > 0);
   if (analysis) return { id: newBlockId("run-metric"), type: "run-metric", analysisId: analysis.analysisId, metrics: Object.keys(analysis.metrics).filter((key) => typeof analysis.metrics[key] === "number").slice(0, 4), span: 2 };
@@ -973,7 +973,7 @@ function CuratedControls({ block, tables, onPatch }: { block: Extract<ReportBloc
 
 type TrendChoice = "none" | "previous" | "history" | "timeline";
 
-/** The block-level row of a key figures block: the analysis, the default trend, the layout, and the timeline offer. The cards edit themselves. */
+/** The block-level row of a dashboard numbers block: the analysis, the default trend, the layout, and the timeline offer. The cards edit themselves. */
 function RunMetricControls({ block, analyses, tables, onPatch }: { block: Extract<ReportBlock, { type: "run-metric" }>; analyses: ReportAnalysis[]; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
   const analysis = analyses.find((entry) => entry.analysisId === block.analysisId);
   const source = analysisTimeline(analysis, tables);
@@ -1032,7 +1032,7 @@ function RunMetricControls({ block, analyses, tables, onPatch }: { block: Extrac
             )}
           </>
         ) : (
-          "Type on a card to rename it; the button on each card sets its unit, decimals, target, trend and order. Add a figure from the run or from any table column."
+          "Type on a card to rename it; the button on each card sets its unit, decimals, trend and order. Add a number from the run or from any table column."
         )}
       </p>
     </div>

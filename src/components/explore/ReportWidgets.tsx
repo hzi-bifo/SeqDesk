@@ -16,7 +16,7 @@ import { applyFilters, cellText, distinctValues, groupBy, median, relativeAbunda
 import type { ReportFilter } from "@/lib/explore/report-blocks";
 import { computeStats, formatStat } from "@/lib/explore/report-widgets";
 import { METRIC_STAT_LABELS, METRIC_STATS, type MetricStat } from "@/lib/explore/report-blocks";
-import { figureKeys, tableFigureKey, targetStatus, withUnit, type FigureTarget, type TableFigure, type TargetStatus } from "@/lib/explore/key-figures";
+import { figureKeys, tableFigureKey, withUnit, type FigureTarget, type TableFigure } from "@/lib/explore/key-figures";
 import { formatWithDigits, metricTrend, sparklinePoints, trendNote, type TrendMode } from "@/lib/explore/metric-trend";
 import { detectTimeAxis, measureText, parseMeasure, suggestMeasure, timelineNote, type AnalysisTimeline, type TimeAxis, type TimelineMeasure, type TimelineSeries } from "@/lib/explore/time-axis";
 import type { ReportAnalysis, ReportTable } from "@/lib/explore/reports";
@@ -434,7 +434,6 @@ export const MAX_KEY_FIGURES = 8;
 export const TREND_LABELS: Record<TrendMode, string> = { none: "No trend", previous: "Change since the previous run", history: "Sparkline over the run history", timeline: "Along the table's timeline" };
 const TREND_SHORT: Record<TrendMode, string> = { none: "none", previous: "previous run", history: "run history", timeline: "timeline" };
 const DIGIT_CHOICES = ["auto", "0", "1", "2", "3", "4"] as const;
-const STATUS_STRIPE: Record<TargetStatus, string> = { met: "border-l-[3px] border-l-emerald-500", low: "border-l-[3px] border-l-amber-500", high: "border-l-[3px] border-l-amber-500" };
 
 /** The trend a figure shows: its own choice, else the block's default. */
 export function figureTrend(options: Pick<KeyFigureOptions, "trend" | "trends">, key: string): TrendMode {
@@ -458,9 +457,9 @@ function tableTimeline(table: Pick<ReportTable, "datasetId" | "name" | "columns"
 }
 
 /**
- * Key figures: numbers as cards. A figure is a metric an analysis recorded
- * with its run, or a statistic of a table column. Each card can carry the
- * author's label, unit, decimals and target, and a trend: the change since
+ * Dashboard numbers: numbers as cards. A card shows a metric an analysis
+ * recorded with its run, or a statistic of a table column, with the
+ * author's label, unit and decimals, and a trend: the change since
  * the previous run, a sparkline over the run history, or the figure along
  * the time axis of its table. While editing, the cards are the editor.
  */
@@ -498,7 +497,7 @@ export function RunMetricView({ analysis, tables, timelineSource, editing, ...op
   );
 }
 
-/** The dashed card that adds a figure: a number of the run, or a statistic of a table column. */
+/** The dashed card that adds a number: a number of the run, or a statistic of a table column. */
 function AddFigureCard({ analysisName, available, unused, tables, onAddRun, onAddTable }: { analysisName: string | null; available: Record<string, string | number | boolean | null>; unused: string[]; tables: ReportTable[]; onAddRun: (key: string) => void; onAddTable: (figure: TableFigure) => void }) {
   const [datasetId, setDatasetId] = useState<string>(tables[0]?.datasetId ?? "");
   const table = tables.find((entry) => entry.datasetId === datasetId) ?? tables[0] ?? null;
@@ -509,9 +508,9 @@ function AddFigureCard({ analysisName, available, unused, tables, onAddRun, onAd
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button type="button" className="flex min-h-[4.5rem] items-center justify-center gap-1 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground hover:border-foreground/40 hover:text-foreground" aria-label="Add a figure">
+        <button type="button" className="flex min-h-[4.5rem] items-center justify-center gap-1 rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground hover:border-foreground/40 hover:text-foreground" aria-label="Add a number">
           <Plus className="h-3.5 w-3.5" />
-          Add a figure
+          Add a number
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 p-2 text-xs">
@@ -569,7 +568,7 @@ function TableFigureCard({ figureKey: key, index, keys, figure, table, options, 
 }
 
 function KeyFigureCard({ figureKey: key, index, keys, value, defaultLabel, history, timelineSource, figure, options, editing, footnote = null }: { figureKey: string; index: number; keys: string[]; value: string | number | boolean | null | undefined; defaultLabel: string; history: ReportAnalysis["history"] | null; timelineSource: AnalysisTimeline | null; figure: TableFigure | null; options: KeyFigureOptions; editing: KeyFigureEditing | null; footnote?: string | null }) {
-  const { labels, digits, units, targets } = options;
+  const { labels, digits, units } = options;
   const format = (amount: number) => formatWithDigits(amount, digits?.[key], formatStat);
   const text = typeof value === "number" ? format(value) : value === null || value === undefined ? "n/a" : formatCell(value);
   const shown = withUnit(text, units?.[key]);
@@ -578,24 +577,14 @@ function KeyFigureCard({ figureKey: key, index, keys, value, defaultLabel, histo
   const movement = typeof value === "number" && history ? metricTrend(history, key, mode) : null;
   const note = trendNote(movement, mode, format);
   const label = labels?.[key]?.trim() || defaultLabel;
-  const target = targetStatus(typeof value === "number" ? value : null, targets?.[key], format);
   const trendChoices: TrendMode[] = [...(figure ? ["none"] : ["none", "previous", "history"]), ...(timelineSource ? ["timeline"] : [])] as TrendMode[];
 
-  const setRecord = <T,>(field: "labels" | "digits" | "trends" | "timeline" | "units" | "targets", entry: T | undefined) => {
+  const setRecord = <T,>(field: "labels" | "digits" | "trends" | "timeline" | "units", entry: T | undefined) => {
     if (!editing) return;
     const record = { ...((options[field] as Record<string, T> | undefined) ?? {}) };
     if (entry === undefined) delete record[key];
     else record[key] = entry;
     editing.onPatch({ [field]: Object.keys(record).length > 0 ? record : undefined } as Partial<KeyFigureOptions>);
-  };
-  const setTarget = (bound: "min" | "max", raw: string) => {
-    const current = { ...(targets?.[key] ?? {}) };
-    const parsed = raw.trim() === "" ? undefined : Number(raw);
-    if (parsed === undefined || Number.isFinite(parsed)) {
-      if (parsed === undefined) delete current[bound];
-      else current[bound] = parsed;
-    }
-    setRecord("targets", current.min === undefined && current.max === undefined ? undefined : current);
   };
   const move = (direction: -1 | 1) => {
     if (!editing) return;
@@ -614,7 +603,7 @@ function KeyFigureCard({ figureKey: key, index, keys, value, defaultLabel, histo
   };
 
   return (
-    <div className={cn("group relative rounded-md border bg-muted/20 px-3 py-2", target && STATUS_STRIPE[target.status], editing && "hover:border-foreground/30")}>
+    <div className={cn("group relative rounded-md border bg-muted/20 px-3 py-2", editing && "hover:border-foreground/30")}>
       <div className="flex items-end justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="truncate text-xl font-semibold tabular-nums" title={typeof value === "number" ? String(value) : text}>{shown}</div>
@@ -633,7 +622,6 @@ function KeyFigureCard({ figureKey: key, index, keys, value, defaultLabel, histo
         </div>
         {mode === "history" && movement && movement.series.length >= 2 && <Sparkline values={movement.series.map((point) => point.value)} />}
       </div>
-      {target && <div className={cn("mt-1 text-[11px]", target.status === "met" ? "text-emerald-700" : "text-amber-700")}>{target.note}</div>}
       {mode === "timeline" && timelineSource && measure && <TimelineSpark source={timelineSource} measure={measure} format={format} />}
       {mode === "timeline" && (!timelineSource || !measure) && (
         <div className="mt-1 text-[11px] text-muted-foreground">{timelineSource ? "choose what this figure counts along the timeline" : "this figure's table has no timeline"}</div>
@@ -647,7 +635,7 @@ function KeyFigureCard({ figureKey: key, index, keys, value, defaultLabel, histo
       {editing && (
         <Popover>
           <PopoverTrigger asChild>
-            <button type="button" className="absolute right-1 top-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-foreground focus:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`Settings for ${label}`} title="Unit, decimals, target, trend, order">
+            <button type="button" className="absolute right-1 top-1 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-foreground focus:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`Settings for ${label}`} title="Unit, decimals, trend, order">
               <Settings2 className="h-3.5 w-3.5" />
             </button>
           </PopoverTrigger>
@@ -670,15 +658,6 @@ function KeyFigureCard({ figureKey: key, index, keys, value, defaultLabel, histo
                   </SelectContent>
                 </Select>
               </label>
-            )}
-            {typeof value === "number" && (
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted-foreground" title="The card shows whether the value is within the target">Target</span>
-                <div className="flex w-40 items-center gap-1">
-                  <Input type="number" defaultValue={targets?.[key]?.min ?? ""} placeholder="at least" onBlur={(event) => setTarget("min", event.target.value)} className="h-7 min-w-0 flex-1 px-1.5 text-[11px]" aria-label={`Minimum for ${key}`} />
-                  <Input type="number" defaultValue={targets?.[key]?.max ?? ""} placeholder="at most" onBlur={(event) => setTarget("max", event.target.value)} className="h-7 min-w-0 flex-1 px-1.5 text-[11px]" aria-label={`Maximum for ${key}`} />
-                </div>
-              </div>
             )}
             <label className="flex items-center justify-between gap-2">
               <span className="text-muted-foreground">Trend</span>

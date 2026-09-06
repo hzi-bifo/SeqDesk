@@ -16,7 +16,7 @@ import { METRIC_STAT_LABELS, type ReportFilter } from "./report-blocks";
 import { buildChart, computeStats, formatStat, WIDGET_ROW_LIMIT } from "./report-widgets";
 import { formatWithDigits, metricTrend, sparklinePoints, trendNote } from "./metric-trend";
 import { analysisTimeline, buildTimeline, detectTimeAxis, parseMeasure, suggestMeasure, timelineNote } from "./time-axis";
-import { figureKeys, tableFigureKey, targetStatus, withUnit } from "./key-figures";
+import { figureKeys, tableFigureKey, withUnit } from "./key-figures";
 import { getReportView, type ReportAnalysis, type ReportView, type ResolvedReportBlock } from "./reports";
 import { parseRoles, parseSchema } from "./schema";
 import { parseTargetKey } from "./target-key";
@@ -135,9 +135,9 @@ function htmlTable(columns: Array<{ key: string; label: string; type?: string }>
   return `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-function cards(entries: Array<{ label: string; value: string; note?: string | null; extra?: string; status?: "met" | "low" | "high" | null }>, columns?: number): string {
+function cards(entries: Array<{ label: string; value: string; note?: string | null; extra?: string }>, columns?: number): string {
   const style = columns ? ` style="grid-template-columns:repeat(${Math.max(1, Math.min(6, columns))},minmax(0,1fr))"` : "";
-  return `<div class="cards"${style}>${entries.map((entry) => `<div class="card${entry.status ? ` ${entry.status}` : ""}"><div class="value">${escapeHtml(entry.value)}</div><div class="label">${escapeHtml(entry.label)}</div>${entry.extra ?? ""}${entry.note ? `<div class="note">${escapeHtml(entry.note)}</div>` : ""}</div>`).join("")}</div>`;
+  return `<div class="cards"${style}>${entries.map((entry) => `<div class="card"><div class="value">${escapeHtml(entry.value)}</div><div class="label">${escapeHtml(entry.label)}</div>${entry.extra ?? ""}${entry.note ? `<div class="note">${escapeHtml(entry.note)}</div>` : ""}</div>`).join("")}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,10 +293,10 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
     }
     case "run-metric": {
       const analysis = block.analysis;
-      if (block.metrics.length > 0 && !analysis) return section(block, block.label ?? "Key figures", empty("This analysis is not in the report any more."));
+      if (block.metrics.length > 0 && !analysis) return section(block, block.label ?? "Dashboard numbers", empty("This analysis is not in the report any more."));
       const source = analysisTimeline(analysis, [...input.tables.values()]);
       const keys = figureKeys(block);
-      type Entry = { label: string; value: string; note?: string | null; extra?: string; status?: "met" | "low" | "high" | null };
+      type Entry = { label: string; value: string; note?: string | null; extra?: string };
       const entries = keys.flatMap((key): Entry[] => {
         const figure = (block.figures ?? []).find((entry) => tableFigureKey(entry) === key) ?? null;
         const table = figure ? input.tables.get(figure.datasetId) ?? null : null;
@@ -322,10 +322,7 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
         const text = withUnit(typeof value === "number" ? format(value) : formatValue(value) || "n/a", block.units?.[key]);
         const mode = block.trends?.[key] ?? block.trend ?? "none";
         const label = block.labels?.[key]?.trim() || defaultLabel;
-        const target = targetStatus(typeof value === "number" ? value : null, block.targets?.[key], format);
-        const status = target?.status ?? null;
         const notes: string[] = [];
-        if (target) notes.push(target.note);
         let extra = "";
         if (mode === "timeline") {
           const measure = timeline ? parseMeasure(block.timeline?.[key]) ?? (figure ? (figure.stat === "count" ? { kind: "count" as const } : figure.stat === "missing" ? null : { kind: figure.stat, column: figure.column }) : suggestMeasure(key, timeline.roles)) : null;
@@ -342,10 +339,10 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
           const note = trendNote(movement, mode, format);
           if (note) notes.push(note);
         }
-        return [{ label, value: text, note: notes.join("; ") || null, extra, status }];
+        return [{ label, value: text, note: notes.join("; ") || null, extra }];
       });
       const footer = [analysis && block.metrics.length > 0 ? `${analysis.name}${analysis.runNumber ? `, ${analysis.runNumber}` : ""}` : null, ...new Set((block.figures ?? []).map((figure) => input.tables.get(figure.datasetId)?.name ?? "a table"))].filter(Boolean).join("; ");
-      return section(block, block.label ?? (analysis && block.metrics.length > 0 ? `${analysis.name}: key figures` : "Key figures"), cards(entries, block.columns), footer);
+      return section(block, block.label ?? (analysis && block.metrics.length > 0 ? `${analysis.name} in numbers` : "Dashboard numbers"), cards(entries, block.columns), footer);
     }
     case "view": {
       const table = tableOf(block.datasetId);
@@ -748,8 +745,6 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
 .card .value{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
 .card .label{font-size:12px;color:var(--muted)}
 .card .spark{display:block;width:100%;height:24px;margin-top:4px;color:var(--muted)}
-.card.met{border-left:3px solid #16a34a}
-.card.low,.card.high{border-left:3px solid #d97706}
 .plot{width:100%}
 .pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media (max-width:820px){.pair{grid-template-columns:1fr}}

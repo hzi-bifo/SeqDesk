@@ -180,7 +180,7 @@ const RunMetricBlockSchema = z
     order: z.array(z.string().max(120)).max(16).optional(),
     /** Units by key, shown after the number ("reads", "%"). */
     units: z.record(MetricKey, z.string().max(24)).optional(),
-    /** Targets by key: the card shows whether the value is within them. */
+    /** Targets by key. Accepted for pages that stored them; not shown. */
     targets: z.record(MetricKey, FigureTargetSchema).optional(),
     /** Card labels by metric key; a missing entry reads the key as words. */
     labels: z.record(MetricKey, z.string().max(80)).optional(),
