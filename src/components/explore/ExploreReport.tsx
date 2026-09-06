@@ -3,9 +3,10 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
-import { ArrowDown, ArrowUp, Copy, ExternalLink, LayoutGrid, Loader2, Plus, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Unlink, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, Copy, ExternalLink, Globe, LayoutGrid, Loader2, Plus, RectangleHorizontal, RotateCcw, Share2, Square, Trash2, Unlink, X } from "lucide-react";
 import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
+import { RichTextEditor } from "@/components/explore/RichTextEditor";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { CuratedOrganismsView, FilterBar, filtersApply, RunMetricView, SubjectView, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
 import { HeatmapView, type HeatmapOptions } from "@/components/explore/views/HeatmapView";
@@ -16,7 +17,6 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { fetcher, formatCell, formatDateTime, postJson } from "@/lib/explore/client";
@@ -227,7 +227,18 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
     {
       label: "Figures from your analyses",
       empty: "No analysis has drawn a figure yet. Run one on the canvas and it appears here.",
-      items: report.outputs.figures.map((figure) => {
+      items: [
+        {
+          id: "new-figure",
+          title: "New analysis",
+          hint: "On the canvas: pick a table, choose a template, run; its figures land here",
+          sketch: "analysis" as const,
+          onSelect: () => {
+            setStoreOpen(false);
+            onOpenCanvas();
+          },
+        },
+        ...report.outputs.figures.map((figure) => {
         const used = usedFigures.has(figureKey(figure.analysisId, figure.figureName));
         return {
           id: figureKey(figure.analysisId, figure.figureName),
@@ -239,12 +250,24 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           disabled: used,
           onSelect: () => addBlock(figureBlockOf(figure)),
         };
-      }),
+        }),
+      ],
     },
     {
       label: "Tables",
       empty: "No tables in this scope yet.",
-      items: report.outputs.tables.map((table) => {
+      items: [
+        {
+          id: "new-table",
+          title: "New table",
+          hint: "On the canvas: bring one in from samples, sequencing, a pipeline or a file, or let an analysis write one",
+          sketch: "import" as const,
+          onSelect: () => {
+            setStoreOpen(false);
+            onOpenCanvas();
+          },
+        },
+        ...report.outputs.tables.map((table) => {
         const used = usedTables.has(table.datasetId);
         return {
           id: table.datasetId,
@@ -255,7 +278,8 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           disabled: used,
           onSelect: () => addBlock(tableBlockOf(table)),
         };
-      }),
+        }),
+      ],
     },
   ];
 
@@ -426,38 +450,42 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
   const label = BLOCK_LABELS[block.type];
   const blockTable = "datasetId" in block ? (tables.find((table) => table.datasetId === block.datasetId) ?? null) : null;
   const narrowed = filtersApply(blockTable, filters, active);
+  const actions = (
+    <>
+      <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground" onClick={() => onPatch({ span: span === 2 ? 1 : 2 })} title={span === 2 ? "Make half width" : "Make full width"} aria-label={span === 2 ? "Make half width" : "Make full width"}>
+        {span === 2 ? <RectangleHorizontal className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+      </button>
+      <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground disabled:opacity-40" onClick={() => onMove(-1)} disabled={first} title="Move up" aria-label="Move up">
+        <ArrowUp className="h-3.5 w-3.5" />
+      </button>
+      <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground disabled:opacity-40" onClick={() => onMove(1)} disabled={last} title="Move down" aria-label="Move down">
+        <ArrowDown className="h-3.5 w-3.5" />
+      </button>
+      <button type="button" className="rounded p-1 hover:bg-muted hover:text-destructive" onClick={onRemove} title="Remove block" aria-label="Remove block">
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </>
+  );
+  // A text block being edited is one box: the formatting bar is its header, with the block actions at its end.
+  if (editing && block.type === "text") {
+    return (
+      <section id={block.id} className={cn("min-w-0 scroll-mt-4 rounded-lg border bg-card", span === 2 && "md:col-span-2")} aria-label={`${label} block`}>
+        <RichTextEditor value={block.markdown} onChange={(markdown) => onPatch({ markdown })} actions={actions} className="border-0" />
+      </section>
+    );
+  }
   return (
     <section id={block.id} className={cn("min-w-0 scroll-mt-4 rounded-lg border bg-card", span === 2 && "md:col-span-2")} aria-label={`${label} block`}>
       {editing && (
         <div className="flex items-center gap-1 border-b bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
           <span className="font-medium">{label}</span>
           <span className="flex-1" />
-          <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground" onClick={() => onPatch({ span: span === 2 ? 1 : 2 })} title={span === 2 ? "Make half width" : "Make full width"} aria-label={span === 2 ? "Make half width" : "Make full width"}>
-            {span === 2 ? <RectangleHorizontal className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
-          </button>
-          <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground disabled:opacity-40" onClick={() => onMove(-1)} disabled={first} title="Move up" aria-label="Move up">
-            <ArrowUp className="h-3.5 w-3.5" />
-          </button>
-          <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground disabled:opacity-40" onClick={() => onMove(1)} disabled={last} title="Move down" aria-label="Move down">
-            <ArrowDown className="h-3.5 w-3.5" />
-          </button>
-          <button type="button" className="rounded p-1 hover:bg-muted hover:text-destructive" onClick={onRemove} title="Remove block" aria-label="Remove block">
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          {actions}
         </div>
       )}
       <div className="p-4">
         {block.type === "text" &&
-          (editing ? (
-            <Textarea
-              value={block.markdown}
-              onChange={(event) => onPatch({ markdown: event.target.value })}
-              rows={Math.min(16, Math.max(4, block.markdown.split("\n").length + 1))}
-              placeholder="Write in Markdown: headings with #, lists with -, emphasis with *"
-              className="font-mono text-xs"
-              aria-label="Text block"
-            />
-          ) : block.markdown.trim() ? (
+          (block.markdown.trim() ? (
             <Markdown>{block.markdown}</Markdown>
           ) : (
             <p className="text-sm text-muted-foreground">Empty text block.</p>
@@ -511,15 +539,15 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
           <>
             <Caption editing={editing} value={block.caption ?? ""} fallback={`Subject${blockTable ? `: ${blockTable.name}` : ""}`} onChange={(caption) => onPatch({ caption })} />
             {editing && (
-              <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-2">
-                <label className="space-y-1 text-[11px] text-muted-foreground">
+              <div className="mb-3 grid gap-2 border-b pb-3 sm:grid-cols-2">
+                <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
                   <span>Table</span>
                   <TableSelect value={block.datasetId} tables={tables.filter((table) => table.views.includes("subject-timeline"))} onChange={(datasetId) => onPatch({ datasetId, subject: undefined } as Partial<ReportBlock>)} />
                 </label>
-                <label className="space-y-1 text-[11px] text-muted-foreground">
+                <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
                   <span>Measure</span>
                   <Select value={block.measure ?? "ra"} onValueChange={(measure) => onPatch({ measure } as Partial<ReportBlock>)}>
-                    <SelectTrigger className="h-8 text-xs" aria-label="Measure"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Measure"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="ra">Relative abundance</SelectItem>
                       <SelectItem value="reads">Reads</SelectItem>
@@ -587,7 +615,15 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
 
 function Caption({ editing, value, fallback, onChange }: { editing: boolean; value: string; fallback: string; onChange: (value: string) => void }) {
   if (editing) {
-    return <Input value={value} onChange={(event) => onChange(event.target.value)} placeholder={fallback} className="mb-3 h-8 text-sm font-medium" aria-label="Caption" />;
+    return (
+      <Input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={fallback}
+        className="mb-3 h-9 border-transparent bg-transparent px-1 text-base font-semibold shadow-none hover:border-input focus-visible:border-input"
+        aria-label="Caption"
+      />
+    );
   }
   return <h3 className="mb-3 text-sm font-semibold">{value || fallback}</h3>;
 }
@@ -726,8 +762,8 @@ function metricTitle(block: MetricBlock, tables: ReportTable[]): string {
 
 function TableOnlyControls({ value, tables, onChange }: { value: string; tables: ReportTable[]; onChange: (datasetId: string) => void }) {
   return (
-    <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-2">
-      <label className="space-y-1 text-[11px] text-muted-foreground">
+    <div className="mb-3 grid gap-2 border-b pb-3 sm:grid-cols-2">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>Table</span>
         <TableSelect value={value} tables={tables} onChange={onChange} />
       </label>
@@ -737,15 +773,15 @@ function TableOnlyControls({ value, tables, onChange }: { value: string; tables:
 
 function CuratedControls({ block, tables, onPatch }: { block: Extract<ReportBlock, { type: "curated" }>; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
   return (
-    <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-3">
-      <label className="space-y-1 text-[11px] text-muted-foreground">
+    <div className="mb-3 grid gap-2 border-b pb-3 sm:grid-cols-3">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>Table</span>
         <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => onPatch({ datasetId } as Partial<ReportBlock>)} />
       </label>
-      <label className="space-y-1 text-[11px] text-muted-foreground">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>Lists</span>
         <Select value={block.role ?? "pathogen"} onValueChange={(role) => onPatch({ role } as Partial<ReportBlock>)}>
-          <SelectTrigger className="h-8 text-xs" aria-label="Lists"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Lists"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="pathogen">Pathogen lists</SelectItem>
             <SelectItem value="flora">Flora lists</SelectItem>
@@ -753,10 +789,10 @@ function CuratedControls({ block, tables, onPatch }: { block: Extract<ReportBloc
           </SelectContent>
         </Select>
       </label>
-      <label className="space-y-1 text-[11px] text-muted-foreground">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>Show at most</span>
         <Select value={String(block.limit ?? 25)} onValueChange={(limit) => onPatch({ limit: Number(limit) } as Partial<ReportBlock>)}>
-          <SelectTrigger className="h-8 text-xs" aria-label="Show at most"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Show at most"><SelectValue /></SelectTrigger>
           <SelectContent>
             {[10, 25, 50, 100].map((entry) => (
               <SelectItem key={entry} value={String(entry)}>{entry} organisms</SelectItem>
@@ -776,11 +812,11 @@ function RunMetricControls({ block, analyses, onPatch }: { block: Extract<Report
     if (next.length > 0) onPatch({ metrics: next } as Partial<ReportBlock>);
   };
   return (
-    <div className="mb-3 space-y-2 rounded-md border bg-muted/30 p-2">
-      <label className="space-y-1 text-[11px] text-muted-foreground">
+    <div className="mb-3 space-y-2 border-b pb-3">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>Analysis</span>
         <Select value={block.analysisId} onValueChange={(analysisId) => { const target = analyses.find((entry) => entry.analysisId === analysisId); onPatch({ analysisId, metrics: Object.keys(target?.metrics ?? {}).slice(0, 4) } as Partial<ReportBlock>); }}>
-          <SelectTrigger className="h-8 text-xs" aria-label="Analysis"><SelectValue placeholder="Choose an analysis" /></SelectTrigger>
+          <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Analysis"><SelectValue placeholder="Choose an analysis" /></SelectTrigger>
           <SelectContent>
             {analyses.filter((entry) => Object.keys(entry.metrics).length > 0).map((entry) => (
               <SelectItem key={entry.analysisId} value={entry.analysisId}>{entry.name}<span className="ml-1.5 text-xs text-muted-foreground">{entry.runNumber}</span></SelectItem>
@@ -824,7 +860,7 @@ function FilteredTableContent({ table, rows, filters, active, scopeQuery, report
 function TableSelect({ value, tables, onChange }: { value: string; tables: ReportTable[]; onChange: (datasetId: string) => void }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="h-8 text-xs" aria-label="Table">
+      <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Table">
         <SelectValue placeholder="Choose a table" />
       </SelectTrigger>
       <SelectContent>
@@ -843,7 +879,7 @@ function ColumnSelect({ value, columns, onChange, label, allowNone, numericFirst
   const ordered = numericFirst ? [...numericColumns(columns), ...columns.filter((column) => column.type !== "number")] : columns;
   return (
     <Select value={value || (allowNone ? "__none__" : undefined)} onValueChange={(next) => onChange(next === "__none__" ? "" : next)}>
-      <SelectTrigger className="h-8 text-xs" aria-label={label}>
+      <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label={label}>
         <SelectValue placeholder={label} />
       </SelectTrigger>
       <SelectContent>
@@ -864,15 +900,15 @@ function ChartControls({ block, tables, onPatch }: { block: ChartBlock; tables: 
   const needsY = CHART_KIND_LABELS[block.chart].needsY;
   const patch = (values: Partial<ChartBlock>) => onPatch(values as Partial<ReportBlock>);
   return (
-    <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-2">
-      <label className="space-y-1 text-[11px] text-muted-foreground">
+    <div className="mb-3 grid gap-2 border-b pb-3 sm:grid-cols-2">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>Table</span>
         <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => patch({ datasetId, x: "", y: undefined, color: undefined })} />
       </label>
-      <label className="space-y-1 text-[11px] text-muted-foreground">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>Chart</span>
         <Select value={block.chart} onValueChange={(chart) => patch({ chart: chart as ChartKind })}>
-          <SelectTrigger className="h-8 text-xs" aria-label="Chart type"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Chart type"><SelectValue /></SelectTrigger>
           <SelectContent>
             {CHART_KINDS.map((kind) => (
               <SelectItem key={kind} value={kind}>
@@ -883,18 +919,18 @@ function ChartControls({ block, tables, onPatch }: { block: ChartBlock; tables: 
           </SelectContent>
         </Select>
       </label>
-      <label className="space-y-1 text-[11px] text-muted-foreground">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>{block.chart === "box" ? "Groups (x axis)" : block.chart === "scatter" ? "X axis" : "Column"}</span>
         <ColumnSelect value={block.x} columns={columns} onChange={(x) => patch({ x })} label="Column" numericFirst={block.chart !== "box" && block.chart !== "bar"} />
       </label>
       {needsY && (
-        <label className="space-y-1 text-[11px] text-muted-foreground">
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
           <span>{block.chart === "box" ? "Values (numeric)" : "Y axis (numeric)"}</span>
           <ColumnSelect value={block.y ?? ""} columns={numericColumns(columns)} onChange={(y) => patch({ y })} label="Numeric column" />
         </label>
       )}
       {block.chart !== "box" && (
-        <label className="space-y-1 text-[11px] text-muted-foreground">
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
           <span>Colour by</span>
           <ColumnSelect value={block.color ?? ""} columns={columns.filter((column) => column.type !== "number")} onChange={(color) => patch({ color: color || undefined })} label="Colour" allowNone />
         </label>
@@ -935,13 +971,13 @@ function MetricControls({ block, tables, onPatch }: { block: MetricBlock; tables
     if (next.length > 0) patch({ stats: next });
   };
   return (
-    <div className="mb-3 space-y-2 rounded-md border bg-muted/30 p-2">
+    <div className="mb-3 space-y-2 border-b pb-3">
       <div className="grid gap-2 sm:grid-cols-2">
-        <label className="space-y-1 text-[11px] text-muted-foreground">
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
           <span>Table</span>
           <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => patch({ datasetId, column: "" })} />
         </label>
-        <label className="space-y-1 text-[11px] text-muted-foreground">
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
           <span>Column</span>
           <ColumnSelect value={block.column} columns={columns} onChange={(column) => patch({ column })} label="Column" numericFirst />
         </label>
@@ -1008,13 +1044,13 @@ function ViewControls({ block, tables, onPatch }: { block: ViewBlock; tables: Re
   const options = block.options ?? {};
   const setOption = (key: string, value: string | number) => patch({ options: { ...options, [key]: value } });
   return (
-    <div className="mb-3 grid gap-2 rounded-md border bg-muted/30 p-2 sm:grid-cols-2">
+    <div className="mb-3 grid gap-2 border-b pb-3 sm:grid-cols-2">
       {block.view === "heatmap" && (
         <>
-          <label className="space-y-1 text-[11px] text-muted-foreground">
+          <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
             <span>Values</span>
             <Select value={String(options.value ?? "log10_ra")} onValueChange={(value) => setOption("value", value)}>
-              <SelectTrigger className="h-8 text-xs" aria-label="Heatmap values"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Heatmap values"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="log10_ra">log10 abundance</SelectItem>
                 <SelectItem value="ra">Relative abundance</SelectItem>
@@ -1022,17 +1058,17 @@ function ViewControls({ block, tables, onPatch }: { block: ViewBlock; tables: Re
               </SelectContent>
             </Select>
           </label>
-          <label className="space-y-1 text-[11px] text-muted-foreground">
+          <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
             <span>Taxa and order</span>
             <div className="flex gap-1">
               <Select value={String(options.nTaxa ?? 35)} onValueChange={(value) => setOption("nTaxa", Number(value))}>
-                <SelectTrigger className="h-8 text-xs" aria-label="Number of taxa"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Number of taxa"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {["20", "35", "50", "80", "120"].map((entry) => <SelectItem key={entry} value={entry}>{entry} taxa</SelectItem>)}
                 </SelectContent>
               </Select>
               <Select value={String(options.order ?? "prevalence")} onValueChange={(value) => setOption("order", value)}>
-                <SelectTrigger className="h-8 text-xs" aria-label="Taxon order"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Taxon order"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="prevalence">by prevalence</SelectItem>
                   <SelectItem value="abundance">by abundance</SelectItem>
@@ -1042,19 +1078,18 @@ function ViewControls({ block, tables, onPatch }: { block: ViewBlock; tables: Re
           </label>
         </>
       )}
-      <label className="space-y-1 text-[11px] text-muted-foreground">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>Table</span>
         <TableSelect value={block.datasetId} tables={candidates} onChange={(datasetId) => patch({ datasetId })} />
       </label>
-      <label className="space-y-1 text-[11px] text-muted-foreground">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>View</span>
         <Select value={block.view} onValueChange={(view) => patch({ view: view as BuiltInView })}>
-          <SelectTrigger className="h-8 text-xs" aria-label="View"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="View"><SelectValue /></SelectTrigger>
           <SelectContent>
             {(Object.entries(BUILT_IN_VIEWS) as Array<[BuiltInView, { label: string; description: string }]>).map(([id, meta]) => (
-              <SelectItem key={id} value={id}>
+              <SelectItem key={id} value={id} title={meta.description}>
                 {meta.label}
-                <span className="ml-1.5 text-xs text-muted-foreground">{meta.description}</span>
               </SelectItem>
             ))}
           </SelectContent>
@@ -1113,6 +1148,7 @@ function ViewBlockView({ block, table, scopeQuery, reportId, filters, active }: 
  */
 function SharePopover({ reportId, share, canEdit, filters, active, onChanged }: { reportId: string; share: ReportShare | null; canEdit: boolean; filters: ReportFilter[]; active: ActiveFilters; onChanged: () => Promise<unknown> }) {
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
   const query = new URLSearchParams();
   for (const filter of filters) for (const value of active[filter.id] ?? []) query.append(`f.${filter.id}`, value);
   const hasActive = query.size > 0;
@@ -1145,7 +1181,8 @@ function SharePopover({ reportId, share, canEdit, filters, active, onChanged }: 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl());
-      toast.success("Link copied");
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
     } catch {
       toast.error("Could not copy; select the link and copy it by hand");
     }
@@ -1158,36 +1195,54 @@ function SharePopover({ reportId, share, canEdit, filters, active, onChanged }: 
           Share
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 text-sm">
-        <div>
-          <p className="font-medium">Share link</p>
+      <PopoverContent align="end" className="w-[22rem] p-0 text-sm" onOpenAutoFocus={(event) => event.preventDefault()}>
+        <div className="flex items-center gap-2.5 border-b px-4 py-3">
+          <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full", share ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground")}>
+            <Globe className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-medium leading-tight">Share by link</p>
+            <p className="text-xs text-muted-foreground">{share ? "Anyone with the link can read it" : "Not shared"}</p>
+          </div>
+          {share && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Live
+            </span>
+          )}
+        </div>
+        <div className="px-4 py-3">
           {share ? (
             <>
-              <p className="mt-0.5 text-xs text-muted-foreground">Anyone with the link reads the live page without signing in{hasActive ? ", with the current filters" : ""}. Shared since {formatDateTime(share.publishedAt)}.</p>
-              <code className="mt-2 block truncate rounded bg-muted px-2 py-1 text-xs" title={sharePath ?? undefined}>{sharePath}</code>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => void copy()}>
-                  <Copy className="mr-2 h-4 w-4" />
-                  Copy link
+              <div className="flex items-center gap-1.5">
+                <Input readOnly value={sharePath ?? ""} title={sharePath ?? undefined} onClick={(event) => event.currentTarget.select()} className="h-9 flex-1 truncate font-mono text-xs" />
+                <Button size="sm" variant={copied ? "outline" : "default"} className="h-9 shrink-0" onClick={() => void copy()}>
+                  {copied ? <Check className="mr-1.5 h-4 w-4 text-emerald-600" /> : <Copy className="mr-1.5 h-4 w-4" />}
+                  {copied ? "Copied" : "Copy"}
                 </Button>
-                {canEdit && (
-                  <Button size="sm" variant="ghost" onClick={() => void stop()} disabled={busy}>
-                    <Unlink className="mr-2 h-4 w-4" />
+              </div>
+              <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
+                No sign-in needed{hasActive ? "; the current filters are carried in the link" : ""}. Shared since {formatDateTime(share.publishedAt)}.
+              </p>
+              {canEdit && (
+                <div className="mt-3 flex justify-end border-t pt-3">
+                  <Button size="sm" variant="ghost" className="h-8 text-muted-foreground hover:text-destructive" onClick={() => void stop()} disabled={busy}>
+                    {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Unlink className="mr-1.5 h-3.5 w-3.5" />}
                     Stop sharing
                   </Button>
-                )}
-              </div>
+                </div>
+              )}
             </>
           ) : canEdit ? (
             <>
-              <p className="mt-0.5 text-xs text-muted-foreground">Create a link that opens the live page without signing in. Anyone with the link can read it; stop sharing at any time.</p>
-              <Button size="sm" className="mt-2" onClick={() => void create()} disabled={busy}>
+              <p className="text-xs leading-relaxed text-muted-foreground">Create a link that opens the live page without signing in. Anyone with the link can read it; you can stop sharing at any time.</p>
+              <Button size="sm" className="mt-3 w-full" onClick={() => void create()} disabled={busy}>
                 {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
-                Create link
+                Create share link
               </Button>
             </>
           ) : (
-            <p className="mt-0.5 text-xs text-muted-foreground">This report has no share link.</p>
+            <p className="text-xs leading-relaxed text-muted-foreground">This report has no share link. Ask an editor to create one.</p>
           )}
         </div>
       </PopoverContent>

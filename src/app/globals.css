@@ -405,3 +405,19 @@
   opacity: 1;
 }
 
+
+/* Report text blocks edited in place: the same type as the page shows. */
+.report-editor-content h1 { margin: 0 0 0.75rem; font-size: 1.25rem; font-weight: 600; }
+.report-editor-content h2 { margin: 1rem 0 0.5rem; font-size: 1.125rem; font-weight: 600; }
+.report-editor-content h3 { margin: 0.75rem 0 0.25rem; font-weight: 600; }
+.report-editor-content p { margin: 0 0 0.75rem; }
+.report-editor-content p:last-child { margin-bottom: 0; }
+.report-editor-content ul { margin: 0 0 0.75rem; padding-left: 1.25rem; list-style: disc; }
+.report-editor-content ol { margin: 0 0 0.75rem; padding-left: 1.25rem; list-style: decimal; }
+.report-editor-content blockquote { margin: 0 0 0.75rem; padding-left: 0.75rem; border-left: 2px solid var(--border); color: var(--muted-foreground); }
+.report-editor-content code { border-radius: 0.25rem; background: var(--muted); padding: 0.1rem 0.25rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+.report-editor-content pre { margin: 0 0 0.75rem; overflow: auto; border-radius: 0.375rem; background: var(--muted); padding: 0.5rem 0.75rem; font-size: 0.75rem; }
+.report-editor-content pre code { background: transparent; padding: 0; }
+.report-editor-content a { text-decoration: underline; text-underline-offset: 2px; }
+.report-editor-content hr { margin: 0.75rem 0; border: 0; border-top: 1px solid var(--border); }
+.report-editor-content strong { font-weight: 600; }
