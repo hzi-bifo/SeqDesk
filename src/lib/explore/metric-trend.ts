@@ -19,11 +19,11 @@ export interface MetricTrend {
   since: { runNumber: string; completedAt: string | null } | null;
 }
 
-export type TrendMode = "none" | "previous" | "history";
+export type TrendMode = "none" | "previous" | "history" | "timeline";
 
 /** The trend of one metric: against the previous run, or across the whole history. */
 export function metricTrend(history: MetricHistoryEntry[] | null | undefined, key: string, mode: TrendMode): MetricTrend | null {
-  if (mode === "none" || !history || history.length === 0) return null;
+  if (mode === "none" || mode === "timeline" || !history || history.length === 0) return null;
   const series = history
     .filter((entry) => typeof entry.metrics[key] === "number" && Number.isFinite(entry.metrics[key] as number))
     .map((entry) => ({ runNumber: entry.runNumber, completedAt: entry.completedAt, value: entry.metrics[key] as number }));
@@ -85,7 +85,7 @@ export function deltaText(trend: MetricTrend | null, fallback: (value: number) =
  * numbers; the run number belongs in a tooltip.
  */
 export function trendNote(trend: MetricTrend | null, mode: TrendMode, format: (value: number) => string, now: Date = new Date()): string | null {
-  if (mode === "none") return null;
+  if (mode === "none" || mode === "timeline") return null;
   const delta = deltaText(trend, format);
   if (!delta || !trend) return "no earlier run to compare";
   const when = agoText(trend.since?.completedAt, now);

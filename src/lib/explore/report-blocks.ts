@@ -156,6 +156,7 @@ const CuratedBlockSchema = z
  * moved over the analysis's runs.
  */
 const MetricKey = z.string().min(1).max(120);
+const TrendChoice = z.enum(["none", "previous", "history", "timeline"]);
 const RunMetricBlockSchema = z
   .object({
     id: BlockId,
@@ -168,8 +169,12 @@ const RunMetricBlockSchema = z
     digits: z.record(MetricKey, z.number().int().min(0).max(6)).optional(),
     /** Cards per row; missing means as many as there are, up to four. */
     columns: z.number().int().min(1).max(6).optional(),
-    /** Change against the previous run, or a sparkline over the run history. */
-    trend: z.enum(["none", "previous", "history"]).optional(),
+    /** The block's default trend: none, the change since the previous run, the run history, or the table's own timeline. */
+    trend: TrendChoice.optional(),
+    /** A figure's own trend, overriding the block's default. */
+    trends: z.record(MetricKey, TrendChoice).optional(),
+    /** What a figure counts along the timeline (distinct:<column>, sum:<column>, count); missing means suggested from its name. */
+    timeline: z.record(MetricKey, z.string().max(160)).optional(),
     label: z.string().max(200).optional(),
     span: Span,
   })

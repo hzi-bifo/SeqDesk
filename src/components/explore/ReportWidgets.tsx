@@ -15,6 +15,7 @@ import { applyFilters, cellText, distinctValues, groupBy, median, relativeAbunda
 import type { ReportFilter } from "@/lib/explore/report-blocks";
 import { formatStat } from "@/lib/explore/report-widgets";
 import { formatWithDigits, metricTrend, sparklinePoints, trendNote, type TrendMode } from "@/lib/explore/metric-trend";
+import { measureText, parseMeasure, suggestMeasure, timelineNote, type AnalysisTimeline, type TimeAxis, type TimelineMeasure, type TimelineSeries } from "@/lib/explore/time-axis";
 import type { ReportAnalysis, ReportTable } from "@/lib/explore/reports";
 import type { ExploreColumn, ExploreRowData } from "@/lib/explore/types";
 
@@ -411,14 +412,29 @@ export interface KeyFigureOptions {
   digits?: Record<string, number>;
   columns?: number;
   trend?: TrendMode;
+  trends?: Record<string, TrendMode>;
+  timeline?: Record<string, string>;
+}
+
+/** The trend a figure shows: its own choice, else the block's default. */
+export function figureTrend(options: Pick<KeyFigureOptions, "trend" | "trends">, key: string): TrendMode {
+  return options.trends?.[key] ?? options.trend ?? "none";
+}
+
+/** What a figure counts along the table's timeline: the author's choice, else a suggestion from its name. */
+export function figureMeasure(options: Pick<KeyFigureOptions, "timeline">, key: string, source: AnalysisTimeline | null): TimelineMeasure | null {
+  if (!source) return null;
+  return parseMeasure(options.timeline?.[key]) ?? suggestMeasure(key, source.roles);
 }
 
 /**
  * Key figures: the numbers an analysis recorded, as cards. Each card can
- * carry the author's label and decimals, and the change since the previous
- * run or a sparkline over the run history.
+ * carry the author's label and decimals, and a trend: the change since the
+ * previous run, a sparkline over the run history, or the figure along the
+ * time axis of the table the analysis reads.
  */
-export function RunMetricView({ analysis, metrics, labels, digits, columns, trend = "none" }: { analysis: ReportAnalysis | null } & KeyFigureOptions) {
+export function RunMetricView({ analysis, timelineSource, ...options }: { analysis: ReportAnalysis | null; timelineSource: AnalysisTimeline | null } & KeyFigureOptions) {
+  const { metrics, labels, digits, columns } = options;
   if (!analysis) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This analysis is gone.</div>;
   if (!analysis.runNumber) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{analysis.name} has not finished a run yet.</div>;
   const perRow = columns ?? Math.min(4, metrics.length);
@@ -427,9 +443,12 @@ export function RunMetricView({ analysis, metrics, labels, digits, columns, tren
       <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(perRow, 6))}, minmax(0, 1fr))` }}>
         {metrics.map((key) => {
           const value = analysis.metrics[key];
-          const text = typeof value === "number" ? formatWithDigits(value, digits?.[key], formatStat) : value === null || value === undefined ? "n/a" : formatCell(value);
-          const movement = typeof value === "number" ? metricTrend(analysis.history, key, trend) : null;
-          const note = trendNote(movement, trend, (amount) => formatWithDigits(amount, digits?.[key], formatStat));
+          const format = (amount: number) => formatWithDigits(amount, digits?.[key], formatStat);
+          const text = typeof value === "number" ? format(value) : value === null || value === undefined ? "n/a" : formatCell(value);
+          const mode = figureTrend(options, key);
+          const measure = mode === "timeline" ? figureMeasure(options, key, timelineSource) : null;
+          const movement = typeof value === "number" ? metricTrend(analysis.history, key, mode) : null;
+          const note = trendNote(movement, mode, format);
           const label = labels?.[key]?.trim() || metricLabel(key);
           return (
             <div key={key} className="rounded-md border bg-muted/20 px-3 py-2">
@@ -438,9 +457,13 @@ export function RunMetricView({ analysis, metrics, labels, digits, columns, tren
                   <div className="truncate text-xl font-semibold tabular-nums" title={typeof value === "number" ? String(value) : text}>{text}</div>
                   <div className="truncate text-[11px] text-muted-foreground" title={key}>{label}</div>
                 </div>
-                {trend === "history" && movement && movement.series.length >= 2 && <Sparkline values={movement.series.map((point) => point.value)} />}
+                {mode === "history" && movement && movement.series.length >= 2 && <Sparkline values={movement.series.map((point) => point.value)} />}
               </div>
-              {trend !== "none" && (
+              {mode === "timeline" && timelineSource && measure && <TimelineSpark source={timelineSource} measure={measure} format={format} />}
+              {mode === "timeline" && (!timelineSource || !measure) && (
+                <div className="mt-1 truncate text-[11px] text-muted-foreground">{timelineSource ? "choose what this figure counts along the timeline" : "the analysis reads no table with a timeline"}</div>
+              )}
+              {(mode === "previous" || mode === "history") && (
                 <div className={cn("mt-1 truncate text-[11px] tabular-nums", movement?.delta ? (movement.delta > 0 ? "text-emerald-700" : "text-rose-700") : "text-muted-foreground")} title={movement?.since ? `Compared with ${movement.since.runNumber}` : undefined}>
                   {note}
                 </div>
@@ -464,6 +487,36 @@ function Sparkline({ values }: { values: number[] }) {
       <polyline points={points.map((point) => point.join(",")).join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
       <circle cx={last[0]} cy={last[1]} r="2" fill="currentColor" />
     </svg>
+  );
+}
+
+/** The figure along the table's time axis: cumulative sparkline plus what the last stretch added. */
+function TimelineSpark({ source, measure, format }: { source: AnalysisTimeline; measure: TimelineMeasure; format: (value: number) => string }) {
+  const { data, error } = useSWR<{ axis: TimeAxis | null; series: TimelineSeries | null }>(
+    `/api/explore/datasets/${source.datasetId}/views/timeline?measure=${encodeURIComponent(measureText(measure))}`,
+    fetcher,
+    { revalidateOnFocus: false }
+  );
+  if (error) return <div className="mt-1 truncate text-[11px] text-destructive">timeline unavailable</div>;
+  if (!data) return <Skeleton className="mt-1 h-6 w-full" />;
+  const series = data.series;
+  if (!series || series.buckets.length < 2) return <div className="mt-1 truncate text-[11px] text-muted-foreground">too few points along the {source.axis.label}s</div>;
+  const points = sparklinePoints(series.buckets.map((bucket) => bucket.cumulative), 160, 24);
+  const last = points[points.length - 1];
+  const note = timelineNote(series, format);
+  const first = series.buckets[0];
+  const end = series.buckets[series.buckets.length - 1];
+  return (
+    <div className="mt-1" title={`${measure.kind === "count" ? "rows" : `${measure.kind} of ${measure.column}`} per ${series.step} ${source.axis.kind === "day" ? "study days" : "days"} in ${source.tableName}; ${series.rowsWithoutTime} rows without a ${source.axis.label}`}>
+      <svg viewBox="0 0 160 24" className="h-6 w-full text-muted-foreground" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points={points.map((point) => point.join(",")).join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        <circle cx={last[0]} cy={last[1]} r="2" fill="currentColor" />
+      </svg>
+      <div className="flex justify-between gap-2 text-[10px] text-muted-foreground">
+        <span className="truncate">{first.label}</span>
+        <span className="truncate tabular-nums">{note ?? end.label}</span>
+      </div>
+    </div>
   );
 }
 

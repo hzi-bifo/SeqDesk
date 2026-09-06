@@ -14,7 +14,8 @@ import { renderMarkdownHtml } from "./markdown-html";
 import { applyRowFilter } from "./row-filter";
 import { METRIC_STAT_LABELS, type ReportFilter } from "./report-blocks";
 import { buildChart, computeStats, formatStat, WIDGET_ROW_LIMIT } from "./report-widgets";
-import { formatWithDigits, metricTrend, trendNote } from "./metric-trend";
+import { formatWithDigits, metricTrend, sparklinePoints, trendNote } from "./metric-trend";
+import { analysisTimeline, buildTimeline, parseMeasure, suggestMeasure, timelineNote } from "./time-axis";
 import { getReportView, type ReportView, type ResolvedReportBlock } from "./reports";
 import { parseRoles, parseSchema } from "./schema";
 import { parseTargetKey } from "./target-key";
@@ -133,9 +134,9 @@ function htmlTable(columns: Array<{ key: string; label: string; type?: string }>
   return `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-function cards(entries: Array<{ label: string; value: string; note?: string | null }>, columns?: number): string {
+function cards(entries: Array<{ label: string; value: string; note?: string | null; extra?: string }>, columns?: number): string {
   const style = columns ? ` style="grid-template-columns:repeat(${Math.max(1, Math.min(6, columns))},minmax(0,1fr))"` : "";
-  return `<div class="cards"${style}>${entries.map((entry) => `<div class="card"><div class="value">${escapeHtml(entry.value)}</div><div class="label">${escapeHtml(entry.label)}</div>${entry.note ? `<div class="note">${escapeHtml(entry.note)}</div>` : ""}</div>`).join("")}</div>`;
+  return `<div class="cards"${style}>${entries.map((entry) => `<div class="card"><div class="value">${escapeHtml(entry.value)}</div><div class="label">${escapeHtml(entry.label)}</div>${entry.extra ?? ""}${entry.note ? `<div class="note">${escapeHtml(entry.note)}</div>` : ""}</div>`).join("")}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,14 +293,26 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
     case "run-metric": {
       const analysis = block.analysis;
       if (!analysis) return section(block, block.label ?? "Key figures", empty("This analysis is not in the report any more."));
-      const trend = block.trend ?? "none";
+      const source = analysisTimeline(analysis, [...input.tables.values()]);
       const entries = block.metrics.map((key) => {
         const value = analysis.metrics[key];
         const digits = block.digits?.[key];
-        const text = typeof value === "number" ? formatWithDigits(value, digits, formatStat) : formatValue(value) || "n/a";
-        const movement = typeof value === "number" ? metricTrend(analysis.history, key, trend) : null;
-        const note = trendNote(movement, trend, (amount) => formatWithDigits(amount, digits, formatStat));
-        return { label: block.labels?.[key]?.trim() || metricLabel(key), value: text, note };
+        const format = (amount: number) => formatWithDigits(amount, digits, formatStat);
+        const text = typeof value === "number" ? format(value) : formatValue(value) || "n/a";
+        const mode = block.trends?.[key] ?? block.trend ?? "none";
+        const label = block.labels?.[key]?.trim() || metricLabel(key);
+        if (mode === "timeline") {
+          const measure = source ? parseMeasure(block.timeline?.[key]) ?? suggestMeasure(key, source.roles) : null;
+          const table = source ? input.tables.get(source.datasetId) : null;
+          if (!source || !measure || !table) return { label, value: text, note: source ? "no measure along the timeline" : "no timeline in the analysis's tables" };
+          const series = buildTimeline(table.records.map((record) => record.data), source.axis, measure);
+          const points = sparklinePoints(series.buckets.map((bucket) => bucket.cumulative), 160, 24);
+          const spark = points.length >= 2 ? `<svg viewBox="0 0 160 24" class="spark" preserveAspectRatio="none" aria-hidden="true"><polyline points="${points.map((point) => point.join(",")).join(" ")}" fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>` : "";
+          const note = timelineNote(series, format) ?? (series.buckets.length > 0 ? `${series.buckets[0].label} to ${series.buckets[series.buckets.length - 1].label}` : "");
+          return { label, value: text, note, extra: spark };
+        }
+        const movement = typeof value === "number" ? metricTrend(analysis.history, key, mode) : null;
+        return { label, value: text, note: trendNote(movement, mode, format) };
       });
       return section(block, block.label ?? `${analysis.name}: key figures`, cards(entries, block.columns), `${analysis.name}${analysis.runNumber ? `, ${analysis.runNumber}` : ""}`);
     }
@@ -703,6 +716,7 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:now
 .card{border:1px solid var(--line);border-radius:6px;padding:10px 12px}
 .card .value{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
 .card .label{font-size:12px;color:var(--muted)}
+.card .spark{display:block;width:100%;height:24px;margin-top:4px;color:var(--muted)}
 .plot{width:100%}
 .pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 @media (max-width:820px){.pair{grid-template-columns:1fr}}
