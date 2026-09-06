@@ -119,7 +119,7 @@ export function Markdown({ children, className, variables, variableLinks }: { ch
                       {resolved.text}
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent align="start" className="w-80">
+                  <PopoverContent align="start" className="w-80 p-4">
                     <VariableCard resolved={resolved} links={variableLinks} />
                   </PopoverContent>
                 </Popover>
