@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LayoutGrid } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -20,47 +21,66 @@ function VariableCard({ resolved, links }: { resolved: ResolvedVariable; links: 
   if (!resolved.found) return <p className="text-xs text-muted-foreground">{step.name} recorded no value called {resolved.ref.metric}.</p>;
   const params = Object.entries(step.params ?? {}).filter(([, value]) => value !== null && value !== undefined && value !== "" && typeof value !== "object");
   const canvasHref = `/explore/reports/${encodeURIComponent(links.reportId)}${links.scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`analysis:${step.analysisId}`)}`;
+  const finished = step.completedAt ? new Date(step.completedAt).toLocaleString() : null;
   return (
-    <div className="space-y-2 text-xs">
-      <div>
-        <div className="text-lg font-semibold tabular-nums">{formatVariableValue(resolved.value, resolved.ref.digits)}</div>
-        <div className="font-mono text-[11px] text-muted-foreground">{step.slug}.{resolved.ref.metric}</div>
+    <div className="text-xs">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-xl font-semibold tabular-nums">{formatVariableValue(resolved.value, resolved.ref.digits)}</span>
+        <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-muted-foreground">
+          {step.slug}.{resolved.ref.metric}
+        </code>
       </div>
-      <dl className="space-y-1">
-        <div>
-          <dt className="text-muted-foreground">Recorded by</dt>
-          <dd>
-            {step.name}
-            {step.kitId ? <span className="text-muted-foreground"> (template {step.kitId})</span> : null}
-            {step.runNumber ? (
-              <>
-                {", run "}
-                {step.runId ? <Link href={`/explore/runs/${step.runId}${links.scopeQuery}`} className="underline underline-offset-2">{step.runNumber}</Link> : step.runNumber}
-                {step.completedAt ? <span className="text-muted-foreground"> finished {new Date(step.completedAt).toLocaleString()}</span> : null}
-              </>
-            ) : null}
-          </dd>
-        </div>
+      <dl className="mt-3 grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+        <dt className="text-muted-foreground">Step</dt>
+        <dd className="min-w-0">
+          {step.name}
+          {step.kitId ? <span className="text-muted-foreground"> · template {step.kitId}</span> : null}
+        </dd>
+        {step.runNumber && (
+          <>
+            <dt className="text-muted-foreground">Run</dt>
+            <dd className="min-w-0">
+              {step.runId ? <Link href={`/explore/runs/${step.runId}${links.scopeQuery}`} className="font-medium underline underline-offset-2">{step.runNumber}</Link> : step.runNumber}
+              {finished ? <span className="text-muted-foreground"> · finished {finished}</span> : null}
+            </dd>
+          </>
+        )}
         {step.inputs && step.inputs.length > 0 && (
-          <div>
+          <>
             <dt className="text-muted-foreground">Reads</dt>
-            <dd className="flex flex-wrap gap-x-2">
-              {step.inputs.map((input) => (
-                <Link key={input.alias} href={`/explore/datasets/${input.datasetId}${links.scopeQuery}`} className="underline underline-offset-2">
-                  {input.name}
-                </Link>
+            <dd className="min-w-0">
+              {step.inputs.map((input, index) => (
+                <span key={input.alias}>
+                  {index > 0 ? ", " : ""}
+                  <Link href={`/explore/datasets/${input.datasetId}${links.scopeQuery}`} className="underline underline-offset-2">
+                    {input.name}
+                  </Link>
+                </span>
               ))}
             </dd>
-          </div>
+          </>
         )}
         {params.length > 0 && (
-          <div>
-            <dt className="text-muted-foreground">With</dt>
-            <dd className="font-mono text-[11px]">{params.map(([key, value]) => `${key} ${String(value)}`).join(", ")}</dd>
-          </div>
+          <>
+            <dt className="text-muted-foreground">Settings</dt>
+            <dd className="min-w-0">
+              <span className="flex flex-wrap gap-1">
+                {params.map(([key, value]) => (
+                  <span key={key} className="rounded border px-1.5 font-mono text-[10px]">
+                    {key} <span className="text-muted-foreground">{String(value)}</span>
+                  </span>
+                ))}
+              </span>
+            </dd>
+          </>
         )}
       </dl>
-      <Link href={canvasHref} className="inline-block underline underline-offset-2">Show the step on the canvas</Link>
+      <div className="mt-3 border-t pt-2">
+        <Link href={canvasHref} className="inline-flex items-center gap-1 font-medium hover:underline">
+          <LayoutGrid className="h-3.5 w-3.5" />
+          Show the step on the canvas
+        </Link>
+      </div>
     </div>
   );
 }
