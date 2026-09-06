@@ -14,6 +14,7 @@ import { fetcher, formatCell, ROLE_LABELS } from "@/lib/explore/client";
 import { applyFilters, cellText, distinctValues, groupBy, median, relativeAbundance, toNumber, type ActiveFilters } from "@/lib/explore/frame";
 import type { ReportFilter } from "@/lib/explore/report-blocks";
 import { formatStat } from "@/lib/explore/report-widgets";
+import { formatWithDigits, metricTrend, sparklinePoints, trendNote, type TrendMode } from "@/lib/explore/metric-trend";
 import type { ReportAnalysis, ReportTable } from "@/lib/explore/reports";
 import type { ExploreColumn, ExploreRowData } from "@/lib/explore/types";
 
@@ -404,25 +405,65 @@ export function SubjectView({
 // Run metrics as numbers
 // ---------------------------------------------------------------------------
 
-export function RunMetricView({ analysis, metrics }: { analysis: ReportAnalysis | null; metrics: string[] }) {
+export interface KeyFigureOptions {
+  metrics: string[];
+  labels?: Record<string, string>;
+  digits?: Record<string, number>;
+  columns?: number;
+  trend?: TrendMode;
+}
+
+/**
+ * Key figures: the numbers an analysis recorded, as cards. Each card can
+ * carry the author's label and decimals, and the change since the previous
+ * run or a sparkline over the run history.
+ */
+export function RunMetricView({ analysis, metrics, labels, digits, columns, trend = "none" }: { analysis: ReportAnalysis | null } & KeyFigureOptions) {
   if (!analysis) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This analysis is gone.</div>;
   if (!analysis.runNumber) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{analysis.name} has not finished a run yet.</div>;
+  const perRow = columns ?? Math.min(4, metrics.length);
   return (
     <div>
-      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(4, metrics.length)}, minmax(0, 1fr))` }}>
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.max(1, Math.min(perRow, 6))}, minmax(0, 1fr))` }}>
         {metrics.map((key) => {
           const value = analysis.metrics[key];
-          const text = typeof value === "number" ? formatStat(value) : value === null || value === undefined ? "n/a" : formatCell(value);
+          const text = typeof value === "number" ? formatWithDigits(value, digits?.[key], formatStat) : value === null || value === undefined ? "n/a" : formatCell(value);
+          const movement = typeof value === "number" ? metricTrend(analysis.history, key, trend) : null;
+          const note = trendNote(movement, trend, (amount) => formatWithDigits(amount, digits?.[key], formatStat));
+          const label = labels?.[key]?.trim() || metricLabel(key);
           return (
             <div key={key} className="rounded-md border bg-muted/20 px-3 py-2">
-              <div className="truncate text-xl font-semibold tabular-nums" title={text}>{text}</div>
-              <div className="truncate text-[11px] text-muted-foreground" title={key}>{metricLabel(key)}</div>
+              <div className="flex items-end justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-xl font-semibold tabular-nums" title={typeof value === "number" ? String(value) : text}>{text}</div>
+                  <div className="truncate text-[11px] text-muted-foreground" title={key}>{label}</div>
+                </div>
+                {trend === "history" && movement && movement.series.length >= 2 && <Sparkline values={movement.series.map((point) => point.value)} />}
+              </div>
+              {trend !== "none" && (
+                <div className={cn("mt-1 truncate text-[11px] tabular-nums", movement?.delta ? (movement.delta > 0 ? "text-emerald-700" : "text-rose-700") : "text-muted-foreground")} title={movement?.since ? `Compared with ${movement.since.runNumber}` : undefined}>
+                  {note}
+                </div>
+              )}
             </div>
           );
         })}
       </div>
       <p className="mt-1 text-[11px] text-muted-foreground">{analysis.name}, {analysis.runNumber}</p>
     </div>
+  );
+}
+
+/** A tiny line over the run history; the last point is marked. */
+function Sparkline({ values }: { values: number[] }) {
+  const points = sparklinePoints(values, 64, 24);
+  if (points.length < 2) return null;
+  const last = points[points.length - 1];
+  return (
+    <svg viewBox="0 0 64 24" className="h-6 w-16 shrink-0 text-muted-foreground" aria-hidden="true">
+      <polyline points={points.map((point) => point.join(",")).join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={last[0]} cy={last[1]} r="2" fill="currentColor" />
+    </svg>
   );
 }
 

@@ -53,6 +53,9 @@ function provenanceSources(raw: string | null | undefined): ExploreProvenance["s
   return Array.isArray(parsed?.sources) ? parsed!.sources : [];
 }
 
+/** How many completed runs a key figure's trend looks back over. */
+const METRIC_HISTORY_RUNS = 12;
+
 /** The metrics a run recorded, flattened to values a card can show. */
 function runMetrics(results: string | null | undefined): Record<string, string | number | boolean | null> | undefined {
   const parsed = parseJsonObject(results);
@@ -259,6 +262,11 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         metricsRunNumber: completedByAnalysis.get(analysis.id)?.[0]?.runNumber,
         metricsRunId: completedByAnalysis.get(analysis.id)?.[0]?.id,
         metricsCompletedAt: completedByAnalysis.get(analysis.id)?.[0]?.completedAt?.toISOString() ?? null,
+        // The newest runs first in the source; oldest first here, for trends.
+        metricHistory: (completedByAnalysis.get(analysis.id) ?? [])
+          .slice(0, METRIC_HISTORY_RUNS)
+          .map((run) => ({ runNumber: run.runNumber, completedAt: run.completedAt?.toISOString() ?? null, metrics: runMetrics(run.results) ?? {} }))
+          .reverse(),
         params: parseJsonObject(revision?.params) ?? {},
         paramsSchema: ((analysis.kitId ? kits.get(analysis.kitId)?.manifest.params : null) ?? null) as CanvasParamsSchema | null,
         inputs: parseInputBindings(revision?.inputs).map((binding) => ({ alias: binding.alias, datasetId: binding.datasetId })),

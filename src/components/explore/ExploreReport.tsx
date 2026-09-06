@@ -9,7 +9,7 @@ import { Sketch, type StoreGroup } from "@/components/explore/ElementStore";
 import { Markdown } from "@/components/explore/Markdown";
 import { insertIntoActiveEditor, RichTextEditor } from "@/components/explore/RichTextEditor";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
-import { CuratedOrganismsView, filtersApply, RunMetricView, SubjectView, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
+import { CuratedOrganismsView, filtersApply, metricLabel, RunMetricView, SubjectView, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
 import { HeatmapView, type HeatmapOptions } from "@/components/explore/views/HeatmapView";
 import { SubjectTimelineOverview } from "@/components/explore/views/SubjectTimelineOverview";
 import { BUILT_IN_VIEWS, type BuiltInView } from "@/lib/explore/canvas-layout";
@@ -78,7 +78,7 @@ function toInput(report: ReportView): ReportInput {
       if (block.type === "taxon-explorer") return { id: block.id, type: "taxon-explorer", datasetId: block.datasetId, taxon: block.taxon, caption: block.caption, span: block.span };
       if (block.type === "subject") return { id: block.id, type: "subject", datasetId: block.datasetId, subject: block.subject, measure: block.measure, caption: block.caption, span: block.span };
       if (block.type === "curated") return { id: block.id, type: "curated", datasetId: block.datasetId, role: block.role, lists: block.lists, limit: block.limit, caption: block.caption, span: block.span };
-      if (block.type === "run-metric") return { id: block.id, type: "run-metric", analysisId: block.analysisId, metrics: block.metrics, label: block.label, span: block.span };
+      if (block.type === "run-metric") return { id: block.id, type: "run-metric", analysisId: block.analysisId, metrics: block.metrics, labels: block.labels, digits: block.digits, columns: block.columns, trend: block.trend, label: block.label, span: block.span };
       return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
     }),
   };
@@ -249,8 +249,8 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
         { id: "metric", title: "Numbers", hint: "Count, mean, min, max of one column", sketch: "numbers", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock(defaultMetricBlock(report.outputs.tables)) },
         {
           id: "run-metric",
-          title: "Run numbers",
-          hint: "Numbers an analysis recorded, as cards",
+          title: "Key figures",
+          hint: "Numbers an analysis recorded, as cards with labels and trends",
           sketch: "numbers",
           disabled: !report.outputs.analyses.some((analysis) => Object.keys(analysis.metrics).length > 0),
           onSelect: () => {
@@ -598,7 +598,7 @@ interface ReportBlockCardProps {
   variables: ReportVariables;
 }
 
-const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Run numbers" };
+const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Key figures" };
 
 function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope, variables }: ReportBlockCardProps) {
   const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
@@ -732,9 +732,9 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
 
         {block.type === "run-metric" && (
           <>
-            <Caption editing={editing} value={block.label ?? ""} fallback={analysis ? `${analysis.name} in numbers` : "Run numbers"} onChange={(label) => onPatch({ label } as Partial<ReportBlock>)} />
+            <Caption editing={editing} value={block.label ?? ""} fallback={analysis ? `${analysis.name}: key figures` : "Key figures"} onChange={(label) => onPatch({ label } as Partial<ReportBlock>)} />
             {editing && <RunMetricControls block={block} analyses={analyses} onPatch={onPatch} />}
-            <RunMetricView analysis={analysis} metrics={block.metrics} />
+            <RunMetricView analysis={analysis} metrics={block.metrics} labels={block.labels} digits={block.digits} columns={block.columns} trend={block.trend ?? "none"} />
           </>
         )}
 
@@ -955,34 +955,105 @@ function CuratedControls({ block, tables, onPatch }: { block: Extract<ReportBloc
   );
 }
 
+const MAX_KEY_FIGURES = 8;
+const DIGIT_CHOICES = ["auto", "0", "1", "2", "3", "4"] as const;
+const TREND_LABELS: Record<"none" | "previous" | "history", string> = { none: "No trend", previous: "Change since the previous run", history: "Sparkline over the run history" };
+
+/** The editor of a key figures block: which numbers, how they are named and rounded, and whether they show a trend. */
 function RunMetricControls({ block, analyses, onPatch }: { block: Extract<ReportBlock, { type: "run-metric" }>; analyses: ReportAnalysis[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
   const analysis = analyses.find((entry) => entry.analysisId === block.analysisId);
   const keys = analysis ? Object.keys(analysis.metrics) : [];
-  const toggle = (key: string) => {
-    const next = block.metrics.includes(key) ? block.metrics.filter((entry) => entry !== key) : [...block.metrics, key].slice(-4);
-    if (next.length > 0) onPatch({ metrics: next } as Partial<ReportBlock>);
+  const unused = keys.filter((key) => !block.metrics.includes(key));
+  const patch = (next: Partial<Extract<ReportBlock, { type: "run-metric" }>>) => onPatch(next as Partial<ReportBlock>);
+  const setMetrics = (metrics: string[]) => {
+    if (metrics.length > 0) patch({ metrics });
+  };
+  const move = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= block.metrics.length) return;
+    const next = [...block.metrics];
+    [next[index], next[target]] = [next[target], next[index]];
+    setMetrics(next);
+  };
+  const setLabel = (key: string, label: string) => {
+    const labels = { ...(block.labels ?? {}) };
+    if (label.trim()) labels[key] = label;
+    else delete labels[key];
+    patch({ labels: Object.keys(labels).length > 0 ? labels : undefined });
+  };
+  const setDigits = (key: string, choice: string) => {
+    const digits = { ...(block.digits ?? {}) };
+    if (choice === "auto") delete digits[key];
+    else digits[key] = Number.parseInt(choice, 10);
+    patch({ digits: Object.keys(digits).length > 0 ? digits : undefined });
   };
   return (
     <div className="mb-3 space-y-2 border-b pb-3">
-      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
-        <span>Analysis</span>
-        <Select value={block.analysisId} onValueChange={(analysisId) => { const target = analyses.find((entry) => entry.analysisId === analysisId); onPatch({ analysisId, metrics: Object.keys(target?.metrics ?? {}).slice(0, 4) } as Partial<ReportBlock>); }}>
-          <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Analysis"><SelectValue placeholder="Choose an analysis" /></SelectTrigger>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Analysis</span>
+          <Select value={block.analysisId} onValueChange={(analysisId) => { const target = analyses.find((entry) => entry.analysisId === analysisId); patch({ analysisId, metrics: Object.keys(target?.metrics ?? {}).filter((key) => typeof target?.metrics[key] === "number").slice(0, 4), labels: undefined, digits: undefined }); }}>
+            <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Analysis"><SelectValue placeholder="Choose an analysis" /></SelectTrigger>
+            <SelectContent>
+              {analyses.filter((entry) => Object.keys(entry.metrics).length > 0).map((entry) => (
+                <SelectItem key={entry.analysisId} value={entry.analysisId}>{entry.name}<span className="ml-1.5 text-xs text-muted-foreground">{entry.runNumber}</span></SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Trend</span>
+          <Select value={block.trend ?? "none"} onValueChange={(trend) => patch({ trend: trend as "none" | "previous" | "history" })}>
+            <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Trend"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {(Object.keys(TREND_LABELS) as Array<keyof typeof TREND_LABELS>).map((mode) => <SelectItem key={mode} value={mode}>{TREND_LABELS[mode]}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Cards per row</span>
+          <Select value={block.columns ? String(block.columns) : "auto"} onValueChange={(value) => patch({ columns: value === "auto" ? undefined : Number.parseInt(value, 10) })}>
+            <SelectTrigger className="h-8 w-full min-w-0 text-xs" aria-label="Cards per row"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">As many as fit</SelectItem>
+              {[1, 2, 3, 4, 5, 6].map((count) => <SelectItem key={count} value={String(count)}>{count}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </label>
+      </div>
+      <ul className="space-y-1" aria-label="Key figures">
+        {block.metrics.map((key, index) => {
+          const value = analysis?.metrics[key];
+          return (
+            <li key={key} className="flex items-center gap-1.5 rounded-md border px-2 py-1">
+              <span className="w-28 shrink-0 truncate font-mono text-[11px] text-muted-foreground" title={key}>{key}</span>
+              <span className="w-16 shrink-0 truncate text-right text-xs tabular-nums" title={value === null || value === undefined ? "n/a" : String(value)}>{typeof value === "number" ? formatStat(value) : value === null || value === undefined ? "n/a" : formatCell(value)}</span>
+              <Input value={block.labels?.[key] ?? ""} placeholder={metricLabel(key)} onChange={(event) => setLabel(key, event.target.value)} className="h-7 min-w-0 flex-1 text-xs" aria-label={`Label for ${key}`} />
+              {typeof value === "number" && (
+                <Select value={block.digits?.[key] === undefined ? "auto" : String(block.digits[key])} onValueChange={(choice) => setDigits(key, choice)}>
+                  <SelectTrigger className="h-7 w-[4.5rem] shrink-0 text-[11px]" aria-label={`Decimals for ${key}`}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {DIGIT_CHOICES.map((choice) => <SelectItem key={choice} value={choice}>{choice === "auto" ? "auto" : `${choice} dec.`}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
+              <button type="button" onClick={() => move(index, -1)} disabled={index === 0} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-30" aria-label={`Move ${key} up`}><ChevronUp className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => move(index, 1)} disabled={index === block.metrics.length - 1} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-30" aria-label={`Move ${key} down`}><ChevronDown className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => setMetrics(block.metrics.filter((entry) => entry !== key))} disabled={block.metrics.length === 1} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-destructive disabled:opacity-30" aria-label={`Remove ${key}`}><Trash2 className="h-3.5 w-3.5" /></button>
+            </li>
+          );
+        })}
+      </ul>
+      {unused.length > 0 && block.metrics.length < MAX_KEY_FIGURES ? (
+        <Select value="" onValueChange={(key) => setMetrics([...block.metrics, key])}>
+          <SelectTrigger className="h-8 w-56 text-xs" aria-label="Add a figure"><SelectValue placeholder="Add a figure" /></SelectTrigger>
           <SelectContent>
-            {analyses.filter((entry) => Object.keys(entry.metrics).length > 0).map((entry) => (
-              <SelectItem key={entry.analysisId} value={entry.analysisId}>{entry.name}<span className="ml-1.5 text-xs text-muted-foreground">{entry.runNumber}</span></SelectItem>
-            ))}
+            {unused.map((key) => <SelectItem key={key} value={key}>{key}<span className="ml-1.5 text-xs text-muted-foreground">{typeof analysis?.metrics[key] === "number" ? formatStat(analysis.metrics[key] as number) : String(analysis?.metrics[key] ?? "")}</span></SelectItem>)}
           </SelectContent>
         </Select>
-      </label>
-      <div className="flex flex-wrap gap-1" role="group" aria-label="Numbers to show">
-        {keys.map((key) => (
-          <button key={key} type="button" onClick={() => toggle(key)} aria-pressed={block.metrics.includes(key)} className={cn("rounded-full border px-2 py-0.5 text-[11px]", block.metrics.includes(key) ? "border-transparent bg-secondary font-medium" : "text-muted-foreground hover:bg-muted")} title={String(analysis?.metrics[key])}>
-            {key}
-          </button>
-        ))}
-        <span className="self-center text-[10px] text-muted-foreground">up to four</span>
-      </div>
+      ) : (
+        <p className="text-[10px] text-muted-foreground">{block.metrics.length >= MAX_KEY_FIGURES ? `Up to ${MAX_KEY_FIGURES} figures.` : "Every number of this run is shown."}</p>
+      )}
     </div>
   );
 }

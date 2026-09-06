@@ -14,6 +14,7 @@ import { renderMarkdownHtml } from "./markdown-html";
 import { applyRowFilter } from "./row-filter";
 import { METRIC_STAT_LABELS, type ReportFilter } from "./report-blocks";
 import { buildChart, computeStats, formatStat, WIDGET_ROW_LIMIT } from "./report-widgets";
+import { formatWithDigits, metricTrend, trendNote } from "./metric-trend";
 import { getReportView, type ReportView, type ResolvedReportBlock } from "./reports";
 import { parseRoles, parseSchema } from "./schema";
 import { parseTargetKey } from "./target-key";
@@ -132,8 +133,9 @@ function htmlTable(columns: Array<{ key: string; label: string; type?: string }>
   return `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-function cards(entries: Array<{ label: string; value: string }>): string {
-  return `<div class="cards">${entries.map((entry) => `<div class="card"><div class="value">${escapeHtml(entry.value)}</div><div class="label">${escapeHtml(entry.label)}</div></div>`).join("")}</div>`;
+function cards(entries: Array<{ label: string; value: string; note?: string | null }>, columns?: number): string {
+  const style = columns ? ` style="grid-template-columns:repeat(${Math.max(1, Math.min(6, columns))},minmax(0,1fr))"` : "";
+  return `<div class="cards"${style}>${entries.map((entry) => `<div class="card"><div class="value">${escapeHtml(entry.value)}</div><div class="label">${escapeHtml(entry.label)}</div>${entry.note ? `<div class="note">${escapeHtml(entry.note)}</div>` : ""}</div>`).join("")}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -289,8 +291,17 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
     }
     case "run-metric": {
       const analysis = block.analysis;
-      if (!analysis) return section(block, block.label ?? "Run numbers", empty("This analysis is not in the report any more."));
-      return section(block, block.label ?? `${analysis.name} in numbers`, cards(block.metrics.map((key) => ({ label: metricLabel(key), value: formatValue(analysis.metrics[key]) || "n/a" }))), `${analysis.name}${analysis.runNumber ? `, ${analysis.runNumber}` : ""}`);
+      if (!analysis) return section(block, block.label ?? "Key figures", empty("This analysis is not in the report any more."));
+      const trend = block.trend ?? "none";
+      const entries = block.metrics.map((key) => {
+        const value = analysis.metrics[key];
+        const digits = block.digits?.[key];
+        const text = typeof value === "number" ? formatWithDigits(value, digits, formatStat) : formatValue(value) || "n/a";
+        const movement = typeof value === "number" ? metricTrend(analysis.history, key, trend) : null;
+        const note = trendNote(movement, trend, (amount) => formatWithDigits(amount, digits, formatStat));
+        return { label: block.labels?.[key]?.trim() || metricLabel(key), value: text, note };
+      });
+      return section(block, block.label ?? `${analysis.name}: key figures`, cards(entries, block.columns), `${analysis.name}${analysis.runNumber ? `, ${analysis.runNumber}` : ""}`);
     }
     case "view": {
       const table = tableOf(block.datasetId);

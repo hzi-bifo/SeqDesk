@@ -87,6 +87,8 @@ export type CanvasAnalysisData = {
   metricsRunNumber?: string;
   metricsRunId?: string;
   metricsCompletedAt?: string | null;
+  /** Metrics of the last completed runs, oldest first, for trends on key figures. */
+  metricHistory?: Array<{ runNumber: string; completedAt: string | null; metrics: Record<string, string | number | boolean | null> }>;
   /** How the report cites the step. */
   slug?: string | null;
 }

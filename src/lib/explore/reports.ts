@@ -74,6 +74,8 @@ export interface ReportAnalysis {
   completedAt?: string | null;
   inputs?: Array<{ alias: string; datasetId: string; name: string }>;
   params?: Record<string, unknown>;
+  /** Metrics of the last completed runs, oldest first, for trends on key figures. */
+  history?: Array<{ runNumber: string; completedAt: string | null; metrics: Record<string, string | number | boolean | null> }>;
 }
 
 /** What a chart or numbers block needs to know about its table; the rows come from the rows API. */
@@ -161,6 +163,7 @@ export async function collectReportOutputs(targetKey: string, reportId: string |
       kitId: node.data.kitId,
       runId: node.data.metricsRunId ?? null,
       completedAt: node.data.metricsCompletedAt ?? null,
+      history: node.data.metricHistory ?? [],
       inputs: (node.data.inputs ?? []).map((binding) => ({ alias: binding.alias, datasetId: binding.datasetId, name: datasetNames.get(binding.datasetId) ?? binding.alias })),
       params: node.data.params ?? {},
     });

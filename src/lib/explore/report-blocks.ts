@@ -150,13 +150,26 @@ const CuratedBlockSchema = z
   })
   .strict();
 
-/** A number an analysis recorded with its latest run, shown as a summary card. */
+/**
+ * Key figures: numbers an analysis recorded with its latest run, shown as
+ * cards. Authors pick which, name them, fix their decimals and show how they
+ * moved over the analysis's runs.
+ */
+const MetricKey = z.string().min(1).max(120);
 const RunMetricBlockSchema = z
   .object({
     id: BlockId,
     type: z.literal("run-metric"),
     analysisId: z.string().min(1).max(80),
-    metrics: z.array(z.string().min(1).max(120)).min(1).max(4),
+    metrics: z.array(MetricKey).min(1).max(8),
+    /** Card labels by metric key; a missing entry reads the key as words. */
+    labels: z.record(MetricKey, z.string().max(80)).optional(),
+    /** Decimals by metric key; a missing entry rounds for reading. */
+    digits: z.record(MetricKey, z.number().int().min(0).max(6)).optional(),
+    /** Cards per row; missing means as many as there are, up to four. */
+    columns: z.number().int().min(1).max(6).optional(),
+    /** Change against the previous run, or a sparkline over the run history. */
+    trend: z.enum(["none", "previous", "history"]).optional(),
     label: z.string().max(200).optional(),
     span: Span,
   })
