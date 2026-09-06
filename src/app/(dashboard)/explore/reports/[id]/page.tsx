@@ -40,7 +40,8 @@ function ReportScreen() {
   const requestedScope = searchParams.get("scope");
   const mode: "report" | "edit" = searchParams.get("mode") === "edit" ? "edit" : "report";
   const requestedView = searchParams.get("view");
-  const view: EditView = requestedView === "page" || requestedView === "list" ? requestedView : "canvas";
+  // Edit opens the page editor; the analysis steps (canvas) and the lists are one tab further in.
+  const view: EditView = requestedView === "canvas" || requestedView === "list" ? requestedView : "page";
   const focus = searchParams.get("focus");
 
   const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
@@ -67,7 +68,7 @@ function ReportScreen() {
       if (scope) query.set("scope", scope);
       if (next.mode === "edit") {
         query.set("mode", "edit");
-        query.set("view", next.view ?? "canvas");
+        query.set("view", next.view ?? "page");
       }
       router.replace(`/explore/reports/${reportId}?${query.toString()}`);
     },
@@ -92,6 +93,7 @@ function ReportScreen() {
   }
   const scopeKey = report.targetKey;
   const openCanvas = () => go({ mode: "edit", view: "canvas" });
+  const openEditor = () => go({ mode: "edit", view: "page" });
   const done = () => go({ mode: "report" });
 
   return (
@@ -119,11 +121,11 @@ function ReportScreen() {
           <>
             <span className="h-5 w-px bg-border" aria-hidden />
             <div className="flex rounded-md border text-xs" role="group" aria-label="View">
-              <button type="button" onClick={() => go({ mode: "edit", view: "canvas" })} className={`inline-flex items-center gap-1 px-2 py-1.5 ${view === "canvas" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={view === "canvas"} title="The analysis steps: tables, analyses and their outputs as connected cards">
-                <LayoutGrid className="h-3.5 w-3.5" /> Canvas
-              </button>
               <button type="button" onClick={() => go({ mode: "edit", view: "page" })} className={`inline-flex items-center gap-1 px-2 py-1.5 ${view === "page" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={view === "page"} title="Arrange the page: text, figures, tables and filters">
                 <FileText className="h-3.5 w-3.5" /> Page
+              </button>
+              <button type="button" onClick={() => go({ mode: "edit", view: "canvas" })} className={`inline-flex items-center gap-1 px-2 py-1.5 ${view === "canvas" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={view === "canvas"} title="The analysis steps: tables, analyses and their outputs as connected cards">
+                <LayoutGrid className="h-3.5 w-3.5" /> Canvas
               </button>
               <button type="button" onClick={() => go({ mode: "edit", view: "list" })} className={`inline-flex items-center gap-1 px-2 py-1.5 ${view === "list" ? "bg-secondary font-medium" : "text-muted-foreground"}`} aria-pressed={view === "list"} title="Tables and analysis steps as lists">
                 <List className="h-3.5 w-3.5" /> List
@@ -153,7 +155,7 @@ function ReportScreen() {
           </>
         )}
         {mode === "report" && canEdit && (
-          <Button size="sm" className="h-8" onClick={openCanvas} title="Edit the analysis steps and the page">
+          <Button size="sm" className="h-8" onClick={openEditor} title="Edit the page; the analysis steps are behind the Canvas tab">
             <Pencil className="h-3.5 w-3.5 lg:mr-1.5" />
             <span className="hidden lg:inline">Edit</span>
           </Button>

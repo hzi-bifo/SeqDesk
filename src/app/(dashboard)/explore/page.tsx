@@ -265,7 +265,7 @@ function ReportsHome() {
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => router.push(`/explore/reports/${report.id}${scopeQuery}&mode=edit&view=canvas`)}>
+                    <DropdownMenuItem onSelect={() => router.push(`/explore/reports/${report.id}${scopeQuery}&mode=edit&view=page`)}>
                       <Pencil className="mr-2 h-4 w-4" /> Edit
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => setRenaming({ id: report.id, title: report.title })}>
