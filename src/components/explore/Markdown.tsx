@@ -75,6 +75,11 @@ function VariableCard({ resolved, links }: { resolved: ResolvedVariable; links: 
           </>
         )}
       </dl>
+      {step.latestRun && step.latestRun.runNumber !== step.runNumber && (
+        <p className="mt-2 rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1 text-[11px] text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          A newer run, {step.latestRun.runNumber}, {step.latestRun.status === "failed" ? "failed" : `is ${step.latestRun.status}`}; this value is from {step.runNumber}.
+        </p>
+      )}
       <div className="mt-3 border-t pt-2">
         <Link href={canvasHref} className="inline-flex items-center gap-1 font-medium hover:underline">
           <LayoutGrid className="h-3.5 w-3.5" />

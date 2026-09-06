@@ -52,20 +52,49 @@ export function formatDateTime(value: string | null | undefined): string {
  * large value (a read count must stay exact); integers print verbatim. The same
  * rule the DataGrid applies, so a value reads alike on a card and in the table.
  */
+/**
+ * Numbers for reading, not for computing: millions and more compact (48.9M),
+ * thousands with separators and no decimals, everyday values with two
+ * decimals, small values (p-values, fractions) with three significant digits.
+ * The exact value belongs in a tooltip next to it.
+ */
 export function formatNumber(value: number): string {
-  if (!Number.isFinite(value) || Number.isInteger(value)) return String(value);
+  if (!Number.isFinite(value)) return String(value);
   const magnitude = Math.abs(value);
-  if (magnitude >= 1) {
-    const integerDigits = Math.floor(Math.log10(magnitude)) + 1;
-    const fractionDigits = Math.max(0, 6 - integerDigits);
-    return String(Number(value.toFixed(fractionDigits)));
-  }
-  return String(Number(value.toPrecision(6)));
+  if (magnitude >= 1_000_000) return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  if (Number.isInteger(value)) return value.toLocaleString("en-US");
+  if (magnitude >= 1000) return Math.round(value).toLocaleString("en-US");
+  if (magnitude >= 1) return Number(value.toFixed(2)).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return String(Number(value.toPrecision(3)));
 }
 
-export function formatCell(value: string | number | boolean | null | undefined): string {
+type CellValue = string | number | boolean | null | undefined;
+
+/** A number, also when a number-typed column stores it as text; otherwise nothing. */
+function numericValue(value: CellValue, type?: string): number | undefined {
+  if (typeof value === "number") return Number.isFinite(value) ? value : undefined;
+  if (type === "number" && typeof value === "string") {
+    const trimmed = value.trim();
+    const numeric = Number(trimmed);
+    return trimmed !== "" && Number.isFinite(numeric) ? numeric : undefined;
+  }
+  return undefined;
+}
+
+/** The unrounded value for a tooltip, or nothing when the shown text already is exact. */
+export function exactValue(value: CellValue, type?: string): string | undefined {
+  const numeric = numericValue(value, type);
+  if (numeric === undefined) return undefined;
+  const exact = String(numeric);
+  return exact === formatNumber(numeric) ? undefined : exact;
+}
+
+/** Text for one table cell. Numbers are rounded for reading, also when a number column stores them as text. */
+export function formatCell(value: CellValue, type?: string): string {
   if (value === null || value === undefined) return "";
-  if (typeof value === "number") return formatNumber(value);
+  const numeric = numericValue(value, type);
+  if (numeric !== undefined) return formatNumber(numeric);
+  if (typeof value === "number") return String(value);
   if (typeof value === "boolean") return value ? "true" : "false";
   return value;
 }

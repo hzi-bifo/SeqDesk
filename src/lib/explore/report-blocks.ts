@@ -191,6 +191,8 @@ export const ReportInputSchema = z
     title: z.string().trim().min(1).max(200),
     blocks: z.array(ReportBlockSchema).max(MAX_REPORT_BLOCKS),
     filters: z.array(ReportFilterSchema).max(MAX_REPORT_FILTERS).optional(),
+    /** The version the editor started from (updatedAt); a save against an older version is refused. */
+    expectedUpdatedAt: z.string().max(40).optional(),
   })
   .strict();
 

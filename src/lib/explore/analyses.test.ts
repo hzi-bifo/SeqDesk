@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   db: {
-    exploreAnalysis: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn(), findMany: vi.fn() },
+    exploreAnalysis: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     exploreAnalysisRevision: { create: vi.fn(), findUnique: vi.fn() },
     exploreAnalysisRun: { findFirst: vi.fn() },
   },

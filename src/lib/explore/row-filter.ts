@@ -32,10 +32,19 @@ type Node =
 
 export interface CompiledFilter {
   expression: string;
-  /** Column names the expression refers to. */
+  /** Column names the expression refers to, as written. */
   columns: string[];
   test: (row: ExploreRowData) => boolean;
 }
+
+export interface RowFilterOptions {
+  /** Other names a column may be written as (its label), mapped to its key; matched regardless of case. */
+  aliases?: Record<string, string>;
+}
+
+const MAX_PATTERN_LENGTH = 200;
+/** A quantified group that is itself quantified, the shape behind catastrophic backtracking. */
+const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)[+*{?]/;
 
 export class RowFilterError extends Error {}
 
@@ -241,27 +250,27 @@ function compare(left: Cell, right: Cell, op: string): boolean {
   return false;
 }
 
-function evaluate(node: Node, row: ExploreRowData): Cell | Cell[] {
+type Resolve = (name: string, row: ExploreRowData) => Cell;
+
+function evaluate(node: Node, row: ExploreRowData, resolve: Resolve): Cell | Cell[] {
   switch (node.kind) {
     case "literal":
       return node.value;
     case "column":
-      return row[node.name] ?? null;
+      return resolve(node.name, row);
     case "list":
-      return node.items.map((item) => evaluate(item, row) as Cell);
+      return node.items.map((item) => evaluate(item, row, resolve) as Cell);
     case "not":
-      return !truthy(evaluate(node.operand, row));
+      return !truthy(evaluate(node.operand, row, resolve));
     case "call": {
-      const args = node.args.map((argument) => evaluate(argument, row));
+      const args = node.args.map((argument) => evaluate(argument, row, resolve));
       if (node.name === "is.na") return isMissing(args[0] as Cell);
       if (node.name === "grepl") {
         const [pattern, subject] = args;
+        // The pattern is checked before the missing shortcut so a bad pattern is found on any row.
+        const regex = safePattern(String(pattern));
         if (isMissing(subject as Cell)) return false;
-        try {
-          return new RegExp(String(pattern), "i").test(String(subject));
-        } catch {
-          throw new RowFilterError(`grepl: "${String(pattern)}" is not a valid pattern`);
-        }
+        return regex.test(String(subject));
       }
       if (node.name === "startsWith") {
         const [subject, prefix] = args;
@@ -270,17 +279,46 @@ function evaluate(node: Node, row: ExploreRowData): Cell | Cell[] {
       return false;
     }
     case "binary": {
-      if (node.op === "&") return truthy(evaluate(node.left, row)) && truthy(evaluate(node.right, row));
-      if (node.op === "|") return truthy(evaluate(node.left, row)) || truthy(evaluate(node.right, row));
-      const left = evaluate(node.left, row) as Cell;
+      if (node.op === "&") return truthy(evaluate(node.left, row, resolve)) && truthy(evaluate(node.right, row, resolve));
+      if (node.op === "|") return truthy(evaluate(node.left, row, resolve)) || truthy(evaluate(node.right, row, resolve));
+      const left = evaluate(node.left, row, resolve) as Cell;
       if (node.op === "%in%") {
-        const items = evaluate(node.right, row);
+        const items = evaluate(node.right, row, resolve);
         const list = Array.isArray(items) ? items : [items];
         return !isMissing(left) && list.some((item) => compare(left, item as Cell, "=="));
       }
-      return compare(left, evaluate(node.right, row) as Cell, node.op);
+      return compare(left, evaluate(node.right, row, resolve) as Cell, node.op);
     }
   }
+}
+
+const patternCache = new Map<string, RegExp>();
+
+/** A grepl pattern as a regular expression, refused when it is long or could backtrack badly. */
+function safePattern(pattern: string): RegExp {
+  const cached = patternCache.get(pattern);
+  if (cached) return cached;
+  if (pattern.length > MAX_PATTERN_LENGTH) throw new RowFilterError(`grepl: the pattern is longer than ${MAX_PATTERN_LENGTH} characters`);
+  if (NESTED_QUANTIFIER.test(pattern)) throw new RowFilterError("grepl: a repeated group inside a repeat is not allowed; write the pattern without nested repeats");
+  let compiled: RegExp;
+  try {
+    compiled = new RegExp(pattern, "i");
+  } catch {
+    throw new RowFilterError(`grepl: "${pattern}" is not a valid pattern`);
+  }
+  if (patternCache.size > 200) patternCache.clear();
+  patternCache.set(pattern, compiled);
+  return compiled;
+}
+
+function resolver(options: RowFilterOptions | undefined): Resolve {
+  const aliases = new Map<string, string>();
+  for (const [alias, key] of Object.entries(options?.aliases ?? {})) aliases.set(alias.toLowerCase(), key);
+  return (name, row) => {
+    if (Object.prototype.hasOwnProperty.call(row, name)) return row[name] ?? null;
+    const key = aliases.get(name.toLowerCase());
+    return key !== undefined ? (row[key] ?? null) : null;
+  };
 }
 
 function truthy(value: Cell | Cell[]): boolean {
@@ -315,30 +353,34 @@ function collectColumns(node: Node, into: Set<string>): void {
 }
 
 /** Parse a filter once; the result tests rows. Throws RowFilterError with a message for the editor. */
-export function compileRowFilter(expression: string): CompiledFilter {
+export function compileRowFilter(expression: string, options?: RowFilterOptions): CompiledFilter {
   const node = new Parser(tokenize(expression)).parse();
   const columns = new Set<string>();
   collectColumns(node, columns);
-  return { expression, columns: [...columns], test: (row) => truthy(evaluate(node, row)) };
+  const resolve = resolver(options);
+  return { expression, columns: [...columns], test: (row) => truthy(evaluate(node, row, resolve)) };
 }
 
 /** Rows that pass the filter; an empty or blank expression keeps every row. */
-export function applyRowFilter(rows: ExploreRowData[], expression: string | null | undefined): ExploreRowData[] {
+export function applyRowFilter(rows: ExploreRowData[], expression: string | null | undefined, options?: RowFilterOptions): ExploreRowData[] {
   if (!expression || !expression.trim()) return rows;
-  const compiled = compileRowFilter(expression);
+  const compiled = compileRowFilter(expression, options);
   return rows.filter((row) => compiled.test(row));
 }
 
-/** The problem with an expression, or null when it parses. */
-export function rowFilterProblem(expression: string, knownColumns?: string[]): string | null {
+/** The problem with an expression, or null when it parses and names only known columns (keys or labels). */
+export function rowFilterProblem(expression: string, knownColumns?: string[], options?: RowFilterOptions): string | null {
   if (!expression.trim()) return null;
   try {
-    const compiled = compileRowFilter(expression);
+    const compiled = compileRowFilter(expression, options);
     if (knownColumns) {
-      const known = new Set(knownColumns);
-      const unknown = compiled.columns.filter((column) => !known.has(column));
+      const known = new Set([...knownColumns, ...Object.keys(options?.aliases ?? {}).map((alias) => alias.toLowerCase())]);
+      const unknown = compiled.columns.filter((column) => !known.has(column) && !known.has(column.toLowerCase()));
       if (unknown.length > 0) return `No column called ${unknown.map((column) => `"${column}"`).join(", ")}`;
     }
+    // Patterns are checked once here so a reader never meets the error.
+    const probe = { probe: "x" } as ExploreRowData;
+    compiled.test(probe);
     return null;
   } catch (error) {
     return error instanceof Error ? error.message : "Not a valid filter";

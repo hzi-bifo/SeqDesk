@@ -65,10 +65,12 @@ export function computeStats(rows: ExploreRowData[], key: string): Record<Metric
 /** Numbers for people: integers as they are, others with a few significant digits, thousands separated. */
 export function formatStat(value: number | null): string {
   if (value === null) return "n/a";
-  if (Number.isInteger(value)) return value.toLocaleString();
   const abs = Math.abs(value);
-  const digits = abs >= 100 ? 1 : abs >= 1 ? 2 : 4;
-  return value.toLocaleString(undefined, { maximumFractionDigits: digits });
+  if (abs >= 1_000_000) return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  if (Number.isInteger(value)) return value.toLocaleString("en-US");
+  if (abs >= 1000) return Math.round(value).toLocaleString("en-US");
+  if (abs >= 1) return Number(value.toFixed(2)).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  return String(Number(value.toPrecision(3)));
 }
 
 export interface ChartSpec {

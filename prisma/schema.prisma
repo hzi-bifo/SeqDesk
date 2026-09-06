@@ -998,6 +998,7 @@ model ExploreAnalysis {
   description       String?
   kitId             String?  // template it was created from
   reportId          String?  // the report this analysis is a step of
+  slug              String?  // how the report cites this step (cohort_overview); fixed once given, survives renames
   language          String   // python | r
   environmentName   String
   currentRevisionId String?  @unique

@@ -75,13 +75,19 @@ export function escapeHtml(value: unknown): string {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char);
 }
 
-function formatValue(value: unknown): string {
+function cell(value: unknown, type?: string): string {
+  const text = formatValue(value, type);
+  const numeric = typeof value === "number" || (type === "number" && typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value)));
+  const exact = numeric ? String(Number(value)) : "";
+  const title = numeric && exact !== text ? ` title="${escapeHtml(exact)}"` : "";
+  return `<td${numeric ? ` class="num"${title}` : ""}>${escapeHtml(text)}</td>`;
+}
+
+// Same rounding as the app's tables: compact millions, whole thousands, two decimals, three significant digits below one.
+function formatValue(value: unknown, type?: string): string {
   if (value === null || value === undefined) return "";
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) return "";
-    if (Number.isInteger(value)) return value.toLocaleString("en-US");
-    return Math.abs(value) >= 1000 ? Math.round(value).toLocaleString("en-US") : Number(value.toPrecision(4)).toString();
-  }
+  if (typeof value === "number") return Number.isFinite(value) ? formatStat(value) : "";
+  if (type === "number" && typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return formatStat(Number(value));
   if (typeof value === "boolean") return value ? "true" : "false";
   return String(value);
 }
@@ -118,10 +124,10 @@ function empty(text: string): string {
   return `<div class="empty">${escapeHtml(text)}</div>`;
 }
 
-function htmlTable(columns: Array<{ key: string; label: string }>, rows: ExploreRowData[]): string {
+function htmlTable(columns: Array<{ key: string; label: string; type?: string }>, rows: ExploreRowData[]): string {
   const head = columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("");
   const body = rows
-    .map((row) => `<tr>${columns.map((column) => `<td${typeof row[column.key] === "number" ? ' class="num"' : ""}>${escapeHtml(formatValue(row[column.key]))}</td>`).join("")}</tr>`)
+    .map((row) => `<tr>${columns.map((column) => cell(row[column.key], column.type)).join("")}</tr>`)
     .join("");
   return `<div class="scroll"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
@@ -243,7 +249,7 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
       let filterNote = "";
       if (block.filter) {
         try {
-          rows = applyRowFilter(rows, block.filter);
+          rows = applyRowFilter(rows, block.filter, { aliases: Object.fromEntries(table.columns.map((column) => [column.label, column.key])) });
           filterNote = ", row filter applied";
         } catch {
           filterNote = ", row filter could not be applied";

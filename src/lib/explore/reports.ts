@@ -64,6 +64,10 @@ export interface ReportAnalysis {
   name: string;
   runNumber: string | null;
   metrics: Record<string, string | number | boolean | null>;
+  /** How the page cites this step; fixed once given. */
+  slug?: string | null;
+  /** The newest run, which may be newer than the one the numbers come from. */
+  latestRun?: { runNumber: string; status: string } | null;
   /** Where the numbers come from: template, run, tables read and parameters used. */
   kitId?: string | null;
   runId?: string | null;
@@ -152,6 +156,8 @@ export async function collectReportOutputs(targetKey: string, reportId: string |
       name: node.data.name,
       runNumber: node.data.metricsRunNumber ?? null,
       metrics: node.data.metrics ?? {},
+      slug: node.data.slug ?? null,
+      latestRun: node.data.latestRun ? { runNumber: node.data.latestRun.runNumber, status: node.data.latestRun.status } : null,
       kitId: node.data.kitId,
       runId: node.data.metricsRunId ?? null,
       completedAt: node.data.metricsCompletedAt ?? null,
@@ -359,8 +365,12 @@ export async function saveReport(reportId: string, raw: unknown): Promise<Report
     if (ids.has(block.id)) throw new ExploreReportError(400, `Block id ${block.id} is used twice`);
     ids.add(block.id);
   }
-  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true } });
+  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true, updatedAt: true } });
   if (!existing) throw new ExploreReportError(404, "Report not found");
+  // Two editors: the second save of the same version is refused instead of overwriting the first.
+  if (parsed.data.expectedUpdatedAt && parsed.data.expectedUpdatedAt !== existing.updatedAt.toISOString()) {
+    throw new ExploreReportError(409, "This page was changed elsewhere since you opened it; reload to see the latest version before editing further.");
+  }
   const blocks = parsed.data.blocks as unknown as Prisma.InputJsonValue;
   const settings = { filters: parsed.data.filters ?? [] } as unknown as Prisma.InputJsonValue;
   await db.exploreReport.update({ where: { id: reportId }, data: { title: parsed.data.title, blocks, settings } });

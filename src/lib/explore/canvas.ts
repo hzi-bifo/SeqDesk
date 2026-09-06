@@ -245,6 +245,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         kind: "analysis",
         analysisId: analysis.id,
         name: analysis.name,
+        slug: analysis.slug,
         kitId: analysis.kitId,
         language: analysis.language,
         revision: revision?.number ?? null,

@@ -87,6 +87,8 @@ export type CanvasAnalysisData = {
   metricsRunNumber?: string;
   metricsRunId?: string;
   metricsCompletedAt?: string | null;
+  /** How the report cites the step. */
+  slug?: string | null;
 }
 
 export type CanvasFigureData = {

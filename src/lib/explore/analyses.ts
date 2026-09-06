@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getKit, type LoadedKit } from "./kits/loader";
+import { stepSlug } from "./variables";
 
 export type AnalysisLanguage = "python" | "r";
 
@@ -243,10 +244,17 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
     reportId = report.id;
   }
 
+  const name = input.name?.trim() || kit?.manifest.name || "Untitled analysis";
+  // The slug the page cites the step by, unique within the report, kept for good.
+  const taken = new Set((await db.exploreAnalysis.findMany({ where: reportId ? { reportId } : { targetKey: input.targetKey }, select: { slug: true } })).map((entry) => entry.slug).filter((entry): entry is string => Boolean(entry)));
+  let slug = stepSlug(name);
+  for (let index = 2; taken.has(slug); index += 1) slug = `${stepSlug(name)}_${index}`;
+
   const analysis = await db.exploreAnalysis.create({
     data: {
       targetKey: input.targetKey,
-      name: input.name?.trim() || kit?.manifest.name || "Untitled analysis",
+      name,
+      slug,
       description: input.description ?? kit?.manifest.description ?? null,
       kitId: kit?.manifest.id ?? null,
       reportId,

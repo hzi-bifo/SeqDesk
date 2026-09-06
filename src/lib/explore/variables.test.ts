@@ -23,8 +23,10 @@ describe("variables", () => {
 
   it("formats values the way a reader expects", () => {
     expect(formatVariableValue(874)).toBe("874");
-    expect(formatVariableValue(49178386.2)).toBe("49,178,386");
-    expect(formatVariableValue(0.062867)).toBe("0.06287");
+    expect(formatVariableValue(49178386.2)).toBe("49.2M");
+    expect(formatVariableValue(1417113.3)).toBe("1.4M");
+    expect(formatVariableValue(0.062867)).toBe("0.0629");
+    expect(formatVariableValue(13.0745)).toBe("13.07");
     expect(formatVariableValue(0.062867, 3)).toBe("0.063");
     expect(formatVariableValue(true)).toBe("yes");
     expect(formatVariableValue(null)).toBe("n/a");

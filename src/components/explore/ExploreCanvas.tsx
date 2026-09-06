@@ -66,7 +66,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { fetcher, formatCell, postJson, ROLE_LABELS } from "@/lib/explore/client";
+import { exactValue, fetcher, formatCell, postJson, ROLE_LABELS } from "@/lib/explore/client";
 import {
   assignCanvasHues,
   CANVAS_COLUMN_WIDTH,
@@ -417,9 +417,9 @@ function DatasetNode({ id, data, width, height, positionAbsoluteX, positionAbsol
                       key={segment.column.key}
                       className={cn("truncate whitespace-nowrap px-2 py-1", segment.column.type === "number" && "text-right tabular-nums")}
                       style={{ maxWidth: COLUMN_WIDTH + 20, background: usedColumns[segment.column.key] ? computeSoft : undefined }}
-                      title={formatCell(row[segment.column.key])}
+                      title={exactValue(row[segment.column.key], segment.column.type) ?? formatCell(row[segment.column.key], segment.column.type)}
                     >
-                      {formatCell(row[segment.column.key])}
+                      {formatCell(row[segment.column.key], segment.column.type)}
                     </td>
                   )
                 )}
@@ -1318,7 +1318,7 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
                   ? ({ id, type: "view", datasetId: target.datasetId, view: target.view, caption: target.label, span: 2 } as ReportBlock)
                   : ({ id, type: "table", datasetId: target.datasetId, caption: target.label, span: 2 } as ReportBlock),
             ];
-        await postJson(key, { title: report.title, blocks: next, filters: report.filters }, "PUT");
+        await postJson(key, { title: report.title, blocks: next, filters: report.filters, expectedUpdatedAt: report.updatedAt ?? undefined }, "PUT");
         toast.success(present ? `${target.label} taken off the report` : `${target.label} added to the report`);
         await mutate();
       } catch (err) {

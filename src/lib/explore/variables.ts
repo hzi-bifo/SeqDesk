@@ -44,12 +44,16 @@ export function stepSlug(name: string): string {
   return slug || "step";
 }
 
-/** The steps of a report with unique slugs; a second "Alpha diversity" becomes alpha_diversity_2. */
+/**
+ * The steps of a report with unique slugs. A step keeps the slug it was given
+ * when created (so citations survive a rename); older steps derive it from
+ * their name; a second "Alpha diversity" becomes alpha_diversity_2.
+ */
 export function buildVariables(analyses: ReportAnalysis[]): ReportVariables {
   const steps: VariableStep[] = [];
   const bySlug = new Map<string, VariableStep>();
   for (const analysis of analyses) {
-    const base = stepSlug(analysis.name);
+    const base = analysis.slug?.trim() || stepSlug(analysis.name);
     let slug = base;
     for (let index = 2; bySlug.has(slug); index += 1) slug = `${base}_${index}`;
     const step: VariableStep = { ...analysis, slug };
@@ -74,9 +78,11 @@ export function formatVariableValue(value: VariableValue | undefined, digits: nu
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return "n/a";
     if (digits !== null) return value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    if (Math.abs(value) >= 1_000_000) return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
     if (Number.isInteger(value)) return value.toLocaleString("en-US");
     if (Math.abs(value) >= 1000) return Math.round(value).toLocaleString("en-US");
-    return Number(value.toPrecision(4)).toString();
+    if (Math.abs(value) >= 1) return Number(value.toFixed(2)).toString();
+    return Number(value.toPrecision(3)).toString();
   }
   return String(value);
 }

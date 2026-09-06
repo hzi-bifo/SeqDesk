@@ -37,4 +37,13 @@ describe("row filters in R notation", () => {
     expect(rowFilterProblem("sqrt(n_samples) > 1", ["n_samples"])).toMatch(/Unknown function/);
     expect(compileRowFilter("a == 1 & b %in% c(2, 3)").columns).toEqual(["a", "b"]);
   });
+
+  it("accepts column labels as aliases and refuses patterns that could run away", () => {
+    const options = { aliases: { "Specimen type": "specimen_type", Samples: "n_samples" } };
+    expect(names(applyRowFilter(rows, '`Specimen type` == "Urine" & samples >= 10', options))).toEqual(["Escherichia"]);
+    expect(rowFilterProblem('`specimen TYPE` == "Urine"', ["specimen_type"], options)).toBeNull();
+    expect(rowFilterProblem('grepl("(a+)+b", taxon)', ["taxon"])).toMatch(/nested repeats/);
+    expect(rowFilterProblem(`grepl("${"a".repeat(201)}", taxon)`, ["taxon"])).toMatch(/longer than/);
+    expect(rowFilterProblem('grepl("[", taxon)', ["taxon"])).toMatch(/not a valid pattern/);
+  });
 });

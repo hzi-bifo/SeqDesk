@@ -18,6 +18,11 @@ export function insertIntoActiveEditor(markdown: string): boolean {
   return true;
 }
 
+/** Markdown the formatted view cannot hold yet (tables, task lists, raw HTML) is edited as source so nothing is lost. */
+export function needsMarkdownSource(markdown: string): boolean {
+  return /^\s*\|.*\|\s*$/m.test(markdown) || /^\s*[-*+]\s+\[[ xX]\]/m.test(markdown) || /<[a-zA-Z][^>]*>/.test(markdown);
+}
+
 interface RichTextEditorProps {
   /** Markdown, the format the report stores. */
   value: string;
@@ -33,7 +38,8 @@ interface RichTextEditorProps {
  * away for those who prefer the source.
  */
 export function RichTextEditor({ value, onChange, actions, className }: RichTextEditorProps) {
-  const [source, setSource] = useState(false);
+  const locked = needsMarkdownSource(value);
+  const [source, setSource] = useState(() => needsMarkdownSource(value));
   const onChangeRef = useRef(onChange);
   const lastEmitted = useRef(value);
   useEffect(() => {
@@ -101,7 +107,7 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
             type="button"
             onMouseDown={(event) => event.preventDefault()}
             onClick={tool.run}
-            disabled={source}
+            disabled={source || locked}
             className={cn("rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40", tool.active && "bg-secondary text-foreground")}
             title={tool.label}
             aria-label={tool.label}
@@ -114,9 +120,10 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
         <button
           type="button"
           onClick={() => setSource((current) => !current)}
-          className={cn("inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground", source && "bg-secondary text-foreground")}
-          title={source ? "Back to the formatted view" : "Edit the Markdown source"}
-          aria-pressed={source}
+          disabled={locked}
+          className={cn("inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-60", (source || locked) && "bg-secondary text-foreground")}
+          title={locked ? "This block has a table, task list or HTML, which the formatted view cannot keep; it is edited as Markdown" : source ? "Back to the formatted view" : "Edit the Markdown source"}
+          aria-pressed={source || locked}
         >
           <FileCode2 className="h-3.5 w-3.5" /> Markdown
         </button>
@@ -127,7 +134,7 @@ export function RichTextEditor({ value, onChange, actions, className }: RichText
           </>
         )}
       </div>
-      {source ? (
+      {source || locked ? (
         <Textarea value={value} onChange={(event) => onChange(event.target.value)} rows={Math.min(24, Math.max(6, value.split("\n").length + 1))} className="rounded-t-none border-0 font-mono text-xs shadow-none focus-visible:ring-0" aria-label="Markdown source" />
       ) : (
         <EditorContent editor={editor} />

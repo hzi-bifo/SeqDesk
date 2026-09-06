@@ -15,17 +15,34 @@ export const PALETTE = [
 ];
 export const OTHER_COLOR = "#d9d9d9";
 
-export function MiniTimeline({ row, dayMin, dayMax, groups }: { row: SubjectsTablePayload["patients"][number]; dayMin: number; dayMax: number; groups: string[] }) {
+/** Text exported as a missing value by pandas and friends is treated as missing. */
+function present(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed && !/^(none|nan|na|null|n\/a)$/i.test(trimmed) ? trimmed : null;
+}
+
+/**
+ * One subject's sampling days on a shared day axis, one lane per specimen group.
+ * Dots are laid out in percent so the timeline fills whatever width the column has.
+ */
+export function MiniTimeline({ row, dayMin, dayMax, groups, compact = false }: { row: SubjectsTablePayload["patients"][number]; dayMin: number; dayMax: number; groups: string[]; compact?: boolean }) {
   const span = Math.max(dayMax - dayMin, 1);
+  const dot = compact ? "h-2 w-2" : "h-2.5 w-2.5";
   return (
-    <svg viewBox="0 0 120 12" className="h-3 w-28" aria-hidden="true">
-      <line x1="0" y1="6" x2="120" y2="6" stroke="currentColor" strokeOpacity="0.15" />
+    <div className={cn("relative w-full min-w-[7rem]", compact ? "h-4" : "h-6")} aria-hidden="true">
+      <div className="absolute inset-x-1 top-1/2 border-t border-border" />
       {groups.map((group, groupIndex) =>
         (row.days_by_sampletype[group] ?? []).map((day) => (
-          <circle key={`${group}-${day}`} cx={((day - dayMin) / span) * 116 + 2} cy={groupIndex === 0 ? 4 : 8} r="2" fill={PALETTE[groupIndex % PALETTE.length]} />
+          <span
+            key={`${group}-${day}`}
+            title={`${group}, day ${day}`}
+            className={cn("absolute -translate-x-1/2 -translate-y-1/2 rounded-full ring-1 ring-background", dot)}
+            style={{ left: `${4 + ((day - dayMin) / span) * 92}%`, top: groups.length > 1 ? `${28 + (44 * groupIndex) / (groups.length - 1)}%` : "50%", backgroundColor: PALETTE[groupIndex % PALETTE.length] }}
+          />
         ))
       )}
-    </svg>
+    </div>
   );
 }
 
@@ -54,7 +71,7 @@ export function SubjectTimelineOverview({
   className?: string;
 }) {
   const { data, error } = useSWR<SubjectsResponse>(`/api/explore/datasets/${datasetId}/views/subject-timeline?part=subjects`, fetcher, onLoaded ? { onSuccess: onLoaded } : undefined);
-  const groups = useMemo(() => data?.groups.slice(0, 2) ?? [], [data]);
+  const groups = useMemo(() => data?.groups ?? [], [data]);
   const visible = useMemo(() => {
     const lower = filter.trim().toLowerCase();
     const rows = (data?.patients ?? []).filter((row) => !lower || row.patient.toLowerCase().includes(lower));
@@ -75,12 +92,23 @@ export function SubjectTimelineOverview({
   return (
     <div className={className}>
       <table className={cn("w-full", compact ? "text-[11px]" : "text-sm")}>
-        <thead className={cn("sticky top-0 bg-muted/60 text-left uppercase tracking-wide text-muted-foreground", compact ? "text-[9px]" : "text-xs")}>
+        <thead className={cn("sticky top-0 z-10 bg-card text-left uppercase tracking-wide text-muted-foreground shadow-[inset_0_-1px_0_0_hsl(var(--border))]", compact ? "text-[9px]" : "text-xs")}>
           <tr>
             <th className={cn("font-medium", compact ? "px-2 py-1" : "px-3 py-1.5")}>Subject</th>
             <th className={cn("text-right font-medium", compact ? "px-1 py-1" : "px-2 py-1.5")}>Days</th>
             {!compact && <th className="px-2 py-1.5 text-right font-medium">Span</th>}
-            <th className={cn("font-medium", compact ? "px-1 py-1" : "px-2 py-1.5")}>Timeline</th>
+            <th className={cn("w-full font-medium", compact ? "px-1 py-1" : "px-2 py-1.5")}>
+              <span className="flex items-center gap-2">
+                <span>Timeline</span>
+                {!compact && <span className="normal-case tracking-normal">day {data.day_min} to {data.day_max}</span>}
+                {!compact && groups.map((group, index) => (
+                  <span key={group} className="inline-flex items-center gap-1 normal-case tracking-normal">
+                    <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: PALETTE[index % PALETTE.length] }} />
+                    {group}
+                  </span>
+                ))}
+              </span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -90,14 +118,14 @@ export function SubjectTimelineOverview({
               className={cn("border-t", onSelect && "cursor-pointer", row.patient === activeSubject ? "bg-secondary" : onSelect && "hover:bg-muted/30")}
               onClick={onSelect ? () => onSelect(row.patient) : undefined}
             >
-              <td className={cn("font-medium", compact ? "px-2 py-0.5" : "px-3 py-1.5")}>
+              <td className={cn("whitespace-nowrap font-medium", compact ? "px-2 py-0.5" : "px-3 py-1.5")}>
                 {row.patient}
-                {row.site && !compact ? <span className="ml-1 text-xs text-muted-foreground">{row.site}</span> : null}
+                {present(row.site) && !compact ? <span className="ml-1 text-xs text-muted-foreground">{present(row.site)}</span> : null}
               </td>
               <td className={cn("text-right tabular-nums", compact ? "px-1 py-0.5" : "px-2 py-1.5")}>{row.n_days}</td>
               {!compact && <td className="px-2 py-1.5 text-right tabular-nums">{row.span}</td>}
               <td className={compact ? "px-1 py-0.5" : "px-2 py-1.5"}>
-                <MiniTimeline row={row} dayMin={data.day_min} dayMax={data.day_max} groups={groups} />
+                <MiniTimeline row={row} dayMin={data.day_min} dayMax={data.day_max} groups={groups} compact={compact} />
               </td>
             </tr>
           ))}

@@ -28,7 +28,9 @@ describe("computeStats", () => {
     expect(formatStat(null)).toBe("n/a");
     expect(formatStat(1234)).toBe("1,234");
     expect(formatStat(2.34567)).toBe("2.35");
-    expect(formatStat(123.456)).toBe("123.5");
+    expect(formatStat(123.456)).toBe("123.46");
+    expect(formatStat(48872104.6)).toBe("48.9M");
+    expect(formatStat(0.001468835)).toBe("0.00147");
   });
 });
 

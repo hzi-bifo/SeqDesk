@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { fetcher, formatCell, formatDateTime, postJson } from "@/lib/explore/client";
+import { exactValue, fetcher, formatCell, formatDateTime, postJson } from "@/lib/explore/client";
 import { useFooterNote } from "@/components/layout/FooterNote";
 import { CHART_KINDS, CHART_KIND_LABELS, METRIC_STATS, METRIC_STAT_LABELS, type ChartKind, type MetricStat } from "@/lib/explore/report-blocks";
 import { buildChart, computeStats, formatStat, numericColumns } from "@/lib/explore/report-widgets";
@@ -110,7 +110,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const { data, error, isLoading, mutate } = useSWR<ReportResponse>(key, fetcher, { refreshInterval: 15000 });
   const [draft, setDraft] = useState<ReportInput | null>(null);
   // Changes save on their own a moment after they stop; Undo walks back through them.
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error" | "conflict">("idle");
   const [history, setHistory] = useState<ReportInput[]>([]);
   const [dirty, setDirty] = useState(false);
   useFooterNote(data?.report && !data.report.draft ? `Report last changed ${formatDateTime(data.report.updatedAt)}` : null);
@@ -124,7 +124,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
 
   // Save a moment after the last change while editing.
   useEffect(() => {
-    if (!editingNow || !draft || !report) return;
+    if (!editingNow || !draft || !report || saveState === "conflict") return;
     if (savedRef.current === null) {
       savedInputRef.current = toInput(report);
       savedRef.current = JSON.stringify(savedInputRef.current);
@@ -133,7 +133,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
     if (payload === savedRef.current) return;
     const timer = setTimeout(() => {
       setSaveState("saving");
-      void postJson<ReportResponse>(key, draft, "PUT")
+      void postJson<ReportResponse>(key, { ...draft, expectedUpdatedAt: report.updatedAt ?? undefined }, "PUT")
         .then(async (result) => {
           // Every saved step is one Undo step.
           const before = savedInputRef.current;
@@ -145,22 +145,23 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           setDirty(false);
         })
         .catch((err) => {
-          setSaveState("error");
-          toast.error(err instanceof Error ? err.message : "Could not save the report");
+          const message = err instanceof Error ? err.message : "Could not save the report";
+          setSaveState(/changed elsewhere/.test(message) ? "conflict" : "error");
+          toast.error(message);
         });
     }, 700);
     return () => clearTimeout(timer);
-  }, [draft, editingNow, key, mutate, report]);
+  }, [draft, editingNow, key, mutate, report, saveState]);
 
   // Leaving the editor saves what is still pending and forgets the session.
   useEffect(() => {
     if (editingNow || !draft) return;
     const payload = JSON.stringify(draft);
-    const pending = payload !== savedRef.current;
+    const pending = payload !== savedRef.current && saveState !== "conflict";
     void (async () => {
       if (pending) {
         try {
-          const result = await postJson<ReportResponse>(key, draft, "PUT");
+          const result = await postJson<ReportResponse>(key, { ...draft, expectedUpdatedAt: report?.updatedAt ?? undefined }, "PUT");
           savedRef.current = payload;
           await mutate(result, { revalidate: false });
         } catch (err) {
@@ -174,7 +175,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
       setDirty(false);
       setSaveState("idle");
     })();
-  }, [editingNow, draft, key, mutate]);
+  }, [editingNow, draft, key, mutate, report, saveState]);
 
   if (error) return <p className="mt-6 text-sm text-destructive">Could not load the report: {String(error.message)}</p>;
   if (!report || (isLoading && !data)) {
@@ -371,7 +372,11 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
         editing ? (
           <>
             <span className="min-w-14 text-right text-xs text-muted-foreground" aria-live="polite">
-              {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : ""}
+              {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : saveState === "conflict" ? (
+                <span className="text-destructive">
+                  Changed elsewhere; <button type="button" className="underline" onClick={() => window.location.reload()}>reload</button> to continue
+                </span>
+              ) : ""}
             </span>
             <Button variant="ghost" size="sm" className="h-8" onClick={undo} disabled={history.length === 0 && !dirty} title="Take back the last change">
               <Undo2 className="h-3.5 w-3.5 lg:mr-1.5" />
@@ -746,8 +751,8 @@ function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, l
         {block.type === "table" && (
           <>
             <Caption editing={editing} value={block.caption ?? ""} fallback={tableInfo?.name ?? "Table"} onChange={(caption) => onPatch({ caption })} />
-            {editing && <TableControls block={block} tables={tables} onPatch={onPatch} />}
-            {blockTable ? (
+            {editing && <TableControls key={`${block.datasetId}:${block.filter ?? ""}`} block={block} tables={tables} onPatch={onPatch} />}
+            {blockTable && (tableNeedsWholeTable(block) || filtersApply(blockTable, filters, active) || !(resolved && resolved.type === "table" && resolved.table)) ? (
               <TableBlockView block={block} table={blockTable} filters={filters} active={active} scopeQuery={scopeQuery} reportId={reportId} />
             ) : resolved && resolved.type === "table" && resolved.table ? (
               <TableContent table={resolved.table} scopeQuery={scopeQuery} reportId={reportId} />
@@ -832,8 +837,8 @@ function TableContent({ table, scopeQuery, reportId, note }: { table: ReportTabl
             {table.rows.map((row, index) => (
               <tr key={index} className="border-t">
                 {table.columns.map((column) => (
-                  <td key={column.key} className={cn("whitespace-nowrap px-2 py-1", column.type === "number" && "text-right tabular-nums")}>
-                    {formatCell(row[column.key])}
+                  <td key={column.key} className={cn("whitespace-nowrap px-2 py-1", column.type === "number" && "text-right tabular-nums")} title={exactValue(row[column.key], column.type)}>
+                    {formatCell(row[column.key], column.type)}
                   </td>
                 ))}
               </tr>
@@ -995,6 +1000,15 @@ type TableBlock = Extract<ReportBlock, { type: "table" }>;
 
 const TABLE_BLOCK_FLAGS = ["search", "sortable", "download"] as const;
 
+/** Only a block that filters, sorts, picks columns or lets readers work on the rows needs the whole table in the browser. */
+function tableNeedsWholeTable(block: TableBlock): boolean {
+  return Boolean(block.filter || block.sort || (block.columns && block.columns.length > 0) || block.search || block.sortable || block.download);
+}
+
+function columnAliases(columns: ExploreColumn[]): Record<string, string> {
+  return Object.fromEntries(columns.map((column) => [column.label, column.key]));
+}
+
 function compareCells(a: ExploreRowData[string], b: ExploreRowData[string]): number {
   const missingA = a === null || a === undefined || a === "";
   const missingB = b === null || b === undefined || b === "";
@@ -1021,18 +1035,19 @@ function TableBlockView({ block, table, filters, active, scopeQuery, reportId }:
   const { frame, rows: pageRows, error } = useFilteredTable(table, filters, active);
   const [query, setQuery] = useState("");
   const [readerSort, setReaderSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
-  const filterProblem = useMemo(() => (block.filter ? rowFilterProblem(block.filter, frame?.columns.map((column) => column.key)) : null), [block.filter, frame]);
+  const aliases = useMemo(() => columnAliases(frame?.columns ?? []), [frame]);
+  const filterProblem = useMemo(() => (block.filter ? rowFilterProblem(block.filter, frame?.columns.map((column) => column.key), { aliases }) : null), [block.filter, frame, aliases]);
   const filtered = useMemo(() => {
     if (!frame) return [];
     if (block.filter && !filterProblem) {
       try {
-        return applyRowFilter(pageRows, block.filter);
+        return applyRowFilter(pageRows, block.filter, { aliases });
       } catch {
         return pageRows;
       }
     }
     return pageRows;
-  }, [frame, pageRows, block.filter, filterProblem]);
+  }, [frame, pageRows, block.filter, filterProblem, aliases]);
   const columns = useMemo(() => {
     const all = frame?.columns ?? [];
     if (!block.columns || block.columns.length === 0) return all;
@@ -1041,12 +1056,13 @@ function TableBlockView({ block, table, filters, active, scopeQuery, reportId }:
   const sort = readerSort ?? block.sort ?? null;
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    let rows = needle ? filtered.filter((row) => columns.some((column) => String(row[column.key] ?? "").toLowerCase().includes(needle))) : filtered;
-    if (sort && columns.some((column) => column.key === sort.column)) {
+    const searchable = frame?.columns ?? columns;
+    let rows = needle ? filtered.filter((row) => searchable.some((column) => String(row[column.key] ?? "").toLowerCase().includes(needle))) : filtered;
+    if (sort && searchable.some((column) => column.key === sort.column)) {
       rows = [...rows].sort((a, b) => (sort.direction === "asc" ? 1 : -1) * compareCells(a[sort.column], b[sort.column]));
     }
     return rows;
-  }, [filtered, columns, query, sort]);
+  }, [filtered, columns, frame, query, sort]);
   if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
   if (!frame) return <Skeleton className="h-40 w-full" />;
   const limit = block.rows ?? 12;
@@ -1057,11 +1073,12 @@ function TableBlockView({ block, table, filters, active, scopeQuery, reportId }:
   if (query.trim()) parts.push("search");
   const note = `${Math.min(limit, shown.length).toLocaleString()} of ${shown.length.toLocaleString()} rows${parts.length ? ` after ${parts.join(", ")}` : ""}, ${columns.length} columns${frame.version ? `, v${frame.version}` : ""}`;
   const download = () => {
-    const blob = new Blob([csvOf(columns, shown)], { type: "text/csv;charset=utf-8" });
+    // A byte-order mark so spreadsheets read the file as UTF-8.
+    const blob = new Blob(["\ufeff", csvOf(columns, shown)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${(block.caption || table.name).replace(/[^A-Za-z0-9._-]+/g, "_")}.csv`;
+    link.download = `${(block.caption || table.name).replace(/[^A-Za-z0-9._-]+/g, "_")}_${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
@@ -1102,8 +1119,8 @@ function TableBlockView({ block, table, filters, active, scopeQuery, reportId }:
             {shown.slice(0, limit).map((row, index) => (
               <tr key={index} className="border-t">
                 {columns.map((column) => (
-                  <td key={column.key} className={cn("whitespace-nowrap px-2 py-1", column.type === "number" && "text-right tabular-nums")}>
-                    {formatCell(row[column.key])}
+                  <td key={column.key} className={cn("whitespace-nowrap px-2 py-1", column.type === "number" && "text-right tabular-nums")} title={exactValue(row[column.key], column.type)}>
+                    {formatCell(row[column.key], column.type)}
                   </td>
                 ))}
               </tr>
@@ -1137,7 +1154,7 @@ function TableControls({ block, tables, onPatch }: { block: TableBlock; tables: 
   const patch = (values: Partial<TableBlock>) => onPatch(values as Partial<ReportBlock>);
   const [filterDraft, setFilterDraft] = useState(block.filter ?? "");
   const [open, setOpen] = useState(false);
-  const problem = rowFilterProblem(filterDraft, columns.map((column) => column.key));
+  const problem = rowFilterProblem(filterDraft, columns.map((column) => column.key), { aliases: columnAliases(columns) });
   const chosen = block.columns && block.columns.length > 0 ? block.columns : null;
   const summary = [
     `${block.rows ?? 12} rows`,
@@ -1195,7 +1212,7 @@ function TableControls({ block, tables, onPatch }: { block: TableBlock; tables: 
           className={cn("h-8 font-mono text-xs", problem && "border-destructive")}
           aria-label="Row filter"
         />
-        {problem ? <span className="text-destructive">{problem}</span> : <span>Comparisons, &amp; | !, %in% c(…), is.na(), grepl(), startsWith(). Applied when you leave the field.</span>}
+        {problem ? <span className="text-destructive">{problem}</span> : <span>Column keys or labels (in backticks when they have spaces); comparisons, &amp; | !, %in% c(…), is.na(), grepl(), startsWith(). Applied when you leave the field.</span>}
       </div>
       {columns.length > 0 && (
         <div className="space-y-1 text-[11px] text-muted-foreground">

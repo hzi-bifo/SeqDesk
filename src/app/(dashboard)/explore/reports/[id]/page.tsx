@@ -45,6 +45,9 @@ function ReportScreen() {
   // The right sidebar of the page editor: figures, tables, views and variables; hidden and shown like the left one.
   const [panelPref, setPanelPref] = useStoredPreference<"shown" | "hidden">("seqdesk:explore:page-panel", "shown", ["shown", "hidden"]);
   const [panelEl, setPanelEl] = useState<HTMLElement | null>(null);
+  // Below the sidebar breakpoint the same panel opens as a drawer over the page.
+  const [drawer, setDrawer] = useState(false);
+  const [drawerEl, setDrawerEl] = useState<HTMLElement | null>(null);
   const [actionsEl, setActionsEl] = useState<HTMLElement | null>(null);
 
   const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
@@ -163,7 +166,10 @@ function ReportScreen() {
         )}
         {mode === "edit" && view === "page" && canEdit && (
           <>
-            <Button variant="ghost" size="sm" className="h-8 w-8 px-0" onClick={() => setPanelPref(panelPref === "shown" ? "hidden" : "shown")} aria-pressed={panelPref === "shown"} aria-label={panelPref === "shown" ? "Hide the panel" : "Show the panel"} title="Show or hide the panel with figures, tables and variables">
+            <Button variant="ghost" size="sm" className="hidden h-8 w-8 px-0 lg:inline-flex" onClick={() => setPanelPref(panelPref === "shown" ? "hidden" : "shown")} aria-pressed={panelPref === "shown"} aria-label={panelPref === "shown" ? "Hide the panel" : "Show the panel"} title="Show or hide the panel with figures, tables and variables">
+              <PanelRight className="h-4 w-4" />
+            </Button>
+            <Button variant="ghost" size="sm" className="h-8 w-8 px-0 lg:hidden" onClick={() => setDrawer(true)} aria-label="Open the panel" title="Open the panel with figures, tables and variables">
               <PanelRight className="h-4 w-4" />
             </Button>
           </>
@@ -202,7 +208,7 @@ function ReportScreen() {
 
       {mode === "report" && <ExploreReport reportId={reportId} scope={scopeKey} canEdit={canEdit} editing={false} onDone={done} onOpenCanvas={openCanvas} actionsContainer={actionsEl} />}
       {mode === "edit" && view === "page" && (
-        <ExploreReport reportId={reportId} scope={scopeKey} canEdit={canEdit} editing={canEdit} onDone={done} onOpenCanvas={openCanvas} panelContainer={panelOpen ? panelEl : null} actionsContainer={actionsEl} />
+        <ExploreReport reportId={reportId} scope={scopeKey} canEdit={canEdit} editing={canEdit} onDone={done} onOpenCanvas={openCanvas} panelContainer={drawer ? drawerEl : panelOpen ? panelEl : null} actionsContainer={actionsEl} />
       )}
       {mode === "edit" && view === "canvas" && (
         <div className="mt-3">
@@ -222,6 +228,21 @@ function ReportScreen() {
         </div>
         <div ref={setPanelEl} className="min-h-0 flex-1 overflow-y-auto" />
       </aside>
+    )}
+    {drawer && mode === "edit" && view === "page" && canEdit && (
+      <div className="fixed inset-0 z-40 lg:hidden" role="dialog" aria-label="Add to the page">
+        <button type="button" className="absolute inset-0 bg-black/30" onClick={() => setDrawer(false)} aria-label="Close the panel" />
+        <aside className="absolute inset-y-0 right-0 flex w-80 max-w-[90vw] flex-col border-l bg-card shadow-xl">
+          <div className="flex items-center gap-2 border-b px-3 py-2 text-xs font-medium">
+            <span>Add to the page</span>
+            <span className="flex-1" />
+            <button type="button" onClick={() => setDrawer(false)} className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label="Close the panel">
+              <PanelRightClose className="h-4 w-4" />
+            </button>
+          </div>
+          <div ref={setDrawerEl} className="min-h-0 flex-1 overflow-y-auto" />
+        </aside>
+      </div>
     )}
     </div>
   );
