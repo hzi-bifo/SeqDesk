@@ -1,0 +1,44 @@
+{
+  "artifacts": [
+    {
+      "name": "composition_plot",
+      "kind": "figure",
+      "format": "plotly-json"
+    },
+    {
+      "name": "composition",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "prevalence",
+      "kind": "table",
+      "format": "tsv"
+    }
+  ],
+  "metrics": {
+    "n_samples": 12,
+    "n_taxa": 20,
+    "n_rows_input": 123,
+    "n_rows_retained": 98,
+    "n_nondetections_dropped": 1,
+    "n_artifact_taxa_removed": 2,
+    "artifact_reads_pct": {
+      "approx": 60.7494,
+      "tol": 0.001
+    },
+    "n_samples_dropped_empty": 0,
+    "n_rows_below_min_ra": 0,
+    "top_n_effective": 15,
+    "mean_top_n_coverage_pct": {
+      "approx": 90.0674,
+      "tol": 0.001
+    },
+    "n_groups": 2,
+    "n_subjects": 4
+  },
+  "notes_contain": [
+    "artifact",
+    "rank"
+  ]
+}

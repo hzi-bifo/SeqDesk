@@ -1,0 +1,12 @@
+{
+  "schema": { "columns": [
+    { "key": "sample_db_id", "label": "Sample record", "type": "string", "role": "sample" },
+    { "key": "sample_id", "label": "Sample", "type": "string" },
+    { "key": "TAXID", "label": "Taxon ID", "type": "string", "role": "taxon_id" },
+    { "key": "RANK", "label": "Rank", "type": "string", "role": "rank" },
+    { "key": "TAXPATHSN", "label": "Taxon", "type": "string", "role": "taxon" },
+    { "key": "PERCENTAGE", "label": "Relative abundance (%)", "type": "number", "role": "value" },
+    { "key": "cohort_group", "label": "Cohort group", "type": "string", "role": "group" }
+  ] },
+  "provenance": { "builder": "internal-test-fixture", "sources": [], "notes": ["Internal software fixture; not external repository data."] }
+}

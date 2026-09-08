@@ -1,7 +1,7 @@
 // Module system types
 // Allows features to be enabled/disabled globally
 
-export type ModuleCategory = "order-form" | "validation" | "access" | "communication";
+export type ModuleCategory = "order-form" | "validation" | "access" | "communication" | "analysis";
 
 export interface ModuleDefinition {
   id: string;
@@ -32,6 +32,10 @@ export const MODULE_CATEGORIES: Record<ModuleCategory, { label: string; descript
   communication: {
     label: "Communication",
     description: "User notifications and messaging",
+  },
+  analysis: {
+    label: "Analysis",
+    description: "Bring study, sequencing and pipeline data together for statistics and figures",
   },
 };
 
@@ -129,6 +133,14 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
     featureLocation: "Settings > Notifications",
     hasSettings: true,
   },
+  // Analysis
+  {
+    id: "explore",
+    name: "Reports / Explore",
+    description: "Build reports and analyses from sequencing data, study metadata and pipeline outputs in the same application.",
+    category: "analysis",
+    featureLocation: "Sequencing data / Studies > Reports",
+  },
 ];
 
 // Default module states (what's enabled out of the box)
@@ -145,6 +157,7 @@ export const DEFAULT_MODULE_STATES: Record<string, boolean> = {
   "sequencing-tech": true, // Always active when the deployment profile supports sequencing operations
   "dynamic-studies": false, // Off by default - single global study form unless enabled
   "notifications": false,
+  "explore": true, // On by default - the analysis section works on existing data
 };
 
 // Billing module settings

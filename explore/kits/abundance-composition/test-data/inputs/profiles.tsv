@@ -1,0 +1,7 @@
+sample_db_id	sample_id	TAXID	RANK	TAXPATHSN	PERCENTAGE	cohort_group
+case-db	Case fixture	internal-A	species	Internal taxon A	60	case
+case-db	Case fixture	internal-B	species	Internal taxon B	30	case
+case-db	Case fixture	internal-genus	genus	Internal genus	90	case
+control-db	Control fixture	internal-A	species	Internal taxon A	20	control
+control-db	Control fixture	internal-B	species	Internal taxon B	70	control
+control-db	Control fixture	internal-genus	genus	Internal genus	90	control

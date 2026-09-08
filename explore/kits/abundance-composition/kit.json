@@ -1,0 +1,31 @@
+{
+  "kitVersion": 1,
+  "id": "abundance-composition",
+  "name": "Relative abundance composition",
+  "description": "Plot percentage-based taxonomic profiles such as MetaPhlAn CAMI output at one taxonomic rank. Uses supplied percentages without inventing read counts or renormalising away unreported abundance.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [{
+    "alias": "profiles",
+    "label": "Relative abundance profiles",
+    "tableKind": "taxon-abundance-long",
+    "requiredRoles": ["sample", "taxon", "value", "rank"],
+    "optionalRoles": ["taxon_id", "group"]
+  }],
+  "params": {
+    "type": "object",
+    "properties": {
+      "rank": { "type": "string", "title": "Taxonomic rank", "default": "species" },
+      "top_n": { "type": "integer", "title": "Taxa to show", "default": 15, "minimum": 1, "maximum": 60 }
+    }
+  },
+  "outputs": [
+    { "name": "composition", "kind": "table", "description": "Supplied taxon percentages at the selected rank; no estimated read counts." },
+    { "name": "composition_plot", "kind": "figure", "description": "Per-sample stacked percentages and an explicitly labelled remainder." }
+  ],
+  "tags": ["metaphlan", "cami", "relative-abundance", "composition"],
+  "citation": "SeqDesk percentage-preserving composition using pandas and Plotly. Cite the original profiler, database and source dataset separately.",
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}

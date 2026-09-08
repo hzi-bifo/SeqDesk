@@ -550,12 +550,12 @@ export default function SubmissionsPage() {
           </div>
 
           {/* Column Headers */}
-          <div className="grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
-            <div className="col-span-4">Entity</div>
-            <div className="col-span-2">Status</div>
-            <div className="col-span-2">Accession</div>
-            <div className="col-span-2">Date</div>
-            <div className="col-span-2"></div>
+          <div className="grid grid-cols-[minmax(0,1fr)_7rem_8rem_6rem_auto] gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
+            <div>Entity</div>
+            <div>Status</div>
+            <div>Accession</div>
+            <div>Date</div>
+            <div />
           </div>
 
           {/* Submissions List */}
@@ -570,11 +570,11 @@ export default function SubmissionsPage() {
               return (
                 <div key={submission.id}>
                   <div
-                    className="grid grid-cols-12 gap-4 px-5 py-4 hover:bg-secondary/80 transition-colors cursor-pointer items-center"
+                    className="grid grid-cols-[minmax(0,1fr)_7rem_8rem_6rem_auto] gap-4 px-5 py-4 hover:bg-secondary/80 transition-colors cursor-pointer items-center"
                     onClick={() => setExpandedId(isExpanded ? null : submission.id)}
                   >
                     {/* Entity */}
-                    <div className="col-span-4 min-w-0">
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
                         <div
                           className={`h-7 w-7 rounded-md flex items-center justify-center flex-shrink-0 ${
@@ -605,10 +605,10 @@ export default function SubmissionsPage() {
                     </div>
 
                     {/* Status */}
-                    <div className="col-span-2">
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${statusCfg.dot}`} />
-                        <span className={`text-xs font-medium ${statusCfg.color}`}>
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${statusCfg.dot}`} />
+                        <span className={`text-xs font-medium truncate ${statusCfg.color}`}>
                           {statusCfg.label}
                         </span>
                       </div>
@@ -623,9 +623,9 @@ export default function SubmissionsPage() {
                     </div>
 
                     {/* Accession */}
-                    <div className="col-span-2">
+                    <div className="min-w-0">
                       {accessionNumbers ? (
-                        <span className="font-mono text-xs text-[#00BD7D]">
+                        <span className="font-mono text-xs text-[#00BD7D] block truncate">
                           {Object.values(accessionNumbers)[0]}
                         </span>
                       ) : (
@@ -634,14 +634,14 @@ export default function SubmissionsPage() {
                     </div>
 
                     {/* Date */}
-                    <div className="col-span-2">
-                      <span className="text-sm text-muted-foreground tabular-nums">
+                    <div>
+                      <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
                         {formatDate(submission.createdAt)}
                       </span>
                     </div>
 
                     {/* Actions */}
-                    <div className="col-span-2 flex items-center justify-end gap-1">
+                    <div className="flex items-center justify-end gap-1">
                       {submission.entityType === "study" && submission.entityDetails && (
                         <Button
                           variant="ghost"

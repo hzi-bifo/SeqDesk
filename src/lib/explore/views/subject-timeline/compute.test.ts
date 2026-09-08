@@ -1,0 +1,454 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { subjectComposition, subjectHighlights, subjectsTable } from "./compute";
+import {
+  brayCurtisSimilarity,
+  comparePyStrings,
+  dailyMeanProfiles,
+  frameRowSum,
+  kahanMean,
+  kahanSum,
+  microbiome,
+  numpyRound,
+  numpySum,
+  pyRound,
+  readCount,
+  siteLabel,
+  textOrNone,
+  topTaxa,
+  type MicrobiomeRow,
+} from "./helpers";
+import type { SubjectTimelineCuration, SubjectTimelineRow } from "./types";
+
+const FIXTURE_DIR = path.join(__dirname, "..", "..", "__fixtures__", "subject-timeline");
+
+function loadJson<T>(name: string): T {
+  return JSON.parse(readFileSync(path.join(FIXTURE_DIR, name), "utf8")) as T;
+}
+
+interface ExpectedFixture {
+  patients_table: unknown;
+  compositions: Record<string, unknown>;
+  highlights: Record<string, unknown>;
+}
+
+interface DailyProfileProbe {
+  records: Array<[number, string, string, number]>;
+  days: number[];
+  taxa: string[];
+  matrix: number[][];
+  n_libraries: number[];
+  dropped: number[];
+  other: number[];
+  column_totals: number[];
+}
+
+interface NumericFixture {
+  numpy_sum: Array<{ values: number[]; sum: number }>;
+  kahan: Array<{ values: number[]; sum: number; mean: number }>;
+  daily_profiles: DailyProfileProbe[];
+  python_round: Array<[number, number, number]>;
+  numpy_round: Array<[number, number, number]>;
+  read_count: Array<[number, number]>;
+}
+
+const rows = loadJson<SubjectTimelineRow[]>("rows.json");
+const curation = loadJson<SubjectTimelineCuration>("curation.json");
+const expected = loadJson<ExpectedFixture>("expected.json");
+const numeric = loadJson<NumericFixture>("numeric.json");
+
+const FLOAT_TOLERANCE = 1e-6;
+
+/**
+ * Deep comparison against the Python reference payload: exact for integers,
+ * strings, booleans, null, array order and key sets; floats may differ by up to
+ * 1e-6 to absorb summation-order noise.
+ */
+function expectClose(actual: unknown, wanted: unknown, location = "$"): void {
+  if (typeof wanted === "number") {
+    if (typeof actual !== "number") {
+      throw new Error(`${location}: expected number ${wanted}, got ${JSON.stringify(actual)}`);
+    }
+    if (Number.isInteger(wanted) && Number.isInteger(actual)) {
+      if (actual !== wanted) {
+        throw new Error(`${location}: expected ${wanted}, got ${actual}`);
+      }
+      return;
+    }
+    if (!(Math.abs(actual - wanted) <= FLOAT_TOLERANCE)) {
+      throw new Error(`${location}: expected ${wanted}, got ${actual}`);
+    }
+    return;
+  }
+  if (wanted === null || typeof wanted !== "object") {
+    if (!Object.is(actual, wanted)) {
+      throw new Error(
+        `${location}: expected ${JSON.stringify(wanted)}, got ${JSON.stringify(actual)}`,
+      );
+    }
+    return;
+  }
+  if (Array.isArray(wanted)) {
+    if (!Array.isArray(actual)) {
+      throw new Error(`${location}: expected an array, got ${JSON.stringify(actual)}`);
+    }
+    if (actual.length !== wanted.length) {
+      throw new Error(
+        `${location}: expected ${wanted.length} items, got ${actual.length}: ${JSON.stringify(actual)}`,
+      );
+    }
+    wanted.forEach((item, index) => expectClose(actual[index], item, `${location}[${index}]`));
+    return;
+  }
+  if (actual === null || typeof actual !== "object" || Array.isArray(actual)) {
+    throw new Error(`${location}: expected an object, got ${JSON.stringify(actual)}`);
+  }
+  const wantedRecord = wanted as Record<string, unknown>;
+  const actualRecord = actual as Record<string, unknown>;
+  const wantedKeys = Object.keys(wantedRecord).sort();
+  const actualKeys = Object.keys(actualRecord).sort();
+  if (wantedKeys.join("\u0000") !== actualKeys.join("\u0000")) {
+    throw new Error(
+      `${location}: key sets differ; expected [${wantedKeys.join(", ")}], got [${actualKeys.join(", ")}]`,
+    );
+  }
+  for (const key of wantedKeys) {
+    expectClose(actualRecord[key], wantedRecord[key], `${location}.${key}`);
+  }
+}
+
+function subjectTimelineRow(overrides: Partial<SubjectTimelineRow>): SubjectTimelineRow {
+  return {
+    sample: "S1",
+    subject: "P1",
+    timepoint: 1,
+    group: "Urine",
+    taxon: "Escherichia coli",
+    count: 10,
+    site: "a",
+    protocol: "hd",
+    ...overrides,
+  };
+}
+
+describe("subject-timeline golden parity with the INDIVO reference", () => {
+  it("loads a non-trivial synthetic cohort", () => {
+    expect(rows.length).toBeGreaterThan(500);
+    expect(new Set(rows.map((row) => row.subject)).size).toBeGreaterThanOrEqual(30);
+    expect(Object.keys(expected.compositions).length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("subjectsTable reproduces patients_table", () => {
+    expectClose(subjectsTable(rows), expected.patients_table);
+  });
+
+  describe("subjectComposition reproduces patient_composition", () => {
+    it.each(Object.keys(expected.compositions))("%s", (key) => {
+      const [subject, group] = key.split("|");
+      expectClose(
+        subjectComposition(rows, subject, group, curation),
+        expected.compositions[key],
+      );
+    });
+  });
+
+  describe("subjectHighlights reproduces patient_highlights", () => {
+    it.each(Object.keys(expected.highlights))("%s", (subject) => {
+      expectClose(subjectHighlights(rows, subject, curation), expected.highlights[subject]);
+    });
+  });
+});
+
+describe("numeric helpers reproduce numpy / pandas / Python semantics", () => {
+  it("numpySum matches ndarray.sum() bit for bit (pairwise summation)", () => {
+    for (const probe of numeric.numpy_sum) {
+      expect(numpySum(probe.values)).toBe(probe.sum);
+    }
+  });
+
+  it("kahanSum / kahanMean match pandas groupby sum and mean bit for bit", () => {
+    for (const probe of numeric.kahan) {
+      expect(kahanSum(probe.values)).toBe(probe.sum);
+      expect(kahanMean(probe.values)).toBe(probe.mean);
+    }
+  });
+
+  it("dailyMeanProfiles matches the pivot_table / groupby(level).mean() reference", () => {
+    for (const probe of numeric.daily_profiles) {
+      const probeRows: MicrobiomeRow[] = probe.records.map(([day, sample, taxon, ra]) => ({
+        sample,
+        subject: "P",
+        timepoint: day,
+        group: "Urine",
+        taxon,
+        count: 1,
+        ra,
+      }));
+      const profiles = dailyMeanProfiles(probeRows);
+      expect(profiles.days).toEqual(probe.days);
+      expect(profiles.taxa).toEqual(probe.taxa);
+      expect(profiles.librariesByDay).toEqual(probe.n_libraries);
+      expect(profiles.matrix).toEqual(probe.matrix);
+      const dropped = new Set(probe.dropped);
+      profiles.matrix.forEach((rowValues, dayIndex) => {
+        const other = rowValues.filter((_, column) => !dropped.has(column));
+        expect(frameRowSum(other, profiles.days.length)).toBe(probe.other[dayIndex]);
+      });
+      profiles.taxa.forEach((_, column) => {
+        expect(numpySum(profiles.matrix.map((rowValues) => rowValues[column]))).toBe(
+          probe.column_totals[column],
+        );
+      });
+    }
+  });
+
+  it("pyRound matches Python round() including exact half-to-even ties", () => {
+    for (const [value, ndigits, wanted] of numeric.python_round) {
+      expect(pyRound(value, ndigits)).toBe(wanted);
+    }
+    expect(pyRound(0.5, 0)).toBe(0);
+    expect(pyRound(1.5, 0)).toBe(2);
+    expect(pyRound(2.5, 0)).toBe(2);
+    expect(pyRound(0.125, 2)).toBe(0.12);
+    expect(pyRound(0.375, 2)).toBe(0.38);
+    expect(pyRound(2.675, 2)).toBe(2.67);
+    expect(pyRound(0.45, 1)).toBe(0.5);
+    expect(pyRound(1234.5, -1)).toBe(1230);
+    expect(pyRound(1235, -1)).toBe(1240);
+  });
+
+  it("numpyRound matches numpy.round (scale, rint, unscale)", () => {
+    for (const [value, decimals, wanted] of numeric.numpy_round) {
+      expect(numpyRound(value, decimals)).toBe(wanted);
+    }
+    expect(numpyRound(0.45, 1)).toBe(0.4);
+    expect(numpyRound(1.115, 2)).toBe(1.12);
+    expect(numpyRound(2.5, 0)).toBe(2);
+  });
+
+  it("readCount matches analysis._read_count (12 significant digits)", () => {
+    for (const [value, wanted] of numeric.read_count) {
+      expect(readCount(value)).toBe(wanted);
+    }
+    expect(readCount(Number.NaN)).toBe(0);
+    expect(readCount(Number.POSITIVE_INFINITY, 7)).toBe(7);
+  });
+
+  it("brayCurtisSimilarity follows analysis._bc_similarity", () => {
+    const a = new Map([
+      ["x", 1],
+      ["y", 3],
+    ]);
+    const b = new Map([
+      ["y", 1],
+      ["z", 1],
+    ]);
+    // union [x, y, z]: |1-0| + |3-1| + |0-1| = 4 over 4 + 2 = 6
+    expect(brayCurtisSimilarity(a, b)).toBeCloseTo(1 - 4 / 6, 12);
+    expect(brayCurtisSimilarity(a, a)).toBe(1);
+    expect(brayCurtisSimilarity(a, new Map([["z", 2]]))).toBe(0);
+    expect(brayCurtisSimilarity(new Map(), new Map())).toBeNull();
+    expect(brayCurtisSimilarity(new Map([["x", 0]]), new Map([["x", 0]]))).toBeNull();
+  });
+
+  it("comparePyStrings orders by code point like Python", () => {
+    expect(["b", "B", "a", "A", "Zz", "["].sort(comparePyStrings)).toEqual([
+      "A",
+      "B",
+      "Zz",
+      "[",
+      "a",
+      "b",
+    ]);
+    expect(comparePyStrings("abc", "ab")).toBe(1);
+    expect(comparePyStrings("ab", "abc")).toBe(-1);
+    expect(comparePyStrings("same", "same")).toBe(0);
+  });
+
+  it("textOrNone / siteLabel treat pandas missing sentinels as absent", () => {
+    expect(textOrNone("  hd ")).toBe("hd");
+    expect(textOrNone("NaN")).toBeNull();
+    expect(textOrNone("")).toBeNull();
+    expect(textOrNone(undefined)).toBeNull();
+    expect(siteLabel(null)).toBe("None");
+    expect(siteLabel(" none ")).toBe("None");
+    expect(siteLabel("a")).toBe("a");
+  });
+});
+
+describe("microbiome semantics", () => {
+  const artifactCuration: SubjectTimelineCuration = {
+    memberships: {},
+    artifacts: ["Toxoplasma gondii"],
+  };
+
+  it("drops artifacts (case-insensitively) and zero counts, then renormalizes RA per library", () => {
+    const input = [
+      subjectTimelineRow({ taxon: "Escherichia coli", count: 30 }),
+      subjectTimelineRow({ taxon: "  toxoplasma GONDII ", count: 500 }),
+      subjectTimelineRow({ taxon: "Candida albicans", count: 10 }),
+      subjectTimelineRow({ taxon: "Absent taxon", count: 0 }),
+      subjectTimelineRow({ sample: "S2", taxon: "Escherichia coli", count: 5 }),
+    ];
+    const result = microbiome(input, artifactCuration);
+    expect(result.map((row) => [row.sample, row.taxon, row.ra])).toEqual([
+      ["S1", "Escherichia coli", 75],
+      ["S1", "Candida albicans", 25],
+      ["S2", "Escherichia coli", 100],
+    ]);
+  });
+
+  it("ranks the cohort top taxa by summed RA with a deterministic tie-break", () => {
+    const input = microbiome(
+      [
+        subjectTimelineRow({ sample: "S1", taxon: "B", count: 50 }),
+        subjectTimelineRow({ sample: "S1", taxon: "A", count: 50 }),
+        subjectTimelineRow({ sample: "S2", taxon: "C", count: 1 }),
+      ],
+      artifactCuration,
+    );
+    expect(topTaxa(input, 18)).toEqual(["C", "A", "B"]);
+    expect(topTaxa(input, 2)).toEqual(["C", "A"]);
+    expect(topTaxa(input, 0)).toEqual([]);
+  });
+});
+
+describe("degenerate inputs", () => {
+  const emptyCuration: SubjectTimelineCuration = { memberships: {}, artifacts: [] };
+
+  it("subjectsTable of no rows", () => {
+    expect(subjectsTable([])).toEqual({ day_min: 0, day_max: 0, patients: [] });
+  });
+
+  it("subjectsTable pairs days across the configured primary groups", () => {
+    const input = [
+      subjectTimelineRow({ sample: "U1", group: "Urine", timepoint: 3 }),
+      subjectTimelineRow({ sample: "A1", group: "Ascites", timepoint: 3 }),
+      subjectTimelineRow({ sample: "B1", group: "BAL", timepoint: 3 }),
+      subjectTimelineRow({ sample: "U2", group: "Urine", timepoint: 9 }),
+    ];
+    expect(subjectsTable(input).patients[0]).toMatchObject({
+      patient: "P1",
+      site: "a",
+      n_samples: 4,
+      n_days: 2,
+      n_paired_days: 1,
+      day_min: 3,
+      day_max: 9,
+      span: 6,
+      sampletypes: ["Ascites", "BAL", "Urine"],
+      days_by_sampletype: { Ascites: [3], BAL: [3], Urine: [3, 9] },
+    });
+    expect(subjectsTable(input, { primaryGroups: ["Urine", "BAL"] }).patients[0].n_paired_days).toBe(1);
+    expect(subjectsTable(input, { primaryGroups: ["Urine"] }).patients[0].n_paired_days).toBe(0);
+  });
+
+  it("subjectComposition of an unknown subject has the raw-empty shape (no site)", () => {
+    const payload = subjectComposition(rows, "no-such-subject", "Urine", curation);
+    expect(payload).toEqual({
+      patient: "no-such-subject",
+      sampletype: "Urine",
+      days: [],
+      taxa: [],
+      stacked: {},
+      stacked_reads: {},
+      n_samples: 0,
+      n_samples_by_day: [],
+      series: {},
+      collection_days: [],
+      n_libraries: 0,
+      day_support: [],
+      aggregation: {
+        composition: "equal-library mean RA among libraries with retained assignments",
+        reads: "sum of retained assigned reads across same-day libraries",
+        zero_retained_libraries_in_composition: false,
+      },
+    });
+    expect("site" in payload).toBe(false);
+  });
+
+  it("subjectComposition of an artifact-only library keeps the day support but no composition", () => {
+    const input = [
+      subjectTimelineRow({ taxon: "Toxoplasma gondii", count: 40, timepoint: 5 }),
+      subjectTimelineRow({ sample: "S2", taxon: "Toxoplasma gondii", count: 60, timepoint: 5, protocol: "nd" }),
+    ];
+    const payload = subjectComposition(input, "P1", "Urine", {
+      memberships: {},
+      artifacts: ["Toxoplasma gondii"],
+    });
+    expect(payload.site).toBe("a");
+    expect(payload.days).toEqual([]);
+    expect(payload.collection_days).toEqual([5]);
+    expect(payload.n_libraries).toBe(2);
+    expect(payload.day_support).toEqual([
+      {
+        day: 5,
+        n_libraries: 2,
+        n_profiled_libraries: 0,
+        assigned_reads: 100,
+        retained_assigned_reads: 0,
+        retained_fraction: 0,
+        depletion_protocols: ["hd", "nd"],
+        mixed_depletion: true,
+      },
+    ]);
+  });
+
+  it("subjectHighlights of an unknown subject is empty", () => {
+    expect(subjectHighlights(rows, "no-such-subject", emptyCuration)).toEqual({
+      patient: "no-such-subject",
+      pathogens: [],
+      clinical_interest: [],
+      flora: [],
+      curated_hits: [],
+      shifts: {},
+    });
+  });
+
+  it("subjectHighlights only classifies detections in the compartment the list is curated for", () => {
+    const curated: SubjectTimelineCuration = {
+      memberships: {
+        "escherichia coli": [
+          { listId: "urine_verified", label: "Urine", role: "pathogen", site: "Urine", tier: "verified", color: "#C0392B" },
+        ],
+      },
+      artifacts: [],
+    };
+    const input = [
+      subjectTimelineRow({ sample: "A1", group: "Ascites", timepoint: 1, taxon: "Escherichia coli", count: 90 }),
+      subjectTimelineRow({ sample: "A1", group: "Ascites", timepoint: 1, taxon: "Other taxon", count: 10 }),
+      subjectTimelineRow({ sample: "U1", group: "Urine", timepoint: 4, taxon: "Escherichia coli", count: 1 }),
+      subjectTimelineRow({ sample: "U1", group: "Urine", timepoint: 4, taxon: "Other taxon", count: 99 }),
+      subjectTimelineRow({ sample: "U2", group: "Urine", timepoint: 8, taxon: "Other taxon", count: 100 }),
+    ];
+    const payload = subjectHighlights(input, "P1", curated);
+    expect(payload.pathogens).toEqual([
+      { name: "Escherichia coli", peak_ra: 1, day: 4, sampletype: "Urine", tier: "verified", color: "#C0392B" },
+    ]);
+    expect(payload.clinical_interest).toEqual(payload.pathogens);
+    expect(payload.flora).toEqual([]);
+    expect(payload.curated_hits).toEqual([
+      {
+        name: "Escherichia coli",
+        peak_ra: 1,
+        day: 4,
+        sampletype: "Urine",
+        memberships: [
+          { list_id: "urine_verified", label: "Urine", tier: "verified", role: "pathogen", color: "#C0392B" },
+        ],
+      },
+    ]);
+    expect(payload.shifts.Urine).toEqual({
+      n_days: 2,
+      transitions: [{ from_day: 4, to_day: 8, value: 0.01 }],
+      max_turnover: { from_day: 4, to_day: 8, value: 0.01 },
+      n_dominance_changes: 0,
+      dominant_first: { day: 4, taxon: "Other taxon", ra: 99 },
+      dominant_last: { day: 8, taxon: "Other taxon", ra: 100 },
+    });
+    expect(payload.shifts.Ascites.n_days).toBe(1);
+    expect(payload.shifts.Ascites.transitions).toEqual([]);
+    expect(payload.shifts.Ascites.max_turnover).toBeNull();
+  });
+});

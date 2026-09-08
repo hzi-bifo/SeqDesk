@@ -117,6 +117,19 @@
     },
     {
       "id": "cami_profile",
+      "table": {
+        "label": "MetaPhlAn relative abundance (CAMI profile)",
+        "tableKind": "taxon-abundance-long",
+        "format": "tsv",
+        "headerLinePrefix": "@@",
+        "skipLinesStartingWith": "@",
+        "roles": {
+          "taxon": "TAXPATHSN",
+          "taxon_id": "TAXID",
+          "rank": "RANK",
+          "value": "PERCENTAGE"
+        }
+      },
       "scope": "sample",
       "destination": "run_artifact",
       "type": "artifact",

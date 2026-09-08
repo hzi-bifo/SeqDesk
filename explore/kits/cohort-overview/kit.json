@@ -1,0 +1,36 @@
+{
+  "kitVersion": 1,
+  "id": "cohort-overview",
+  "name": "Cohort overview",
+  "description": "What is in a long taxon profile table: samples, subjects, specimen groups, taxa and reads, one summary row per group, one row per subject with its sampling days, and a sampling timeline (subjects against study day, coloured by group). The first page of any cohort report.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [
+    {
+      "alias": "profiles",
+      "label": "Taxon profiles (long)",
+      "description": "One row per taxon per sample with read counts. Subject, timepoint and group roles add the per-subject table and the timeline.",
+      "tableKind": "taxon-profile-long",
+      "requiredRoles": ["sample", "taxon", "count"],
+      "optionalRoles": ["group", "subject", "timepoint", "taxon_id", "rank"]
+    }
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "rank": { "type": "string", "title": "Taxonomic rank", "description": "When the table maps a rank role, count taxa of this rank only.", "default": "species" },
+      "remove_artifacts": { "type": "boolean", "title": "Remove curated artifacts", "description": "Drop taxa on curation lists with the artifact role before counting reads.", "default": true }
+    }
+  },
+  "outputs": [
+    { "name": "overview", "kind": "table", "description": "One row per group plus a total row: samples, subjects, taxa, reads." },
+    { "name": "subjects", "kind": "table", "description": "One row per subject: groups, samples, timepoints, first and last day." },
+    { "name": "samples_per_group", "kind": "figure", "description": "Samples and subjects per group." },
+    { "name": "sampling_timeline", "kind": "figure", "description": "Subjects against study day, one marker per sample, coloured by group." }
+  ],
+  "citation": "Built with pandas (McKinney 2010; The pandas development team, https://pandas.pydata.org) and Plotly (Plotly Technologies Inc., https://plotly.com/python/). Cohort counts follow the INDIVO Explorer overview page. See README.md for details.",
+  "tags": ["overview", "cohort", "timeline", "taxon-profile"],
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}

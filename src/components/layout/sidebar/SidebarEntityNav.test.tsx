@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   usePathname: mocks.usePathname,
   useSearchParams: mocks.useSearchParams,
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
 vi.mock("next/link", () => ({
@@ -41,6 +42,11 @@ vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
+
+vi.mock("@/lib/modules", () => ({
+  // The sidebar is rendered without a module provider here; Explore is on by default.
+  useModuleEnabled: (moduleId: string) => moduleId === "explore",
 }));
 
 vi.mock("./useOrderFormSteps", () => ({
@@ -223,6 +229,28 @@ describe("SidebarEntityNav", () => {
     // registration view is reachable but the submit actions are disabled.
     expect(screen.getByText("Publishing")).toBeTruthy();
     expect(mocks.useStudyPipelines).toHaveBeenCalledWith(true, "study-1", false);
+  });
+
+  it("keeps the study navigation and marks Explore active on Explore pages scoped to the study", () => {
+    mocks.usePathname.mockReturnValue("/explore/datasets/d1");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("scope=study:study-1"));
+
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          ...entityContextDefaults,
+          entityType: "study",
+          entityId: "study-1",
+          entityData: entityData("Study 1"),
+        }}
+        collapsed={false}
+      />
+    );
+
+    const explore = screen.getByRole("link", { name: /^Reports$/ });
+    expect(explore.getAttribute("href")).toBe("/explore?scope=study:study-1");
+    expect(explore.className).toContain("font-medium");
+    expect(screen.getByRole("link", { name: /^Overview$/ }).className).not.toContain("font-medium");
   });
 
   it("renders study sequencing subitems under a single parent", () => {

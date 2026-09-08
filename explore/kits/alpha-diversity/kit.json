@@ -1,0 +1,38 @@
+{
+  "kitVersion": 1,
+  "id": "alpha-diversity",
+  "name": "Alpha diversity",
+  "description": "Within-sample diversity from a long taxon profile table: richness, Shannon, Simpson and Pielou evenness per sample after artifact removal and renormalisation. Draws the chosen index per group and over the study timeline, and tests groups (Kruskal-Wallis) and time trends (Spearman) with Benjamini-Hochberg control.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [
+    {
+      "alias": "profiles",
+      "label": "Taxon profiles (long)",
+      "description": "One row per taxon per sample with read counts. Group, subject and timepoint roles add the comparisons and the time plot.",
+      "tableKind": "taxon-profile-long",
+      "requiredRoles": ["sample", "taxon", "count"],
+      "optionalRoles": ["group", "subject", "timepoint", "taxon_id", "rank"]
+    }
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "metric": { "type": "string", "title": "Index to draw", "description": "Which index the figures show; the table always has all four.", "default": "shannon", "enum": ["shannon", "richness", "simpson", "evenness"] },
+      "rank": { "type": "string", "title": "Taxonomic rank", "description": "When the table maps a rank role, use taxa of this rank only.", "default": "species" },
+      "min_reads": { "type": "number", "title": "Minimum reads per sample", "description": "Samples with fewer retained reads are dropped; 0 keeps every sample.", "default": 0, "minimum": 0 },
+      "remove_artifacts": { "type": "boolean", "title": "Remove curated artifacts", "description": "Drop taxa on curation lists with the artifact role before computing the indices.", "default": true }
+    }
+  },
+  "outputs": [
+    { "name": "alpha_diversity", "kind": "table", "description": "One row per sample: richness, Shannon, Simpson, evenness, reads, plus group, subject and timepoint." },
+    { "name": "alpha_tests", "kind": "table", "description": "Kruskal-Wallis across groups and Spearman against time, per index, with BH q-values." },
+    { "name": "alpha_by_group", "kind": "figure", "description": "The chosen index per group as box plots with every sample." },
+    { "name": "alpha_over_time", "kind": "figure", "description": "The chosen index against the timepoint, coloured by group, with a running median per group." }
+  ],
+  "citation": "Built with pandas, NumPy, SciPy (Virtanen et al. 2020) and Plotly. Shannon uses the natural logarithm; Pielou evenness J = H / ln(S); the test layout follows the INDIVO Explorer temporal-trends page. See README.md for details.",
+  "tags": ["microbiome", "alpha-diversity", "shannon", "richness", "taxon-profile"],
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}

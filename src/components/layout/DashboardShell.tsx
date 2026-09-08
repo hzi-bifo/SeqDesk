@@ -10,6 +10,7 @@ import {
 import { FieldHelpProvider } from "@/lib/contexts/FieldHelpContext";
 import { Sidebar } from "./sidebar";
 import { Footer } from "./Footer";
+import { FooterNoteProvider } from "./FooterNote";
 import { UpdateBanner } from "@/components/admin/UpdateBanner";
 import { cn } from "@/lib/utils";
 import { Menu } from "lucide-react";
@@ -301,15 +302,17 @@ export function DashboardShell({
     <DeploymentProfileProvider profile={deploymentProfile}>
       <SidebarProvider embeddedMode={embeddedMode}>
         <FieldHelpProvider>
-          <DashboardContent
-            user={user}
-            version={version}
-            deploymentProfile={deploymentProfile}
-            embeddedMode={embeddedMode}
-          >
-            {children}
-          </DashboardContent>
-          <Footer isDemo={Boolean(user.isDemo)} />
+          <FooterNoteProvider>
+            <DashboardContent
+              user={user}
+              version={version}
+              deploymentProfile={deploymentProfile}
+              embeddedMode={embeddedMode}
+            >
+              {children}
+            </DashboardContent>
+            <Footer isDemo={Boolean(user.isDemo)} />
+          </FooterNoteProvider>
         </FieldHelpProvider>
       </SidebarProvider>
     </DeploymentProfileProvider>

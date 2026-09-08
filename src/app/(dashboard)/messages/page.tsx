@@ -90,6 +90,10 @@ export default function MessagesPage() {
       )
   );
 
+  const listGridCols = isAdmin
+    ? "md:grid-cols-[minmax(0,1fr)_6.5rem_minmax(0,9rem)_3.5rem_4.5rem_5.5rem_2rem]"
+    : "md:grid-cols-[minmax(0,1fr)_6.5rem_3.5rem_4.5rem_5.5rem_2rem]";
+
   useEffect(() => {
     const fetchTickets = async () => {
       try {
@@ -347,10 +351,10 @@ export default function MessagesPage() {
           </div>
 
           {/* Table Header - hidden on mobile */}
-          <div className={`hidden md:grid ${isAdmin ? "grid-cols-12" : "grid-cols-12"} gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground`}>
+          <div className={`hidden md:grid ${listGridCols} gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground`}>
             <button
               onClick={() => handleSort("subject")}
-              className={`${isAdmin ? "col-span-4" : "col-span-5"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Subject
               {sortField === "subject" && (
@@ -359,17 +363,17 @@ export default function MessagesPage() {
             </button>
             <button
               onClick={() => handleSort("status")}
-              className="col-span-2 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Status
               {sortField === "status" && (
                 <ArrowUpDown className="h-3 w-3" />
               )}
             </button>
-            {isAdmin && <div className="col-span-2">User</div>}
+            {isAdmin && <div>User</div>}
             <button
               onClick={() => handleSort("messages")}
-              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors justify-end"
+              className="flex items-center gap-1 hover:text-foreground transition-colors justify-end"
             >
               {sortField === "messages" && (
                 <ArrowUpDown className="h-3 w-3" />
@@ -378,7 +382,7 @@ export default function MessagesPage() {
             </button>
             <button
               onClick={() => handleSort("priority")}
-              className={`${isAdmin ? "col-span-1" : "col-span-1"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Priority
               {sortField === "priority" && (
@@ -387,14 +391,14 @@ export default function MessagesPage() {
             </button>
             <button
               onClick={() => handleSort("updated")}
-              className={`${isAdmin ? "col-span-1" : "col-span-2"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Updated
               {sortField === "updated" && (
                 <ArrowUpDown className="h-3 w-3" />
               )}
             </button>
-            <div className="col-span-1"></div>
+            <div />
           </div>
 
           {/* Tickets List */}
@@ -407,7 +411,7 @@ export default function MessagesPage() {
                 <Link
                   key={ticket.id}
                   href={`/messages/${ticket.id}`}
-                  className="block px-4 py-3 hover:bg-secondary/80 transition-colors group md:grid md:grid-cols-12 md:gap-4 md:px-5 md:py-4 md:items-center"
+                  className={`block px-4 py-3 hover:bg-secondary/80 transition-colors group md:grid ${listGridCols} md:gap-4 md:px-5 md:py-4 md:items-center`}
                 >
                   {/* Mobile layout */}
                   <div className="md:hidden">
@@ -451,7 +455,7 @@ export default function MessagesPage() {
                   {/* Desktop layout */}
                   <div className="hidden md:contents">
                     {/* Subject */}
-                    <div className={`${isAdmin ? "col-span-4" : "col-span-5"} min-w-0 flex items-center gap-2`}>
+                    <div className="min-w-0 flex items-center gap-2">
                       <div className="w-2 shrink-0">
                         {ticket.hasUnread && (
                           <span className="block h-2 w-2 rounded-full bg-primary" />
@@ -463,10 +467,10 @@ export default function MessagesPage() {
                     </div>
 
                     {/* Status */}
-                    <div className="col-span-2">
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
-                        <span className={`text-xs font-medium ${statusConfig.color}`}>
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${statusConfig.dot}`} />
+                        <span className={`text-xs font-medium truncate ${statusConfig.color}`}>
                           {statusConfig.label}
                         </span>
                       </div>
@@ -474,7 +478,7 @@ export default function MessagesPage() {
 
                     {/* User (Admin only) */}
                     {isAdmin && (
-                      <div className="col-span-2 min-w-0">
+                      <div className="min-w-0">
                         <p className="text-sm truncate">
                           {ticket.user.firstName} {ticket.user.lastName}
                         </p>
@@ -482,28 +486,28 @@ export default function MessagesPage() {
                     )}
 
                     {/* Messages count */}
-                    <div className="col-span-1 text-right">
-                      <span className="text-sm text-muted-foreground tabular-nums">
+                    <div className="text-right">
+                      <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
                         {ticket._count.messages}
                       </span>
                     </div>
 
                     {/* Priority */}
-                    <div className={`${isAdmin ? "col-span-1" : "col-span-1"}`}>
+                    <div className="whitespace-nowrap">
                       <span className={`text-xs font-medium ${priorityConfig.color}`}>
                         {priorityConfig.label}
                       </span>
                     </div>
 
                     {/* Updated */}
-                    <div className={isAdmin ? "col-span-1" : "col-span-2"}>
-                      <span className="text-sm text-muted-foreground tabular-nums">
+                    <div className="whitespace-nowrap">
+                      <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
                         {formatTimeAgo(ticket.updatedAt)}
                       </span>
                     </div>
 
                     {/* Arrow */}
-                    <div className="col-span-1 flex justify-end">
+                    <div className="flex justify-end">
                       <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />
                     </div>
                   </div>

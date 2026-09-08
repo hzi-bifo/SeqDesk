@@ -1,0 +1,42 @@
+{
+  "kitVersion": 1,
+  "id": "community-signatures",
+  "name": "Community signatures",
+  "description": "Recurring taxon combinations found by non-negative matrix factorisation of the samples-by-taxa relative-abundance matrix. Every sample is a mixture of a few signatures, each a weighted set of taxa; the outputs give the taxa behind each signature, each sample's signature shares and the mean shares per group.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [
+    {
+      "alias": "profiles",
+      "label": "Taxon profiles (long)",
+      "description": "One row per taxon per sample with read counts. Group, subject and timepoint roles are carried into the per-sample table and the group figure.",
+      "tableKind": "taxon-profile-long",
+      "requiredRoles": ["sample", "taxon", "count"],
+      "optionalRoles": ["group", "subject", "timepoint", "taxon_id", "rank"]
+    }
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "n_signatures": { "type": "integer", "title": "Number of signatures", "description": "How many signatures to extract; reduced when the table is too small.", "default": 5, "minimum": 2, "maximum": 20 },
+      "top_taxa": { "type": "integer", "title": "Taxa per signature", "description": "How many of the highest-loading taxa each signature lists.", "default": 12, "minimum": 3, "maximum": 40 },
+      "min_prevalence_pct": { "type": "number", "title": "Minimum prevalence (%)", "description": "Taxa present in fewer samples are left out of the factorisation.", "default": 5, "minimum": 0, "maximum": 100 },
+      "transform": { "type": "string", "title": "Abundance transform", "description": "Applied to relative abundance before factorising: square root dampens dominant taxa, log more so, none keeps proportions.", "default": "sqrt", "enum": ["sqrt", "log", "none"] },
+      "seed": { "type": "integer", "title": "Random seed", "description": "Seed of the factorisation; the same seed gives the same signatures.", "default": 0, "minimum": 0 },
+      "rank": { "type": "string", "title": "Taxonomic rank", "description": "When the table maps a rank role, use taxa of this rank only.", "default": "species" },
+      "min_reads": { "type": "number", "title": "Minimum reads per sample", "description": "Samples with fewer retained reads are dropped; 0 keeps every sample.", "default": 0, "minimum": 0 },
+      "remove_artifacts": { "type": "boolean", "title": "Remove curated artifacts", "description": "Drop taxa on curation lists with the artifact role first.", "default": true }
+    }
+  },
+  "outputs": [
+    { "name": "signature_taxa", "kind": "table", "description": "The highest-loading taxa of every signature with their loading, rank and curated role." },
+    { "name": "sample_signatures", "kind": "table", "description": "One row per sample: the share of each signature, the dominant signature and its share." },
+    { "name": "signature_taxa_heatmap", "kind": "figure", "description": "Loadings of the top taxa across the signatures." },
+    { "name": "signatures_by_group", "kind": "figure", "description": "Mean signature share per group as stacked bars." }
+  ],
+  "citation": "Built with scikit-learn (Pedregosa et al. 2011; NMF after Lee and Seung 1999, NNDSVD initialisation after Boutsidis and Gallopoulos 2008), pandas, NumPy and Plotly. See README.md.",
+  "tags": ["microbiome", "signatures", "nmf", "community-types", "taxon-profile"],
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}

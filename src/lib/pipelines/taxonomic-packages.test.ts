@@ -13,6 +13,14 @@ const taxonomicConfigOverrideIssues = (id: string, config: Record<string, unknow
 const taxonomicRunOverrides = (id: string, config: Record<string, unknown>) => pipelineRunOverrides(getPackage(id)?.registry.configSchema, config);
 
 describe("taxonomic packages", () => {
+  it("declares MetaPhlAn percentages as a reusable Explore table without a count role", () => {
+    const table = getPackage("metaphlan")!.manifest.outputs.find(output => output.id === "cami_profile")!.table!;
+    expect(table).toMatchObject({
+      tableKind: "taxon-abundance-long", headerLinePrefix: "@@",
+      roles: { value: "PERCENTAGE", taxon: "TAXPATHSN", rank: "RANK" },
+    });
+    expect(table.roles).not.toHaveProperty("count");
+  });
   it.each(["metaphlan", "cami-opal"])("loads the complete %s package through the real loader", id => {
     const pkg = getPackage(id);
     expect(pkg, id).not.toBeNull();

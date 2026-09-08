@@ -1,0 +1,117 @@
+name: Explore E2E
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "explore/**"
+      - "src/lib/explore/**"
+      - "src/app/api/explore/**"
+      - "src/app/(dashboard)/explore/**"
+      - "src/components/explore/**"
+      - "scripts/explore-*.ts"
+      - "scripts/validate-explore-kit.ts"
+      - "playwright/tests/explore.spec.ts"
+      - "data/explore-kit-coverage.json"
+      - ".github/workflows/explore-e2e.yml"
+  pull_request:
+    paths:
+      - "explore/**"
+      - "src/lib/explore/**"
+      - "src/app/api/explore/**"
+      - "src/app/(dashboard)/explore/**"
+      - "src/components/explore/**"
+      - "scripts/explore-*.ts"
+      - "scripts/validate-explore-kit.ts"
+      - "playwright/tests/explore.spec.ts"
+      - "data/explore-kit-coverage.json"
+      - ".github/workflows/explore-e2e.yml"
+  workflow_dispatch:
+
+jobs:
+  explore:
+    name: Explore datasets, kits and analysis runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: seqdesk
+          POSTGRES_PASSWORD: seqdesk
+          POSTGRES_DB: seqdesk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seqdesk"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public
+      DIRECT_URL: postgresql://seqdesk:seqdesk@127.0.0.1:5432/seqdesk_test?schema=public
+      NEXTAUTH_SECRET: explore-e2e-secret
+      NEXTAUTH_URL: http://127.0.0.1:3000
+      SEQDESK_EXPLORE_DIR: /tmp/seqdesk-explore
+      SEQDESK_EXPLORE_RUN_DIR: /tmp/seqdesk-explore-runs
+      EXPLORE_E2E_KIT: table-summary
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Prepare database
+        run: |
+          npm run db:migrate:deploy
+          npm run db:seed
+
+      - name: Validate kits
+        run: npm run explore:validate
+
+      - name: Unit and route tests
+        run: npm run test:explore
+
+      - name: Setup Miniconda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniconda-version: latest
+          activate-environment: ""
+
+      - name: Create the Python analysis environment
+        run: |
+          conda env create --yes -p /tmp/seqdesk-explore-python -f explore/environments/seqdesk-explore-python.yml
+          /tmp/seqdesk-explore-python/bin/python -c "import pandas, plotly, scipy; print(pandas.__version__, plotly.__version__)"
+
+      - name: Kit and helper tests in the real environment
+        run: /tmp/seqdesk-explore-python/bin/python -m pytest explore -q
+
+      - name: Register the environment with the app
+        run: npx tsx scripts/explore-build-env.ts --register seqdesk-explore-python /tmp/seqdesk-explore-python
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Explore browser and analysis-run flow
+        run: npx playwright test playwright/tests/explore.spec.ts
+
+      - name: Upload Playwright results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: explore-playwright-results
+          path: test-results/
+          retention-days: 7

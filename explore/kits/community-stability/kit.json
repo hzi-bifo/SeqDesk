@@ -1,0 +1,40 @@
+{
+  "kitVersion": 1,
+  "id": "community-stability",
+  "name": "Community stability",
+  "description": "How much a subject's community changes between its samples. Dissimilarity between consecutive samples of the same subject (Bray-Curtis on relative abundance or Jaccard on presence) against the time gap between them, per group, with the dissimilarity between different subjects as the baseline.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [
+    {
+      "alias": "profiles",
+      "label": "Taxon profiles (long)",
+      "description": "One row per taxon per sample with read counts; subject and timepoint roles order each subject's samples. A group role keeps comparisons within a group and colours the figures.",
+      "tableKind": "taxon-profile-long",
+      "requiredRoles": ["sample", "taxon", "count", "subject", "timepoint"],
+      "optionalRoles": ["group", "taxon_id", "rank"]
+    }
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "metric": { "type": "string", "title": "Dissimilarity", "description": "Bray-Curtis on relative abundance or Jaccard on presence.", "default": "braycurtis", "enum": ["braycurtis", "jaccard"] },
+      "within_group_only": { "type": "boolean", "title": "Compare within a group only", "description": "Pair a subject's samples only when they share the group value (for example the same specimen type).", "default": true },
+      "max_gap": { "type": "number", "title": "Maximum time gap", "description": "Pairs further apart than this many timepoint units are left out; 0 keeps every pair.", "default": 0, "minimum": 0 },
+      "rank": { "type": "string", "title": "Taxonomic rank", "description": "When the table maps a rank role, use taxa of this rank only.", "default": "species" },
+      "min_reads": { "type": "number", "title": "Minimum reads per sample", "description": "Samples with fewer retained reads are dropped; 0 keeps every sample.", "default": 0, "minimum": 0 },
+      "remove_artifacts": { "type": "boolean", "title": "Remove curated artifacts", "description": "Drop taxa on curation lists with the artifact role first.", "default": true }
+    }
+  },
+  "outputs": [
+    { "name": "sample_pairs", "kind": "table", "description": "Every pair of samples of the same subject: times, gap, dissimilarity and whether the two are consecutive." },
+    { "name": "subject_stability", "kind": "table", "description": "Per subject (and group): samples, consecutive pairs, median and maximum dissimilarity, median gap." },
+    { "name": "turnover_vs_gap", "kind": "figure", "description": "Dissimilarity between consecutive samples against the time gap, per group, with running medians and the between-subject baseline." },
+    { "name": "stability_by_group", "kind": "figure", "description": "Within-subject dissimilarity next to the between-subject baseline, per group." }
+  ],
+  "citation": "Built with pandas, NumPy, SciPy (Virtanen et al. 2020) and Plotly. Bray-Curtis dissimilarity (Bray and Curtis 1957), Jaccard index (Jaccard 1901), Spearman rank correlation. See README.md.",
+  "tags": ["microbiome", "longitudinal", "stability", "beta-diversity", "taxon-profile"],
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}

@@ -116,6 +116,9 @@ export default function OrdersPage() {
     principal && hasCapability(deploymentProfile, principal, "orders.process")
   );
   const isResearcher = canCreateOrder && !isFacilityAdmin;
+  const listGridCols = isFacilityAdmin
+    ? "md:grid-cols-[minmax(0,1fr)_minmax(7rem,10rem)_minmax(0,9rem)_4.5rem_6rem_2rem]"
+    : "md:grid-cols-[minmax(0,1fr)_minmax(7rem,10rem)_4.5rem_6rem_2rem]";
 
   useEffect(() => {
     const fetchOrders = async () => {
@@ -374,28 +377,27 @@ export default function OrdersPage() {
           <div className="px-4 py-3 border-b border-border">
             <Skeleton className="h-9 w-full rounded-lg" />
           </div>
-          <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50">
-            <Skeleton className="col-span-3 h-3 w-16" />
-            <Skeleton className="col-span-3 h-3 w-12" />
-            <Skeleton className="col-span-2 h-3 w-20" />
-            <Skeleton className="col-span-1 h-3 w-14 ml-auto" />
-            <Skeleton className="col-span-2 h-3 w-16" />
-            <div className="col-span-1" />
+          <div className="hidden md:grid md:grid-cols-[minmax(0,1fr)_minmax(7rem,10rem)_4.5rem_6rem_2rem] gap-4 px-5 py-2.5 border-b border-border bg-secondary/50">
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-3 w-12" />
+            <Skeleton className="h-3 w-14 ml-auto" />
+            <Skeleton className="h-3 w-16" />
+            <div />
           </div>
           <div className="divide-y divide-border">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="hidden md:grid grid-cols-12 gap-4 px-5 py-4 items-center">
-                <div className="col-span-3 space-y-1.5">
+              <div key={i} className="hidden md:grid md:grid-cols-[minmax(0,1fr)_minmax(7rem,10rem)_4.5rem_6rem_2rem] gap-4 px-5 py-4 items-center">
+                <div className="space-y-1.5">
                   <Skeleton className="h-4 w-36" />
                   <Skeleton className="h-3 w-24" />
                 </div>
-                <div className="col-span-3">
+                <div>
                   <Skeleton className="h-5 w-20 rounded-full" />
                 </div>
-                <Skeleton className="col-span-2 h-3 w-24" />
-                <Skeleton className="col-span-1 h-3 w-6 ml-auto" />
-                <Skeleton className="col-span-2 h-3 w-20" />
-                <div className="col-span-1" />
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-3 w-6 ml-auto" />
+                <Skeleton className="h-3 w-20" />
+                <div />
               </div>
             ))}
           </div>
@@ -556,29 +558,29 @@ export default function OrdersPage() {
           </div>
 
           {/* Table Header - hidden on mobile */}
-          <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
+          <div className={`hidden md:grid ${listGridCols} gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground`}>
             <button
               onClick={() => handleSort("name")}
-              className="col-span-3 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left min-w-0"
             >
-              Sequencing data
+              <span className="truncate">Sequencing data</span>
               {sortField === "name" && (
                 <ArrowUpDown className="h-3 w-3" />
               )}
             </button>
             <button
               onClick={() => handleSort("status")}
-              className="col-span-3 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Status
               {sortField === "status" && (
                 <ArrowUpDown className="h-3 w-3" />
               )}
             </button>
-            {isFacilityAdmin && <div className="col-span-2">Researcher</div>}
+            {isFacilityAdmin && <div>Researcher</div>}
             <button
               onClick={() => handleSort("samples")}
-              className={`${isFacilityAdmin ? "col-span-1" : "col-span-2"} flex items-center gap-1 hover:text-foreground transition-colors justify-end`}
+              className="flex items-center gap-1 hover:text-foreground transition-colors justify-end"
             >
               {sortField === "samples" && (
                 <ArrowUpDown className="h-3 w-3" />
@@ -587,14 +589,14 @@ export default function OrdersPage() {
             </button>
             <button
               onClick={() => handleSort("created")}
-              className={`${isFacilityAdmin ? "col-span-2" : "col-span-3"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Created
               {sortField === "created" && (
                 <ArrowUpDown className="h-3 w-3" />
               )}
             </button>
-            <div className="col-span-1"></div>
+            <div />
           </div>
 
           {/* Orders List */}
@@ -606,7 +608,7 @@ export default function OrdersPage() {
               return (
                 <div
                   key={order.id}
-                  className={`px-4 py-3 transition-colors group md:grid md:grid-cols-12 md:gap-4 md:px-5 md:py-4 md:items-center ${
+                  className={`px-4 py-3 transition-colors group md:grid ${listGridCols} md:gap-4 md:px-5 md:py-4 md:items-center ${
                     bulkEditMode
                       ? `${isSelected ? "bg-primary/10 ring-1 ring-inset ring-primary/30" : "hover:bg-secondary/80"} cursor-pointer`
                       : "hover:bg-secondary/80"
@@ -702,7 +704,7 @@ export default function OrdersPage() {
                   {/* Desktop layout */}
                   <div className="hidden md:contents">
                     {/* Order Info */}
-                    <div className="col-span-3 min-w-0 overflow-hidden">
+                    <div className="min-w-0 overflow-hidden">
                       {bulkEditMode ? (
                         <>
                           <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
@@ -725,10 +727,10 @@ export default function OrdersPage() {
                     </div>
 
                     {/* Status */}
-                    <div className="col-span-3 min-w-0">
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
-                        <span className={`text-xs font-medium ${statusConfig.color}`}>
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${statusConfig.dot}`} />
+                        <span className={`text-xs font-medium truncate ${statusConfig.color}`}>
                           {statusConfig.label}
                         </span>
                       </div>
@@ -739,7 +741,7 @@ export default function OrdersPage() {
 
                     {/* Researcher (Admin only) */}
                     {isFacilityAdmin && (
-                      <div className="col-span-2 min-w-0">
+                      <div className="min-w-0">
                         <p className="text-sm truncate">
                           {order.user.firstName} {order.user.lastName}
                         </p>
@@ -747,21 +749,21 @@ export default function OrdersPage() {
                     )}
 
                     {/* Samples */}
-                    <div className={`${isFacilityAdmin ? "col-span-1" : "col-span-2"} text-right`}>
-                      <span className="text-sm text-muted-foreground tabular-nums">
+                    <div className="text-right">
+                      <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
                         {order._count.samples}
                       </span>
                     </div>
 
                     {/* Date */}
-                    <div className={isFacilityAdmin ? "col-span-2" : "col-span-3"}>
-                      <span className="text-sm text-muted-foreground tabular-nums">
+                    <div>
+                      <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
                         {formatDate(order.createdAt)}
                       </span>
                     </div>
 
                     {isFacilityAdmin ? (
-                      <div className="col-span-1 flex justify-end">
+                      <div className="flex justify-end">
                         {bulkEditMode ? (
                           <div className="h-8 w-8" />
                         ) : (
@@ -789,7 +791,7 @@ export default function OrdersPage() {
                         )}
                       </div>
                     ) : (
-                      <div className="col-span-1 flex justify-end">
+                      <div className="flex justify-end">
                         {!bulkEditMode && (
                           <Link href={`/orders/${order.id}`}>
                             <ChevronRight className="h-4 w-4 text-muted-foreground/50 group-hover:text-muted-foreground transition-colors" />

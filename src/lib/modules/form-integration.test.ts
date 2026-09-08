@@ -77,7 +77,7 @@ describe("form module integration", () => {
     ).toBe(true);
   });
 
-  it("turns facility-only defaults and stored overrides off in Research Workbench", () => {
+  it("turns facility-only defaults and stored overrides off when their domains are unavailable", () => {
     const config = parseModulesConfig(
       JSON.stringify({
         modules: {
@@ -86,7 +86,12 @@ describe("form module integration", () => {
           notifications: true,
         },
       }),
-      getDeploymentProfileDefinition("research-workbench")
+      {
+        ...getDeploymentProfileDefinition("research-workbench"),
+        domains: getDeploymentProfileDefinition("research-workbench").domains.filter(
+          domain => domain !== "facility-intake" && domain !== "sequencing-operations"
+        ),
+      }
     );
 
     expect(config.modules["ai-validation"]).toBe(false);
@@ -105,6 +110,13 @@ describe("form module integration", () => {
       type: "billing",
       name: "_billing",
     }, config)).toBe(false);
+  });
+
+  it("keeps imports and Reports available in the shared application research preset", () => {
+    const config = parseModulesConfig(null, getDeploymentProfileDefinition("research-workbench"));
+    expect(config.modules).toMatchObject({
+      "sequencing-management": false, "import-cami": true, "import-sra": true, explore: true,
+    });
   });
 
   it("detects whether a module has fields in a form schema", () => {

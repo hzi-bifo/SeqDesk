@@ -1,0 +1,45 @@
+{
+  "artifacts": [
+    {
+      "name": "pcoa_coordinates",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "permanova",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "pcoa",
+      "kind": "figure",
+      "format": "plotly-json"
+    }
+  ],
+  "metrics": {
+    "n_rows_input": 123,
+    "n_rows_retained": 98,
+    "n_nondetections_dropped": 1,
+    "n_artifact_taxa_removed": 2,
+    "n_samples_dropped": 0,
+    "n_samples": 12,
+    "n_taxa": 20,
+    "metric": "bray-curtis",
+    "pc1_variance_pct": {
+      "approx": 39.8024,
+      "tol": 0.001
+    },
+    "pc2_variance_pct": {
+      "approx": 16.6591,
+      "tol": 0.001
+    },
+    "permanova_group_p": {
+      "approx": 0.005,
+      "tol": 0.0005
+    },
+    "permanova_group_R2": {
+      "approx": 0.3947,
+      "tol": 0.0005
+    }
+  }
+}

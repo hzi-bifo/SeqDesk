@@ -1,0 +1,38 @@
+{
+  "kitVersion": 1,
+  "id": "differential-abundance",
+  "name": "Differential abundance",
+  "description": "Which taxa differ between two groups of a long taxon profile table: per-taxon Mann-Whitney U on relative abundance (zeros included), Benjamini-Hochberg q-values, prevalence and mean abundance per group, a log2 fold change, and a volcano plot. The two groups default to the two most frequent values of the group role.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [
+    {
+      "alias": "profiles",
+      "label": "Taxon profiles (long)",
+      "description": "One row per taxon per sample with read counts and a group role with at least two values.",
+      "tableKind": "taxon-profile-long",
+      "requiredRoles": ["sample", "taxon", "count", "group"],
+      "optionalRoles": ["subject", "timepoint", "taxon_id", "rank"]
+    }
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "group_a": { "type": "string", "title": "Group A", "description": "A value of the group role; empty picks the most frequent one.", "default": "" },
+      "group_b": { "type": "string", "title": "Group B", "description": "The other value; empty picks the second most frequent one.", "default": "" },
+      "min_prevalence_pct": { "type": "number", "title": "Minimum prevalence (%)", "description": "Only taxa present in at least this share of samples in either group are tested.", "default": 10, "minimum": 0, "maximum": 100 },
+      "q_threshold": { "type": "number", "title": "Significance (q)", "description": "Taxa with a q-value below this are marked significant.", "default": 0.05, "minimum": 0.0001, "maximum": 1 },
+      "rank": { "type": "string", "title": "Taxonomic rank", "description": "When the table maps a rank role, use taxa of this rank only.", "default": "species" },
+      "remove_artifacts": { "type": "boolean", "title": "Remove curated artifacts", "description": "Drop taxa on curation lists with the artifact role before testing.", "default": true }
+    }
+  },
+  "outputs": [
+    { "name": "differential_abundance", "kind": "table", "description": "One row per tested taxon: prevalence and mean relative abundance per group, log2 fold change, U, p and q." },
+    { "name": "volcano", "kind": "figure", "description": "log2 fold change against -log10 p, significant taxa highlighted." }
+  ],
+  "citation": "Built with pandas, NumPy, SciPy (Virtanen et al. 2020) and Plotly. Two-sided Mann-Whitney U with Benjamini-Hochberg control, following the INDIVO Explorer differential-abundance page. See README.md for details.",
+  "tags": ["microbiome", "differential-abundance", "mann-whitney", "volcano", "taxon-profile"],
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}

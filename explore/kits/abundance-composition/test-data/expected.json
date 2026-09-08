@@ -1,0 +1,8 @@
+{
+  "artifacts": [
+    { "name": "composition", "kind": "table", "format": "tsv" },
+    { "name": "composition_plot", "kind": "figure", "format": "plotly-json" }
+  ],
+  "metrics": { "n_samples": 2, "n_taxa": 2, "n_rows": 4 },
+  "notes_contain": ["not read counts", "Kept rank species"]
+}

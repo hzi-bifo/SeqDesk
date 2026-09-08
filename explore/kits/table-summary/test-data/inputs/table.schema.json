@@ -1,0 +1,78 @@
+{
+  "schema": {
+    "columns": [
+      {
+        "key": "sample_id",
+        "label": "Sample ID",
+        "type": "string",
+        "role": "sample",
+        "group": "identity"
+      },
+      {
+        "key": "condition",
+        "label": "Condition",
+        "type": "string",
+        "role": "group",
+        "group": "study"
+      },
+      {
+        "key": "age",
+        "label": "Age (years)",
+        "type": "number",
+        "group": "study"
+      },
+      {
+        "key": "weight_kg",
+        "label": "Weight (kg)",
+        "type": "number",
+        "group": "study"
+      },
+      {
+        "key": "score",
+        "label": "Score",
+        "type": "number",
+        "group": "study"
+      },
+      {
+        "key": "read_count",
+        "label": "Read count",
+        "type": "number",
+        "role": "count",
+        "group": "reads"
+      },
+      {
+        "key": "is_control",
+        "label": "Is control",
+        "type": "boolean",
+        "group": "study"
+      },
+      {
+        "key": "collection_date",
+        "label": "Collection date",
+        "type": "date",
+        "group": "study"
+      },
+      {
+        "key": "notes",
+        "label": "Notes",
+        "type": "string",
+        "group": "study"
+      }
+    ]
+  },
+  "provenance": {
+    "builtAt": "2026-09-04T12:00:00.000Z",
+    "builder": "test-fixture@1",
+    "sources": [
+      {
+        "type": "file",
+        "id": "synthetic",
+        "label": "Synthetic table"
+      }
+    ],
+    "notes": [
+      "Synthetic data generated for the kit self-test; no real samples."
+    ]
+  },
+  "contentHash": "c6d763e86c28c57765b59f66233adc5f17c2bf1de8984b996541063e20bc5af5"
+}

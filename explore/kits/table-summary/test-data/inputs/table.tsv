@@ -1,0 +1,41 @@
+sample_id	condition	age	weight_kg	score	read_count	is_control	collection_date	notes
+S001	control	27	75.1	50.3	305024	true	2026-01-01	batch A
+S002	control	50	81.3	51.73	298970	true	2026-01-02	
+S003	control	23	78.1	35.96	560304	true	2026-01-03	batch B
+S004	control	79	70.2		390011	true	2026-01-04	
+S005	control	31	45.5	25.52	427062	true	2026-01-05	batch A
+S006	control	27	59.2	75.15	242490	true	2026-01-06	
+S007	control	20	64.0	43.2	476475	true	2026-01-07	batch B
+S008	control	31	63.6	80.15		true	2026-01-08	
+S009	control	71	80.2	2.91	673343	true	2026-01-09	batch A
+S010	control	49	81.1	27.6	324644	true	2026-01-10	
+S011	control	52	79.0	21.65	669284	true	2026-01-11	batch B
+S012	control	58	74.9		220165	true	2026-01-12	
+S013	control	35	58.8	13.23	933980	true	2026-01-13	batch A
+S014	control	33	80.9	93.57	2040242	true	2026-01-14	
+S015	control	55	58.7	13.78	282664	true	2026-01-15	batch B
+S016	control	72	61.8	47.3	725298	true	2026-01-16	
+S017	control	51	87.0	76.65	694101	true	2026-01-17	batch A
+S018	control	48	68.3	8.36	882180	true	2026-01-18	
+S019	control	46	72.9	22.89	780756	true	2026-01-19	batch B
+S020	control	43	74.2		344525	true	2026-01-20	
+S021	treated	43	80.4	49.32	207237	false	2026-01-21	batch A
+S022	treated	80	87.6	83.86	1076518	false	2026-01-22	
+S023	treated	63	79.4	61.93	646854	false	2026-01-23	batch B
+S024	treated	20	64.5	17.31	646113	false	2026-01-24	
+S025	treated	45	81.9	67.53	1610271	false	2026-01-25	batch A
+S026	treated	35	67.7	83.12	554768	false	2026-01-26	
+S027	treated	68	69.9	89.86	158775	false	2026-01-27	batch B
+S028	treated	46	73.0		349424	false	2026-01-28	
+S029	treated	30	51.8	40.37	282305	false	2026-01-29	batch A
+S030	treated	58	78.1	76.43	356908	false	2026-01-30	
+S031	treated	75	53.9	29.62		false	2026-01-31	batch B
+S032	treated	29	89.4	57.79	572607	false	2026-02-01	
+S033	treated	43	67.0	75.41	836733	false	2026-02-02	batch A
+S034	treated	64	72.0	7.5	516301	false	2026-02-03	
+S035	treated	68	76.1	52.89	674812	false	2026-02-04	batch B
+S036	treated	50	74.6		397926	false	2026-02-05	
+S037	treated	52	74.7	32.51	891391	false	2026-02-06	batch A
+S038	treated	34	81.0	22.59	443921	false	2026-02-07	
+S039	treated	57	81.7	78.15	384020	false	2026-02-08	batch B
+S040	treated	39	67.7	3.22	1027812	false	2026-02-09	

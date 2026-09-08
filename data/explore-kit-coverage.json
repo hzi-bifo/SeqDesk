@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "kits": {
+    "abundance-composition": { "tier": "required", "proofs": ["validate", "pytest"] },
+    "alpha-diversity": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "beta-diversity": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "cohort-overview": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "community-signatures": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "community-stability": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "differential-abundance": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "domain-overview": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "sequencing-qc-overview": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "table-summary": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest",
+        "app-run"
+      ]
+    },
+    "taxon-composition": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    },
+    "taxon-cooccurrence": {
+      "tier": "required",
+      "proofs": [
+        "validate",
+        "pytest"
+      ]
+    }
+  }
+}

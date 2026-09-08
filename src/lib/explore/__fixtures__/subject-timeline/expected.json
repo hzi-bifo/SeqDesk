@@ -1,0 +1,3568 @@
+{
+ "patients_table": {
+  "day_min": 408,
+  "day_max": 2218,
+  "patients": [
+   {
+    "patient": "A001",
+    "site": "d",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1103,
+    "day_max": 1103,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [1103]
+    }
+   },
+   {
+    "patient": "A002",
+    "site": "a",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 2154,
+    "day_max": 2154,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [2154]
+    }
+   },
+   {
+    "patient": "A003",
+    "site": "e",
+    "n_samples": 2,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 1192,
+    "day_max": 1206,
+    "span": 14,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [1192],
+     "Urine": [1206]
+    }
+   },
+   {
+    "patient": "A004",
+    "site": "a",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1106,
+    "day_max": 1106,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [1106]
+    }
+   },
+   {
+    "patient": "A005",
+    "site": "c",
+    "n_samples": 2,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 1882,
+    "day_max": 1909,
+    "span": 27,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1882, 1909]
+    }
+   },
+   {
+    "patient": "A006",
+    "site": "e",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1784,
+    "day_max": 1784,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1784]
+    }
+   },
+   {
+    "patient": "A007",
+    "site": "c",
+    "n_samples": 6,
+    "n_days": 5,
+    "n_paired_days": 0,
+    "day_min": 2109,
+    "day_max": 2181,
+    "span": 72,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [2134, 2152, 2181],
+     "Urine": [2109, 2116]
+    }
+   },
+   {
+    "patient": "A008",
+    "site": "c",
+    "n_samples": 2,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1132,
+    "day_max": 1132,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1132]
+    }
+   },
+   {
+    "patient": "A009",
+    "site": "b",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1783,
+    "day_max": 1783,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1783]
+    }
+   },
+   {
+    "patient": "A010",
+    "site": "d",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 919,
+    "day_max": 919,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [919]
+    }
+   },
+   {
+    "patient": "A011",
+    "site": "d",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1706,
+    "day_max": 1706,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1706]
+    }
+   },
+   {
+    "patient": "A012",
+    "site": "c",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1198,
+    "day_max": 1198,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [1198]
+    }
+   },
+   {
+    "patient": "A013",
+    "site": "a",
+    "n_samples": 2,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 1034,
+    "day_max": 1054,
+    "span": 20,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [1034, 1054]
+    }
+   },
+   {
+    "patient": "A014",
+    "site": "a",
+    "n_samples": 3,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 1327,
+    "day_max": 1335,
+    "span": 8,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [1335],
+     "Urine": [1327]
+    }
+   },
+   {
+    "patient": "A015",
+    "site": "b",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1107,
+    "day_max": 1107,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1107]
+    }
+   },
+   {
+    "patient": "A016",
+    "site": "d",
+    "n_samples": 2,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 2204,
+    "day_max": 2206,
+    "span": 2,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [2206],
+     "Urine": [2204]
+    }
+   },
+   {
+    "patient": "A017",
+    "site": "b",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1112,
+    "day_max": 1112,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [1112]
+    }
+   },
+   {
+    "patient": "A018",
+    "site": "d",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1398,
+    "day_max": 1398,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1398]
+    }
+   },
+   {
+    "patient": "A019",
+    "site": "e",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1144,
+    "day_max": 1144,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1144]
+    }
+   },
+   {
+    "patient": "A020",
+    "site": "b",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1621,
+    "day_max": 1621,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1621]
+    }
+   },
+   {
+    "patient": "A021",
+    "site": "a",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 2023,
+    "day_max": 2023,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [2023]
+    }
+   },
+   {
+    "patient": "A022",
+    "site": "d",
+    "n_samples": 2,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 968,
+    "day_max": 975,
+    "span": 7,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [968],
+     "Urine": [975]
+    }
+   },
+   {
+    "patient": "A023",
+    "site": "c",
+    "n_samples": 2,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 1938,
+    "day_max": 1970,
+    "span": 32,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [1938],
+     "Urine": [1970]
+    }
+   },
+   {
+    "patient": "A024",
+    "site": "c",
+    "n_samples": 4,
+    "n_days": 4,
+    "n_paired_days": 0,
+    "day_min": 970,
+    "day_max": 1201,
+    "span": 231,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [1022, 1201],
+     "Urine": [970, 984]
+    }
+   },
+   {
+    "patient": "A025",
+    "site": "d",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1995,
+    "day_max": 1995,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [1995]
+    }
+   },
+   {
+    "patient": "A026",
+    "site": "c",
+    "n_samples": 2,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 1363,
+    "day_max": 1427,
+    "span": 64,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1363, 1427]
+    }
+   },
+   {
+    "patient": "A027",
+    "site": "d",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1612,
+    "day_max": 1612,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [1612]
+    }
+   },
+   {
+    "patient": "A028",
+    "site": "a",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1309,
+    "day_max": 1309,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [1309]
+    }
+   },
+   {
+    "patient": "A029",
+    "site": "d",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 2218,
+    "day_max": 2218,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [2218]
+    }
+   },
+   {
+    "patient": "A030",
+    "site": "c",
+    "n_samples": 5,
+    "n_days": 4,
+    "n_paired_days": 0,
+    "day_min": 1117,
+    "day_max": 1160,
+    "span": 43,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [1117, 1131, 1147],
+     "Urine": [1160]
+    }
+   },
+   {
+    "patient": "A031",
+    "site": "c",
+    "n_samples": 2,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 2071,
+    "day_max": 2123,
+    "span": 52,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [2071],
+     "Urine": [2123]
+    }
+   },
+   {
+    "patient": "A032",
+    "site": "d",
+    "n_samples": 2,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 1503,
+    "day_max": 1531,
+    "span": 28,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1503, 1531]
+    }
+   },
+   {
+    "patient": "A033",
+    "site": "d",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1555,
+    "day_max": 1555,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [1555]
+    }
+   },
+   {
+    "patient": "A034",
+    "site": "d",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 931,
+    "day_max": 931,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [931]
+    }
+   },
+   {
+    "patient": "A035",
+    "site": "e",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1874,
+    "day_max": 1874,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1874]
+    }
+   },
+   {
+    "patient": "A036",
+    "site": "b",
+    "n_samples": 2,
+    "n_days": 2,
+    "n_paired_days": 0,
+    "day_min": 1608,
+    "day_max": 1627,
+    "span": 19,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [1627],
+     "Urine": [1608]
+    }
+   },
+   {
+    "patient": "A037",
+    "site": "e",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1582,
+    "day_max": 1582,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1582]
+    }
+   },
+   {
+    "patient": "A038",
+    "site": "e",
+    "n_samples": 4,
+    "n_days": 4,
+    "n_paired_days": 0,
+    "day_min": 1863,
+    "day_max": 2011,
+    "span": 148,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [1863, 1886],
+     "Urine": [1880, 2011]
+    }
+   },
+   {
+    "patient": "A039",
+    "site": "c",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1660,
+    "day_max": 1660,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1660]
+    }
+   },
+   {
+    "patient": "A040",
+    "site": "e",
+    "n_samples": 3,
+    "n_days": 3,
+    "n_paired_days": 0,
+    "day_min": 1786,
+    "day_max": 1844,
+    "span": 58,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [1800, 1844],
+     "Urine": [1786]
+    }
+   },
+   {
+    "patient": "A041",
+    "site": "d",
+    "n_samples": 6,
+    "n_days": 5,
+    "n_paired_days": 0,
+    "day_min": 1078,
+    "day_max": 1286,
+    "span": 208,
+    "sampletypes": ["Ascites", "Urine"],
+    "days_by_sampletype": {
+     "Ascites": [1184, 1266, 1286],
+     "Urine": [1078, 1100]
+    }
+   },
+   {
+    "patient": "A042",
+    "site": "b",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 408,
+    "day_max": 408,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [408]
+    }
+   },
+   {
+    "patient": "A043",
+    "site": "c",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1512,
+    "day_max": 1512,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1512]
+    }
+   },
+   {
+    "patient": "A044",
+    "site": "c",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1744,
+    "day_max": 1744,
+    "span": 0,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1744]
+    }
+   },
+   {
+    "patient": "A045",
+    "site": "e",
+    "n_samples": 1,
+    "n_days": 1,
+    "n_paired_days": 0,
+    "day_min": 1478,
+    "day_max": 1478,
+    "span": 0,
+    "sampletypes": ["Ascites"],
+    "days_by_sampletype": {
+     "Ascites": [1478]
+    }
+   },
+   {
+    "patient": "A046",
+    "site": "e",
+    "n_samples": 3,
+    "n_days": 3,
+    "n_paired_days": 0,
+    "day_min": 1224,
+    "day_max": 1249,
+    "span": 25,
+    "sampletypes": ["Urine"],
+    "days_by_sampletype": {
+     "Urine": [1224, 1239, 1249]
+    }
+   }
+  ]
+ },
+ "compositions": {
+  "A003|Ascites": {
+   "patient": "A003",
+   "sampletype": "Ascites",
+   "site": "e",
+   "days": [1192],
+   "taxa": ["Enterococcus faecalis", "Proteus mirabilis", "Staphylococcus haemolyticus", "Staphylococcus aureus", "Other"],
+   "stacked": {
+    "Enterococcus faecalis": [1.504],
+    "Proteus mirabilis": [0.188],
+    "Staphylococcus haemolyticus": [11.278],
+    "Staphylococcus aureus": [0.188],
+    "Other": [86.842]
+   },
+   "stacked_reads": {
+    "Enterococcus faecalis": [8.0],
+    "Proteus mirabilis": [1.0],
+    "Staphylococcus haemolyticus": [60.0],
+    "Staphylococcus aureus": [1.0],
+    "Other": [462.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Bacteroides sp. P302": {
+     "ra": [54.135338],
+     "reads": [288.0]
+    },
+    "Clostridium sp. D486": {
+     "ra": [13.721805],
+     "reads": [73.0]
+    },
+    "Staphylococcus haemolyticus": {
+     "ra": [11.278195],
+     "reads": [60.0]
+    },
+    "Finegoldia magna": {
+     "ra": [8.834586],
+     "reads": [47.0]
+    },
+    "Neisseria sp. G607": {
+     "ra": [4.135338],
+     "reads": [22.0]
+    },
+    "Enterobacter hormaechei": {
+     "ra": [3.195489],
+     "reads": [17.0]
+    },
+    "Lactobacillus crispatus": {
+     "ra": [1.691729],
+     "reads": [9.0]
+    },
+    "Enterococcus faecalis": {
+     "ra": [1.503759],
+     "reads": [8.0]
+    },
+    "Bradyrhizobium sp. A655": {
+     "ra": [0.93985],
+     "reads": [5.0]
+    },
+    "Penicillium sp. E180": {
+     "ra": [0.18797],
+     "reads": [1.0]
+    },
+    "Proteus mirabilis": {
+     "ra": [0.18797],
+     "reads": [1.0]
+    },
+    "Staphylococcus aureus": {
+     "ra": [0.18797],
+     "reads": [1.0]
+    }
+   },
+   "collection_days": [1192],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 1192,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 532,
+     "retained_assigned_reads": 532,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A003|Urine": {
+   "patient": "A003",
+   "sampletype": "Urine",
+   "site": "e",
+   "days": [1206],
+   "taxa": ["Escherichia coli", "Klebsiella pneumoniae", "Enterococcus faecalis", "Other"],
+   "stacked": {
+    "Escherichia coli": [34.483],
+    "Klebsiella pneumoniae": [7.456],
+    "Enterococcus faecalis": [0.048],
+    "Other": [58.013]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [29385.0],
+    "Klebsiella pneumoniae": [6354.0],
+    "Enterococcus faecalis": [41.0],
+    "Other": [49436.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Prevotella sp. L579": {
+     "ra": [40.864392],
+     "reads": [34823.0]
+    },
+    "Escherichia coli": {
+     "ra": [34.482961],
+     "reads": [29385.0]
+    },
+    "Haemophilus sp. E773": {
+     "ra": [14.093597],
+     "reads": [12010.0]
+    },
+    "Klebsiella pneumoniae": {
+     "ra": [7.456346],
+     "reads": [6354.0]
+    },
+    "Clostridium sp. M175": {
+     "ra": [1.03267],
+     "reads": [880.0]
+    },
+    "Pseudomonas sp. A445": {
+     "ra": [0.855473],
+     "reads": [729.0]
+    },
+    "Delftia sp. P458": {
+     "ra": [0.668888],
+     "reads": [570.0]
+    },
+    "Staphylococcus epidermidis": {
+     "ra": [0.479957],
+     "reads": [409.0]
+    },
+    "Enterococcus faecalis": {
+     "ra": [0.048113],
+     "reads": [41.0]
+    },
+    "Bacteroides sp. K984": {
+     "ra": [0.017602],
+     "reads": [15.0]
+    }
+   },
+   "collection_days": [1206],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 1206,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 85216,
+     "retained_assigned_reads": 85216,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A007|Ascites": {
+   "patient": "A007",
+   "sampletype": "Ascites",
+   "site": "c",
+   "days": [2134, 2152, 2181],
+   "taxa": ["Escherichia coli", "Cutibacterium acnes", "Klebsiella pneumoniae", "Streptococcus mitis", "Enterococcus faecalis", "Pseudomonas putida", "Other"],
+   "stacked": {
+    "Escherichia coli": [0.031, 0.031, 13.426],
+    "Cutibacterium acnes": [1.657, 0.0, 0.0],
+    "Klebsiella pneumoniae": [0.399, 0.0, 0.0],
+    "Streptococcus mitis": [0.0, 0.0, 12.05],
+    "Enterococcus faecalis": [0.542, 0.0, 0.0],
+    "Pseudomonas putida": [0.0, 0.0, 8.778],
+    "Other": [97.371, 99.969, 65.747]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [26.0, 2.0, 82354.0],
+    "Cutibacterium acnes": [1397.0, 0.0, 0.0],
+    "Klebsiella pneumoniae": [336.0, 0.0, 0.0],
+    "Streptococcus mitis": [0.0, 0.0, 66111.0],
+    "Enterococcus faecalis": [457.0, 0.0, 0.0],
+    "Pseudomonas putida": [0.0, 0.0, 52857.0],
+    "Other": [82083.0, 6379.0, 374946.0]
+   },
+   "n_samples": 4,
+   "n_samples_by_day": [1, 1, 2],
+   "series": {
+    "Lactobacillus sp. P716": {
+     "ra": [11.493612, 52.546623, 0.0],
+     "reads": [9689.0, 3353.0, 0.0]
+    },
+    "Malassezia sp. D168": {
+     "ra": [0.0, 0.0, 36.662063],
+     "reads": [0.0, 0.0, 211319.0]
+    },
+    "Fusobacterium sp. B739": {
+     "ra": [0.0, 0.0, 27.736541],
+     "reads": [0.0, 0.0, 152502.0]
+    },
+    "Haemophilus sp. L238": {
+     "ra": [0.727174, 22.833412, 0.0],
+     "reads": [613.0, 1457.0, 0.0]
+    },
+    "Malassezia phage E165": {
+     "ra": [23.394109, 0.0, 0.0],
+     "reads": [19721.0, 0.0, 0.0]
+    },
+    "Candida parapsilosis": {
+     "ra": [0.0, 14.715562, 0.0],
+     "reads": [0.0, 939.0, 0.0]
+    },
+    "Escherichia coli": {
+     "ra": [0.030843, 0.031343, 13.425928],
+     "reads": [26.0, 2.0, 82354.0]
+    },
+    "Neisseria sp. Q707": {
+     "ra": [13.047604, 0.0, 0.0],
+     "reads": [10999.0, 0.0, 0.0]
+    },
+    "Citrobacter koseri": {
+     "ra": [12.643092, 0.0, 0.0],
+     "reads": [10658.0, 0.0, 0.0]
+    },
+    "Streptococcus mitis": {
+     "ra": [0.0, 0.0, 12.0495],
+     "reads": [0.0, 0.0, 66111.0]
+    },
+    "Delftia sp. M382": {
+     "ra": [0.0, 9.590973, 0.0],
+     "reads": [0.0, 612.0, 0.0]
+    },
+    "Pseudomonas putida": {
+     "ra": [0.0, 0.0, 8.777954],
+     "reads": [0.0, 0.0, 52857.0]
+    },
+    "Delftia sp. Q619": {
+     "ra": [8.167357, 0.0, 0.0],
+     "reads": [6885.0, 0.0, 0.0]
+    },
+    "Porphyromonas sp. R904": {
+     "ra": [7.582534, 0.0, 0.0],
+     "reads": [6392.0, 0.0, 0.0]
+    },
+    "Aspergillus sp. A896": {
+     "ra": [5.777055, 0.0, 0.0],
+     "reads": [4870.0, 0.0, 0.0]
+    },
+    "Neisseria sp. E892": {
+     "ra": [4.697565, 0.0, 0.0],
+     "reads": [3960.0, 0.0, 0.0]
+    },
+    "Nakaseomyces glabratus": {
+     "ra": [3.830413, 0.0, 0.0],
+     "reads": [3229.0, 0.0, 0.0]
+    },
+    "Enterobacter hormaechei": {
+     "ra": [3.328628, 0.0, 0.0],
+     "reads": [2806.0, 0.0, 0.0]
+    },
+    "Rothia sp. R928": {
+     "ra": [2.591964, 0.0, 0.0],
+     "reads": [2185.0, 0.0, 0.0]
+    },
+    "Cutibacterium acnes": {
+     "ra": [1.657196, 0.0, 0.0],
+     "reads": [1397.0, 0.0, 0.0]
+    },
+    "Malassezia sp. B465": {
+     "ra": [0.0, 0.0, 1.138825],
+     "reads": [0.0, 0.0, 9978.0]
+    },
+    "Enterococcus faecalis": {
+     "ra": [0.542118, 0.0, 0.0],
+     "reads": [457.0, 0.0, 0.0]
+    },
+    "Klebsiella pneumoniae": {
+     "ra": [0.398581, 0.0, 0.0],
+     "reads": [336.0, 0.0, 0.0]
+    },
+    "Morganella morganii": {
+     "ra": [0.0, 0.282087, 0.0],
+     "reads": [0.0, 18.0, 0.0]
+    },
+    "Lactobacillus sp. M356": {
+     "ra": [0.0, 0.0, 0.13023],
+     "reads": [0.0, 0.0, 906.0]
+    },
+    "Aspergillus sp. B543": {
+     "ra": [0.0, 0.0, 0.078959],
+     "reads": [0.0, 0.0, 241.0]
+    },
+    "Lactobacillus sp. C439": {
+     "ra": [0.068803, 0.0, 0.0],
+     "reads": [58.0, 0.0, 0.0]
+    },
+    "Campylobacter sp. P736": {
+     "ra": [0.021353, 0.0, 0.0],
+     "reads": [18.0, 0.0, 0.0]
+    }
+   },
+   "collection_days": [2134, 2152, 2181],
+   "n_libraries": 4,
+   "day_support": [
+    {
+     "day": 2134,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 84299,
+     "retained_assigned_reads": 84299,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    },
+    {
+     "day": 2152,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 6381,
+     "retained_assigned_reads": 6381,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    },
+    {
+     "day": 2181,
+     "n_libraries": 2,
+     "n_profiled_libraries": 2,
+     "assigned_reads": 576268,
+     "retained_assigned_reads": 576268,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["nd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A007|Urine": {
+   "patient": "A007",
+   "sampletype": "Urine",
+   "site": "c",
+   "days": [2109, 2116],
+   "taxa": ["Escherichia coli", "Candida albicans", "Cutibacterium acnes", "Proteus mirabilis", "Pseudomonas aeruginosa", "Other"],
+   "stacked": {
+    "Escherichia coli": [0.0, 8.013],
+    "Candida albicans": [0.0, 0.118],
+    "Cutibacterium acnes": [0.0, 0.009],
+    "Proteus mirabilis": [0.0, 23.101],
+    "Pseudomonas aeruginosa": [0.0, 9.541],
+    "Other": [100.0, 59.218]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [0.0, 881.0],
+    "Candida albicans": [0.0, 13.0],
+    "Cutibacterium acnes": [0.0, 1.0],
+    "Proteus mirabilis": [0.0, 2540.0],
+    "Pseudomonas aeruginosa": [0.0, 1049.0],
+    "Other": [51435.0, 6511.0]
+   },
+   "n_samples": 2,
+   "n_samples_by_day": [1, 1],
+   "series": {
+    "Malassezia sp. K153": {
+     "ra": [49.135802, 0.0],
+     "reads": [25273.0, 0.0]
+    },
+    "Haemophilus sp. D762": {
+     "ra": [38.852921, 0.0],
+     "reads": [19984.0, 0.0]
+    },
+    "Haemophilus sp. L532": {
+     "ra": [0.0, 31.277854],
+     "reads": [0.0, 3439.0]
+    },
+    "Proteus mirabilis": {
+     "ra": [0.0, 23.10141],
+     "reads": [0.0, 2540.0]
+    },
+    "Pseudomonas aeruginosa": {
+     "ra": [0.0, 9.5407],
+     "reads": [0.0, 1049.0]
+    },
+    "Escherichia coli": {
+     "ra": [0.0, 8.012733],
+     "reads": [0.0, 881.0]
+    },
+    "Pseudomonas sp. D992": {
+     "ra": [0.0, 7.46703],
+     "reads": [0.0, 821.0]
+    },
+    "Neisseria sp. Q610": {
+     "ra": [0.0, 6.875853],
+     "reads": [0.0, 756.0]
+    },
+    "Penicillium sp. F858": {
+     "ra": [0.0, 4.429286],
+     "reads": [0.0, 487.0]
+    },
+    "Delftia sp. H954": {
+     "ra": [3.38291, 0.0],
+     "reads": [1740.0, 0.0]
+    },
+    "Bifidobacterium sp. M792": {
+     "ra": [0.0, 3.074125],
+     "reads": [0.0, 338.0]
+    },
+    "Penicillium sp. H599": {
+     "ra": [2.927967, 0.0],
+     "reads": [1506.0, 0.0]
+    },
+    "Staphylococcus epidermidis": {
+     "ra": [0.38884, 2.11005],
+     "reads": [200.0, 232.0]
+    },
+    "Campylobacter sp. R197": {
+     "ra": [0.0, 2.173715],
+     "reads": [0.0, 239.0]
+    },
+    "Gardnerella vaginalis": {
+     "ra": [1.500923, 0.336517],
+     "reads": [772.0, 37.0]
+    },
+    "Bradyrhizobium sp. M435": {
+     "ra": [1.617576, 0.0],
+     "reads": [832.0, 0.0]
+    },
+    "Rothia phage R336": {
+     "ra": [0.939049, 0.0],
+     "reads": [483.0, 0.0]
+    },
+    "Lactobacillus crispatus": {
+     "ra": [0.756294, 0.0],
+     "reads": [389.0, 0.0]
+    },
+    "Haemophilus sp. L496": {
+     "ra": [0.0, 0.736698],
+     "reads": [0.0, 81.0]
+    },
+    "Enterococcus faecium": {
+     "ra": [0.497716, 0.0],
+     "reads": [256.0, 0.0]
+    },
+    "Streptococcus sp. G839": {
+     "ra": [0.0, 0.418372],
+     "reads": [0.0, 46.0]
+    },
+    "Aspergillus sp. J489": {
+     "ra": [0.0, 0.300136],
+     "reads": [0.0, 33.0]
+    },
+    "Candida albicans": {
+     "ra": [0.0, 0.118236],
+     "reads": [0.0, 13.0]
+    },
+    "Bacteroides sp. J544": {
+     "ra": [0.0, 0.01819],
+     "reads": [0.0, 2.0]
+    },
+    "Cutibacterium acnes": {
+     "ra": [0.0, 0.009095],
+     "reads": [0.0, 1.0]
+    }
+   },
+   "collection_days": [2109, 2116],
+   "n_libraries": 2,
+   "day_support": [
+    {
+     "day": 2109,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 51435,
+     "retained_assigned_reads": 51435,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    },
+    {
+     "day": 2116,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 10995,
+     "retained_assigned_reads": 10995,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A014|Ascites": {
+   "patient": "A014",
+   "sampletype": "Ascites",
+   "site": "a",
+   "days": [1335],
+   "taxa": ["Escherichia coli", "Candida albicans", "Pseudomonas aeruginosa", "Staphylococcus aureus", "Other"],
+   "stacked": {
+    "Escherichia coli": [0.323],
+    "Candida albicans": [28.473],
+    "Pseudomonas aeruginosa": [0.396],
+    "Staphylococcus aureus": [0.477],
+    "Other": [70.331]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [1126.0],
+    "Candida albicans": [99397.0],
+    "Pseudomonas aeruginosa": [1383.0],
+    "Staphylococcus aureus": [1666.0],
+    "Other": [245514.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Ralstonia sp. G102": {
+     "ra": [40.264577],
+     "reads": [140558.0]
+    },
+    "Candida albicans": {
+     "ra": [28.473499],
+     "reads": [99397.0]
+    },
+    "Neisseria sp. Q610": {
+     "ra": [19.319595],
+     "reads": [67442.0]
+    },
+    "Actinomyces sp. N372": {
+     "ra": [6.154644],
+     "reads": [21485.0]
+    },
+    "Aspergillus sp. G950": {
+     "ra": [1.949376],
+     "reads": [6805.0]
+    },
+    "Haemophilus sp. K597": {
+     "ra": [1.93534],
+     "reads": [6756.0]
+    },
+    "Staphylococcus aureus": {
+     "ra": [0.477246],
+     "reads": [1666.0]
+    },
+    "Pseudomonas aeruginosa": {
+     "ra": [0.396177],
+     "reads": [1383.0]
+    },
+    "Corynebacterium glucuronolyticum": {
+     "ra": [0.361802],
+     "reads": [1263.0]
+    },
+    "Escherichia coli": {
+     "ra": [0.322557],
+     "reads": [1126.0]
+    },
+    "Bifidobacterium sp. B604": {
+     "ra": [0.282452],
+     "reads": [986.0]
+    },
+    "Bifidobacterium sp. B227": {
+     "ra": [0.062735],
+     "reads": [219.0]
+    }
+   },
+   "collection_days": [1335],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 1335,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 349086,
+     "retained_assigned_reads": 349086,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A014|Urine": {
+   "patient": "A014",
+   "sampletype": "Urine",
+   "site": "a",
+   "days": [1327],
+   "taxa": ["Escherichia coli", "Candida albicans", "Cutibacterium acnes", "Enterococcus faecalis", "Other"],
+   "stacked": {
+    "Escherichia coli": [0.043],
+    "Candida albicans": [37.717],
+    "Cutibacterium acnes": [4.468],
+    "Enterococcus faecalis": [3.161],
+    "Other": [54.612]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [331.0],
+    "Candida albicans": [547182.0],
+    "Cutibacterium acnes": [61346.0],
+    "Enterococcus faecalis": [41718.0],
+    "Other": [804850.0]
+   },
+   "n_samples": 2,
+   "n_samples_by_day": [2],
+   "series": {
+    "Candida albicans": {
+     "ra": [37.716655],
+     "reads": [547182.0]
+    },
+    "Delftia sp. L536": {
+     "ra": [25.523897],
+     "reads": [383488.0]
+    },
+    "Bifidobacterium breve": {
+     "ra": [15.832321],
+     "reads": [234312.0]
+    },
+    "Bacteroides sp. Q186": {
+     "ra": [10.146906],
+     "reads": [142728.0]
+    },
+    "Cutibacterium acnes": {
+     "ra": [4.468062],
+     "reads": [61346.0]
+    },
+    "Enterococcus faecalis": {
+     "ra": [3.160807],
+     "reads": [41718.0]
+    },
+    "Malassezia sp. B465": {
+     "ra": [1.355306],
+     "reads": [18217.0]
+    },
+    "Veillonella sp. N557": {
+     "ra": [1.317493],
+     "reads": [19471.0]
+    },
+    "Bradyrhizobium sp. N678": {
+     "ra": [0.431313],
+     "reads": [6610.0]
+    },
+    "Escherichia coli": {
+     "ra": [0.04258],
+     "reads": [331.0]
+    },
+    "Campylobacter sp. L811": {
+     "ra": [0.004662],
+     "reads": [24.0]
+    }
+   },
+   "collection_days": [1327],
+   "n_libraries": 2,
+   "day_support": [
+    {
+     "day": 1327,
+     "n_libraries": 2,
+     "n_profiled_libraries": 2,
+     "assigned_reads": 1455427,
+     "retained_assigned_reads": 1455427,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A016|Ascites": {
+   "patient": "A016",
+   "sampletype": "Ascites",
+   "site": "d",
+   "days": [2206],
+   "taxa": ["Escherichia coli", "Cutibacterium acnes", "Enterococcus faecalis", "Staphylococcus haemolyticus", "Pseudomonas aeruginosa", "Other"],
+   "stacked": {
+    "Escherichia coli": [0.047],
+    "Cutibacterium acnes": [0.328],
+    "Enterococcus faecalis": [0.188],
+    "Staphylococcus haemolyticus": [1.969],
+    "Pseudomonas aeruginosa": [3.094],
+    "Other": [94.374]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [1.0],
+    "Cutibacterium acnes": [7.0],
+    "Enterococcus faecalis": [4.0],
+    "Staphylococcus haemolyticus": [42.0],
+    "Pseudomonas aeruginosa": [66.0],
+    "Other": [2013.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Campylobacter sp. H950": {
+     "ra": [21.894046],
+     "reads": [467.0]
+    },
+    "Campylobacter sp. N711": {
+     "ra": [19.268636],
+     "reads": [411.0]
+    },
+    "Bifidobacterium sp. K615": {
+     "ra": [12.376934],
+     "reads": [264.0]
+    },
+    "Bradyrhizobium sp. K943": {
+     "ra": [10.68917],
+     "reads": [228.0]
+    },
+    "Enterococcus faecium": {
+     "ra": [6.751055],
+     "reads": [144.0]
+    },
+    "Rothia sp. H352": {
+     "ra": [5.25082],
+     "reads": [112.0]
+    },
+    "Delftia sp. B780": {
+     "ra": [4.781997],
+     "reads": [102.0]
+    },
+    "Pseudomonas aeruginosa": {
+     "ra": [3.094233],
+     "reads": [66.0]
+    },
+    "Bifidobacterium sp. A693": {
+     "ra": [2.953586],
+     "reads": [63.0]
+    },
+    "Bifidobacterium sp. Q251": {
+     "ra": [2.297234],
+     "reads": [49.0]
+    },
+    "Haemophilus sp. K597": {
+     "ra": [2.203469],
+     "reads": [47.0]
+    },
+    "Staphylococcus haemolyticus": {
+     "ra": [1.969058],
+     "reads": [42.0]
+    },
+    "Rothia sp. E210": {
+     "ra": [1.875293],
+     "reads": [40.0]
+    },
+    "Delftia sp. N542": {
+     "ra": [1.593999],
+     "reads": [34.0]
+    },
+    "Sphingomonas sp. P844": {
+     "ra": [0.797],
+     "reads": [17.0]
+    },
+    "Veillonella sp. R267": {
+     "ra": [0.797],
+     "reads": [17.0]
+    },
+    "Lactobacillus sp. P716": {
+     "ra": [0.656353],
+     "reads": [14.0]
+    },
+    "Cutibacterium acnes": {
+     "ra": [0.328176],
+     "reads": [7.0]
+    },
+    "Enterococcus faecalis": {
+     "ra": [0.187529],
+     "reads": [4.0]
+    },
+    "Bacteroides sp. Q265": {
+     "ra": [0.046882],
+     "reads": [1.0]
+    },
+    "Bifidobacterium sp. M792": {
+     "ra": [0.046882],
+     "reads": [1.0]
+    },
+    "Escherichia coli": {
+     "ra": [0.046882],
+     "reads": [1.0]
+    },
+    "Fusobacterium sp. R235": {
+     "ra": [0.046882],
+     "reads": [1.0]
+    },
+    "Neisseria sp. Q104": {
+     "ra": [0.046882],
+     "reads": [1.0]
+    }
+   },
+   "collection_days": [2206],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 2206,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 2133,
+     "retained_assigned_reads": 2133,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A016|Urine": {
+   "patient": "A016",
+   "sampletype": "Urine",
+   "site": "d",
+   "days": [2204],
+   "taxa": ["Cutibacterium acnes", "Enterococcus faecalis", "Other"],
+   "stacked": {
+    "Cutibacterium acnes": [15.44],
+    "Enterococcus faecalis": [0.234],
+    "Other": [84.327]
+   },
+   "stacked_reads": {
+    "Cutibacterium acnes": [7535.0],
+    "Enterococcus faecalis": [114.0],
+    "Other": [41154.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Bifidobacterium sp. M715": {
+     "ra": [29.414175],
+     "reads": [14355.0]
+    },
+    "Ralstonia sp. D232": {
+     "ra": [19.922956],
+     "reads": [9723.0]
+    },
+    "Rothia sp. F330": {
+     "ra": [16.308424],
+     "reads": [7959.0]
+    },
+    "Cutibacterium acnes": {
+     "ra": [15.439625],
+     "reads": [7535.0]
+    },
+    "Sphingomonas sp. H298": {
+     "ra": [8.177776],
+     "reads": [3991.0]
+    },
+    "Enterococcus faecium": {
+     "ra": [4.245641],
+     "reads": [2072.0]
+    },
+    "Citrobacter koseri": {
+     "ra": [2.409688],
+     "reads": [1176.0]
+    },
+    "Sphingomonas sp. G591": {
+     "ra": [2.120771],
+     "reads": [1035.0]
+    },
+    "Bradyrhizobium sp. N924": {
+     "ra": [0.997889],
+     "reads": [487.0]
+    },
+    "Lactobacillus sp. D287": {
+     "ra": [0.729463],
+     "reads": [356.0]
+    },
+    "Enterococcus faecalis": {
+     "ra": [0.233592],
+     "reads": [114.0]
+    }
+   },
+   "collection_days": [2204],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 2204,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 48803,
+     "retained_assigned_reads": 48803,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A022|Ascites": {
+   "patient": "A022",
+   "sampletype": "Ascites",
+   "site": "d",
+   "days": [968],
+   "taxa": ["Escherichia coli", "Cutibacterium acnes", "Other"],
+   "stacked": {
+    "Escherichia coli": [14.715],
+    "Cutibacterium acnes": [3.847],
+    "Other": [81.438]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [3481.0],
+    "Cutibacterium acnes": [910.0],
+    "Other": [19265.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Veillonella sp. Q671": {
+     "ra": [39.021813],
+     "reads": [9231.0]
+    },
+    "Escherichia coli": {
+     "ra": [14.715083],
+     "reads": [3481.0]
+    },
+    "Delftia sp. L536": {
+     "ra": [9.680419],
+     "reads": [2290.0]
+    },
+    "Bacteroides sp. Q186": {
+     "ra": [8.526378],
+     "reads": [2017.0]
+    },
+    "Porphyromonas sp. B771": {
+     "ra": [6.776294],
+     "reads": [1603.0]
+    },
+    "Cutibacterium acnes": {
+     "ra": [3.846804],
+     "reads": [910.0]
+    },
+    "Bradyrhizobium sp. K622": {
+     "ra": [3.842577],
+     "reads": [909.0]
+    },
+    "Bifidobacterium sp. K615": {
+     "ra": [3.719986],
+     "reads": [880.0]
+    },
+    "Enterobacter hormaechei": {
+     "ra": [2.185492],
+     "reads": [517.0]
+    },
+    "Pseudomonas sp. D992": {
+     "ra": [2.164356],
+     "reads": [512.0]
+    },
+    "Bacteroides sp. Q367": {
+     "ra": [1.851539],
+     "reads": [438.0]
+    },
+    "Citrobacter koseri": {
+     "ra": [1.800812],
+     "reads": [426.0]
+    },
+    "Malassezia sp. M329": {
+     "ra": [1.424586],
+     "reads": [337.0]
+    },
+    "Ralstonia sp. G102": {
+     "ra": [0.443862],
+     "reads": [105.0]
+    }
+   },
+   "collection_days": [968],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 968,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 23656,
+     "retained_assigned_reads": 23656,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A022|Urine": {
+   "patient": "A022",
+   "sampletype": "Urine",
+   "site": "d",
+   "days": [975],
+   "taxa": ["Escherichia coli", "Candida albicans", "Klebsiella pneumoniae", "Streptococcus mitis", "Enterococcus faecalis", "Other"],
+   "stacked": {
+    "Escherichia coli": [1.347],
+    "Candida albicans": [33.671],
+    "Klebsiella pneumoniae": [1.904],
+    "Streptococcus mitis": [17.853],
+    "Enterococcus faecalis": [0.0],
+    "Other": [45.224]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [3582.0],
+    "Candida albicans": [89520.0],
+    "Klebsiella pneumoniae": [5063.0],
+    "Streptococcus mitis": [47464.0],
+    "Enterococcus faecalis": [1.0],
+    "Other": [120235.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Candida albicans": {
+     "ra": [33.671224],
+     "reads": [89520.0]
+    },
+    "Haemophilus sp. K597": {
+     "ra": [19.088259],
+     "reads": [50749.0]
+    },
+    "Streptococcus mitis": {
+     "ra": [17.85267],
+     "reads": [47464.0]
+    },
+    "Veillonella sp. R519": {
+     "ra": [8.420815],
+     "reads": [22388.0]
+    },
+    "Morganella morganii": {
+     "ra": [6.015083],
+     "reads": [15992.0]
+    },
+    "Bradyrhizobium sp. H222": {
+     "ra": [3.869633],
+     "reads": [10288.0]
+    },
+    "Fusobacterium sp. D973": {
+     "ra": [3.364866],
+     "reads": [8946.0]
+    },
+    "Klebsiella pneumoniae": {
+     "ra": [1.90435],
+     "reads": [5063.0]
+    },
+    "Escherichia coli": {
+     "ra": [1.3473],
+     "reads": [3582.0]
+    },
+    "Fusobacterium sp. B739": {
+     "ra": [1.286743],
+     "reads": [3421.0]
+    },
+    "Lactobacillus crispatus": {
+     "ra": [1.182555],
+     "reads": [3144.0]
+    },
+    "Veillonella sp. M892": {
+     "ra": [1.133658],
+     "reads": [3014.0]
+    },
+    "Penicillium sp. F858": {
+     "ra": [0.640551],
+     "reads": [1703.0]
+    },
+    "Bacteroides sp. M484": {
+     "ra": [0.119233],
+     "reads": [317.0]
+    },
+    "Enterobacter hormaechei": {
+     "ra": [0.042879],
+     "reads": [114.0]
+    },
+    "Bifidobacterium breve": {
+     "ra": [0.03498],
+     "reads": [93.0]
+    },
+    "Prevotella sp. B736": {
+     "ra": [0.023696],
+     "reads": [63.0]
+    },
+    "Enterococcus faecium": {
+     "ra": [0.001128],
+     "reads": [3.0]
+    },
+    "Enterococcus faecalis": {
+     "ra": [0.000376],
+     "reads": [1.0]
+    }
+   },
+   "collection_days": [975],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 975,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 265865,
+     "retained_assigned_reads": 265865,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A023|Ascites": {
+   "patient": "A023",
+   "sampletype": "Ascites",
+   "site": "c",
+   "days": [1938],
+   "taxa": ["Escherichia coli", "Enterococcus faecalis", "Other"],
+   "stacked": {
+    "Escherichia coli": [13.698],
+    "Enterococcus faecalis": [10.594],
+    "Other": [75.708]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [72284.0],
+    "Enterococcus faecalis": [55903.0],
+    "Other": [399499.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Malassezia sp. R422": {
+     "ra": [30.299648],
+     "reads": [159887.0]
+    },
+    "Staphylococcus epidermidis": {
+     "ra": [29.330132],
+     "reads": [154771.0]
+    },
+    "Escherichia coli": {
+     "ra": [13.698298],
+     "reads": [72284.0]
+    },
+    "Neisseria sp. J864": {
+     "ra": [12.016805],
+     "reads": [63411.0]
+    },
+    "Enterococcus faecalis": {
+     "ra": [10.59399],
+     "reads": [55903.0]
+    },
+    "Fusobacterium sp. E104": {
+     "ra": [4.061127],
+     "reads": [21430.0]
+    }
+   },
+   "collection_days": [1938],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 1938,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 527686,
+     "retained_assigned_reads": 527686,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["nd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A023|Urine": {
+   "patient": "A023",
+   "sampletype": "Urine",
+   "site": "c",
+   "days": [1970],
+   "taxa": ["Escherichia coli", "Cutibacterium acnes", "Pseudomonas putida", "Other"],
+   "stacked": {
+    "Escherichia coli": [0.197],
+    "Cutibacterium acnes": [1.169],
+    "Pseudomonas putida": [6.055],
+    "Other": [92.579]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [145.0],
+    "Cutibacterium acnes": [862.0],
+    "Pseudomonas putida": [4466.0],
+    "Other": [68282.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Veillonella sp. C606": {
+     "ra": [41.222968],
+     "reads": [30404.0]
+    },
+    "Bifidobacterium sp. A772": {
+     "ra": [28.144533],
+     "reads": [20758.0]
+    },
+    "Moraxella osloensis": {
+     "ra": [8.262491],
+     "reads": [6094.0]
+    },
+    "Pseudomonas putida": {
+     "ra": [6.055183],
+     "reads": [4466.0]
+    },
+    "Campylobacter sp. N711": {
+     "ra": [5.525049],
+     "reads": [4075.0]
+    },
+    "Delftia sp. P218": {
+     "ra": [4.95424],
+     "reads": [3654.0]
+    },
+    "Aspergillus sp. N686": {
+     "ra": [2.405261],
+     "reads": [1774.0]
+    },
+    "Cutibacterium acnes": {
+     "ra": [1.168734],
+     "reads": [862.0]
+    },
+    "Bradyrhizobium sp. N924": {
+     "ra": [0.873161],
+     "reads": [644.0]
+    },
+    "Rothia sp. K792": {
+     "ra": [0.747068],
+     "reads": [551.0]
+    },
+    "Delftia sp. J482": {
+     "ra": [0.309132],
+     "reads": [228.0]
+    },
+    "Escherichia coli": {
+     "ra": [0.196597],
+     "reads": [145.0]
+    },
+    "Bifidobacterium breve": {
+     "ra": [0.132872],
+     "reads": [98.0]
+    },
+    "Citrobacter koseri": {
+     "ra": [0.001356],
+     "reads": [1.0]
+    },
+    "Fusobacterium sp. P357": {
+     "ra": [0.001356],
+     "reads": [1.0]
+    }
+   },
+   "collection_days": [1970],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 1970,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 73755,
+     "retained_assigned_reads": 73755,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A001|Ascites": {
+   "patient": "A001",
+   "sampletype": "Ascites",
+   "site": "d",
+   "days": [1103],
+   "taxa": ["Escherichia coli", "Delftia sp. B520", "Other"],
+   "stacked": {
+    "Escherichia coli": [8.589],
+    "Delftia sp. B520": [59.799],
+    "Other": [31.612]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [1036.0],
+    "Delftia sp. B520": [7213.0],
+    "Other": [3813.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Delftia sp. B520": {
+     "ra": [59.79937],
+     "reads": [7213.0]
+    },
+    "Bradyrhizobium sp. H888": {
+     "ra": [10.595258],
+     "reads": [1278.0]
+    },
+    "Escherichia coli": {
+     "ra": [8.588957],
+     "reads": [1036.0]
+    },
+    "Rothia sp. H747": {
+     "ra": [8.099818],
+     "reads": [977.0]
+    },
+    "Delftia sp. C443": {
+     "ra": [7.63555],
+     "reads": [921.0]
+    },
+    "Ralstonia sp. C734": {
+     "ra": [2.843641],
+     "reads": [343.0]
+    },
+    "Lactobacillus crispatus": {
+     "ra": [2.114077],
+     "reads": [255.0]
+    },
+    "Delftia sp. N768": {
+     "ra": [0.207262],
+     "reads": [25.0]
+    },
+    "Rothia sp. P339": {
+     "ra": [0.107776],
+     "reads": [13.0]
+    },
+    "Bifidobacterium sp. M586": {
+     "ra": [0.00829],
+     "reads": [1.0]
+    }
+   },
+   "collection_days": [1103],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 1103,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 12493,
+     "retained_assigned_reads": 12062,
+     "retained_fraction": 0.9655,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A002|Urine": {
+   "patient": "A002",
+   "sampletype": "Urine",
+   "site": "a",
+   "days": [2154],
+   "taxa": ["Cutibacterium acnes", "Enterococcus faecalis", "Proteus mirabilis", "Other"],
+   "stacked": {
+    "Cutibacterium acnes": [2.008],
+    "Enterococcus faecalis": [8.951],
+    "Proteus mirabilis": [4.176],
+    "Other": [84.865]
+   },
+   "stacked_reads": {
+    "Cutibacterium acnes": [905.0],
+    "Enterococcus faecalis": [4034.0],
+    "Proteus mirabilis": [1882.0],
+    "Other": [38247.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Bacteroides sp. Q367": {
+     "ra": [37.798438],
+     "reads": [17035.0]
+    },
+    "Bifidobacterium sp. K615": {
+     "ra": [17.049791],
+     "reads": [7684.0]
+    },
+    "Malassezia sp. M329": {
+     "ra": [9.92944],
+     "reads": [4475.0]
+    },
+    "Enterococcus faecalis": {
+     "ra": [8.950919],
+     "reads": [4034.0]
+    },
+    "Campylobacter sp. N347": {
+     "ra": [8.884353],
+     "reads": [4004.0]
+    },
+    "Haemophilus sp. L319": {
+     "ra": [7.158072],
+     "reads": [3226.0]
+    },
+    "Proteus mirabilis": {
+     "ra": [4.175912],
+     "reads": [1882.0]
+    },
+    "Morganella morganii": {
+     "ra": [3.614538],
+     "reads": [1629.0]
+    },
+    "Cutibacterium acnes": {
+     "ra": [2.008077],
+     "reads": [905.0]
+    },
+    "Citrobacter koseri": {
+     "ra": [0.297328],
+     "reads": [134.0]
+    },
+    "Enterobacter hormaechei": {
+     "ra": [0.133132],
+     "reads": [60.0]
+    }
+   },
+   "collection_days": [2154],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 2154,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 45270,
+     "retained_assigned_reads": 45068,
+     "retained_fraction": 0.9955,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A008|Urine": {
+   "patient": "A008",
+   "sampletype": "Urine",
+   "site": "c",
+   "days": [1132],
+   "taxa": ["Escherichia coli", "Cutibacterium acnes", "Proteus mirabilis", "Corynebacterium tuberculostearicum", "Pseudomonas aeruginosa", "Other"],
+   "stacked": {
+    "Escherichia coli": [7.562],
+    "Cutibacterium acnes": [0.007],
+    "Proteus mirabilis": [2.086],
+    "Corynebacterium tuberculostearicum": [20.84],
+    "Pseudomonas aeruginosa": [1.324],
+    "Other": [68.182]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [244837.0],
+    "Cutibacterium acnes": [43.0],
+    "Proteus mirabilis": [59547.0],
+    "Corynebacterium tuberculostearicum": [631707.0],
+    "Pseudomonas aeruginosa": [53856.0],
+    "Other": [2315852.0]
+   },
+   "n_samples": 2,
+   "n_samples_by_day": [2],
+   "series": {
+    "Corynebacterium tuberculostearicum": {
+     "ra": [20.839668],
+     "reads": [631707.0]
+    },
+    "Human erythrovirus V9": {
+     "ra": [18.423354],
+     "reads": [626245.0]
+    },
+    "Porphyromonas sp. B811": {
+     "ra": [14.146866],
+     "reads": [472785.0]
+    },
+    "Actinomyces sp. J118": {
+     "ra": [10.474656],
+     "reads": [356047.0]
+    },
+    "Neisseria sp. M432": {
+     "ra": [10.049797],
+     "reads": [330928.0]
+    },
+    "Pseudomonas sp. K203": {
+     "ra": [8.569068],
+     "reads": [302147.0]
+    },
+    "Escherichia coli": {
+     "ra": [7.562252],
+     "reads": [244837.0]
+    },
+    "Rothia sp. B372": {
+     "ra": [6.047518],
+     "reads": [214934.0]
+    },
+    "Proteus mirabilis": {
+     "ra": [2.085624],
+     "reads": [59547.0]
+    },
+    "Pseudomonas aeruginosa": {
+     "ra": [1.323887],
+     "reads": [53856.0]
+    },
+    "Ralstonia sp. B886": {
+     "ra": [0.431917],
+     "reads": [12651.0]
+    },
+    "Bacteroides sp. B277": {
+     "ra": [0.037842],
+     "reads": [112.0]
+    },
+    "Cutibacterium acnes": {
+     "ra": [0.006855],
+     "reads": [43.0]
+    },
+    "Bradyrhizobium sp. E899": {
+     "ra": [0.000697],
+     "reads": [3.0]
+    }
+   },
+   "collection_days": [1132],
+   "n_libraries": 2,
+   "day_support": [
+    {
+     "day": 1132,
+     "n_libraries": 2,
+     "n_profiled_libraries": 2,
+     "assigned_reads": 3305842,
+     "retained_assigned_reads": 3305842,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["nd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A030|Ascites": {
+   "patient": "A030",
+   "sampletype": "Ascites",
+   "site": "c",
+   "days": [1117, 1131, 1147],
+   "taxa": ["Escherichia coli", "Cutibacterium acnes", "Klebsiella pneumoniae", "Fusobacterium sp. R879", "Pseudomonas aeruginosa", "Staphylococcus aureus", "Sphingomonas sp. R661", "Other"],
+   "stacked": {
+    "Escherichia coli": [2.563, 0.0, 0.006],
+    "Cutibacterium acnes": [0.0, 0.0, 1.102],
+    "Klebsiella pneumoniae": [0.0, 0.0, 0.154],
+    "Fusobacterium sp. R879": [0.0, 0.0, 56.348],
+    "Pseudomonas aeruginosa": [0.057, 0.001, 0.0],
+    "Staphylococcus aureus": [0.0, 0.0, 0.109],
+    "Sphingomonas sp. R661": [0.0, 0.0, 4.519],
+    "Other": [97.379, 99.999, 37.762]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [538.0, 0.0, 14.0],
+    "Cutibacterium acnes": [0.0, 0.0, 2486.0],
+    "Klebsiella pneumoniae": [0.0, 0.0, 279.0],
+    "Fusobacterium sp. R879": [0.0, 0.0, 109527.0],
+    "Pseudomonas aeruginosa": [12.0, 2.0, 0.0],
+    "Staphylococcus aureus": [0.0, 0.0, 221.0],
+    "Sphingomonas sp. R661": [0.0, 0.0, 8763.0],
+    "Other": [20437.0, 175137.0, 73477.0]
+   },
+   "n_samples": 4,
+   "n_samples_by_day": [1, 1, 2],
+   "series": {
+    "Campylobacter sp. N347": {
+     "ra": [67.7467, 0.0, 0.0],
+     "reads": [14218.0, 0.0, 0.0]
+    },
+    "Fusobacterium sp. R879": {
+     "ra": [0.0, 0.0, 56.348184],
+     "reads": [0.0, 0.0, 109527.0]
+    },
+    "Sphingomonas sp. D859": {
+     "ra": [0.0, 36.859295, 0.0],
+     "reads": [0.0, 64555.0, 0.0]
+    },
+    "Prevotella sp. H865": {
+     "ra": [0.0, 0.0, 21.9127],
+     "reads": [0.0, 0.0, 42407.0]
+    },
+    "Sphingomonas sp. H940": {
+     "ra": [0.0, 20.504285, 0.0],
+     "reads": [0.0, 35911.0, 0.0]
+    },
+    "Corynebacterium glucuronolyticum": {
+     "ra": [0.0, 17.707649, 0.0],
+     "reads": [0.0, 31013.0, 0.0]
+    },
+    "Streptococcus sp. E322": {
+     "ra": [10.249202, 0.0, 0.0],
+     "reads": [2151.0, 0.0, 0.0]
+    },
+    "Haemophilus sp. L238": {
+     "ra": [8.124077, 0.0, 0.0],
+     "reads": [1705.0, 0.0, 0.0]
+    },
+    "Actinomyces sp. P304": {
+     "ra": [0.0, 7.416966, 0.0],
+     "reads": [0.0, 12990.0, 0.0]
+    },
+    "Bradyrhizobium sp. N924": {
+     "ra": [0.0, 6.645579, 0.0],
+     "reads": [0.0, 11639.0, 0.0]
+    },
+    "Acinetobacter baumannii": {
+     "ra": [5.727355, 0.0, 0.0],
+     "reads": [1202.0, 0.0, 0.0]
+    },
+    "Porphyromonas sp. P297": {
+     "ra": [0.0, 0.0, 5.599343],
+     "reads": [0.0, 0.0, 11522.0]
+    },
+    "Delftia sp. H954": {
+     "ra": [5.531996, 0.0, 0.0],
+     "reads": [1161.0, 0.0, 0.0]
+    },
+    "Haemophilus sp. E864": {
+     "ra": [0.0, 4.627753, 0.0],
+     "reads": [0.0, 8105.0, 0.0]
+    },
+    "Sphingomonas sp. R661": {
+     "ra": [0.0, 0.0, 4.518977],
+     "reads": [0.0, 0.0, 8763.0]
+    },
+    "Acinetobacter johnsonii": {
+     "ra": [0.0, 0.0, 4.215373],
+     "reads": [0.0, 0.0, 8391.0]
+    },
+    "Malassezia sp. M329": {
+     "ra": [0.0, 2.675589, 0.0],
+     "reads": [0.0, 4686.0, 0.0]
+    },
+    "Escherichia coli": {
+     "ra": [2.563492, 0.0, 0.005628],
+     "reads": [538.0, 0.0, 14.0]
+    },
+    "Lactobacillus sp. R538": {
+     "ra": [0.0, 1.997842, 0.0],
+     "reads": [0.0, 3499.0, 0.0]
+    },
+    "Sphingomonas sp. P564": {
+     "ra": [0.0, 0.0, 1.690218],
+     "reads": [0.0, 0.0, 2716.0]
+    },
+    "Lactobacillus crispatus": {
+     "ra": [0.0, 0.0, 1.35527],
+     "reads": [0.0, 0.0, 2889.0]
+    },
+    "Cutibacterium acnes": {
+     "ra": [0.0, 0.0, 1.101921],
+     "reads": [0.0, 0.0, 2486.0]
+    },
+    "Veillonella sp. K863": {
+     "ra": [0.0, 0.98379, 0.0],
+     "reads": [0.0, 1723.0, 0.0]
+    },
+    "Penicillium sp. G131": {
+     "ra": [0.0, 0.0, 0.900407],
+     "reads": [0.0, 0.0, 1607.0]
+    },
+    "Fusobacterium sp. Q381": {
+     "ra": [0.0, 0.0, 0.681703],
+     "reads": [0.0, 0.0, 1297.0]
+    },
+    "Neisseria sp. C145": {
+     "ra": [0.0, 0.562981, 0.0],
+     "reads": [0.0, 986.0, 0.0]
+    },
+    "Saccharomyces cerevisiae": {
+     "ra": [0.0, 0.0, 0.479001],
+     "reads": [0.0, 0.0, 1168.0]
+    },
+    "Bradyrhizobium sp. E777": {
+     "ra": [0.0, 0.0, 0.420065],
+     "reads": [0.0, 0.0, 734.0]
+    },
+    "Delftia sp. P179": {
+     "ra": [0.0, 0.0, 0.397202],
+     "reads": [0.0, 0.0, 533.0]
+    },
+    "Klebsiella pneumoniae": {
+     "ra": [0.0, 0.0, 0.154412],
+     "reads": [0.0, 0.0, 279.0]
+    },
+    "Staphylococcus aureus": {
+     "ra": [0.0, 0.0, 0.10884],
+     "reads": [0.0, 0.0, 221.0]
+    },
+    "Fusobacterium sp. R452": {
+     "ra": [0.0, 0.0, 0.082237],
+     "reads": [0.0, 0.0, 138.0]
+    },
+    "Pseudomonas aeruginosa": {
+     "ra": [0.057178, 0.001142, 0.0],
+     "reads": [12.0, 2.0, 0.0]
+    },
+    "Aspergillus sp. E356": {
+     "ra": [0.0, 0.0, 0.026931],
+     "reads": [0.0, 0.0, 72.0]
+    },
+    "Penicillium sp. M865": {
+     "ra": [0.0, 0.015416, 0.0],
+     "reads": [0.0, 27.0, 0.0]
+    },
+    "Nakaseomyces glabratus": {
+     "ra": [0.0, 0.001713, 0.0],
+     "reads": [0.0, 3.0, 0.0]
+    },
+    "Veillonella sp. B770": {
+     "ra": [0.0, 0.0, 0.001587],
+     "reads": [0.0, 0.0, 3.0]
+    }
+   },
+   "collection_days": [1117, 1131, 1147],
+   "n_libraries": 4,
+   "day_support": [
+    {
+     "day": 1117,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 20987,
+     "retained_assigned_reads": 20987,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    },
+    {
+     "day": 1131,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 175139,
+     "retained_assigned_reads": 175139,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    },
+    {
+     "day": 1147,
+     "n_libraries": 2,
+     "n_profiled_libraries": 2,
+     "assigned_reads": 194767,
+     "retained_assigned_reads": 194767,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  },
+  "A030|Urine": {
+   "patient": "A030",
+   "sampletype": "Urine",
+   "site": "c",
+   "days": [1160],
+   "taxa": ["Escherichia coli", "Streptococcus mitis", "Haemophilus sp. H529", "Other"],
+   "stacked": {
+    "Escherichia coli": [3.798],
+    "Streptococcus mitis": [3.071],
+    "Haemophilus sp. H529": [89.697],
+    "Other": [3.434]
+   },
+   "stacked_reads": {
+    "Escherichia coli": [188.0],
+    "Streptococcus mitis": [152.0],
+    "Haemophilus sp. H529": [4440.0],
+    "Other": [170.0]
+   },
+   "n_samples": 1,
+   "n_samples_by_day": [1],
+   "series": {
+    "Haemophilus sp. H529": {
+     "ra": [89.69697],
+     "reads": [4440.0]
+    },
+    "Escherichia coli": {
+     "ra": [3.79798],
+     "reads": [188.0]
+    },
+    "Streptococcus mitis": {
+     "ra": [3.070707],
+     "reads": [152.0]
+    },
+    "Lactobacillus sp. P716": {
+     "ra": [2.727273],
+     "reads": [135.0]
+    },
+    "Aspergillus sp. N766": {
+     "ra": [0.707071],
+     "reads": [35.0]
+    }
+   },
+   "collection_days": [1160],
+   "n_libraries": 1,
+   "day_support": [
+    {
+     "day": 1160,
+     "n_libraries": 1,
+     "n_profiled_libraries": 1,
+     "assigned_reads": 4950,
+     "retained_assigned_reads": 4950,
+     "retained_fraction": 1.0,
+     "depletion_protocols": ["hd"],
+     "mixed_depletion": false
+    }
+   ],
+   "aggregation": {"composition": "equal-library mean RA among libraries with retained assignments", "reads": "sum of retained assigned reads across same-day libraries", "zero_retained_libraries_in_composition": false}
+  }
+ },
+ "highlights": {
+  "A003": {
+   "patient": "A003",
+   "pathogens": [
+    {"name": "Escherichia coli", "peak_ra": 34.5, "day": 1206, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Staphylococcus haemolyticus", "peak_ra": 11.3, "day": 1192, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Klebsiella pneumoniae", "peak_ra": 7.5, "day": 1206, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Enterococcus faecalis", "peak_ra": 1.5, "day": 1192, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"}
+   ],
+   "clinical_interest": [
+    {"name": "Escherichia coli", "peak_ra": 34.5, "day": 1206, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Staphylococcus haemolyticus", "peak_ra": 11.3, "day": 1192, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Klebsiella pneumoniae", "peak_ra": 7.5, "day": 1206, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Enterococcus faecalis", "peak_ra": 1.5, "day": 1192, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Staphylococcus epidermidis", "peak_ra": 0.5, "day": 1206, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Proteus mirabilis", "peak_ra": 0.2, "day": 1192, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Staphylococcus aureus", "peak_ra": 0.2, "day": 1192, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"}
+   ],
+   "flora": [],
+   "curated_hits": [
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 34.482961,
+     "day": 1206,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Klebsiella pneumoniae",
+     "peak_ra": 7.456346,
+     "day": 1206,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Staphylococcus epidermidis",
+     "peak_ra": 0.479957,
+     "day": 1206,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecalis",
+     "peak_ra": 0.048113,
+     "day": 1206,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Staphylococcus haemolyticus",
+     "peak_ra": 11.278195,
+     "day": 1192,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecalis",
+     "peak_ra": 1.503759,
+     "day": 1192,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Proteus mirabilis",
+     "peak_ra": 0.18797,
+     "day": 1192,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Staphylococcus aureus",
+     "peak_ra": 0.18797,
+     "day": 1192,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    }
+   ],
+   "shifts": {
+    "Ascites": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 1192, "taxon": "Bacteroides sp. P302", "ra": 54.1},
+     "dominant_last": {"day": 1192, "taxon": "Bacteroides sp. P302", "ra": 54.1}
+    },
+    "Urine": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 1206, "taxon": "Prevotella sp. L579", "ra": 40.9},
+     "dominant_last": {"day": 1206, "taxon": "Prevotella sp. L579", "ra": 40.9}
+    }
+   }
+  },
+  "A007": {
+   "patient": "A007",
+   "pathogens": [
+    {"name": "Proteus mirabilis", "peak_ra": 23.1, "day": 2116, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Candida parapsilosis", "peak_ra": 14.7, "day": 2152, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Escherichia coli", "peak_ra": 14.4, "day": 2181, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Streptococcus mitis", "peak_ra": 12.7, "day": 2181, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Pseudomonas aeruginosa", "peak_ra": 9.5, "day": 2116, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Nakaseomyces glabratus", "peak_ra": 3.8, "day": 2134, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Staphylococcus epidermidis", "peak_ra": 2.1, "day": 2116, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Gardnerella vaginalis", "peak_ra": 1.5, "day": 2109, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"}
+   ],
+   "clinical_interest": [
+    {"name": "Proteus mirabilis", "peak_ra": 23.1, "day": 2116, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Candida parapsilosis", "peak_ra": 14.7, "day": 2152, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Escherichia coli", "peak_ra": 14.4, "day": 2181, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Streptococcus mitis", "peak_ra": 12.7, "day": 2181, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Pseudomonas aeruginosa", "peak_ra": 9.5, "day": 2116, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Nakaseomyces glabratus", "peak_ra": 3.8, "day": 2134, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Staphylococcus epidermidis", "peak_ra": 2.1, "day": 2116, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Gardnerella vaginalis", "peak_ra": 1.5, "day": 2109, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Enterococcus faecalis", "peak_ra": 0.5, "day": 2134, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Enterococcus faecium", "peak_ra": 0.5, "day": 2109, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Klebsiella pneumoniae", "peak_ra": 0.4, "day": 2134, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Morganella morganii", "peak_ra": 0.3, "day": 2152, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Candida albicans", "peak_ra": 0.1, "day": 2116, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"}
+   ],
+   "flora": [],
+   "curated_hits": [
+    {
+     "name": "Proteus mirabilis",
+     "peak_ra": 23.10141,
+     "day": 2116,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Pseudomonas aeruginosa",
+     "peak_ra": 9.5407,
+     "day": 2116,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 8.012733,
+     "day": 2116,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Staphylococcus epidermidis",
+     "peak_ra": 2.11005,
+     "day": 2116,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Gardnerella vaginalis",
+     "peak_ra": 1.500923,
+     "day": 2109,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Lactobacillus crispatus",
+     "peak_ra": 0.756294,
+     "day": 2109,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecium",
+     "peak_ra": 0.497716,
+     "day": 2109,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Candida albicans",
+     "peak_ra": 0.118236,
+     "day": 2116,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Cutibacterium acnes",
+     "peak_ra": 0.009095,
+     "day": 2116,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Candida parapsilosis",
+     "peak_ra": 14.715562,
+     "day": 2152,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 13.425928,
+     "day": 2181,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Streptococcus mitis",
+     "peak_ra": 12.0495,
+     "day": 2181,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Nakaseomyces glabratus",
+     "peak_ra": 3.830413,
+     "day": 2134,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Cutibacterium acnes",
+     "peak_ra": 1.657196,
+     "day": 2134,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_commensal", "label": "Ascites · commensal / contaminant", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecalis",
+     "peak_ra": 0.542118,
+     "day": 2134,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Klebsiella pneumoniae",
+     "peak_ra": 0.398581,
+     "day": 2134,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Morganella morganii",
+     "peak_ra": 0.282087,
+     "day": 2152,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    }
+   ],
+   "shifts": {
+    "Ascites": {
+     "n_days": 3,
+     "transitions": [
+      {"from_day": 2134, "to_day": 2152, "value": 0.88},
+      {"from_day": 2152, "to_day": 2181, "value": 1.0}
+     ],
+     "max_turnover": {"from_day": 2152, "to_day": 2181, "value": 1.0},
+     "n_dominance_changes": 2,
+     "dominant_first": {"day": 2134, "taxon": "Malassezia phage E165", "ra": 23.4},
+     "dominant_last": {"day": 2181, "taxon": "Malassezia sp. D168", "ra": 36.7}
+    },
+    "Urine": {
+     "n_days": 2,
+     "transitions": [
+      {"from_day": 2109, "to_day": 2116, "value": 0.99}
+     ],
+     "max_turnover": {"from_day": 2109, "to_day": 2116, "value": 0.99},
+     "n_dominance_changes": 1,
+     "dominant_first": {"day": 2109, "taxon": "Malassezia sp. K153", "ra": 49.1},
+     "dominant_last": {"day": 2116, "taxon": "Haemophilus sp. L532", "ra": 31.3}
+    }
+   }
+  },
+  "A014": {
+   "patient": "A014",
+   "pathogens": [
+    {"name": "Candida albicans", "peak_ra": 37.9, "day": 1327, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Enterococcus faecalis", "peak_ra": 3.6, "day": 1327, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"}
+   ],
+   "clinical_interest": [
+    {"name": "Candida albicans", "peak_ra": 37.9, "day": 1327, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Enterococcus faecalis", "peak_ra": 3.6, "day": 1327, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Staphylococcus aureus", "peak_ra": 0.5, "day": 1335, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Pseudomonas aeruginosa", "peak_ra": 0.4, "day": 1335, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Escherichia coli", "peak_ra": 0.3, "day": 1335, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"}
+   ],
+   "flora": [
+    {"name": "Bifidobacterium breve", "peak_ra": 16.2, "day": 1327, "sampletype": "Urine", "tier": "flora", "color": "#2E8B57"}
+   ],
+   "curated_hits": [
+    {
+     "name": "Candida albicans",
+     "peak_ra": 37.716655,
+     "day": 1327,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Bifidobacterium breve",
+     "peak_ra": 15.832321,
+     "day": 1327,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Cutibacterium acnes",
+     "peak_ra": 4.468062,
+     "day": 1327,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecalis",
+     "peak_ra": 3.160807,
+     "day": 1327,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 0.04258,
+     "day": 1327,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Candida albicans",
+     "peak_ra": 28.473499,
+     "day": 1335,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Staphylococcus aureus",
+     "peak_ra": 0.477246,
+     "day": 1335,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Pseudomonas aeruginosa",
+     "peak_ra": 0.396177,
+     "day": 1335,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 0.322557,
+     "day": 1335,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    }
+   ],
+   "shifts": {
+    "Ascites": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 1335, "taxon": "Ralstonia sp. G102", "ra": 40.3},
+     "dominant_last": {"day": 1335, "taxon": "Ralstonia sp. G102", "ra": 40.3}
+    },
+    "Urine": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 1327, "taxon": "Candida albicans", "ra": 37.7},
+     "dominant_last": {"day": 1327, "taxon": "Candida albicans", "ra": 37.7}
+    }
+   }
+  },
+  "A016": {
+   "patient": "A016",
+   "pathogens": [
+    {"name": "Enterococcus faecium", "peak_ra": 6.8, "day": 2206, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Pseudomonas aeruginosa", "peak_ra": 3.1, "day": 2206, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Citrobacter koseri", "peak_ra": 2.4, "day": 2204, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Staphylococcus haemolyticus", "peak_ra": 2.0, "day": 2206, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"}
+   ],
+   "clinical_interest": [
+    {"name": "Enterococcus faecium", "peak_ra": 6.8, "day": 2206, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Pseudomonas aeruginosa", "peak_ra": 3.1, "day": 2206, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Citrobacter koseri", "peak_ra": 2.4, "day": 2204, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Staphylococcus haemolyticus", "peak_ra": 2.0, "day": 2206, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Enterococcus faecalis", "peak_ra": 0.2, "day": 2204, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Escherichia coli", "peak_ra": 0.0, "day": 2206, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"}
+   ],
+   "flora": [
+    {"name": "Cutibacterium acnes", "peak_ra": 15.4, "day": 2204, "sampletype": "Urine", "tier": "flora", "color": "#2E8B57"}
+   ],
+   "curated_hits": [
+    {
+     "name": "Cutibacterium acnes",
+     "peak_ra": 15.439625,
+     "day": 2204,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecium",
+     "peak_ra": 4.245641,
+     "day": 2204,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Citrobacter koseri",
+     "peak_ra": 2.409688,
+     "day": 2204,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecalis",
+     "peak_ra": 0.233592,
+     "day": 2204,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecium",
+     "peak_ra": 6.751055,
+     "day": 2206,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Pseudomonas aeruginosa",
+     "peak_ra": 3.094233,
+     "day": 2206,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Staphylococcus haemolyticus",
+     "peak_ra": 1.969058,
+     "day": 2206,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Cutibacterium acnes",
+     "peak_ra": 0.328176,
+     "day": 2206,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_commensal", "label": "Ascites · commensal / contaminant", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecalis",
+     "peak_ra": 0.187529,
+     "day": 2206,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 0.046882,
+     "day": 2206,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    }
+   ],
+   "shifts": {
+    "Ascites": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 2206, "taxon": "Campylobacter sp. H950", "ra": 21.9},
+     "dominant_last": {"day": 2206, "taxon": "Campylobacter sp. H950", "ra": 21.9}
+    },
+    "Urine": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 2204, "taxon": "Bifidobacterium sp. M715", "ra": 29.4},
+     "dominant_last": {"day": 2204, "taxon": "Bifidobacterium sp. M715", "ra": 29.4}
+    }
+   }
+  },
+  "A022": {
+   "patient": "A022",
+   "pathogens": [
+    {"name": "Candida albicans", "peak_ra": 33.7, "day": 975, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Escherichia coli", "peak_ra": 14.7, "day": 968, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Morganella morganii", "peak_ra": 6.0, "day": 975, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Klebsiella pneumoniae", "peak_ra": 1.9, "day": 975, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"}
+   ],
+   "clinical_interest": [
+    {"name": "Candida albicans", "peak_ra": 33.7, "day": 975, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Escherichia coli", "peak_ra": 14.7, "day": 968, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Morganella morganii", "peak_ra": 6.0, "day": 975, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Klebsiella pneumoniae", "peak_ra": 1.9, "day": 975, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Enterobacter hormaechei", "peak_ra": 0.0, "day": 975, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Enterococcus faecalis", "peak_ra": 0.0, "day": 975, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Enterococcus faecium", "peak_ra": 0.0, "day": 975, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"}
+   ],
+   "flora": [
+    {"name": "Streptococcus mitis", "peak_ra": 17.9, "day": 975, "sampletype": "Urine", "tier": "flora", "color": "#2E8B57"}
+   ],
+   "curated_hits": [
+    {
+     "name": "Candida albicans",
+     "peak_ra": 33.671224,
+     "day": 975,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Streptococcus mitis",
+     "peak_ra": 17.85267,
+     "day": 975,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Morganella morganii",
+     "peak_ra": 6.015083,
+     "day": 975,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Klebsiella pneumoniae",
+     "peak_ra": 1.90435,
+     "day": 975,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 1.3473,
+     "day": 975,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Lactobacillus crispatus",
+     "peak_ra": 1.182555,
+     "day": 975,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Enterobacter hormaechei",
+     "peak_ra": 0.042879,
+     "day": 975,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Bifidobacterium breve",
+     "peak_ra": 0.03498,
+     "day": 975,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecium",
+     "peak_ra": 0.001128,
+     "day": 975,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecalis",
+     "peak_ra": 0.000376,
+     "day": 975,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 14.715083,
+     "day": 968,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Cutibacterium acnes",
+     "peak_ra": 3.846804,
+     "day": 968,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_commensal", "label": "Ascites · commensal / contaminant", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    }
+   ],
+   "shifts": {
+    "Ascites": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 968, "taxon": "Veillonella sp. Q671", "ra": 39.0},
+     "dominant_last": {"day": 968, "taxon": "Veillonella sp. Q671", "ra": 39.0}
+    },
+    "Urine": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 975, "taxon": "Candida albicans", "ra": 33.7},
+     "dominant_last": {"day": 975, "taxon": "Candida albicans", "ra": 33.7}
+    }
+   }
+  },
+  "A023": {
+   "patient": "A023",
+   "pathogens": [
+    {"name": "Staphylococcus epidermidis", "peak_ra": 29.3, "day": 1938, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Escherichia coli", "peak_ra": 13.7, "day": 1938, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Enterococcus faecalis", "peak_ra": 10.6, "day": 1938, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"}
+   ],
+   "clinical_interest": [
+    {"name": "Staphylococcus epidermidis", "peak_ra": 29.3, "day": 1938, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Escherichia coli", "peak_ra": 13.7, "day": 1938, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Enterococcus faecalis", "peak_ra": 10.6, "day": 1938, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Citrobacter koseri", "peak_ra": 0.0, "day": 1970, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"}
+   ],
+   "flora": [],
+   "curated_hits": [
+    {
+     "name": "Cutibacterium acnes",
+     "peak_ra": 1.168734,
+     "day": 1970,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 0.196597,
+     "day": 1970,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Bifidobacterium breve",
+     "peak_ra": 0.132872,
+     "day": 1970,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Citrobacter koseri",
+     "peak_ra": 0.001356,
+     "day": 1970,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Staphylococcus epidermidis",
+     "peak_ra": 29.330132,
+     "day": 1938,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 13.698298,
+     "day": 1938,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Enterococcus faecalis",
+     "peak_ra": 10.59399,
+     "day": 1938,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    }
+   ],
+   "shifts": {
+    "Ascites": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 1938, "taxon": "Malassezia sp. R422", "ra": 30.3},
+     "dominant_last": {"day": 1938, "taxon": "Malassezia sp. R422", "ra": 30.3}
+    },
+    "Urine": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 1970, "taxon": "Veillonella sp. C606", "ra": 41.2},
+     "dominant_last": {"day": 1970, "taxon": "Veillonella sp. C606", "ra": 41.2}
+    }
+   }
+  },
+  "A001": {
+   "patient": "A001",
+   "pathogens": [
+    {"name": "Escherichia coli", "peak_ra": 8.6, "day": 1103, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"}
+   ],
+   "clinical_interest": [
+    {"name": "Escherichia coli", "peak_ra": 8.6, "day": 1103, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"}
+   ],
+   "flora": [],
+   "curated_hits": [
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 8.588957,
+     "day": 1103,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    }
+   ],
+   "shifts": {
+    "Ascites": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 1103, "taxon": "Delftia sp. B520", "ra": 59.8},
+     "dominant_last": {"day": 1103, "taxon": "Delftia sp. B520", "ra": 59.8}
+    }
+   }
+  },
+  "A002": {
+   "patient": "A002",
+   "pathogens": [
+    {"name": "Enterococcus faecalis", "peak_ra": 9.0, "day": 2154, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Proteus mirabilis", "peak_ra": 4.2, "day": 2154, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Morganella morganii", "peak_ra": 3.6, "day": 2154, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"}
+   ],
+   "clinical_interest": [
+    {"name": "Enterococcus faecalis", "peak_ra": 9.0, "day": 2154, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Proteus mirabilis", "peak_ra": 4.2, "day": 2154, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Morganella morganii", "peak_ra": 3.6, "day": 2154, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Citrobacter koseri", "peak_ra": 0.3, "day": 2154, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"},
+    {"name": "Enterobacter hormaechei", "peak_ra": 0.1, "day": 2154, "sampletype": "Urine", "tier": "potential", "color": "#E0A800"}
+   ],
+   "flora": [],
+   "curated_hits": [
+    {
+     "name": "Enterococcus faecalis",
+     "peak_ra": 8.950919,
+     "day": 2154,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Proteus mirabilis",
+     "peak_ra": 4.175912,
+     "day": 2154,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Morganella morganii",
+     "peak_ra": 3.614538,
+     "day": 2154,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Cutibacterium acnes",
+     "peak_ra": 2.008077,
+     "day": 2154,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Citrobacter koseri",
+     "peak_ra": 0.297328,
+     "day": 2154,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Enterobacter hormaechei",
+     "peak_ra": 0.133132,
+     "day": 2154,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_potential", "label": "Urine · potentially uropathogenic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    }
+   ],
+   "shifts": {
+    "Urine": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 2154, "taxon": "Bacteroides sp. Q367", "ra": 37.8},
+     "dominant_last": {"day": 2154, "taxon": "Bacteroides sp. Q367", "ra": 37.8}
+    }
+   }
+  },
+  "A008": {
+   "patient": "A008",
+   "pathogens": [
+    {"name": "Escherichia coli", "peak_ra": 7.7, "day": 1132, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Proteus mirabilis", "peak_ra": 2.4, "day": 1132, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Pseudomonas aeruginosa", "peak_ra": 1.7, "day": 1132, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"}
+   ],
+   "clinical_interest": [
+    {"name": "Escherichia coli", "peak_ra": 7.7, "day": 1132, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Proteus mirabilis", "peak_ra": 2.4, "day": 1132, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Pseudomonas aeruginosa", "peak_ra": 1.7, "day": 1132, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"}
+   ],
+   "flora": [
+    {"name": "Corynebacterium tuberculostearicum", "peak_ra": 22.7, "day": 1132, "sampletype": "Urine", "tier": "flora", "color": "#2E8B57"}
+   ],
+   "curated_hits": [
+    {
+     "name": "Corynebacterium tuberculostearicum",
+     "peak_ra": 20.839668,
+     "day": 1132,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 7.562252,
+     "day": 1132,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Proteus mirabilis",
+     "peak_ra": 2.085624,
+     "day": 1132,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Pseudomonas aeruginosa",
+     "peak_ra": 1.323887,
+     "day": 1132,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Cutibacterium acnes",
+     "peak_ra": 0.006855,
+     "day": 1132,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    }
+   ],
+   "shifts": {
+    "Urine": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 1132, "taxon": "Corynebacterium tuberculostearicum", "ra": 20.8},
+     "dominant_last": {"day": 1132, "taxon": "Corynebacterium tuberculostearicum", "ra": 20.8}
+    }
+   }
+  },
+  "A030": {
+   "patient": "A030",
+   "pathogens": [
+    {"name": "Acinetobacter baumannii", "peak_ra": 5.7, "day": 1117, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Escherichia coli", "peak_ra": 3.8, "day": 1160, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"}
+   ],
+   "clinical_interest": [
+    {"name": "Acinetobacter baumannii", "peak_ra": 5.7, "day": 1117, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Escherichia coli", "peak_ra": 3.8, "day": 1160, "sampletype": "Urine", "tier": "verified", "color": "#C0392B"},
+    {"name": "Klebsiella pneumoniae", "peak_ra": 0.2, "day": 1147, "sampletype": "Ascites", "tier": "verified", "color": "#C0392B"},
+    {"name": "Pseudomonas aeruginosa", "peak_ra": 0.1, "day": 1117, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Staphylococcus aureus", "peak_ra": 0.1, "day": 1147, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"},
+    {"name": "Nakaseomyces glabratus", "peak_ra": 0.0, "day": 1131, "sampletype": "Ascites", "tier": "potential", "color": "#E0A800"}
+   ],
+   "flora": [],
+   "curated_hits": [
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 3.79798,
+     "day": 1160,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_verified", "label": "Urine · typically uropathogenic", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Streptococcus mitis",
+     "peak_ra": 3.070707,
+     "day": 1160,
+     "sampletype": "Urine",
+     "memberships": [
+      {"list_id": "urine_flora", "label": "Urine · urogenital mucosal flora", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Acinetobacter baumannii",
+     "peak_ra": 5.727355,
+     "day": 1117,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Escherichia coli",
+     "peak_ra": 2.563492,
+     "day": 1117,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Cutibacterium acnes",
+     "peak_ra": 1.101921,
+     "day": 1147,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_commensal", "label": "Ascites · commensal / contaminant", "tier": "flora", "role": "flora", "color": "#2E8B57"}
+     ]
+    },
+    {
+     "name": "Klebsiella pneumoniae",
+     "peak_ra": 0.154412,
+     "day": 1147,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_verified", "label": "Ascites · established SBP pathogen", "tier": "verified", "role": "pathogen", "color": "#C0392B"}
+     ]
+    },
+    {
+     "name": "Staphylococcus aureus",
+     "peak_ra": 0.10884,
+     "day": 1147,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Pseudomonas aeruginosa",
+     "peak_ra": 0.057178,
+     "day": 1117,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    },
+    {
+     "name": "Nakaseomyces glabratus",
+     "peak_ra": 0.001713,
+     "day": 1131,
+     "sampletype": "Ascites",
+     "memberships": [
+      {"list_id": "ascites_potential", "label": "Ascites · potential / opportunistic", "tier": "potential", "role": "pathogen", "color": "#E0A800"}
+     ]
+    }
+   ],
+   "shifts": {
+    "Ascites": {
+     "n_days": 3,
+     "transitions": [
+      {"from_day": 1117, "to_day": 1131, "value": 1.0},
+      {"from_day": 1131, "to_day": 1147, "value": 1.0}
+     ],
+     "max_turnover": {"from_day": 1117, "to_day": 1131, "value": 1.0},
+     "n_dominance_changes": 2,
+     "dominant_first": {"day": 1117, "taxon": "Campylobacter sp. N347", "ra": 67.7},
+     "dominant_last": {"day": 1147, "taxon": "Fusobacterium sp. R879", "ra": 56.3}
+    },
+    "Urine": {
+     "n_days": 1,
+     "transitions": [],
+     "max_turnover": null,
+     "n_dominance_changes": 0,
+     "dominant_first": {"day": 1160, "taxon": "Haemophilus sp. H529", "ra": 89.7},
+     "dominant_last": {"day": 1160, "taxon": "Haemophilus sp. H529", "ra": 89.7}
+    }
+   }
+  }
+ }
+}

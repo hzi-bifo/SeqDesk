@@ -1,0 +1,45 @@
+{
+  "artifacts": [
+    {
+      "name": "reads_per_sample",
+      "kind": "figure",
+      "format": "plotly-json"
+    },
+    {
+      "name": "quality_by_run",
+      "kind": "figure",
+      "format": "plotly-json"
+    },
+    {
+      "name": "qc_table",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "runs",
+      "kind": "table",
+      "format": "tsv"
+    }
+  ],
+  "metrics": {
+    "n_samples": 18,
+    "n_rows": 20,
+    "n_runs": 3,
+    "total_reads": 86251616.0,
+    "median_reads_per_sample": 4394444.0,
+    "n_low_yield": 2,
+    "n_samples_without_reads": 1,
+    "low_read_threshold": 10000,
+    "mean_q30": {
+      "approx": 90.8,
+      "tol": 0.001
+    },
+    "mean_avg_quality_1": {
+      "approx": 35.0663,
+      "tol": 0.001
+    }
+  },
+  "notes_contain": [
+    "RUN-2026-003"
+  ]
+}

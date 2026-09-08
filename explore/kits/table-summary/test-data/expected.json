@@ -1,0 +1,23 @@
+{
+  "artifacts": [
+    {
+      "name": "summary",
+      "kind": "table",
+      "format": "tsv"
+    },
+    {
+      "name": "distributions",
+      "kind": "figure",
+      "format": "plotly-json"
+    }
+  ],
+  "metrics": {
+    "n_rows": 40,
+    "n_columns": 9,
+    "n_numeric_columns": 4,
+    "n_text_columns": 5,
+    "n_missing_cells": 27,
+    "n_samples": 40,
+    "n_groups": 2
+  }
+}

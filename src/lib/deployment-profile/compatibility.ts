@@ -60,6 +60,7 @@ export const FEATURE_MODULE_DOMAIN_REQUIREMENTS = {
   "sequencing-management": ["core"],
   "import-cami": ["core"],
   "import-sra": ["core"],
+  explore: ["analysis"],
   "ai-validation": ["facility-intake"],
   "mixs-metadata": ["sample-catalog"],
   "account-validation": ["core"],

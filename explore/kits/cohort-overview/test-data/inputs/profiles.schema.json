@@ -1,0 +1,90 @@
+{
+  "schema": {
+    "columns": [
+      {
+        "key": "sample_db_id",
+        "label": "Sample record",
+        "type": "string",
+        "role": "sample",
+        "group": "identity"
+      },
+      {
+        "key": "sample_id",
+        "label": "Sample ID",
+        "type": "string",
+        "group": "identity"
+      },
+      {
+        "key": "subject",
+        "label": "Subject",
+        "type": "string",
+        "role": "subject",
+        "group": "study"
+      },
+      {
+        "key": "relDay",
+        "label": "Relative day",
+        "type": "number",
+        "role": "timepoint",
+        "group": "study"
+      },
+      {
+        "key": "sampletype",
+        "label": "Sample type",
+        "type": "string",
+        "role": "group",
+        "group": "study"
+      },
+      {
+        "key": "speciesName",
+        "label": "Species",
+        "type": "string",
+        "role": "taxon",
+        "group": "pipeline"
+      },
+      {
+        "key": "speciesTaxID",
+        "label": "Taxonomy ID",
+        "type": "number",
+        "role": "taxon_id",
+        "group": "pipeline"
+      },
+      {
+        "key": "taxRank",
+        "label": "Rank",
+        "type": "string",
+        "role": "rank",
+        "group": "pipeline"
+      },
+      {
+        "key": "numReads",
+        "label": "Reads",
+        "type": "number",
+        "role": "count",
+        "group": "pipeline"
+      },
+      {
+        "key": "abundance",
+        "label": "Abundance",
+        "type": "number",
+        "role": "value",
+        "group": "pipeline"
+      }
+    ]
+  },
+  "provenance": {
+    "builtAt": "2026-09-04T12:00:00.000Z",
+    "builder": "pipeline-table@1",
+    "sources": [
+      {
+        "type": "pipeline-run",
+        "id": "run_synthetic",
+        "label": "PIPE-20260904-0001"
+      }
+    ],
+    "notes": [
+      "Synthetic taxon profiles generated for the kit self-test; taxon ids are illustrative."
+    ]
+  },
+  "contentHash": "02febc0225fb19b3567b4b6c2300236fada2a5bcc4efd81046b2251bce9edd00"
+}

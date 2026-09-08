@@ -32,6 +32,7 @@ describe("DemoBanner", () => {
 
   afterEach(() => {
     cleanup();
+    window.sessionStorage.clear();
   });
 
   beforeEach(() => {
@@ -117,5 +118,24 @@ describe("DemoBanner", () => {
     await waitFor(() => {
       expect((button as HTMLButtonElement).disabled).toBe(false);
     });
+  });
+
+  it("hides the banner when dismissed and stays hidden for the session", () => {
+    render(<DemoBanner embeddedMode={false} demoExperience="researcher" />);
+    expect(screen.getByText("Researcher Demo")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("demo-banner-dismiss"));
+    expect(screen.queryByText("Researcher Demo")).toBeNull();
+    expect(
+      window.sessionStorage.getItem("seqdesk-demo-banner-dismissed:researcher"),
+    ).toBe("1");
+
+    cleanup();
+    render(<DemoBanner embeddedMode={false} demoExperience="researcher" />);
+    expect(screen.queryByText("Researcher Demo")).toBeNull();
+
+    cleanup();
+    render(<DemoBanner embeddedMode={false} demoExperience="facility" />);
+    expect(screen.getByText("Facility Demo")).toBeTruthy();
   });
 });

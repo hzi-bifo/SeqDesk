@@ -1,0 +1,1737 @@
+"use client";
+
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import Link from "next/link";
+import useSWR from "swr";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, Copy, Download, ExternalLink, Globe, LayoutGrid, Loader2, RectangleHorizontal, Share2, Square, Trash2, Undo2, Unlink } from "lucide-react";
+import { Sketch, type StoreGroup } from "@/components/explore/ElementStore";
+import { Markdown } from "@/components/explore/Markdown";
+import { insertIntoActiveEditor, RichTextEditor } from "@/components/explore/RichTextEditor";
+import { VariablesContext } from "@/components/explore/VariableNode";
+import { PlotlyChart } from "@/components/explore/PlotlyChart";
+import { CuratedOrganismsView, filtersApply, metricLabel, RunMetricView, SubjectView, TREND_LABELS, TaxonExplorerView, useTableFrame, filteredRows, columnLabel as frameColumnLabel } from "@/components/explore/ReportWidgets";
+import { HeatmapView, type HeatmapOptions } from "@/components/explore/views/HeatmapView";
+import { SubjectTimelineOverview } from "@/components/explore/views/SubjectTimelineOverview";
+import { BUILT_IN_VIEWS, type BuiltInView } from "@/lib/explore/canvas-layout";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "@/components/ui/toast";
+import { cn } from "@/lib/utils";
+import { exactValue, fetcher, formatCell, formatDateTime, postJson } from "@/lib/explore/client";
+import { analysisTimeline, suggestMeasure } from "@/lib/explore/time-axis";
+import { useFooterNote } from "@/components/layout/FooterNote";
+import { CHART_KINDS, CHART_KIND_LABELS, METRIC_STATS, METRIC_STAT_LABELS, type ChartKind, type MetricStat } from "@/lib/explore/report-blocks";
+import { buildChart, computeStats, formatStat, numericColumns } from "@/lib/explore/report-widgets";
+import type { ActiveFilters } from "@/lib/explore/frame";
+import type { ReportFilter } from "@/lib/explore/report-blocks";
+import type { ReportAnalysis, ReportBlock, ReportFigure, ReportInput, ReportShare, ReportTable, ReportTableContent, ReportView, ResolvedReportBlock } from "@/lib/explore/reports";
+import type { ExploreColumn } from "@/lib/explore/types";
+import { buildVariables, formatVariableValue, variableReference, type ReportVariables, type VariableStep } from "@/lib/explore/variables";
+import { toInput } from "@/lib/explore/report-input";
+import { applyRowFilter, rowFilterProblem } from "@/lib/explore/row-filter";
+import type { ExploreRowData } from "@/lib/explore/types";
+
+interface ExploreReportProps {
+  reportId: string;
+  scope: string;
+  canEdit: boolean;
+  /** True while the page is being edited (the report page's edit mode); saving or cancelling calls onDone. */
+  editing: boolean;
+  onDone: () => void;
+  /** Switch to the canvas, where outputs are made. */
+  onOpenCanvas: () => void;
+  /** The right sidebar's body while editing; the panel with figures, tables and variables renders into it. */
+  panelContainer?: HTMLElement | null;
+  /** A slot in the page's top bar; Undo and the save state render into it while editing, Start over and Share otherwise. */
+  actionsContainer?: HTMLElement | null;
+}
+
+type ReportResponse = { report: ReportView };
+
+/** Tables the organism blocks can read: long profiles with sample, taxon and count roles. */
+const profileTable = (table: ReportTable): boolean => Boolean(table.roles.sample && table.roles.taxon && table.roles.count);
+
+function newBlockId(prefix: string): string {
+  return `${prefix}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function figureKey(analysisId: string, figureName: string): string {
+  return `${analysisId}:${figureName}`;
+}
+
+/** The editable shape of a report: what the server stores, without the resolved content. */
+function figureBlockOf(figure: ReportFigure): ReportBlock {
+  return {
+    id: `figure:${figure.analysisId}:${figure.figureName}`,
+    type: "figure",
+    analysisId: figure.analysisId,
+    figureName: figure.figureName,
+    caption: `${figure.figureName} (${figure.analysisName})`,
+    span: 1,
+  };
+}
+
+function tableBlockOf(table: ReportTable): ReportBlock {
+  return { id: `table:${table.datasetId}`, type: "table", datasetId: table.datasetId, caption: table.name, span: 2 };
+}
+
+/**
+ * The report of a scope: the final page where the outputs of the canvas come
+ * together with text. Read-only for viewers; editors arrange blocks, write
+ * Markdown and pick which figures and tables to show.
+ */
+const ACTIVE_RUN_STATUS = new Set(["pending", "queued", "running"]);
+// Page filters are set aside until they are wired to the blocks properly:
+// the stored filter settings are kept, but nothing on the page applies them.
+const NO_FILTERS: ReportFilter[] = [];
+const NO_ACTIVE: ActiveFilters = {};
+
+export function ExploreReport({ reportId, scope, canEdit, editing: editRequested, onOpenCanvas, panelContainer = null, actionsContainer = null }: ExploreReportProps) {
+  const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
+  const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
+  // While an analysis runs, the page asks often so cited numbers and cards update the moment it finishes.
+  const { data, error, isLoading, mutate } = useSWR<ReportResponse>(key, fetcher, {
+    refreshInterval: (latest) => (latest?.report?.outputs.analyses.some((analysis) => analysis.latestRun && ACTIVE_RUN_STATUS.has(analysis.latestRun.status)) ? 3000 : 15000),
+  });
+  const [draft, setDraft] = useState<ReportInput | null>(null);
+  // Changes save on their own a moment after they stop; Undo walks back through them.
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error" | "conflict">("idle");
+  const saveStateRef = useRef(saveState);
+  useEffect(() => {
+    saveStateRef.current = saveState;
+  }, [saveState]);
+  const undoingRef = useRef(false);
+  const inFlightRef = useRef(false);
+  const followUpRef = useRef(false);
+  const failedPayloadRef = useRef<string | null>(null);
+  const baseUpdatedAtRef = useRef<string | null>(null);
+  const [saveTick, setSaveTick] = useState(0);
+  const [history, setHistory] = useState<ReportInput[]>([]);
+  const [dirty, setDirty] = useState(false);
+  useFooterNote(data?.report && !data.report.draft ? `Report last changed ${formatDateTime(data.report.updatedAt)}` : null);
+  const savedRef = useRef<string | null>(null);
+  const savedInputRef = useRef<ReportInput | null>(null);
+  const active = NO_ACTIVE;
+  const report = data?.report;
+
+  const editingNow = editRequested && canEdit;
+  const variables = useMemo(() => buildVariables(data?.report?.outputs.analyses ?? []), [data]);
+
+  // Save a moment after the last change while editing. One request at a
+  // time; the version a save must land on is the one the draft started from
+  // or the last own save, never a value a background poll brought in, so a
+  // poll cannot let one editor overwrite another.
+  useEffect(() => {
+    if (!editingNow || !draft || !report || saveStateRef.current === "conflict") return;
+    if (baseUpdatedAtRef.current && report.updatedAt && report.updatedAt !== baseUpdatedAtRef.current && !inFlightRef.current) {
+      // A poll brought a newer version while a draft exists: someone else saved, so this page stops overwriting.
+      const notice = setTimeout(() => {
+        setSaveState("conflict");
+        toast.error("This page was changed elsewhere; reload to see the latest version before editing further.");
+      }, 0);
+      return () => clearTimeout(notice);
+    }
+    if (savedRef.current === null) {
+      savedInputRef.current = toInput(report);
+      savedRef.current = JSON.stringify(savedInputRef.current);
+      baseUpdatedAtRef.current = report.updatedAt ?? null;
+    }
+    const payload = JSON.stringify(draft);
+    if (payload === savedRef.current || payload === failedPayloadRef.current) return;
+    const timer = setTimeout(() => {
+      if (inFlightRef.current) {
+        // The draft moved on during a save: the effect runs again when that save resolves.
+        followUpRef.current = true;
+        return;
+      }
+      inFlightRef.current = true;
+      setSaveState("saving");
+      void postJson<ReportResponse>(key, { ...draft, expectedUpdatedAt: baseUpdatedAtRef.current ?? undefined }, "PUT")
+        .then(async (result) => {
+          // Every saved step is one Undo step, except the save that an Undo itself causes.
+          const before = savedInputRef.current;
+          if (before && !undoingRef.current) setHistory((entries) => [...entries.slice(-49), before]);
+          undoingRef.current = false;
+          savedInputRef.current = draft;
+          savedRef.current = payload;
+          baseUpdatedAtRef.current = result.report.updatedAt ?? baseUpdatedAtRef.current;
+          await mutate(result, { revalidate: false });
+          setSaveState("saved");
+          setDirty(false);
+        })
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : "Could not save the report";
+          // The same draft is not sent again until it changes.
+          failedPayloadRef.current = payload;
+          setSaveState(/changed elsewhere/.test(message) ? "conflict" : "error");
+          toast.error(message);
+        })
+        .finally(() => {
+          inFlightRef.current = false;
+          if (followUpRef.current) {
+            followUpRef.current = false;
+            setSaveTick((tick) => tick + 1);
+          }
+        });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [draft, editingNow, key, mutate, report, saveTick]);
+
+  // Leaving the editor saves what is still pending and forgets the session.
+  useEffect(() => {
+    if (editingNow || !draft) return;
+    const payload = JSON.stringify(draft);
+    const pending = payload !== savedRef.current && saveState !== "conflict";
+    void (async () => {
+      if (pending) {
+        try {
+          const result = await postJson<ReportResponse>(key, { ...draft, expectedUpdatedAt: report?.updatedAt ?? undefined }, "PUT");
+          savedRef.current = payload;
+          await mutate(result, { revalidate: false });
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Could not save the report");
+        }
+      }
+      savedRef.current = null;
+      savedInputRef.current = null;
+      setDraft(null);
+      baseUpdatedAtRef.current = null;
+      failedPayloadRef.current = null;
+      setHistory([]);
+      setDirty(false);
+      setSaveState("idle");
+    })();
+  }, [editingNow, draft, key, mutate, report, saveState]);
+
+  // The draft mutators are stable so memoized block cards keep their callbacks between renders.
+  const patchDraft = useCallback(
+    (fn: (current: ReportInput) => ReportInput) => {
+      if (!report) return;
+      setDraft((current) => fn(current ?? toInput(report)));
+      setDirty(true);
+    },
+    [report]
+  );
+  const update = useCallback((mutator: (blocks: ReportBlock[]) => ReportBlock[]) => patchDraft((current) => ({ ...current, blocks: mutator(current.blocks) })), [patchDraft]);
+  const patchBlock = useCallback((id: string, patch: Partial<ReportBlock>) => update((current) => current.map((block) => (block.id === id ? ({ ...block, ...patch } as ReportBlock) : block))), [update]);
+  const moveBlock = useCallback((id: string, delta: number) =>
+    update((current) => {
+      const index = current.findIndex((block) => block.id === id);
+      const target = index + delta;
+      if (index < 0 || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    }), [update]);
+  const removeBlock = useCallback((id: string) => update((current) => current.filter((block) => block.id !== id)), [update]);
+  // One stable set of callbacks per block, so a memoized card only re-renders when its own inputs change.
+  const blockIdsKey = (draft?.blocks ?? report?.blocks ?? []).map((block) => block.id).join("|");
+  const handlers = useMemo(() => {
+    const map = new Map<string, { onPatch: (patch: Partial<ReportBlock>) => void; onMove: (delta: number) => void; onRemove: () => void }>();
+    for (const id of blockIdsKey ? blockIdsKey.split("|") : []) {
+      map.set(id, { onPatch: (patch) => patchBlock(id, patch), onMove: (delta) => moveBlock(id, delta), onRemove: () => removeBlock(id) });
+    }
+    return map;
+  }, [blockIdsKey, patchBlock, moveBlock, removeBlock]);
+  const handlersFor = (id: string) => handlers.get(id) ?? { onPatch: (patch: Partial<ReportBlock>) => patchBlock(id, patch), onMove: (delta: number) => moveBlock(id, delta), onRemove: () => removeBlock(id) };
+
+  if (error) return <p className="mt-6 text-sm text-destructive">Could not load the report: {String(error.message)}</p>;
+  if (!report || (isLoading && !data)) {
+    return (
+      <div className="mt-6 space-y-3">
+        <Skeleton className="h-8 w-1/2" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+
+  const editing = editRequested && canEdit;
+  // The working copy starts from the saved page and lives in state once something changes.
+  const working: ReportInput | null = editing ? (draft ?? toInput(report)) : null;
+  // Undo first drops what is not saved yet, then walks back one saved step at a time.
+  const undo = () => {
+    const lastSaved = savedInputRef.current;
+    if (draft && lastSaved && JSON.stringify(draft) !== savedRef.current) {
+      setDraft(lastSaved);
+      setDirty(false);
+      return;
+    }
+    const previous = history[history.length - 1];
+    if (!previous) return;
+    setHistory((entries) => entries.slice(0, -1));
+    // Saving the restored state must not push the undone one back onto the history.
+    undoingRef.current = true;
+    setDraft(previous);
+  };
+  const outputTables = report.outputs.tables.filter((table) => table.output);
+  const hasOutputs = report.outputs.figures.length + outputTables.length > 0;
+  const resolvedById = new Map(report.blocks.map((block) => [block.id, block] as const));
+  const figureByKey = new Map(report.outputs.figures.map((figure) => [figureKey(figure.analysisId, figure.figureName), figure] as const));
+  const tableById = new Map(report.outputs.tables.map((table) => [table.datasetId, table] as const));
+  const blocks: ReportBlock[] = working ? working.blocks : report.blocks;
+  const filters = NO_FILTERS;
+  const analysisById = new Map(report.outputs.analyses.map((analysis) => [analysis.analysisId, analysis] as const));
+  const headings = blocks.flatMap((block) => (block.type === "text" ? block.markdown.split("\n").filter((line) => /^##\s+/.test(line)).slice(0, 1).map((line) => ({ id: block.id, title: line.replace(/^##\s+/, "").trim() })) : []));
+  const usedFigures = new Set(blocks.filter((block) => block.type === "figure").map((block) => figureKey(block.analysisId, block.figureName)));
+  const usedTables = new Set(blocks.filter((block) => block.type === "table").map((block) => block.datasetId));
+  const usedViews = new Set(blocks.filter((block) => block.type === "view").map((block) => `${block.datasetId}:${block.view}`));
+
+  const addBlock = (block: ReportBlock) => update((current) => (current.some((entry) => entry.id === block.id) ? current : [...current, block]));
+  const storeGroups: StoreGroup[] = [
+    {
+      label: "Build from a table",
+      items: [
+        { id: "text", title: "Text", hint: "Headings, paragraphs and lists in Markdown", sketch: "text", onSelect: () => addBlock({ id: newBlockId("text"), type: "text", markdown: "" }) },
+        {
+          id: "run-metric",
+          title: "Dashboard numbers",
+          hint: "Numbers as cards, from an analysis run or a table column, with units and trends",
+          sketch: "numbers",
+          disabled: !report.outputs.analyses.some((analysis) => Object.keys(analysis.metrics).length > 0) && !report.outputs.tables.some((table) => table.columns.some((column) => column.type === "number")),
+          onSelect: () => addBlock(defaultKeyFiguresBlock(report.outputs.analyses, report.outputs.tables)),
+        },
+        { id: "histogram", title: "Histogram", hint: "How the values of a numeric column spread", sketch: "histogram", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "histogram" } as ReportBlock) },
+        { id: "bar", title: "Bar chart", hint: "How many rows have each value", sketch: "bar", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "bar" } as ReportBlock) },
+        { id: "scatter", title: "Dot plot", hint: "Two numeric columns against each other", sketch: "scatter", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "scatter" } as ReportBlock) },
+        { id: "box", title: "Box plot", hint: "A numeric column per group", sketch: "box", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "box" } as ReportBlock) },
+        {
+          id: "taxon-explorer",
+          title: "Taxon explorer",
+          hint: "Pick an organism: prevalence, abundance, carriers",
+          sketch: "scatter",
+          disabled: !report.outputs.tables.some((table) => table.roles.sample && table.roles.taxon && table.roles.count),
+          onSelect: () => {
+            const table = report.outputs.tables.find((entry) => entry.roles.sample && entry.roles.taxon && entry.roles.count);
+            if (table) addBlock({ id: newBlockId("taxon"), type: "taxon-explorer", datasetId: table.datasetId, span: 2 });
+          },
+        },
+        {
+          id: "subject",
+          title: "Subject",
+          hint: "Pick a subject: composition over time",
+          sketch: "timeline",
+          disabled: !report.outputs.tables.some((table) => table.views.includes("subject-timeline")),
+          onSelect: () => {
+            const table = report.outputs.tables.find((entry) => entry.views.includes("subject-timeline"));
+            if (table) addBlock({ id: newBlockId("subject"), type: "subject", datasetId: table.datasetId, span: 2 });
+          },
+        },
+        {
+          id: "curated",
+          title: "Organisms of interest",
+          hint: "Which listed organisms occur, how often, in whom",
+          sketch: "list",
+          disabled: !report.outputs.tables.some(profileTable),
+          onSelect: () => {
+            const table = report.outputs.tables.find(profileTable);
+            if (table) addBlock({ id: newBlockId("curated"), type: "curated", datasetId: table.datasetId, role: "pathogen", span: 2 });
+          },
+        },
+      ],
+    },
+    {
+      label: "Built-in views",
+      empty: "Map sample, subject, timepoint, taxon and count roles on a table to unlock these.",
+      items: (["subject-timeline", "heatmap"] as const).flatMap((view) =>
+        report.outputs.tables
+          .filter((table) => table.views.includes(view))
+          .map((table) => {
+            const used = usedViews.has(`${table.datasetId}:${view}`);
+            return {
+              id: `${table.datasetId}:${view}`,
+              title: BUILT_IN_VIEWS[view].label,
+              hint: table.name,
+              sketch: view === "heatmap" ? ("heatmap" as const) : ("timeline" as const),
+              badge: used ? "added" : undefined,
+              disabled: used,
+              onSelect: () => addBlock({ id: `view:${table.datasetId}:${view}`, type: "view", datasetId: table.datasetId, view, caption: `${BUILT_IN_VIEWS[view].label} of ${table.name}`, span: 2 }),
+            };
+          })
+      ),
+    },
+    {
+      label: "Figures from your analyses",
+      empty: "No analysis has drawn a figure yet. Run one on the canvas and it appears here.",
+      items: [
+        {
+          id: "new-figure",
+          title: "New analysis",
+          hint: "On the canvas: pick a table, choose a template, run; its figures land here",
+          sketch: "analysis" as const,
+          onSelect: () => onOpenCanvas(),
+        },
+        ...report.outputs.figures.map((figure) => {
+        const used = usedFigures.has(figureKey(figure.analysisId, figure.figureName));
+        return {
+          id: figureKey(figure.analysisId, figure.figureName),
+          title: figure.figureName,
+          hint: `${figure.analysisName}, ${figure.runNumber}`,
+          sketch: "figure" as const,
+          image: figure.thumbnailUrl,
+          badge: used ? "added" : undefined,
+          disabled: used,
+          onSelect: () => addBlock(figureBlockOf(figure)),
+        };
+        }),
+      ],
+    },
+    {
+      label: "Tables",
+      empty: "No tables in this scope yet.",
+      items: [
+        {
+          id: "new-table",
+          title: "New table",
+          hint: "On the canvas: bring one in from samples, sequencing, a pipeline or a file, or let an analysis write one",
+          sketch: "import" as const,
+          onSelect: () => onOpenCanvas(),
+        },
+        ...report.outputs.tables.map((table) => {
+        const used = usedTables.has(table.datasetId);
+        return {
+          id: table.datasetId,
+          title: table.name,
+          hint: `${table.rowCount.toLocaleString()} rows, ${table.columnCount} columns`,
+          sketch: "table" as const,
+          badge: used ? "added" : table.output ? "output" : "input",
+          disabled: used,
+          onSelect: () => addBlock(tableBlockOf(table)),
+        };
+        }),
+      ],
+    },
+  ];
+
+  return (
+    <VariablesContext.Provider value={variables}>
+    <div className="mt-6">
+      <div className="min-w-0">
+      {actionsContainer && createPortal(
+        editing ? (
+          <>
+            <span className="min-w-14 text-right text-xs text-muted-foreground" aria-live="polite">
+              {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : saveState === "conflict" ? (
+                <span className="text-destructive">
+                  Changed elsewhere; <button type="button" className="underline" onClick={() => window.location.reload()}>reload</button> to continue
+                </span>
+              ) : ""}
+            </span>
+            <Button variant="ghost" size="sm" className="h-8" onClick={undo} disabled={history.length === 0 && !dirty} title="Take back the last change">
+              <Undo2 className="h-3.5 w-3.5 lg:mr-1.5" />
+              <span className="hidden lg:inline">Undo</span>
+            </Button>
+          </>
+        ) : (
+          // Sharing is hidden until it is rethought; SharePopover stays for that.
+          null
+        ),
+        actionsContainer
+      )}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <input
+              value={working?.title ?? report.title}
+              onChange={(event) => patchDraft((current) => ({ ...current, title: event.target.value }))}
+              className="-mx-2 w-full max-w-2xl rounded-md border border-transparent bg-transparent px-2 py-0.5 text-2xl font-semibold tracking-tight outline-none hover:border-border focus:border-border focus:bg-background"
+              aria-label="Report title"
+              placeholder="Untitled report"
+            />
+          ) : (
+            <h2 className="text-2xl font-semibold tracking-tight">{report.title}</h2>
+          )}
+          {report.draft && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              A draft assembled from every output of this report; nothing is saved until you edit the page.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {!editing && headings.length > 1 && (
+        <nav className="mt-5 rounded-lg border bg-muted/20 px-4 py-3" aria-label="Contents">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Contents</p>
+          <ol className="mt-1.5 columns-1 gap-x-8 text-sm sm:columns-2 lg:columns-3">
+            {headings.map((heading, index) => (
+              <li key={heading.id} className="flex gap-2 break-inside-avoid py-0.5">
+                <span className="w-5 shrink-0 text-right tabular-nums text-muted-foreground">{index + 1}.</span>
+                <a href={`#${heading.id}`} className="min-w-0 truncate hover:underline">{heading.title}</a>
+              </li>
+            ))}
+          </ol>
+        </nav>
+      )}
+
+      {!hasOutputs && !editing && (
+        <div className="mt-6 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+          <p>Nothing to report yet. Outputs are made on the canvas: connect a dataset to an analysis and run it, and its figures and tables land here.</p>
+          <Button variant="outline" size="sm" className="mt-4" onClick={onOpenCanvas}>
+            <LayoutGrid className="mr-2 h-4 w-4" />
+            Open the canvas
+          </Button>
+        </div>
+      )}
+
+      {(hasOutputs || editing) && (
+        <div className="mt-6 grid gap-4 md:grid-cols-2">
+          {blocks.map((block, index) => (
+            <ReportBlockCard
+              key={block.id}
+              block={block}
+              resolved={resolvedById.get(block.id)}
+              figure={block.type === "figure" ? (figureByKey.get(figureKey(block.analysisId, block.figureName)) ?? null) : null}
+              tableInfo={block.type === "table" ? (tableById.get(block.datasetId) ?? null) : null}
+              editing={editing}
+              first={index === 0}
+              last={index === blocks.length - 1}
+              onPatch={handlersFor(block.id).onPatch}
+              onMove={handlersFor(block.id).onMove}
+              onRemove={handlersFor(block.id).onRemove}
+              scopeQuery={scopeQuery} reportId={reportId}
+              scope={scope}
+              variables={variables}
+              tables={report.outputs.tables}
+              analyses={report.outputs.analyses}
+              analysis={block.type === "run-metric" && block.analysisId ? (analysisById.get(block.analysisId) ?? null) : null}
+              filters={filters}
+              active={active}
+            />
+          ))}
+          {editing && blocks.length === 0 && (
+            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground md:col-span-2">The page is empty. Add a text block, a figure or a table from the panel.</div>
+          )}
+        </div>
+      )}
+      </div>
+      {editing && panelContainer && createPortal(<ReportSidePanel groups={storeGroups} variables={variables} />, panelContainer)}
+    </div>
+    </VariablesContext.Provider>
+  );
+}
+
+/**
+ * What the canvas offers the page, always in view while editing: blocks to
+ * build, the figures, tables and views of the analysis steps, and the numbers
+ * the steps recorded, ready to be cited in the text.
+ */
+function ReportSidePanel({ groups, variables }: { groups: StoreGroup[]; variables: ReportVariables }) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const matches = (text: string) => !needle || text.toLowerCase().includes(needle);
+  const insertVariable = async (step: VariableStep, metric: string) => {
+    const reference = variableReference(step, metric);
+    if (insertIntoActiveEditor(reference)) return;
+    try {
+      await navigator.clipboard.writeText(reference);
+      toast.info(`${reference} copied; click into a text block and paste it`);
+    } catch {
+      toast.info(`Write ${reference} in a text block to show this value`);
+    }
+  };
+  const stepsWithNumbers = variables.steps.filter((step) => Object.keys(step.metrics).length > 0);
+  return (
+    <div className="space-y-4 p-3 text-sm">
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a figure, table or variable" className="h-8 text-xs" aria-label="Find in the panel" />
+      {groups.map((group) => {
+        const items = group.items.filter((item) => matches(`${item.title} ${item.hint ?? ""}`));
+        if (items.length === 0 && (needle || !group.empty)) return null;
+        return (
+          <section key={group.label}>
+            <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h3>
+            {items.length === 0 ? (
+              <p className="text-xs text-muted-foreground">{group.empty}</p>
+            ) : (
+              <ul className="space-y-0.5">
+                {items.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={item.onSelect}
+                      disabled={item.disabled}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-secondary disabled:cursor-default disabled:opacity-50"
+                      title={item.hint}
+                    >
+                      {item.image ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={item.image} alt="" className="h-8 w-12 shrink-0 rounded border object-cover" />
+                      ) : (
+                        <span className="flex h-8 w-12 shrink-0 items-center justify-center rounded border bg-muted/30" aria-hidden>
+                          <Sketch kind={item.sketch ?? "table"} className="h-7 w-11 text-foreground/70" />
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-medium">{item.title}</span>
+                        {item.hint && <span className="block truncate text-[11px] text-muted-foreground">{item.hint}</span>}
+                      </span>
+                      {item.badge && <span className="shrink-0 rounded-full border px-1.5 text-[10px] text-muted-foreground">{item.badge}</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        );
+      })}
+      <section>
+        <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Variables</h3>
+        {stepsWithNumbers.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Steps record numbers with their runs; they appear here once a step has run.</p>
+        ) : (
+          <div className="space-y-2">
+            {stepsWithNumbers.map((step) => {
+              const entries = Object.entries(step.metrics).filter(([key]) => matches(`${step.slug}.${key} ${step.name}`));
+              if (entries.length === 0) return null;
+              return (
+                <div key={step.slug}>
+                  <p className="truncate px-2 text-[11px] text-muted-foreground" title={`${step.name}${step.runNumber ? `, ${step.runNumber}` : ""}`}>
+                    <span className="font-medium text-foreground">{step.name}</span>
+                    {step.runNumber ? ` ${step.runNumber}` : ""}
+                  </p>
+                  <ul>
+                    {entries.map(([key, value]) => (
+                      <li key={key}>
+                        <button
+                          type="button"
+                          onClick={() => void insertVariable(step, key)}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-0.5 text-left font-mono text-[11px] hover:bg-secondary"
+                          title={`Insert \`r ${step.slug}.${key}\` into the text block you are writing in`}
+                        >
+                          <span className="min-w-0 flex-1 truncate">{key}</span>
+                          <span className="shrink-0 tabular-nums text-muted-foreground">{formatVariableValue(value)}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <p className="mt-2 px-2 text-[11px] text-muted-foreground">Cite a value in text as `r step.name`; add `| 2` for two decimals. Values follow the latest run.</p>
+      </section>
+    </div>
+  );
+}
+
+interface ReportBlockCardProps {
+  block: ReportBlock;
+  resolved: ResolvedReportBlock | undefined;
+  figure: ReportFigure | null;
+  tableInfo: ReportTable | null;
+  editing: boolean;
+  first: boolean;
+  last: boolean;
+  onPatch: (patch: Partial<ReportBlock>) => void;
+  onMove: (delta: number) => void;
+  onRemove: () => void;
+  scopeQuery: string;
+  reportId: string;
+  tables: ReportTable[];
+  analyses: ReportAnalysis[];
+  analysis: ReportAnalysis | null;
+  filters: ReportFilter[];
+  active: ActiveFilters;
+  /** The scope, for blocks that read scope-level data such as the curation lists. */
+  scope: string;
+  variables: ReportVariables;
+}
+
+const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Dashboard numbers" };
+
+const ReportBlockCard = memo(function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope, variables }: ReportBlockCardProps) {
+  const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
+  const label = BLOCK_LABELS[block.type];
+  const blockTable = "datasetId" in block ? (tables.find((table) => table.datasetId === block.datasetId) ?? null) : null;
+  const actions = (
+    <>
+      <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground" onClick={() => onPatch({ span: span === 2 ? 1 : 2 })} title={span === 2 ? "Make half width" : "Make full width"} aria-label={span === 2 ? "Make half width" : "Make full width"}>
+        {span === 2 ? <RectangleHorizontal className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+      </button>
+      <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground disabled:opacity-40" onClick={() => onMove(-1)} disabled={first} title="Move up" aria-label="Move up">
+        <ArrowUp className="h-3.5 w-3.5" />
+      </button>
+      <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground disabled:opacity-40" onClick={() => onMove(1)} disabled={last} title="Move down" aria-label="Move down">
+        <ArrowDown className="h-3.5 w-3.5" />
+      </button>
+      <button type="button" className="rounded p-1 hover:bg-muted hover:text-destructive" onClick={onRemove} title="Remove block" aria-label="Remove block">
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </>
+  );
+  // A text block being edited is one box: the formatting bar is its header, with the block actions at its end.
+  if (editing && block.type === "text") {
+    return (
+      <section id={block.id} className={cn("min-w-0 scroll-mt-4 rounded-lg border bg-card", span === 2 && "md:col-span-2")} aria-label={`${label} block`}>
+        <RichTextEditor value={block.markdown} onChange={(markdown) => onPatch({ markdown })} actions={actions} className="border-0" />
+      </section>
+    );
+  }
+  return (
+    <section id={block.id} className={cn("min-w-0 scroll-mt-4 rounded-lg border bg-card", span === 2 && "md:col-span-2")} aria-label={`${label} block`}>
+      {editing && (
+        <div className="flex items-center gap-1 border-b bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+          <span className="font-medium">{label}</span>
+          <span className="flex-1" />
+          {actions}
+        </div>
+      )}
+      <div className="p-4">
+        {block.type === "text" &&
+          (block.markdown.trim() ? (
+            <Markdown variables={variables} variableLinks={{ reportId, scopeQuery }}>{block.markdown}</Markdown>
+          ) : (
+            <p className="text-sm text-muted-foreground">Empty text block.</p>
+          ))}
+
+        {block.type === "figure" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={block.figureName} onChange={(caption) => onPatch({ caption })} />
+            {figure ? (
+              <>
+                {Object.values(active).some((values) => values.length > 0) && (
+                  <p className="mb-1 text-[11px] text-muted-foreground">Drawn by the analysis run; page filters do not change it.</p>
+                )}
+                <FigureContent figure={figure} scopeQuery={scopeQuery} reportId={reportId} />
+              </>
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This figure is not produced by the analysis any more.</div>
+            )}
+          </>
+        )}
+
+        {block.type === "chart" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={chartTitle(block, tables)} onChange={(caption) => onPatch({ caption })} />
+            {editing && <ChartControls block={block} tables={tables} onPatch={onPatch} />}
+            <ChartBlockView block={block} table={blockTable} filters={filters} active={active} />
+          </>
+        )}
+
+        {block.type === "view" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={viewTitle(block, tables)} onChange={(caption) => onPatch({ caption })} />
+            {editing && <ViewControls block={block} tables={tables} onPatch={onPatch} />}
+            <ViewBlockView block={block} table={blockTable} scopeQuery={scopeQuery} reportId={reportId} filters={filters} active={active} />
+          </>
+        )}
+
+        {block.type === "taxon-explorer" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={`Taxon explorer${blockTable ? `: ${blockTable.name}` : ""}`} onChange={(caption) => onPatch({ caption })} />
+            {editing && <TableOnlyControls value={block.datasetId} tables={tables.filter((table) => table.roles.sample && table.roles.taxon && table.roles.count)} onChange={(datasetId) => onPatch({ datasetId, taxon: undefined } as Partial<ReportBlock>)} />}
+            {blockTable ? (
+              <TaxonExplorerView table={blockTable} taxon={block.taxon ?? null} onPickTaxon={(taxon) => onPatch({ taxon } as Partial<ReportBlock>)} filters={filters} active={active} editing={editing} />
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>
+            )}
+          </>
+        )}
+
+        {block.type === "subject" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={`Subject${blockTable ? `: ${blockTable.name}` : ""}`} onChange={(caption) => onPatch({ caption })} />
+            {editing && (
+              <div className="mb-3 grid gap-2 border-b pb-3 sm:grid-cols-2">
+                <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+                  <span>Table</span>
+                  <TableSelect value={block.datasetId} tables={tables.filter((table) => table.views.includes("subject-timeline"))} onChange={(datasetId) => onPatch({ datasetId, subject: undefined } as Partial<ReportBlock>)} />
+                </label>
+                <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+                  <span>Measure</span>
+                  <Select value={block.measure ?? "ra"} onValueChange={(measure) => onPatch({ measure } as Partial<ReportBlock>)}>
+                    <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Measure"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ra">Relative abundance</SelectItem>
+                      <SelectItem value="reads">Reads</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
+              </div>
+            )}
+            {blockTable ? (
+              <SubjectView table={blockTable} subject={block.subject ?? null} measure={block.measure ?? "ra"} onPickSubject={(subject) => onPatch({ subject } as Partial<ReportBlock>)} filters={filters} active={active} editing={editing} />
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>
+            )}
+          </>
+        )}
+
+        {block.type === "curated" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={`Organisms of interest${blockTable ? `: ${blockTable.name}` : ""}`} onChange={(caption) => onPatch({ caption })} />
+            {editing && <CuratedControls block={block} tables={tables.filter(profileTable)} onPatch={onPatch} />}
+            {blockTable ? (
+              <CuratedOrganismsView table={blockTable} scope={scope} role={block.role ?? "pathogen"} lists={block.lists} limit={block.limit ?? 25} filters={filters} active={active} />
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>
+            )}
+          </>
+        )}
+
+        {block.type === "run-metric" && (
+          <>
+            <Caption editing={editing} value={block.label ?? ""} fallback={analysis ? `${analysis.name} in numbers` : "Dashboard numbers"} onChange={(label) => onPatch({ label } as Partial<ReportBlock>)} />
+            {editing && <RunMetricControls block={block} analyses={analyses} tables={tables} onPatch={onPatch} />}
+            <RunMetricView
+              analysis={analysis}
+              tables={tables}
+              timelineSource={analysisTimeline(analysis, tables)}
+              editing={editing ? { onPatch: (patch) => onPatch(patch as Partial<ReportBlock>), available: analysis?.metrics ?? {} } : null}
+              metrics={block.metrics}
+              figures={block.figures}
+              order={block.order}
+              labels={block.labels}
+              digits={block.digits}
+              units={block.units}
+              targets={block.targets}
+              columns={block.columns}
+              trend={block.trend ?? "none"}
+              trends={block.trends}
+              timeline={block.timeline}
+            />
+          </>
+        )}
+
+        {block.type === "metric" && (
+          <>
+            <Caption editing={editing} value={block.label ?? ""} fallback={metricTitle(block, tables)} onChange={(label) => onPatch({ label })} />
+            {editing && <MetricControls block={block} tables={tables} onPatch={onPatch} />}
+            <MetricBlockView block={block} table={blockTable} filters={filters} active={active} />
+          </>
+        )}
+
+        {block.type === "table" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback={tableInfo?.name ?? "Table"} onChange={(caption) => onPatch({ caption })} />
+            {editing && <TableControls key={`${block.datasetId}:${block.filter ?? ""}`} block={block} tables={tables} onPatch={onPatch} />}
+            {blockTable && (tableNeedsWholeTable(block) || filtersApply(blockTable, filters, active) || !(resolved && resolved.type === "table" && resolved.table)) ? (
+              <TableBlockView block={block} table={blockTable} filters={filters} active={active} scopeQuery={scopeQuery} reportId={reportId} />
+            ) : resolved && resolved.type === "table" && resolved.table ? (
+              <TableContent table={resolved.table} scopeQuery={scopeQuery} reportId={reportId} />
+            ) : (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">This table is not available in this scope any more.</div>
+            )}
+          </>
+        )}
+      </div>
+    </section>
+  );
+});
+
+function Caption({ editing, value, fallback, onChange }: { editing: boolean; value: string; fallback: string; onChange: (value: string) => void }) {
+  if (editing) {
+    return (
+      <Input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={fallback}
+        className="mb-3 h-9 border-transparent bg-transparent px-1 text-base font-semibold shadow-none hover:border-input focus-visible:border-input"
+        aria-label="Caption"
+      />
+    );
+  }
+  return <h3 className="mb-3 text-sm font-semibold">{value || fallback}</h3>;
+}
+
+function InteractiveFigure({ url }: { url: string }) {
+  const { data, error } = useSWR<{ data?: unknown[]; layout?: Record<string, unknown> }>(url, fetcher);
+  if (error) return <p className="text-sm text-destructive">Could not load the figure.</p>;
+  if (!data) return <Skeleton className="h-72 w-full" />;
+  return <PlotlyChart data={Array.isArray(data.data) ? data.data : []} layout={{ ...(data.layout ?? {}), autosize: true }} height={380} className="w-full" />;
+}
+
+function FigureContent({ figure, scopeQuery, reportId }: { figure: ReportFigure; scopeQuery: string; reportId: string }) {
+  const image = figure.thumbnailUrl ?? (figure.format === "png" || figure.format === "svg" ? figure.url : null);
+  return (
+    <figure>
+      {figure.format === "plotly-json" ? (
+        <InteractiveFigure url={figure.url} />
+      ) : image ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={image} alt={figure.figureName} className="mx-auto max-h-[480px] max-w-full object-contain" />
+      ) : (
+        <a href={figure.url} className="text-sm underline" target="_blank" rel="noreferrer">
+          Open figure
+        </a>
+      )}
+      <figcaption className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+        <span>{figure.analysisName}</span>
+        <span>{figure.runNumber}</span>
+        {figure.unchanged && <span>unchanged since the previous run</span>}
+        <span className="flex-1" />
+        <Link href={`/explore/reports/${encodeURIComponent(reportId)}${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`figure:${figure.analysisId}:${figure.figureName}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at the card that draws this figure">
+          <LayoutGrid className="h-3 w-3" /> Show on canvas
+        </Link>
+        <Link href={`/explore/runs/${figure.runId}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">
+          Run <ExternalLink className="h-3 w-3" />
+        </Link>
+      </figcaption>
+    </figure>
+  );
+}
+
+function TableContent({ table, scopeQuery, reportId, note }: { table: ReportTableContent; scopeQuery: string;
+  reportId: string; note?: string }) {
+  return (
+    <div>
+      <div className="overflow-x-auto rounded-md border">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/50 text-left">
+            <tr>
+              {table.columns.map((column) => (
+                <th key={column.key} className="whitespace-nowrap px-2 py-1.5 font-medium" title={column.key}>
+                  {column.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.rows.map((row, index) => (
+              <tr key={index} className="border-t">
+                {table.columns.map((column) => (
+                  <td key={column.key} className={cn("whitespace-nowrap px-2 py-1", column.type === "number" && "text-right tabular-nums")} title={exactValue(row[column.key], column.type)}>
+                    {formatCell(row[column.key], column.type)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {table.rows.length === 0 && (
+              <tr>
+                <td className="px-2 py-3 text-muted-foreground" colSpan={Math.max(1, table.columns.length)}>
+                  No rows
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+        <span className="tabular-nums">
+          {note ?? `${Math.min(table.rows.length, table.rowCount).toLocaleString()} of ${table.rowCount.toLocaleString()} rows, ${table.columnCount} columns${table.version ? `, v${table.version}` : ""}`}
+        </span>
+        <span className="flex-1" />
+        <Link href={`/explore/reports/${encodeURIComponent(reportId)}${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`dataset:${table.datasetId}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at this table's card">
+          <LayoutGrid className="h-3 w-3" /> Show on canvas
+        </Link>
+        <Link href={`/explore/datasets/${table.datasetId}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">
+          Open table <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Charts and numbers drawn straight from a table; no analysis needed.
+// ---------------------------------------------------------------------------
+
+type ChartBlock = Extract<ReportBlock, { type: "chart" }>;
+type MetricBlock = Extract<ReportBlock, { type: "metric" }>;
+
+function firstTable(tables: ReportTable[]): ReportTable | undefined {
+  return tables.find((table) => table.output && table.columns.length > 0) ?? tables.find((table) => table.columns.length > 0) ?? tables[0];
+}
+
+function defaultChartBlock(tables: ReportTable[]): ReportBlock {
+  const table = firstTable(tables);
+  const numeric = table ? numericColumns(table.columns) : [];
+  const x = numeric[0]?.key ?? table?.columns[0]?.key ?? "";
+  return { id: newBlockId("chart"), type: "chart", datasetId: table?.datasetId ?? "", chart: numeric.length > 0 ? "histogram" : "bar", x, span: 1 };
+}
+
+/** A dashboard numbers block: the first analysis with numbers, else the row count of the first table. */
+function defaultKeyFiguresBlock(analyses: ReportAnalysis[], tables: ReportTable[]): ReportBlock {
+  const analysis = analyses.find((entry) => Object.keys(entry.metrics).length > 0);
+  if (analysis) return { id: newBlockId("run-metric"), type: "run-metric", analysisId: analysis.analysisId, metrics: Object.keys(analysis.metrics).filter((key) => typeof analysis.metrics[key] === "number").slice(0, 4), span: 2 };
+  const table = firstTable(tables);
+  const numeric = table ? numericColumns(table.columns) : [];
+  const column = numeric[0]?.key ?? table?.columns[0]?.key ?? "";
+  return { id: newBlockId("run-metric"), type: "run-metric", metrics: [], figures: table ? [{ id: newBlockId("f").slice(-8), datasetId: table.datasetId, column, stat: "count" }] : [], span: 2 };
+}
+
+function columnLabel(columns: ExploreColumn[], key: string | undefined): string {
+  if (!key) return "";
+  return columns.find((column) => column.key === key)?.label ?? key;
+}
+
+function chartTitle(block: ChartBlock, tables: ReportTable[]): string {
+  const table = tables.find((entry) => entry.datasetId === block.datasetId);
+  const columns = table?.columns ?? [];
+  const kind = CHART_KIND_LABELS[block.chart].label;
+  if (block.chart === "scatter") return `${columnLabel(columns, block.y)} by ${columnLabel(columns, block.x)}`;
+  if (block.chart === "box") return `${columnLabel(columns, block.y)} per ${columnLabel(columns, block.x)}`;
+  return `${kind} of ${columnLabel(columns, block.x)}`;
+}
+
+function metricTitle(block: MetricBlock, tables: ReportTable[]): string {
+  const table = tables.find((entry) => entry.datasetId === block.datasetId);
+  return `${columnLabel(table?.columns ?? [], block.column)}${table ? ` (${table.name})` : ""}`;
+}
+
+function TableOnlyControls({ value, tables, onChange }: { value: string; tables: ReportTable[]; onChange: (datasetId: string) => void }) {
+  return (
+    <div className="mb-3 grid gap-2 border-b pb-3 sm:grid-cols-2">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+        <span>Table</span>
+        <TableSelect value={value} tables={tables} onChange={onChange} />
+      </label>
+    </div>
+  );
+}
+
+function CuratedControls({ block, tables, onPatch }: { block: Extract<ReportBlock, { type: "curated" }>; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  return (
+    <div className="mb-3 grid gap-2 border-b pb-3 sm:grid-cols-3">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+        <span>Table</span>
+        <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => onPatch({ datasetId } as Partial<ReportBlock>)} />
+      </label>
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+        <span>Lists</span>
+        <Select value={block.role ?? "pathogen"} onValueChange={(role) => onPatch({ role } as Partial<ReportBlock>)}>
+          <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Lists"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="pathogen">Pathogen lists</SelectItem>
+            <SelectItem value="flora">Flora lists</SelectItem>
+            <SelectItem value="all">Every list</SelectItem>
+          </SelectContent>
+        </Select>
+      </label>
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+        <span>Show at most</span>
+        <Select value={String(block.limit ?? 25)} onValueChange={(limit) => onPatch({ limit: Number(limit) } as Partial<ReportBlock>)}>
+          <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Show at most"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {[10, 25, 50, 100].map((entry) => (
+              <SelectItem key={entry} value={String(entry)}>{entry} organisms</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </label>
+    </div>
+  );
+}
+
+type TrendChoice = "none" | "previous" | "history" | "timeline";
+
+/** The block-level row of a dashboard numbers block: the analysis, the default trend, the layout, and the timeline offer. The cards edit themselves. */
+function RunMetricControls({ block, analyses, tables, onPatch }: { block: Extract<ReportBlock, { type: "run-metric" }>; analyses: ReportAnalysis[]; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  const analysis = analyses.find((entry) => entry.analysisId === block.analysisId);
+  const source = analysisTimeline(analysis, tables);
+  const patch = (next: Partial<Extract<ReportBlock, { type: "run-metric" }>>) => onPatch(next as Partial<ReportBlock>);
+  // Figures the timeline can count without further choice: those named after a role.
+  const suggestible = source ? block.metrics.filter((key) => suggestMeasure(key, source.roles)) : [];
+  const timelineUnused = source && suggestible.length > 0 && block.trend !== "timeline" && !suggestible.every((key) => block.trends?.[key] === "timeline");
+  const trendChoices: TrendChoice[] = source ? ["none", "previous", "history", "timeline"] : ["none", "previous", "history"];
+  return (
+    <div className="mb-3 space-y-2 border-b pb-3">
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="min-w-0 flex-1 space-y-1 text-[11px] text-muted-foreground">
+          <span>Analysis</span>
+          <Select value={block.analysisId ?? "none"} onValueChange={(analysisId) => { if (analysisId === "none") { patch({ analysisId: undefined, metrics: [], order: (block.order ?? []).filter((key) => key.startsWith("f:")) }); return; } const target = analyses.find((entry) => entry.analysisId === analysisId); patch({ analysisId, metrics: Object.keys(target?.metrics ?? {}).filter((key) => typeof target?.metrics[key] === "number").slice(0, 4), order: undefined, labels: undefined, digits: undefined, trends: undefined, timeline: undefined }); }}>
+            <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Analysis"><SelectValue placeholder="Choose an analysis" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No analysis (table figures only)</SelectItem>
+              {analyses.filter((entry) => Object.keys(entry.metrics).length > 0).map((entry) => (
+                <SelectItem key={entry.analysisId} value={entry.analysisId}>{entry.name}<span className="ml-1.5 text-xs text-muted-foreground">{entry.runNumber}</span></SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Trend for all cards</span>
+          <Select value={block.trend ?? "none"} onValueChange={(trend) => patch({ trend: trend as TrendChoice })}>
+            <SelectTrigger className="h-8 w-52 min-w-0 text-xs [&>span]:truncate" aria-label="Trend"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {trendChoices.map((mode) => <SelectItem key={mode} value={mode}>{TREND_LABELS[mode]}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Per row</span>
+          <Select value={block.columns ? String(block.columns) : "auto"} onValueChange={(value) => patch({ columns: value === "auto" ? undefined : Number.parseInt(value, 10) })}>
+            <SelectTrigger className="h-8 w-28 min-w-0 text-xs" aria-label="Cards per row"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">As fit</SelectItem>
+              {[1, 2, 3, 4, 5, 6].map((count) => <SelectItem key={count} value={String(count)}>{count}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </label>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        {source ? (
+          <>
+            {analysis?.name} reads <span className="font-medium text-foreground">{source.tableName}</span>, which has a timeline ({source.axis.label}s in <span className="font-mono">{source.axis.column}</span>).
+            {timelineUnused && (
+              <>
+                {" "}
+                <button type="button" className="underline hover:text-foreground" onClick={() => { const trends = { ...(block.trends ?? {}) }; for (const key of suggestible) trends[key] = "timeline"; patch({ trends }); }}>
+                  Show {suggestible.map((key) => block.labels?.[key]?.trim() || metricLabel(key)).join(", ")} along it
+                </button>
+                .
+              </>
+            )}
+          </>
+        ) : (
+          "Type on a card to rename it; the button on each card sets its unit, decimals, trend and order. Add a number from the run or from any table column."
+        )}
+      </p>
+    </div>
+  );
+}
+
+/** The whole table for a block, with the page filters that apply to it already removed. */
+function useFilteredTable(table: ReportTable | null, filters: ReportFilter[], active: ActiveFilters) {
+  const { data, error } = useTableFrame(table ? table.datasetId : null);
+  const rows = useMemo(() => (data ? filteredRows(data, filters, active) : []), [data, filters, active]);
+  return { frame: data, rows, error };
+}
+
+type TableBlock = Extract<ReportBlock, { type: "table" }>;
+
+const TABLE_BLOCK_FLAGS = ["search", "sortable", "download"] as const;
+
+/** Only a block that filters, sorts, picks columns or lets readers work on the rows needs the whole table in the browser. */
+function tableNeedsWholeTable(block: TableBlock): boolean {
+  return Boolean(block.filter || block.sort || (block.columns && block.columns.length > 0) || block.search || block.sortable || block.download);
+}
+
+function columnAliases(columns: ExploreColumn[]): Record<string, string> {
+  return Object.fromEntries(columns.map((column) => [column.label, column.key]));
+}
+
+function compareCells(a: ExploreRowData[string], b: ExploreRowData[string]): number {
+  const missingA = a === null || a === undefined || a === "";
+  const missingB = b === null || b === undefined || b === "";
+  if (missingA || missingB) return missingA && missingB ? 0 : missingA ? 1 : -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+}
+
+function csvOf(columns: ExploreColumn[], rows: ExploreRowData[]): string {
+  const cell = (value: ExploreRowData[string]) => {
+    const text = value === null || value === undefined ? "" : String(value);
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  return [columns.map((column) => cell(column.label)).join(","), ...rows.map((row) => columns.map((column) => cell(row[column.key])).join(","))].join("\n");
+}
+
+/**
+ * A table as the block presents it: the page filters, then the block's row
+ * filter, then what the reader searched, sorted by the block's or the
+ * reader's choice, the chosen columns, the first N rows. Readers get search,
+ * sorting and a CSV of what they see only where the editor allowed it.
+ */
+function TableBlockView({ block, table, filters, active, scopeQuery, reportId }: { block: TableBlock; table: ReportTable; filters: ReportFilter[]; active: ActiveFilters; scopeQuery: string; reportId: string }) {
+  const { frame, rows: pageRows, error } = useFilteredTable(table, filters, active);
+  const [query, setQuery] = useState("");
+  const [readerSort, setReaderSort] = useState<{ column: string; direction: "asc" | "desc" } | null>(null);
+  const aliases = useMemo(() => columnAliases(frame?.columns ?? []), [frame]);
+  const filterProblem = useMemo(() => (block.filter ? rowFilterProblem(block.filter, frame?.columns.map((column) => column.key), { aliases }) : null), [block.filter, frame, aliases]);
+  const filtered = useMemo(() => {
+    if (!frame) return [];
+    if (block.filter && !filterProblem) {
+      try {
+        return applyRowFilter(pageRows, block.filter, { aliases });
+      } catch {
+        return pageRows;
+      }
+    }
+    return pageRows;
+  }, [frame, pageRows, block.filter, filterProblem, aliases]);
+  const columns = useMemo(() => {
+    const all = frame?.columns ?? [];
+    if (!block.columns || block.columns.length === 0) return all;
+    return block.columns.map((key) => all.find((column) => column.key === key)).filter((column): column is ExploreColumn => Boolean(column));
+  }, [frame, block.columns]);
+  const sort = readerSort ?? block.sort ?? null;
+  const shown = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const searchable = frame?.columns ?? columns;
+    let rows = needle ? filtered.filter((row) => searchable.some((column) => String(row[column.key] ?? "").toLowerCase().includes(needle))) : filtered;
+    if (sort && searchable.some((column) => column.key === sort.column)) {
+      rows = [...rows].sort((a, b) => (sort.direction === "asc" ? 1 : -1) * compareCells(a[sort.column], b[sort.column]));
+    }
+    return rows;
+  }, [filtered, columns, frame, query, sort]);
+  if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
+  if (!frame) return <Skeleton className="h-40 w-full" />;
+  const limit = block.rows ?? 12;
+  const narrowed = filtersApply(table, filters, active);
+  const parts: string[] = [];
+  if (narrowed) parts.push("page filters");
+  if (block.filter && !filterProblem) parts.push("row filter");
+  if (query.trim()) parts.push("search");
+  const note = `${Math.min(limit, shown.length).toLocaleString()} of ${shown.length.toLocaleString()} rows${parts.length ? ` after ${parts.join(", ")}` : ""}, ${columns.length} columns${frame.version ? `, v${frame.version}` : ""}`;
+  const download = () => {
+    // A byte-order mark so spreadsheets read the file as UTF-8.
+    const blob = new Blob(["\ufeff", csvOf(columns, shown)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${(block.caption || table.name).replace(/[^A-Za-z0-9._-]+/g, "_")}_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const toggleSort = (key: string) => {
+    if (!block.sortable) return;
+    setReaderSort((current) => (current?.column === key ? (current.direction === "asc" ? { column: key, direction: "desc" } : null) : { column: key, direction: "asc" }));
+  };
+  return (
+    <div>
+      {filterProblem && <p className="mb-2 text-xs text-destructive">Row filter: {filterProblem}. Every row is shown.</p>}
+      {(block.search || block.download) && (
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          {block.search && <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search this table" className="h-8 max-w-xs text-xs" aria-label="Search this table" />}
+          <span className="flex-1" />
+          {block.download && (
+            <Button variant="outline" size="sm" className="h-8" onClick={download} title="The rows and columns shown, as CSV">
+              <Download className="mr-1.5 h-3.5 w-3.5" /> CSV
+            </Button>
+          )}
+        </div>
+      )}
+      <div className="overflow-x-auto rounded-md border">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/50 text-left">
+            <tr>
+              {columns.map((column) => {
+                const active = sort?.column === column.key;
+                return (
+                  <th key={column.key} className="whitespace-nowrap px-2 py-1.5 font-medium" title={block.sortable ? `Sort by ${column.label}` : column.key} aria-sort={active ? (sort?.direction === "asc" ? "ascending" : "descending") : undefined}>{block.sortable ? <button type="button" onClick={() => toggleSort(column.key)} className="inline-flex items-center gap-1 rounded hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Sort by ${column.label}`}>
+                    {column.label}
+                    {active ? <span className="ml-1 text-muted-foreground">{sort?.direction === "asc" ? "▲" : "▼"}</span> : null}
+                  </button> : <>
+                    {column.label}
+                    {active ? <span className="ml-1 text-muted-foreground">{sort?.direction === "asc" ? "▲" : "▼"}</span> : null}
+                  </>}</th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {shown.slice(0, limit).map((row, index) => (
+              <tr key={index} className="border-t">
+                {columns.map((column) => (
+                  <td key={column.key} className={cn("whitespace-nowrap px-2 py-1", column.type === "number" && "text-right tabular-nums")} title={exactValue(row[column.key], column.type)}>
+                    {formatCell(row[column.key], column.type)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            {shown.length === 0 && (
+              <tr>
+                <td className="px-2 py-3 text-muted-foreground" colSpan={Math.max(1, columns.length)}>No rows</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+        <span className="tabular-nums">{note}</span>
+        <span className="flex-1" />
+        <Link href={`/explore/reports/${encodeURIComponent(reportId)}${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`dataset:${table.datasetId}`)}`} className="inline-flex items-center gap-1 hover:underline" title="Open the canvas at this table's card">
+          <LayoutGrid className="h-3 w-3" /> Show on canvas
+        </Link>
+        <Link href={`/explore/datasets/${table.datasetId}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">
+          Open table <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/** What the editor decides for a table block: columns, order, rows, the row filter, and what readers may do. */
+function TableControls({ block, tables, onPatch }: { block: TableBlock; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  const table = tables.find((entry) => entry.datasetId === block.datasetId) ?? null;
+  const columns = table?.columns ?? [];
+  const patch = (values: Partial<TableBlock>) => onPatch(values as Partial<ReportBlock>);
+  const [filterDraft, setFilterDraft] = useState(block.filter ?? "");
+  const [open, setOpen] = useState(false);
+  const problem = rowFilterProblem(filterDraft, columns.map((column) => column.key), { aliases: columnAliases(columns) });
+  const chosen = block.columns && block.columns.length > 0 ? block.columns : null;
+  const summary = [
+    `${block.rows ?? 12} rows`,
+    chosen ? `${chosen.length} of ${columns.length} columns` : "all columns",
+    block.sort ? `by ${columns.find((column) => column.key === block.sort?.column)?.label ?? block.sort.column} ${block.sort.direction === "asc" ? "↑" : "↓"}` : null,
+    block.filter ? `filter: ${block.filter}` : null,
+    [block.search && "search", block.sortable && "sort", block.download && "CSV"].filter(Boolean).length ? `readers: ${[block.search && "search", block.sortable && "sort", block.download && "CSV"].filter(Boolean).join(", ")}` : null,
+  ].filter(Boolean);
+  const toggleColumn = (key: string) => {
+    const current = chosen ?? columns.map((column) => column.key);
+    const next = current.includes(key) ? current.filter((entry) => entry !== key) : [...columns.map((column) => column.key).filter((entry) => current.includes(entry) || entry === key)];
+    patch({ columns: next.length === columns.length ? undefined : next });
+  };
+  return (
+    <div className="mb-3 border-b pb-3">
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+        <div className="min-w-0 flex-1 sm:max-w-xs">
+          <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => { setFilterDraft(""); patch({ datasetId, columns: undefined, sort: undefined, filter: undefined }); }} />
+        </div>
+        <span className="min-w-0 flex-1 truncate" title={summary.join(" · ")}>{summary.join(" · ")}</span>
+        <button type="button" onClick={() => setOpen((value) => !value)} className={cn("inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 hover:bg-secondary hover:text-foreground", open && "bg-secondary text-foreground")} aria-expanded={open}>
+          Options {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        </button>
+      </div>
+      {open && (
+      <div className="mt-2 space-y-2">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Sort by</span>
+          <div className="flex gap-1">
+            <ColumnSelect value={block.sort?.column ?? ""} columns={columns} onChange={(column) => patch({ sort: column ? { column, direction: block.sort?.direction ?? "asc" } : undefined })} label="Sort column" allowNone />
+            <Select value={block.sort?.direction ?? "asc"} onValueChange={(direction) => block.sort && patch({ sort: { ...block.sort, direction: direction as "asc" | "desc" } })}>
+              <SelectTrigger className="h-8 w-24 min-w-0 text-xs" aria-label="Sort direction"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="asc">ascending</SelectItem>
+                <SelectItem value="desc">descending</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </label>
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Rows shown</span>
+          <Input type="number" min={1} max={500} value={block.rows ?? 12} onChange={(event) => patch({ rows: Math.min(500, Math.max(1, Number(event.target.value) || 12)) })} className="h-8 text-xs" aria-label="Rows shown" />
+        </label>
+      </div>
+      <div className="space-y-1 text-[11px] text-muted-foreground">
+        <span>Rows to keep, in R notation (empty keeps every row)</span>
+        <Input
+          value={filterDraft}
+          onChange={(event) => setFilterDraft(event.target.value)}
+          onBlur={() => {
+            if (!problem && filterDraft.trim() !== (block.filter ?? "")) patch({ filter: filterDraft.trim() || undefined });
+          }}
+          placeholder={columns.length > 1 ? `${columns[0].key} == "…" & ${columns[1].key} > 0` : 'column == "value"'}
+          className={cn("h-8 font-mono text-xs", problem && "border-destructive")}
+          aria-label="Row filter"
+        />
+        {problem ? <span className="text-destructive">{problem}</span> : <span>Column keys or labels (in backticks when they have spaces); comparisons, &amp; | !, %in% c(…), is.na(), grepl(), startsWith(). Applied when you leave the field.</span>}
+      </div>
+      {columns.length > 0 && (
+        <div className="space-y-1 text-[11px] text-muted-foreground">
+          <span>Columns{chosen ? ` (${chosen.length} of ${columns.length})` : " (all)"}</span>
+          <div className="flex flex-wrap gap-1">
+            {columns.map((column) => {
+              const on = !chosen || chosen.includes(column.key);
+              return (
+                <button key={column.key} type="button" onClick={() => toggleColumn(column.key)} className={cn("rounded-full border px-2 py-0.5 text-[11px]", on ? "bg-secondary text-foreground" : "text-muted-foreground line-through")} aria-pressed={on} title={column.key}>
+                  {column.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-4 text-[11px] text-muted-foreground">
+        <span>Readers may</span>
+        {TABLE_BLOCK_FLAGS.map((flag) => (
+          <label key={flag} className="inline-flex items-center gap-1.5">
+            <input type="checkbox" checked={Boolean(block[flag])} onChange={(event) => patch({ [flag]: event.target.checked || undefined } as Partial<TableBlock>)} className="h-3.5 w-3.5" />
+            {flag === "search" ? "search" : flag === "sortable" ? "sort by clicking a header" : "download as CSV"}
+          </label>
+        ))}
+      </div>
+      </div>
+      )}
+    </div>
+  );
+}
+
+function TableSelect({ value, tables, onChange }: { value: string; tables: ReportTable[]; onChange: (datasetId: string) => void }) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Table">
+        <SelectValue placeholder="Choose a table" />
+      </SelectTrigger>
+      <SelectContent>
+        {tables.map((table) => (
+          <SelectItem key={table.datasetId} value={table.datasetId}>
+            {table.name}
+            <span className="ml-1.5 text-xs text-muted-foreground">{table.output ? "output" : "input"}</span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function ColumnSelect({ value, columns, onChange, label, allowNone, numericFirst }: { value: string; columns: ExploreColumn[]; onChange: (key: string) => void; label: string; allowNone?: boolean; numericFirst?: boolean }) {
+  const ordered = numericFirst ? [...numericColumns(columns), ...columns.filter((column) => column.type !== "number")] : columns;
+  return (
+    <Select value={value || (allowNone ? "__none__" : undefined)} onValueChange={(next) => onChange(next === "__none__" ? "" : next)}>
+      <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label={label}>
+        <SelectValue placeholder={label} />
+      </SelectTrigger>
+      <SelectContent>
+        {allowNone && <SelectItem value="__none__">None</SelectItem>}
+        {ordered.map((column) => (
+          <SelectItem key={column.key} value={column.key}>
+            {column.label}
+            <span className="ml-1.5 text-xs text-muted-foreground">{column.type}</span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function ChartControls({ block, tables, onPatch }: { block: ChartBlock; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  const columns = tables.find((table) => table.datasetId === block.datasetId)?.columns ?? [];
+  const needsY = CHART_KIND_LABELS[block.chart].needsY;
+  const patch = (values: Partial<ChartBlock>) => onPatch(values as Partial<ReportBlock>);
+  return (
+    <div className="mb-3 grid gap-2 border-b pb-3 sm:grid-cols-2">
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+        <span>Table</span>
+        <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => patch({ datasetId, x: "", y: undefined, color: undefined })} />
+      </label>
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+        <span>Chart</span>
+        <Select value={block.chart} onValueChange={(chart) => patch({ chart: chart as ChartKind })}>
+          <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Chart type"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {CHART_KINDS.map((kind) => (
+              <SelectItem key={kind} value={kind}>
+                {CHART_KIND_LABELS[kind].label}
+                <span className="ml-1.5 text-xs text-muted-foreground">{CHART_KIND_LABELS[kind].description}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </label>
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+        <span>{block.chart === "box" ? "Groups (x axis)" : block.chart === "scatter" ? "X axis" : "Column"}</span>
+        <ColumnSelect value={block.x} columns={columns} onChange={(x) => patch({ x })} label="Column" numericFirst={block.chart !== "box" && block.chart !== "bar"} />
+      </label>
+      {needsY && (
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>{block.chart === "box" ? "Values (numeric)" : "Y axis (numeric)"}</span>
+          <ColumnSelect value={block.y ?? ""} columns={numericColumns(columns)} onChange={(y) => patch({ y })} label="Numeric column" />
+        </label>
+      )}
+      {block.chart !== "box" && (
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Colour by</span>
+          <ColumnSelect value={block.color ?? ""} columns={columns.filter((column) => column.type !== "number")} onChange={(color) => patch({ color: color || undefined })} label="Colour" allowNone />
+        </label>
+      )}
+    </div>
+  );
+}
+
+function ChartBlockView({ block, table, filters, active }: { block: ChartBlock; table: ReportTable | null; filters: ReportFilter[]; active: ActiveFilters }) {
+  const { frame, rows, error } = useFilteredTable(table && block.x ? table : null, filters, active);
+  if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
+  if (!block.x) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a column.</div>;
+  if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
+  if (!frame) return <Skeleton className="h-64 w-full" />;
+  const narrowed = filtersApply(table, filters, active);
+  const result = buildChart(rows, table.columns, { chart: block.chart, x: block.x, y: block.y, color: block.color }, frame.truncated ? frame.total : undefined);
+  return (
+    <div>
+      {result.data.length > 0 ? (
+        <PlotlyChart data={result.data} layout={result.layout} height={300} className="w-full" />
+      ) : (
+        <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{result.notes[0] ?? "Nothing to draw yet."}</div>
+      )}
+      {result.data.length > 0 && result.notes.length > 0 && <p className="mt-1 text-[11px] text-muted-foreground">{result.notes.join(" ")}</p>}
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {table.name}
+        {narrowed ? `, ${rows.length.toLocaleString()} rows after page filters` : ""}
+      </p>
+    </div>
+  );
+}
+
+function MetricControls({ block, tables, onPatch }: { block: MetricBlock; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  const columns = tables.find((table) => table.datasetId === block.datasetId)?.columns ?? [];
+  const patch = (values: Partial<MetricBlock>) => onPatch(values as Partial<ReportBlock>);
+  const toggle = (stat: MetricStat) => {
+    const next = block.stats.includes(stat) ? block.stats.filter((entry) => entry !== stat) : [...block.stats, stat].slice(-4);
+    if (next.length > 0) patch({ stats: next });
+  };
+  return (
+    <div className="mb-3 space-y-2 border-b pb-3">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Table</span>
+          <TableSelect value={block.datasetId} tables={tables} onChange={(datasetId) => patch({ datasetId, column: "" })} />
+        </label>
+        <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+          <span>Column</span>
+          <ColumnSelect value={block.column} columns={columns} onChange={(column) => patch({ column })} label="Column" numericFirst />
+        </label>
+      </div>
+      <div className="flex flex-wrap gap-1" role="group" aria-label="Numbers to show">
+        {METRIC_STATS.map((stat) => (
+          <button
+            key={stat}
+            type="button"
+            onClick={() => toggle(stat)}
+            aria-pressed={block.stats.includes(stat)}
+            className={cn("rounded-full border px-2 py-0.5 text-[11px]", block.stats.includes(stat) ? "border-transparent bg-secondary font-medium" : "text-muted-foreground hover:bg-muted")}
+          >
+            {METRIC_STAT_LABELS[stat]}
+          </button>
+        ))}
+        <span className="self-center text-[10px] text-muted-foreground">up to four</span>
+      </div>
+    </div>
+  );
+}
+
+function MetricBlockView({ block, table, filters, active }: { block: MetricBlock; table: ReportTable | null; filters: ReportFilter[]; active: ActiveFilters }) {
+  const { frame, rows, error } = useFilteredTable(table && block.column ? table : null, filters, active);
+  if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
+  if (!block.column) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a column.</div>;
+  if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
+  if (!frame) return <Skeleton className="h-20 w-full" />;
+  const narrowed = filtersApply(table, filters, active);
+  const stats = computeStats(rows, block.column);
+  return (
+    <div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(4, block.stats.length)}, minmax(0, 1fr))` }}>
+        {block.stats.map((stat) => (
+          <div key={stat} className="rounded-md border bg-muted/20 px-3 py-2">
+            <div className="text-xl font-semibold tabular-nums">{formatStat(stats[stat])}</div>
+            <div className="text-[11px] text-muted-foreground">{METRIC_STAT_LABELS[stat]}</div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {table.name}
+        {frame.truncated ? `, first ${frame.rows.length.toLocaleString()} of ${frame.total.toLocaleString()} rows` : ""}
+        {narrowed ? `, ${rows.length.toLocaleString()} rows after page filters` : ""}
+      </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Built-in views: the subject timeline and the heatmap, drawn from a table.
+// ---------------------------------------------------------------------------
+
+type ViewBlock = Extract<ReportBlock, { type: "view" }>;
+
+function viewTitle(block: ViewBlock, tables: ReportTable[]): string {
+  const table = tables.find((entry) => entry.datasetId === block.datasetId);
+  return `${BUILT_IN_VIEWS[block.view].label}${table ? ` of ${table.name}` : ""}`;
+}
+
+function ViewControls({ block, tables, onPatch }: { block: ViewBlock; tables: ReportTable[]; onPatch: (patch: Partial<ReportBlock>) => void }) {
+  const candidates = tables.filter((table) => table.views.length > 0);
+  const patch = (values: Partial<ViewBlock>) => onPatch(values as Partial<ReportBlock>);
+  const options = block.options ?? {};
+  const setOption = (key: string, value: string | number) => patch({ options: { ...options, [key]: value } });
+  return (
+    <div className="mb-3 grid gap-2 border-b pb-3 sm:grid-cols-2">
+      {block.view === "heatmap" && (
+        <>
+          <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+            <span>Values</span>
+            <Select value={String(options.value ?? "log10_ra")} onValueChange={(value) => setOption("value", value)}>
+              <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Heatmap values"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="log10_ra">log10 abundance</SelectItem>
+                <SelectItem value="ra">Relative abundance</SelectItem>
+                <SelectItem value="reads">Reads</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+            <span>Taxa and order</span>
+            <div className="flex gap-1">
+              <Select value={String(options.nTaxa ?? 35)} onValueChange={(value) => setOption("nTaxa", Number(value))}>
+                <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Number of taxa"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {["20", "35", "50", "80", "120"].map((entry) => <SelectItem key={entry} value={entry}>{entry} taxa</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Select value={String(options.order ?? "prevalence")} onValueChange={(value) => setOption("order", value)}>
+                <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="Taxon order"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="prevalence">by prevalence</SelectItem>
+                  <SelectItem value="abundance">by abundance</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </label>
+        </>
+      )}
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+        <span>Table</span>
+        <TableSelect value={block.datasetId} tables={candidates} onChange={(datasetId) => patch({ datasetId })} />
+      </label>
+      <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+        <span>View</span>
+        <Select value={block.view} onValueChange={(view) => patch({ view: view as BuiltInView })}>
+          <SelectTrigger className="h-8 w-full min-w-0 text-xs [&>span]:truncate" aria-label="View"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {(Object.entries(BUILT_IN_VIEWS) as Array<[BuiltInView, { label: string; description: string }]>).map(([id, meta]) => (
+              <SelectItem key={id} value={id} title={meta.description}>
+                {meta.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </label>
+    </div>
+  );
+}
+
+function ViewBlockView({ block, table, scopeQuery, reportId, filters, active }: { block: ViewBlock; table: ReportTable | null; scopeQuery: string;
+  reportId: string; filters: ReportFilter[]; active: ActiveFilters }) {
+  if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
+  if (!table.views.includes(block.view)) {
+    return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">{table.name} lacks the roles this view needs (sample, subject, timepoint, taxon and count).</div>;
+  }
+  // A page filter on the table's group column narrows the heatmap to that group.
+  const groupFilter = filters.find((filter) => filter.datasetId === table.datasetId && filter.column === table.roles.group && (active[filter.id]?.length ?? 0) > 0);
+  const options = block.options ?? {};
+  const heatmapOptions: HeatmapOptions = {
+    group: groupFilter ? active[groupFilter.id][0] : null,
+    value: (options.value as HeatmapOptions["value"]) ?? "log10_ra",
+    order: (options.order as HeatmapOptions["order"]) ?? "prevalence",
+    nTaxa: typeof options.nTaxa === "number" ? options.nTaxa : 35,
+  };
+  return (
+    <div>
+      {block.view === "heatmap" ? (
+        <HeatmapView datasetId={block.datasetId} height={420} options={heatmapOptions} />
+      ) : (
+        <div className="max-h-[420px] overflow-y-auto rounded-md border">
+          <SubjectTimelineOverview datasetId={block.datasetId} />
+        </div>
+      )}
+      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+        <span>
+          {table.name}
+          {block.view === "heatmap" && groupFilter ? `, ${frameColumnLabel(table.columns, groupFilter.column)}: ${heatmapOptions.group}` : ""}
+          {block.view !== "heatmap" && filtersApply(table, filters, active) ? ", page filters do not apply to this view" : ""}
+        </span>
+        <span className="flex-1" />
+        <Link href={`/explore/reports/${encodeURIComponent(reportId)}${scopeQuery}&mode=edit&view=canvas&focus=${encodeURIComponent(`view:${block.datasetId}:${block.view}`)}`} className="inline-flex items-center gap-1 hover:underline">
+          <LayoutGrid className="h-3 w-3" /> Show on canvas
+        </Link>
+        <Link href={`/explore/datasets/${block.datasetId}/${block.view}${scopeQuery}`} className="inline-flex items-center gap-1 hover:underline">
+          Open <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The way out of the app: a link that opens the live page for anyone who has
+ * it, carrying the page filters as set. (A downloadable HTML file was tried
+ * and set aside until sharing has proper access control.)
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function SharePopover({ reportId, share, canEdit, filters, active, onChanged }: { reportId: string; share: ReportShare | null; canEdit: boolean; filters: ReportFilter[]; active: ActiveFilters; onChanged: () => Promise<unknown> }) {
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const query = new URLSearchParams();
+  for (const filter of filters) for (const value of active[filter.id] ?? []) query.append(`f.${filter.id}`, value);
+  const hasActive = query.size > 0;
+  const sharePath = share ? `/share/reports/${share.token}${hasActive ? `?${query.toString()}` : ""}` : null;
+  const shareUrl = () => `${window.location.origin}${sharePath ?? ""}`;
+  const create = async () => {
+    setBusy(true);
+    try {
+      await postJson(`/api/explore/reports/${encodeURIComponent(reportId)}/share`, {});
+      await onChanged();
+      toast.success("Share link created");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not create the link");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stop = async () => {
+    setBusy(true);
+    try {
+      await postJson(`/api/explore/reports/${encodeURIComponent(reportId)}/share`, undefined, "DELETE");
+      await onChanged();
+      toast.success("Sharing stopped; the old link no longer works");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not stop sharing");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl());
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      toast.error("Could not copy; select the link and copy it by hand");
+    }
+  };
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" className="h-8">
+          <Share2 className="h-3.5 w-3.5 mr-1.5" />
+          Share
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-[22rem] p-0 text-sm" onOpenAutoFocus={(event) => event.preventDefault()}>
+        <div className="flex items-center gap-2.5 border-b px-4 py-3">
+          <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-full", share ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground")}>
+            <Globe className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-medium leading-tight">Share by link</p>
+            <p className="text-xs text-muted-foreground">{share ? "Anyone with the link can read it" : "Not shared"}</p>
+          </div>
+          {share && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Live
+            </span>
+          )}
+        </div>
+        <div className="px-4 py-3">
+          {share ? (
+            <>
+              <div className="flex items-center gap-1.5">
+                <Input readOnly value={sharePath ?? ""} title={sharePath ?? undefined} onClick={(event) => event.currentTarget.select()} className="h-9 flex-1 truncate font-mono text-xs" />
+                <Button size="sm" variant={copied ? "outline" : "default"} className="h-9 shrink-0" onClick={() => void copy()}>
+                  {copied ? <Check className="mr-1.5 h-4 w-4 text-emerald-600" /> : <Copy className="mr-1.5 h-4 w-4" />}
+                  {copied ? "Copied" : "Copy"}
+                </Button>
+              </div>
+              <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
+                No sign-in needed{hasActive ? "; the current filters are carried in the link" : ""}. Shared since {formatDateTime(share.publishedAt)}.
+              </p>
+              {canEdit && (
+                <div className="mt-3 flex justify-end border-t pt-3">
+                  <Button size="sm" variant="ghost" className="h-8 text-muted-foreground hover:text-destructive" onClick={() => void stop()} disabled={busy}>
+                    {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Unlink className="mr-1.5 h-3.5 w-3.5" />}
+                    Stop sharing
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : canEdit ? (
+            <>
+              <p className="text-xs leading-relaxed text-muted-foreground">Create a link that opens the live page without signing in. Anyone with the link can read it; you can stop sharing at any time.</p>
+              <Button size="sm" className="mt-3 w-full" onClick={() => void create()} disabled={busy}>
+                {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Share2 className="mr-2 h-4 w-4" />}
+                Create share link
+              </Button>
+            </>
+          ) : (
+            <p className="text-xs leading-relaxed text-muted-foreground">This report has no share link. Ask an editor to create one.</p>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}

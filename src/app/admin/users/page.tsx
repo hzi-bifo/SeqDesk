@@ -308,50 +308,50 @@ export default function UsersPage() {
           </div>
 
           {/* Table Header */}
-          <div className="grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-stone-100 bg-stone-50/50 text-xs font-medium text-muted-foreground">
+          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,9rem)_minmax(0,10rem)_8rem_4rem_6rem_2rem] gap-4 px-5 py-2.5 border-b border-stone-100 bg-stone-50/50 text-xs font-medium text-muted-foreground">
             <button
               onClick={() => handleSort("name")}
-              className="col-span-3 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               {memberLabel}
               {sortField === "name" && <ArrowUpDown className="h-3 w-3" />}
             </button>
             <button
               onClick={() => handleSort("position")}
-              className="col-span-2 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Position
               {sortField === "position" && <ArrowUpDown className="h-3 w-3" />}
             </button>
             <button
               onClick={() => handleSort("department")}
-              className="col-span-2 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Department
               {sortField === "department" && <ArrowUpDown className="h-3 w-3" />}
             </button>
             <button
               onClick={() => handleSort("orders")}
-              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors justify-end"
+              className="flex items-center gap-1 hover:text-foreground transition-colors justify-end text-right"
             >
               {sortField === "orders" && <ArrowUpDown className="h-3 w-3" />}
               Sequencing Orders
             </button>
             <button
               onClick={() => handleSort("studies")}
-              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors justify-end"
+              className="flex items-center gap-1 hover:text-foreground transition-colors justify-end text-right"
             >
               {sortField === "studies" && <ArrowUpDown className="h-3 w-3" />}
               Studies
             </button>
             <button
               onClick={() => handleSort("joined")}
-              className="col-span-2 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Joined
               {sortField === "joined" && <ArrowUpDown className="h-3 w-3" />}
             </button>
-            <div className="col-span-1"></div>
+            <div />
           </div>
 
           {/* Users List */}
@@ -360,10 +360,10 @@ export default function UsersPage() {
               <Link
                 key={user.id}
                 href={`/admin/users/${user.id}`}
-                className="grid grid-cols-12 gap-4 px-5 py-3.5 hover:bg-stone-50/80 transition-colors group items-center"
+                className="grid grid-cols-[minmax(0,1fr)_minmax(0,9rem)_minmax(0,10rem)_8rem_4rem_6rem_2rem] gap-4 px-5 py-3.5 hover:bg-stone-50/80 transition-colors group items-center"
               >
                 {/* User Info */}
-                <div className="col-span-3 flex items-center gap-3 min-w-0">
+                <div className="flex items-center gap-3 min-w-0">
                   <div
                     className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-medium text-white shrink-0"
                     style={{ backgroundColor: '#1e3a8a' }}
@@ -386,42 +386,42 @@ export default function UsersPage() {
                 </div>
 
                 {/* Position */}
-                <div className="col-span-2">
-                  <span className="text-sm text-muted-foreground">
+                <div className="min-w-0">
+                  <span className="text-sm text-muted-foreground block truncate">
                     {user.researcherRole ? ROLE_LABELS[user.researcherRole] || user.researcherRole : <span className="text-stone-300">-</span>}
                   </span>
                 </div>
 
                 {/* Department */}
-                <div className="col-span-2 min-w-0">
+                <div className="min-w-0">
                   <span className="text-sm text-muted-foreground truncate block">
                     {user.department?.name || <span className="text-stone-300">-</span>}
                   </span>
                 </div>
 
                 {/* Orders */}
-                <div className="col-span-1 text-right">
+                <div className="text-right">
                   <span className="text-sm text-muted-foreground tabular-nums">
                     {user._count.orders}
                   </span>
                 </div>
 
                 {/* Studies */}
-                <div className="col-span-1 text-right">
+                <div className="text-right">
                   <span className="text-sm text-muted-foreground tabular-nums">
                     {user._count.studies}
                   </span>
                 </div>
 
                 {/* Joined */}
-                <div className="col-span-2">
-                  <span className="text-sm text-muted-foreground tabular-nums">
+                <div>
+                  <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
                     {formatDate(user.createdAt)}
                   </span>
                 </div>
 
                 {/* Arrow */}
-                <div className="col-span-1 flex justify-end">
+                <div className="flex justify-end">
                   <ChevronRight className="h-4 w-4 text-stone-300 group-hover:text-stone-400 transition-colors" />
                 </div>
               </Link>

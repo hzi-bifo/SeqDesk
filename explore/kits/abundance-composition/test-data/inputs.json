@@ -1,0 +1,18 @@
+{
+  "inputs": {
+    "profiles": {
+      "path": "inputs/profiles.tsv",
+      "schemaPath": "inputs/profiles.schema.json",
+      "tableKind": "taxon-abundance-long",
+      "roles": { "sample": "sample_db_id", "taxon": "TAXPATHSN", "taxon_id": "TAXID", "rank": "RANK", "value": "PERCENTAGE", "group": "cohort_group" },
+      "datasetId": "internal_abundance_test",
+      "versionId": "internal_abundance_v1",
+      "rowCount": 6,
+      "name": "Internal percentage fixture"
+    }
+  },
+  "params": { "rank": "species", "top_n": 15 },
+  "outputDir": "outputs",
+  "run": { "id": "internal_abundance_run", "runNumber": "INTERNAL-TEST", "analysisId": "internal_abundance_analysis", "revision": 1 },
+  "curation": { "lists": [] }
+}

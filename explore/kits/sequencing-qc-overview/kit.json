@@ -1,0 +1,41 @@
+{
+  "kitVersion": 1,
+  "id": "sequencing-qc-overview",
+  "name": "Sequencing QC overview",
+  "description": "Overview of a sequencing table: reads per sample (stacked by run when a run_id column exists), read quality and Q30 per run, a per-sample QC table with low-yield flags and a per-run table. Panels that need columns the table does not have are skipped and listed in the run notes.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [
+    {
+      "alias": "sequencing",
+      "label": "Sequencing table",
+      "description": "One row per sample per sequencing run, such as the built-in Sequencing dataset. Uses read_count_1, read_count_2, avg_quality_1, avg_quality_2, q30_score, run_id, platform, instrument and sample_id when present.",
+      "tableKind": "sample-summary",
+      "requiredRoles": ["sample"],
+      "optionalRoles": ["group", "date"]
+    }
+  ],
+  "params": {
+    "type": "object",
+    "properties": {
+      "low_read_threshold": {
+        "type": "integer",
+        "title": "Low-yield threshold (reads)",
+        "description": "Samples with fewer total reads than this are flagged as low yield.",
+        "default": 10000,
+        "minimum": 0
+      }
+    }
+  },
+  "outputs": [
+    { "name": "reads_per_sample", "kind": "figure", "description": "Total reads per sample, stacked by run when run_id is present." },
+    { "name": "quality_by_run", "kind": "figure", "description": "Average read quality per run (box plots) and Q30 per run." },
+    { "name": "qc_table", "kind": "table", "description": "Per-sample read totals, quality means, runs and low-yield flags." },
+    { "name": "runs", "kind": "table", "description": "Per-run platform, sample count, Q30 and read totals." }
+  ],
+  "citation": "Built with pandas (McKinney 2010; The pandas development team, https://pandas.pydata.org), NumPy (Harris et al. 2020, https://numpy.org) and Plotly (Plotly Technologies Inc., https://plotly.com/python/). See README.md for details.",
+  "tags": ["qc", "sequencing", "reads"],
+  "provider": "SeqDesk",
+  "version": "1.0.0"
+}
