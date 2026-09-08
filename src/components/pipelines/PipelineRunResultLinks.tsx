@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, FileText, Files } from "lucide-react";
+import { ChevronDown, ExternalLink, FileText, Files } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -71,13 +71,13 @@ export function PipelineRunResultLinks({
   }
 
   return (
-    <div className="flex max-w-[260px] flex-wrap items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
+    <div className="flex min-w-0 max-w-[260px] flex-col items-start gap-1" onClick={(event) => event.stopPropagation()}>
       {primary.previewable ? (
         <a
           href={fileHref(primary)}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex min-w-0 items-center gap-1 text-xs text-primary hover:underline"
+          className="inline-flex min-w-0 max-w-full items-center gap-1 text-xs text-primary hover:underline"
           title={primary.path}
         >
           <FileText className="h-3 w-3 shrink-0" />
@@ -85,7 +85,7 @@ export function PipelineRunResultLinks({
           <ExternalLink className="h-3 w-3 shrink-0" />
         </a>
       ) : (
-        <span className="inline-flex min-w-0 items-center gap-1 text-xs text-muted-foreground" title={primary.path}>
+        <span className="inline-flex min-w-0 max-w-full items-center gap-1 text-xs text-muted-foreground" title={primary.path}>
           <FileText className="h-3 w-3 shrink-0" />
           <span className="truncate">{primary.name}</span>
         </span>
@@ -96,11 +96,11 @@ export function PipelineRunResultLinks({
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              aria-label={`Open ${secondary.length} additional result files`}
+              size="sm"
+              className="h-6 gap-1 px-1 text-xs font-normal text-muted-foreground"
             >
-              <Files className="h-3.5 w-3.5" />
+              More files
+              <ChevronDown className="size-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-72">

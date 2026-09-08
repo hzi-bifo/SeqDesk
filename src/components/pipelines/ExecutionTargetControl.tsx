@@ -22,18 +22,18 @@ export interface SlurmAvailability {
 const SLURM_AVAILABILITY_KEY = "/api/admin/settings/pipelines/test-setting:slurm";
 
 function formatMode(mode: ExecutionMode): string {
-  return mode === "slurm" ? "SLURM" : "Local";
+  return mode === "slurm" ? "Compute cluster (SLURM)" : "SeqDesk server (local)";
 }
 
 function formatSource(source: ExecutionPolicySource | undefined): string {
   switch (source) {
     case "pipeline":
-      return "pipeline policy";
+      return "this pipeline's default setting";
     case "run":
-      return "run override";
+      return "the setting saved for this run";
     case "global":
     default:
-      return "global policy";
+      return "the SeqDesk default setting";
   }
 }
 
@@ -109,16 +109,16 @@ export function getExecutionTargetBlockMessage({
   if (effectiveMode !== "slurm") return null;
 
   if (slurmAvailabilityLoading) {
-    return "Checking SLURM availability before starting this run.";
+    return "Checking the compute cluster before starting this run.";
   }
 
   if (slurmAvailabilityError) {
-    return `Could not verify SLURM: ${slurmAvailabilityError}. Choose Local to run on this host.`;
+    return `Could not check the compute cluster: ${slurmAvailabilityError}. Choose SeqDesk server to run without the cluster.`;
   }
 
   if (!slurmAvailability?.success) {
-    const reason = slurmAvailability?.message || "SLURM is not available on this host.";
-    return `SLURM unavailable: ${reason}. Choose Local to run on this host.`;
+    const reason = slurmAvailability?.message || "No SLURM connection is available.";
+    return `Compute cluster unavailable: ${reason}. Choose SeqDesk server to run without the cluster.`;
   }
 
   return null;
@@ -150,7 +150,7 @@ export function ExecutionTargetControl({
   slurmAvailabilityLoading = false,
   slurmAvailabilityError = null,
   id = "execution-target",
-  label = "Execution Target",
+  label = "Where to run",
   className,
 }: ExecutionTargetControlProps) {
   const effectiveMode = getEffectiveExecutionMode(value, executionPolicy);
@@ -167,10 +167,19 @@ export function ExecutionTargetControl({
     slurmAvailabilityLoading ||
     Boolean(slurmAvailabilityError) ||
     slurmAvailability?.success !== true;
-  const slurmDisabledReason =
-    slurmAvailabilityError ||
-    slurmAvailability?.message ||
-    (slurmAvailabilityLoading ? "Checking SLURM availability..." : null);
+  const slurmDisabledReason = slurmAvailabilityLoading
+    ? "Checking whether a compute cluster is available…"
+    : slurmAvailabilityError
+      ? `Could not check the compute cluster: ${slurmAvailabilityError}`
+      : /Missing required SLURM command/i.test(slurmAvailability?.details ?? "")
+        ? "SLURM is not set up on this SeqDesk server: required cluster tools are missing or unavailable. An administrator can check the cluster setup."
+        : slurmAvailability?.message
+          ? `Compute cluster unavailable: ${slurmAvailability.message}`
+          : "No available SLURM connection has been confirmed. An administrator can check the cluster setup.";
+  // Keep the saved request as "default"; only simplify its presentation when
+  // local is the default and the cluster is confirmed unavailable.
+  const localOnly = defaultMode === "local" && effectiveMode === "local" &&
+    slurmAvailability?.success === false && !slurmAvailabilityLoading && !slurmAvailabilityError;
 
   const options: Array<{
     value: ExecutionModeRequest;
@@ -178,39 +187,42 @@ export function ExecutionTargetControl({
     disabled?: boolean;
     title?: string | null;
   }> = [
-    {
+    ...(!localOnly ? [{
       value: "default",
-      label: `Default (${formatMode(defaultMode)})`,
-      title: `Uses ${sourceLabel}.`,
-    },
-    { value: "local", label: "Local" },
+      label: "Use default",
+      title: `Uses ${sourceLabel}: ${formatMode(defaultMode)}.`,
+    } as const] : []),
+    { value: "local", label: formatMode("local") },
     {
       value: "slurm",
-      label: "SLURM",
+      label: formatMode("slurm"),
       disabled: slurmDisabled,
-      title: slurmDisabledReason,
+      title: slurmDisabled ? slurmDisabledReason : "Runs on the configured compute cluster (SLURM).",
     },
   ];
 
   return (
     <div className={cn("rounded-xl border border-border bg-card p-4", className)}>
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div id={`${id}-label`} className="text-xs font-medium text-foreground">
             {label}
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Default resolves to {formatMode(defaultMode)} from {sourceLabel}.
+          <p id={`${id}-description`} className="mt-1 text-xs text-muted-foreground">
+            {effectiveMode === "local"
+              ? "Runs on the computer where SeqDesk is installed."
+              : "Runs on the configured compute cluster (SLURM)."}
           </p>
         </div>
 
         <div
           role="radiogroup"
           aria-labelledby={`${id}-label`}
-          className="inline-flex w-full max-w-full overflow-hidden rounded-lg border border-border bg-background p-0.5 md:w-auto"
+          aria-describedby={`${id}-description`}
+          className="inline-flex w-full max-w-full flex-wrap gap-0.5 rounded-lg border border-border bg-background p-0.5 sm:w-auto"
         >
           {options.map((option) => {
-            const selected = value === option.value;
+            const selected = value === option.value || (localOnly && value === "default" && option.value === "local");
             return (
               <button
                 key={option.value}
@@ -218,6 +230,7 @@ export function ExecutionTargetControl({
                 role="radio"
                 aria-checked={selected}
                 disabled={option.disabled}
+                aria-describedby={option.value === "slurm" && slurmDisabled ? `${id}-cluster-status` : undefined}
                 title={option.title || undefined}
                 onClick={() => onChange(option.value)}
                 className={cn(
@@ -236,7 +249,15 @@ export function ExecutionTargetControl({
         </div>
       </div>
 
-      <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+      {slurmDisabled && <div id={`${id}-cluster-status`} className={cn("mt-3 space-y-1 text-xs", blockMessage ? "text-destructive" : "text-muted-foreground")} role="status">
+        <p>{blockMessage || slurmDisabledReason}</p>
+        {slurmAvailability?.details && !slurmAvailabilityLoading && !slurmAvailabilityError && <details>
+          <summary className="cursor-pointer underline underline-offset-4">Technical details</summary>
+          <p className="mt-1 whitespace-pre-wrap break-words">{slurmAvailability.details}</p>
+        </details>}
+      </div>}
+
+      {!(slurmDisabled && blockMessage) && <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
         {slurmAvailabilityLoading ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
         ) : blockMessage ? (
@@ -244,11 +265,11 @@ export function ExecutionTargetControl({
         ) : null}
         <span className={cn(blockMessage && "text-destructive")}>
           {blockMessage ||
-            `Selected target: ${
-              value === "default" ? `Default (${formatMode(effectiveMode)})` : formatMode(effectiveMode)
-            }.`}
+            (value === "default"
+              ? `Using ${sourceLabel}.`
+              : "This choice applies only to this run.")}
         </span>
-      </div>
+      </div>}
     </div>
   );
 }
