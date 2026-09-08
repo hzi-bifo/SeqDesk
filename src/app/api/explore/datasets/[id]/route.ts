@@ -1,20 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireTargetAccess } from "@/lib/explore/authorization";
-import { deleteDataset, getDatasetDetail, getDatasetRecord, updateDatasetRoles } from "@/lib/explore/datasets";
+import { deleteDataset, getDatasetDetail, updateDatasetRoles } from "@/lib/explore/datasets";
 import { EXPLORE_ROLES, type ExploreRole, type ExploreRoleMap } from "@/lib/explore/types";
-import { ExploreRouteError, exploreErrorResponse, readJsonBody, requireExploreSession } from "../../_shared";
+import { ExploreRouteError, exploreErrorResponse, loadAccessibleDataset, readJsonBody, requireExploreSession } from "../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type RouteContext = { params: Promise<{ id: string }> };
-
-async function loadAccessibleDataset(session: Awaited<ReturnType<typeof requireExploreSession>>, id: string, level: "read" | "write") {
-  const record = await getDatasetRecord(id);
-  if (!record) throw new ExploreRouteError(404, "Not found");
-  await requireTargetAccess(session, record.targetKey, level);
-  return record;
-}
 
 export async function GET(_request: NextRequest, context: RouteContext) {
   try {

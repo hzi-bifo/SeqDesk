@@ -543,36 +543,36 @@ export default function DepartmentsPage() {
           </div>
 
           {/* Table Header */}
-          <div className="grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-stone-100 bg-stone-50/50 text-xs font-medium text-muted-foreground">
+          <div className="grid grid-cols-[minmax(0,1fr)_5.5rem_4rem_6rem_auto] gap-4 px-5 py-2.5 border-b border-stone-100 bg-stone-50/50 text-xs font-medium text-muted-foreground">
             <button
               onClick={() => handleSort("name")}
-              className="col-span-6 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Department
               {sortField === "name" && <ArrowUpDown className="h-3 w-3" />}
             </button>
             <button
               onClick={() => handleSort("status")}
-              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Status
               {sortField === "status" && <ArrowUpDown className="h-3 w-3" />}
             </button>
             <button
               onClick={() => handleSort("users")}
-              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors justify-end"
+              className="flex items-center gap-1 hover:text-foreground transition-colors justify-end"
             >
               {sortField === "users" && <ArrowUpDown className="h-3 w-3" />}
               Users
             </button>
             <button
               onClick={() => handleSort("created")}
-              className="col-span-2 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Created
               {sortField === "created" && <ArrowUpDown className="h-3 w-3" />}
             </button>
-            <div className="col-span-2 text-right">Actions</div>
+            <div className="text-right">Actions</div>
           </div>
 
           {/* Departments List */}
@@ -580,12 +580,12 @@ export default function DepartmentsPage() {
             {filteredDepartments.map((dept) => (
               <div
                 key={dept.id}
-                className={`grid grid-cols-12 gap-4 px-5 py-3.5 hover:bg-stone-50/80 transition-colors items-center ${
+                className={`grid grid-cols-[minmax(0,1fr)_5.5rem_4rem_6rem_auto] gap-4 px-5 py-3.5 hover:bg-stone-50/80 transition-colors items-center ${
                   !dept.isActive ? "opacity-60" : ""
                 }`}
               >
                 {/* Department Info */}
-                <div className="col-span-6 min-w-0">
+                <div className="min-w-0">
                   <p className="font-medium text-sm truncate">{dept.name}</p>
                   {dept.description && (
                     <p className="text-xs text-muted-foreground truncate mt-0.5">
@@ -595,7 +595,7 @@ export default function DepartmentsPage() {
                 </div>
 
                 {/* Status */}
-                <div className="col-span-1">
+                <div className="whitespace-nowrap">
                   <div className="flex items-center gap-2">
                     <span className={`h-2 w-2 rounded-full ${dept.isActive ? "bg-[#00BD7D]" : "bg-stone-400"}`} />
                     <span className={`text-xs font-medium ${dept.isActive ? "text-[#00BD7D]" : "text-stone-600"}`}>
@@ -605,21 +605,21 @@ export default function DepartmentsPage() {
                 </div>
 
                 {/* Users */}
-                <div className="col-span-1 text-right">
+                <div className="text-right">
                   <span className="text-sm text-muted-foreground tabular-nums">
                     {dept._count?.users || 0}
                   </span>
                 </div>
 
                 {/* Created */}
-                <div className="col-span-2">
+                <div>
                   <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
                     {formatDate(dept.createdAt)}
                   </span>
                 </div>
 
                 {/* Actions */}
-                <div className="col-span-2 flex items-center justify-end gap-1">
+                <div className="flex items-center justify-end gap-1">
                   <button
                     onClick={() => handleToggleActive(dept)}
                     className="p-1.5 rounded-md hover:bg-stone-100 transition-colors"

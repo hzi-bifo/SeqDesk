@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireTargetAccess } from "@/lib/explore/authorization";
-import { getDatasetRecord } from "@/lib/explore/datasets";
 import { createEdit, EXPLORE_EDIT_KINDS, listAllEdits, validateEdit } from "@/lib/explore/edits";
 import type { ExploreEditKind, ExploreEditTarget } from "@/lib/explore/types";
-import { ExploreRouteError, exploreErrorResponse, optionalString, readJsonBody, requireExploreSession } from "../../../_shared";
+import { ExploreRouteError, exploreErrorResponse, loadAccessibleDataset, optionalString, readJsonBody, requireExploreSession } from "../../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,9 +12,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   try {
     const session = await requireExploreSession();
     const { id } = await context.params;
-    const record = await getDatasetRecord(id);
-    if (!record) throw new ExploreRouteError(404, "Not found");
-    await requireTargetAccess(session, record.targetKey, "read");
+    await loadAccessibleDataset(session, id, "read");
     return NextResponse.json({ edits: await listAllEdits(id) });
   } catch (error) {
     return exploreErrorResponse(error);
@@ -27,9 +23,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const session = await requireExploreSession();
     const { id } = await context.params;
-    const record = await getDatasetRecord(id);
-    if (!record) throw new ExploreRouteError(404, "Not found");
-    await requireTargetAccess(session, record.targetKey, "write");
+    await loadAccessibleDataset(session, id, "write");
 
     const body = await readJsonBody(request);
     const kind = body.kind as ExploreEditKind;

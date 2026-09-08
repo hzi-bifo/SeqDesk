@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireTargetAccess } from "@/lib/explore/authorization";
 import { listCurationForViews } from "@/lib/explore/curation";
-import { computeDatasetCacheToken, fetchAllDatasetRows, getDatasetRecord } from "@/lib/explore/datasets";
+import { computeDatasetCacheToken, fetchAllDatasetRows } from "@/lib/explore/datasets";
 import { applyEditsToRows, listActiveEdits } from "@/lib/explore/edits";
 import { parseRoles, parseSchema } from "@/lib/explore/schema";
 import { computeHeatmap } from "@/lib/explore/views/heatmap/compute";
 import { adaptRowsForSubjectTimeline, curationFromLists } from "@/lib/explore/views/subject-timeline/adapter";
-import { ExploreRouteError, exploreErrorResponse, requireExploreSession } from "../../../../_shared";
+import { ExploreRouteError, exploreErrorResponse, loadAccessibleDataset, requireExploreSession } from "../../../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,9 +17,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const session = await requireExploreSession();
     const { id } = await context.params;
-    const record = await getDatasetRecord(id);
-    if (!record) throw new ExploreRouteError(404, "Not found");
-    await requireTargetAccess(session, record.targetKey, "read");
+    const record = await loadAccessibleDataset(session, id, "read");
 
     const versionId = record.currentVersionId ?? record.versions[0]?.id ?? null;
     const version = versionId ? record.versions.find((entry) => entry.id === versionId) ?? null : null;

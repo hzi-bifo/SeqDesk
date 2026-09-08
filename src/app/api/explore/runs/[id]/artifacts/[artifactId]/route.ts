@@ -27,8 +27,9 @@ const CONTENT_TYPES: Record<string, string> = {
 
 /**
  * Serve one artifact of a run. Files are only ever read from inside the
- * run folder (lexical and realpath checks). HTML is served with a strict
- * sandboxing content security policy so a report cannot reach the app.
+ * run folder (lexical and realpath checks). HTML and SVG are served with a
+ * strict sandboxing content security policy so a report (or a script inside
+ * an SVG opened directly) cannot reach the app.
  */
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
@@ -52,7 +53,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     };
     const fileName = path.basename(filePath).replace(/[^A-Za-z0-9._-]+/g, "_");
     headers["Content-Disposition"] = `${download ? "attachment" : "inline"}; filename="${fileName}"`;
-    if (artifact.format === "html") {
+    if (artifact.format === "html" || artifact.format === "svg") {
       headers["Content-Security-Policy"] = "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; sandbox allow-scripts";
     }
     const stream = Readable.toWeb(createReadStream(filePath)) as ReadableStream;

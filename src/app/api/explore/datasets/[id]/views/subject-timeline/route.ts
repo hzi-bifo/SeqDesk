@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireTargetAccess } from "@/lib/explore/authorization";
 import { listCurationForViews } from "@/lib/explore/curation";
 import { computeDatasetCacheToken, fetchAllDatasetRows, getDatasetRecord } from "@/lib/explore/datasets";
 import { applyEditsToRows, listActiveEdits } from "@/lib/explore/edits";
@@ -7,7 +6,7 @@ import { parseRoles, parseSchema } from "@/lib/explore/schema";
 import { adaptRowsForSubjectTimeline, curationFromLists } from "@/lib/explore/views/subject-timeline/adapter";
 import { curatedMarks, subjectComposition, subjectHighlights, subjectsTable } from "@/lib/explore/views/subject-timeline/compute";
 import type { SubjectTimelineRow } from "@/lib/explore/views/subject-timeline/types";
-import { ExploreRouteError, exploreErrorResponse, requireExploreSession } from "../../../../_shared";
+import { ExploreRouteError, exploreErrorResponse, loadAccessibleDataset, requireExploreSession } from "../../../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,9 +52,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const session = await requireExploreSession();
     const { id } = await context.params;
-    const record = await getDatasetRecord(id);
-    if (!record) throw new ExploreRouteError(404, "Not found");
-    await requireTargetAccess(session, record.targetKey, "read");
+    const record = await loadAccessibleDataset(session, id, "read");
 
     const token = await computeDatasetCacheToken(id);
     const adapted = await loadAdapted(id, token);

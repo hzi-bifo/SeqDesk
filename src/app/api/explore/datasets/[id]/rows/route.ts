@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireTargetAccess } from "@/lib/explore/authorization";
-import { computeDatasetCacheToken, fetchDatasetRows, getDatasetRecord } from "@/lib/explore/datasets";
+import { computeDatasetCacheToken, fetchDatasetRows } from "@/lib/explore/datasets";
 import { applyEditsToRows, listActiveEdits } from "@/lib/explore/edits";
-import { ExploreRouteError, exploreErrorResponse, requireExploreSession } from "../../../_shared";
+import { exploreErrorResponse, loadAccessibleDataset, requireExploreSession } from "../../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,9 +16,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const session = await requireExploreSession();
     const { id } = await context.params;
-    const record = await getDatasetRecord(id);
-    if (!record) throw new ExploreRouteError(404, "Not found");
-    await requireTargetAccess(session, record.targetKey, "read");
+    const record = await loadAccessibleDataset(session, id, "read");
 
     const versionId = record.currentVersionId ?? record.versions[0]?.id ?? null;
     const params = request.nextUrl.searchParams;

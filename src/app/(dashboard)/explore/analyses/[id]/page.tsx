@@ -127,23 +127,23 @@ export default function ExploreAnalysisPage() {
     [key, mutate]
   );
 
-  /** Make an older revision current again: its code, parameters and inputs become a new revision. */
+  /** Make an older version current again: its code, parameters and inputs become a new version. */
   const restoreRevision = useCallback(
     async (revision: RevisionSummary) => {
       if (revision.code === undefined) {
-        toast.error("The code of this revision is not loaded");
+        toast.error("The code of this version is not loaded");
         return;
       }
-      if (dirty && !window.confirm(`Discard the unsaved code changes and restore revision ${revision.number}?`)) return;
+      if (dirty && !window.confirm(`Discard the unsaved code changes and restore version ${revision.number}?`)) return;
       setBusy("restore");
       try {
-        await postJson(`${key}/revisions`, { code: revision.code, params: revision.params, inputs: revision.inputs, message: `Restored revision ${revision.number}` });
+        await postJson(`${key}/revisions`, { code: revision.code, params: revision.params, inputs: revision.inputs, message: `Restored version ${revision.number}` });
         setCode(revision.code);
         setParamValues(revision.params);
         await mutate();
-        toast.success(`Revision ${revision.number} restored as a new revision`);
+        toast.success(`Version ${revision.number} restored as a new version`);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not restore the revision");
+        toast.error(err instanceof Error ? err.message : "Could not restore the version");
       } finally {
         setBusy(null);
       }
@@ -399,7 +399,7 @@ function RevisionRow({
         </Button>
       )}
       {!current && (
-        <Button variant="ghost" size="sm" onClick={() => void onRestore()} disabled={busy} title="Make this revision current again, as a new revision">
+        <Button variant="ghost" size="sm" onClick={() => void onRestore()} disabled={busy} title="Make this version current again, as a new version">
           <RotateCcw className="mr-1 h-4 w-4" />
           Restore
         </Button>

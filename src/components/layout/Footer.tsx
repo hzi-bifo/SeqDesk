@@ -30,6 +30,7 @@ import {
   SIDEBAR_DEFAULT_WIDTH,
   SidebarContext,
 } from "./SidebarContext";
+import { useFooterNoteValue } from "./FooterNote";
 
 const FOOTER_HEIGHT_PROPERTY = "--seqdesk-footer-height";
 
@@ -496,6 +497,7 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
   const footerRef = useRef<HTMLElement | null>(null);
   const { showHelpText, isLoaded, toggleHelpText } = useHelpText();
   const sidebarContext = useContext(SidebarContext);
+  const pageNote = useFooterNoteValue();
   const collapsed = sidebarContext?.collapsed ?? false;
   const footerOffset = collapsed
     ? SIDEBAR_COLLAPSED_WIDTH
@@ -1617,6 +1619,11 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
                 </div>
               )}
             </div>
+          )}
+          {pageNote && (
+            <span className="hidden max-w-[40vw] truncate md:inline" title={pageNote}>
+              {pageNote}
+            </span>
           )}
           {currentTime && (
             <>

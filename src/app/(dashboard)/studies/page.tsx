@@ -82,6 +82,10 @@ export default function StudiesPage() {
 
   const isResearcher = session?.user?.role === "RESEARCHER";
   const isFacilityAdmin = session?.user?.role === "FACILITY_ADMIN";
+  // Title flexes; the short columns get fixed widths so they never wrap at medium widths.
+  const listGridCols = isFacilityAdmin
+    ? "md:grid-cols-[minmax(0,1fr)_6rem_minmax(0,9rem)_4.5rem_7rem_2rem]"
+    : "md:grid-cols-[minmax(0,1fr)_6rem_4.5rem_7rem_2rem]";
   const canCreateStudy = isResearcher || isFacilityAdmin;
 
   useEffect(() => {
@@ -284,26 +288,26 @@ export default function StudiesPage() {
           <div className="px-4 py-3 border-b border-border">
             <Skeleton className="h-9 w-full rounded-lg" />
           </div>
-          <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50">
-            <Skeleton className="col-span-5 h-3 w-12" />
-            <Skeleton className="col-span-2 h-3 w-12" />
-            <Skeleton className="col-span-2 h-3 w-20" />
-            <Skeleton className="col-span-1 h-3 w-14 ml-auto" />
-            <Skeleton className="col-span-2 h-3 w-16" />
+          <div className="hidden md:grid md:grid-cols-[minmax(0,1fr)_6rem_4.5rem_7rem_2rem] gap-4 px-5 py-2.5 border-b border-border bg-secondary/50">
+            <Skeleton className="h-3 w-12" />
+            <Skeleton className="h-3 w-12" />
+            <Skeleton className="h-3 w-14 ml-auto" />
+            <Skeleton className="h-3 w-16" />
+            <div />
           </div>
           <div className="divide-y divide-border">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="hidden md:grid grid-cols-12 gap-4 px-5 py-4 items-center">
-                <div className="col-span-5 space-y-1.5">
+              <div key={i} className="hidden md:grid md:grid-cols-[minmax(0,1fr)_6rem_4.5rem_7rem_2rem] gap-4 px-5 py-4 items-center">
+                <div className="space-y-1.5">
                   <Skeleton className="h-4 w-40" />
                   <Skeleton className="h-3 w-28" />
                 </div>
-                <div className="col-span-2">
+                <div>
                   <Skeleton className="h-5 w-20 rounded-full" />
                 </div>
-                <Skeleton className="col-span-2 h-3 w-24" />
-                <Skeleton className="col-span-1 h-3 w-6 ml-auto" />
-                <Skeleton className="col-span-2 h-3 w-20" />
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-3 w-6 ml-auto" />
+                <Skeleton className="h-3 w-20" />
               </div>
             ))}
           </div>
@@ -476,37 +480,37 @@ export default function StudiesPage() {
           </div>
 
           {/* Table Header - hidden on mobile */}
-          <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
+          <div className={`hidden md:grid ${listGridCols} gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground`}>
             <button
               onClick={() => handleSort("title")}
-              className={`${isFacilityAdmin ? "col-span-5" : "col-span-7"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Study
               {sortField === "title" && <ArrowUpDown className="h-3 w-3" />}
             </button>
             <button
               onClick={() => handleSort("status")}
-              className="col-span-2 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Status
               {sortField === "status" && <ArrowUpDown className="h-3 w-3" />}
             </button>
-            {isFacilityAdmin && <div className="col-span-2">Researcher</div>}
+            {isFacilityAdmin && <div>Researcher</div>}
             <button
               onClick={() => handleSort("samples")}
-              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors justify-end"
+              className="flex items-center gap-1 hover:text-foreground transition-colors justify-end"
             >
               {sortField === "samples" && <ArrowUpDown className="h-3 w-3" />}
               Samples
             </button>
             <button
               onClick={() => handleSort("created")}
-              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Created
               {sortField === "created" && <ArrowUpDown className="h-3 w-3" />}
             </button>
-            <div className="col-span-1"></div>
+            <div />
           </div>
 
           {/* Studies List */}
@@ -520,7 +524,7 @@ export default function StudiesPage() {
               return (
                 <div
                   key={study.id}
-                  className={`block px-4 py-3 transition-colors group md:grid md:grid-cols-12 md:gap-4 md:px-5 md:py-4 md:items-center ${
+                  className={`block px-4 py-3 transition-colors group md:grid ${listGridCols} md:gap-4 md:px-5 md:py-4 md:items-center ${
                     bulkEditMode && canDeleteStudy
                       ? `${isSelected ? "bg-primary/10 ring-1 ring-inset ring-primary/30" : "hover:bg-secondary/80"} cursor-pointer`
                       : "hover:bg-secondary/80"
@@ -536,7 +540,7 @@ export default function StudiesPage() {
                     <div className="flex items-center justify-between gap-3">
                       {bulkEditMode ? (
                         <div className="min-w-0 flex-1">
-                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                          <p className="font-medium text-sm break-words leading-5 group-hover:text-primary transition-colors">
                             {study.title}
                           </p>
                           <p className="text-xs text-muted-foreground mt-0.5">
@@ -555,7 +559,7 @@ export default function StudiesPage() {
                         </div>
                       ) : (
                         <Link href={`/studies/${study.id}`} className="min-w-0 flex-1">
-                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                          <p className="font-medium text-sm break-words leading-5 group-hover:text-primary transition-colors">
                             {study.title}
                           </p>
                           <p className="text-xs text-muted-foreground mt-0.5">
@@ -623,10 +627,10 @@ export default function StudiesPage() {
                   {/* Desktop layout */}
                   <div className="hidden md:contents">
                     {/* Study Info */}
-                    <div className={`${isFacilityAdmin ? "col-span-5" : "col-span-7"} min-w-0`}>
+                    <div className="min-w-0">
                       {bulkEditMode ? (
                         <>
-                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                          <p className="font-medium text-sm break-words leading-5 group-hover:text-primary transition-colors">
                             {study.title}
                           </p>
                           {study.studyAccessionId && (
@@ -637,7 +641,7 @@ export default function StudiesPage() {
                         </>
                       ) : (
                         <Link href={`/studies/${study.id}`}>
-                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                          <p className="font-medium text-sm break-words leading-5 group-hover:text-primary transition-colors">
                             {study.title}
                           </p>
                           {study.studyAccessionId && (
@@ -650,10 +654,10 @@ export default function StudiesPage() {
                     </div>
 
                     {/* Status */}
-                    <div className="col-span-2">
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
-                        <span className={`text-xs font-medium ${statusConfig.color}`}>
+                        <span className={`h-2 w-2 shrink-0 rounded-full ${statusConfig.dot}`} />
+                        <span className={`text-xs font-medium truncate ${statusConfig.color}`}>
                           {statusConfig.label}
                         </span>
                       </div>
@@ -661,7 +665,7 @@ export default function StudiesPage() {
 
                     {/* Researcher (Admin only) */}
                     {isFacilityAdmin && (
-                      <div className="col-span-2 min-w-0">
+                      <div className="min-w-0">
                         <p className="text-sm truncate">
                           {study.user.firstName} {study.user.lastName}
                         </p>
@@ -669,20 +673,20 @@ export default function StudiesPage() {
                     )}
 
                     {/* Samples */}
-                    <div className="col-span-1 text-right">
-                      <span className="text-sm tabular-nums text-muted-foreground">
-                        {study._count.samples} {study._count.samples === 1 ? "sample" : "samples"}
+                    <div className="text-right">
+                      <span className="text-sm tabular-nums text-muted-foreground whitespace-nowrap">
+                        {study._count.samples}
                       </span>
                     </div>
 
                     {/* Date */}
-                    <div className="col-span-1">
-                      <span className="text-sm text-muted-foreground tabular-nums">
+                    <div>
+                      <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
                         {formatDate(study.createdAt)}
                       </span>
                     </div>
 
-                    <div className="col-span-1 flex items-center justify-end">
+                    <div className="flex items-center justify-end">
                       {canDeleteStudy ? (
                         bulkEditMode ? (
                           <div className="h-8 w-8" />

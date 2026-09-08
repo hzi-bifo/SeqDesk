@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createRevision, getAnalysisDetail } from "@/lib/explore/analyses";
-import { parseBindings } from "../../route";
-import { ExploreRouteError, exploreErrorResponse, loadAccessibleAnalysis, optionalString, readJsonBody, requireExploreSession } from "../../../_shared";
+import { ExploreRouteError, exploreErrorResponse, loadAccessibleAnalysis, optionalString, parseBindings, readJsonBody, requireExploreSession } from "../../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
