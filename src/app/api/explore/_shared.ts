@@ -4,9 +4,10 @@ import type { Session } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import type { AnalysisInputBinding } from "@/lib/explore/analyses";
-import { ExploreAuthorizationError, requireTargetAccess } from "@/lib/explore/authorization";
+import { ExploreAuthorizationError, requireExplorePrincipal, requireTargetAccess } from "@/lib/explore/authorization";
 import { getDatasetRecord } from "@/lib/explore/datasets";
 import { isExploreModuleEnabled } from "@/lib/explore/module";
+import { ExploreBuildInputError } from "@/lib/explore/builders/types";
 
 export class ExploreRouteError extends Error {
   status: number;
@@ -30,10 +31,14 @@ export async function requireExploreSession(): Promise<Session> {
   if (!session?.user?.id) {
     throw new ExploreRouteError(401, "Unauthorized");
   }
+  requireExplorePrincipal(session);
   return session;
 }
 
 export function exploreErrorResponse(error: unknown): NextResponse {
+  if (error instanceof ExploreBuildInputError) {
+    return NextResponse.json({ error: error.message }, { status: 422 });
+  }
   if (error instanceof ExploreRouteError || error instanceof ExploreAuthorizationError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }

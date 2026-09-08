@@ -28,5 +28,17 @@ export interface BuiltDataset {
 export interface BuildContext {
   target: ExploreTargetKey;
   targetKey: string;
+  /** Derived from the authenticated server principal, never request options. */
+  userId: string;
+  installation: boolean;
+  /** Operational form-field visibility; not system-administrator status. */
   isFacilityAdmin: boolean;
+}
+
+/** A source exists but cannot produce a trustworthy table; show actionable feedback. */
+export class ExploreBuildInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExploreBuildInputError";
+  }
 }

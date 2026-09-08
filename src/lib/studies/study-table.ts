@@ -1,4 +1,6 @@
 import { db } from "@/lib/db";
+import { getPipelineSampleWhere } from "@/lib/pipelines/target";
+import { sequencingEntryScope } from "@/lib/sequencing/entry-access";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   isStudyModuleEnabled,
@@ -83,6 +85,8 @@ export interface StudyTableRow {
   statusLabel: string;
   /** column key -> display string */
   cells: Record<string, string>;
+  /** Present only for the read-only analysis view, not the editable primary table. */
+  analysisMembership?: { sourceStudyId: string | null; group: string | null; role: string | null };
 }
 
 export interface StudyInfoField {
@@ -364,7 +368,7 @@ export async function loadStudyChecklistFieldNames(study: {
  */
 export async function buildStudyTableData(
   idOrAlias: string,
-  options: { isFacilityAdmin: boolean }
+  options: { isFacilityAdmin: boolean; analysisActor?: { userId: string; installation: boolean } }
 ): Promise<StudyTableData | null> {
   const study = await resolveStudy(idOrAlias);
   if (!study) return null;
@@ -396,11 +400,21 @@ export async function buildStudyTableData(
       applyModuleFilter: false,
     }),
     db.sample.findMany({
-      where: { studyId: study.id },
+      where: options.analysisActor
+        ? options.analysisActor.userId ? { AND: [
+            getPipelineSampleWhere({ type: "study", studyId: study.id }),
+            sequencingEntryScope(options.analysisActor.userId, options.analysisActor.installation),
+          ] } : { id: { in: [] } }
+        : { studyId: study.id },
       orderBy: { createdAt: "asc" },
       select: {
         id: true,
         sampleId: true,
+        studyId: true,
+        studyMemberships: {
+          where: { studyId: study.id },
+          select: { groupLabel: true, role: true },
+        },
         sampleAlias: true,
         sampleTitle: true,
         sampleDescription: true,
@@ -777,6 +791,11 @@ export async function buildStudyTableData(
       status,
       statusLabel: FACILITY_SAMPLE_STATUS_LABELS[status],
       cells,
+      ...(options.analysisActor ? { analysisMembership: {
+        sourceStudyId: sample.studyId,
+        group: sample.studyMemberships[0]?.groupLabel ?? null,
+        role: sample.studyMemberships[0]?.role ?? null,
+      } } : {}),
     };
   });
 

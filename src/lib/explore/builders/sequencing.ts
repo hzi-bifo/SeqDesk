@@ -1,9 +1,11 @@
 import { db } from "@/lib/db";
 import { coerceCell, inferSchema } from "../schema";
-import type { ExploreRowData } from "../types";
+import type { ExploreRoleMap, ExploreRowData } from "../types";
 import type { BuildContext, BuiltDataset } from "./types";
+import { COHORT_LABELS, cohortColumns, cohortMembershipSelection, exploreSampleWhere } from "../sample-scope";
 
 const LABELS: Record<string, string> = {
+  ...COHORT_LABELS,
   sample_db_id: "Sample record",
   sample_id: "Sample ID",
   run_db_id: "Run record",
@@ -34,20 +36,16 @@ const LABELS: Record<string, string> = {
  * run. Samples without a run still appear once so nothing is silently lost.
  */
 export async function buildSequencingDataset(context: BuildContext): Promise<BuiltDataset | null> {
-  const sampleWhere =
-    context.target.type === "study"
-      ? { studyId: context.target.id }
-      : context.target.type === "order"
-        ? { orderId: context.target.id }
-        : null;
-  if (!sampleWhere) return null;
+  if (!["study", "order"].includes(context.target.type)) return null;
 
   const samples = await db.sample.findMany({
-    where: sampleWhere,
+    where: exploreSampleWhere(context),
     orderBy: { createdAt: "asc" },
     select: {
       id: true,
       sampleId: true,
+      studyId: true,
+      studyMemberships: cohortMembershipSelection(context),
       sequencingRunSamples: {
         select: {
           barcode: true,
@@ -88,10 +86,11 @@ export async function buildSequencingDataset(context: BuildContext): Promise<Bui
 
   const rows: ExploreRowData[] = [];
   for (const sample of samples) {
+    const cohort = cohortColumns(sample, context);
     const runLinks = sample.sequencingRunSamples;
     if (runLinks.length === 0) {
       for (const read of sample.reads.length ? sample.reads : [null]) {
-        rows.push(buildRow(sample, null, null, read));
+        rows.push({ ...buildRow(sample, null, null, read), ...cohort });
       }
       continue;
     }
@@ -99,14 +98,16 @@ export async function buildSequencingDataset(context: BuildContext): Promise<Bui
       const run = link.sequencingRun;
       const reads = sample.reads.filter((read) => read.sequencingRunId === run.id);
       for (const read of reads.length ? reads : [null]) {
-        rows.push(buildRow(sample, run, link.barcode, read));
+        rows.push({ ...buildRow(sample, run, link.barcode, read), ...cohort });
       }
     }
   }
 
+  const roles: ExploreRoleMap = { sample: "sample_db_id", date: "run_date" };
+  if (rows.some(row => row.cohort_group)) roles.group = "cohort_group";
   const schema = inferSchema(rows, {
     labels: LABELS,
-    roles: { sample: "sample_db_id", date: "run_date" },
+    roles,
     groups: Object.fromEntries(Object.keys(LABELS).map((key) => [key, key.startsWith("read") || key === "data_class" ? "reads" : key.startsWith("sample") ? "identity" : "run"])),
   });
   const targetLabel = context.target.type === "study" ? "study" : "sequencing order";
@@ -116,7 +117,7 @@ export async function buildSequencingDataset(context: BuildContext): Promise<Bui
     name: `Sequencing of the ${targetLabel}`,
     description: "One row per sample per sequencing run, with run quality metrics and read files.",
     sensitivity: "standard",
-    roles: { sample: "sample_db_id", date: "run_date" },
+    roles,
     schema,
     rows,
     provenance: {

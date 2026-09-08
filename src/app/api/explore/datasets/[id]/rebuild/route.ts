@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isFacilityAdminSession, requireTargetAccess } from "@/lib/explore/authorization";
+import { exploreBuildContext, requireTargetAccess } from "@/lib/explore/authorization";
 import { rebuildDataset } from "@/lib/explore/build";
 import { getDatasetRecord } from "@/lib/explore/datasets";
 import { ExploreRouteError, exploreErrorResponse, requireExploreSession } from "../../../_shared";
@@ -18,7 +18,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     const target = await requireTargetAccess(session, record.targetKey, "write");
     const result = await rebuildDataset(
       id,
-      { target, targetKey: record.targetKey, isFacilityAdmin: isFacilityAdminSession(session) },
+      exploreBuildContext(session, target, record.targetKey),
       session.user.id
     );
     if (!result) throw new ExploreRouteError(404, "Nothing to rebuild: the source has no data any more");

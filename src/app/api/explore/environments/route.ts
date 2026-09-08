@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isFacilityAdminSession } from "@/lib/explore/authorization";
+import { canManageExplore } from "@/lib/explore/authorization";
 import { buildEnvironment, listEnvironments, registerExistingEnvironment } from "@/lib/explore/environments";
 import { ExploreRouteError, exploreErrorResponse, readJsonBody, requireExploreSession, requireString } from "../_shared";
 
@@ -15,11 +15,11 @@ export async function GET() {
   }
 }
 
-/** Build or register an environment. Facility admins only: it runs conda on the server. */
+/** Build or register an environment. Requires system pipeline management. */
 export async function POST(request: NextRequest) {
   try {
     const session = await requireExploreSession();
-    if (!isFacilityAdminSession(session)) throw new ExploreRouteError(403, "Only facility admins manage environments");
+    if (!canManageExplore(session)) throw new ExploreRouteError(403, "Pipeline management permission is required to manage environments");
     const body = await readJsonBody(request);
     const name = requireString(body.name, "name", 120);
     if (!/^[a-z0-9][a-z0-9._-]*$/.test(name)) throw new ExploreRouteError(400, "Invalid environment name");

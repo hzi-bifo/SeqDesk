@@ -44,35 +44,57 @@ Later edits on either source branch are not automatically copied into beta.
    relative abundance (CAMI profile)** and select **Relative abundance
    composition**. Its figure and table can be included in the report.
 4. For cross-source comparisons, link facility/imported samples to a study
-   with study-specific cohort groups. Study pipelines already support these
-   links; the remaining Report integration is listed below.
+   with study-specific cohort groups. Study pipelines and Report datasets both
+   include the accessible primary-plus-linked sample union. Reports can reuse
+   per-sample profiles from earlier source runs without copying unrelated
+   samples from those runs.
 
 The optional CAMI/OPAL ground-truth comparison remains a separate study-level
 pipeline with explicit reference/taxonomy configuration. It is not silently
 run by the importer or the report kit.
 
-## Pending authorization-sensitive integration
+## Authorization and cohort integration
 
-The automated safety review paused the proposed changes below pending explicit
-user approval; they have **not** been applied:
+Implemented on `beta` after explicit user approval:
 
-- Replace legacy Report role comparisons with the shared capability model.
-  Shared-lab scientific-data permissions must be consistent with pipelines;
-  system configuration rights must not become blanket access to private data.
-- Honor invalidated sessions and separate environment-management permission
-  from scientific-data permission.
-- Use the authorized direct-plus-cohort sample union in Report sample,
-  sequencing and pipeline-table builders; carry group labels/source-study IDs.
-- Reuse earlier per-sample outputs from linked controls while excluding other
-  samples in the same source run; handle ambiguous sample labels and aggregate
-  tables conservatively.
-- Test operator/requester/system-admin/shared-lab combinations, inaccessible
-  links, removed memberships and cross-scope artifact filtering.
+- Reports use the shared capability model. Shared-lab members and center
+  operators retain installation-scoped scientific access; a system admin who
+  is a center requester or research-preset user does **not** get global data
+  access merely from configuration rights.
+- Private Explore projects and workbench workspaces remain owner-only in every
+  preset, including for system admins and operators.
+- Every authenticated Explore API rejects invalidated identities. Environment
+  installation and sandbox configuration require `system.pipelines.manage`;
+  operational form-field visibility uses `orders.process` independently.
+- Report sample, sequencing and pipeline-table builders intersect direct-plus-
+  cohort membership with source-entry access. They carry `source_study_id`,
+  `cohort_group` and `cohort_role`; groups are specific to the comparison study.
+  Linking a control does not transfer ownership or change its source study.
+- The ordinary editable/submission Study table remains primary-only; the
+  read-only Report builder explicitly opts into the authorized analysis union.
+- Earlier per-sample outputs are reusable even from another sequencing entry
+  or study. Other artifacts from the source run are excluded. The selected
+  final run of the Report scope takes precedence; remaining samples use their
+  latest eligible completed run. Older overlapping results are not counted a
+  second time. An explicitly empty run selection stays empty.
+- Whole-scope tables are eligible only for the same target with known, nonempty
+  frozen input IDs wholly contained in the current authorized sample union.
+  Legacy aggregates without that provenance must be regenerated or replaced
+  with per-sample outputs; membership is not guessed.
+- Combined-table rows must match an unambiguous accessible sample that was a
+  frozen input of that run. Duplicate labels/aliases (including collisions with
+  database IDs) are not guessed. Per-sample artifacts retain stable IDs even
+  when samples from different sources have identical display names.
+- Pipeline manifests determine declared table parsing. File columns cannot
+  replace server-resolved identity/group columns. Reads stay inside the real
+  run directory, including symlink checks, and skipped files are not recorded
+  as successful provenance. Unusable formats/labels return actionable errors.
 
-Until these items are completed, do not treat beta as ready for multi-user
-deployment or claim the full linked-control Report workflow is finished. The
-authorization architecture test correctly reports the two remaining legacy
-role comparisons in Explore.
+Removing a cohort link changes subsequent builds and source selection. Existing
+dataset versions and report snapshots remain historical copies for
+reproducibility; unlinking is **not** retrospective erasure or withdrawal of a
+previously created/shared report. Scope access still applies to those copies.
+Use a rebuild to refresh a Report dataset after changing the cohort.
 
 ## Verification and boundaries
 
@@ -81,17 +103,22 @@ role comparisons in Explore.
 - All twelve Explore kit manifests validate. The new kit's seven Python tests
   execute the real analysis code on explicitly internal fixtures.
 - The full Python Explore helper/kit suite passes: **51 tests**.
-- The combined targeted Vitest suite contains **2,520 tests across 188 files**:
-  **2,519 pass after the local-socket rerun**. The remaining failure is the
-  authorization architecture check described above. The separately rerun
-  launcher suite passes all 52 tests with loopback permission.
+- The expanded targeted Vitest suite passes **2,614 tests across 197 files**,
+  including Report/pipeline/Study authorization, source filtering and the
+  unchanged no-direct-role-checks architecture guard. The separate launcher
+  suite passes **52 tests** with local-loopback permission: **2,666 total**.
+  An old Study authorization fixture was corrected to remove the study domain
+  explicitly; the research preset now correctly has the same Study UI.
 - The importer/workbench suite passes **237 tests across 40 files**. Both live
-  PostgreSQL tests (cohort pipelines and the new pipeline-to-Report link) pass
-  together. The final webpack build passes after the module integration.
+  PostgreSQL tests (cohort pipelines and the expanded pipeline-to-Report link)
+  pass together. Production webpack and targeted ESLint checks pass.
 - The live PostgreSQL integration test exercises a stored imported-data entry,
   real pipeline artifact queries, the manifest parser, persisted dataset
-  versions, an analysis bound to the kit, and a saved Report table. It always
-  rolls back its database records and removes its own temporary files.
+  versions, an analysis bound to the kit, and a saved Report table. It also
+  tests linked-control metadata/groups, inaccessible links, unrelated source
+  artifacts, shared access, removed membership, primary-only editing and
+  preserved source-study ownership. It always rolls back its database records
+  and removes its own temporary files.
 - Fresh installation: `seqdesk_beta_validation_20260908`.
 - Upgrade from modules: `seqdesk_beta_modules_test_20260908`.
 - Upgrade from reports: `seqdesk_beta_reports_test_20260908`.

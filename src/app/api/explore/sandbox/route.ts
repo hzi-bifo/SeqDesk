@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isFacilityAdminSession } from "@/lib/explore/authorization";
+import { canManageExplore } from "@/lib/explore/authorization";
 import { collectHostFacts } from "@/lib/explore/sandbox/host";
 import { getSandboxSettings, saveSandboxSettings } from "@/lib/explore/sandbox/settings";
 import { ExploreRouteError, exploreErrorResponse, readJsonBody, requireExploreSession } from "../_shared";
@@ -17,7 +17,7 @@ export async function GET() {
       host: {
         platform: facts.platform,
         tool: facts.toolName,
-        toolPath: isFacilityAdminSession(session) ? facts.tool : null,
+        toolPath: canManageExplore(session) ? facts.tool : null,
         problem: facts.problem,
       },
     });
@@ -29,7 +29,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const session = await requireExploreSession();
-    if (!isFacilityAdminSession(session)) throw new ExploreRouteError(403, "Only facility admins change how analyses are confined");
+    if (!canManageExplore(session)) throw new ExploreRouteError(403, "Pipeline management permission is required to configure analysis isolation");
     const body = await readJsonBody(request);
     const settings = await saveSandboxSettings(body);
     return NextResponse.json({ settings });

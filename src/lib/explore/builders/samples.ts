@@ -3,6 +3,7 @@ import { buildStudyTableData } from "@/lib/studies/study-table";
 import { coerceCell, inferSchema } from "../schema";
 import type { ExploreRoleMap, ExploreRowData } from "../types";
 import type { BuildContext, BuiltDataset } from "./types";
+import { COHORT_LABELS, exploreSampleWhere } from "../sample-scope";
 
 const SUBJECT_FIELD_CANDIDATES = ["host_subject_id", "subject_id", "patient_id", "subject"];
 const TIMEPOINT_FIELD_CANDIDATES = ["timepoint", "collection_day", "relative_day", "visit"];
@@ -45,11 +46,14 @@ export async function buildSamplesDataset(context: BuildContext): Promise<BuiltD
 }
 
 async function buildFromStudy(context: BuildContext): Promise<BuiltDataset | null> {
-  const table = await buildStudyTableData(context.target.id, { isFacilityAdmin: context.isFacilityAdmin });
+  const table = await buildStudyTableData(context.target.id, {
+    isFacilityAdmin: context.isFacilityAdmin,
+    analysisActor: { userId: context.userId, installation: context.installation },
+  });
   if (!table) return null;
 
-  const labels: Record<string, string> = { sample_db_id: "Sample record", sample_status: "Facility status" };
-  const groups: Record<string, string> = { sample_db_id: "identity", sample_status: "status" };
+  const labels: Record<string, string> = { ...COHORT_LABELS, sample_db_id: "Sample record", sample_status: "Facility status" };
+  const groups: Record<string, string> = { sample_db_id: "identity", sample_status: "status", ...Object.fromEntries(Object.keys(COHORT_LABELS).map(key => [key, "cohort"])) };
   for (const column of table.columns) {
     labels[column.key] = column.label;
     groups[column.key] = column.group;
@@ -60,11 +64,16 @@ async function buildFromStudy(context: BuildContext): Promise<BuiltDataset | nul
     for (const column of table.columns) {
       out[column.key] = coerceCell(row.cells[column.key] ?? null);
     }
-    return out;
+    return { ...out, sample_db_id: row.id,
+      source_study_id: row.analysisMembership?.sourceStudyId ?? null,
+      cohort_group: row.analysisMembership?.group ?? null,
+      cohort_role: row.analysisMembership?.role ?? null,
+    };
   });
 
   const columnKeys = Object.keys(rows[0] ?? { sample_db_id: null, ...Object.fromEntries(table.columns.map((c) => [c.key, null])) });
   const roles: ExploreRoleMap = { sample: "sample_db_id" };
+  if (rows.some(row => row.cohort_group)) roles.group = "cohort_group";
   const subjectColumn = pickRole(columnKeys, SUBJECT_FIELD_CANDIDATES);
   if (subjectColumn) roles.subject = subjectColumn;
   const timepointColumn = pickRole(columnKeys, TIMEPOINT_FIELD_CANDIDATES);
@@ -77,7 +86,7 @@ async function buildFromStudy(context: BuildContext): Promise<BuiltDataset | nul
     kind: "samples",
     tableKind: "sample-summary",
     name: `Samples of ${table.study.title}`,
-    description: "One row per sample assigned to the study, with the same columns as the Table Overview.",
+    description: "One row per accessible primary or linked cohort sample, including metadata and study-specific groups. Source study assignments are unchanged.",
     sensitivity: subjectColumn ? "pseudonymous" : "standard",
     roles,
     schema,
@@ -102,6 +111,7 @@ async function buildFromOrder(context: BuildContext): Promise<BuiltDataset | nul
       orderNumber: true,
       name: true,
       samples: {
+        where: exploreSampleWhere(context),
         orderBy: { createdAt: "asc" },
         select: {
           id: true,

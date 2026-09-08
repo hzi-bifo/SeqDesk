@@ -19,6 +19,7 @@ vi.mock("@/lib/explore/build", () => ({ buildDataset: mocks.buildDataset }));
 vi.mock("@/lib/db", () => ({ db: {} }));
 
 import { POST } from "./route";
+import { ExploreBuildInputError } from "@/lib/explore/builders/types";
 
 function request(body: unknown) {
   return new NextRequest("http://localhost/api/explore/datasets/build", { method: "POST", body: JSON.stringify(body) });
@@ -68,5 +69,25 @@ describe("/api/explore/datasets/build", () => {
     mocks.buildDataset.mockRejectedValueOnce(new Error("pipelineId and outputId are required for a pipeline table"));
     const response = await POST(request({ targetKey: "study:s1", kind: "pipeline-table" }));
     expect(response.status).toBe(400);
+  });
+
+  it("derives the builder identity from the session, not client-supplied scope flags", async () => {
+    mocks.getServerSession.mockResolvedValue({ user: { id: "owner", role: "FACILITY_ADMIN", systemRole: "ADMIN", facilityWorkflowRole: "REQUESTER" } });
+    const response = await POST(request({ targetKey: "study:s1", kind: "samples", userId: "foreign", installation: true,
+      options: { userId: "foreign", installation: true, isFacilityAdmin: true } }));
+    expect(response.status).toBe(201);
+    expect(mocks.buildDataset).toHaveBeenCalledWith(expect.objectContaining({ context: expect.objectContaining({
+      userId: "owner", installation: false, isFacilityAdmin: false,
+    }) }));
+  });
+
+  it("returns actionable input errors and rejects invalidated sessions before building", async () => {
+    mocks.buildDataset.mockRejectedValueOnce(new ExploreBuildInputError("Check the sample labels"));
+    const response = await POST(request({ targetKey: "study:s1", kind: "pipeline-table" }));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ error: "Check the sample labels" });
+    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1", role: "FACILITY_ADMIN", authorizationValid: false } });
+    expect((await POST(request({ targetKey: "study:s1", kind: "samples" }))).status).toBe(401);
+    expect(mocks.buildDataset).toHaveBeenCalledTimes(1);
   });
 });

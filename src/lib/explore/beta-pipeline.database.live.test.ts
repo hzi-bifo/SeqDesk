@@ -21,7 +21,10 @@ vi.mock("./storage", async () => {
     importsRoot: path.join(state.root, "imports"), runsRoot: path.join(state.root, "runs"),
   }) };
 });
-import { listPipelineTableSources } from "./builders/pipeline-table";
+import { buildPipelineTableDataset, listPipelineTableSources } from "./builders/pipeline-table";
+import { buildSamplesDataset } from "./builders/samples";
+import { buildSequencingDataset } from "./builders/sequencing";
+import { buildStudyTableData } from "@/lib/studies/study-table";
 import { buildDataset } from "./build";
 import { getDatasetDetail } from "./datasets";
 import { createAnalysis } from "./analyses";
@@ -98,6 +101,91 @@ it.skipIf(!url)("builds a manifest-declared profile dataset and a report analysi
       const block = view.blocks[0];
       if (block.type !== "table") throw new Error("Expected report table");
       expect(block.table?.rows.map(row => row.sample_db_id)).toEqual([sample.id, sample.id]);
+
+      // A real cross-source cohort: own facility sample + imported control,
+      // with a different owner's linked sample and an unrelated source sample.
+      const study = await tx.study.create({ data: { title: "Internal cohort comparison", userId: owner.id } });
+      const sourceStudy = await tx.study.create({ data: { title: "Internal control source", userId: owner.id } });
+      await tx.sample.update({ where: { id: sample.id }, data: { studyId: study.id } });
+      const controlOrder = await tx.order.create({ data: {
+        orderNumber: `BETA-CONTROL-${suffix}`, userId: owner.id, dataOrigin: "import",
+      } });
+      const control = await tx.sample.create({ data: {
+        sampleId: "INTERNAL_CONTROL", orderId: controlOrder.id, studyId: sourceStudy.id,
+        checklistData: JSON.stringify({ host_subject_id: "INTERNAL_SUBJECT", collection_date: "2026-01-01" }),
+      } });
+      const unrelated = await tx.sample.create({ data: { sampleId: "INTERNAL_UNRELATED", orderId: controlOrder.id } });
+      const otherOwner = await tx.user.create({ data: {
+        email: `beta-other-${suffix}@example.invalid`, password: "!disabled-internal-fixture",
+        firstName: "Internal", lastName: "Other owner", isActive: false,
+      } });
+      const privateOrder = await tx.order.create({ data: { orderNumber: `BETA-PRIVATE-${suffix}`, userId: otherOwner.id } });
+      const privateSample = await tx.sample.create({ data: { sampleId: "INTERNAL_PRIVATE", orderId: privateOrder.id } });
+      await tx.studySample.createMany({ data: [
+        { studyId: study.id, sampleId: sample.id, groupLabel: "Cases", role: "case" },
+        { studyId: study.id, sampleId: control.id, groupLabel: "Controls", role: "control" },
+        { studyId: study.id, sampleId: privateSample.id, groupLabel: "Private", role: "control" },
+      ] });
+      const controlRun = await tx.pipelineRun.create({ data: {
+        runNumber: `BETA-CONTROL-RUN-${suffix}`, pipelineId: "metaphlan", status: "completed",
+        targetType: "order", orderId: controlOrder.id, userId: owner.id, runFolder: root,
+        completedAt: new Date(Date.now() - 60_000), inputSampleIds: JSON.stringify([control.id, unrelated.id]),
+      } });
+      for (const entry of [control, unrelated]) {
+        const entryProfile = path.join(root, `${entry.id}.cami.profile`);
+        await fs.writeFile(entryProfile, (await fs.readFile(profile, "utf8")).replace("@SampleID:INTERNAL_PROFILE_SAMPLE", `@SampleID:${entry.sampleId}`));
+        await tx.pipelineArtifact.create({ data: { pipelineRunId: controlRun.id, outputId: "cami_profile",
+          type: "artifact", sampleId: entry.id, path: entryProfile } });
+      }
+      const privateRun = await tx.pipelineRun.create({ data: {
+        runNumber: `BETA-PRIVATE-RUN-${suffix}`, pipelineId: "metaphlan", status: "completed",
+        targetType: "order", orderId: privateOrder.id, userId: otherOwner.id, runFolder: root,
+        completedAt: new Date(), inputSampleIds: JSON.stringify([privateSample.id]),
+      } });
+      await tx.pipelineArtifact.create({ data: { pipelineRunId: privateRun.id, outputId: "cami_profile",
+        type: "artifact", sampleId: privateSample.id, path: profile } });
+      const cohortContext = { ...context, target: { type: "study" as const, id: study.id }, targetKey: `study:${study.id}` };
+      const cohortSources = await listPipelineTableSources(cohortContext);
+      expect(cohortSources[0].runs.map(entry => entry.id).sort()).toEqual([run.id, controlRun.id].sort());
+      expect(cohortSources[0].runs.every(entry => entry.artifactCount === 1)).toBe(true);
+      const metadata = await buildSamplesDataset(cohortContext);
+      expect(metadata?.rows.map(row => row.sample_db_id).sort()).toEqual([sample.id, control.id].sort());
+      expect(metadata?.rows.find(row => row.sample_db_id === control.id)).toMatchObject({
+        source_study_id: sourceStudy.id, cohort_group: "Controls", cohort_role: "control",
+        "checklist:host_subject_id": "INTERNAL_SUBJECT",
+      });
+      expect(metadata?.roles.group).toBe("cohort_group");
+      const sequencing = await buildSequencingDataset(cohortContext);
+      expect(sequencing?.rows.map(row => row.sample_db_id).sort()).toEqual([sample.id, control.id].sort());
+      expect(sequencing?.rows.find(row => row.sample_db_id === control.id)?.cohort_group).toBe("Controls");
+      // The editable/submission table must retain primary-only membership.
+      const primaryTable = await buildStudyTableData(study.id, { isFacilityAdmin: false });
+      expect(primaryTable?.rows.map(row => row.id)).toEqual([sample.id]);
+      const cohortBuilt = await buildDataset({ context: cohortContext, kind: "pipeline-table", createdById: owner.id,
+        options: { pipelineId: "metaphlan", outputId: "cami_profile" } });
+      expect(cohortBuilt?.warnings).toEqual([]);
+      expect(cohortBuilt?.version.rowCount).toBe(4);
+      expect(cohortBuilt?.dataset.roles.group).toBe("cohort_group");
+      const cohortReport = await createReport(cohortContext.targetKey, owner.id, "Internal cases and controls");
+      const cohortView = await saveReport(cohortReport.id, {
+        title: cohortReport.title, blocks: [{ id: "cohort-profiles", type: "table", datasetId: cohortBuilt!.dataset.id }],
+      });
+      const cohortBlock = cohortView.blocks[0];
+      if (cohortBlock.type !== "table") throw new Error("Expected cohort report table");
+      expect(cohortBlock.table?.rowCount).toBe(4);
+      expect(new Set(cohortBlock.table?.rows.map(row => row.cohort_group))).toEqual(new Set(["Cases", "Controls"]));
+      expect(await tx.sample.findUnique({ where: { id: control.id }, select: { studyId: true } })).toEqual({ studyId: sourceStudy.id });
+
+      // Shared-lab/operational scientific access may include the linked sample,
+      // but must still exclude the unrelated sample in the same source run.
+      const shared = await buildPipelineTableDataset({ ...cohortContext, installation: true }, { pipelineId: "metaphlan", outputId: "cami_profile" });
+      expect(new Set(shared?.rows.map(row => row.sample_db_id))).toEqual(new Set([sample.id, control.id, privateSample.id]));
+      await tx.studySample.delete({ where: { studyId_sampleId: { studyId: study.id, sampleId: control.id } } });
+      const afterUnlink = await buildPipelineTableDataset(cohortContext, { pipelineId: "metaphlan", outputId: "cami_profile" });
+      expect(new Set(afterUnlink?.rows.map(row => row.sample_db_id))).toEqual(new Set([sample.id]));
+      expect((await buildSamplesDataset(cohortContext))?.rows.map(row => row.sample_db_id)).toEqual([sample.id]);
+      // Existing dataset versions remain reproducible snapshots, not a live join.
+      expect((await getDatasetDetail(cohortBuilt!.dataset.id))?.currentVersion?.rowCount).toBe(4);
       completed = true;
       throw rollback;
     }, { timeout: 30_000 })).rejects.toBe(rollback);

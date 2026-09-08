@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isFacilityAdminSession, requireTargetAccess } from "@/lib/explore/authorization";
+import { exploreBuildContext, requireTargetAccess } from "@/lib/explore/authorization";
 import { buildDataset, type BuildableKind } from "@/lib/explore/build";
 import { ExploreRouteError, exploreErrorResponse, readJsonBody, requireExploreSession, requireString } from "../../_shared";
 
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
       throw new ExploreRouteError(400, "This dataset kind cannot be built from a source");
     }
     const result = await buildDataset({
-      context: { target, targetKey, isFacilityAdmin: isFacilityAdminSession(session) },
+      context: exploreBuildContext(session, target, targetKey),
       kind: kind as BuildableKind,
       options: body.options && typeof body.options === "object" ? (body.options as Record<string, unknown>) : {},
       createdById: session.user.id,

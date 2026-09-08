@@ -1,5 +1,7 @@
 import type { Session } from "next-auth";
 import { db } from "@/lib/db";
+import { decideServerCapability } from "@/lib/authorization/api";
+import type { BuildContext } from "./builders/types";
 import { parseTargetKey, type ExploreTargetKey } from "./target-key";
 import type { ExploreScope } from "./types";
 
@@ -17,15 +19,41 @@ export class ExploreAuthorizationError extends Error {
 
 export type SessionLike = Pick<Session, "user"> | null | undefined;
 
-export function isFacilityAdminSession(session: SessionLike): boolean {
-  return session?.user?.role === "FACILITY_ADMIN";
+export function requireExplorePrincipal(session: SessionLike) {
+  const decision = decideServerCapability(session, "analysis.read_own");
+  if (!decision.allowed || !decision.principal) {
+    const status = decision.status === 200 ? 403 : decision.status;
+    throw new ExploreAuthorizationError(status, status === 401 ? "Unauthorized" : status === 404 ? "Not found" : "Forbidden");
+  }
+  return decision.principal;
+}
+
+export function canManageExplore(session: SessionLike): boolean {
+  return decideServerCapability(session, "system.pipelines.manage").allowed;
+}
+
+export function canReadAllExploreData(session: SessionLike): boolean {
+  const decision = decideServerCapability(session, "analysis.read_all");
+  return decision.allowed && decision.grant?.scope === "installation";
+}
+
+/** Server-derived builder identity. Call only after authorizing the target. */
+export function exploreBuildContext(session: SessionLike, target: ExploreTargetKey, targetKey: string): BuildContext {
+  const principal = requireExplorePrincipal(session);
+  return {
+    target, targetKey, userId: principal.id, installation: canReadAllExploreData(session),
+    // Historical form-schema option name; this means operational field access,
+    // not system-administrator status or access to private workspaces.
+    isFacilityAdmin: decideServerCapability(session, "orders.process").allowed,
+  };
 }
 
 /**
  * Resolve what a session may do on one Explore scope.
  *
- * Facility admins may read and write every scope. Everyone else may read and
- * write the studies and orders they own and their own workbench workspace.
+ * Study/order access follows the same scientific-data grants as pipelines.
+ * System configuration rights do not grant scientific-data access. Private
+ * projects and workspaces remain owner-only, including in shared labs.
  * Unknown targets resolve to "none" so a caller can answer 404 without
  * revealing whether the id exists.
  */
@@ -35,10 +63,12 @@ export async function resolveTargetAccess(
 ): Promise<{ level: ExploreAccessLevel; target: ExploreTargetKey | null }> {
   const target = parseTargetKey(targetKey);
   if (!target) return { level: "none", target: null };
-  if (!session?.user?.id) return { level: "none", target };
+  const decision = decideServerCapability(session, "analysis.read_own");
+  if (!decision.allowed || !decision.principal) return { level: "none", target };
 
-  const userId = session.user.id;
-  const admin = isFacilityAdminSession(session);
+  const userId = decision.principal.id;
+  const installation = canReadAllExploreData(session);
+  const level = decideServerCapability(session, "analysis.run").allowed ? "write" : "read";
 
   if (target.type === "study") {
     const study = await db.study.findUnique({
@@ -46,7 +76,7 @@ export async function resolveTargetAccess(
       select: { userId: true },
     });
     if (!study) return { level: "none", target };
-    return { level: admin || study.userId === userId ? "write" : "none", target };
+    return { level: installation || study.userId === userId ? level : "none", target };
   }
 
   if (target.type === "order") {
@@ -55,13 +85,13 @@ export async function resolveTargetAccess(
       select: { userId: true },
     });
     if (!order) return { level: "none", target };
-    return { level: admin || order.userId === userId ? "write" : "none", target };
+    return { level: installation || order.userId === userId ? level : "none", target };
   }
 
   if (target.type === "project") {
     const project = await db.exploreProject.findUnique({ where: { id: target.id }, select: { ownerId: true } });
     if (!project) return { level: "none", target };
-    return { level: admin || project.ownerId === userId ? "write" : "none", target };
+    return { level: project.ownerId === userId ? level : "none", target };
   }
 
   const workspace = await db.workbenchWorkspace.findUnique({
@@ -69,7 +99,7 @@ export async function resolveTargetAccess(
     select: { ownerId: true },
   });
   if (!workspace) return { level: "none", target };
-  return { level: admin || workspace.ownerId === userId ? "write" : "none", target };
+  return { level: workspace.ownerId === userId ? level : "none", target };
 }
 
 export async function requireTargetAccess(
@@ -77,9 +107,7 @@ export async function requireTargetAccess(
   targetKey: string,
   level: "read" | "write"
 ): Promise<ExploreTargetKey> {
-  if (!session?.user?.id) {
-    throw new ExploreAuthorizationError(401, "Unauthorized");
-  }
+  requireExplorePrincipal(session);
   const access = await resolveTargetAccess(session, targetKey);
   if (!access.target || access.level === "none") {
     throw new ExploreAuthorizationError(404, "Not found");
@@ -91,14 +119,15 @@ export async function requireTargetAccess(
 }
 
 /**
- * Every scope a session can open in Explore: studies and orders the user owns
- * (all of them for facility admins) plus the user's workbench workspace.
+ * Every scope a session can open in Explore, using the same access policy as
+ * resolveTargetAccess (including owner-only projects and workspaces).
  */
 export async function listExploreScopes(session: SessionLike): Promise<ExploreScope[]> {
-  if (!session?.user?.id) return [];
-  const userId = session.user.id;
-  const admin = isFacilityAdminSession(session);
-  const ownerFilter = admin ? {} : { userId };
+  const decision = decideServerCapability(session, "analysis.read_own");
+  if (!decision.allowed || !decision.principal) return [];
+  const userId = decision.principal.id;
+  const ownerFilter = canReadAllExploreData(session) ? {} : { userId };
+  const access = decideServerCapability(session, "analysis.run").allowed ? "write" : "read";
 
   const [studies, orders, workspace, projects] = await Promise.all([
     db.study.findMany({
@@ -118,7 +147,7 @@ export async function listExploreScopes(session: SessionLike): Promise<ExploreSc
       select: { id: true, name: true },
     }),
     db.exploreProject.findMany({
-      where: admin ? {} : { ownerId: userId },
+      where: { ownerId: userId },
       select: { id: true, name: true, description: true },
       orderBy: { updatedAt: "desc" },
       take: 200,
@@ -132,7 +161,7 @@ export async function listExploreScopes(session: SessionLike): Promise<ExploreSc
       type: "project",
       label: project.name,
       detail: project.description ?? undefined,
-      access: "write",
+      access,
     });
   }
   for (const study of studies) {
@@ -141,7 +170,7 @@ export async function listExploreScopes(session: SessionLike): Promise<ExploreSc
       type: "study",
       label: study.title,
       detail: study.alias ?? undefined,
-      access: "write",
+      access,
     });
   }
   for (const order of orders) {
@@ -150,7 +179,7 @@ export async function listExploreScopes(session: SessionLike): Promise<ExploreSc
       type: "order",
       label: order.name ?? order.orderNumber,
       detail: order.name ? order.orderNumber : undefined,
-      access: "write",
+      access,
     });
   }
   if (workspace) {
@@ -158,7 +187,7 @@ export async function listExploreScopes(session: SessionLike): Promise<ExploreSc
       targetKey: `workspace:${workspace.id}`,
       type: "workspace",
       label: workspace.name,
-      access: "write",
+      access,
     });
   }
   return scopes;

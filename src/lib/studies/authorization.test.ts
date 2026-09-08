@@ -54,7 +54,10 @@ describe("study authorization", () => {
   });
 
   it("fails closed when the study domain is unavailable", () => {
-    const profile = getDeploymentProfileDefinition("research-workbench");
+    // All presets now include studies. Test an actually absent domain instead
+    // of treating the research preset as a separate, study-less application.
+    const base = getDeploymentProfileDefinition("research-workbench");
+    const profile = { ...base, domains: base.domains.filter(domain => domain !== "sample-catalog") };
 
     expect(decideStudyReadAccess(memberSession, profile)).toMatchObject({
       allowed: false,
@@ -65,5 +68,16 @@ describe("study authorization", () => {
       status: 404,
     });
     expect(canUseOperationalStudyFields(memberSession, profile)).toBe(false);
+  });
+
+  it("keeps the shared study UI available in the research preset without global data access", () => {
+    const profile = getDeploymentProfileDefinition("research-workbench");
+    for (const session of [memberSession, adminSession]) {
+      const read = decideStudyReadAccess(session, profile);
+      expect(read.allowed).toBe(true);
+      expect(canAccessStudyOwner(read, session.user.id)).toBe(true);
+      expect(canAccessStudyOwner(read, "someone-else")).toBe(false);
+      expect(canUseOperationalStudyFields(session, profile)).toBe(false);
+    }
   });
 });

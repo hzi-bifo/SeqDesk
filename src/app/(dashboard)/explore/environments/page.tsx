@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { fetcher, formatDateTime, postJson } from "@/lib/explore/client";
+import { hasCapability, principalFromSession } from "@/lib/authorization/client";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 
 interface SandboxSettings {
   mode: "required" | "auto" | "off";
@@ -37,7 +39,9 @@ interface EnvironmentSummary {
 
 export default function ExploreEnvironmentsPage() {
   const { data: session } = useSession();
-  const isAdmin = session?.user?.role === "FACILITY_ADMIN";
+  const profile = useDeploymentProfile();
+  const principal = principalFromSession(session);
+  const isAdmin = Boolean(principal && hasCapability(profile, principal, "system.pipelines.manage"));
   const { data, mutate, isLoading } = useSWR<{ environments: EnvironmentSummary[] }>("/api/explore/environments", fetcher, {
     refreshInterval: (latest) => (latest?.environments.some((entry) => entry.status === "building") ? 5000 : 0),
   });
