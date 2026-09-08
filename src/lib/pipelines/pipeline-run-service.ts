@@ -707,6 +707,7 @@ export async function createPipelineRunForOperator({
   if (target.type === 'study' && requestedSampleIds?.length === 0) {
     return jsonResponse({ error: 'Select at least one sample' }, 400);
   }
+  if (target.type === 'study' && !samples.length) return jsonResponse({ error: 'No accessible samples in study' }, 400);
   if (requestedSampleIds && requestedSampleIds.length > 0) {
     const sampleIdSet = new Set(samples.map((sample) => sample.id));
     const missingSampleIds = requestedSampleIds.filter((sampleId) => !sampleIdSet.has(sampleId));
@@ -722,7 +723,7 @@ export async function createPipelineRunForOperator({
   // start and output matching. A later link must not silently expand a queued run.
   if (target.type === 'study') requestedSampleIds = [...new Set(requestedSampleIds ?? samples.map(sample => sample.id))];
   const selectedSamples = requestedSampleIds?.length ? samples.filter(sample => requestedSampleIds.includes(sample.id)) : samples;
-  if (new Set(selectedSamples.map(sample => sample.sampleId)).size !== selectedSamples.length) {
+  if (target.type === 'study' && new Set(selectedSamples.map(sample => sample.sampleId)).size !== selectedSamples.length) {
     return jsonResponse({ error: 'Selected samples have duplicate sample codes. Select uniquely named samples before running the pipeline.' }, 400);
   }
 
@@ -946,12 +947,15 @@ export async function startPipelineRunForOperator({
   if (target.type === 'study') {
     const samples = await loadStudyPipelineSamples(target, { userId, installation: accessScope === 'installation' });
     const available = new Set(samples.map(sample => sample.id));
-    if (selectedSampleIds?.some(id => !available.has(id))) {
+    // New runs always have a frozen selection. Legacy pending runs without one
+    // retain their old primary-only meaning unless the operator selects inputs.
+    selectedSampleIds = [...new Set(selectedSampleIds ?? run.study?.samples.map(sample => sample.id) ?? [])];
+    if (selectedSampleIds.some(id => !available.has(id))) {
       return jsonResponse({ error: 'Selected samples are no longer available in this study or you no longer have access. Create a new run with the current selection.' }, 400);
     }
-    selectedSampleIds = [...new Set(selectedSampleIds ?? samples.map(sample => sample.id))];
     if (!selectedSampleIds.length) return jsonResponse({ error: 'No accessible samples in study' }, 400);
-    const selected = samples.filter(sample => selectedSampleIds.includes(sample.id));
+    const selectedSet = new Set(selectedSampleIds);
+    const selected = samples.filter(sample => selectedSet.has(sample.id));
     if (new Set(selected.map(sample => sample.sampleId)).size !== selected.length) {
       return jsonResponse({ error: 'Selected samples have duplicate sample codes. Create a new run with uniquely named samples.' }, 400);
     }

@@ -5,6 +5,7 @@ import EventEmitter from "events";
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   db: {
+    sample: { findMany: vi.fn() },
     pipelineRun: {
       findUnique: vi.fn(),
       update: vi.fn(),
@@ -213,6 +214,7 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     });
     mocks.isDemoSession.mockReturnValue(false);
     mocks.db.pipelineRun.findUnique.mockResolvedValue(defaultRun);
+    mocks.db.sample.findMany.mockResolvedValue([{ id: 's1', sampleId: 'S1', reads: [] }]);
     mocks.db.pipelineRun.update.mockResolvedValue({});
     mocks.db.pipelineRun.updateMany.mockResolvedValue({ count: 1 });
     mocks.db.pipelineConfig.findUnique.mockResolvedValue(null);
@@ -1571,7 +1573,33 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
 
     expect(response.status).toBe(200);
     const prepArgs = mocks.prepareGenericRun.mock.calls[0][0];
-    expect(prepArgs.target).toEqual({ type: "study", studyId: "study-1" });
+    expect(prepArgs.target).toEqual({ type: "study", studyId: "study-1", sampleIds: ['s1'] });
+  });
+
+  it('starts the frozen cohort selection without adding newly linked samples', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...defaultRun, targetType: 'study', orderId: null, order: null, studyId: 'study-1', study: { userId: 'user-1', samples: [] }, inputSampleIds: JSON.stringify(['control']) });
+    mocks.db.sample.findMany.mockResolvedValue([{ id: 'control', sampleId: 'CONTROL' }, { id: 'new-member', sampleId: 'NEW' }]);
+    const response = await POST(makeRequest(), { params: baseParams });
+    expect(response.status).toBe(200);
+    expect(mocks.prepareGenericRun.mock.calls[0][0].target).toEqual({ type: 'study', studyId: 'study-1', sampleIds: ['control'] });
+  });
+
+  it('does not silently expand a legacy pending run to newly linked controls', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...defaultRun, targetType: 'study', orderId: null, order: null, studyId: 'study-1', study: { userId: 'user-1', samples: [{ id: 'case', sampleId: 'CASE' }] }, inputSampleIds: null });
+    mocks.db.sample.findMany.mockResolvedValue([{ id: 'case', sampleId: 'CASE' }, { id: 'new-control', sampleId: 'CONTROL' }]);
+    const response = await POST(makeRequest(), { params: baseParams });
+    expect(response.status).toBe(200);
+    expect(mocks.prepareGenericRun.mock.calls[0][0].target).toEqual({ type: 'study', studyId: 'study-1', sampleIds: ['case'] });
+  });
+
+  it('does not start when a frozen control was unlinked or access was revoked', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ ...defaultRun, targetType: 'study', orderId: null, order: null, studyId: 'study-1', study: { userId: 'user-1', samples: [] }, inputSampleIds: JSON.stringify(['control']) });
+    mocks.db.sample.findMany.mockResolvedValue([]);
+    const response = await POST(makeRequest(), { params: baseParams });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain('no longer available');
+    expect(mocks.prepareGenericRun).not.toHaveBeenCalled();
+    expect(mocks.db.pipelineRun.updateMany).not.toHaveBeenCalled();
   });
 
   it("returns 500 on top-level unexpected error", async () => {

@@ -84,7 +84,8 @@ async function resolveRegularArtifactPath(
 }
 
 /**
- * Copy declared artifacts from completed runs of the same study into the new
+ * Copy declared artifacts for the selected study samples (including linked
+ * controls and their source runs) into the new
  * run folder. Copies are used deliberately: the prepared run remains
  * self-contained and a compute node never has to follow an application-host
  * symlink outside the submitted run directory.
@@ -212,7 +213,7 @@ export async function stagePriorRunArtifacts(
       .join('; ');
     throw new Error(
       `No usable artifacts from completed runs were found for study ${studyId}. ` +
-        `Run a supported source pipeline first (${expected}).`
+        `Run a supported source pipeline first (${expected}). Combined reports require a saved input selection contained in this run; older reports may need a new source run.`
     );
   }
 

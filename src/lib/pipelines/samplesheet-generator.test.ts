@@ -18,6 +18,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 vi.mock("./package-loader", () => ({
+  getPackage: () => null,
   getPackageSamplesheet: mocks.getPackageSamplesheet,
 }));
 
@@ -132,11 +133,25 @@ describe("samplesheet-generator", () => {
 
     expect(mocks.db.sample.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { studyId: "study-1", id: { in: ["sample-x"] } },
+        where: { OR: [{ studyId: 'study-1' }, { studyMemberships: { some: { studyId: 'study-1' } } }], id: { in: ["sample-x"] } },
       })
     );
     expect(result.errors).toEqual(["No samples found for the specified pipeline target"]);
     expect(result.sampleCount).toBe(0);
+  });
+
+  it('uses the analysis study context for a control that retains its source study', async () => {
+    mocks.getPackageSamplesheet.mockReturnValue(makeConfig());
+    mocks.db.study.findUnique.mockResolvedValue({ id: 'analysis-study', title: 'Case and controls' });
+    mocks.db.sample.findMany.mockResolvedValue([{
+      id: 'control', sampleId: 'CONTROL', study: { id: 'source-study', title: 'Public source project' },
+      order: { platform: 'illumina' }, reads: [{ id: 'reads', file1: '/reads/control.fastq.gz', file2: null, isActive: true, dataClass: 'raw' }],
+    }]);
+    const result = await new SamplesheetGenerator('mag').generate({ target: { type: 'study', studyId: 'analysis-study', sampleIds: ['control'] }, dataBasePath: '/data' });
+    expect(result.errors).toEqual([]);
+    expect(result.sampleCount).toBe(1);
+    expect(result.content).toContain('Case and controls');
+    expect(result.content).not.toContain('Public source project');
   });
 
   it("returns error when study lookup fails", async () => {

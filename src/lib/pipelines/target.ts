@@ -52,3 +52,13 @@ export function supportsPipelineTarget(
 
   return scopes.includes('study') || scopes.includes('samples') || scopes.includes('sample');
 }
+
+/** Preparation must not silently shrink a frozen cohort after a concurrent unlink. */
+export function studySampleSelectionIssues(target: PipelineTarget, samples: Array<{ id: string; sampleId: string }>): string[] {
+  if (!isStudyTarget(target)) return [];
+  const issues: string[] = [];
+  const available = new Set(samples.map(sample => sample.id));
+  if (target.sampleIds?.some(id => !available.has(id))) issues.push('Selected samples are no longer available in this study. Create a new run with the current selection.');
+  if (new Set(samples.map(sample => sample.sampleId)).size !== samples.length) issues.push('Selected samples have duplicate sample codes. Select uniquely named samples before running the pipeline.');
+  return issues;
+}

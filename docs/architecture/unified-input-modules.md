@@ -137,12 +137,20 @@ module activation does not gate these analysis pages.
   novelty, taxonomy changes, abundance definitions and subsampling affect scores.
   Agree on per-rank/dataset acceptance thresholds before interpreting results.
 
-Current scope limits: the runtime still uses primary `Sample.studyId` links, not
-cohort-only `StudySample` memberships. For a comparison spanning several data
-collections, link samples through the primary study relationship and make a
-common study-level MetaPhlAn run; partial runs are not silently stitched together.
-Graphical reference-file selection/sample mapping, cohort-native execution,
-long-read profiling and a Kraken2/Bracken → CAMI conversion are follow-ups.
+Analysis pipelines use the access-scoped union of primary `Sample.studyId` links
+and `StudySample` memberships, without moving samples or their source metadata.
+Run creation freezes selected database IDs; start rechecks membership/access.
+Legacy pending runs without a snapshot retain primary-only defaults, and output
+matching uses frozen IDs even after a later unlink. Duplicate sample codes fail
+before filename generation. Submission pipelines remain primary-only.
+
+Prior-run staging includes selected samples' artifacts from order or other-study
+runs. Unselected samples are excluded, including from same-study runs. Aggregate
+files require a same-study source run whose entire saved input selection is
+within the current selection; unknown legacy aggregates must be regenerated.
+OPAL still requires complete coverage per selected prediction run: partial runs
+are not silently stitched together. Graphical reference/sample mapping,
+long-read profiling and a Kraken2/Bracken → CAMI conversion remain follow-ups.
 
 Verification on September 8: focused package/API/authorization/sidebar tests and
 production TypeScript checking passed. The new Python runner contracts have
@@ -173,7 +181,8 @@ CAMI multi-selection/status refinement: **246 focused tests across 36 files** an
 - [x] Shared source-neutral pipeline UI, owner-scoped execution/progress, explicit imported read selection, and focused authorization/readiness tests.
 - [x] MetaPhlAn short-read profiling and OPAL taxonomic benchmark packages with pinned tools and reference/provenance safeguards.
 - [x] Manifest-declared database resources, existing-store setup/link/cancel UI, schema-driven parameter access and read-evidence gates; 2,124 focused checks passed.
-- [ ] Cohort-native `StudySample` pipeline/report inputs, graphical benchmark reference/sample selection, and a complete real MetaPhlAn → imported CAMI acceptance run.
+- [x] Cohort-native analysis input selection, metadata validation, samplesheets, prior-run artifact staging and historical output matching; ownership and source-study relationships are preserved. See [cohort verification](study-pipeline-cohorts.md).
+- [ ] Graphical benchmark reference/sample selection and a complete real MetaPhlAn → imported CAMI acceptance run.
 - [ ] Decouple the remaining legacy operational-role/data-sharing presets from capability assignment with an explicit migration. Module activation alone must never silently broaden data access. Existing research-private presets do not acquire center-wide operator authority.
 - [ ] Module-derived onboarding checks throughout the entire checklist (older runtime checks are still preset-based), packaged first-use acceptance, updater/rollback verification and public installer synchronization.
 - [ ] Full release build, complete repository test/coverage gates and large CAMI dataset transfer acceptance before release. Focused checks are not a claim that every repository test passes or that imported reads already run through all pipelines.

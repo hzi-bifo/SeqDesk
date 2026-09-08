@@ -16,7 +16,7 @@ import { db } from '@/lib/db';
 import { resolveAssemblySelection } from '@/lib/pipelines/assembly-selection';
 import { compilePackageGlobPattern } from '@/lib/pipelines/package-patterns';
 import type { PipelineTarget } from '@/lib/pipelines/types';
-import { getPipelineSampleWhere, isOrderTarget, isStudyTarget } from '@/lib/pipelines/target';
+import { getPipelineSampleWhere, isOrderTarget, isStudyTarget, studySampleSelectionIssues } from '@/lib/pipelines/target';
 import { scopePipelineStudyTarget } from './study-samples';
 
 /**
@@ -451,6 +451,8 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
         return { valid: false, issues };
       }
 
+      issues.push(...studySampleSelectionIssues(target, samples));
+
       // Check manifest inputs requirements
       for (const input of pkg.manifest.inputs) {
         if (!input.required) continue;
@@ -626,6 +628,8 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
             orderBy: { sampleId: 'asc' },
           });
 
+          const selectionIssues = studySampleSelectionIssues(options.target, samples);
+          if (selectionIssues.length) return { content: '', sampleCount: 0, errors: selectionIssues };
           return await runSamplesheetScript(customSamplesheetScript, {
             packageId,
             target: options.target,

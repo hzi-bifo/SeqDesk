@@ -57,7 +57,7 @@ describe("pipeline target helpers", () => {
         sampleIds: ["sample-1", "sample-2"],
       })
     ).toEqual({
-      studyId: "study-1",
+      OR: [{ studyId: 'study-1' }, { studyMemberships: { some: { studyId: 'study-1' } } }],
       id: { in: ["sample-1", "sample-2"] },
     });
 

@@ -18,7 +18,7 @@ import { scopePipelineStudyTarget } from './study-samples';
 import { resolveOrderPlatform } from './order-platform';
 import path from 'path';
 import type { PipelineTarget } from './types';
-import { getPipelineSampleWhere, isStudyTarget } from './target';
+import { getPipelineSampleWhere, isStudyTarget, studySampleSelectionIssues } from './target';
 import { normalizeReadDataClass } from '@/lib/sequencing/constants';
 
 type PackageSamplesheet = PackageSamplesheetConfig['samplesheet'];
@@ -279,6 +279,9 @@ export class SamplesheetGenerator {
       errors.push('No samples found for the specified pipeline target');
       return { content: '', sampleCount: 0, errors, warnings };
     }
+
+    errors.push(...studySampleSelectionIssues(target, samples));
+    if (errors.length) return { content: '', sampleCount: 0, errors, warnings };
 
     let study: { id: string; title: string | null } | null = null;
     if (isStudyTarget(target)) {

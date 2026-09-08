@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   isDemoSession: vi.fn(),
   db: {
+    sample: { findMany: vi.fn() },
     pipelineRun: {
       findUnique: vi.fn(),
     },
@@ -358,6 +359,7 @@ describe("GET /api/pipelines/runs/[id]/debug", () => {
   });
 
   it("filters samples by inputSampleIds when set", async () => {
+    mocks.db.sample.findMany.mockResolvedValue([{ id: 'sample-999', sampleId: 'S999', reads: [] }]);
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       ...baseRun,
       inputSampleIds: JSON.stringify(["sample-999"]),

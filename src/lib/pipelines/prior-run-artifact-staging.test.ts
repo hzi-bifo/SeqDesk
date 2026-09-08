@@ -5,10 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
+  samples: vi.fn(),
 }));
 
 vi.mock('@/lib/db', () => ({
   db: {
+    sample: { findMany: mocks.samples },
     pipelineRun: {
       findMany: mocks.findMany,
     },
@@ -36,6 +38,7 @@ describe('stagePriorRunArtifacts', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mocks.samples.mockResolvedValue([{ id: 'sample-db-1' }]);
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'seqdesk-prior-artifacts-'));
     priorRunFolder = path.join(tempDir, 'prior-run');
     newRunFolder = path.join(tempDir, 'new-run');
@@ -93,15 +96,7 @@ describe('stagePriorRunArtifacts', () => {
           pipelineId: { in: ['fastqc', 'nanoplot'] },
           OR: [
             { studyId: 'study-1' },
-            {
-              order: {
-                is: {
-                  samples: {
-                    some: { studyId: 'study-1' },
-                  },
-                },
-              },
-            },
+            { artifacts: { some: { sampleId: { in: ['sample-db-1'] } } } },
           ],
         },
       })
@@ -129,6 +124,7 @@ describe('stagePriorRunArtifacts', () => {
   });
 
   it('does not leak artifacts from another study in a mixed-study order run', async () => {
+    mocks.samples.mockResolvedValue([{ id: 'sample-study-1' }]);
     const matching = path.join(priorRunFolder, 'study-1_fastqc.zip');
     const unrelated = path.join(priorRunFolder, 'study-2_fastqc.zip');
     await fs.writeFile(matching, 'matching-study');
@@ -180,6 +176,47 @@ describe('stagePriorRunArtifacts', () => {
     );
   });
 
+  it('stages selected control profiles from another study but not its other samples', async () => {
+    const control = path.join(priorRunFolder, 'control.cami.profile');
+    const other = path.join(priorRunFolder, 'other.cami.profile');
+    await fs.writeFile(control, 'internal control profile fixture');
+    await fs.writeFile(other, 'internal unselected fixture');
+    mocks.samples.mockResolvedValue([{ id: 'control' }]);
+    mocks.findMany.mockResolvedValue([{
+      id: 'prior-control-run', pipelineId: 'metaphlan', studyId: 'source-study', runFolder: priorRunFolder,
+      inputSampleIds: JSON.stringify(['control', 'other']),
+      artifacts: [
+        { id: 'control-profile', sampleId: 'control', outputId: 'cami_profile', path: control },
+        { id: 'other-profile', sampleId: 'other', outputId: 'cami_profile', path: other },
+        { id: 'whole-source-study', sampleId: null, outputId: 'cami_profile', path: other },
+      ],
+    }]);
+    const result = await stagePriorRunArtifacts({ currentRunId: 'benchmark', studyId: 'analysis-study', sampleIds: ['control'], runFolder: newRunFolder, spec: { ...SPEC, sources: { metaphlan: ['cami_profile'] } } });
+    expect(result.artifacts.map(a => [a.artifactId, a.sampleId])).toEqual([['control-profile', 'control']]);
+    expect(mocks.samples.mock.calls[0][0].where).toMatchObject({ id: { in: ['control'] }, OR: [{ studyId: 'analysis-study' }, { studyMemberships: { some: { studyId: 'analysis-study' } } }] });
+  });
+
+  it('does not stage an unselected sample even from a direct run of this study', async () => {
+    const file = path.join(priorRunFolder, 'unselected.zip');
+    await fs.writeFile(file, 'internal unselected fixture');
+    mocks.samples.mockResolvedValue([{ id: 'selected' }]);
+    mocks.findMany.mockResolvedValue([{
+      id: 'same-study', pipelineId: 'fastqc', studyId: 'study-1', runFolder: priorRunFolder,
+      inputSampleIds: JSON.stringify(['selected', 'unselected']),
+      artifacts: [
+        { id: 'unselected', sampleId: 'unselected', outputId: 'sample_qc_data', path: file },
+        { id: 'mixed-aggregate', sampleId: null, outputId: 'sample_qc_data', path: file },
+      ],
+    }]);
+    await expect(stagePriorRunArtifacts({ currentRunId: 'new-run', studyId: 'study-1', sampleIds: ['selected'], runFolder: newRunFolder, spec: SPEC })).rejects.toThrow('No usable artifacts');
+  });
+
+  it('fails if a selected membership was removed before staging', async () => {
+    mocks.samples.mockResolvedValue([]);
+    await expect(stagePriorRunArtifacts({ currentRunId: 'new-run', studyId: 'study-1', sampleIds: ['removed'], runFolder: newRunFolder, spec: SPEC })).rejects.toThrow('membership changed');
+    expect(mocks.findMany).not.toHaveBeenCalled();
+  });
+
   it('allows a declared run-level artifact from a direct study run', async () => {
     const summary = path.join(priorRunFolder, 'summary.tsv');
     await fs.writeFile(summary, 'header\nvalue\n');
@@ -188,6 +225,7 @@ describe('stagePriorRunArtifacts', () => {
         id: 'run-study-qc',
         pipelineId: 'reads-qc',
         studyId: 'study-1',
+        inputSampleIds: JSON.stringify(['sample-db-1']),
         runFolder: priorRunFolder,
         order: null,
         artifacts: [

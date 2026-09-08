@@ -14,7 +14,7 @@ vi.mock("next-auth", () => ({
 vi.mock("@/lib/auth", () => ({
   authOptions: {},
 }));
-vi.mock("@/lib/db", () => ({ db: { order: { findFirst: mocks.target }, study: { findFirst: mocks.target } } }));
+vi.mock("@/lib/db", () => ({ db: { order: { findFirst: mocks.target }, study: { findFirst: mocks.target }, sample: { findMany: vi.fn(async () => [{ id: 'sample-a' }, { id: 'sample-b' }]) } } }));
 
 vi.mock("@/lib/pipelines/metadata-validation", () => ({
   validatePipelineMetadata: mocks.validatePipelineMetadata,
@@ -131,7 +131,7 @@ describe("POST /api/pipelines/validate-metadata", () => {
     expect(response.status).toBe(200);
     expect(data).toEqual(validationResult);
     expect(mocks.validatePipelineMetadata).toHaveBeenCalledWith(
-      { type: "study", studyId: "s1", sampleIds: undefined },
+      { type: "study", studyId: "s1", sampleIds: ['sample-a', 'sample-b'] },
       "p1",
     );
   });

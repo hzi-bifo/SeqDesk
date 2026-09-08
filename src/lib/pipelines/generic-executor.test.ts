@@ -7,6 +7,7 @@ import type { PipelineAdapter } from "./adapters/types";
 
 const mocks = vi.hoisted(() => ({
   db: {
+    sample: { findMany: vi.fn(async () => [{ id: 'sample-1' }]) },
     pipelineRun: {
       findMany: vi.fn(),
       update: vi.fn(),

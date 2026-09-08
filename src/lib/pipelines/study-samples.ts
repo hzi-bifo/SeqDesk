@@ -8,7 +8,7 @@ import type { PipelineTarget } from './types';
 // Analysis membership does not transfer ownership or change the source study.
 // Submission pipelines retain their existing primary-study-only semantics.
 export function scopePipelineStudyTarget(target: PipelineTarget, pipelineId: string): PipelineTarget {
-  return target.type === 'study' && (pipelineId === 'submg' || getPackage(pipelineId)?.registry.category === 'submission')
+  return target.type === 'study' && (pipelineId === 'submg' || getPackage(pipelineId)?.registry?.category === 'submission')
     ? { ...target, primaryOnly: true }
     : target;
 }
@@ -31,14 +31,14 @@ export const STUDY_PIPELINE_SAMPLE_INCLUDE = {
   study: { select: { id: true, title: true } },
 } satisfies Prisma.SampleInclude;
 
-/** Call after authorizing the study. At request boundaries always supply the actor. */
+/** Call after authorizing the study; a membership never substitutes for sample access. */
 export async function loadStudyPipelineSamples(
   target: Extract<PipelineTarget, { type: 'study' }>,
-  actor?: { userId: string; installation: boolean },
+  actor: { userId: string; installation: boolean },
 ) {
   const membership = getPipelineSampleWhere(target);
   return db.sample.findMany({
-    where: actor ? { AND: [membership, sequencingEntryScope(actor.userId, actor.installation)] } : membership,
+    where: { AND: [membership, sequencingEntryScope(actor.userId, actor.installation)] },
     include: STUDY_PIPELINE_SAMPLE_INCLUDE,
     orderBy: [{ sampleId: 'asc' }, { id: 'asc' }],
   });

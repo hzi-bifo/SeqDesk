@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getServerDeploymentProfile: vi.fn(),
   supportsPipelineTarget: vi.fn(),
   db: {
+    sample: { findMany: vi.fn() },
     pipelineRun: {
       findMany: vi.fn(),
       count: vi.fn(),
@@ -92,7 +93,8 @@ vi.mock("@/lib/deployment-profile/server", () => ({
   getServerDeploymentProfile: mocks.getServerDeploymentProfile,
 }));
 
-vi.mock("@/lib/pipelines/target", () => ({
+vi.mock("@/lib/pipelines/target", async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/pipelines/target')>(),
   supportsPipelineTarget: mocks.supportsPipelineTarget,
 }));
 
@@ -394,6 +396,34 @@ describe("POST /api/pipelines/runs", () => {
       orderId: "order-1",
       targetType: "order",
     });
+  });
+
+  it('creates a cohort-only study run and freezes the authorized input IDs', async () => {
+    // The order-capability mock accepts study targets; this exercises the shared
+    // creation path independently of a particular workflow's manifest inputs.
+    mocks.db.study.findUnique.mockResolvedValue({ id: 'study-1', userId: 'owner', samples: [] });
+    mocks.db.sample.findMany.mockResolvedValue([{ id: 'case', sampleId: 'CASE' }, { id: 'control', sampleId: 'CONTROL' }]);
+    const response = await POST(new NextRequest('http://localhost/api/pipelines/runs', { method: 'POST', body: JSON.stringify({ pipelineId: 'simulate-reads', studyId: 'study-1' }) }));
+    expect(response.status).toBe(200);
+    expect(mocks.validatePipelineMetadata).toHaveBeenCalledWith({ type: 'study', studyId: 'study-1', sampleIds: ['case', 'control'] }, 'simulate-reads');
+    expect(mocks.db.pipelineRun.create.mock.calls[0][0].data.inputSampleIds).toBe(JSON.stringify(['case', 'control']));
+  });
+
+  it('rejects a requested sample outside the accessible cohort', async () => {
+    mocks.db.study.findUnique.mockResolvedValue({ id: 'study-1', userId: 'owner', samples: [] });
+    mocks.db.sample.findMany.mockResolvedValue([{ id: 'control', sampleId: 'CONTROL' }]);
+    const response = await POST(new NextRequest('http://localhost/api/pipelines/runs', { method: 'POST', body: JSON.stringify({ pipelineId: 'simulate-reads', studyId: 'study-1', sampleIds: ['foreign'] }) }));
+    expect(response.status).toBe(400);
+    expect(mocks.db.pipelineRun.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects ambiguous sample codes across sources before generating output filenames', async () => {
+    mocks.db.study.findUnique.mockResolvedValue({ id: 'study-1', userId: 'owner', samples: [] });
+    mocks.db.sample.findMany.mockResolvedValue([{ id: 'source-a', sampleId: 'sample_0' }, { id: 'source-b', sampleId: 'sample_0' }]);
+    const response = await POST(new NextRequest('http://localhost/api/pipelines/runs', { method: 'POST', body: JSON.stringify({ pipelineId: 'simulate-reads', studyId: 'study-1' }) }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain('duplicate sample codes');
+    expect(mocks.db.pipelineRun.create).not.toHaveBeenCalled();
   });
 
   it("returns 403 for demo sessions", async () => {

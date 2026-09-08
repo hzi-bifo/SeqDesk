@@ -130,6 +130,22 @@ describe("GET /api/studies/[id]", () => {
     mocks.db.order.findMany.mockResolvedValue([]);
   });
 
+  it('returns accessible analysis members separately from metadata/submission samples', async () => {
+    mocks.getServerSession.mockResolvedValue({ user: { id: 'user-1', role: 'RESEARCHER' } });
+    setupFindUniqueMock();
+    mocks.db.sample.findMany.mockResolvedValue([{ id: 'control', sampleId: 'CONTROL', studyId: 'source-study', reads: [], assemblies: [] }]);
+    const response = await GET(new NextRequest(BASE_URL), { params: Promise.resolve({ id: 'study-1' }) });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.samples).toEqual([]);
+    expect(body.analysisSamples.map((sample: { id: string }) => sample.id)).toEqual(['control']);
+    expect(mocks.db.sample.findMany.mock.calls[0][0].where).toEqual({ AND: [
+      { OR: [{ studyId: 'study-1' }, { studyMemberships: { some: { studyId: 'study-1' } } }] },
+      { OR: [{ order: { userId: 'user-1' } }, { orderId: null, study: { userId: 'user-1' } }] },
+    ] });
+    expect(mocks.db.sample.updateMany).not.toHaveBeenCalled();
+  });
+
   it("returns 401 when not authenticated", async () => {
     mocks.getServerSession.mockResolvedValue(null);
     const req = new NextRequest(BASE_URL);

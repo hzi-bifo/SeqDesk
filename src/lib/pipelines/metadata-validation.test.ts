@@ -82,6 +82,17 @@ describe("metadata-validation", () => {
     mocks.packageToPipelineDefinition.mockReturnValue(null);
   });
 
+  it.each([['short', true], ['long', false]])('validates cohort-only MetaPhlAn reads: %s', async (technology, allowed) => {
+    mocks.getPackage.mockReturnValue({ manifest: { inputs: [], sequencingCompatibility: { readLengthClass: 'short', requireReadLengthEvidence: true } } });
+    mocks.db.study.findUnique.mockResolvedValue({ id: 'cohort-study', samples: [], cohortMembers: [{ sample: {
+      id: 'control', sampleId: 'CONTROL', assemblies: [], bins: [], order: null,
+      reads: [{ file1: '/control.fastq.gz', isActive: true, pipelineSources: JSON.stringify({ sourceType: 'cami-benchmark', technology }) }],
+    } }] });
+    const result = await validatePipelineMetadata({ type: 'study', studyId: 'cohort-study', sampleIds: ['control'] }, 'metaphlan');
+    expect(result.valid).toBe(allowed);
+    expect(result.issues.some(issue => issue.message.includes('No samples'))).toBe(false);
+  });
+
   it.each([['short', true], ['long', false], ['unknown', false]])('checks the selected imported MetaPhlAn technology: %s', async (technology, allowed) => {
     mocks.getPackage.mockReturnValue({ manifest: { inputs: [], sequencingCompatibility: { readLengthClass: 'short', requireReadLengthEvidence: true } } });
     mocks.db.order.findUnique.mockResolvedValue({ id: "import-order", samples: [{

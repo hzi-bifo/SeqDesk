@@ -125,10 +125,15 @@ destination, never `--force`, so the original mapping cannot be deleted.
 1. Provision the exact compatible MetaPhlAn database on a supported execution host.
 2. Complete a real CAMI sample import and select its validated read set.
 3. Run MetaPhlAn and verify all three per-sample output artifacts and database provenance.
-4. Link samples to a primary study and supply the matching taxonomic Ground Truth.
+4. Assign or link samples to an analysis study and supply matching taxonomic Ground Truth.
 5. Check exact sample IDs, reference/taxonomy snapshots and abundance definitions.
 6. Run OPAL through SeqDesk; verify artifact staging, output discovery, report
    retrieval and metrics against agreed per-rank acceptance criteria.
 
 No reference files are invented; no automatic large database download or new
 CAMI bulk import was started for this implementation.
+
+Follow-up: [cohort-native study pipeline inputs](study-pipeline-cohorts.md) are now
+implemented and tested without moving source samples. The later user-requested
+MetaPhlAn database download was started separately; its job state, not the earlier
+implementation checks above, determines installation completion.

@@ -14,7 +14,7 @@ import { db } from '@/lib/db';
 import { mapPlatformForPipeline } from '../metadata-validation';
 import { resolveOrderPlatform } from '../order-platform';
 import { generateSamplesheetFromConfig } from '../samplesheet-generator';
-import { getPipelineSampleWhere, isStudyTarget } from '../target';
+import { getPipelineSampleWhere, isStudyTarget, studySampleSelectionIssues } from '../target';
 import {
   PipelineAdapter,
   ValidationResult,
@@ -250,6 +250,8 @@ export const magAdapter: PipelineAdapter = {
       return { valid: false, issues };
     }
 
+    issues.push(...studySampleSelectionIssues(target, samples));
+
     for (const sample of samples) {
       if (sample.reads.length === 0) {
         issues.push(`Sample ${sample.sampleId}: No reads assigned`);
@@ -296,6 +298,7 @@ export const magAdapter: PipelineAdapter = {
 
     // Fallback to custom code if no config or config failed
     // (This code is kept for backwards compatibility)
+    const { studyId } = options.target;
     const { dataBasePath } = options;
     const errors: string[] = [];
 

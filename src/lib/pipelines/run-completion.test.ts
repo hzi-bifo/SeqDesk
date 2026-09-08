@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   db: {
+    sample: { findMany: vi.fn() },
     pipelineRun: {
       findUnique: vi.fn(),
       updateMany: vi.fn(),
@@ -686,7 +687,8 @@ describe("run-completion", () => {
     expect(mocks.resolveOutputs).not.toHaveBeenCalled();
   });
 
-  it("requires sample-scoped outputs only for samples selected on the run", async () => {
+  it("resolves only frozen inputs, including a cohort sample unlinked after launch", async () => {
+    mocks.db.sample.findMany.mockResolvedValue([{ id: 'sample-1', sampleId: 'SAMPLE-1' }]);
     const selectedSampleOutput = {
       files: [
         {
@@ -723,7 +725,6 @@ describe("run-completion", () => {
       inputSampleIds: JSON.stringify(["sample-1"]),
       study: {
         samples: [
-          { id: "sample-1", sampleId: "SAMPLE-1" },
           { id: "sample-2", sampleId: "SAMPLE-2" },
         ],
       },

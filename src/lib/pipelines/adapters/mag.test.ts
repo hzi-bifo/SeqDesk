@@ -113,7 +113,7 @@ describe('magAdapter.validateInputs', () => {
 
     expect(mocks.db.sample.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { studyId: 'study-1', id: { in: ['id-1', 'id-2'] } },
+        where: { OR: [{ studyId: 'study-1' }, { studyMemberships: { some: { studyId: 'study-1' } } }], id: { in: ['id-1', 'id-2'] } },
       })
     );
   });
