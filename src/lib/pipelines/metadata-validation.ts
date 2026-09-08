@@ -8,6 +8,7 @@ import {
   type DerivedPipelineSetting,
 } from '@/lib/pipelines/derived-config';
 import { getPackage } from '@/lib/pipelines/package-loader';
+import { importedReadLengthClass } from '@/lib/pipelines/import-read-technology';
 import {
   resolveOrderPlatform,
   resolveOrderSequencingTechnology,
@@ -16,6 +17,7 @@ import {
 import { parseTechConfig } from '@/lib/sequencing-tech/config';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import { isOrderTarget, isStudyTarget } from '@/lib/pipelines/target';
+import { mergeStudySamples, scopePipelineStudyTarget } from './study-samples';
 import type { Prisma } from '@prisma/client';
 import type {
   SequencingTechnology,
@@ -355,7 +357,7 @@ export async function validatePipelineMetadata(
   pipelineId: string,
   sampleIds?: string[]
 ): Promise<MetadataValidationResult> {
-  const target = normalizeValidationTarget(targetOrStudyId, sampleIds);
+  const target = scopePipelineStudyTarget(normalizeValidationTarget(targetOrStudyId, sampleIds), pipelineId);
   const issues: MetadataIssue[] = [];
   let derivedSettings: DerivedPipelineSetting[] = [];
   const metadata: MetadataValidationResult['metadata'] = {};
@@ -384,6 +386,7 @@ export async function validatePipelineMetadata(
         checksum2: true,
         dataClass: true,
         isActive: true,
+        pipelineSources: true,
       },
     },
     assemblies: {
@@ -421,6 +424,10 @@ export async function validatePipelineMetadata(
       ? db.study.findUnique({
           where: { id: target.studyId },
           include: {
+            cohortMembers: {
+              where: { sample: sampleFilter ?? {} },
+              select: { sample: { include: sampleInclude } },
+            },
             samples: {
               ...(sampleFilter ? { where: sampleFilter } : {}),
               include: sampleInclude,
@@ -456,8 +463,26 @@ export async function validatePipelineMetadata(
   }
 
   const samples = isStudyTarget(target)
-    ? study?.samples ?? []
+    ? mergeStudySamples(study, target.primaryOnly)
     : order?.samples ?? [];
+
+  if (target.type === 'study' && target.sampleIds && (!target.sampleIds.length || target.sampleIds.some(id => !samples.some(sample => sample.id === id)))) {
+    return buildMetadataValidationResult({ issues: [{ field: 'samples', message: 'Selected samples are not available in this study', severity: 'error' }], metadata });
+  }
+
+  const readCompatibility = getPackage(pipelineId)?.manifest.sequencingCompatibility;
+  if (readCompatibility?.requireReadLengthEvidence) {
+    for (const sample of samples) {
+      const read = sample.reads[0];
+      const selectedTechnology = sample.order ? resolveOrderSequencingTechnology(sample.order) : null;
+      const platform = sample.order ? resolveOrderPlatform(sample.order)?.toLowerCase() ?? '' : '';
+      const lengthClass = importedReadLengthClass(read?.pipelineSources) ?? selectedTechnology?.readLengthClass ??
+        (MAG_SHORT_READ_PLATFORM_OPTIONS.some(value => platform.includes(value.toLowerCase())) ? 'short' :
+          isLongReadPlatform(platform) ? 'long' : 'unknown');
+      if (lengthClass === 'unknown' || (readCompatibility.readLengthClass !== 'both' && lengthClass !== readCompatibility.readLengthClass)) issues.push({ field: 'reads', severity: 'error',
+        message: `Sample ${sample.sampleId}: this pipeline package requires documented ${readCompatibility.readLengthClass}-read inputs; selected read technology is ${lengthClass}.` });
+    }
+  }
 
   if (samples.length === 0) {
     return buildMetadataValidationResult({

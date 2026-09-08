@@ -91,13 +91,13 @@ describe("GET /api/pipelines/runs/[id]/logs", () => {
     expect(res.status).toBe(403);
   });
 
-  it("returns 403 for a non-admin owner of an unpublished run", async () => {
+  it("allows a runnable owner to read their unpublished run logs", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       ...baseRun,
       selectedResultSelections: [],
     });
     const res = await GET(makeRequest(), makeParams());
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
   it("returns cached tail when file read fails", async () => {

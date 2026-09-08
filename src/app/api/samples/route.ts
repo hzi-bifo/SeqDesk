@@ -43,7 +43,10 @@ export async function GET(request: NextRequest) {
     const where: Record<string, unknown> = {};
 
     if (decision.grant.scope !== "installation") {
-      where.order = { userId: session.user.id };
+      where.OR = [
+        { order: { userId: session.user.id } },
+        { orderId: null, study: { userId: session.user.id } },
+      ];
     } else if (demoWsUserIds) {
       where.order = { userId: { in: demoWsUserIds } };
     }

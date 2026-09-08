@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     adminInvite: {
       findMany: vi.fn(),
       create: vi.fn(),
+      updateMany: vi.fn(),
     },
     pipelineRun: {
       findUnique: vi.fn(),
@@ -60,6 +61,7 @@ vi.mock("@prisma/client", () => {
 });
 
 import { Prisma } from "@prisma/client";
+import { digestInviteCode } from "@/lib/accounts/invite-secret.server";
 import { GET as getAdminInvites, POST as postAdminInvites } from "./admin/invites/route";
 import { GET as getRunWeblog } from "./pipelines/runs/[id]/weblog/route";
 
@@ -217,7 +219,8 @@ describe("admin invites and run weblog quick wins", () => {
     expect(await success.json()).toEqual([
       {
         id: "invite-1",
-        code: "ABCDEF01",
+        usedAt: null,
+        revokedAt: null,
         accountRole: "FACILITY_ADMIN",
         grant: {
           systemRole: "ADMIN",
@@ -283,7 +286,8 @@ describe("admin invites and run weblog quick wins", () => {
     expect(success.status).toBe(201);
     expect(mocks.db.adminInvite.create).toHaveBeenCalledWith({
       data: {
-        code: `A-${"AB".repeat(24)}`,
+        code: null,
+        codeDigest: digestInviteCode(`A-${"AB".repeat(24)}`),
         email: "admin@example.test",
         expiresAt: daysFromNow(7),
         createdById: "admin-1",
@@ -304,11 +308,11 @@ describe("admin invites and run weblog quick wins", () => {
         systemRole: "ADMIN",
         facilityWorkflowRole: "REQUESTER",
       },
-      targetSystemRole: "ADMIN",
-      targetFacilityWorkflowRole: "REQUESTER",
+      usedAt: null,
+      revokedAt: null,
+      usedBy: null,
       email: "admin@example.test",
       expiresAt: "2026-04-01T15:30:00.000Z",
-      createdById: "admin-1",
       createdBy: {
         firstName: "Ada",
         lastName: "Admin",
@@ -324,7 +328,8 @@ describe("admin invites and run weblog quick wins", () => {
       .mockRejectedValueOnce(duplicateInviteError())
       .mockResolvedValueOnce({
         id: "invite-2",
-        code: `M-${"BB".repeat(24)}`,
+        code: null,
+        codeDigest: digestInviteCode(`M-${"BB".repeat(24)}`),
         email: null,
         expiresAt: new Date("2026-03-28T15:30:00.000Z"),
         createdById: "admin-1",
@@ -343,7 +348,8 @@ describe("admin invites and run weblog quick wins", () => {
     expect(retried.status).toBe(201);
     expect(mocks.db.adminInvite.create).toHaveBeenNthCalledWith(1, {
       data: {
-        code: `M-${"AA".repeat(24)}`,
+        code: null,
+        codeDigest: digestInviteCode(`M-${"AA".repeat(24)}`),
         email: null,
         expiresAt: daysFromNow(3),
         createdById: "admin-1",
@@ -358,7 +364,8 @@ describe("admin invites and run weblog quick wins", () => {
     });
     expect(mocks.db.adminInvite.create).toHaveBeenNthCalledWith(2, {
       data: {
-        code: `M-${"BB".repeat(24)}`,
+        code: null,
+        codeDigest: digestInviteCode(`M-${"BB".repeat(24)}`),
         email: null,
         expiresAt: daysFromNow(3),
         createdById: "admin-1",

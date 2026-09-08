@@ -12,6 +12,8 @@ import {
   sanitizePathSegment,
 } from "@/lib/workbench/storage";
 import { getOrCreateDefaultWorkbenchWorkspace } from "@/lib/workbench/workspaces";
+import { validateFastqFile } from "@/lib/workbench/fastq-validation";
+import { lockWorkbenchPublicationAccess } from "./publication-access";
 
 const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024 * 1024;
 const SUPPORTED_UPLOAD_SUFFIXES = [
@@ -61,7 +63,7 @@ export function normalizeWorkbenchUploadFilename(value: string): string {
     }
   })();
   const basename = path.basename(decoded.trim()).replace(/[\u0000-\u001f\u007f]/g, "");
-  if (!basename || basename === "." || basename === ".." || basename.length > 255) {
+  if (!basename || basename === "." || basename === ".." || Buffer.byteLength(basename, "utf8") > 255) {
     throw new WorkbenchUploadError("A valid file name is required");
   }
   const lower = basename.toLowerCase();
@@ -82,6 +84,9 @@ export async function storeWorkbenchUpload(args: {
 }) {
   const filename = normalizeWorkbenchUploadFilename(args.filename);
   const maxBytes = getWorkbenchUploadLimitBytes();
+  if (args.contentLength != null && (!Number.isSafeInteger(args.contentLength) || args.contentLength < 0)) {
+    throw new WorkbenchUploadError("Invalid upload content length");
+  }
   if (args.contentLength && args.contentLength > maxBytes) {
     throw new WorkbenchUploadError("Upload exceeds the configured size limit", 413);
   }
@@ -90,7 +95,9 @@ export async function storeWorkbenchUpload(args: {
   const storage = await resolveWorkbenchStorageBase();
   const uploadId = crypto.randomUUID();
   const uploadDir = path.join(storage.baseDir, "uploads", workspace.id, uploadId);
-  const storedFilename = sanitizePathSegment(filename);
+  const suffix = [...SUPPORTED_UPLOAD_SUFFIXES].sort((a, b) => b.length - a.length)
+    .find((item) => filename.toLowerCase().endsWith(item))!;
+  const storedFilename = `${sanitizePathSegment(filename.slice(0, -suffix.length))}${suffix}`;
   const finalPath = path.join(uploadDir, storedFilename);
   const temporaryPath = `${finalPath}.part`;
   assertPathInsideBase(finalPath, storage.baseDir, "Workbench upload path");
@@ -119,11 +126,22 @@ export async function storeWorkbenchUpload(args: {
     if (bytesWritten === 0) {
       throw new WorkbenchUploadError("The uploaded file is empty");
     }
+    if (args.contentLength != null && bytesWritten !== args.contentLength) {
+      throw new WorkbenchUploadError("Upload length does not match the declared content length");
+    }
+    if (/\.(fastq|fq)(\.gz)?$/.test(filename.toLowerCase())) {
+      try {
+        await validateFastqFile(temporaryPath, { gzip: suffix.endsWith(".gz"), maxExpandedBytes: maxBytes });
+      } catch {
+        throw new WorkbenchUploadError("Invalid, unsupported, or oversized FASTQ content");
+      }
+    }
     await fs.rename(temporaryPath, finalPath);
 
     const checksumSha256 = hash.digest("hex");
     const linkedAt = new Date();
     const dataset = await db.$transaction(async (tx) => {
+      await lockWorkbenchPublicationAccess(tx, workspace.id, args.userId);
       const created = await tx.workbenchDataset.create({
         data: {
           providerId: "local-upload",
@@ -135,6 +153,8 @@ export async function storeWorkbenchUpload(args: {
             originalFilename: filename,
             contentType: args.contentType || "application/octet-stream",
             uploadedAt: linkedAt.toISOString(),
+            validation: /\.(fastq|fq)(\.gz)?$/.test(filename.toLowerCase())
+              ? "four-line-fastq; pairing-not-validated" : "content-validation-pending",
           }),
           storagePath: finalPath,
           sizeBytes: BigInt(bytesWritten),

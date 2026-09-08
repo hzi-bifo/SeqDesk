@@ -112,6 +112,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (database.resource) {
+      const { resourceApiAction } = await import('@/lib/pipelines/resource-service');
+      return resourceApiAction('link', pipelineId, database.resource, resolvedPath);
+    }
+
     const existingJob = await getDatabaseDownloadJobStatus(pipelineId, databaseId);
     if (existingJob?.state === 'running') {
       return NextResponse.json(

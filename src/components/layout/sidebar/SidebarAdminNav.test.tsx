@@ -159,7 +159,7 @@ describe("SidebarAdminNav", () => {
     expect(screen.getByRole("link", { name: "Sequencing Order Form" }).className).toContain("bg-secondary");
   });
 
-  it("shows shared administration without sequencing-center configuration in Workbench", async () => {
+  it("shows the same administration configuration in the research preset", async () => {
     mocks.usePathname.mockReturnValue("/admin/onboarding");
 
     render(
@@ -173,15 +173,15 @@ describe("SidebarAdminNav", () => {
     expect(screen.getByRole("link", { name: "Setup checklist" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Modules" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Pipelines" })).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Sequencing Order Form" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Study Forms" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "MIxS Checklists" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Sequencers" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "MinKNOW Stream" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Data Upload" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Sequencing Order Form" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Study Forms" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "MIxS Checklists" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Sequencers" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "MinKNOW Stream" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Data Upload" })).toBeTruthy();
   });
 
-  it("uses the setup checklist as the collapsed Workbench settings destination", () => {
+  it("uses the shared settings destination in the collapsed research preset", () => {
     render(
       <DeploymentProfileProvider
         profile={getDeploymentProfileDefinition("research-workbench")}
@@ -191,7 +191,7 @@ describe("SidebarAdminNav", () => {
     );
 
     expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe(
-      "/admin/onboarding"
+      "/admin/form-builder"
     );
   });
 

@@ -55,7 +55,7 @@ describe("capability guards", () => {
       decideCapability(
         { user: { id: "member-1", role: "RESEARCHER" } },
         "orders.read",
-        workbench
+        { ...workbench, domains: workbench.domains.filter(d => d !== "facility-intake") }
       )
     ).toMatchObject({
       allowed: false,

@@ -24,9 +24,6 @@ export async function GET(request: NextRequest) {
     }
 
     const deploymentProfile = getServerDeploymentProfile();
-    if (deploymentProfile.experience === 'workbench') {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }
 
     const readAll = decideCapability(session, 'analysis.read_all', deploymentProfile);
     const readOwn = decideCapability(session, 'analysis.read_own', deploymentProfile);
@@ -41,6 +38,7 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const publishedOnly =
+      !decideCapability(session, 'analysis.run', deploymentProfile).allowed ||
       searchParams.get('publishedOnly') === 'true' ||
       searchParams.get('userVisible') === 'true' ||
       searchParams.get('visible') === 'user';
@@ -79,9 +77,6 @@ export async function POST(request: NextRequest) {
     }
 
     const deploymentProfile = getServerDeploymentProfile();
-    if (deploymentProfile.experience === 'workbench') {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }
     const decision = decideCapability(session, 'analysis.run', deploymentProfile);
     if (!decision.allowed || !decision.grant) {
       return NextResponse.json(
@@ -106,6 +101,7 @@ export async function POST(request: NextRequest) {
       body,
       userId: session.user.id,
       accessScope: decision.grant.scope,
+      canManageConfig: decideCapability(session, 'system.pipelines.manage', deploymentProfile).allowed,
     });
 
     return NextResponse.json(result.body, { status: result.status });

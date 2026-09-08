@@ -8,6 +8,11 @@ import {
 } from "./overview-flow";
 
 describe("sampleHasStudyOverviewMetadata", () => {
+  it("does not count repository snapshots as completed study metadata", () => {
+    const imported = { sourceType: "ena-fastq-accession", dataset: "source", sourceKey: "sample", synthetic: false, originalMetadata: { retained: true } };
+    expect(sampleHasStudyOverviewMetadata({ id: "sample", customFields: imported })).toBe(false);
+    expect(sampleHasStudyOverviewMetadata({ id: "sample", customFields: imported, checklistData: { depth: "10m" } })).toBe(true);
+  });
   it("does not treat core sample identifiers as completed metadata", () => {
     expect(
       sampleHasStudyOverviewMetadata({

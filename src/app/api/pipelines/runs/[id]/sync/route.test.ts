@@ -271,7 +271,7 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
     expect(body.success).toBe(true);
   });
 
-  it("returns 403 for a non-admin owner of an unpublished run", async () => {
+  it("allows a runnable owner to sync their unpublished run", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "study-owner", role: "RESEARCHER" },
     });
@@ -284,9 +284,9 @@ describe("POST /api/pipelines/runs/[id]/sync", () => {
 
     const response = await POST(makeRequest(), { params: baseParams });
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body.error).toBe("Forbidden");
+    expect(body.success).toBe(true);
   });
 
   it("detects failed tasks from trace file", async () => {

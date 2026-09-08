@@ -7,6 +7,8 @@ export interface SidebarEntityData {
   label: string;
   sublabel: string;
   status: string;
+  dataOrigin?: string;
+  collectionKey?: string;
 }
 
 export interface SidebarEntityContext {
@@ -33,7 +35,11 @@ export function useSidebarEntity(): SidebarEntityContext {
   const studyMatch = pathname.match(/^\/studies\/([^/]+)(\/(.+))?$/);
   const analysisMatch = pathname.match(/^\/analysis\/([^/]+)/);
 
-  if (orderMatch && orderMatch[1] !== "new") {
+  if (pathname === "/orders/import" && searchParams.get("orderId")) {
+    entityType = "order";
+    entityId = searchParams.get("orderId");
+    currentSubPage = "source";
+  } else if (orderMatch && !["new", "import"].includes(orderMatch[1])) {
     entityType = "order";
     entityId = orderMatch[1];
     currentSubPage = orderMatch[3] || "overview";
@@ -87,8 +93,12 @@ export function useSidebarEntity(): SidebarEntityContext {
 
         let parsed: SidebarEntityData;
         if (entityType === "order") {
+          let collectionKey: string | undefined;
+          try { collectionKey = JSON.parse(data.sourceMetadata || "{}").collectionKey; } catch { /* Legacy metadata */ }
           parsed = {
-            label: data.name || data.orderNumber || "Sequencing Order",
+            collectionKey,
+            dataOrigin: data.dataOrigin,
+            label: data.name || data.orderNumber || "Sequencing data",
             sublabel: data.orderNumber || "",
             status: data.status || "DRAFT",
           };

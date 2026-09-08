@@ -20,7 +20,9 @@ import {
 
 vi.mock("@/lib/pipelines/package-loader", () => ({
   getPipelinesDir: () => "/tmp/pipelines",
+  getPackage: () => undefined,
 }));
+vi.mock('./resource-jobs', () => ({ readResourceJob: async () => null, readAllResourceJobs: async () => [] }));
 
 const pipelinesDir = "/tmp/pipelines";
 const indexPath = path.join(pipelinesDir, ".pipeline-database-downloads.json");

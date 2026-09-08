@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { WorkbenchImportStoragePaths } from "@/lib/workbench/storage";
+import type { ImportCollection } from "../import-collection";
 
 export type WorkbenchImportJobStatus = "queued" | "running" | "success" | "error" | "cancelled";
 
@@ -21,6 +22,7 @@ export interface WorkbenchGenomePreviewItem {
 }
 
 export interface WorkbenchFilePreviewItem {
+  sourceRecord?: Record<string, string | undefined>;
   runAccession: string;
   sampleAccession?: string;
   studyAccession?: string;
@@ -35,6 +37,9 @@ export interface WorkbenchFilePreviewItem {
 }
 
 export interface WorkbenchImportPreview {
+  processing?: import("../import-processing").SourceProcessing;
+  contractVersion?: number;
+  sampleMetadata?: Record<string, unknown>;
   providerId: string;
   summary: {
     label: string;
@@ -46,11 +51,25 @@ export interface WorkbenchImportPreview {
     hardMax: number;
   };
   genomes: WorkbenchGenomePreviewItem[];
+  assets?: { url: string; filename: string; bytes: number; etag: string; role: string }[];
   files?: WorkbenchFilePreviewItem[];
   warnings?: string[];
 }
 
 export interface WorkbenchImportResult {
+  processingDeclaration?: import("../import-processing").ProcessingDeclaration;
+  collection?: ImportCollection;
+  scientificImports?: NonNullable<WorkbenchImportResult["scientificImport"]>[];
+  scientificImport?: {
+    processing?: import("../import-processing").SourceProcessing;
+    targetStudyId?: string;
+    synthetic: boolean;
+    metadata?: Record<string, unknown>;
+    studyKey: string; studyTitle: string; sampleKey: string; sampleTitle: string;
+    technology: "short" | "long" | "single";
+    readKey?: string;
+    reads: { path: string; sha256: string; md5?: string; bytes: number; records?: number }[];
+  };
   cacheKey: string;
   name: string;
   description?: string;
@@ -70,6 +89,7 @@ export interface WorkbenchImportStartContext<TInput> {
   preview: WorkbenchImportPreview;
   cacheKey: string;
   storage: WorkbenchImportStoragePaths;
+  signal?: AbortSignal;
   update: (update: {
     status?: WorkbenchImportJobStatus;
     phase?: string | null;

@@ -18,6 +18,8 @@ export interface StudyPipelineTarget {
   type: 'study';
   studyId: string;
   sampleIds?: string[];
+  /** Server-selected scope: publication never includes analysis-only memberships. */
+  primaryOnly?: boolean;
 }
 
 export interface OrderPipelineTarget {
@@ -56,6 +58,12 @@ export interface PipelineConfigSchema {
   type: 'object';
   properties: Record<string, PipelineConfigProperty>;
   required?: string[];
+  /** Opt-in strict run parameters; older packages retain their existing policy. */
+  additionalProperties?: boolean;
+  runRequirements?: {
+    required?: string[];
+    properties?: Record<string, { const?: unknown; format?: 'json-string-map' }>;
+  };
 }
 
 export type PipelineConfigPlacement = 'basic' | 'advanced' | 'derived' | 'admin' | 'hidden';
@@ -91,6 +99,8 @@ export interface PipelineConfigProperty {
   enum?: unknown[];
   minimum?: number;
   maximum?: number;
+  pattern?: string;
+  format?: 'absolute-path' | 'identifier-list';
   'x-seqdesk'?: PipelineConfigSeqDeskUi;
 }
 

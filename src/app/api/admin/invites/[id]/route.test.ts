@@ -98,7 +98,7 @@ describe("DELETE /api/admin/invites/[id]", () => {
     expect(body.revokedAt).toEqual(expect.any(String));
     expect(mocks.db.adminInvite.updateMany).toHaveBeenCalledWith({
       where: { id: "invite-1", usedAt: null, revokedAt: null },
-      data: { revokedAt: expect.any(Date), revokedById: "admin-1" },
+      data: { revokedAt: expect.any(Date), revokedById: "admin-1", code: null },
     });
   });
 

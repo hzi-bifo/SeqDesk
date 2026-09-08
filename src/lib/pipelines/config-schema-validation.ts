@@ -132,6 +132,18 @@ export function validatePipelineConfigSchema(
       continue;
     }
 
+    if (typeof value === 'string' && value.trim()) {
+      if (property.pattern && !new RegExp(property.pattern).test(value.trim())) {
+        valueIssues.push(`${label} has an invalid format.`);
+      }
+      if (property.format === 'absolute-path' && (!value.startsWith('/') || /[\x00-\x1f]/.test(value))) {
+        valueIssues.push(`${label} must be an absolute path on the execution host.`);
+      }
+      if (property.format === 'identifier-list' && !value.split(',').every(part => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(part.trim()))) {
+        valueIssues.push(`${label} must contain comma-separated identifiers.`);
+      }
+    }
+
     if (
       property.enum &&
       !property.enum.some((allowedValue) => valuesEqual(allowedValue, value))
@@ -160,4 +172,42 @@ export function validatePipelineConfigSchema(
     valueIssues,
     issues: [...requiredIssues, ...valueIssues],
   };
+}
+
+/** Run forms may contain saved administrator defaults. Reload those on the server. */
+export function pipelineRunOverrides(schema: { additionalProperties?: boolean; properties?: Record<string, PipelineConfigProperty> } | undefined, config: Record<string, unknown>): Record<string, unknown> {
+  if (schema?.additionalProperties !== false) return config;
+  return Object.fromEntries(Object.entries(config).filter(([key]) => {
+    const property = schema.properties?.[key];
+    return property && !['admin', 'hidden', 'derived'].includes(property['x-seqdesk']?.placement ?? '');
+  }));
+}
+
+export function pipelineConfigOverrideIssues(schema: PipelineConfigSchema | undefined, config: Record<string, unknown>, canManageConfig: boolean): string[] {
+  if (schema?.additionalProperties !== false) return [];
+  return Object.keys(config).flatMap(key => {
+    const property = Object.hasOwn(schema.properties, key) ? schema.properties[key] : undefined;
+    if (!property) return [`Unsupported pipeline parameter: ${key}`];
+    const placement = property['x-seqdesk']?.placement;
+    if (placement === 'hidden' || placement === 'derived') return [`Parameter ${key} is supplied by the executor`];
+    return !canManageConfig && placement === 'admin' ? [`Only administrators may override ${key}`] : [];
+  });
+}
+
+export function pipelineSchemaRunIssues(schema: PipelineConfigSchema | undefined, config: Record<string, unknown>): string[] {
+  if (!schema) return [];
+  if (!schema.runRequirements && schema.additionalProperties !== false) return [];
+  const issues = validatePipelineConfigSchema({ ...schema, required: [...(schema.required ?? []), ...(schema.runRequirements?.required ?? [])] }, config).issues;
+  for (const [key, rule] of Object.entries(schema.runRequirements?.properties ?? {})) {
+    const label = schema.properties[key]?.title || key;
+    if (Object.hasOwn(rule, 'const') && !valuesEqual(config[key], rule.const)) issues.push(`${label} must be ${formatEnumValue(rule.const)}.`);
+    if (rule.format === 'json-string-map') {
+      try {
+        const mapping: unknown = JSON.parse(String(config[key]));
+        if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping) || !Object.keys(mapping).length ||
+          Object.entries(mapping).some(([name, value]) => !name.trim() || typeof value !== 'string' || !value.trim())) throw new Error();
+      } catch { issues.push(`${label} must be a nonempty JSON mapping of names to strings.`); }
+    }
+  }
+  return issues;
 }

@@ -1,8 +1,10 @@
 import { ncbiGenomesTaxonImporter } from "./ncbi-genomes-taxon";
 import { enaFastqAccessionImporter } from "./ena-fastq-accession";
+import { camiBenchmarkImporter } from "./cami-benchmark";
 import type { WorkbenchImporterProvider } from "./types";
 
 const providers = [
+  camiBenchmarkImporter,
   enaFastqAccessionImporter,
   ncbiGenomesTaxonImporter,
 ] as const satisfies readonly WorkbenchImporterProvider[];

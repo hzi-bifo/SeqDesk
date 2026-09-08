@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
     siteSettings: { findUnique: vi.fn() },
     user: { count: vi.fn(), findFirst: vi.fn() },
     department: { findUnique: vi.fn() },
-    adminInvite: { findUnique: vi.fn() },
+    adminInvite: { findFirst: vi.fn() },
     $transaction: vi.fn(),
   },
 }));
@@ -33,6 +33,7 @@ vi.mock("@/lib/modules/types", () => ({
 }));
 
 import { POST } from "./route";
+import { inviteCodeLookup } from "@/lib/accounts/invite-secret.server";
 
 function makeRequest(body: Record<string, unknown>) {
   return new NextRequest("http://localhost:3000/api/register", {
@@ -185,7 +186,7 @@ describe("POST /api/register", () => {
   });
 
   it("redeems a member invite through an atomic conditional claim", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue(
+    mocks.db.adminInvite.findFirst.mockResolvedValue(
       activeInvite({ email: "new@example.com" })
     );
 
@@ -194,8 +195,8 @@ describe("POST /api/register", () => {
     );
 
     expect(response.status).toBe(201);
-    expect(mocks.db.adminInvite.findUnique).toHaveBeenCalledWith({
-      where: { code: "M-MEMBER01" },
+    expect(mocks.db.adminInvite.findFirst).toHaveBeenCalledWith({
+      where: inviteCodeLookup("M-MEMBER01").where,
       include: {
         createdBy: { select: { systemRole: true, isActive: true } },
       },
@@ -210,12 +211,12 @@ describe("POST /api/register", () => {
           is: { systemRole: "ADMIN", isActive: true },
         },
       },
-      data: { usedAt: expect.any(Date), usedById: "user-1" },
+      data: { usedAt: expect.any(Date), usedById: "user-1", code: null },
     });
   });
 
   it("supports a member who is independently a Sequencing Center operator", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue(
+    mocks.db.adminInvite.findFirst.mockResolvedValue(
       activeInvite({ targetFacilityWorkflowRole: "OPERATOR" })
     );
 
@@ -235,8 +236,20 @@ describe("POST /api/register", () => {
     );
   });
 
+  it("redeems a digest-only invitation using its explicit stored grant", async () => {
+    mocks.db.adminInvite.findFirst.mockResolvedValue(activeInvite({
+      code: null,
+      codeDigest: inviteCodeLookup("M-MEMBER01").codeDigest,
+    }));
+    const response = await POST(makeRequest({ ...validBody, inviteCode: "m-member01" }));
+    expect(response.status).toBe(201);
+    expect(mocks.transactionUserCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ systemRole: "MEMBER" }),
+    }));
+  });
+
   it("supports an administrator who remains a Sequencing Center requester", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue(
+    mocks.db.adminInvite.findFirst.mockResolvedValue(
       activeInvite({
         code: "A-ADMIN01",
         email: "new@example.com",
@@ -262,7 +275,7 @@ describe("POST /api/register", () => {
   });
 
   it("never lets a legacy role assertion elevate a member grant", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue(activeInvite());
+    mocks.db.adminInvite.findFirst.mockResolvedValue(activeInvite());
 
     const response = await POST(
       makeRequest({
@@ -277,7 +290,7 @@ describe("POST /api/register", () => {
   });
 
   it("rejects revoked invitations and invitations from inactive creators", async () => {
-    mocks.db.adminInvite.findUnique
+    mocks.db.adminInvite.findFirst
       .mockResolvedValueOnce(activeInvite({ revokedAt: new Date() }))
       .mockResolvedValueOnce(
         activeInvite({ createdBy: { systemRole: "ADMIN", isActive: false } })
@@ -296,7 +309,7 @@ describe("POST /api/register", () => {
   });
 
   it("enforces email-bound invitations", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue(
+    mocks.db.adminInvite.findFirst.mockResolvedValue(
       activeInvite({ email: "specific@example.com" })
     );
 
@@ -313,7 +326,7 @@ describe("POST /api/register", () => {
   });
 
   it("rolls back registration when another request claims the invite first", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue(activeInvite());
+    mocks.db.adminInvite.findFirst.mockResolvedValue(activeInvite());
     mocks.transactionInviteUpdateMany.mockResolvedValue({ count: 0 });
 
     const response = await POST(
@@ -328,7 +341,7 @@ describe("POST /api/register", () => {
 
   it("normalizes legacy operator grants and rejects center-only fields outside the center", async () => {
     mocks.getServerDeploymentProfile.mockReturnValue({ id: "shared-lab" });
-    mocks.db.adminInvite.findUnique.mockResolvedValue(
+    mocks.db.adminInvite.findFirst.mockResolvedValue(
       activeInvite({ targetFacilityWorkflowRole: "OPERATOR" })
     );
 

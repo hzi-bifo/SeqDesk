@@ -42,7 +42,7 @@ export interface DeploymentProfileDefinition {
   shortLabel: string;
   description: string;
   experience: DeploymentExperience;
-  defaultRoute: "/orders" | "/workbench/data";
+  defaultRoute: "/orders" | "/workbench/data" | "/sequencing";
   domains: readonly DeploymentDomainId[];
   modules: readonly DeploymentModuleId[];
   accountModel: "service-roles" | "collaborative-lab" | "self-service";

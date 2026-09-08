@@ -157,7 +157,7 @@ describe("SetupPage", () => {
     expect(screen.getByText("Self-hosted install")).toBeTruthy();
     expect(screen.getByText("Continue to login")).toBeTruthy();
     expect(screen.getAllByText("Sequencing center").length).toBeGreaterThan(0);
-    expect(screen.getByText("Operating model")).toBeTruthy();
+    expect(screen.getByText("Account and module preset")).toBeTruthy();
     expect(screen.getByText("Administrator credentials required")).toBeTruthy();
     expect(screen.queryByText("admin@example.com")).toBeNull();
   });

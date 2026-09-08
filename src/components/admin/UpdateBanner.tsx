@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import { ArrowUpCircle, X } from "lucide-react";
 import Link from "next/link";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
-import { hasCapability, principalFromSession } from "@/lib/authorization";
+import { hasCapability, principalFromSession } from "@/lib/authorization/client";
 
 interface UpdateInfo {
   currentVersion: string;

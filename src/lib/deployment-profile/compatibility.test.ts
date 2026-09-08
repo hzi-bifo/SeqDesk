@@ -40,18 +40,11 @@ describe("deployment profile compatibility", () => {
     );
   });
 
-  it("rejects Workbench/sequencing composition conflicts", () => {
-    const invalid = {
-      ...DEPLOYMENT_PROFILES["research-workbench"],
-      modules: [...DEPLOYMENT_PROFILES["research-workbench"].modules, "orders"],
-    } as DeploymentProfileDefinition;
-
-    expect(validateDeploymentProfileCompatibility(invalid)).toContainEqual(
-      expect.objectContaining({
-        severity: "error",
-        code: "experience-module-conflict",
-      })
-    );
+  it("allows facility and raw-read source modules to coexist in each preset", () => {
+    for (const profile of Object.values(DEPLOYMENT_PROFILES)) {
+      expect(profile.modules).toEqual(expect.arrayContaining(["orders", "data-imports", "studies"]));
+      expect(validateDeploymentProfileCompatibility(profile)).toEqual([]);
+    }
   });
 
   it("reports disabled Workbench execution as an operational warning, not an invalid profile", () => {
@@ -94,7 +87,7 @@ describe("deployment profile compatibility", () => {
   it.each([
     ["sequencing-center", true, true, true, true],
     ["shared-lab", true, true, true, true],
-    ["research-workbench", false, false, false, false],
+    ["research-workbench", true, true, true, true],
   ] as const)(
     "resolves facility defaults for the %s profile",
     (profileId, aiValidation, mixsMetadata, enaSampleFields, sequencingTech) => {
@@ -111,13 +104,13 @@ describe("deployment profile compatibility", () => {
         notifications: false,
       });
       expect(resolved.incompatibleModules.includes("ai-validation")).toBe(
-        profileId === "research-workbench"
+        false
       );
     }
   );
 
   it("keeps compatible overrides while forcing incompatible stored values off", () => {
-    const profile = DEPLOYMENT_PROFILES["research-workbench"];
+    const profile = { ...DEPLOYMENT_PROFILES["research-workbench"], domains: DEPLOYMENT_PROFILES["research-workbench"].domains.filter(d => d !== "facility-intake") };
     const resolved = resolveEffectiveFeatureModuleStates(profile, {
       notifications: true,
       "billing-info": true,
@@ -149,7 +142,7 @@ describe("deployment profile compatibility", () => {
 
     expect(
       validateFeatureModuleCompatibility(
-        DEPLOYMENT_PROFILES["research-workbench"],
+        { ...DEPLOYMENT_PROFILES["research-workbench"], domains: DEPLOYMENT_PROFILES["research-workbench"].domains.filter(d => d !== "facility-intake" && d !== "sequencing-operations") },
         { "billing-info": true }
       )
     ).toContainEqual(
@@ -183,7 +176,7 @@ describe("deployment profile compatibility", () => {
   it("allows an incompatible always-on module to be explicitly cleared", () => {
     expect(
       validateFeatureModuleCompatibility(
-        DEPLOYMENT_PROFILES["research-workbench"],
+        { ...DEPLOYMENT_PROFILES["research-workbench"], domains: DEPLOYMENT_PROFILES["research-workbench"].domains.filter(d => d !== "facility-intake" && d !== "sequencing-operations") },
         { "sequencing-tech": false }
       )
     ).toEqual([]);

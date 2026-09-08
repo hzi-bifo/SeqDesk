@@ -14,6 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import { ManifestSchema } from './manifest-schema';
+import type { PipelineResource } from './resource-schema';
 import {
   DefinitionRuntimeSchema,
   ParserRuntimeSchema,
@@ -151,6 +152,7 @@ export interface PackageExecution {
 }
 
 export interface PackageSequencingCompatibility {
+  requireReadLengthEvidence?: boolean;
   readLengthClass?: 'short' | 'long' | 'both' | 'unknown';
   readLayouts?: Array<'single' | 'paired'>;
   platformFamilies?: string[];
@@ -180,6 +182,7 @@ export interface PackageManifest {
     supported: PackageTargetType[];
   };
   sequencingCompatibility?: PackageSequencingCompatibility;
+  resources?: PipelineResource[];
   inputs: PackageInput[];
   execution: PackageExecution;
   outputs: PackageOutput[];
@@ -494,6 +497,20 @@ function validatePackageManifest(
     errors.push(
       `Registry ID mismatch: registry.id="${registry.id}" but manifest.package.id="${manifest.package.id}"`
     );
+  }
+
+  if (schemaResult.success && registry) {
+    for (const resource of schemaResult.data.resources ?? []) {
+      const bindings = { ...resource.config.values, [resource.config.pathKey]: '/resource-directory' };
+      for (const [key, value] of Object.entries(bindings)) {
+        const property = registry.configSchema.properties[key];
+        if (!property || property['x-seqdesk']?.placement !== 'admin') {
+          errors.push(`Resource ${resource.id} config binding ${key} must reference an admin configuration field`);
+        } else if ((property.type === 'integer' ? !Number.isInteger(value) : typeof value !== property.type) || (property.enum && !property.enum.includes(value))) {
+          errors.push(`Resource ${resource.id} has an invalid value for ${key}`);
+        }
+      }
+    }
   }
 
   const pipelineReference = manifest.execution.pipeline.trim();

@@ -6,6 +6,7 @@ import {
   serializeWorkbenchImporter,
 } from "@/lib/workbench/importers/registry";
 import { authorizeWorkbenchRequest } from "@/lib/workbench/server";
+import { requireRawReadImporter } from "@/lib/modules/input-modules.server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,10 +18,11 @@ export async function GET() {
 
   const importers = await Promise.all(
     listWorkbenchImporters().map(async (provider) => {
+      try { await requireRawReadImporter(provider.id); } catch { return null; }
       const preflight = await provider.preflight();
       return serializeWorkbenchImporter(provider, preflight);
     })
   );
 
-  return NextResponse.json({ importers });
+  return NextResponse.json({ importers: importers.filter(Boolean) });
 }

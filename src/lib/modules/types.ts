@@ -54,6 +54,9 @@ export interface AccountValidationSettings {
 
 // Available modules in the system
 export const AVAILABLE_MODULES: ModuleDefinition[] = [
+  { id: "sequencing-management", name: "Sequencing management", description: "Facility submission, sample intake and instrument sequencing. Can coexist with raw-read import modules.", category: "order-form", featureLocation: "Sequencing data > Facility processing" },
+  { id: "import-cami", name: "CAMI raw reads", description: "Import CAMI short or long raw reads and source metadata into shared records.", category: "order-form", featureLocation: "Sequencing data > Data source" },
+  { id: "import-sra", name: "SRA / ENA raw reads", description: "Import public raw reads and archive metadata using ENA/SRA accessions.", category: "order-form", featureLocation: "Sequencing data > Data source" },
   // Form Extensions
   {
     id: "mixs-metadata",
@@ -130,6 +133,9 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
 
 // Default module states (what's enabled out of the box)
 export const DEFAULT_MODULE_STATES: Record<string, boolean> = {
+  "sequencing-management": true,
+  "import-cami": true,
+  "import-sra": true,
   "ai-validation": true,
   "mixs-metadata": true,
   "account-validation": false,

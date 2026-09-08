@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { isActiveSession } from "@/lib/auth-session";
 import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { inputModuleEnabled } from "@/lib/modules/input-modules.server";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { getDemoFacilityWorkspaceUserIds } from "@/lib/demo/server";
 import { notifyOrderCreatedInApp } from "@/lib/notifications/in-app";
@@ -94,7 +95,7 @@ export async function GET() {
       sharingMode = "all";
     } else {
       // Check if department sharing is enabled
-      const departmentSharing = await isDepartmentSharingEnabled();
+      const departmentSharing = readGrant.scope !== "workspace" && await isDepartmentSharingEnabled();
 
       if (departmentSharing) {
         // Get user's department
@@ -106,9 +107,10 @@ export async function GET() {
         if (user?.departmentId) {
           // Show orders from users in the same department
           whereClause = {
-            user: {
-              departmentId: user.departmentId,
-            },
+            OR: [
+              { userId: session.user.id },
+              { dataOrigin: "facility", user: { departmentId: user.departmentId } },
+            ],
           };
           sharingMode = "department";
         } else {
@@ -201,6 +203,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!await inputModuleEnabled("sequencing-management")) return NextResponse.json({ error: "Sequencing management is disabled. Use an enabled raw-read source instead." }, { status: 403 });
     const body = await request.json();
     const generatedByE2E = request.headers.get("x-seqdesk-e2e") === "playwright";
     const {

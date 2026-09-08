@@ -115,7 +115,9 @@
     "react-simple-wysiwyg": "^3.4.1",
     "swr": "^2.3.8",
     "tailwind-merge": "^3.4.0",
+    "tar-stream": "2.2.0",
     "turndown": "^7.2.2",
+    "unzipper": "0.10.14",
     "zod": "^4.3.5",
     "zustand": "^5.0.10"
   },

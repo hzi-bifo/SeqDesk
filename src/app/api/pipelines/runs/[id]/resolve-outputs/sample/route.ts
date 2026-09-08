@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { loadStudyRunSamples } from '@/lib/pipelines/study-samples';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import '@/lib/pipelines/adapters/mag';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
@@ -85,7 +86,7 @@ export async function POST(
 
     const samples = run.targetType === 'order'
       ? run.order?.samples || []
-      : run.study?.samples || [];
+      : run.inputSampleIds ? await loadStudyRunSamples(run) : run.study?.samples || [];
 
     const targetSample = samples.find((s) => s.id === body.sampleId);
     if (!targetSample) {

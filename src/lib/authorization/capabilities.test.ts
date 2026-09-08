@@ -23,7 +23,7 @@ describe("deployment profile capability grants", () => {
     ["sequencing-center", "member", "requester", "samples.manage", true, "own"],
     ["sequencing-center", "member", "requester", "support.tickets.use", true, "own"],
     ["sequencing-center", "member", "requester", "support.tickets.manage", false, null],
-    ["sequencing-center", "member", "requester", "analysis.run", false, null],
+    ["sequencing-center", "member", "requester", "analysis.run", true, "own"],
     ["sequencing-center", "admin", "operator", "analysis.run", true, "installation"],
     ["sequencing-center", "admin", "operator", "support.tickets.manage", true, "installation"],
     ["sequencing-center", "admin", "operator", "system.facility.manage", true, "installation"],
@@ -38,8 +38,11 @@ describe("deployment profile capability grants", () => {
     ["shared-lab", "member", "requester", "analysis.cancel_all", false, null],
     ["research-workbench", "member", "requester", "workbench.import", true, "workspace"],
     ["research-workbench", "admin", "operator", "system.pipelines.manage", true, "installation"],
-    ["research-workbench", "admin", "operator", "system.catalog.manage", false, null],
-    ["research-workbench", "admin", "operator", "system.sequencing.manage", false, null],
+    ["research-workbench", "admin", "operator", "system.catalog.manage", true, "installation"],
+    ["research-workbench", "member", "requester", "studies.read", true, "workspace"],
+    ["research-workbench", "member", "requester", "studies.create", true, "workspace"],
+    ["research-workbench", "admin", "operator", "studies.read_all", false, null],
+    ["research-workbench", "admin", "operator", "system.sequencing.manage", true, "installation"],
     ["research-workbench", "admin", "operator", "support.tickets.manage", false, null],
     ["research-workbench", "admin", "operator", "analysis.read_all", false, null],
     ["research-workbench", "admin", "operator", "orders.read_all", false, null],
@@ -62,7 +65,7 @@ describe("deployment profile capability grants", () => {
     expect(hasCapability(profile, administrator, "system.settings.manage")).toBe(true);
     expect(hasCapability(profile, administrator, "analysis.read_all")).toBe(false);
     expect(getCapabilityGrant(profile, administrator, "analysis.read_own")?.scope).toBe(
-      "workspace"
+      "own"
     );
   });
 

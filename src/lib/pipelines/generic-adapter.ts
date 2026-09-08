@@ -17,6 +17,7 @@ import { resolveAssemblySelection } from '@/lib/pipelines/assembly-selection';
 import { compilePackageGlobPattern } from '@/lib/pipelines/package-patterns';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import { getPipelineSampleWhere, isOrderTarget, isStudyTarget } from '@/lib/pipelines/target';
+import { scopePipelineStudyTarget } from './study-samples';
 
 /**
  * Simple glob implementation for finding files matching a pattern
@@ -399,7 +400,7 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
       target: PipelineTarget
     ): Promise<ValidationResult> {
       const issues: string[] = [];
-      const whereClause = getPipelineSampleWhere(target);
+      const whereClause = getPipelineSampleWhere(scopePipelineStudyTarget(target, packageId));
 
       if (isOrderTarget(target)) {
         for (const input of pkg.manifest.inputs) {
@@ -608,7 +609,7 @@ export function createGenericAdapter(packageId: string): PipelineAdapter | null 
       if (customSamplesheetScript) {
         try {
           const samples = await db.sample.findMany({
-            where: getPipelineSampleWhere(options.target),
+            where: getPipelineSampleWhere(scopePipelineStudyTarget(options.target, packageId)),
             include: {
               reads: {
                 where: { isActive: true },

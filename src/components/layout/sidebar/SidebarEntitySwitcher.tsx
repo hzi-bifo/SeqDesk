@@ -47,10 +47,7 @@ export function SidebarEntitySwitcher({
   const currentOrderName = entityType === "order" ? entityData?.label ?? null : null;
   const currentStudyId = entityType === "study" ? entityId : null;
   const currentStudyTitle = entityType === "study" ? entityData?.label ?? null : null;
-  const orderLabel =
-    deploymentProfile.terminology.workItem === "Project"
-      ? "Projects"
-      : "Sequencing Orders";
+  const orderLabel = "Sequencing data";
 
   if (collapsed) {
     const ActiveIcon = activeTab === "orders" ? Inbox : BookOpen;

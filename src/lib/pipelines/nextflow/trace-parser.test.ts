@@ -330,6 +330,52 @@ describe("trace-parser", () => {
     clearIntervalSpy.mockRestore();
   });
 
+  it('discards an in-flight read after stop and does not overlap interval checks', async () => {
+    const tracePath = await writeFile('trace.txt', 'task_id\tname\tstatus\n');
+    const callback = vi.fn();
+    let tick!: () => void;
+    const interval = vi.spyOn(globalThis, 'setInterval').mockImplementation(handler => {
+      tick = handler as () => void; return 1 as unknown as NodeJS.Timeout;
+    });
+    const clear = vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => undefined);
+    const stop = await watchTraceFile(tracePath, callback);
+    const future = new Date(Date.now() + 1000); await fs.utimes(tracePath, future, future);
+    let finish!: (content: string) => void;
+    let started!: () => void;
+    const began = new Promise<void>(resolve => { started = resolve; });
+    const read = vi.spyOn(fs, 'readFile').mockImplementationOnce(() => {
+      started(); return new Promise<string>(resolve => { finish = resolve; });
+    });
+    const stat = vi.spyOn(fs, 'stat');
+    try {
+      tick(); tick();
+      await began;
+      expect(stat).toHaveBeenCalledTimes(1);
+      stop();
+      finish('task_id\tname\tstatus\n');
+      await pause(0);
+      expect(callback).toHaveBeenCalledTimes(1);
+    } finally { stop(); interval.mockRestore(); clear.mockRestore(); read.mockRestore(); stat.mockRestore(); }
+  });
+
+  it('retries a failed read even when the trace mtime has not changed again', async () => {
+    const tracePath = await writeFile('trace.txt', 'task_id\tname\tstatus\n');
+    const callback = vi.fn();
+    let tick!: () => void;
+    const interval = vi.spyOn(globalThis, 'setInterval').mockImplementation(handler => {
+      tick = handler as () => void; return 1 as unknown as NodeJS.Timeout;
+    });
+    const clear = vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => undefined);
+    const stop = await watchTraceFile(tracePath, callback);
+    const future = new Date(Date.now() + 1000); await fs.utimes(tracePath, future, future);
+    const read = vi.spyOn(fs, 'readFile').mockRejectedValueOnce(new Error('Internal transient read error'));
+    try {
+      tick(); await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+      expect(callback).toHaveBeenCalledTimes(1);
+      tick(); await vi.waitFor(() => expect(callback).toHaveBeenCalledTimes(2));
+    } finally { stop(); interval.mockRestore(); clear.mockRestore(); read.mockRestore(); }
+  });
+
   it("parseTraceFile throws when file cannot be read", async () => {
     const missing = path.join(tempDir, "missing-trace.txt");
     await expect(parseTraceFile(missing)).rejects.toBeTruthy();

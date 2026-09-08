@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    if (!sample) {
+    if (!sample || !sample.order) {
       return NextResponse.json(
         { error: "Sample not found" },
         { status: 404 }

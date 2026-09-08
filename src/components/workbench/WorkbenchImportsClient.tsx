@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -25,6 +25,10 @@ import {
 } from "@/components/ui/select";
 import { WorkbenchStatusBadge } from "@/components/workbench/WorkbenchPageShell";
 import { cn } from "@/lib/utils";
+import { CamiImportCard } from "./CamiImportCard";
+import type { ImportCollection } from "@/lib/workbench/import-collection";
+import { ImportFileDetails } from "./ImportFileDetails";
+import { ImportProgress } from "./ImportProgress";
 
 interface ImporterSummary {
   id: string;
@@ -48,6 +52,7 @@ interface PreviewGenome {
 }
 
 interface ImportPreview {
+  fingerprint?: string;
   summary: {
     label: string;
     requestedTaxon?: string;
@@ -62,6 +67,7 @@ interface ImportPreview {
 }
 
 interface EnaImportPreview {
+  fingerprint?: string;
   summary: ImportPreview["summary"];
   files: Array<{
     runAccession: string;
@@ -69,12 +75,15 @@ interface EnaImportPreview {
     scientificName?: string;
     libraryLayout?: string;
     filename: string;
+    url?: string;
+    md5?: string;
     bytes?: number;
   }>;
   warnings?: string[];
 }
 
 interface ImportJob {
+  collectionOrderId?: string;
   id: string;
   providerId: string;
   status: string;
@@ -82,6 +91,8 @@ interface ImportJob {
   progress: number | null;
   error: string | null;
   resultDatasetId: string | null;
+  request?: { collection?: { key?: string } } | null;
+  scientificRecords?: { orderId?: string; orderTitle?: string; studyId: string | null; sampleId: string; studyTitle: string | null; sampleTitle: string } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -147,12 +158,19 @@ function storeStatusLabel(item: StoreItem | undefined): string {
 }
 
 export function WorkbenchImportsClient({
+  onCollectionReady,
   enablePolling = true,
+  source,
+  collection,
 }: {
+  onCollectionReady?: (orderId: string) => void;
   enablePolling?: boolean;
+  source?: "cami" | "sra" | "jobs";
+  collection?: ImportCollection;
 } = {}) {
   const [importers, setImporters] = useState<ImporterSummary[]>([]);
   const [jobs, setJobs] = useState<ImportJob[]>([]);
+  const [trackedJobs, setTrackedJobs] = useState<Record<string, string>>({});
   const [storeItems, setStoreItems] = useState<StoreItem[]>([]);
   const [storeOpen, setStoreOpen] = useState(false);
   const [selectedImporterId, setSelectedImporterId] = useState<string | null>(null);
@@ -175,6 +193,17 @@ export function WorkbenchImportsClient({
   const [error, setError] = useState<string | null>(null);
   const [storeError, setStoreError] = useState<string | null>(null);
   const [installingItemId, setInstallingItemId] = useState<string | null>(null);
+  const previewGeneration = useRef(0);
+  const enaPreviewGeneration = useRef(0);
+  const importRequestKey = useRef("");
+  const enaImportRequestKey = useRef("");
+  const moduleProviderId = source === "cami" ? "cami-benchmark" : source === "sra" ? enaProviderId : null;
+  // Module selection is not a job-history page. Recover only active transfers
+  // for this module/collection, and retain results started here for their links.
+  const visibleJobs = moduleProviderId ? jobs.filter(job => Boolean(collection) && job.providerId === moduleProviderId && (
+    trackedJobs[job.id] === collection?.key ||
+    (job.request?.collection?.key === collection?.key && (job.status === "queued" || job.status === "running"))
+  )) : jobs;
 
   const ncbiImporter = importers.find((importer) => importer.id === providerId);
   const enaImporter = importers.find((importer) => importer.id === enaProviderId);
@@ -195,11 +224,33 @@ export function WorkbenchImportsClient({
     [assemblySource, cap, excludeAtypical, mag, referenceOnly, selectedLevels, taxon]
   );
 
+  useEffect(() => {
+    previewGeneration.current += 1;
+    setPreview(null);
+    setLoadingPreview(false);
+  }, [input]);
+  useEffect(() => {
+    enaPreviewGeneration.current += 1;
+    setEnaPreview(null);
+    setEnaLoadingPreview(false);
+  }, [enaAccession, enaMaxFiles, collection?.key, collection?.name]);
+
   const refreshJobs = async () => {
-    const response = await fetch("/api/workbench/imports", { cache: "no-store" });
+    const response = await fetch(collection ? `/api/workbench/imports?collection=${encodeURIComponent(collection.key)}` : "/api/workbench/imports", { cache: "no-store" });
     if (!response.ok) return;
     const payload = (await response.json()) as { jobs?: ImportJob[] };
-    setJobs(Array.isArray(payload.jobs) ? payload.jobs : []);
+    const incoming = Array.isArray(payload.jobs) ? payload.jobs : [];
+    setJobs(incoming);
+    if (collection && moduleProviderId) {
+      const active = incoming.filter(job => job.providerId === moduleProviderId && job.request?.collection?.key === collection.key && (job.status === "queued" || job.status === "running"));
+      // Keep completion/errors visible if this screen recovered an active job.
+      if (active.length) setTrackedJobs(current => ({ ...current, ...Object.fromEntries(active.map(job => [job.id, collection.key])) }));
+    }
+  };
+
+  const trackStartedImport = async (jobId: string) => {
+    if (collection) setTrackedJobs(current => ({ ...current, [jobId]: collection.key }));
+    await refreshJobs();
   };
 
   const refreshImporters = async () => {
@@ -219,7 +270,7 @@ export function WorkbenchImportsClient({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      await Promise.all([refreshImporters(), refreshStore(), refreshJobs()]);
+      await Promise.all([refreshImporters(), ...(!source ? [refreshStore()] : []), refreshJobs()]);
       if (cancelled) return;
     })();
     if (!enablePolling) {
@@ -228,14 +279,14 @@ export function WorkbenchImportsClient({
       };
     }
     const interval = setInterval(
-      () => void Promise.all([refreshImporters(), refreshStore(), refreshJobs()]),
+      () => void Promise.all([refreshImporters(), ...(!source ? [refreshStore()] : []), refreshJobs()]),
       5000
     );
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [enablePolling]);
+  }, [enablePolling, source, collection?.key]);
 
   const startStoreInstall = async (itemId: string) => {
     setStoreOpen(true);
@@ -279,6 +330,8 @@ export function WorkbenchImportsClient({
   };
 
   const runPreview = async () => {
+    importRequestKey.current = crypto.randomUUID();
+    const generation = ++previewGeneration.current;
     setLoadingPreview(true);
     setError(null);
     setPreview(null);
@@ -292,11 +345,11 @@ export function WorkbenchImportsClient({
       if (!response.ok) {
         throw new Error(payload.details || payload.error || "Preview failed");
       }
-      setPreview(payload.preview);
+      if (generation === previewGeneration.current) setPreview(payload.preview);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Preview failed");
+      if (generation === previewGeneration.current) setError(err instanceof Error ? err.message : "Preview failed");
     } finally {
-      setLoadingPreview(false);
+      if (generation === previewGeneration.current) setLoadingPreview(false);
     }
   };
 
@@ -306,8 +359,8 @@ export function WorkbenchImportsClient({
     try {
       const response = await fetch("/api/workbench/imports", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ providerId, input }),
+        headers: { "content-type": "application/json", "idempotency-key": importRequestKey.current },
+        body: JSON.stringify({ providerId, input, previewFingerprint: preview?.fingerprint }),
       });
       const payload = await response.json();
       if (!response.ok) {
@@ -331,6 +384,8 @@ export function WorkbenchImportsClient({
   };
 
   const runEnaPreview = async () => {
+    enaImportRequestKey.current = crypto.randomUUID();
+    const generation = ++enaPreviewGeneration.current;
     setEnaLoadingPreview(true);
     setEnaError(null);
     setEnaPreview(null);
@@ -338,15 +393,15 @@ export function WorkbenchImportsClient({
       const response = await fetch(`/api/workbench/importers/${enaProviderId}/preview`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ accession: enaAccession, maxFiles: enaMaxFiles }),
+        body: JSON.stringify({ accession: enaAccession, maxFiles: enaMaxFiles, ...(collection ? { collection } : {}) }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "ENA preview failed");
-      setEnaPreview(payload.preview);
+      if (generation === enaPreviewGeneration.current) setEnaPreview(payload.preview);
     } catch (err) {
-      setEnaError(err instanceof Error ? err.message : "ENA preview failed");
+      if (generation === enaPreviewGeneration.current) setEnaError(err instanceof Error ? err.message : "ENA preview failed");
     } finally {
-      setEnaLoadingPreview(false);
+      if (generation === enaPreviewGeneration.current) setEnaLoadingPreview(false);
     }
   };
 
@@ -354,18 +409,21 @@ export function WorkbenchImportsClient({
     setEnaStarting(true);
     setEnaError(null);
     try {
+      if (!collection) throw new Error("Name your sequencing data before importing.");
       const response = await fetch("/api/workbench/imports", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "idempotency-key": enaImportRequestKey.current },
         body: JSON.stringify({
           providerId: enaProviderId,
-          input: { accession: enaAccession, maxFiles: enaMaxFiles },
+          input: { accession: enaAccession, maxFiles: enaMaxFiles, collection },
+          previewFingerprint: enaPreview?.fingerprint,
         }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Failed to start ENA import");
       setEnaPreview(null);
-      await refreshJobs();
+      await trackStartedImport(payload.job.id);
+      if (typeof payload.collectionOrderId === "string") onCollectionReady?.(payload.collectionOrderId);
     } catch (err) {
       setEnaError(err instanceof Error ? err.message : "Failed to start ENA import");
     } finally {
@@ -391,12 +449,15 @@ export function WorkbenchImportsClient({
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border border-border bg-card">
-        <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
+      {!source && <a className="text-sm underline" href="/orders">View sequencing data</a>}
+      {(!source || source === "cami") && <CamiImportCard initiallyOpen={source === "cami"} onStarted={trackStartedImport} onQueued={onCollectionReady} collection={collection} enablePolling={enablePolling} />}
+      {collection && jobs.some(job => job.collectionOrderId && job.request?.collection?.key === collection.key) && <div className="rounded border bg-muted/20 p-4"><a className="font-medium underline" href={`/orders/${jobs.find(job => job.collectionOrderId && job.request?.collection?.key === collection.key)!.collectionOrderId}/samples-files`}>Open {collection.name} · Files</a><p className="mt-2 text-sm">You can leave this page. Imports continue on the server; keep your local server and computer running. Completion and failure notifications appear in SeqDesk.</p></div>}
+      {(!source || source === "sra") && <section className="rounded-lg border border-border bg-card">
+        {!source && <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <Store className="h-4 w-4 text-teal-700" />
-              <h2 className="text-sm font-semibold text-foreground">Workbench imports</h2>
+              <h2 className="text-sm font-semibold text-foreground">Additional import sources</h2>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               Add import capabilities from the Workbench Store before starting data pulls.
@@ -410,7 +471,7 @@ export function WorkbenchImportsClient({
             <Store className="h-4 w-4" />
             Store
           </Button>
-        </div>
+        </div>}
 
         <div className="border-b border-border p-4">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.9fr)]">
@@ -419,14 +480,46 @@ export function WorkbenchImportsClient({
                 <div className="flex flex-wrap items-center gap-2">
                   <Globe2 className="h-4 w-4 text-teal-700" />
                   <h3 className="text-base font-semibold text-foreground">
-                    {enaImporter?.label || "ENA FASTQ by accession"}
+                    {source ? "SRA / ENA import module" : enaImporter?.label || "ENA FASTQ by accession"}
                   </h3>
                   <WorkbenchStatusBadge tone="accent">No local tool required</WorkbenchStatusBadge>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
                   Enter a public ENA, SRA, or DRA run, sample, or project accession. SeqDesk
-                  previews the real archive files before downloading them into this workspace.
+                  previews the real archive files before importing sequencing data and metadata into SeqDesk.
+                  Repository study and BioProject metadata are retained as provenance; no SeqDesk study is created.
                 </p>
+              </div>
+              <div className="rounded-lg border border-border bg-muted/30 p-3">
+                <p className="text-sm font-medium">Try a public example</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Choose an example, then select Preview files. Examples set a two-file limit.
+                  Previewing fetches archive metadata only; files are downloaded when you import.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {[
+                    { accession: "ERR164407", label: "Marine metagenome run" },
+                    { accession: "DRR099973", label: "Mouse gut metagenome run" },
+                    { accession: "PRJEB1787", label: "Marine metagenome project" },
+                  ].map((example) => (
+                    <Button
+                      key={example.accession}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-auto flex-col items-start gap-0.5 py-2 text-left whitespace-normal"
+                      disabled={enaLoadingPreview || enaStarting}
+                      onClick={() => {
+                        setEnaAccession(example.accession);
+                        setEnaMaxFiles(2);
+                        setEnaError(null);
+                      }}
+                    >
+                      <span>{example.label}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{example.accession}</span>
+                    </Button>
+                  ))}
+                </div>
               </div>
               <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
                 <label className="space-y-1.5">
@@ -470,7 +563,7 @@ export function WorkbenchImportsClient({
                   disabled={!enaPreview || enaStarting}
                 >
                   {enaStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                  Download to workspace
+                  Import sequencing data
                 </Button>
               </div>
             </div>
@@ -490,10 +583,12 @@ export function WorkbenchImportsClient({
                     {enaPreview.files.map((file) => (
                       <div key={`${file.runAccession}:${file.filename}`} className="rounded border border-border px-3 py-2">
                         <p className="truncate text-sm font-medium">{file.filename}</p>
+                        <ImportFileDetails file={{ ...file, sourceMd5: file.md5 }} />
                         <p className="text-xs text-muted-foreground">
                           {file.runAccession}
                           {file.scientificName ? ` · ${file.scientificName}` : ""}
                           {file.libraryLayout ? ` · ${file.libraryLayout}` : ""}
+                          {file.bytes !== undefined ? ` · ${(file.bytes / 1024 ** 2).toFixed(1)} MiB` : " · size unknown"}
                         </p>
                       </div>
                     ))}
@@ -508,7 +603,7 @@ export function WorkbenchImportsClient({
           </div>
         </div>
 
-        {storeOpen && (
+        {!source && storeOpen && (
           <div className="border-b border-border p-4">
             <div className="mb-3 flex items-center gap-2">
               <h3 className="text-sm font-semibold text-foreground">Reference genomes</h3>
@@ -589,7 +684,7 @@ export function WorkbenchImportsClient({
           </div>
         )}
 
-        {!storeOpen && selectedImporterId !== providerId && (
+        {!source && !storeOpen && selectedImporterId !== providerId && (
           <div className="flex min-h-56 flex-col items-center justify-center px-6 py-12 text-center">
             <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-secondary text-muted-foreground">
               <Store className="h-5 w-5" />
@@ -602,7 +697,7 @@ export function WorkbenchImportsClient({
           </div>
         )}
 
-        {selectedImporterId === providerId && (
+        {!source && selectedImporterId === providerId && (
           <div className="grid gap-5 border-t border-border p-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
             <div className="space-y-4">
               <div>
@@ -802,19 +897,19 @@ export function WorkbenchImportsClient({
             </div>
           </div>
         )}
-      </section>
+      </section>}
 
-      <section className="overflow-hidden rounded-lg border border-border bg-card">
+      {(!moduleProviderId || visibleJobs.length > 0) && <section className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold text-foreground">Import jobs</h2>
+          <h2 className="text-sm font-semibold text-foreground">{moduleProviderId ? "Import progress" : "Import jobs"}</h2>
         </div>
-        {jobs.length === 0 ? (
+        {visibleJobs.length === 0 ? (
           <div className="px-6 py-12 text-center text-sm text-muted-foreground">
-            No Workbench import jobs yet.
+            No import jobs yet.
           </div>
         ) : (
           <div className="divide-y divide-border">
-            {jobs.map((job) => (
+            {visibleJobs.map((job) => (
               <div key={job.id} className="grid gap-3 px-4 py-4 md:grid-cols-[1.2fr_0.8fr_1fr_1.2fr] md:items-center">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-foreground">{job.providerId}</p>
@@ -824,17 +919,16 @@ export function WorkbenchImportsClient({
                   <WorkbenchStatusBadge tone={statusTone(job.status)}>{job.status}</WorkbenchStatusBadge>
                 </div>
                 <div className="text-sm text-muted-foreground">
-                  {job.phase || "queued"}
-                  {typeof job.progress === "number" ? ` · ${job.progress}%` : ""}
+                  <ImportProgress status={job.status} phase={job.phase} />
                 </div>
-                <div className={cn("truncate text-sm", job.error ? "text-destructive" : "text-muted-foreground")}>
-                  {job.error || (job.resultDatasetId ? "Dataset ready" : "Waiting")}
+                <div className={cn("text-sm", job.error ? "text-destructive" : "text-muted-foreground")}>
+                  {job.error || (job.scientificRecords ? <span>Imported sequencing data into <a className="underline" href={job.scientificRecords.orderId ? `/orders/${job.scientificRecords.orderId}` : `/sequencing/${job.scientificRecords.sampleId}`}>{job.scientificRecords.orderTitle ?? job.scientificRecords.sampleTitle} — open sequencing data</a>. {job.scientificRecords.studyId ? <a className="underline" href={`/studies/${job.scientificRecords.studyId}`}>{job.scientificRecords.studyTitle} — open study</a> : <>No study created. <a className="underline" href="/studies">Link samples to a study later</a>.</>}</span> : job.resultDatasetId ? "Dataset ready" : job.status === "running" ? "Import continues in the background" : job.status === "queued" ? "Queued on the server" : job.status)}
                 </div>
               </div>
             ))}
           </div>
         )}
-      </section>
+      </section>}
     </div>
   );
 }

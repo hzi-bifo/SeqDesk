@@ -34,10 +34,12 @@ import {
 } from "lucide-react";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
-import { hasCapability, principalFromSession } from "@/lib/authorization";
+import { hasCapability, principalFromSession } from "@/lib/authorization/client";
+import { formatSequencingIdentifier } from "@/lib/orders/format-identifier";
 
 interface Order {
   id: string;
+  dataOrigin?: string;
   orderNumber: string;
   name: string | null;
   status: string;
@@ -162,6 +164,7 @@ export default function OrdersPage() {
 
   const getStatusDisplay = (order: Order) => {
     const baseStatus = STATUS_CONFIG[order.status] || STATUS_CONFIG.DRAFT;
+    if (order.dataOrigin === "import") return { ...baseStatus, label: "Imported" };
     const samplesSent = order.statusNotes.length > 0;
 
     if (order.status === "SUBMITTED") {
@@ -407,10 +410,10 @@ export default function OrdersPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold">
-            {isFacilityAdmin ? "All Sequencing Orders" : sharingMode === "department" ? "Department Sequencing Orders" : "My Sequencing Orders"}
+            {isFacilityAdmin ? "All Sequencing data" : sharingMode === "department" ? "Department Sequencing data" : "My Sequencing data"}
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {orders.length} sequencing order{orders.length !== 1 ? "s" : ""}
+            {orders.length} sequencing data {orders.length === 1 ? "entry" : "entries"}
             {isResearcher && sharingMode === "department" && " from your department"}
           </p>
         </div>
@@ -429,32 +432,30 @@ export default function OrdersPage() {
             )}
             <Button size="sm" variant="outline" asChild>
               <Link href="/orders/new">
-                New Sequencing Order
+                Add sequencing data
               </Link>
             </Button>
           </div>
         )}
       </div>
 
-      <HelpBox title="What are sequencing orders?">
-        A sequencing order represents a sequencing request submitted to the facility.
-        It contains sample information, sequencing parameters, and tracks the progress from submission through to data delivery.
+      <HelpBox title="What is sequencing data?">
+        Keep samples, read files and their metadata together, whether they come from a facility order or a raw-read import module.
+        Link samples from different sources into studies. Facility orders additionally track submission and delivery.
       </HelpBox>
 
       {error && <ErrorBanner message={renderOrderDeleteError(error)} />}
 
       {orders.length === 0 ? (
         <div className="bg-card rounded-xl p-12 text-center border border-border">
-          <h2 className="text-lg font-medium mb-2">No sequencing orders yet</h2>
+          <h2 className="text-lg font-medium mb-2">No sequencing data yet</h2>
           <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
-            {isResearcher
-              ? "Sequencing orders contain your samples for sequencing. Create a sequencing order, add samples, then mark it as ready for the sequencing facility."
-              : "Sequencing orders contain samples for sequencing. Create a sequencing order, add samples, then mark it as ready when preparation is complete."}
+            Choose an enabled data source to submit a facility order or import raw sequencing reads and metadata.
           </p>
           {canCreateOrder && (
             <Button size="sm" variant="outline" asChild>
               <Link href="/orders/new">
-                New Sequencing Order
+                Add sequencing data
               </Link>
             </Button>
           )}
@@ -480,7 +481,7 @@ export default function OrdersPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <input
                   type="text"
-                  placeholder="Search sequencing orders..."
+                  placeholder="Search sequencing data..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 text-sm bg-secondary border-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -560,7 +561,7 @@ export default function OrdersPage() {
               onClick={() => handleSort("name")}
               className="col-span-3 flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
-              Sequencing Order
+              Sequencing data
               {sortField === "name" && (
                 <ArrowUpDown className="h-3 w-3" />
               )}
@@ -620,8 +621,8 @@ export default function OrdersPage() {
                           <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
                             {order.name || order.orderNumber}
                           </p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {order.orderNumber} · {order._count.samples} samples · {formatDate(order.createdAt)}
+                          <p className="text-xs text-muted-foreground mt-0.5 truncate" title={order.orderNumber}>
+                            {formatSequencingIdentifier(order.orderNumber)} · {order._count.samples} samples · {formatDate(order.createdAt)}
                           </p>
                           {isFacilityAdmin && (
                             <p className="text-xs text-muted-foreground mt-0.5">
@@ -634,8 +635,8 @@ export default function OrdersPage() {
                           <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
                             {order.name || order.orderNumber}
                           </p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {order.orderNumber} · {order._count.samples} samples · {formatDate(order.createdAt)}
+                          <p className="text-xs text-muted-foreground mt-0.5 truncate" title={order.orderNumber}>
+                            {formatSequencingIdentifier(order.orderNumber)} · {order._count.samples} samples · {formatDate(order.createdAt)}
                           </p>
                           {isFacilityAdmin && (
                             <p className="text-xs text-muted-foreground mt-0.5">
@@ -701,23 +702,23 @@ export default function OrdersPage() {
                   {/* Desktop layout */}
                   <div className="hidden md:contents">
                     {/* Order Info */}
-                    <div className="col-span-3 min-w-0">
+                    <div className="col-span-3 min-w-0 overflow-hidden">
                       {bulkEditMode ? (
                         <>
                           <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
                             {order.name || order.orderNumber}
                           </p>
-                          <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                            {order.orderNumber}
+                          <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate" title={order.orderNumber}>
+                            {formatSequencingIdentifier(order.orderNumber)}
                           </p>
                         </>
                       ) : (
-                        <Link href={`/orders/${order.id}`}>
+                        <Link href={`/orders/${order.id}`} className="block min-w-0">
                           <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
                             {order.name || order.orderNumber}
                           </p>
-                          <p className="text-xs text-muted-foreground font-mono mt-0.5">
-                            {order.orderNumber}
+                          <p className="text-xs text-muted-foreground font-mono mt-0.5 truncate" title={order.orderNumber}>
+                            {formatSequencingIdentifier(order.orderNumber)}
                           </p>
                         </Link>
                       )}

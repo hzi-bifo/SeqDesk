@@ -1,5 +1,7 @@
 # Profile-aware installation and setup journey
 
+> Superseded where it describes separate application views, mutually exclusive input paths or Canvas-first navigation. The current implementation and remaining TODOs are in [One SeqDesk with coexisting input modules](unified-input-modules.md). Existing enrollment/ownership protections remain compatibility policy, not separate products.
+
 Status: in progress on `codex/modular-deployment-modes`
 
 Companion to:
@@ -418,10 +420,14 @@ Common checklist:
 - review enabled modules and credentials;
 - finish a small test journey.
 
-Classify every item as **required** or **recommended**. Required items gate
-ordinary members only when the selected profile cannot perform its normal work
-without them: managed storage for all profiles, plus workflow-runtime readiness
-for Research Workbench. Identity review, enrollment review, backup/retention
+Classify every item as **required** or **recommended**, and record which
+operations each required check protects. Target behavior: missing managed
+storage blocks data operations; missing workflow-runtime readiness blocks new
+analysis execution, not workspace browsing or uploads when their own storage
+checks pass. Workbench is not fully operational until both are verified, but a
+deliberately deferred runtime must not make its promised upload-only start
+unusable. The current branch's global member onboarding gate still needs to be
+changed to implement this operation-scoped behavior. Identity review, enrollment review, backup/retention
 documentation, optional credentials, and test journeys remain recommended and
 reopenable; they must not globally lock out a small lab.
 
@@ -452,7 +458,51 @@ Profile additions:
 
 Track onboarding with a versioned checklist and explicit `completedAt`/actor rather than equating “a SiteSettings row exists” with complete setup. Critical infrastructure failures block the affected operation; incomplete optional onboarding should not prevent an administrator from signing in to fix it.
 
-Ordinary members who arrive before operational setup is complete should see a clear “Your administrator is finishing setup” state, not broken navigation or administrator instructions.
+Ordinary members who attempt an operation whose required setup is incomplete
+should see “Your administrator is finishing setup” with the affected capability
+named. Keep unaffected work available and never expose configuration secrets or
+administrator-only repair instructions. Administrators must always retain access
+to the setup and recovery controls.
+
+## First-install usability and handover contract
+
+These are planned acceptance requirements, not claims about completed code:
+
+- **A short default path:** show only workflow model, access scope, database,
+  managed data location, execution choice, and first administrator before review.
+  Explain each choice inline; Advanced expands details without discarding answers.
+- **Back is safe:** changing an earlier answer invalidates dependent defaults and
+  checks. Show the changed values again before confirmation; never retain an
+  invisible sequencing-only dependency after selecting Workbench.
+- **Service identity is explicit:** explain which OS account owns the persistent
+  service, configuration, database, and data. Probe as that identity, not merely
+  the installing administrator. Distinguish starting now from surviving logout
+  and reboot; only claim restart persistence after it is verified.
+- **No mail prerequisite:** a small lab can finish installation and distribute
+  one-time invitation links manually without SMTP. Explain that email delivery
+  and email-based password recovery remain unavailable until configured; retain
+  the protected local administrator-recovery path.
+- **Connectivity is explained before downloads:** list required release/runtime
+  hosts and optional repository hosts, proxy/private-CA requirements, and what
+  still works without external access. Never offer disabled TLS verification as
+  a routine workaround. No automatic public-repository downloads on first login.
+- **Browser handover is usable:** show the exact sign-in URL and manual fallback
+  if a browser cannot be opened. A loopback health check does not prove another
+  lab computer can reach the HTTPS URL; report remote reachability as unverified
+  until checked from the intended client network.
+- **First scientific success is guided:** link to one small profile-specific
+  journey, explaining required inputs and expected output. Real repository
+  imports must use real services and accessions; unavailable services produce an
+  actionable error, never fabricated success or sample metadata.
+- **Support without secret leakage:** provide a sanitized diagnostic summary
+  with release, profile, failed stage/check, and next action. Exclude passwords,
+  tokens, credential-bearing URLs, and scientific filenames/metadata by default;
+  preview it before the operator chooses to share it.
+
+For a solo maintainer, prioritize the guided local/single-server path plus one
+unattended equivalent before adding deployment tooling. All three workflow
+profiles share these paths; operating-system/executor support is a separate,
+explicitly tested matrix, not three new installer products.
 
 ## Reconfigure, update, and recovery behavior
 
@@ -518,6 +568,17 @@ At minimum, automate these journeys against the same release artifact:
 14. No supported packaged fresh install creates a known default password or generic second account.
 15. `/api/setup/status` is read-only and cannot create an administrator or alter configuration.
 16. First login and next steps use the selected profile's language and landing page.
+17. Workbench with deferred runtime permits workspace/upload work when storage
+    is ready, blocks execution with actionable guidance, and becomes executable
+    after an administrator verifies runtime without reinstalling.
+18. Back/profile changes invalidate stale dependent answers; EOF and unavailable
+    terminal input cancel safely rather than accepting hidden defaults.
+19. A no-SMTP lab can invite a second member manually and recover administrator
+    access through the protected local procedure.
+20. Persistent service survives logout/reboot under its configured OS identity;
+    failed remote browser reachability is not masked by a local health check.
+21. A new operator completes each profile's documented first journey without
+    undocumented CLI steps; record confusing prompts and correct the shared copy.
 
 Release checks should also assert that `scripts/install-dist.sh`, the npm launcher/help, the public installer copy, hosted install-profile schema, `settings.json` example, and website setup documentation describe the same choices and defaults.
 

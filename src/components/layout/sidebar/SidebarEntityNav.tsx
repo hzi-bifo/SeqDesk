@@ -12,6 +12,7 @@ import {
   Table2,
   Workflow,
 } from "lucide-react";
+import { useModuleEnabled } from "@/lib/modules";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -41,6 +42,7 @@ interface SidebarEntityNavProps {
   /** @deprecated Tests and transitional callers should use showOperationalControls. */
   showAdminControls?: boolean;
   showOperationalControls?: boolean;
+  showPipelineControls?: boolean;
   deploymentProfile?: DeploymentProfileDefinition;
 }
 
@@ -92,11 +94,14 @@ export function SidebarEntityNav({
   isDemoUser = false,
   showAdminControls = false,
   showOperationalControls: showOperationalControlsProp,
+  showPipelineControls,
   deploymentProfile = getDeploymentProfileDefinition("sequencing-center"),
 }: SidebarEntityNavProps) {
   const showOperationalControls =
     showOperationalControlsProp ?? showAdminControls;
+  const pipelineAccess = showPipelineControls ?? showOperationalControls;
   const pathname = usePathname();
+  const facilityEnabled = useModuleEnabled("sequencing-management");
   const searchParams = useSearchParams();
   const { entityType, entityId } = entityContext;
   const { steps: orderFormSteps, facilitySections, loading: orderFormLoading } = useOrderFormSteps(
@@ -109,12 +114,12 @@ export function SidebarEntityNav({
     loading: studyFormLoading,
   } = useStudyFormSteps(showOperationalControls, entityType === "study" ? entityId : null);
   const orderPipelines = useOrderPipelines(
-    showOperationalControls,
+    pipelineAccess,
     entityType === "order" ? entityId : null,
     !isDemoUser
   );
   const studyPipelines = useStudyPipelines(
-    showOperationalControls,
+    pipelineAccess,
     entityType === "study" ? entityId : null,
     !isDemoUser
   );
@@ -243,13 +248,13 @@ export function SidebarEntityNav({
       show: showOperationalControls && studyFacilitySections.length > 0,
     },
     { key: "sequencing", label: "Sequencing Data", href: entityId ? `/studies/${entityId}?tab=samples` : undefined, icon: HardDrive, show: true },
-    { key: "analysis", label: "Analysis", href: entityId ? `/studies/${entityId}?tab=pipelines` : undefined, icon: Workflow, show: showOperationalControls },
+    { key: "analysis", label: "Analysis", href: entityId ? `/studies/${entityId}?tab=pipelines` : undefined, icon: Workflow, show: pipelineAccess },
     { key: "publishing", label: "Publishing", href: entityId ? `/studies/${entityId}?tab=publishing` : undefined, icon: Send, show: true },
   ];
 
   // ── Order nav items ──
   const currentOrderSubview =
-    pathname.match(/^\/orders\/[^/]+\/(edit|files|sequencing|studies)$/)?.[1] ?? null;
+    pathname.match(/^\/orders\/[^/]+\/(edit|files|samples-files|pipelines|sequencing|studies)$/)?.[1] ?? null;
   const requestedOrderSection = searchParams.get("section");
   const currentOrderSection =
     requestedOrderSection === "reads"
@@ -275,17 +280,19 @@ export function SidebarEntityNav({
       : null);
 
   const orderItems: NavItem[] = [
-    { key: "details", label: "Overview", href: entityId ? `/orders/${entityId}` : undefined, icon: FileText, show: true },
+    { key: "source", label: "Data source", href: entityContext.entityData?.collectionKey ? `/orders/import?${new URLSearchParams({ collection: entityContext.entityData.collectionKey, name: entityContext.entityData.label, ...(entityId ? { orderId: entityId } : {}) })}` : "/orders/import", icon: HardDrive, show: true },
+    { key: "details", label: "Metadata", href: entityId ? `/orders/${entityId}` : undefined, icon: FileText, show: true },
+    { key: "samples-files", label: "Files", href: entityId ? `/orders/${entityId}/samples-files` : undefined, icon: HardDrive, show: true },
     {
       key: "facility",
       label:
         deploymentProfile.id === "shared-lab" ? "Lab Fields" : "Facility Fields",
       href: entityId ? `/orders/${entityId}?section=facility` : undefined,
       icon: Building2,
-      show: showOperationalControls && !!facilityStep,
+      show: facilityEnabled && entityContext.entityData?.dataOrigin !== "import" && showOperationalControls && !!facilityStep,
     },
     { key: "sequencing", label: "Sequencing Data", href: entityId ? `/orders/${entityId}/sequencing` : undefined, icon: HardDrive, show: showOperationalControls },
-    { key: "analysis", label: "Analysis", href: entityId ? `/orders/${entityId}/sequencing?view=analysis` : undefined, icon: FlaskConical, show: showOperationalControls && orderPipelines.length > 0 },
+    { key: "analysis", label: "Pipelines", href: entityId ? `/orders/${entityId}/pipelines` : undefined, icon: FlaskConical, show: pipelineAccess },
   ];
 
   const items = activeTab === "studies" ? studyItems : orderItems;
@@ -317,7 +324,12 @@ export function SidebarEntityNav({
     }
 
     // Orders
+    if (item.key === "source") return pathname === "/orders/import";
+    if (item.key === "samples-files") return currentOrderSubview === "samples-files";
     if (item.key === "details") {
+      if (currentOrderSubview === "pipelines") return false;
+      if (pathname === "/orders/import") return false;
+      if (currentOrderSubview === "samples-files") return false;
       if (isOrderAnalysisContext) {
         return false;
       }
@@ -345,7 +357,7 @@ export function SidebarEntityNav({
     }
     if (item.key === "analysis") {
       return (
-        isOrderAnalysisContext ||
+        currentOrderSubview === "pipelines" || isOrderAnalysisContext ||
         (currentOrderSubview === "sequencing" &&
           (!!requestedPipelineId || searchParams.get("view") === "analysis"))
       );
@@ -362,6 +374,7 @@ export function SidebarEntityNav({
 
           const shouldShowOrderSubitems =
             !collapsed &&
+            entityContext.entityData?.dataOrigin !== "import" &&
             activeTab === "orders" &&
             item.key === "details" &&
             !!entityId &&
@@ -785,12 +798,12 @@ export function SidebarEntityNav({
                 <div className="ml-5 border-l border-border/70 pl-2">
                   {orderPipelines.map((pipeline) => {
                     const isPipelineActive =
-                      (currentOrderSubview === "sequencing" || isOrderAnalysisContext) &&
+                      (currentOrderSubview === "sequencing" || currentOrderSubview === "pipelines" || isOrderAnalysisContext) &&
                       activeOrderPipelineId === pipeline.pipelineId;
                     return (
                       <Link
                         key={pipeline.pipelineId}
-                        href={`/orders/${entityId}/sequencing?pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
+                        href={`/orders/${entityId}/pipelines?pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
                         className={cn(
                           "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
                           isPipelineActive

@@ -1,0 +1,148 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "metaphlan",
+    "name": "Taxonomic Profiling (MetaPhlAn)",
+    "description": "Profile short shotgun reads from any source, with native and CAMI-format taxonomic profiles.",
+    "version": "0.1.0",
+    "provider": "SeqDesk",
+    "website": "https://github.com/biobakery/MetaPhlAn"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md",
+    "parsers": []
+  },
+  "targets": {
+    "supported": [
+      "order",
+      "study"
+    ]
+  },
+  "sequencingCompatibility": {
+    "readLengthClass": "short",
+    "requireReadLengthEvidence": true,
+    "readLayouts": [
+      "single",
+      "paired"
+    ]
+  },
+  "inputs": [
+    {
+      "id": "reads",
+      "scope": "sample",
+      "source": "sample.reads",
+      "required": true
+    }
+  ],
+  "resources": [
+    {
+      "id": "marker-database",
+      "label": "MetaPhlAn marker database",
+      "description": "Pinned CHOCOPhlAnSGB database with prebuilt large Bowtie2 indexes. Two publisher archives, about 44.5 GiB to download. An existing installation can also be linked.",
+      "version": "mpa_vJan26_CHOCOPhlAnSGB_202605",
+      "type": "archive-set",
+      "assets": [
+        {
+          "fileName": "mpa_vJan26_CHOCOPhlAnSGB_202605_bt2.tar",
+          "url": "https://cmprod1.cibio.unitn.it/biobakery4/metaphlan_databases/bowtie2_indexes/mpa_vJan26_CHOCOPhlAnSGB_202605_bt2.tar",
+          "bytes": 41742510080,
+          "format": "tar",
+          "checksum": { "algorithm": "md5", "value": "ac93e1e9c0829629266f5b6ab19c318d" }
+        },
+        {
+          "fileName": "mpa_vJan26_CHOCOPhlAnSGB_202605.tar",
+          "url": "https://cmprod1.cibio.unitn.it/biobakery4/metaphlan_databases/mpa_vJan26_CHOCOPhlAnSGB_202605.tar",
+          "bytes": 6014115840,
+          "format": "tar",
+          "checksum": { "algorithm": "md5", "value": "f3a9dd08e0d0a95215ef535e58409983" }
+        }
+      ],
+      "requiredFiles": [
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.pkl",
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.1.bt2l",
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.2.bt2l",
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.3.bt2l",
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.4.bt2l",
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.rev.1.bt2l",
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.rev.2.bt2l"
+      ],
+      "maxExtractedBytes": 64424509440,
+      "fileSizes": {
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.pkl": 91701032,
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.1.bt2l": 7934175221,
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.2.bt2l": 10254270108,
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.3.bt2l": 238479191,
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.4.bt2l": 5127135051,
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.rev.1.bt2l": 7934175221,
+        "mpa_vJan26_CHOCOPhlAnSGB_202605.rev.2.bt2l": 10254270108
+      },
+      "config": {
+        "pathKey": "metaphlanDb",
+        "values": { "metaphlanIndex": "mpa_vJan26_CHOCOPhlAnSGB_202605" }
+      }
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "0.1.0",
+    "profiles": [
+      "conda"
+    ],
+    "defaultParams": {
+      "metaphlanDb": "",
+      "metaphlanIndex": "",
+      "skipUnclassifiedEstimation": false
+    },
+    "paramMap": {
+      "metaphlanDb": "--db_dir",
+      "metaphlanIndex": "--db_index",
+      "skipUnclassifiedEstimation": "--skip_unclassified_estimation"
+    }
+  },
+  "outputs": [
+    {
+      "id": "taxonomic_profile",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "profile",
+      "discovery": {
+        "pattern": "profiles/*.metaphlan.tsv",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "cami_profile",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "profile",
+      "discovery": {
+        "pattern": "profiles/*.cami.profile",
+        "matchSampleBy": "filename"
+      }
+    },
+    {
+      "id": "provenance",
+      "scope": "sample",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "profile",
+      "discovery": {
+        "pattern": "profiles/*.provenance.json",
+        "matchSampleBy": "filename"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Sample",
+      "PipelineRun",
+      "PipelineArtifact"
+    ]
+  }
+}

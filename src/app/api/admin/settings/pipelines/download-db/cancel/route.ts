@@ -54,6 +54,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (job.managedResource) {
+      const { cancelResourceJob } = await import('@/lib/pipelines/resource-jobs');
+      const { getPipelinesDir } = await import('@/lib/pipelines/package-loader');
+      try { return NextResponse.json(await cancelResourceJob(getPipelinesDir(), pipelineId, databaseId)); }
+      catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : 'Cancel failed' }, { status: 409 }); }
+    }
+
     const killed = job.pid ? killProcessTree(job.pid) : false;
 
     await updateDatabaseDownloadJobStatus(pipelineId, databaseId, {

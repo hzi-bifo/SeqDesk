@@ -34,6 +34,7 @@ import {
 import { notifyPanel } from "@/lib/notifications/client";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { useCapability } from "@/components/deployment-profile/useCapability";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 
 interface Study {
   id: string;
@@ -65,6 +66,7 @@ type SortField = "created" | "title" | "status" | "samples";
 type SortDirection = "asc" | "desc";
 
 export default function StudiesPage() {
+  const research = useDeploymentProfile().experience === "workbench";
   const { data: session } = useSession();
   const canCreateStudy = useCapability("studies.create");
   const canReadAllStudies = useCapability("studies.read_all");
@@ -83,6 +85,11 @@ export default function StudiesPage() {
   const [deleting, setDeleting] = useState(false);
   const [selectedStudyIds, setSelectedStudyIds] = useState<Set<string>>(new Set());
   const [bulkEditMode, setBulkEditMode] = useState(false);
+
+  // Reserve space for metadata so long titles cannot squeeze counts or dates.
+  const listGridCols = canReadAllStudies
+    ? "md:grid-cols-[minmax(0,1fr)_6rem_minmax(0,9rem)_4.5rem_7rem_2rem]"
+    : "md:grid-cols-[minmax(0,1fr)_6rem_4.5rem_7rem_2rem]";
 
   useEffect(() => {
     const fetchStudies = async () => {
@@ -359,7 +366,7 @@ export default function StudiesPage() {
         <div className="bg-card rounded-xl p-12 text-center border border-border">
           <h2 className="text-lg font-medium mb-2">No studies yet</h2>
           <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
-            {!canReadAllStudies
+            {research ? "Create a study to organize your samples and metadata, or import sequencing data to create a linked study automatically." : !canReadAllStudies
               ? "Studies group samples for ENA submission. First create an order with samples, then create a study to associate those samples with metadata."
               : "Studies group samples for ENA submission. Create an order with samples first, then create a study to associate metadata."}
           </p>
@@ -370,8 +377,8 @@ export default function StudiesPage() {
                   New Study
                 </Link>
               </Button>
-              <Link href="/orders" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                Or create an order first
+              <Link href={research ? "/workbench/imports" : "/orders"} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                {research ? "Or import sequencing data" : "Or create an order first"}
               </Link>
             </div>
           )}
@@ -478,37 +485,37 @@ export default function StudiesPage() {
           </div>
 
           {/* Table Header - hidden on mobile */}
-          <div className="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground">
+          <div className={`hidden md:grid ${listGridCols} gap-4 px-5 py-2.5 border-b border-border bg-secondary/50 text-xs font-medium text-muted-foreground`}>
             <button
               onClick={() => handleSort("title")}
-              className={`${canReadAllStudies ? "col-span-5" : "col-span-7"} flex items-center gap-1 hover:text-foreground transition-colors text-left`}
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Study
               {sortField === "title" && <ArrowUpDown className="h-3 w-3" />}
             </button>
             <button
               onClick={() => handleSort("status")}
-              className="col-span-2 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Status
               {sortField === "status" && <ArrowUpDown className="h-3 w-3" />}
             </button>
-            {canReadAllStudies && <div className="col-span-2">Owner</div>}
+            {canReadAllStudies && <div className="min-w-0">Owner</div>}
             <button
               onClick={() => handleSort("samples")}
-              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors justify-end"
+              className="flex items-center gap-1 hover:text-foreground transition-colors justify-end"
             >
               {sortField === "samples" && <ArrowUpDown className="h-3 w-3" />}
               Samples
             </button>
             <button
               onClick={() => handleSort("created")}
-              className="col-span-1 flex items-center gap-1 hover:text-foreground transition-colors text-left"
+              className="flex items-center gap-1 hover:text-foreground transition-colors text-left"
             >
               Created
               {sortField === "created" && <ArrowUpDown className="h-3 w-3" />}
             </button>
-            <div className="col-span-1"></div>
+            <div className="min-w-0"></div>
           </div>
 
           {/* Studies List */}
@@ -524,7 +531,7 @@ export default function StudiesPage() {
               return (
                 <div
                   key={study.id}
-                  className={`block px-4 py-3 transition-colors group md:grid md:grid-cols-12 md:gap-4 md:px-5 md:py-4 md:items-center ${
+                  className={`block px-4 py-3 transition-colors group md:grid ${listGridCols} md:gap-4 md:px-5 md:py-4 md:items-center ${
                     bulkEditMode && canDeleteStudy
                       ? `${isSelected ? "bg-primary/10 ring-1 ring-inset ring-primary/30" : "hover:bg-secondary/80"} cursor-pointer`
                       : "hover:bg-secondary/80"
@@ -540,7 +547,7 @@ export default function StudiesPage() {
                     <div className="flex items-center justify-between gap-3">
                       {bulkEditMode ? (
                         <div className="min-w-0 flex-1">
-                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                          <p className="font-medium text-sm break-words leading-5 group-hover:text-primary transition-colors">
                             {study.title}
                           </p>
                           <p className="text-xs text-muted-foreground mt-0.5">
@@ -559,7 +566,7 @@ export default function StudiesPage() {
                         </div>
                       ) : (
                         <Link href={`/studies/${study.id}`} className="min-w-0 flex-1">
-                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                          <p className="font-medium text-sm break-words leading-5 group-hover:text-primary transition-colors">
                             {study.title}
                           </p>
                           <p className="text-xs text-muted-foreground mt-0.5">
@@ -627,10 +634,10 @@ export default function StudiesPage() {
                   {/* Desktop layout */}
                   <div className="hidden md:contents">
                     {/* Study Info */}
-                    <div className={`${canReadAllStudies ? "col-span-5" : "col-span-7"} min-w-0`}>
+                    <div className="min-w-0">
                       {bulkEditMode ? (
                         <>
-                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                          <p className="font-medium text-sm break-words leading-5 group-hover:text-primary transition-colors">
                             {study.title}
                           </p>
                           {study.studyAccessionId && (
@@ -641,7 +648,7 @@ export default function StudiesPage() {
                         </>
                       ) : (
                         <Link href={`/studies/${study.id}`}>
-                          <p className="font-medium text-sm truncate group-hover:text-primary transition-colors">
+                          <p className="font-medium text-sm break-words leading-5 group-hover:text-primary transition-colors">
                             {study.title}
                           </p>
                           {study.studyAccessionId && (
@@ -654,7 +661,7 @@ export default function StudiesPage() {
                     </div>
 
                     {/* Status */}
-                    <div className="col-span-2">
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className={`h-2 w-2 rounded-full ${statusConfig.dot}`} />
                         <span className={`text-xs font-medium ${statusConfig.color}`}>
@@ -665,7 +672,7 @@ export default function StudiesPage() {
 
                     {/* Researcher (Admin only) */}
                     {canReadAllStudies && (
-                      <div className="col-span-2 min-w-0">
+                      <div className="min-w-0">
                         <p className="text-sm truncate">
                           {study.user.firstName} {study.user.lastName}
                         </p>
@@ -673,20 +680,20 @@ export default function StudiesPage() {
                     )}
 
                     {/* Samples */}
-                    <div className="col-span-1 text-right">
-                      <span className="text-sm tabular-nums text-muted-foreground">
-                        {study._count.samples} {study._count.samples === 1 ? "sample" : "samples"}
+                    <div className="text-right">
+                      <span className="text-sm tabular-nums text-muted-foreground whitespace-nowrap">
+                        {study._count.samples}
                       </span>
                     </div>
 
                     {/* Date */}
-                    <div className="col-span-1">
-                      <span className="text-sm text-muted-foreground tabular-nums">
+                    <div className="min-w-0">
+                      <span className="text-sm text-muted-foreground tabular-nums whitespace-nowrap">
                         {formatDate(study.createdAt)}
                       </span>
                     </div>
 
-                    <div className="col-span-1 flex items-center justify-end">
+                    <div className="flex items-center justify-end">
                       {canDeleteStudy ? (
                         bulkEditMode ? (
                           <div className="h-8 w-8" />

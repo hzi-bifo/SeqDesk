@@ -2262,7 +2262,12 @@ describe("getOrderSequencingSummary stream + read-origin branches", () => {
     expect(result.summary.statusCounts.PROCESSING).toBe(1);
   });
 
-  it("derives pipeline and legacy read origins", async () => {
+  it.each([
+    ["associate", '{"trimming":"run-9"}', "pipeline"],
+    ["external_import", '{}', "external_import"],
+    ["manual", '{"sourceType":"cami-benchmark","processing":{"effectiveState":"cleaned"}}', "external_import"],
+    ["manual", '{"sourceType":"ena-fastq-accession"}', "external_import"],
+  ])("derives read origins independently from processing declarations: %s %s", async (dataClassSource, pipelineSources, readOrigin) => {
     const baseTime = new Date("2026-03-24T09:00:00.000Z");
     mocks.db.order.findUnique.mockResolvedValue(
       createOrder({
@@ -2292,8 +2297,8 @@ describe("getOrderSequencingSummary stream + read-origin branches", () => {
                 fastqcReport2: null,
                 pipelineRunId: "run-9",
                 // Pipeline sources without simulate-reads => "pipeline" origin.
-                pipelineSources: '{"trimming":"run-9"}',
-                dataClassSource: "associate",
+                pipelineSources,
+                dataClassSource,
                 pipelineRun: { runNumber: 9 },
                 sequencingRun: null,
                 isActive: true,
@@ -2310,7 +2315,7 @@ describe("getOrderSequencingSummary stream + read-origin branches", () => {
 
     expect(result.samples[0].read).toEqual(
       expect.objectContaining({
-        readOrigin: "pipeline",
+        readOrigin,
         isSimulated: false,
       })
     );

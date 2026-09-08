@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { isActiveSession } from "@/lib/auth-session";
 import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
+import { inputModuleEnabled } from "@/lib/modules/input-modules.server";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import {
   notifyOrderStatusChanged,
@@ -16,6 +17,8 @@ import { notifyOrderUpdatedInApp } from "@/lib/notifications/in-app";
 const STATUS_ORDER = ["DRAFT", "SUBMITTED", "COMPLETED"];
 
 type OrderDetailResponse = {
+  dataOrigin?: string;
+  sourceMetadata?: string | null;
   id: string;
   name: string | null;
   status: string;
@@ -103,6 +106,8 @@ async function getOrderWithResolvedRelations(
     select: {
       id: true,
       name: true,
+      dataOrigin: true,
+      sourceMetadata: true,
       status: true,
       statusUpdatedAt: true,
       createdAt: true,
@@ -128,7 +133,7 @@ async function getOrderWithResolvedRelations(
 
   if (!order) return null;
 
-  const readWhere = options?.canOperate
+  const readWhere = options?.canOperate || order.dataOrigin === "import"
     ? undefined
     : order.sequencingFilesPublishedAt
       ? { isActive: true, dataClass: "cleaned" }
@@ -166,6 +171,11 @@ async function getOrderWithResolvedRelations(
             file2: true,
             readCount1: true,
             readCount2: true,
+            dataClass: true,
+            pipelineSources: true,
+            runAccessionNumber: true,
+            isActive: true,
+            supersededByReadId: true,
           },
         },
         study: {
@@ -331,6 +341,10 @@ export async function PUT(
       markSamplesSent,
     } = body;
 
+    if ((status !== undefined || markSamplesSent) && (existing.dataOrigin === "import" || !await inputModuleEnabled("sequencing-management"))) {
+      return NextResponse.json({ error: "Facility status actions are not available for this data" }, { status: 403 });
+    }
+
     const requestedMetadataUpdate =
       name !== undefined ||
       contactName !== undefined ||
@@ -351,7 +365,7 @@ export async function PUT(
       if (existing.userId !== session.user.id) {
         return NextResponse.json({ error: "Forbidden" }, { status: 403 });
       }
-      if (requestedMetadataUpdate && existing.status === "COMPLETED") {
+      if (requestedMetadataUpdate && existing.status === "COMPLETED" && existing.dataOrigin !== "import") {
         return NextResponse.json(
           { error: "Cannot edit completed order" },
           { status: 400 }

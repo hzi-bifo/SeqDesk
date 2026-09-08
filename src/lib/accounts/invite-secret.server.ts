@@ -19,14 +19,15 @@ export function digestInviteCode(code: string): string {
 
 export function inviteCodeLookup(code: string) {
   const normalizedCode = normalizeInviteCode(code);
+  const codeDigest = digestInviteCode(normalizedCode);
   return {
     normalizedCode,
-    codeDigest: digestInviteCode(normalizedCode),
+    codeDigest,
     where: {
       OR: [
-        { codeDigest: digestInviteCode(normalizedCode) },
+        { codeDigest },
         { code: normalizedCode },
       ],
     },
-  } as const;
+  };
 }

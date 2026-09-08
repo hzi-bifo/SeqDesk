@@ -38,7 +38,7 @@ describe("pipeline run capability boundary", () => {
     ).toMatchObject({ status: 401 });
   });
 
-  it("returns 404 for facility run APIs in Research Workbench", () => {
+  it("allows owned analysis without granting facility output management", () => {
     expect(
       decideFacilityPipelineCapability(
         ownerSession,
@@ -46,9 +46,8 @@ describe("pipeline run capability boundary", () => {
         workbench
       )
     ).toMatchObject({
-      allowed: false,
-      status: 404,
-      reason: "domain-unavailable",
+      allowed: true,
+      grant: { scope: "own" },
     });
     expect(
       decideFacilityPipelineCapability(
@@ -56,7 +55,7 @@ describe("pipeline run capability boundary", () => {
         "analysis.resolve_outputs",
         workbench
       )
-    ).toMatchObject({ allowed: false, status: 404 });
+    ).toMatchObject({ allowed: false, status: 403 });
   });
 
   it("keeps pipeline configuration separate from running workflows", () => {
@@ -117,7 +116,7 @@ describe("pipeline run read scopes", () => {
     ).toBe(true);
   });
 
-  it("lets a Sequencing Center requester read only selected results for their target", () => {
+  it("lets a runnable owner read progress and results only for their target", () => {
     expect(
       authorizePipelineRunRead(ownerSession, publishedOwnerRun, sequencingCenter)
     ).toBeNull();
@@ -127,7 +126,7 @@ describe("pipeline run read scopes", () => {
         { ...publishedOwnerRun, selectedResultSelections: [] },
         sequencingCenter
       )
-    ).toMatchObject({ status: 403 });
+    ).toBeNull();
     expect(
       authorizePipelineRunRead(strangerSession, publishedOwnerRun, sequencingCenter)
     ).toMatchObject({ status: 403 });
@@ -146,9 +145,10 @@ describe("pipeline run read scopes", () => {
     ).toBeNull();
   });
 
-  it("returns 404 instead of leaking facility runs to Workbench", () => {
+  it("allows owned source-neutral runs but never other members' targets", () => {
     expect(
       authorizePipelineRunRead(ownerSession, publishedOwnerRun, workbench)
-    ).toMatchObject({ status: 404, body: { error: "Not found" } });
+    ).toBeNull();
+    expect(authorizePipelineRunRead(strangerSession, publishedOwnerRun, workbench)).toMatchObject({ status: 403 });
   });
 });

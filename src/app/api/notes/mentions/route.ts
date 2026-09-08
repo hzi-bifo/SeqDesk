@@ -396,7 +396,7 @@ async function getStudyMentionItems(
   }
 
   const sampleIds = study.samples.map((sample) => sample.id);
-  const orderIds = Array.from(new Set(study.samples.map((sample) => sample.order.id)));
+  const orderIds = Array.from(new Set(study.samples.flatMap((sample) => sample.order ? [sample.order.id] : [])));
 
   const [assemblies, bins, pipelineRuns, sequencingArtifacts, pipelineArtifacts] = await Promise.all([
     sampleIds.length
@@ -463,12 +463,12 @@ async function getStudyMentionItems(
       type: "sample",
       id: sample.id,
       label: formatSampleLabel(sample),
-      detail: formatSampleDetail(sample, sample.order.orderNumber),
+      detail: formatSampleDetail(sample, sample.order?.orderNumber ?? null),
       group: "samples",
       href: `/studies/${study.id}?tab=samples`,
     });
 
-    addUnique(items, seen, {
+    if (sample.order) addUnique(items, seen, {
       type: "order",
       id: sample.order.id,
       label: sample.order.orderNumber || sample.order.name || "Order",

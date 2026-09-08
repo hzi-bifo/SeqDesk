@@ -118,6 +118,11 @@ describe("WorkbenchCanvasClient", () => {
     expect(await screen.findAllByText("Reference genomes")).toHaveLength(2);
     expect(await screen.findAllByText("Text note")).toHaveLength(2);
 
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PATCH")).toBe(true), { timeout: 2000 });
+    // Saving must not reload the old server canvas and erase newly added nodes.
+    expect(screen.getAllByText("Reference genomes")).toHaveLength(2);
+    const patch = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH");
+    expect(JSON.parse(String(patch?.[1]?.body)).canvas.nodes).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: /Play/i }));
 
     await waitFor(() =>

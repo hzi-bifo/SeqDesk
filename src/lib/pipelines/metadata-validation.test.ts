@@ -82,6 +82,17 @@ describe("metadata-validation", () => {
     mocks.packageToPipelineDefinition.mockReturnValue(null);
   });
 
+  it.each([['short', true], ['long', false], ['unknown', false]])('checks the selected imported MetaPhlAn technology: %s', async (technology, allowed) => {
+    mocks.getPackage.mockReturnValue({ manifest: { inputs: [], sequencingCompatibility: { readLengthClass: 'short', requireReadLengthEvidence: true } } });
+    mocks.db.order.findUnique.mockResolvedValue({ id: "import-order", samples: [{
+      id: "sample-0", sampleId: "sample_0", assemblies: [], bins: [], order: null,
+      reads: [{ file1: "/read.fastq.gz", isActive: true, pipelineSources: JSON.stringify({ sourceType: "cami-benchmark", technology }) }],
+    }] });
+    const result = await validatePipelineMetadata({ type: "order", orderId: "import-order" }, "metaphlan");
+    expect(result.valid).toBe(allowed);
+    if (!allowed) expect(result.issues.some(issue => issue.message.includes('requires documented short-read'))).toBe(true);
+  });
+
   it("returns a study-not-found error when study does not exist", async () => {
     mocks.db.study.findUnique.mockResolvedValue(null);
 

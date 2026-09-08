@@ -1030,6 +1030,7 @@ export async function prepareGenericRun(
         const staged = await stagePriorRunArtifacts({
           currentRunId: runId,
           studyId: target.studyId,
+          sampleIds: target.sampleIds,
           runFolder,
           spec: execution.priorRunArtifacts,
         });

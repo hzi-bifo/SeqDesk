@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { loadStudyRunSamples } from '@/lib/pipelines/study-samples';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import '@/lib/pipelines/adapters/mag';
 import { createGenericAdapter } from '@/lib/pipelines/generic-adapter';
@@ -107,7 +108,7 @@ export async function POST(
           ? { type: 'study', studyId: run.studyId }
           : null;
 
-    const samples = run.targetType === 'order' ? run.order?.samples || [] : run.study?.samples || [];
+    const samples = run.targetType === 'order' ? run.order?.samples || [] : run.inputSampleIds ? await loadStudyRunSamples(run) : run.study?.samples || [];
     if (samples.length === 0) {
       return NextResponse.json(
         { error: 'No samples found for this run' },

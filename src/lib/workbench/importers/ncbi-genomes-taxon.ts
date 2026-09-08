@@ -9,6 +9,7 @@ import {
   getPathSizeBytes,
 } from "@/lib/workbench/storage";
 import { resolveWorkbenchStoreCommand } from "@/lib/workbench/store";
+import { extractWorkbenchZip } from "@/lib/workbench/safe-zip";
 import {
   WORKBENCH_REQUIRED_TEST_LAYERS,
   type WorkbenchIntegrationTestSpec,
@@ -74,10 +75,10 @@ export function parseNcbiGenomeSummaryLines(output: string, cap = DEFAULT_CAP): 
     try {
       parsed = JSON.parse(trimmed);
     } catch {
-      continue;
+      throw new Error("NCBI returned malformed genome metadata");
     }
     const root = isRecord(parsed) && isRecord(parsed.report) ? parsed.report : parsed;
-    if (!isRecord(root)) continue;
+    if (!isRecord(root)) throw new Error("NCBI returned invalid genome metadata");
     const organism = nestedRecord(root, "organism");
     const assemblyInfo = nestedRecord(root, "assembly_info");
     const assemblyStats = nestedRecord(root, "assembly_stats");
@@ -85,7 +86,7 @@ export function parseNcbiGenomeSummaryLines(output: string, cap = DEFAULT_CAP): 
       optionalString(root.accession) ||
       optionalString(root.assembly_accession) ||
       optionalString(root.current_accession);
-    if (!accession) continue;
+    if (!accession || !/^GC[AF]_\d+\.\d+$/.test(accession)) throw new Error("NCBI returned an unversioned or invalid assembly accession");
     genomes.push({
       accession,
       organismName:
@@ -223,16 +224,18 @@ async function appendLine(filePath: string, line: string): Promise<void> {
 async function runLoggedCommand(
   command: string,
   args: string[],
-  logPath: string
+  logPath: string,
+  signal?: AbortSignal
 ): Promise<void> {
   await appendLine(logPath, `[${new Date().toISOString()}] ${command} ${args.join(" ")}`);
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { env: process.env, stdio: ["ignore", "pipe", "pipe"],
+      signal, timeout: 6 * 60 * 60 * 1000 });
     child.stdout?.on("data", (chunk) => {
-      void fs.appendFile(logPath, chunk);
+      void fs.appendFile(logPath, chunk).catch(() => child.kill());
     });
     child.stderr?.on("data", (chunk) => {
-      void fs.appendFile(logPath, chunk);
+      void fs.appendFile(logPath, chunk).catch(() => child.kill());
     });
     child.on("error", reject);
     child.on("close", (code) => {
@@ -249,14 +252,14 @@ async function start(
   if (accessions.length === 0) {
     throw new Error("NCBI preview did not return any genome accessions to import.");
   }
+  if (accessions.some((accession) => !/^GC[AF]_\d+\.\d+$/.test(accession)) || new Set(accessions).size !== accessions.length) {
+    throw new Error("Import requires distinct, explicitly versioned assembly accessions");
+  }
 
   const accessionsPath = path.join(context.storage.jobDir, "accessions.txt");
   const zipPath = path.join(context.storage.jobDir, "ncbi_dataset.zip");
   await fs.writeFile(accessionsPath, `${accessions.join("\n")}\n`);
-  const [datasetsCommand, unzipCommand] = await Promise.all([
-    resolveNcbiCommand("datasets"),
-    resolveNcbiCommand("unzip"),
-  ]);
+  const datasetsCommand = await resolveNcbiCommand("datasets");
 
   await context.update({ status: "running", phase: "downloading", progress: 10, targetPath: zipPath });
   await context.log(`Writing ${accessions.length} selected genome accession(s) to ${accessionsPath}`);
@@ -274,21 +277,22 @@ async function start(
       zipPath,
       "--no-progressbar",
     ],
-    context.storage.logPath
+    context.storage.logPath,
+    context.signal
   );
 
   await context.update({ phase: "extracting", progress: 70, targetPath: context.storage.cacheDir });
-  await fs.rm(context.storage.cacheDir, { recursive: true, force: true });
-  await fs.mkdir(context.storage.cacheDir, { recursive: true });
-  await runLoggedCommand(
-    unzipCommand,
-    ["-q", zipPath, "-d", context.storage.cacheDir],
-    context.storage.logPath
-  );
+  const extractedPath = path.join(context.storage.cacheDir, "dataset");
+  await extractWorkbenchZip(zipPath, extractedPath);
+  for (const accession of accessions) {
+    const directory = path.join(extractedPath, "ncbi_dataset", "data", accession);
+    const entries = await fs.readdir(directory);
+    if (!entries.some((name) => name.endsWith(".fna"))) throw new Error(`Missing genome FASTA for ${accession}`);
+  }
 
   await context.update({ phase: "indexing", progress: 90 });
   const [sizeBytes, checksumSha256] = await Promise.all([
-    getPathSizeBytes(context.storage.cacheDir),
+    getPathSizeBytes(extractedPath),
     computeFileSha256(zipPath),
   ]);
 
@@ -303,8 +307,9 @@ async function start(
       request: context.input,
       accessions,
       previewSummary: context.preview.summary,
+      checksumRepresentation: "sha256-of-downloaded-zip",
     },
-    storagePath: context.storage.cacheDir,
+    storagePath: extractedPath,
     sizeBytes,
     checksumSha256,
     genomeCount: accessions.length,

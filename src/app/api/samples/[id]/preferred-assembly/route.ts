@@ -100,7 +100,7 @@ export async function PUT(
     }
 
     const ownsSample =
-      sample.order.userId === access.principal.id ||
+      sample.order?.userId === access.principal.id ||
       sample.study?.userId === access.principal.id;
 
     if (access.grant.scope !== "installation" && !ownsSample) {

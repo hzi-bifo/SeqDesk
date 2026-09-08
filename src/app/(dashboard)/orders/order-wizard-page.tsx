@@ -91,7 +91,7 @@ import { InlineFieldHelp, hasInlineFieldHelpContent } from "@/components/ui/inli
 import { PageNotice } from "@/components/ui/page-notice";
 import { ExcelToolbar } from "@/components/samples/ExcelToolbar";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
-import { hasCapability, principalFromSession } from "@/lib/authorization";
+import { hasCapability, principalFromSession } from "@/lib/authorization/client";
 
 // Extend TanStack Table meta types for the wizard
 declare module "@tanstack/react-table" {
@@ -659,7 +659,8 @@ export function OrderWizardPage({
   const [selectedMixsFields, setSelectedMixsFields] = useState<string[]>([]);
 
   // Unified field values state - stores all field values by field name
-  const [fieldValues, setFieldValues] = useState<Record<string, unknown>>({});
+  const [fieldValues, setFieldValues] = useState<Record<string, unknown>>(() => !isEditMode && searchParams.get("name")?.trim()
+    ? { name: searchParams.get("name")!.trim().slice(0, 500) } : {});
   const [loadedCustomFields, setLoadedCustomFields] = useState<Record<string, unknown>>({});
 
   // Field validation state

@@ -1,20 +1,46 @@
 # SeqDesk deployment profiles and domain separation plan
 
+> Superseded where it describes separate application views, mutually exclusive input paths or Canvas-first navigation. The current implementation and remaining TODOs are in [One SeqDesk with coexisting input modules](unified-input-modules.md). Existing enrollment/ownership protections remain compatibility policy, not separate products.
+
 Status: proposed
 
 Branch: `codex/modular-deployment-modes`
 
 Scope: application architecture and phased implementation plan; no production behavior is changed by this document.
 
-Pre-implementation choices and recommended defaults are tracked in `docs/architecture/deployment-profiles-decision-register.md`. The complete guided installer and first-login journey is defined in `docs/architecture/deployment-profiles-installation-setup.md`.
+Pre-implementation choices and recommended defaults are tracked in `docs/architecture/deployment-profiles-decision-register.md`. The complete guided installer and first-login journey is defined in `docs/architecture/deployment-profiles-installation-setup.md`. Follow-on modular source discovery and the unified Add data flow are proposed in `docs/architecture/deployment-profiles-input-sources.md`; this does not expand the initial profile release gate to every repository.
 
 ## Decision summary
 
-SeqDesk should support three explicit deployment profiles in two product families:
+### UI correction — September 7, 2026
+
+This decision supersedes the older Canvas/workspace-first product separation
+below. The remaining implementation phases are historical planning context
+where they conflict with this shared scientific-record approach.
+
+One application, not separate products: profiles share SeqDesk branding, the
+Sequencing/Studies navigation pattern, study creation/detail/metadata screens,
+and scientific records. Research mode lands on `/sequencing`, not Canvas.
+An imported sequencing entry uses a Sample and its Read datasets linked to a
+Study; a facility Order remains optional operational context. Never fabricate
+an order or instrument run for downloaded data. Canvas is experimental and optional.
+
+The source-module flow lives under Add sequencing data. CAMI supports selecting
+an owned, unsubmitted destination study or creating/reusing its dataset study,
+then publishes links to the shared study and sequencing entry. Provenance,
+read layout, file locations, raw/cleaned classification, validation and checksums
+belong to the scientific record, not just an import job.
+
+Remaining integration: promote non-CAMI workspace datasets/uploads into the same
+scientific publication contract; unify the new order-independent sequencing
+detail sections with the existing order-scoped editing/QC/pipeline components.
+Do not describe those capabilities as implemented merely because navigation is shared.
+
+SeqDesk should support three explicit deployment profiles of one application:
 
 1. **Sequencing Center** (`sequencing-center`): the current service workflow, with researchers requesting work and facility operators processing it.
 2. **Shared Lab** (`shared-lab`): sequencing-center capabilities for a small team, without a requester-versus-facility split in everyday work.
-3. **Research Workbench** (`research-workbench`): a researcher-first analysis environment organized around workspaces, datasets, analyses, runs, and results rather than sequencing orders.
+3. **Research Workbench** (`research-workbench`): the shared study/sequencing interface, with source imports instead of center intake; private ownership remains enforced.
 
 A deployment profile is not another feature flag. It selects the product's workflow topology, navigation, language, default permissions, and enabled domains. Feature modules remain smaller optional capabilities within a compatible profile.
 
@@ -270,7 +296,7 @@ Profile-specific landing routes:
 
 - Sequencing Center: `/orders`
 - Shared Lab: `/orders` initially, with neutral “Projects” or “Sequencing Work” language evaluated in user testing
-- Research Workbench: `/workbench/data`
+- Research Workbench: `/sequencing`
 
 ### 5. Make the pipeline engine target-agnostic
 

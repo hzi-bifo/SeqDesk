@@ -212,9 +212,9 @@ export async function GET(request: NextRequest) {
       const hasAssemblyAccess = Boolean(
         assemblyRecord &&
           allowUserAssemblyDownload &&
-          (assemblyRecord.sample.order.userId === session.user.id ||
+          (assemblyRecord.sample.order?.userId === session.user.id ||
             assemblyRecord.sample.study?.userId === session.user.id) &&
-          assemblyRecord.sample.order.status === "COMPLETED"
+          assemblyRecord.sample.order?.status === "COMPLETED"
       );
 
       if (!hasReadAccess && !hasAssemblyAccess && !hasArtifactAccess) {

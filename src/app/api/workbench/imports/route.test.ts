@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
+  requireRawReadImporter: vi.fn(),
   getServerSession: vi.fn(),
   getWorkbenchImporter: vi.fn(),
   createWorkbenchImportJob: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next-auth", () => ({
   getServerSession: mocks.getServerSession,
 }));
+vi.mock("@/lib/modules/input-modules.server", () => ({ requireRawReadImporter: mocks.requireRawReadImporter }));
 
 vi.mock("@/lib/auth", () => ({
   authOptions: {},
@@ -41,6 +43,9 @@ vi.mock("@/lib/workbench/workspaces", () => ({
 }));
 
 import { GET, POST } from "./route";
+import { importPreviewFingerprint } from "@/lib/workbench/import-preview-fingerprint";
+import { ImportSelectionConflict } from "@/lib/workbench/import-conflict";
+const namedInput = { taxon: "E. coli", collection: { key: "00e55dcb-9697-4b89-af56-af51bd557a17", name: "Public controls" } };
 
 function postRequest(body: unknown) {
   return new NextRequest("http://localhost/api/workbench/imports", {
@@ -51,6 +56,13 @@ function postRequest(body: unknown) {
 }
 
 describe("/api/workbench/imports", () => {
+  it("blocks disabled input modules before provider calls or job creation", async () => {
+    mocks.requireRawReadImporter.mockRejectedValueOnce(new Error("Disabled"));
+    const response = await POST(postRequest({ providerId: "mock", input: {} }));
+    expect(response.status).toBe(403);
+    expect(mocks.provider.preflight).not.toHaveBeenCalled();
+    expect(mocks.createWorkbenchImportJob).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
@@ -78,7 +90,7 @@ describe("/api/workbench/imports", () => {
   it("rejects unauthenticated list and start requests", async () => {
     mocks.getServerSession.mockResolvedValue(null);
 
-    const list = await GET();
+    const list = await GET(new NextRequest("http://localhost/api/workbench/imports"));
     const start = await POST(postRequest({ providerId: "mock", input: { taxon: "E. coli" } }));
 
     expect(list.status).toBe(401);
@@ -86,7 +98,7 @@ describe("/api/workbench/imports", () => {
   });
 
   it("lists jobs for the current user's private workbench workspace", async () => {
-    const response = await GET();
+    const response = await GET(new NextRequest("http://localhost/api/workbench/imports"));
 
     expect(response.status).toBe(200);
     expect(mocks.listWorkbenchImportJobs).toHaveBeenCalledWith("user-1");
@@ -141,15 +153,19 @@ describe("/api/workbench/imports", () => {
 
   it("creates and starts a tracked import job from a bounded preview", async () => {
     const response = await POST(
-      postRequest({ providerId: "mock", input: { taxon: "E. coli" } })
+      postRequest({ providerId: "mock", input: namedInput,
+        previewFingerprint: importPreviewFingerprint("mock", namedInput, {
+          providerId: "mock", summary: { selectedCount: 1 }, genomes: [{ accession: "GCF_1" }],
+        }),
+      })
     );
 
     expect(response.status).toBe(202);
-    expect(mocks.provider.preview).toHaveBeenCalledWith({ taxon: "E. coli" });
+    expect(mocks.provider.preview).toHaveBeenCalledWith(namedInput);
     expect(mocks.createWorkbenchImportJob).toHaveBeenCalledWith({
       userId: "user-1",
       providerId: "mock",
-      input: { taxon: "E. coli" },
+      input: namedInput,
       preview: {
         providerId: "mock",
         summary: { selectedCount: 1 },
@@ -159,8 +175,36 @@ describe("/api/workbench/imports", () => {
     expect(mocks.runWorkbenchImportJob).toHaveBeenCalledWith("job-1");
     expect(await response.json()).toEqual({
       success: true,
+      collectionOrderId: expect.stringMatching(/^imported-data-/),
       started: true,
       job: { id: "job-1", status: "queued" },
     });
+  });
+
+  it.each([undefined, "outdated"])("requires a matching reviewed manifest (%s)", async (previewFingerprint) => {
+    const response = await POST(postRequest({ providerId: "mock", input: namedInput, previewFingerprint }));
+    expect(response.status).toBe(409);
+    expect(mocks.createWorkbenchImportJob).not.toHaveBeenCalled();
+  });
+  it.each([undefined, { key: namedInput.collection.key, name: " " }, { key: "another-user", name: "Controls" }])("requires a valid named collection before previewing or queuing (%j)", async collection => {
+    const response = await POST(postRequest({ providerId: "mock", input: { taxon: "E. coli", collection } }));
+    expect(response.status).toBe(400);
+    expect(mocks.provider.preview).not.toHaveBeenCalled();
+    expect(mocks.createWorkbenchImportJob).not.toHaveBeenCalled();
+  });
+  it("binds the reviewed preview to its named destination", async () => {
+    const response = await POST(postRequest({ providerId: "mock", input: { ...namedInput, collection: { ...namedInput.collection, name: "Changed" } },
+      previewFingerprint: importPreviewFingerprint("mock", namedInput, { providerId: "mock", summary: { selectedCount: 1 }, genomes: [{ accession: "GCF_1" }] }),
+    }));
+    expect(response.status).toBe(409);
+    expect(mocks.createWorkbenchImportJob).not.toHaveBeenCalled();
+  });
+  it("reports an already-imported or queued selection as a conflict", async () => {
+    mocks.createWorkbenchImportJob.mockRejectedValueOnce(new ImportSelectionConflict("Already queued"));
+    const response = await POST(postRequest({ providerId: "mock", input: namedInput,
+      previewFingerprint: importPreviewFingerprint("mock", namedInput, { providerId: "mock", summary: { selectedCount: 1 }, genomes: [{ accession: "GCF_1" }] }),
+    }));
+    expect(response.status).toBe(409);
+    expect(mocks.runWorkbenchImportJob).not.toHaveBeenCalled();
   });
 });

@@ -51,7 +51,7 @@ export async function GET(
           select: { id: true, userId: true, orderNumber: true },
         },
         study: {
-          select: { id: true, title: true },
+          select: { id: true, title: true, userId: true },
         },
       },
     });
@@ -60,7 +60,7 @@ export async function GET(
       return NextResponse.json({ error: "Sample not found" }, { status: 404 });
     }
 
-    if (access.grant.scope !== "installation" && sample.order.userId !== session.user.id) {
+    if (access.grant.scope !== "installation" && (sample.order?.userId ?? sample.study?.userId) !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -95,6 +95,7 @@ export async function PUT(
         order: {
           select: { userId: true },
         },
+        study: { select: { userId: true } },
       },
     });
 
@@ -102,7 +103,7 @@ export async function PUT(
       return NextResponse.json({ error: "Sample not found" }, { status: 404 });
     }
 
-    if (access.grant.scope !== "installation" && existing.order.userId !== session.user.id) {
+    if (access.grant.scope !== "installation" && (existing.order?.userId ?? existing.study?.userId) !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -156,6 +157,7 @@ export async function DELETE(
         order: {
           select: { userId: true, status: true },
         },
+        study: { select: { userId: true } },
       },
     });
 
@@ -168,11 +170,11 @@ export async function DELETE(
       "data.purge_shared",
       deploymentProfile
     ).allowed;
-    if (!canPurgeShared && existing.order.userId !== session.user.id) {
+    if (!canPurgeShared && (existing.order?.userId ?? existing.study?.userId) !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    if (!canPurgeShared && existing.order.status !== "DRAFT") {
+    if (!canPurgeShared && existing.order && existing.order.status !== "DRAFT") {
       return NextResponse.json(
         { error: "Cannot delete samples from a submitted order" },
         { status: 400 }

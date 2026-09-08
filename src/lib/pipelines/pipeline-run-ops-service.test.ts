@@ -255,15 +255,15 @@ describe('pipeline run operator services', () => {
     expect(result.status).toBe(403);
   });
 
-  it('does not expose order/study pipeline commands in Research Workbench', async () => {
+  it('keeps the installation-wide CLI operator resolver unavailable to private-data principals', async () => {
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition('research-workbench')
     );
 
     const result = await resolvePipelineOperator('member@example.org');
 
-    expect(result.status).toBe(404);
-    expect(mocks.db.user.findMany).not.toHaveBeenCalled();
+    expect(result.status).toBe(403);
+    expect(mocks.db.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { email: 'member@example.org', isActive: true } }));
   });
 
   it('selects attribution and FastQC report paths for order and study Reads', async () => {

@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   db: {
     workbenchImportJob: {
       findFirst: vi.fn(),
-      update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -38,6 +38,7 @@ function params(jobId = "job-a") {
 describe("POST /api/workbench/imports/[jobId]/cancel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.db.workbenchImportJob.updateMany.mockReset().mockResolvedValue({ count: 1 });
     process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
     mocks.getServerSession.mockResolvedValue({ user: { id: "user-a", role: "RESEARCHER" } });
     mocks.getOrCreateDefaultWorkbenchWorkspace.mockResolvedValue({
@@ -73,7 +74,9 @@ describe("POST /api/workbench/imports/[jobId]/cancel", () => {
       workspaceId: "workspace-a",
       status: "queued",
     });
-    mocks.db.workbenchImportJob.update.mockResolvedValue({
+    mocks.db.workbenchImportJob.findFirst.mockResolvedValueOnce({
+      id: "job-a", workspaceId: "workspace-a", status: "queued",
+    }).mockResolvedValue({
       id: "job-a",
       status: "cancelled",
     });
@@ -81,8 +84,8 @@ describe("POST /api/workbench/imports/[jobId]/cancel", () => {
     const response = await POST(new Request("http://localhost"), params("job-a"));
 
     expect(response.status).toBe(200);
-    expect(mocks.db.workbenchImportJob.update).toHaveBeenCalledWith({
-      where: { id: "job-a" },
+    expect(mocks.db.workbenchImportJob.updateMany).toHaveBeenCalledWith({
+      where: { id: "job-a", workspaceId: "workspace-a", status: "queued" },
       data: expect.objectContaining({
         status: "cancelled",
         phase: "cancelled",
@@ -96,7 +99,7 @@ describe("POST /api/workbench/imports/[jobId]/cancel", () => {
     });
   });
 
-  it("rejects cancellation after a job has started", async () => {
+  it("requests a running stop without releasing its worker slot", async () => {
     mocks.db.workbenchImportJob.findFirst.mockResolvedValue({
       id: "job-a",
       workspaceId: "workspace-a",
@@ -105,7 +108,20 @@ describe("POST /api/workbench/imports/[jobId]/cancel", () => {
 
     const response = await POST(new Request("http://localhost"), params("job-a"));
 
+    expect(response.status).toBe(200);
+    expect(mocks.db.workbenchImportJob.updateMany).toHaveBeenCalledWith({ where: { id: "job-a", workspaceId: "workspace-a", status: "running" }, data: { phase: "cancelling" } });
+  });
+  it("does not cancel a completed import", async () => {
+    mocks.db.workbenchImportJob.findFirst.mockResolvedValue({ id: "job-a", status: "success" });
+    expect((await POST(new Request("http://localhost"), params())).status).toBe(409);
+    expect(mocks.db.workbenchImportJob.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not cancel a job claimed after the initial read", async () => {
+    mocks.db.workbenchImportJob.findFirst.mockResolvedValue({ id: "job-a", status: "queued" });
+    mocks.db.workbenchImportJob.updateMany.mockResolvedValue({ count: 0 });
+    const response = await POST(new Request("http://localhost"), params());
     expect(response.status).toBe(409);
-    expect(mocks.db.workbenchImportJob.update).not.toHaveBeenCalled();
+    expect(mocks.serializeWorkbenchImportJob).not.toHaveBeenCalled();
   });
 });

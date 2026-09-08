@@ -1,10 +1,5 @@
-import { PageContainer } from "@/components/layout/PageContainer";
-import { WorkbenchCanvasClient } from "@/components/workbench/WorkbenchCanvasClient";
+import { redirect } from "next/navigation";
 
 export default function WorkbenchDataPage() {
-  return (
-    <PageContainer>
-      <WorkbenchCanvasClient />
-    </PageContainer>
-  );
+  redirect("/workbench/imports");
 }

@@ -101,7 +101,7 @@ export function OrderSelector({
     router.push(getOrderHref(orderId, pathname, searchParams));
   };
 
-  const displayLabel = currentOrderName || "All Sequencing Orders";
+  const displayLabel = currentOrderName || "All sequencing data";
   const hasOrder = !!currentOrderId;
   const isSidebar = variant === "sidebar";
   const isCollapsedSidebar = isSidebar && collapsed;
@@ -193,7 +193,7 @@ export function OrderSelector({
               )}
             >
               <Layers className="h-3.5 w-3.5 shrink-0" />
-              All Sequencing Orders
+              All sequencing data
             </button>
             <button
               type="button"
@@ -204,7 +204,7 @@ export function OrderSelector({
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
             >
               <Plus className="h-3.5 w-3.5 shrink-0" />
-              New Sequencing Order
+              Add sequencing data
             </button>
           </div>
 

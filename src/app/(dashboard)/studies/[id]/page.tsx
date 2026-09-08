@@ -44,6 +44,8 @@ import {
 } from "lucide-react";
 import { StudyPipelinesSection } from "@/components/pipelines/StudyPipelinesSection";
 import { useCapability } from "@/components/deployment-profile/useCapability";
+import { StudyCohort } from "@/components/studies/StudyCohort";
+import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 import { type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
 import {
   STUDY_ADDITIONAL_DETAILS_SECTION_ID,
@@ -121,6 +123,7 @@ interface Study {
   notesSupported?: boolean;
   createdAt: string;
   samples: Sample[];
+  analysisSamples?: Sample[];
   user: {
     id: string;
     firstName: string | null;
@@ -379,6 +382,7 @@ export default function StudyDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const research = useDeploymentProfile().experience === "workbench";
   const router = useRouter();
   const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
   const searchParams = useSearchParams();
@@ -901,6 +905,7 @@ export default function StudyDetailPage({
     [canUseOperationalStudyFields, study, studyFormFields, studyPerSampleFields]
   );
   const studySamples = study?.samples ?? [];
+  const analysisSamples = study?.analysisSamples ?? studySamples;
   const hasAssociatedSamplesSection =
     Boolean(studyModules?.sampleAssociation) || studySamples.length > 0;
   const hasEnvironmentTypeSection =
@@ -1055,6 +1060,7 @@ export default function StudyDetailPage({
           </p>
         </div>
       </div>
+      {research && <div className="mb-4"><Button asChild variant="outline"><Link href="/workbench/imports">Add sequencing data</Link></Button></div>}
       {error && (
         <div className="mb-6 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive flex items-center gap-2">
           <AlertCircle className="h-5 w-5" />
@@ -1072,6 +1078,8 @@ export default function StudyDetailPage({
         {/* Overview Tab */}
         <TabsContent value="overview">
           <>
+            <StudyCohort studyId={id} readOnly={study.submitted || !(isOwner || canManageStudies)} onChange={fetchStudy} />
+            {parsedStudyMetadata.sourceType && <details className="mb-6 rounded-lg border bg-card p-5"><summary className="text-sm font-semibold">Original repository study metadata</summary><p className="mt-2 text-xs text-muted-foreground">Retained source metadata is not a completed SeqDesk study checklist. Local metadata and group assignments remain separate.</p><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(parsedStudyMetadata, null, 2)}</pre></details>}
             {hasAssociatedSamplesSection && (
               <div
                 id={getStudyOverviewSectionAnchorId(STUDY_OVERVIEW_ASSOCIATED_SAMPLES_SECTION_ID)}
@@ -1095,7 +1103,7 @@ export default function StudyDetailPage({
                         <div>
                           <div className="font-medium">{sample.sampleId}</div>
                           <div className="text-xs text-muted-foreground">
-                            {sample.order ? `${sample.order.orderNumber}${sample.order.name ? ` · ${sample.order.name}` : ""}` : "No source order"}
+                            {sample.order ? `${sample.order.orderNumber}${sample.order.name ? ` · ${sample.order.name}` : ""}` : <Link className="underline" href={`/sequencing/${sample.id}`}>Open sequencing entry and files</Link>}
                           </div>
                         </div>
                         <div className="text-xs text-muted-foreground">
@@ -1647,7 +1655,7 @@ export default function StudyDetailPage({
                                 )}
                               </>
                             ) : (
-                              <span>Order unavailable</span>
+                              <Link className="underline" href={`/sequencing/${sample.id}`}>Imported sequencing entry</Link>
                             )}
                           </div>
                         </div>
@@ -1715,7 +1723,7 @@ export default function StudyDetailPage({
                                   )}
                                 </>
                               ) : (
-                                <span>Order unavailable</span>
+                                <Link className="underline" href={`/sequencing/${sample.id}`}>Imported sequencing entry</Link>
                               )}
                             </div>
                           </div>
@@ -1770,11 +1778,11 @@ export default function StudyDetailPage({
         )}
 
         {/* Pipelines Tab - available to users who may run analysis */}
-        {canRunAnalysis && totalSamples > 0 && (
+        {canRunAnalysis && analysisSamples.length > 0 && (
           <TabsContent value="pipelines">
             <StudyPipelinesSection
               studyId={study.id}
-              samples={studySamples}
+              samples={analysisSamples}
               selectedPipelineId={selectedPipelineId}
               categoryFilter="analysis"
             />

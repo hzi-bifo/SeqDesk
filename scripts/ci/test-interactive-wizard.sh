@@ -293,7 +293,7 @@ assert_eq "clearing wipes the bootstrap plaintext" "" "$SEQDESK_BOOTSTRAP_ADMIN_
 assert_nonempty "the summary copy survives the plaintext wipe" \
     "$SEQDESK_GENERATED_ADMIN_PASSWORD"
 assert_contains "wizard explains one shared application" \
-    "does not install a separate edition" "$OUT"
+    "One application and one UI" "$OUT"
 assert_contains "wizard requires an explicit profile choice" \
     "Choose 1, 2, or 3" "$OUT"
 assert_contains "wizard explains how to choose a profile" \
@@ -303,7 +303,7 @@ assert_contains "Shared Lab is identified as preview before selection" \
 assert_contains "Workbench is identified as preview before selection" \
     "Preview on this branch until the packaged Workbench acceptance journey passes" "$OUT"
 assert_contains "wizard explains profile persistence" \
-    "cannot currently be changed in Settings or with Reconfigure" "$OUT"
+    "Changing sharing policy requires a guarded migration" "$OUT"
 assert_contains "workbench explains administrator privacy boundaries" \
     "do not automatically see another member's private workspace" "$OUT"
 assert_contains "workbench defers member creation to onboarding" \
@@ -324,7 +324,7 @@ EOF
 assert_eq "declining without acknowledgement keeps Workbench runtime selected" \
     "1" "$SEQDESK_WITH_PIPELINES"
 assert_contains "Workbench explains the consequence of runtime deferral" \
-    "analysis execution will remain blocked" "$OUT"
+    "workflow runtime will remain deferred" "$OUT"
 assert_contains "Workbench asks for explicit deferral acknowledgement" \
     "Continue with workflow runtime deferred?" "$OUT"
 assert_contains "unacknowledged deferral restores the recommended selection" \
@@ -575,7 +575,7 @@ assert_not_contains "team-server Sequencing Center plan does not open registrati
 
 render_install_plan_human "$plan_json" >"$OUT"
 assert_contains "review explains the selected profile behavior" \
-    "researchers import or upload data" "$OUT"
+    "shared sequencing data and studies UI" "$OUT"
 assert_contains "review shows the published release size" \
     "121 KiB" "$OUT"
 assert_contains "review explains unknown workflow download size" \
@@ -591,17 +591,14 @@ assert_contains "review labels compatible feature modules as requested, not nece
 assert_contains "review preserves the authority of the global feature-module switch" \
     "an existing global feature-module disable remains authoritative" "$OUT"
 
-SEQDESK_FEATURE_MODULES_JSON='{"billing-info":true}'
+SEQDESK_FEATURE_MODULES_JSON='{"billing-info":true,"sequencing-management":true,"import-cami":true,"import-sra":true}'
 if build_install_plan_json >"$OUT" 2>&1; then
-    echo "FAIL: Workbench plan accepted the facility-only billing module" >&2
-    FAILURES=$((FAILURES + 1))
+    echo "ok: research preset accepts coexisting facility and raw-read input modules"
 else
-    echo "ok: Workbench plan rejects facility-only feature modules"
+    echo "FAIL: research preset rejected coexisting input modules" >&2
+    FAILURES=$((FAILURES + 1))
 fi
-assert_contains "module incompatibility names the selected profile and missing domain" \
-    "Research workbench cannot enable modules.billing-info: it requires facility-intake" "$OUT"
-assert_contains "module incompatibility gives a corrective action" \
-    "Disable modules.billing-info or choose a compatible deployment profile" "$OUT"
+assert_contains "coexisting module choice is retained" '"import-sra": true' "$OUT"
 
 SEQDESK_FEATURE_MODULES_JSON='{"module-name-typo":true}'
 if build_install_plan_json >"$OUT" 2>&1; then

@@ -48,7 +48,7 @@ export async function DELETE(
       },
     });
 
-    if (!sample) {
+    if (!sample || !sample.order) {
       return NextResponse.json({ error: "Sample not found" }, { status: 404 });
     }
 

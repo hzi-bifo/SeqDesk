@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { scientificRecordId } from "./scientific-publication";
 
 export interface SerializedWorkbenchDataset {
   id: string;
@@ -17,6 +18,8 @@ export interface SerializedWorkbenchDataset {
 }
 
 export interface SerializedWorkbenchImportJob {
+  collectionOrderId?: string;
+  scientificRecords?: { orderId?: string; orderTitle?: string; studyId: string | null; sampleId: string; studyTitle: string | null; sampleTitle: string } | null;
   id: string;
   providerId: string;
   status: string;
@@ -55,15 +58,24 @@ function bigintToNumber(value: bigint | number | null | undefined): number | nul
 }
 
 export async function getOrCreateDefaultWorkbenchWorkspace(userId: string) {
-  return db.workbenchWorkspace.upsert({
-    where: { ownerId: userId },
-    create: {
-      ownerId: userId,
-      name: "Private Workbench",
-      isDefault: true,
-    },
-    update: {},
-  });
+  try {
+    return await db.workbenchWorkspace.upsert({
+      where: { ownerId: userId },
+      create: {
+        ownerId: userId,
+        name: "Private Workbench",
+        isDefault: true,
+      },
+      update: {},
+    });
+  } catch (error) {
+    // Prisma may emulate an empty-update upsert as read/create. Another request
+    // can create this same owner's workspace between those statements.
+    if (!error || typeof error !== "object" || !("code" in error) || error.code !== "P2002") throw error;
+    const existing = await db.workbenchWorkspace.findUnique({ where: { ownerId: userId } });
+    if (!existing) throw error;
+    return existing;
+  }
 }
 
 export function serializeWorkbenchDatasetLink(link: {
@@ -149,12 +161,17 @@ export async function listWorkbenchDatasets(userId: string): Promise<SerializedW
   return links.map(serializeWorkbenchDatasetLink);
 }
 
-export async function listWorkbenchImportJobs(userId: string): Promise<SerializedWorkbenchImportJob[]> {
+export async function listWorkbenchImportJobs(userId: string, collection?: string): Promise<SerializedWorkbenchImportJob[]> {
   const workspace = await getOrCreateDefaultWorkbenchWorkspace(userId);
+  const collectionOrder = collection ? await db.order.findFirst({ where: { id: scientificRecordId("data", userId, "collection", collection), userId, dataOrigin: "import" }, select: { id: true } }) : null;
   const jobs = await db.workbenchImportJob.findMany({
-    where: { workspaceId: workspace.id },
+    where: { workspaceId: workspace.id, ...(collection ? { request: { contains: collection } } : {}) },
     orderBy: { createdAt: "desc" },
-    take: 50,
+    ...(collection ? {} : { take: 50 }),
+    include: { resultDataset: { select: { sourceMetadata: true } } },
   });
-  return jobs.map(serializeWorkbenchImportJob);
+  return jobs.filter(job => !collection || (parseJson(job.request) as { collection?: { key?: string } } | null)?.collection?.key === collection).map(job => {
+    const metadata = parseJson(job.resultDataset?.sourceMetadata) as { scientificRecords?: SerializedWorkbenchImportJob["scientificRecords"] } | null;
+    return { ...serializeWorkbenchImportJob(job), ...(collectionOrder ? { collectionOrderId: collectionOrder.id } : {}), scientificRecords: metadata?.scientificRecords ?? null };
+  });
 }

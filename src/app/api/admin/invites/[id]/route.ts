@@ -64,6 +64,7 @@ export async function DELETE(
       data: {
         revokedAt,
         revokedById: decision.principal!.id,
+        code: null,
       },
     });
     if (result.count !== 1) {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { loadStudyRunSamples } from '@/lib/pipelines/study-samples';
 import fs from 'fs/promises';
 import { isDemoSession } from '@/lib/demo/server';
 import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-service';
@@ -217,7 +218,7 @@ export async function POST(
       const targetSamples =
         run.targetType === 'order'
           ? run.order?.samples || []
-          : run.study?.samples || [];
+          : run.inputSampleIds ? await loadStudyRunSamples(run) : run.study?.samples || [];
       const samples = selectedSampleIdSet
         ? targetSamples.filter((sample) => selectedSampleIdSet.has(sample.id))
         : targetSamples;

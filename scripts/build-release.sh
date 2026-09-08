@@ -221,9 +221,12 @@ if [[ -d "${RELEASE_DIR}/pipelines" ]]; then
   rm -f \
     "${RELEASE_DIR}/pipelines/.pipeline-download-status.json" \
     "${RELEASE_DIR}/pipelines/.pipeline-downloads.json" \
+    "${RELEASE_DIR}/pipelines/.pipeline-database-downloads.json" \
+    "${RELEASE_DIR}/pipelines/.pipeline-database-download-status.json" \
     "${RELEASE_DIR}/pipelines/.admin-activity-status.json" \
     2>/dev/null || true
   rm -rf "${RELEASE_DIR}/pipelines/.pipeline-download-logs" 2>/dev/null || true
+  rm -rf "${RELEASE_DIR}/pipelines/.pipeline-database-download-logs" "${RELEASE_DIR}/pipelines/.resource-jobs" 2>/dev/null || true
 fi
 
 if [[ -f "${ROOT_DIR}/scripts/install-wizard.mjs" ]]; then

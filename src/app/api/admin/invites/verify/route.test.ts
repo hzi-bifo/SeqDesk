@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
-  db: { adminInvite: { findUnique: vi.fn() } },
+  db: { adminInvite: { findFirst: vi.fn() } },
   getServerDeploymentProfile: vi.fn(),
 }));
 
@@ -12,6 +12,7 @@ vi.mock("@/lib/deployment-profile/server", () => ({
 }));
 
 import { POST } from "./route";
+import { inviteCodeLookup } from "@/lib/accounts/invite-secret.server";
 
 function request(body: Record<string, unknown>) {
   return new NextRequest("http://localhost/api/admin/invites/verify", {
@@ -49,7 +50,7 @@ describe("POST /api/admin/invites/verify", () => {
 
     const malformed = await POST(request({}));
 
-    mocks.db.adminInvite.findUnique
+    mocks.db.adminInvite.findFirst
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(activeInvite({ usedAt: new Date() }))
       .mockResolvedValueOnce(activeInvite({ expiresAt: new Date("2020-01-01") }))
@@ -78,7 +79,7 @@ describe("POST /api/admin/invites/verify", () => {
   });
 
   it("returns only the explicit grant needed by registration", async () => {
-    mocks.db.adminInvite.findUnique.mockResolvedValue(
+    mocks.db.adminInvite.findFirst.mockResolvedValue(
       activeInvite({
         targetSystemRole: "ADMIN",
         targetFacilityWorkflowRole: "REQUESTER",
@@ -98,8 +99,8 @@ describe("POST /api/admin/invites/verify", () => {
     });
     expect(body).not.toHaveProperty("email");
     expect(body).not.toHaveProperty("accountRole");
-    expect(mocks.db.adminInvite.findUnique).toHaveBeenCalledWith({
-      where: { code: "M-ABC123" },
+    expect(mocks.db.adminInvite.findFirst).toHaveBeenCalledWith({
+      where: inviteCodeLookup("M-ABC123").where,
       include: {
         createdBy: { select: { systemRole: true, isActive: true } },
       },
@@ -108,7 +109,7 @@ describe("POST /api/admin/invites/verify", () => {
 
   it("does not expose a stale operator grant outside Sequencing Center", async () => {
     mocks.getServerDeploymentProfile.mockReturnValue({ id: "shared-lab" });
-    mocks.db.adminInvite.findUnique.mockResolvedValue(
+    mocks.db.adminInvite.findFirst.mockResolvedValue(
       activeInvite({ targetFacilityWorkflowRole: "OPERATOR" })
     );
 
@@ -120,7 +121,7 @@ describe("POST /api/admin/invites/verify", () => {
   });
 
   it("returns 500 on an unexpected database failure", async () => {
-    mocks.db.adminInvite.findUnique.mockRejectedValue(new Error("DB error"));
+    mocks.db.adminInvite.findFirst.mockRejectedValue(new Error("DB error"));
 
     const response = await POST(request({ code: "M-ABC123" }));
 

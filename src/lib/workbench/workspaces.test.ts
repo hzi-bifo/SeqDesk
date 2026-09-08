@@ -71,6 +71,7 @@ describe("workbench workspace helpers", () => {
       where: { workspaceId: "workspace-a" },
       orderBy: { createdAt: "desc" },
       take: 50,
+      include: { resultDataset: { select: { sourceMetadata: true } } },
     });
   });
 

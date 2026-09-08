@@ -21,9 +21,6 @@ export async function POST(
     }
 
     const deploymentProfile = getServerDeploymentProfile();
-    if (deploymentProfile.experience === 'workbench') {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
-    }
     const decision = decideCapability(session, 'analysis.run', deploymentProfile);
     if (!decision.allowed || !decision.grant) {
       return NextResponse.json(

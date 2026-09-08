@@ -164,7 +164,10 @@ function validateRequiredLocalConfigPaths(args: {
 
   for (const key of args.schema.required || []) {
     const property = args.schema.properties[key];
-    if (property?.["x-seqdesk"]?.group !== "databases") continue;
+    // Strict packages declare paths explicitly. A database version/index is
+    // not a filesystem path merely because the UI groups it under Databases.
+    if (property?.format !== 'absolute-path' &&
+        (args.schema.additionalProperties === false || property?.["x-seqdesk"]?.group !== "databases")) continue;
 
     const configuredPath =
       typeof args.config[key] === "string" ? args.config[key].trim() : "";

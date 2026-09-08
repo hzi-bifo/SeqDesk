@@ -79,6 +79,10 @@ seqdesk-*/
 pipelines/.pipeline-downloads.json
 pipelines/.pipeline-download-status.json
 pipelines/.pipeline-download-logs/
+pipelines/.pipeline-database-downloads.json
+pipelines/.pipeline-database-download-status.json
+pipelines/.pipeline-database-download-logs/
+pipelines/.resource-jobs/
 
 # background worker runtime logs
 /logs/
@@ -87,7 +91,11 @@ pipelines/.pipeline-download-logs/
 agents.md
 
 # private docs
-docs/
+docs/*
+!docs/architecture/
+docs/architecture/*
+!docs/architecture/unified-input-modules.md
+!docs/architecture/taxonomic-pipeline-verification.md
 PIPELINE_STORE_INTEGRATION_REVIEW.md
 
 # local AI tooling state

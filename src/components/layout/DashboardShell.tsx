@@ -42,23 +42,27 @@ interface DashboardShellProps {
 const subscribeToEmbedState = () => () => {};
 
 function derivePageTitle(pathname: string, section: string | null): string | null {
-  if (pathname === "/workbench" || pathname === "/workbench/data") return "Workbench Canvas";
-  if (pathname === "/workbench/imports") return "Workbench Imports";
+  if (pathname === "/workbench" || pathname === "/workbench/data") return "Canvas (experimental)";
+  if (pathname === "/workbench/imports") return "Add sequencing data";
+  if (pathname.startsWith("/sequencing/")) return "Sequencing entry";
   if (pathname === "/workbench/pipelines") return "Workbench Pipelines";
   if (pathname === "/workbench/runs") return "Workbench Runs";
   if (pathname === "/workbench/results") return "Workbench Results";
 
   // Orders
+  if (pathname === "/orders/import") return "Data source";
   if (pathname === "/orders") return null; // list page, no title needed
-  if (pathname.match(/^\/orders\/new/)) return "New Sequencing Order";
+  if (pathname.match(/^\/orders\/new/)) return "Add sequencing data";
   const orderMatch = pathname.match(/^\/orders\/([^/]+)(\/(.+))?$/);
   if (orderMatch) {
     const subview = orderMatch[3];
+    if (subview === "samples-files") return "Files";
+    if (subview === "pipelines") return "Pipelines";
     if (subview === "files" || subview === "sequencing") return "Sequencing Data";
     if (subview === "studies") return "Studies";
-    if (subview === "edit") return "Edit Sequencing Order";
+    if (subview === "edit") return "Edit sequencing metadata";
     if (section === "reads") return "Sequencing Data";
-    return "Sequencing Order Details";
+    return "Sequencing data details";
   }
 
   // Studies
@@ -99,13 +103,10 @@ function DashboardContent({
   const router = useRouter();
   const searchParams = useSearchParams();
   const entityContext = useSidebarEntity();
-  const workbenchAppMode = deploymentProfile.experience === "workbench";
 
   const isOrdersView = pathname.startsWith("/orders");
   const isStudiesView = pathname.startsWith("/studies");
   const isAdminView = pathname.startsWith("/admin") || pathname.startsWith("/messages");
-  const appMode = workbenchAppMode ? "workbench" : "lab";
-  const isWorkbenchMode = appMode === "workbench";
   const currentStudyId = entityContext.entityType === "study" ? entityContext.entityId : null;
   const currentOrderId = entityContext.entityType === "order" ? entityContext.entityId : null;
   const currentStudyTitle = entityContext.entityType === "study" ? entityContext.entityData?.label ?? null : null;
@@ -113,10 +114,10 @@ function DashboardContent({
 
   const section = searchParams.get("section") || searchParams.get("tab");
   const pageTitle =
-    !workbenchAppMode && pathname.startsWith("/workbench")
+    pathname.startsWith("/workbench")
       ? null
       : derivePageTitle(pathname, section);
-  const selectorType = isWorkbenchMode ? null : isOrdersView ? "orders" : isStudiesView ? "studies" : null;
+  const selectorType = isOrdersView ? "orders" : isStudiesView ? "studies" : null;
   const hasTopbarSelector = Boolean(selectorType);
   const centerTopbarTitle = Boolean(hasTopbarSelector && pageTitle);
   const sidebarOffset = collapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
@@ -184,10 +185,10 @@ function DashboardContent({
         <span
           className={cn(
             "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold",
-            isWorkbenchMode ? "bg-teal-700 text-white" : "bg-foreground text-background",
+            "bg-foreground text-background",
           )}
         >
-          {isWorkbenchMode ? "SeqDesk Bench" : "SeqDesk"}
+          SeqDesk
         </span>
       </div>
 
@@ -204,7 +205,6 @@ function DashboardContent({
           <div
             className={cn(
               "sticky top-0 z-20 hidden h-10 border-b border-border bg-card px-4",
-              isWorkbenchMode && "border-teal-100",
               centerTopbarTitle
                 ? "md:grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center"
                 : selectorType

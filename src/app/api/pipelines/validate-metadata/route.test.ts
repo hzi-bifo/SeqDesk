@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   validatePipelineMetadata: vi.fn(),
+  target: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({
@@ -13,6 +14,7 @@ vi.mock("next-auth", () => ({
 vi.mock("@/lib/auth", () => ({
   authOptions: {},
 }));
+vi.mock("@/lib/db", () => ({ db: { order: { findFirst: mocks.target }, study: { findFirst: mocks.target } } }));
 
 vi.mock("@/lib/pipelines/metadata-validation", () => ({
   validatePipelineMetadata: mocks.validatePipelineMetadata,
@@ -31,6 +33,7 @@ function makeRequest(body: unknown) {
 describe("POST /api/pipelines/validate-metadata", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.target.mockResolvedValue({ id: "owned-target" });
     mocks.getServerSession.mockResolvedValue({
       user: { id: "u1", role: "FACILITY_ADMIN" },
     });

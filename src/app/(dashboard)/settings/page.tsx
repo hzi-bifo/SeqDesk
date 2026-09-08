@@ -10,7 +10,7 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { Loader2, Check, Mail } from "lucide-react";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
-import { hasCapability, principalFromSession } from "@/lib/authorization";
+import { hasCapability, principalFromSession } from "@/lib/authorization/client";
 
 interface UserProfile {
   id: string;

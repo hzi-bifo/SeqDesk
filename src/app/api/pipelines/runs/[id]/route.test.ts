@@ -230,11 +230,15 @@ describe("GET /api/pipelines/runs/[id]", () => {
     expect(await response.json()).toEqual({ error: "Forbidden" });
   });
 
-  it("blocks owners from unselected runs", async () => {
+  it("allows owners to inspect progress before selecting a final result", async () => {
     mocks.db.pipelineRun.findUnique.mockResolvedValue({
       id: "run-1",
+      pipelineId: "unknown-pipeline", targetType: "order", orderId: "order-1", studyId: null,
+      inputSampleIds: null, config: null, results: null, runFolder: null,
+      queueJobId: null, outputPath: null, errorPath: null, status: "running",
+      user: null, steps: [], assembliesCreated: [], binsCreated: [], artifacts: [], events: [],
       study: null,
-      order: { userId: "user-1" },
+      order: { id: "order-1", userId: "user-1", samples: [] },
       selectedResultSelections: [],
     });
 
@@ -243,8 +247,8 @@ describe("GET /api/pipelines/runs/[id]", () => {
       { params: Promise.resolve({ id: "run-1" }) }
     );
 
-    expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({ error: "Forbidden" });
+    expect(response.status).toBe(200);
+    expect((await response.json()).run.status).toBe("running");
   });
 
   it("allows FACILITY_ADMIN to see any run regardless of ownership", async () => {
@@ -721,11 +725,12 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
     expect(await response.json()).toEqual({ error: "Forbidden" });
   });
 
-  it("returns 404 for facility run cancellation in Research Workbench", async () => {
+  it("rejects cancellation of another member's run in the research preset", async () => {
     mocks.deployment.profileId = "research-workbench";
     mocks.getServerSession.mockResolvedValue({
       user: { id: "member-1", role: "RESEARCHER" },
     });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ userId: "member-2" });
 
     const response = await DELETE(
       new NextRequest("http://localhost:3000/api/pipelines/runs/run-1", {
@@ -734,9 +739,9 @@ describe("DELETE /api/pipelines/runs/[id]", () => {
       { params: Promise.resolve({ id: "run-1" }) }
     );
 
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "Not found" });
-    expect(mocks.db.pipelineRun.findUnique).not.toHaveBeenCalled();
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Forbidden" });
+    expect(mocks.db.pipelineRun.findUnique).toHaveBeenCalled();
   });
 
   it("blocks deletes in the public demo", async () => {

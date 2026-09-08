@@ -1,0 +1,128 @@
+{
+  "manifestVersion": 1,
+  "package": {
+    "id": "cami-opal",
+    "name": "CAMI Taxonomic Benchmark (OPAL)",
+    "description": "Compare completed MetaPhlAn profiles with a supplied CAMI taxonomic Ground Truth; never used for profiling reads.",
+    "version": "0.1.0",
+    "provider": "SeqDesk",
+    "website": "https://github.com/CAMI-challenge/OPAL"
+  },
+  "files": {
+    "definition": "definition.json",
+    "registry": "registry.json",
+    "samplesheet": "samplesheet.yaml",
+    "readme": "README.md",
+    "parsers": []
+  },
+  "targets": {
+    "supported": [
+      "study"
+    ]
+  },
+  "inputs": [
+    {
+      "id": "samples",
+      "scope": "sample",
+      "source": "sample.sampleId",
+      "required": true
+    }
+  ],
+  "execution": {
+    "type": "nextflow",
+    "pipeline": "./workflow",
+    "version": "0.1.0",
+    "profiles": [
+      "conda"
+    ],
+    "defaultParams": {
+      "groundTruthFile": "",
+      "sampleMap": "{}",
+      "predictionRunIds": "",
+      "taxonomyNote": "",
+      "taxonomyConfirmed": false,
+      "normalize": false
+    },
+    "runtime": {
+      "allowMacOsArmConda": true
+    },
+    "priorRunArtifacts": {
+      "scope": "study",
+      "configKey": "profilesDir",
+      "sources": {
+        "metaphlan": [
+          "cami_profile",
+          "provenance"
+        ]
+      }
+    },
+    "paramMap": {
+      "groundTruthFile": "--ground_truth",
+      "profilesDir": "--profiles_dir",
+      "sampleMap": "--sample_map",
+      "predictionRunIds": "--prediction_run_ids",
+      "taxonomyNote": "--taxonomy_note",
+      "taxonomyConfirmed": "--taxonomy_confirmed",
+      "normalize": "--normalize"
+    }
+  },
+  "outputs": [
+    {
+      "id": "benchmark_report",
+      "scope": "study",
+      "destination": "study_report",
+      "type": "report",
+      "fromStep": "benchmark",
+      "discovery": {
+        "pattern": "opal/results.html"
+      },
+      "result": {
+        "kind": "study_report",
+        "writebackPolicy": "none",
+        "preview": {
+          "label": "OPAL benchmark",
+          "primary": true,
+          "previewable": true
+        }
+      }
+    },
+    {
+      "id": "benchmark_metrics",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "benchmark",
+      "discovery": {
+        "pattern": "opal/results.tsv"
+      }
+    },
+    {
+      "id": "benchmark_bundle",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "benchmark",
+      "discovery": {
+        "pattern": "benchmark.zip"
+      }
+    },
+    {
+      "id": "benchmark_provenance",
+      "scope": "run",
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "benchmark",
+      "discovery": {
+        "pattern": "benchmark-provenance.json"
+      }
+    }
+  ],
+  "schema_requirements": {
+    "tables": [
+      "Sample",
+      "PipelineRun",
+      "PipelineArtifact",
+      "Study"
+    ]
+  }
+}

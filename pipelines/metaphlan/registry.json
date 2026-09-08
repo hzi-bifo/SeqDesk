@@ -1,0 +1,115 @@
+{
+  "id": "metaphlan",
+  "name": "Taxonomic Profiling (MetaPhlAn)",
+  "description": "Profile short shotgun reads from any source, with native and CAMI-format taxonomic profiles.",
+  "category": "analysis",
+  "version": "0.1.0",
+  "sortOrder": 4,
+  "website": "https://github.com/biobakery/MetaPhlAn",
+  "requires": {
+    "reads": true,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "data",
+      "name": "taxonomic_profile",
+      "description": "taxonomic profile",
+      "visibility": "both",
+      "downloadable": true
+    },
+    {
+      "type": "data",
+      "name": "cami_profile",
+      "description": "cami profile",
+      "visibility": "both",
+      "downloadable": true
+    },
+    {
+      "type": "data",
+      "name": "provenance",
+      "description": "provenance",
+      "visibility": "both",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": true,
+    "userCanStart": true
+  },
+  "input": {
+    "supportedScopes": [
+      "order",
+      "study"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": true,
+      "pairedEnd": false,
+      "readMode": "single_or_paired"
+    }
+  },
+  "sequencingCompatibility": {
+    "readLengthClass": "short",
+    "readLayouts": [
+      "single",
+      "paired"
+    ]
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "metaphlanDb",
+      "metaphlanIndex"
+    ],
+    "properties": {
+      "metaphlanDb": {
+        "type": "string",
+        "format": "absolute-path",
+        "title": "MetaPhlAn database directory",
+        "description": "Administrator-provisioned database on the execution host. Never downloaded by a run.",
+        "default": "",
+        "x-seqdesk": {
+          "placement": "admin",
+          "group": "databases"
+        }
+      },
+      "metaphlanIndex": {
+        "type": "string",
+        "pattern": "^mpa_[A-Za-z0-9._-]+$",
+        "title": "Pinned database index",
+        "description": "Exact installed mpa_… index, not latest. Recorded with the database metadata checksum.",
+        "default": "",
+        "x-seqdesk": {
+          "placement": "admin",
+          "group": "databases"
+        }
+      },
+      "skipUnclassifiedEstimation": {
+        "type": "boolean",
+        "title": "Normalize to classified taxa",
+        "description": "Default off: retain MetaPhlAn's unclassified estimate. Enabling changes the abundance denominator; use the same policy when comparing runs.",
+        "default": false,
+        "x-seqdesk": {
+          "placement": "advanced",
+          "group": "analysis"
+        }
+      }
+    }
+  },
+  "defaultConfig": {
+    "metaphlanDb": "",
+    "metaphlanIndex": "",
+    "skipUnclassifiedEstimation": false
+  },
+  "icon": "BarChart3"
+}

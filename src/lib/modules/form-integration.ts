@@ -103,6 +103,7 @@ export function parseModulesConfig(
         globalDisabled = parsed.globalDisabled === true;
       } else if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         configuredModules = parsed;
+        globalDisabled = parsed.globalDisabled === true;
       }
     } catch {
       // Fall back to profile-aware defaults below.

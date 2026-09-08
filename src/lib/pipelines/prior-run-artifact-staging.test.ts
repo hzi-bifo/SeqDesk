@@ -325,7 +325,7 @@ describe('stagePriorRunArtifacts', () => {
         spec: SPEC,
       })
     ).rejects.toThrow(
-      'No usable QC artifacts from completed runs were found for study study-empty'
+      'No usable artifacts from completed runs were found for study study-empty'
     );
   });
 });

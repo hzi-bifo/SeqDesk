@@ -8,7 +8,7 @@ import { PageContainer } from "@/components/layout/PageContainer";
 import { HelpBox } from "@/components/ui/help-box";
 import { PageLoader } from "@/components/ui/page-loader";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
-import { hasCapability, principalFromSession } from "@/lib/authorization";
+import { hasCapability, principalFromSession } from "@/lib/authorization/client";
 import {
   ChevronRight,
   Search,

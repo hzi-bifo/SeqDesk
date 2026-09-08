@@ -113,7 +113,7 @@ export async function POST(
     // Check ownership of all samples
     if (access.grant.scope !== "installation") {
       const unauthorized = samples.filter(
-        (s) => s.order.userId !== session.user.id
+        (s) => s.order?.userId !== session.user.id
       );
       if (unauthorized.length > 0) {
         return NextResponse.json(
@@ -256,7 +256,7 @@ export async function PUT(
 
       if (access.grant.scope !== "installation") {
         const unauthorized = newSamples.filter(
-          (s) => s.order.userId !== session.user.id
+          (s) => s.order?.userId !== session.user.id
         );
         if (unauthorized.length > 0) {
           return NextResponse.json(
@@ -269,6 +269,9 @@ export async function PUT(
 
     // Remove samples that are no longer selected
     if (samplesToRemove.length > 0) {
+      if (await db.sample.count({ where: { id: { in: samplesToRemove }, studyId, orderId: null } })) {
+        return NextResponse.json({ error: "Imported samples must retain their owning study" }, { status: 409 });
+      }
       await db.sample.updateMany({
         where: { id: { in: samplesToRemove }, studyId },
         data: { studyId: null },
@@ -391,6 +394,9 @@ export async function DELETE(
     }
 
     // Unassign samples (set studyId to null)
+    if (await db.sample.count({ where: { id: { in: sampleIds }, studyId, orderId: null } })) {
+      return NextResponse.json({ error: "Imported samples must retain their owning study" }, { status: 409 });
+    }
     await db.sample.updateMany({
       where: {
         id: { in: sampleIds },

@@ -68,6 +68,7 @@ describe("Workbench local uploads", () => {
   it("streams a private workspace upload, checksums it, and links the dataset", async () => {
     const now = new Date("2026-09-03T12:00:00.000Z");
     const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "workspace-a" }]),
       workbenchDataset: {
         create: vi.fn().mockImplementation(async ({ data }) => ({
           ...data,
@@ -84,7 +85,7 @@ describe("Workbench local uploads", () => {
       userId: "user-a",
       filename: "reads.fastq",
       contentType: "application/octet-stream",
-      contentLength: 15,
+      contentLength: 18,
       body: body("@read\nACGT\n+\n!!!!\n"),
     });
 
@@ -110,6 +111,18 @@ describe("Workbench local uploads", () => {
         body: body("12345"),
       })
     ).rejects.toMatchObject({ status: 413 });
+    expect(mocks.db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects an incomplete upload before publishing", async () => {
+    await expect(storeWorkbenchUpload({ userId: "user-a", filename: "data.txt", contentLength: 20, body: body("short") }))
+      .rejects.toMatchObject({ status: 400 });
+    expect(mocks.db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("does not accept HTML disguised as FASTQ", async () => {
+    await expect(storeWorkbenchUpload({ userId: "user-a", filename: "reads.fastq", body: body("<html>error</html>") }))
+      .rejects.toMatchObject({ status: 400 });
     expect(mocks.db.$transaction).not.toHaveBeenCalled();
   });
 });

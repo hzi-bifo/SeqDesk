@@ -32,7 +32,7 @@ interface AssemblyItem {
     orderNumber: string;
     name: string | null;
     status: string;
-  };
+  } | null;
   selection: {
     mode: "explicit" | "automatic" | "missing_preferred" | "none";
     preferredAssemblyId: string | null;
@@ -173,7 +173,7 @@ export default function AssembliesPage() {
                               {item.study.title}
                             </Link>
                             <p className="text-xs text-muted-foreground">
-                              {item.order.orderNumber}
+                              {item.order?.orderNumber ?? "Imported without a sequencing order"}
                             </p>
                           </div>
                         ) : (

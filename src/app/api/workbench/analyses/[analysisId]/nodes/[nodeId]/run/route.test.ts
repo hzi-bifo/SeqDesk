@@ -50,6 +50,7 @@ const params = {
 describe("POST /api/workbench/analyses/[analysisId]/nodes/[nodeId]/run", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.runWorkbenchImportJob.mockResolvedValue(undefined);
     process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
     mocks.getServerSession.mockResolvedValue({ user: { id: "user-1", role: "RESEARCHER" } });
     mocks.getWorkbenchImporter.mockReturnValue(mocks.provider);

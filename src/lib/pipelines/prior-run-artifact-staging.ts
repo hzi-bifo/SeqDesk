@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { db } from '@/lib/db';
+import { getPipelineSampleWhere } from './target';
 
 const MAX_STAGED_FILES = 1_000;
 const MAX_STAGED_BYTES = 2 * 1024 * 1024 * 1024;
@@ -14,6 +15,8 @@ export interface PriorRunArtifactStagingSpec {
 export interface StagePriorRunArtifactsOptions {
   currentRunId: string;
   studyId: string;
+  /** Frozen, authorized selection of the run being prepared. */
+  sampleIds?: string[];
   runFolder: string;
   spec: PriorRunArtifactStagingSpec;
 }
@@ -23,6 +26,7 @@ export interface StagedPriorRunArtifact {
   pipelineId: string;
   artifactId: string;
   outputId: string;
+  sampleId: string | null;
   sourcePath: string;
   stagedPath: string;
   size: number;
@@ -99,6 +103,14 @@ export async function stagePriorRunArtifacts(
   const allowedOutputs = new Map(
     sourceEntries.map(([pipelineId, outputIds]) => [pipelineId, new Set(outputIds)])
   );
+  const samples = await db.sample.findMany({
+    where: getPipelineSampleWhere({ type: 'study', studyId, sampleIds: options.sampleIds }),
+    select: { id: true },
+  });
+  const selectedSampleIds = new Set(samples.map(sample => sample.id));
+  if (options.sampleIds?.some(id => !selectedSampleIds.has(id))) {
+    throw new Error('Study membership changed before prior-run artifact staging. Create a new run with the current selection.');
+  }
   const priorRuns = await db.pipelineRun.findMany({
     where: {
       id: { not: currentRunId },
@@ -106,15 +118,7 @@ export async function stagePriorRunArtifacts(
       pipelineId: { in: sourceEntries.map(([pipelineId]) => pipelineId) },
       OR: [
         { studyId },
-        {
-          order: {
-            is: {
-              samples: {
-                some: { studyId },
-              },
-            },
-          },
-        },
+        { artifacts: { some: { sampleId: { in: [...selectedSampleIds] } } } },
       ],
     },
     orderBy: [{ completedAt: 'asc' }, { id: 'asc' }],
@@ -122,15 +126,8 @@ export async function stagePriorRunArtifacts(
       id: true,
       pipelineId: true,
       studyId: true,
+      inputSampleIds: true,
       runFolder: true,
-      order: {
-        select: {
-          samples: {
-            where: { studyId },
-            select: { id: true },
-          },
-        },
-      },
       artifacts: {
         select: {
           id: true,
@@ -151,16 +148,18 @@ export async function stagePriorRunArtifacts(
     if (!priorRun.runFolder) continue;
     const allowed = allowedOutputs.get(priorRun.pipelineId);
     if (!allowed) continue;
-    const matchingOrderSampleIds = new Set(
-      priorRun.order?.samples.map((sample) => sample.id) ?? []
-    );
+    let priorSampleIds: unknown;
+    try { priorSampleIds = JSON.parse(priorRun.inputSampleIds ?? 'null'); } catch { priorSampleIds = null; }
+    // Aggregated files cannot be split by sample. Reuse only when their entire
+    // frozen cohort is known to be within this run's selection and study.
+    const safeStudyAggregate = priorRun.studyId === studyId && Array.isArray(priorSampleIds) && priorSampleIds.length > 0 &&
+      priorSampleIds.every(id => typeof id === 'string' && selectedSampleIds.has(id));
 
     for (const artifact of priorRun.artifacts) {
       if (!artifact.outputId || !allowed.has(artifact.outputId)) continue;
-      const belongsToStudy =
-        priorRun.studyId === studyId ||
-        (artifact.sampleId !== null &&
-          matchingOrderSampleIds.has(artifact.sampleId));
+      const belongsToStudy = artifact.sampleId !== null
+        ? selectedSampleIds.has(artifact.sampleId)
+        : safeStudyAggregate;
       if (!belongsToStudy) continue;
       const context =
         `Prior-run input ${priorRun.pipelineId}/${priorRun.id}/${artifact.id}` +
@@ -199,6 +198,7 @@ export async function stagePriorRunArtifacts(
         pipelineId: priorRun.pipelineId,
         artifactId: artifact.id,
         outputId: artifact.outputId,
+        sampleId: artifact.sampleId,
         sourcePath: resolved.path,
         stagedPath,
         size: resolved.size,
@@ -211,8 +211,8 @@ export async function stagePriorRunArtifacts(
       .map(([pipelineId, outputIds]) => `${pipelineId}: ${outputIds.join(', ')}`)
       .join('; ');
     throw new Error(
-      `No usable QC artifacts from completed runs were found for study ${studyId}. ` +
-        `Run a supported QC pipeline first (${expected}).`
+      `No usable artifacts from completed runs were found for study ${studyId}. ` +
+        `Run a supported source pipeline first (${expected}).`
     );
   }
 

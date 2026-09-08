@@ -52,7 +52,11 @@ export async function GET(request: Request) {
       studyFields: schema.studyFields,
       perSampleFields: schema.perSampleFields,
       groups: schema.groups,
-      modules: schema.modules,
+      // Research studies may be created before any source has been imported.
+      // Keep sample metadata available on existing studies.
+      modules: deploymentProfile.experience === "workbench" && !studyId
+        ? { ...schema.modules, sampleAssociation: false }
+        : schema.modules,
     });
   } catch (error) {
     console.error("Error fetching study form schema:", error);

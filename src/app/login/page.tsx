@@ -15,9 +15,9 @@ import {
 } from "@/lib/deployment-profile";
 
 const LOGIN_DESCRIPTION: Record<DeploymentProfileId, string> = {
-  "sequencing-center": "Sign in to access your sequencing orders",
-  "shared-lab": "Sign in to access your shared lab workspace",
-  "research-workbench": "Sign in to access your research workbench",
+  "sequencing-center": "Sign in to access your sequencing data and studies",
+  "shared-lab": "Sign in to access your sequencing data and studies",
+  "research-workbench": "Sign in to access your sequencing data and studies",
 };
 
 export default function LoginPage() {

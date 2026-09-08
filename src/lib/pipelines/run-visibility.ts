@@ -35,10 +35,9 @@ function decisionError(
 }
 
 /**
- * The legacy `/api/pipelines/runs` family operates on order/study targets.
- * Workbench analyses have their own workspace-scoped API and must never fall
- * through to these facility routes merely because both profiles enable the
- * analysis domain.
+ * Order/study analysis is shared by all deployment presets. Analysis grants
+ * carry installation or target-owner scope; operational facility capabilities
+ * retain their separate boundary.
  */
 export function decideFacilityPipelineCapability(
   session: SessionPrincipalInput | null | undefined,
@@ -54,7 +53,8 @@ export function decideFacilityPipelineCapability(
     };
   }
 
-  if (profile.experience === "workbench") {
+  // Workspace presets use owned order/study records for source-neutral analysis.
+  if (profile.ownership.scientificRecords === "workspace" && !capability.startsWith("analysis.")) {
     return {
       allowed: false,
       status: 404,
@@ -140,7 +140,8 @@ export function authorizePipelineRunRead(
     return readAll.status !== 403 ? readAll : readOwn;
   }
 
-  return canReadPipelineRun(readOwn.grant, readOwn.principalId, run, options)
+  const canExecute = decideCapability(session, "analysis.run", profile ?? getServerDeploymentProfile()).allowed;
+  return canReadPipelineRun(readOwn.grant, readOwn.principalId, run, { ...options, ownRequiresPublished: canExecute ? false : options.ownRequiresPublished })
     ? null
     : { status: 403, body: { error: "Forbidden" } };
 }

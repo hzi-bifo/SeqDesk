@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PipelineResourceSchema } from "./resource-schema";
 import {
   PACKAGE_TARGET_TYPES,
   PIPELINE_RESULT_KINDS,
@@ -153,9 +154,15 @@ export const ManifestSchema = z
         readLengthClass: z.enum(["short", "long", "both", "unknown"]).optional(),
         readLayouts: z.array(z.enum(["single", "paired"])).optional(),
         platformFamilies: z.array(z.string().min(1)).optional(),
+        requireReadLengthEvidence: z.boolean().optional(),
       })
       .strict()
+      .refine(value => !value.requireReadLengthEvidence || ['short', 'long', 'both'].includes(value.readLengthClass ?? ''), 'Read-length evidence requires a supported read-length class')
       .optional(),
+    resources: z.array(PipelineResourceSchema).max(16).refine(
+      resources => new Set(resources.map(resource => resource.id.toLowerCase())).size === resources.length,
+      "Duplicate resource IDs"
+    ).optional(),
     inputs: z.array(
       z
         .object({

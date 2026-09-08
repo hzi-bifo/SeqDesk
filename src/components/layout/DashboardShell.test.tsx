@@ -233,12 +233,12 @@ describe("DashboardShell", () => {
       </DashboardShell>
     );
 
-    expect(screen.getByText("Workbench Canvas")).toBeTruthy();
+    expect(screen.queryByText("Workbench Canvas")).toBeNull();
     expect(screen.queryByTestId("order-selector")).toBeNull();
     expect(screen.queryByTestId("study-selector")).toBeNull();
   });
 
-  it("redirects sequencing routes to Workbench in Workbench app mode", () => {
+  it("keeps sequencing routes and the shared selector in the research preset", () => {
     const replace = vi.fn();
     mocks.useRouter.mockReturnValue({ replace });
     mocks.usePathname.mockReturnValue("/orders");
@@ -252,9 +252,9 @@ describe("DashboardShell", () => {
       </DashboardShell>
     );
 
-    expect(replace).toHaveBeenCalledWith("/workbench/data");
+    expect(replace).not.toHaveBeenCalled();
     expect(screen.getByTestId("update-banner")).toBeTruthy();
-    expect(screen.queryByTestId("order-selector")).toBeNull();
+    expect(screen.getByTestId("order-selector")).toBeTruthy();
     expect(screen.queryByTestId("study-selector")).toBeNull();
   });
 });

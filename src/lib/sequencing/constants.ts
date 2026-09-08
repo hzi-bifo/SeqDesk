@@ -11,6 +11,7 @@ export const READ_DATA_CLASS_SOURCES = [
   "sequencer_ingest",
   "pipeline",
   "manual",
+  "external_import",
 ] as const;
 
 export type ReadDataClassSource = (typeof READ_DATA_CLASS_SOURCES)[number];
@@ -48,6 +49,7 @@ export function isProtectedReadDataClass(value: unknown): boolean {
 }
 
 export const READ_ORIGINS = [
+  "external_import",
   "associate",
   "upload",
   "sequencer_ingest",
@@ -61,6 +63,7 @@ export const READ_ORIGINS = [
 export type ReadOrigin = (typeof READ_ORIGINS)[number];
 
 export const READ_ORIGIN_LABELS: Record<ReadOrigin, string> = {
+  external_import: "Imported",
   associate: "Associated",
   upload: "Uploaded",
   sequencer_ingest: "Sequencer ingest",
@@ -72,6 +75,7 @@ export const READ_ORIGIN_LABELS: Record<ReadOrigin, string> = {
 };
 
 export const READ_ORIGIN_BADGE_CLASSNAMES: Record<ReadOrigin, string> = {
+  external_import: "border-blue-200 bg-blue-50 text-blue-700",
   associate: "border-slate-200 bg-slate-50 text-slate-700",
   upload: "border-blue-200 bg-blue-50 text-blue-700",
   sequencer_ingest: "border-violet-200 bg-violet-50 text-violet-700",

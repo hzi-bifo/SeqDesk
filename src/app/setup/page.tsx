@@ -447,7 +447,7 @@ export default function SetupPage() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Server className="h-4 w-4" />
-                    Operating model
+                    Account and module preset
                   </CardTitle>
                   <CardDescription>
                     {status.deploymentProfile.description}
@@ -456,8 +456,10 @@ export default function SetupPage() {
                 <CardContent className="text-xs text-muted-foreground">
                   Selected during installation as{" "}
                   <code>{status.deploymentProfile.id}</code>. Updates and normal
-                  reconfiguration preserve it; changing it requires a guarded
-                  profile migration.
+                  reconfiguration preserve its access policy. Every preset uses
+                  the same SeqDesk UI. Administrators can enable facility
+                  sequencing, CAMI and SRA/ENA together under Modules; changing
+                  data-sharing policy requires a guarded migration.
                 </CardContent>
               </Card>
             ) : null}

@@ -138,12 +138,12 @@ export async function GET() {
                 alias: sample.study.alias,
               }
             : null,
-          order: {
+          order: sample.order ? {
             id: sample.order.id,
             orderNumber: sample.order.orderNumber,
             name: sample.order.name,
             status: sample.order.status,
-          },
+          } : null,
           selection: {
             mode:
               selection.source === "preferred"

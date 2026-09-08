@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   getServerDeploymentProfile: vi.fn(),
   db: {
     user: { findUnique: vi.fn() },
-    adminInvite: { findMany: vi.fn(), create: vi.fn() },
+    adminInvite: { findMany: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   },
   randomBytes: vi.fn(),
 }));
@@ -31,6 +31,7 @@ vi.mock("@prisma/client", () => ({
 }));
 
 import { GET, POST } from "./route";
+import { digestInviteCode } from "@/lib/accounts/invite-secret.server";
 import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 const adminSession = {
@@ -98,7 +99,10 @@ describe("admin invitations", () => {
     const response = await GET();
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject([
+    const body = await response.json();
+    expect(body[0]).not.toHaveProperty("code");
+    expect(body[0]).not.toHaveProperty("codeDigest");
+    expect(body).toMatchObject([
       {
         grant: {
           systemRole: "MEMBER",
@@ -112,11 +116,15 @@ describe("admin invitations", () => {
     const response = await POST(request({}));
 
     expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.code).toBe(`M-${"A".repeat(48)}`);
+    expect(body).not.toHaveProperty("codeDigest");
     expect(mocks.randomBytes).toHaveBeenCalledWith(24);
     expect(mocks.db.adminInvite.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          code: `M-${"A".repeat(48)}`,
+          code: null,
+          codeDigest: digestInviteCode(`M-${"A".repeat(48)}`),
           email: null,
           targetSystemRole: "MEMBER",
           targetFacilityWorkflowRole: "REQUESTER",

@@ -1,0 +1,152 @@
+{
+  "id": "cami-opal",
+  "name": "CAMI Taxonomic Benchmark (OPAL)",
+  "description": "Compare completed MetaPhlAn profiles with a supplied CAMI taxonomic Ground Truth; never used for profiling reads.",
+  "category": "analysis",
+  "version": "0.1.0",
+  "sortOrder": 5,
+  "website": "https://github.com/CAMI-challenge/OPAL",
+  "requires": {
+    "reads": false,
+    "assemblies": false,
+    "bins": false,
+    "checksums": false,
+    "studyAccession": false,
+    "sampleMetadata": false
+  },
+  "outputs": [
+    {
+      "type": "report",
+      "name": "benchmark_report",
+      "description": "benchmark report",
+      "visibility": "both",
+      "downloadable": true
+    },
+    {
+      "type": "data",
+      "name": "benchmark_metrics",
+      "description": "benchmark metrics",
+      "visibility": "both",
+      "downloadable": true
+    },
+    {
+      "type": "data",
+      "name": "benchmark_bundle",
+      "description": "benchmark bundle",
+      "visibility": "both",
+      "downloadable": true
+    },
+    {
+      "type": "data",
+      "name": "benchmark_provenance",
+      "description": "benchmark provenance",
+      "visibility": "both",
+      "downloadable": true
+    }
+  ],
+  "visibility": {
+    "showToUser": true,
+    "userCanStart": true
+  },
+  "input": {
+    "supportedScopes": [
+      "study"
+    ],
+    "minSamples": 1,
+    "perSample": {
+      "reads": false,
+      "pairedEnd": false
+    }
+  },
+  "samplesheet": {
+    "format": "csv",
+    "generator": "samplesheet.yaml"
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "runRequirements": {
+      "required": ["sampleMap", "taxonomyNote", "taxonomyConfirmed"],
+      "properties": {
+        "sampleMap": { "format": "json-string-map" },
+        "taxonomyConfirmed": { "const": true }
+      }
+    },
+    "required": [
+      "groundTruthFile"
+    ],
+    "properties": {
+      "groundTruthFile": {
+        "type": "string",
+        "format": "absolute-path",
+        "title": "Ground Truth profile file",
+        "description": "Absolute path to a CAMI taxonomic profile on the execution host. Not a genome, assembly or read-to-genome mapping file.",
+        "default": "",
+        "x-seqdesk": {
+          "placement": "admin",
+          "group": "benchmark"
+        }
+      },
+      "sampleMap": {
+        "type": "string",
+        "title": "Ground Truth sample mapping (JSON)",
+        "description": "Explicit SeqDesk sample code → Ground Truth SampleID mapping, e.g. {\"sample_0\":\"exact ID in reference\"}. Every selected sample is required.",
+        "default": "{}",
+        "x-seqdesk": {
+          "placement": "basic",
+          "group": "benchmark"
+        }
+      },
+      "predictionRunIds": {
+        "type": "string",
+        "format": "identifier-list",
+        "title": "Prediction run IDs",
+        "description": "Comma-separated completed MetaPhlAn run IDs. Leave blank only when exactly one run is available. Each chosen run must cover all selected samples.",
+        "default": "",
+        "x-seqdesk": {
+          "placement": "basic",
+          "group": "benchmark"
+        }
+      },
+      "taxonomyNote": {
+        "type": "string",
+        "title": "Reference / taxonomy provenance",
+        "description": "Document CAMI challenge, dataset, read technology, Ground Truth version, database taxonomy and any limitations (novel species or changed IDs).",
+        "default": "",
+        "x-seqdesk": {
+          "placement": "basic",
+          "group": "benchmark"
+        }
+      },
+      "taxonomyConfirmed": {
+        "type": "boolean",
+        "title": "I checked sample identity and taxonomy compatibility",
+        "description": "Required. Matching taxon identifiers alone cannot prove compatible taxonomies or abundance definitions.",
+        "default": false,
+        "x-seqdesk": {
+          "placement": "basic",
+          "group": "benchmark"
+        }
+      },
+      "normalize": {
+        "type": "boolean",
+        "title": "Normalize profiles in OPAL",
+        "description": "Default off. Normalization changes abundance denominators; the choice is recorded.",
+        "default": false,
+        "x-seqdesk": {
+          "placement": "advanced",
+          "group": "benchmark"
+        }
+      }
+    }
+  },
+  "defaultConfig": {
+    "groundTruthFile": "",
+    "sampleMap": "{}",
+    "predictionRunIds": "",
+    "taxonomyNote": "",
+    "taxonomyConfirmed": false,
+    "normalize": false
+  },
+  "icon": "CheckCircle"
+}

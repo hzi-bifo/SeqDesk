@@ -24,22 +24,35 @@ export async function POST(
   if (!job) {
     return NextResponse.json({ error: "Import job not found" }, { status: 404 });
   }
-  if (job.status !== "queued") {
+  if (job.status !== "queued" && job.status !== "running") {
     return NextResponse.json(
-      { error: "Only queued Workbench imports can be cancelled in this version." },
+      { error: "This import has already finished. Refresh to see its result." },
       { status: 409 }
     );
   }
 
-  const cancelled = await db.workbenchImportJob.update({
-    where: { id: job.id },
-    data: {
+  const changed = await db.workbenchImportJob.updateMany({
+    where: { id: job.id, workspaceId: workspace.id, status: job.status },
+    data: job.status === "running" ? { phase: "cancelling" } : {
       status: "cancelled",
       phase: "cancelled",
       progress: 0,
       finishedAt: new Date(),
     },
   });
+
+  if (changed.count !== 1) {
+    return NextResponse.json(
+      { error: "Import state changed; refresh before trying again." },
+      { status: 409 }
+    );
+  }
+  const cancelled = await db.workbenchImportJob.findFirst({
+    where: { id: job.id, workspaceId: workspace.id },
+  });
+  if (!cancelled) {
+    return NextResponse.json({ error: "Import job not found" }, { status: 404 });
+  }
 
   return NextResponse.json({ success: true, job: serializeWorkbenchImportJob(cancelled) });
 }

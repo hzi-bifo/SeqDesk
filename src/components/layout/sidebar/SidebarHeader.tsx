@@ -27,36 +27,31 @@ export function SidebarHeader({
           <button
             onClick={toggle}
             className="flex items-center justify-center w-full py-0.5"
-            title={isWorkbench ? "Expand SeqDesk Bench sidebar" : "Expand sidebar"}
+            title="Expand sidebar"
           >
             <span
               className={cn(
                 "inline-flex h-8 w-8 items-center justify-center rounded-md text-sm font-semibold",
-                isWorkbench ? "bg-teal-700 text-white" : "bg-foreground text-background",
+                "bg-foreground text-background",
               )}
             >
-              {isWorkbench ? "B" : "S"}
+              S
             </span>
           </button>
         ) : (
           <>
             <Link
-              href={isWorkbench ? "/workbench/data" : "/orders"}
+              href={isWorkbench ? "/sequencing" : "/orders"}
               className="flex min-w-0 items-center gap-2.5"
             >
               <span
                 className={cn(
                   "inline-flex items-center rounded-md px-2.5 py-1 text-sm font-semibold",
-                  isWorkbench ? "bg-teal-700 text-white" : "bg-foreground text-background",
+                  "bg-foreground text-background",
                 )}
               >
                 SeqDesk
               </span>
-              {isWorkbench && (
-                <span className="truncate text-sm font-semibold text-teal-800">
-                  Bench
-                </span>
-              )}
               {version && (
                 <span className="text-[10px] leading-none text-muted-foreground font-geist-pixel">
                   v{version}

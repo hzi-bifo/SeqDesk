@@ -70,6 +70,10 @@ const DefinitionParameterRuntimeSchema = z
     enum: z.array(z.unknown()).optional(),
     minimum: z.number().optional(),
     maximum: z.number().optional(),
+    pattern: z.string().max(256).refine(value => {
+      try { new RegExp(value); return true; } catch { return false; }
+    }, 'Invalid configuration pattern').optional(),
+    format: z.enum(['absolute-path', 'identifier-list']).optional(),
   })
   .passthrough();
 
@@ -126,10 +130,18 @@ const PipelineConfigRuntimeSchema = z
       PipelineConfigPropertyRuntimeSchema
     ),
     required: z.array(z.string().trim().min(1)).optional(),
+    additionalProperties: z.boolean().optional(),
+    runRequirements: z.object({
+      required: z.array(z.string()).optional(),
+      properties: z.record(z.string(), z.object({
+        const: z.unknown().optional(),
+        format: z.literal('json-string-map').optional(),
+      }).strict()).optional(),
+    }).strict().optional(),
   })
   .passthrough()
   .superRefine((schema, context) => {
-    for (const [index, requiredKey] of (schema.required || []).entries()) {
+    for (const [index, requiredKey] of [...(schema.required || []), ...(schema.runRequirements?.required || []), ...Object.keys(schema.runRequirements?.properties || {})].entries()) {
       if (!Object.prototype.hasOwnProperty.call(schema.properties, requiredKey)) {
         context.addIssue({
           code: "custom",

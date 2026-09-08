@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getInviteGrant } from "@/lib/accounts/invite-role";
+import { inviteCodeLookup } from "@/lib/accounts/invite-secret.server";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { z } from "zod";
 
@@ -26,8 +27,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const invite = await db.adminInvite.findUnique({
-      where: { code: parsed.data.code.toUpperCase() },
+    const lookup = inviteCodeLookup(parsed.data.code);
+    const invite = await db.adminInvite.findFirst({
+      where: lookup.where,
       include: {
         createdBy: {
           select: { systemRole: true, isActive: true },

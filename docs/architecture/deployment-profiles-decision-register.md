@@ -1,5 +1,7 @@
 # Deployment profiles pre-implementation decision register
 
+> Superseded where it describes separate application views, mutually exclusive input paths or Canvas-first navigation. The current implementation and remaining TODOs are in [One SeqDesk with coexisting input modules](unified-input-modules.md). Existing enrollment/ownership protections remain compatibility policy, not separate products.
+
 Status: proposed defaults for confirmation
 
 Companion to:
@@ -227,10 +229,13 @@ Recommendation: add `--plan` (plus redacted JSON output) to resolve sources/defa
 
 ### I-09 — Separate required readiness from recommendations
 
-Recommendation: the authenticated checklist labels every item. Required items
-gate ordinary members only when the chosen operating model cannot perform its
-normal work without them: managed storage for all profiles and workflow-runtime
-readiness for Research Workbench. Backup/retention documentation, enrollment
+Recommendation: the authenticated checklist labels every item and the operations
+it protects. Managed storage gates data operations in all profiles; workflow
+runtime gates analysis execution. A Workbench with verified storage and deferred
+runtime should still permit workspace/upload work, although it is not yet fully
+operational. Enforce this server-side, not just through disabled buttons.
+Replacing the current global member gate with these operation-scoped checks is
+still pending. Backup/retention documentation, enrollment
 review, optional integrations, and first test journeys remain recommended.
 Replace manual confirmations with automatic storage/runtime verifiers where
 feasible, and never present an acknowledgement as an independent verification.

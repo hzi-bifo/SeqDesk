@@ -54,8 +54,8 @@ describe("deployment profile resolution", () => {
     expect(
       resolveDeploymentProfile({ configuredProfile: "research-workbench" })
     ).toMatchObject({
-      experience: "workbench",
-      defaultRoute: "/workbench/data",
+      experience: "sequencing",
+      defaultRoute: "/orders",
     });
     expect(
       resolveDeploymentProfile({ configuredProfile: "shared-lab" })

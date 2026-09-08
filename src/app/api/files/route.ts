@@ -294,6 +294,7 @@ export async function GET(request: NextRequest) {
     const qualityMap = new Map<string, FileWithAssignment["quality"]>();
 
     for (const read of reads) {
+      if (!read.sample.order || !read.sample.orderId) continue;
       if (read.file1) {
         assignmentMap.set(read.file1, {
           sampleId: read.sample.sampleId,

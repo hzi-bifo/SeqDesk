@@ -21,6 +21,10 @@ const SYSTEM_ADMIN_CAPABILITIES = new Set<Capability>([
 ]);
 
 const SEQUENCING_MEMBER_CAPABILITIES = new Set<Capability>([
+  "analysis.run",
+  "analysis.cancel_own",
+  "workbench.use",
+  "workbench.import",
   "orders.create",
   "orders.read",
   "studies.create",
@@ -53,6 +57,8 @@ const SEQUENCING_OPERATOR_CAPABILITIES = new Set<Capability>([
 ]);
 
 const SHARED_LAB_MEMBER_CAPABILITIES = new Set<Capability>([
+  "workbench.use",
+  "workbench.import",
   "orders.create",
   "orders.read",
   "orders.read_all",
@@ -76,6 +82,11 @@ const SHARED_LAB_MEMBER_CAPABILITIES = new Set<Capability>([
 ]);
 
 const WORKBENCH_MEMBER_CAPABILITIES = new Set<Capability>([
+  "orders.read",
+  "orders.create",
+  "studies.read",
+  "studies.create",
+  "samples.manage",
   "workbench.use",
   "workbench.import",
   "workbench.run",
@@ -136,6 +147,10 @@ function resourceScopeFor(
   capability: Capability
 ): ResourceScope {
   if (capability.startsWith("system.")) return "installation";
+  // Imports remain private to their creator even in a collaborative lab or
+  // for a facility operator. This does not grant access to another workspace.
+  if (capability.startsWith("workbench.")) return "workspace";
+  if (profile.id === "research-workbench" && capability.startsWith("analysis.")) return "own";
   if (profile.id === "shared-lab") return "installation";
   if (profile.id === "research-workbench") return "workspace";
   if (

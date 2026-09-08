@@ -1,6 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import { getPipelinesDir } from './package-loader';
+import { getPackage, getPipelinesDir } from './package-loader';
+import { PipelineResourceSchema, type PipelineResource } from './resource-schema';
+import { readResourceJob, readAllResourceJobs } from './resource-jobs';
+import { validateResourceDirectory } from './resource-files';
+import { resourceFingerprint } from './resource-installer';
 import pipelineDatabaseDefinitions from '../../../data/pipeline-databases.json';
 
 const DB_DOWNLOAD_INDEX_FILE = '.pipeline-database-downloads.json';
@@ -19,6 +23,7 @@ const PIPELINE_STORE_E2E_DATABASE_SHA256 =
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 
 export interface PipelineDatabaseDefinition {
+  resource?: PipelineResource;
   id: string;
   label: string;
   description?: string;
@@ -44,6 +49,7 @@ export interface PipelineDatabaseDownloadRecord {
 }
 
 export interface PipelineDatabaseDownloadJobStatus {
+  managedResource?: boolean;
   pipelineId: string;
   databaseId: string;
   state: 'running' | 'success' | 'error';
@@ -64,6 +70,8 @@ export interface PipelineDatabaseDownloadJobStatus {
 }
 
 export interface PipelineDatabaseStatus {
+  managedResource?: boolean;
+  assets?: PipelineResource['assets'];
   id: string;
   label: string;
   description?: string;
@@ -270,8 +278,14 @@ function getExpectedSizeForCandidate(
 }
 
 export function getPipelineDatabaseDefinitions(pipelineId: string): PipelineDatabaseDefinition[] {
+  const resources = (getPackage(pipelineId)?.manifest.resources ?? []).map(resource => PipelineResourceSchema.parse(resource));
   return [
-    ...(PIPELINE_DATABASES[pipelineId] || []),
+    ...resources.map(resource => ({
+      id: resource.id, label: resource.label, description: resource.description,
+      version: resource.version, fileName: resource.version, downloadUrl: resource.assets[0].url,
+      configKey: resource.config.pathKey, resource,
+    })),
+    ...(PIPELINE_DATABASES[pipelineId] || []).filter(database => !resources.some(resource => resource.id === database.id)),
     ...getPipelineStoreE2EDatabaseDefinitions(pipelineId),
   ];
 }
@@ -347,6 +361,8 @@ export async function getDatabaseDownloadJobStatus(
   pipelineId: string,
   databaseId: string
 ): Promise<PipelineDatabaseDownloadJobStatus | null> {
+  const managed = await readResourceJob(getPipelinesDir(), pipelineId, databaseId);
+  if (managed) return managed;
   const index = await readDownloadStatusIndex();
   return index[getRecordKey(pipelineId, databaseId)] || null;
 }
@@ -355,9 +371,10 @@ export async function getAllDatabaseDownloadJobStatuses(): Promise<
   PipelineDatabaseDownloadJobStatus[]
 > {
   const index = await readDownloadStatusIndex();
-  return Object.values(index).filter(
+  const managed = await readAllResourceJobs(getPipelinesDir());
+  return [...managed, ...Object.values(index).filter(
     (job): job is PipelineDatabaseDownloadJobStatus => Boolean(job)
-  );
+  ).filter(job => !managed.some(resource => resource.pipelineId === job.pipelineId && resource.databaseId === job.databaseId))];
 }
 
 export async function updateDatabaseDownloadJobStatus(
@@ -433,6 +450,38 @@ export async function getPipelineDatabaseStatuses(
 
   const statuses = await Promise.all(
     definitions.map(async (definition) => {
+      if (definition.resource) {
+        const resource = definition.resource;
+        const configuredPath = normalizeConfiguredPath(pipelineConfig[resource.config.pathKey]);
+        let ready = false, sizeBytes: number | undefined, detail: string | undefined;
+        if (configuredPath) {
+          try {
+            if (Object.entries(resource.config.values).some(([key, value]) => pipelineConfig[key] !== value)) throw new Error('Configured database version does not match this package resource');
+            const validated = await validateResourceDirectory(resource, configuredPath);
+            sizeBytes = validated.bytes;
+            const receipt = await fs.promises.readFile(path.join(configuredPath, '.seqdesk-resource.json'), 'utf8').catch(error => {
+              if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+              throw error;
+            });
+            if (receipt) {
+              const parsed = JSON.parse(receipt);
+              if (parsed.fingerprint !== resourceFingerprint(resource) || resource.requiredFiles.some(file => parsed.files?.[file]?.bytes !== validated.files[file].bytes)) throw new Error('Database installation receipt or file sizes no longer match this package');
+              detail = 'Installed from checksum-verified archives. Required files and recorded sizes are present.';
+            } else detail = 'Linked directory: required files checked; publisher archive checksums have not been verified.';
+            ready = true;
+          } catch (error) { detail = error instanceof Error ? error.message : 'Invalid database installation'; }
+        }
+        return {
+          id: definition.id, label: definition.label, description: definition.description,
+          version: definition.version, configKey: definition.configKey,
+          managedResource: true, assets: resource.assets,
+          status: ready ? 'downloaded' as const : 'missing' as const,
+          path: ready ? configuredPath : undefined, configuredPath, sizeBytes,
+          expectedPath: pipelineRunDir ? path.dirname(buildPipelineDatabaseTargetPath(pipelineRunDir, pipelineId, definition.id, resource.version, databaseDirectory)) : undefined,
+          sourceUrl: resource.assets[0].url, detail: detail ?? 'Database is not installed',
+          job: await readResourceJob(getPipelinesDir(), pipelineId, definition.id),
+        };
+      }
       const key = getRecordKey(pipelineId, definition.id);
       const record = recordIndex[key];
       const job = statusIndex[key] || null;

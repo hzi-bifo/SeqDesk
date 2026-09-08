@@ -56,11 +56,11 @@ describe("server capability API helpers", () => {
     );
     const response = authorizationErrorResponse(decision);
 
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "Not found" });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Forbidden" });
   });
 
-  it("keeps sequencing administration unavailable in Workbench", async () => {
+  it("allows administrators to configure sequencing in the shared application", async () => {
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
     );
@@ -70,9 +70,9 @@ describe("server capability API helpers", () => {
     );
 
     expect(decision).toMatchObject({
-      allowed: false,
-      status: 404,
-      reason: "domain-unavailable",
+      allowed: true,
+      status: 200,
+      reason: "allowed",
     });
   });
 
@@ -85,7 +85,7 @@ describe("server capability API helpers", () => {
       decideServerCapability(adminSession, "support.tickets.manage")
     );
 
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "Not found" });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "Forbidden" });
   });
 });

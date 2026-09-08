@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
     },
     sample: {
+      count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),

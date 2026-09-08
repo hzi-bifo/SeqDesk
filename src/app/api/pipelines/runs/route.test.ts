@@ -166,7 +166,6 @@ describe("GET /api/pipelines/runs", () => {
                 { order: { userId: "user-1" } },
               ],
             },
-            { selectedResultSelections: { some: {} } },
           ],
           pipelineId: "simulate-reads",
           status: "completed",
@@ -440,7 +439,7 @@ describe("POST /api/pipelines/runs", () => {
     });
   });
 
-  it("does not expose facility-targeted run creation in Research Workbench", async () => {
+  it("does not expose another owner's target in the research preset", async () => {
     mocks.getServerDeploymentProfile.mockReturnValue({
       id: "research-workbench",
       experience: "workbench",
@@ -454,7 +453,7 @@ describe("POST /api/pipelines/runs", () => {
       })
     );
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
     expect(mocks.db.pipelineRun.create).not.toHaveBeenCalled();
   });
 

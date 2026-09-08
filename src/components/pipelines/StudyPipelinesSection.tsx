@@ -71,6 +71,7 @@ import {
 import type { PipelineRunResultFile } from "@/lib/pipelines/result-files";
 import type { PipelineConfigProperty } from "@/lib/pipelines/types";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
+import { pipelineRunOverrides } from "@/lib/pipelines/config-schema-validation";
 import { PipelineRunResultLinks } from "./PipelineRunResultLinks";
 import {
   getEligibleStudySampleIds,
@@ -1259,7 +1260,7 @@ export function StudyPipelinesSection({
           pipelineId: selectedPipeline.pipelineId,
           studyId,
           sampleIds: Array.from(eligibleSampleIds),
-          config: localConfig,
+          config: pipelineRunOverrides(selectedPipeline.configSchema, localConfig),
           ...(canManagePipelines ? { executionMode } : {}),
         }),
       });

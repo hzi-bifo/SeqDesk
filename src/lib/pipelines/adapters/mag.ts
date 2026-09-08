@@ -14,7 +14,7 @@ import { db } from '@/lib/db';
 import { mapPlatformForPipeline } from '../metadata-validation';
 import { resolveOrderPlatform } from '../order-platform';
 import { generateSamplesheetFromConfig } from '../samplesheet-generator';
-import { isStudyTarget } from '../target';
+import { getPipelineSampleWhere, isStudyTarget } from '../target';
 import {
   PipelineAdapter,
   ValidationResult,
@@ -233,10 +233,7 @@ export const magAdapter: PipelineAdapter = {
       };
     }
 
-    const whereClause: { studyId: string; id?: { in: string[] } } = { studyId: target.studyId };
-    if (target.sampleIds && target.sampleIds.length > 0) {
-      whereClause.id = { in: target.sampleIds };
-    }
+    const whereClause = getPipelineSampleWhere(target);
 
     const samples = await db.sample.findMany({
       where: whereClause,
@@ -299,14 +296,10 @@ export const magAdapter: PipelineAdapter = {
 
     // Fallback to custom code if no config or config failed
     // (This code is kept for backwards compatibility)
-    const { studyId, sampleIds } = options.target;
     const { dataBasePath } = options;
     const errors: string[] = [];
 
-    const whereClause: { studyId: string; id?: { in: string[] } } = { studyId };
-    if (sampleIds && sampleIds.length > 0) {
-      whereClause.id = { in: sampleIds };
-    }
+    const whereClause = getPipelineSampleWhere(options.target);
 
     const samples = await db.sample.findMany({
       where: whereClause,

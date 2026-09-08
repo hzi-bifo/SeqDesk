@@ -69,6 +69,12 @@ describe("GET /api/samples/[id]", () => {
     const json = await res.json();
     expect(json.id).toBe("s1");
   });
+  it("uses study ownership for order-independent samples", async () => {
+    mocks.db.sample.findUnique.mockResolvedValue({ ...sampleWithOrder, order: null, study: { id: "study", userId: "user-1" } });
+    expect((await GET(new NextRequest("http://localhost/api/samples/s1"), makeParams("s1"))).status).toBe(200);
+    mocks.getServerSession.mockResolvedValue({ user: { id: "other", role: "RESEARCHER" } });
+    expect((await GET(new NextRequest("http://localhost/api/samples/s1"), makeParams("s1"))).status).toBe(403);
+  });
 
   it("returns 403 when non-owner non-admin accesses sample", async () => {
     mocks.getServerSession.mockResolvedValue({ user: { id: "other-user", role: "RESEARCHER" } });

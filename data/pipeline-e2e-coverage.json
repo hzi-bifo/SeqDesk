@@ -1,6 +1,14 @@
 {
   "schemaVersion": 1,
   "pipelines": {
+    "metaphlan": {
+      "tier": "extended",
+      "reason": "Requires a provisioned, version-pinned MetaPhlAn reference database and real shotgun reads; contract tests do not establish taxonomic accuracy."
+    },
+    "cami-opal": {
+      "tier": "extended",
+      "reason": "Requires completed MetaPhlAn profiles, a matching real CAMI Ground Truth and an explicitly reviewed sample/taxonomy mapping."
+    },
     "fastq-checksum": {
       "tier": "required",
       "proofs": ["local", "slurm", "app-retrieval", "read-writeback", "output-correctness"]

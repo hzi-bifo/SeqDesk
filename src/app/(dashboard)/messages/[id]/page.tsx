@@ -31,7 +31,7 @@ import {
 } from "lucide-react";
 import { notifyPanel } from "@/lib/notifications/client";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
-import { hasCapability, principalFromSession } from "@/lib/authorization";
+import { hasCapability, principalFromSession } from "@/lib/authorization/client";
 
 interface Message {
   id: string;

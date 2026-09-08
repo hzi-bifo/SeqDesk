@@ -1327,10 +1327,10 @@ export async function prepareSubmgRun(options: PrepareSubmgRunOptions): Promise<
           file2UsedFallback: resolvedFile2.usedFallback,
           checksum1: read.checksum1,
           checksum2: read.checksum2,
-          librarySource: sample.order.librarySource || DEFAULT_LIBRARY_SOURCE,
-          librarySelection: sample.order.librarySelection || DEFAULT_LIBRARY_SELECTION,
-          libraryStrategy: sample.order.libraryStrategy || DEFAULT_LIBRARY_STRATEGY,
-          instrumentModel: normalizeInstrumentModel(sample.order.instrumentModel),
+          librarySource: sample.order?.librarySource || DEFAULT_LIBRARY_SOURCE,
+          librarySelection: sample.order?.librarySelection || DEFAULT_LIBRARY_SELECTION,
+          libraryStrategy: sample.order?.libraryStrategy || DEFAULT_LIBRARY_STRATEGY,
+          instrumentModel: normalizeInstrumentModel(sample.order?.instrumentModel),
           insertSize,
         };
       })

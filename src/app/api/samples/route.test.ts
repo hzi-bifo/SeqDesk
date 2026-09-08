@@ -73,7 +73,7 @@ describe("GET /api/samples", () => {
 
     // Researcher should have user ownership filter
     const whereArg = mocks.db.sample.findMany.mock.calls[0][0].where;
-    expect(whereArg.order).toEqual({ userId: "user-1" });
+    expect(whereArg.OR).toEqual([{ order: { userId: "user-1" } }, { orderId: null, study: { userId: "user-1" } }]);
   });
 
   it("does not filter by user for facility admins", async () => {

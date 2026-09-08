@@ -49,7 +49,7 @@ type DeliveryReadRecord = {
       id: string;
       userId: string;
       sequencingFilesPublishedAt: Date | null;
-    };
+    } | null;
   };
 };
 
@@ -151,7 +151,7 @@ export function canUserAccessDeliveryRead(
 ): boolean {
   if (options?.accessScope === "installation") return true;
   return (
-    read.sample.order.userId === user.id &&
+    read.sample.order?.userId === user.id &&
     read.sample.order.sequencingFilesPublishedAt !== null &&
     isCleanedRead(read)
   );

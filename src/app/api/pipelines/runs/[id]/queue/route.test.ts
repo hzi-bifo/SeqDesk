@@ -516,7 +516,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
     expect(response.status).toBe(403);
   });
 
-  it("returns 403 for a non-admin owner of an unpublished run", async () => {
+  it("allows a runnable owner to inspect their unpublished run queue", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -534,7 +534,7 @@ describe("GET /api/pipelines/runs/[id]/queue", () => {
       { params: Promise.resolve({ id: "run-1" }) }
     );
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(200);
   });
 
   it("allows a non-admin owner of a published run", async () => {

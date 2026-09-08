@@ -54,7 +54,7 @@ import {
 import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
 import { DEFAULT_GROUPS, type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
-import { hasCapability, principalFromSession } from "@/lib/authorization";
+import { hasCapability, principalFromSession } from "@/lib/authorization/client";
 
 const DATA_HANDLING_SETTINGS_HREF = "/admin/form-builder?tab=settings#data-handling";
 
@@ -239,6 +239,8 @@ function formatSchemaFieldValue(field: FormFieldDefinition, value: unknown): str
 }
 
 interface Order {
+  dataOrigin?: string;
+  sourceMetadata?: string | null;
   id: string;
   name: string;
   status: string;
@@ -395,7 +397,7 @@ export default function OrderDetailPage({
   );
   const isDemoUser = session?.user?.isDemo === true;
   const isOwner = order?.user.id === session?.user?.id;
-  const canEditOrder = isFacilityAdmin || ((isOwner ?? false) && order?.status !== "COMPLETED");
+  const canEditOrder = isFacilityAdmin || ((isOwner ?? false) && (order?.dataOrigin === "import" || order?.status !== "COMPLETED"));
 
   // Admin-only field names from form schema (used to filter custom fields display)
   const [adminOnlyFieldNames, setAdminOnlyFieldNames] = useState<Set<string>>(new Set());
@@ -1037,8 +1039,9 @@ export default function OrderDetailPage({
             {renderOrderDeleteError(error)}
           </PageNotice>
         )}
+        {order.dataOrigin === "import" && <Link className="mb-4 inline-block underline" href={`/orders/${order.id}/samples-files`}>View samples, files and import progress</Link>}
           {/* Order Process - only when there are samples */}
-          {activeSection === "overview" && !isFacilityAdmin && order.samples.length > 0 && (() => {
+          {activeSection === "overview" && order.dataOrigin !== "import" && !isFacilityAdmin && order.samples.length > 0 && (() => {
             const isSubmitted = order.status === "SUBMITTED" || order.status === "COMPLETED";
             const allSamplesHaveFiles = order.samples.length > 0 && samplesWithFiles === order.samples.length;
             const canShowShippingInstructions = isSubmitted && Boolean(instructions?.trim());

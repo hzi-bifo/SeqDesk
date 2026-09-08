@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFile);
 
 export type WorkbenchStoreItemKind = "tool" | "importer" | "pipeline" | "analysis";
 export type WorkbenchStoreInstallState = "running" | "success" | "error";
-export type WorkbenchStoreInstallMethod = "conda";
+export type WorkbenchStoreInstallMethod = "conda" | "bundled";
 export type WorkbenchStoreStatusState = "installed" | "missing" | "setup-needed";
 export type WorkbenchStoreStatusSource = "managed" | "system";
 
@@ -87,6 +87,12 @@ const WORKBENCH_STORE_ITEMS: WorkbenchStoreItem[] = [
       channels: ["conda-forge"],
       autoSetup: true,
     },
+  },
+  {
+    id: "cami-benchmark", label: "CAMI sample importer", kind: "importer", category: "Benchmark inputs",
+    description: "CAMI II Marine and CAMI III toy human gut: validated short/long reads with study and sample provenance.",
+    usedBy: ["cami-benchmark"], commands: [],
+    install: { method: "bundled", packages: [], channels: [], autoSetup: false },
   },
 ];
 
@@ -227,6 +233,7 @@ async function writeInstallJob(job: WorkbenchStoreInstallJob): Promise<Workbench
 }
 
 async function getStoreItemStatus(item: WorkbenchStoreItem): Promise<WorkbenchStoreItemStatus> {
+  if (item.install.method === "bundled") return { state: "installed", source: "managed", message: "Bundled with SeqDesk; open the module in Import sources" };
   const managedPath = await getWorkbenchManagedToolPrefix(item.id);
   const managedVersions = await Promise.all(
     item.commands.map(async (command) => {
@@ -300,6 +307,7 @@ export async function startWorkbenchStoreInstall(
   if (!item) {
     throw new Error("Workbench Store item not found");
   }
+  if (item.install.method === "bundled") throw new Error("This importer is bundled; no installation is required");
 
   const existing = await readInstallJob(item.id);
   if (existing?.state === "running") {

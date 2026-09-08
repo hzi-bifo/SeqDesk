@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -251,7 +252,7 @@ describe("GET /api/orders", () => {
     await expect(response.json()).resolves.toMatchObject({ sharingMode: "all" });
   });
 
-  it("does not expose orders in Research Workbench", async () => {
+  it("fails closed for an invalid custom profile without the intake domain", async () => {
     mocks.getServerDeploymentProfile.mockReturnValue({
       id: "research-workbench",
       domains: ["core", "analysis", "publishing", "workbench"],
@@ -281,6 +282,15 @@ describe("GET /api/orders", () => {
     const args = mocks.db.order.findMany.mock.calls[0][0] as { where: { userId: string } };
     expect(args.where).toEqual({ userId: "user-1" });
   });
+  it("keeps research-private collections owner-scoped even with legacy department sharing enabled", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(getDeploymentProfileDefinition("research-workbench"));
+    mocks.getServerSession.mockResolvedValue({ user: { id: "private-owner", role: "RESEARCHER" } });
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ extraSettings: JSON.stringify({ departmentSharing: true }) });
+    mocks.db.user.findUnique.mockResolvedValue({ departmentId: "department" });
+    const response = await GET();
+    expect(response.status).toBe(200);
+    expect(mocks.db.order.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: "private-owner" } }));
+  });
 
   it("department sharing enabled - user with department sees department orders", async () => {
     mocks.getServerSession.mockResolvedValue({
@@ -300,7 +310,7 @@ describe("GET /api/orders", () => {
     const args = mocks.db.order.findMany.mock.calls[0][0] as {
       where: { user: { departmentId: string } };
     };
-    expect(args.where).toEqual({ user: { departmentId: "dept-1" } });
+    expect(args.where).toEqual({ OR: [{ userId: "user-1" }, { dataOrigin: "facility", user: { departmentId: "dept-1" } }] });
   });
 
   it("department sharing enabled but user has no department - sees only own orders", async () => {

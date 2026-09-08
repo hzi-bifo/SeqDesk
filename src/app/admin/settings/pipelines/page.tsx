@@ -130,6 +130,7 @@ interface SequencingTechResponse {
 }
 
 interface PipelineConfig {
+  packageState?: "bundled" | "installed" | "available";
   pipelineId: string;
   name: string;
   description: string;
@@ -165,6 +166,8 @@ interface PipelineReadiness {
 type PipelineReadinessItem = GuidedSetupReadinessItem;
 
 interface PipelineDatabaseDownloadInfo {
+  managedResource?: boolean;
+  assets?: Array<{ fileName: string; url: string; bytes: number; checksum: { algorithm: string; value: string } }>;
   id: string;
   label: string;
   description?: string;
@@ -482,6 +485,9 @@ function getParentDir(targetPath: string): string {
 }
 
 function getManualDbDownloadCommands(database: PipelineDatabaseDownloadInfo): string[] | null {
+  // An archive-set needs full manifest-driven verification and extraction.
+  // A single curl command would leave it incomplete and target a directory.
+  if (database.managedResource) return null;
   const targetPath =
     database.expectedPath ||
     database.job?.targetPath ||
@@ -639,10 +645,12 @@ export default function PipelineSettingsPage() {
     remainingBytes: number | null;
     sufficient: boolean | null;
     hasSha256: boolean;
+    requiredBytes?: number;
     targetPath: string | null;
     error?: string | null;
   } | null>(null);
   const [cancellingDatabase, setCancellingDatabase] = useState<string | null>(null);
+  const dbPreflightRequest = useRef(0);
   const [togglingPipeline, setTogglingPipeline] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
   const [allowUserAssemblyDownload, setAllowUserAssemblyDownload] = useState(false);
@@ -1320,7 +1328,7 @@ export default function PipelineSettingsPage() {
         return;
       }
       await mutate();
-      toast.success("Database download cancelled");
+      toast.success(data.message || "Database download cancelled");
     } catch (err) {
       const message = "Cancel failed. Check console for details.";
       setDatabaseError(message);
@@ -1336,6 +1344,7 @@ export default function PipelineSettingsPage() {
     databaseId: string,
     targetPath: string
   ) => {
+    const requestId = ++dbPreflightRequest.current;
     setDbPreflight((prev) => ({
       loading: true,
       expectedBytes: prev?.expectedBytes ?? null,
@@ -1358,6 +1367,7 @@ export default function PipelineSettingsPage() {
         }),
       });
       const data = await res.json().catch(() => ({}));
+      if (requestId !== dbPreflightRequest.current) return;
       if (!res.ok) {
         setDbPreflight({
           loading: false,
@@ -1380,10 +1390,12 @@ export default function PipelineSettingsPage() {
         remainingBytes: typeof data.remainingBytes === "number" ? data.remainingBytes : null,
         sufficient: typeof data.sufficient === "boolean" ? data.sufficient : null,
         hasSha256: Boolean(data.hasSha256),
+        requiredBytes: typeof data.requiredBytes === "number" ? data.requiredBytes : undefined,
         targetPath: typeof data.targetPath === "string" ? data.targetPath : null,
         error: data.error || null,
       });
     } catch (err) {
+      if (requestId !== dbPreflightRequest.current) return;
       console.error("Preflight error:", err);
       setDbPreflight({
         loading: false,
@@ -1408,7 +1420,7 @@ export default function PipelineSettingsPage() {
       pipelineName: pipeline.name,
       database,
     });
-    const initialPath =
+    const initialPath = database.managedResource ? database.expectedPath || "" :
       database.configuredPath ||
       database.path ||
       database.expectedPath ||
@@ -1446,12 +1458,16 @@ export default function PipelineSettingsPage() {
         );
         return;
       }
-      if (trimmed.endsWith("/")) {
+      if (trimmed.endsWith("/") && !dbDownloadTarget.database.managedResource) {
         setDbDownloadDialogError(
           "Target path must include the file name, not just a directory."
         );
         return;
       }
+    }
+    if (dbDownloadTarget.database.managedResource && (!dbPreflight || dbPreflight.loading || dbPreflight.error || !dbPreflight.sufficient)) {
+      setDbDownloadDialogError("Wait for a successful disk-space check before starting database setup.");
+      return;
     }
     const trimmedLimit = dbDownloadLimitRate.trim();
     if (trimmedLimit.length > 0 && !/^\d+[KMG]?$/i.test(trimmedLimit)) {
@@ -2391,6 +2407,9 @@ export default function PipelineSettingsPage() {
                                 {pipeline.enabled ? "Enabled" : "Disabled"}
                                 </Badge>
                                 {getReadinessBadge(pipeline)}
+                                {pipeline.packageState === "bundled" && (
+                                  <Badge variant="outline" className="text-xs font-normal">Included with SeqDesk</Badge>
+                                )}
                                 {showPipelineDetails && storeEntry && (
                                   <Badge variant="outline" className="text-xs font-normal">
                                     {getSourceBadgeLabel(storeEntry.source)}
@@ -2769,7 +2788,7 @@ export default function PipelineSettingsPage() {
                               const databaseRunning = database.job?.state === "running";
                               const databaseBusy = downloadingDatabase === key || databaseRunning;
                               const databaseActionLabel =
-                                database.status === "downloaded" ? "Re-download DB" : "Download DB";
+                                database.managedResource ? "Set up DB" : database.status === "downloaded" ? "Re-download DB" : "Download DB";
                               if (databaseRunning) {
                                 return (
                                   <Button
@@ -2790,7 +2809,7 @@ export default function PipelineSettingsPage() {
                                     ) : (
                                       <XCircle className="h-4 w-4 mr-1" />
                                     )}
-                                    Cancel DB download
+                                    {database.managedResource ? "Cancel DB setup" : "Cancel DB download"}
                                   </Button>
                                 );
                               }
@@ -3098,14 +3117,15 @@ export default function PipelineSettingsPage() {
         onOpenChange={(open) => {
           setDbDownloadDialogOpen(open);
           if (!open) {
+            ++dbPreflightRequest.current;
             setDbDownloadDialogError(null);
           }
         }}
       >
-        <DialogContent className="max-w-lg w-[94vw]">
+        <DialogContent className="max-w-lg w-[94vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {dbDownloadTarget?.database.status === "downloaded"
+              {dbDownloadTarget?.database.managedResource ? `Set up ${dbDownloadTarget.database.label}` : dbDownloadTarget?.database.status === "downloaded"
                 ? `Re-download ${dbDownloadTarget?.database.label || "database"}`
                 : `Download ${dbDownloadTarget?.database.label || "database"}`}
             </DialogTitle>
@@ -3125,12 +3145,35 @@ export default function PipelineSettingsPage() {
                 </p>
               </div>
 
+              {dbDownloadTarget.database.managedResource && (
+                <div className="space-y-2 rounded-md border p-3 text-xs">
+                  <p>Package-managed database · {dbDownloadTarget.database.version}</p>
+                  <p className="text-muted-foreground">Setup downloads and verifies every archive, extracts the required files, then sets the database path and version together. Existing installations remain available. Cancelled attempts are cleaned up; retry starts a fresh download.</p>
+                  <details>
+                    <summary className="cursor-pointer">Archives and publisher checksums ({dbDownloadTarget.database.assets?.length})</summary>
+                    <div className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+                      {dbDownloadTarget.database.assets?.map(asset => (
+                        <div key={asset.fileName} className="break-all">
+                          <a href={asset.url} target="_blank" rel="noreferrer" className="underline">{asset.fileName}</a> · {formatBytes(asset.bytes)}
+                          <p className="font-mono text-muted-foreground">{asset.checksum.algorithm}: {asset.checksum.value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                  <p className="text-muted-foreground">Only use trusted databases. Linked directories are checked for required files, not against the publisher archive checksums. The directory must also be accessible to the execution host.</p>
+                </div>
+              )}
+
               <div className="space-y-2">
-                <Label htmlFor="db-download-target-path">Target path</Label>
+                <Label htmlFor="db-download-target-path">{dbDownloadTarget.database.managedResource ? "Installation parent / existing database directory" : "Target path"}</Label>
                 <Input
                   id="db-download-target-path"
                   value={dbDownloadCustomPath}
-                  onChange={(event) => setDbDownloadCustomPath(event.target.value)}
+                  onChange={(event) => {
+                    ++dbPreflightRequest.current;
+                    setDbPreflight(null);
+                    setDbDownloadCustomPath(event.target.value);
+                  }}
                   placeholder={dbDownloadTarget.database.expectedPath || "/absolute/path/to/database/file"}
                   className="bg-white font-mono text-xs"
                 />
@@ -3161,6 +3204,12 @@ export default function PipelineSettingsPage() {
                           : "Unknown (source did not report size)"}
                       </span>
                     </div>
+                    {typeof dbPreflight.requiredBytes === "number" && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground">Space needed (including extraction)</span>
+                        <span className="tabular-nums">{formatBytes(dbPreflight.requiredBytes)}</span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-muted-foreground">Free at target</span>
                       <span
@@ -3226,7 +3275,7 @@ export default function PipelineSettingsPage() {
                 </div>
               )}
 
-              {dbDownloadTarget.database.status === "downloaded" &&
+              {!dbDownloadTarget.database.managedResource && dbDownloadTarget.database.status === "downloaded" &&
                 (!dbPreflight || dbPreflight.partialBytes === 0) && (
                   <div className="flex items-start gap-2">
                     <Checkbox
@@ -3291,19 +3340,19 @@ export default function PipelineSettingsPage() {
               variant="outline"
               onClick={handleLinkExistingDatabase}
               disabled={linkingDatabase || dbDownloadCustomPath.trim().length === 0}
-              title="Skip the download and point the pipeline at an existing file on disk"
+              title="Skip the download and validate an existing database on disk"
             >
               {linkingDatabase ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               ) : null}
-              Use existing file
+              {dbDownloadTarget?.database.managedResource ? "Link existing directory" : "Use existing file"}
             </Button>
             <Button
               onClick={handleConfirmDbDownload}
-              disabled={dbPreflight?.sufficient === false || linkingDatabase}
+              disabled={dbPreflight?.sufficient === false || linkingDatabase || (dbDownloadTarget?.database.managedResource === true && (!dbPreflight || dbPreflight.loading || Boolean(dbPreflight.error) || !dbPreflight.sufficient))}
             >
               <Download className="h-4 w-4 mr-2" />
-              {dbPreflight && dbPreflight.partialBytes > 0 && !dbDownloadReplace
+              {dbDownloadTarget?.database.managedResource ? "Download & set up" : dbPreflight && dbPreflight.partialBytes > 0 && !dbDownloadReplace
                 ? "Resume download"
                 : dbDownloadTarget?.database.status === "downloaded"
                   ? "Re-download"

@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import type {
   OrderPipelineTarget,
   PipelineDefinition,
@@ -25,13 +26,15 @@ export function getPipelineTargetWhere(target: PipelineTarget): { studyId?: stri
 
 export function getPipelineSampleWhere(
   target: PipelineTarget
-): { studyId?: string; orderId?: string; id?: { in: string[] } } {
+): Prisma.SampleWhereInput {
   const where = isStudyTarget(target)
-    ? ({ studyId: target.studyId } as { studyId?: string; orderId?: string; id?: { in: string[] } })
-    : ({ orderId: target.orderId } as { studyId?: string; orderId?: string; id?: { in: string[] } });
+    ? (target.primaryOnly ? { studyId: target.studyId } : {
+        OR: [{ studyId: target.studyId }, { studyMemberships: { some: { studyId: target.studyId } } }],
+      }) as Prisma.SampleWhereInput
+    : { orderId: target.orderId };
 
-  if (target.sampleIds && target.sampleIds.length > 0) {
-    where.id = { in: target.sampleIds };
+  if (target.sampleIds && (isStudyTarget(target) || target.sampleIds.length > 0)) {
+    where.id = { in: [...new Set(target.sampleIds)] };
   }
 
   return where;

@@ -1,4 +1,5 @@
 import { db } from '@/lib/db';
+import { scopePipelineStudyTarget } from './study-samples';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import {
   resolveOrderPlatform,
@@ -144,7 +145,7 @@ export async function resolvePipelineDerivedConfig(args: {
   }
 
   const samples = await db.sample.findMany({
-    where: getPipelineSampleWhere(args.target),
+    where: getPipelineSampleWhere(scopePipelineStudyTarget(args.target, args.pipelineId)),
     select: {
       id: true,
       sampleId: true,

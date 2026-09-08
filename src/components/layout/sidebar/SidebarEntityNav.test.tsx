@@ -65,6 +65,7 @@ vi.mock("@/lib/orders/progress-status", () => ({
 }));
 
 import { SidebarEntityNav } from "./SidebarEntityNav";
+vi.mock("@/lib/modules", () => ({ useModuleEnabled: () => true }));
 
 const entityContextDefaults = {
   isLoading: false,
@@ -163,13 +164,13 @@ describe("SidebarEntityNav", () => {
       expect(fetchMock).toHaveBeenCalledWith("/api/orders/order-1/sequencing");
     });
 
-    const overviewLinks = screen.getAllByRole("link", { name: /Overview/i });
+    const overviewLinks = screen.getAllByRole("link", { name: /Metadata/i });
     expect(
       overviewLinks.some((link) => link.getAttribute("href") === "/orders/order-1")
     ).toBe(true);
     expect(screen.getByText("Facility Fields")).toBeTruthy();
     expect(screen.getByText("Sequencing Data")).toBeTruthy();
-    expect(screen.getByText("Analysis")).toBeTruthy();
+    expect(screen.getByText("Pipelines")).toBeTruthy();
     expect(screen.getByText("Samples")).toBeTruthy();
     const detailsLink = screen.getByRole("link", { name: /Details/i });
     expect(detailsLink.getAttribute("href")).toBe("/orders/order-1/edit?step=details");
@@ -180,6 +181,13 @@ describe("SidebarEntityNav", () => {
     const pipelineLink = screen.getByRole("link", { name: /FASTQ Checksum/i });
     const pipelineDot = pipelineLink.querySelector("span[aria-hidden='true']");
     expect(pipelineDot?.className).toContain("bg-[#00BD7D]");
+  });
+  it("highlights Files rather than Metadata on the import progress route", () => {
+    mocks.usePathname.mockReturnValue("/orders/order-1/samples-files");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams());
+    render(<SidebarEntityNav entityContext={{ ...entityContextDefaults, entityType: "order", entityId: "order-1", entityData: { ...entityData("Order 1"), dataOrigin: "import" } }} collapsed={false} />);
+    expect(screen.getByRole("link", { name: "Files" }).className).toContain("font-medium");
+    expect(screen.getByRole("link", { name: "Metadata" }).className).not.toContain("font-medium");
   });
 
   it("renders study navigation and hides demo-only restricted items", () => {
@@ -424,7 +432,7 @@ describe("SidebarEntityNav", () => {
       />
     );
 
-    const analysisLink = screen.getByRole("link", { name: /^Analysis$/i });
+    const analysisLink = screen.getByRole("link", { name: /^Pipelines$/i });
     expect(analysisLink.className).toContain("font-medium");
 
     const pipelineLink = screen.getByRole("link", { name: /FASTQ Checksum/i });
@@ -448,7 +456,7 @@ describe("SidebarEntityNav", () => {
       />
     );
 
-    const analysisLink = screen.getByRole("link", { name: /^Analysis$/i });
+    const analysisLink = screen.getByRole("link", { name: /^Pipelines$/i });
     expect(analysisLink.className).toContain("font-medium");
 
     const pipelineLink = screen.getByRole("link", { name: /FASTQ Checksum/i });

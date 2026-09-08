@@ -66,6 +66,7 @@ export async function GET(
 
     const assignmentMap = new Map<string, { sampleId: string; orderId: string; orderName: string | null; role: "R1" | "R2" }>();
     for (const read of reads) {
+      if (!read.sample.order || !read.sample.orderId) continue;
       if (read.file1) {
         assignmentMap.set(read.file1, {
           sampleId: read.sample.sampleId,

@@ -81,7 +81,9 @@ export async function POST(
       analysisId,
       analysisNodeId: nodeId,
     });
-    void runWorkbenchImportJob(job.id);
+    void runWorkbenchImportJob(job.id).catch(() => {
+      console.error("[workbench] Immediate import dispatch failed; queued work will be retried by the worker.");
+    });
 
     return NextResponse.json({ success: true, started: true, job }, { status: 202 });
   } catch (error) {

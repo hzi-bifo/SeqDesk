@@ -44,12 +44,47 @@ describe("WorkbenchImportsClient", () => {
     vi.restoreAllMocks();
     cleanup();
   });
+  it.each(["cami", "sra"] as const)("does not show job history or an empty jobs panel when choosing %s", async source => {
+    const collection = { key: "00e55dcb-9697-4b89-af56-af51bd557a17", name: "Controls" };
+    const provider = source === "cami" ? "cami-benchmark" : "ena-fastq-accession";
+    const api = vi.fn(async (input: RequestInfo | URL) => jsonResponse(input.toString().startsWith("/api/workbench/imports") ? { jobs: [
+      { id: "completed-here", providerId: provider, status: "success", request: { collection }, phase: "past-result" },
+      { id: "unrelated-running", providerId: provider, status: "running", request: { collection: { key: "other" } }, phase: "unrelated-transfer" },
+      { id: "another-module", providerId: "different-module", status: "running", request: { collection }, phase: "other-module-transfer" },
+      { id: "legacy-job", providerId: provider, status: "running", request: null, phase: "legacy-transfer" },
+    ] } : { importers: [] }));
+    vi.stubGlobal("fetch", api);
+    render(<WorkbenchImportsClient source={source} collection={collection} enablePolling={false} />);
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(source === "cami" ? 3 : 2));
+    expect(screen.queryByRole("heading", { name: "Import jobs" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Import progress" })).toBeNull();
+    expect(screen.queryByText("No import jobs yet.")).toBeNull();
+    expect(screen.queryByText(/unrelated-transfer|past-result|other-module-transfer|legacy-transfer/)).toBeNull();
+  });
+  it.each(["cami", "sra"] as const)("recovers only active progress for the selected %s module and collection", async source => {
+    const collection = { key: "00e55dcb-9697-4b89-af56-af51bd557a17", name: "Controls" };
+    let status = "running";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => jsonResponse(input.toString().startsWith("/api/workbench/imports") ? { jobs: [{
+      id: "active-here", providerId: source === "cami" ? "cami-benchmark" : "ena-fastq-accession", status, phase: "downloading current selection", progress: 42,
+      request: { collection }, createdAt: "2026-09-07T12:00:00Z", updatedAt: "2026-09-07T12:00:00Z",
+    }] } : { importers: [] })));
+    const view = render(<WorkbenchImportsClient source={source} collection={collection} enablePolling={false} />);
+    expect(await screen.findByRole("heading", { name: "Import progress" })).toBeTruthy();
+    expect(screen.getByRole("status", { name: "Processing" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Import jobs" })).toBeNull();
+    status = "success";
+    view.rerender(<WorkbenchImportsClient source={source} collection={collection} />);
+    expect((await screen.findAllByText("success")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Import progress" })).toBeTruthy();
+    view.rerender(<WorkbenchImportsClient source={source} collection={{ ...collection, key: "different-collection" }} enablePolling={false} />);
+    expect(screen.queryByRole("heading", { name: "Import progress" })).toBeNull();
+  });
 
   it("loads imports once without arming the refresh timer when polling is disabled", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url === "/api/workbench/importers") return jsonResponse({ importers: [] });
-      if (url === "/api/workbench/imports") return jsonResponse({ jobs: [] });
+      if (url.startsWith("/api/workbench/imports")) return jsonResponse({ jobs: [] });
       if (url === "/api/workbench/store") return jsonResponse({ items: [] });
       return jsonResponse({}, { status: 404 });
     });
@@ -61,8 +96,21 @@ describe("WorkbenchImportsClient", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(intervalSpy.mock.calls.filter(([, delay]) => delay === 5000)).toHaveLength(0);
   });
+  it("shows the named sequencing-data result without a bogus study link", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => jsonResponse(input.toString().startsWith("/api/workbench/imports") ? { jobs: [{
+      id: "local-completed", providerId: "ena-fastq-accession", status: "success", phase: "complete", progress: 100, error: null, resultDatasetId: "local-dataset",
+      createdAt: "2026-09-07T12:00:00Z", updatedAt: "2026-09-07T12:00:00Z",
+      scientificRecords: { orderId: "local-data", orderTitle: "Public marine controls", sampleId: "local-sample", sampleTitle: "Sample", studyId: null, studyTitle: null },
+    }] } : { importers: [] })));
+    render(<WorkbenchImportsClient source="jobs" enablePolling={false} />);
+    expect((await screen.findByRole("link", { name: "Public marine controls — open sequencing data" })).getAttribute("href")).toBe("/orders/local-data");
+    expect(screen.getByRole("link", { name: "Link samples to a study later" }).getAttribute("href")).toBe("/studies");
+    expect(screen.queryByRole("link", { name: /open study/ })).toBeNull();
+  });
 
-  it("previews and starts a real ENA accession import", async () => {
+  it("sends the named collection with preview and start requests to the SeqDesk API", async () => {
+    const collection = { key: "00e55dcb-9697-4b89-af56-af51bd557a17", name: "Public controls" };
+    let started = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
       if (url === "/api/workbench/importers") {
@@ -78,14 +126,20 @@ describe("WorkbenchImportsClient", () => {
           ],
         });
       }
-      if (url === "/api/workbench/imports" && init?.method === "POST") {
+      if (url.startsWith("/api/workbench/imports") && init?.method === "POST") {
+        started = true;
         return jsonResponse({ job: { id: "job-ena", status: "queued" } }, { status: 202 });
       }
-      if (url === "/api/workbench/imports") return jsonResponse({ jobs: [] });
+      if (url.startsWith("/api/workbench/imports")) return jsonResponse({ jobs: started ? [{
+        id: "job-ena", providerId: "ena-fastq-accession", status: "success", phase: "complete", progress: 100, request: { collection },
+        createdAt: "2026-09-07T12:00:00Z", updatedAt: "2026-09-07T12:00:00Z",
+        scientificRecords: { orderId: "new-import", orderTitle: collection.name, sampleId: "sample", studyId: null, studyTitle: null },
+      }] : [] });
       if (url === "/api/workbench/store") return jsonResponse({ items: [] });
       if (url === "/api/workbench/importers/ena-fastq-accession/preview") {
         return jsonResponse({
           preview: {
+            fingerprint: "internal-preview-fingerprint",
             summary: {
               label: "ENA FASTQ ERR164407",
               totalFound: 2,
@@ -117,9 +171,10 @@ describe("WorkbenchImportsClient", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<WorkbenchImportsClient enablePolling={false} />);
+    render(<WorkbenchImportsClient source="sra" enablePolling={false} collection={collection} />);
 
-    await screen.findByText("ENA FASTQ by accession");
+    await screen.findByText("SRA / ENA import module");
+    expect(screen.queryByRole("heading", { name: "Import progress" })).toBeNull();
     fireEvent.change(screen.getByPlaceholderText(/ERR…/i), {
       target: { value: "err164407" },
     });
@@ -127,7 +182,7 @@ describe("WorkbenchImportsClient", () => {
 
     expect(await screen.findByText("2 FASTQ file(s) selected")).toBeTruthy();
     expect(screen.getByText("ERR164407_1.fastq.gz")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Download to workspace/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Import sequencing data/i }));
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -136,11 +191,15 @@ describe("WorkbenchImportsClient", () => {
           method: "POST",
           body: JSON.stringify({
             providerId: "ena-fastq-accession",
-            input: { accession: "ERR164407", maxFiles: 20 },
+            input: { accession: "ERR164407", maxFiles: 20, collection },
+            previewFingerprint: "internal-preview-fingerprint",
           }),
         })
       )
     );
+    expect(await screen.findByRole("link", { name: "Public controls — open sequencing data" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Import progress" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Import jobs" })).toBeNull();
   });
 
   it("keeps imports empty by default, then opens installed Reference genomes from the Store", async () => {
@@ -159,7 +218,7 @@ describe("WorkbenchImportsClient", () => {
           ],
         });
       }
-      if (url === "/api/workbench/imports") {
+      if (url.startsWith("/api/workbench/imports")) {
         return jsonResponse({
           jobs: [
             {
@@ -231,10 +290,10 @@ describe("WorkbenchImportsClient", () => {
       false
     );
     expect(screen.getByText("Import jobs")).toBeTruthy();
-    expect(screen.getByText(/downloading.*10%/)).toBeTruthy();
-    expect(screen.getByText(/complete.*100%/)).toBeTruthy();
-    expect(screen.getByText(/failed.*20%/)).toBeTruthy();
-    expect(screen.getByText(/queued.*0%/)).toBeTruthy();
+    expect(screen.getByText("downloading")).toBeTruthy();
+    expect(screen.getByText("Ready — files validated")).toBeTruthy();
+    expect(screen.getByText("failed")).toBeTruthy();
+    expect(screen.getAllByText("queued").length).toBeGreaterThan(0);
     expect(screen.getByText("NCBI request failed")).toBeTruthy();
   });
 
@@ -258,7 +317,7 @@ describe("WorkbenchImportsClient", () => {
           ],
         });
       }
-      if (url === "/api/workbench/imports") {
+      if (url.startsWith("/api/workbench/imports")) {
         return jsonResponse({ jobs: [] });
       }
       if (url === "/api/workbench/store") {
@@ -307,7 +366,7 @@ describe("WorkbenchImportsClient", () => {
           ],
         });
       }
-      if (url === "/api/workbench/imports") {
+      if (url.startsWith("/api/workbench/imports")) {
         return jsonResponse({ jobs: [] });
       }
       if (url === "/api/workbench/store") {

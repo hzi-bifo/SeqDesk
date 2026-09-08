@@ -6,6 +6,12 @@ import {
 /** Start the Node-only pipeline monitor without exposing its dependencies to Edge. */
 export async function registerNodeInstrumentation(): Promise<void> {
   try {
+    const { startWorkbenchImportWorker } = await import("@/lib/workbench/import-worker");
+    startWorkbenchImportWorker();
+  } catch {
+    console.error("[instrumentation] Workbench import worker could not start.");
+  }
+  try {
     const result = await ensureWorkerStarted("pipeline-monitor");
     const detail = [
       result.pid ? `pid=${result.pid}` : null,

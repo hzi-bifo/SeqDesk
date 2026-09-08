@@ -14,6 +14,7 @@
 
 import { db } from '@/lib/db';
 import { getPackageSamplesheet, type SamplesheetConfig as PackageSamplesheetConfig } from './package-loader';
+import { scopePipelineStudyTarget } from './study-samples';
 import { resolveOrderPlatform } from './order-platform';
 import path from 'path';
 import type { PipelineTarget } from './types';
@@ -252,7 +253,7 @@ export class SamplesheetGenerator {
     const sheet = this.config.samplesheet;
 
     const samples = await db.sample.findMany({
-      where: getPipelineSampleWhere(target),
+      where: getPipelineSampleWhere(scopePipelineStudyTarget(target, this.pipelineId)),
       include: {
         reads: {
           orderBy: [{ dataClass: 'asc' }, { id: 'asc' }],
@@ -307,7 +308,7 @@ export class SamplesheetGenerator {
             isActive: r.isActive,
           })),
         },
-        study: sample.study || study,
+        study: study || sample.study,
         order: sample.order,
         dataBasePath,
       };

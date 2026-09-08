@@ -45,7 +45,6 @@ const WORKBENCH_MODULES = new Set<DeploymentModuleId>([
 
 const SEQUENCING_MODULES = new Set<DeploymentModuleId>([
   "orders",
-  "studies",
   "sequencing-data",
   "archive-submissions",
   "support",
@@ -58,6 +57,9 @@ const SEQUENCING_MODULES = new Set<DeploymentModuleId>([
  * while these switches customize features inside that topology.
  */
 export const FEATURE_MODULE_DOMAIN_REQUIREMENTS = {
+  "sequencing-management": ["core"],
+  "import-cami": ["core"],
+  "import-sra": ["core"],
   "ai-validation": ["facility-intake"],
   "mixs-metadata": ["sample-catalog"],
   "account-validation": ["core"],
@@ -135,7 +137,7 @@ export function resolveEffectiveFeatureModuleStates(
         ] as const;
       }
 
-      return [typedModuleId, DEFAULT_MODULE_STATES[moduleId] === true] as const;
+      return [typedModuleId, moduleId === "sequencing-management" ? profile.id !== "research-workbench" : DEFAULT_MODULE_STATES[moduleId] === true] as const;
     }
   );
 
@@ -258,7 +260,8 @@ export function validateDeploymentProfileCompatibility(
     }
   }
 
-  if (profile.experience === "workbench") {
+  // Preserve ownership guarantees independently of the shared UI experience.
+  if (profile.id === "research-workbench") {
     if (!domains.has("workbench")) {
       issues.push({
         severity: "error",
@@ -275,15 +278,7 @@ export function validateDeploymentProfileCompatibility(
         });
       }
     }
-    for (const sequencingModule of SEQUENCING_MODULES) {
-      if (modules.has(sequencingModule)) {
-        issues.push({
-          severity: "error",
-          code: "experience-module-conflict",
-          message: `${profile.id} mixes Workbench with sequencing module ${sequencingModule}.`,
-        });
-      }
-    }
+    // Facility and importer modules can coexist; domain checks still apply.
     if (profile.ownership.scientificRecords !== "workspace") {
       issues.push({
         severity: "error",
@@ -297,14 +292,6 @@ export function validateDeploymentProfileCompatibility(
         code: "workflow-execution-disabled",
         message:
           "Research Workbench can import data, but is not operationally complete until workflow execution is enabled.",
-      });
-    }
-  } else {
-    if (domains.has("workbench") || [...WORKBENCH_MODULES].some((moduleId) => modules.has(moduleId))) {
-      issues.push({
-        severity: "error",
-        code: "experience-module-conflict",
-        message: `${profile.id} mixes the sequencing experience with Workbench domains or modules.`,
       });
     }
   }

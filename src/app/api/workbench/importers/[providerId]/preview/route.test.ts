@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const mocks = vi.hoisted(() => ({
+  requireRawReadImporter: vi.fn(),
   getServerSession: vi.fn(),
   getWorkbenchImporter: vi.fn(),
   provider: {
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next-auth", () => ({
   getServerSession: mocks.getServerSession,
 }));
+vi.mock("@/lib/modules/input-modules.server", () => ({ requireRawReadImporter: mocks.requireRawReadImporter }));
 
 vi.mock("@/lib/auth", () => ({
   authOptions: {},
@@ -34,6 +36,13 @@ function request(body: unknown) {
 }
 
 describe("POST /api/workbench/importers/[providerId]/preview", () => {
+  it("blocks disabled input modules before contacting their provider", async () => {
+    mocks.requireRawReadImporter.mockRejectedValueOnce(new Error("Disabled"));
+    const response = await POST(request({}), { params: Promise.resolve({ providerId: "mock" }) });
+    expect(response.status).toBe(403);
+    expect(mocks.provider.preflight).not.toHaveBeenCalled();
+    expect(mocks.provider.preview).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
@@ -97,6 +106,7 @@ describe("POST /api/workbench/importers/[providerId]/preview", () => {
     expect(mocks.provider.preview).toHaveBeenCalledWith({ taxon: "E. coli" });
     expect(await response.json()).toEqual({
       preview: {
+        fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
         providerId: "mock",
         summary: { selectedCount: 1 },
         genomes: [{ accession: "GCF_1" }],

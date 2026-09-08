@@ -432,7 +432,7 @@ describe("GET /api/pipelines/runs/[id]/debug", () => {
     expect(res.status).toBe(200);
   });
 
-  it("returns 403 for a non-admin owner of an unpublished run", async () => {
+  it("allows a runnable owner to debug their unpublished run", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "user-1", role: "RESEARCHER" },
     });
@@ -442,9 +442,9 @@ describe("GET /api/pipelines/runs/[id]/debug", () => {
     });
 
     const res = await GET(makeRequest("run-1"), makeParams("run-1"));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.error).toBe("Forbidden");
+    expect(body.error).toBeUndefined();
   });
 
   it("includes no files when runFolder is null", async () => {

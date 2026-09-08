@@ -91,6 +91,8 @@ model Department {
 
 model Order {
   id               String       @id @default(cuid())
+  dataOrigin       String       @default("facility")
+  sourceMetadata   String?
   orderNumber      String       @unique
   name             String?
   generatedByE2E   Boolean      @default(false)
@@ -152,6 +154,7 @@ model Study {
   updatedAt          DateTime      @updatedAt
   userId             String
   samples            Sample[]
+  cohortMembers      StudySample[]
   pipelineRuns       PipelineRun[]
   pipelineResultSelections PipelineResultSelection[]
   user               User          @relation("StudyOwner", fields: [userId], references: [id])
@@ -187,19 +190,34 @@ model Sample {
   facilityStatusUpdatedAt DateTime?
   createdAt             DateTime   @default(now())
   updatedAt             DateTime   @updatedAt
-  orderId               String
+  orderId               String?
   studyId               String?
   assemblies            Assembly[] @relation("SampleAssemblies")
   preferredAssemblyId   String?    @unique
   preferredAssembly     Assembly?  @relation("PreferredAssembly", fields: [preferredAssemblyId], references: [id], onDelete: SetNull)
   bins                  Bin[]
   reads                 Read[]
+  studyMemberships      StudySample[]
   sequencingRunSamples SequencingRunSample[]
   sequencingArtifacts   SequencingArtifact[]
   sequencingUploads     SequencingUpload[]
   streamIngestedFiles   StreamIngestedFile[]
   study                 Study?     @relation(fields: [studyId], references: [id])
-  order                 Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order                 Order?     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+// Analysis membership never moves a sample or changes its owner/source study.
+model StudySample {
+  studyId    String
+  sampleId   String
+  groupLabel String?
+  role       String @default("unassigned")
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  study      Study @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  sample     Sample @relation(fields: [sampleId], references: [id], onDelete: Cascade)
+  @@id([studyId, sampleId])
+  @@index([sampleId])
 }
 
 model Read {

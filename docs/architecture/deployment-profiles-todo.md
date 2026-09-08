@@ -1,5 +1,7 @@
 # Deployment profiles implementation TODO
 
+> Superseded where it describes separate application views, mutually exclusive input paths or Canvas-first navigation. The current implementation and remaining TODOs are in [One SeqDesk with coexisting input modules](unified-input-modules.md). Existing enrollment/ownership protections remain compatibility policy, not separate products.
+
 Companion to `docs/architecture/deployment-profiles-plan.md`.
 
 Decision gates and their recommended defaults are in `docs/architecture/deployment-profiles-decision-register.md`.
@@ -214,6 +216,10 @@ production-ready.
 - [x] Never seed generic accounts or overwrite existing passwords during update/reconfigure/database adoption.
 
 ### Guided question flow
+
+- [ ] Validate the first-install usability/handover contract in `deployment-profiles-installation-setup.md`: safe Back/dependency invalidation, terminal EOF, service identity and reboot persistence, no-SMTP invitations, connectivity guidance, browser handover, and sanitized support diagnostics.
+- [ ] Replace the global Workbench runtime onboarding gate with operation-scoped readiness: verified storage permits workspace/upload work while deferred runtime blocks execution only. Keep administrator repair access, enforce gates server-side, and test transition to ready without reinstalling.
+- [ ] Run a first-time-operator walkthrough for each profile against the same packaged release; ensure the first scientific journey needs no undocumented setup steps.
 
 - [x] Run a read-only basic prerequisite check before collecting configuration so unsupported runtime/host/tool/target conditions fail before the user completes the wizard.
 - [ ] Replace the current split shell and Node prompt logic with one question schema/state machine, even if execution is internally divided around preflight.
@@ -523,6 +529,48 @@ Acceptance:
 - [ ] Changing dataset bytes produces a new dataset/version; display metadata edits cannot change the immutable run input snapshot.
 - [ ] Deactivating a user does not destroy their Workbench data.
 
+### Follow-on — Modular input sources and unified discovery
+
+CAMI input-module checkpoint (2026-09-07):
+
+- [x] Register CAMI as a bundled Store importer with its own dataset/sample/technology form; keep one app and installer.
+- [x] Support CAMI II Marine and CAMI III toy human gut read inputs, one sample/technology per job; exclude benchmark answers from published inputs.
+- [x] Preview size and destination names; show transfer progress and extraction/validation/publication stages.
+- [x] Safely extract the supported anonymous FASTQ layout, validate gzip/FASTQ and interleaved pair identities, and split short reads into R1/R2.
+- [x] Publish owner-scoped Study/Sample/Read records atomically with dataset/job completion, without a facility Order. Preserve both technologies without selecting a pipeline-active read set.
+- [x] Retain source/version/citation, simulated platform/environment, output checksums/counts and CAMI III's checksum-pinned subject mapping; never invent unavailable accessions or timepoints.
+- [x] Link success to owner-only imported-study detail pages and a persistent study list.
+- [ ] Add batch selection, running cancellation, storage reservations and module preference persistence.
+- [ ] Verify the complete browser journey and other full-size dataset/technology combinations; wire explicit pipeline input selection later.
+
+Follow-on source roadmap (not all required for the initial profile release):
+`deployment-profiles-input-sources.md` documents repository research, boundaries,
+the shared Add data journey, and provider-specific acceptance requirements.
+
+- [ ] Extract a capability-based source registry and shared discovery/resolve/import contracts from the existing importer subsystem; version legacy job payloads.
+- [ ] Add explicit destination authorization and typed immutable asset finalization before adding more providers; do not carry forward implicit default-workspace/global-cache ownership.
+- [ ] Add unified public search, accession/recognized-URL routing, source-grouped results, bounded selection basket and a frozen server-validated import manifest.
+- [ ] Extend ENA-backed reads and NCBI assembly discovery first, reusing the common transfer queue and policy.
+- [ ] Add MGnify **v2**, BioStudies, and BioSamples metadata enrichment next; distinguish linked records, processed analyses and raw files.
+- [ ] Add per-provider shared request budgets, independent error/pagination states, provenance, unknown-size limits, and source compatibility tests.
+- [ ] Implement the input-source P0/P1 edge-case matrix: scientific pairing/version identity, authorization changes, idempotent publication, fenced workers, crash/cancel recovery, storage reservations, safe resume/extraction, and stale search results.
+  - [x] Atomically claim queued jobs and condition queued cancellation on current database state; repeated dispatch cannot restart a running or terminal job.
+  - [x] Commit dataset metadata, workspace link and job success in one database transaction; prevent a subsequent canvas-notification failure from downgrading job success.
+  - [x] Add real isolated-database tests for concurrent request keys, single-job execution, distinct private job storage, deactivation during transfer, transactional publication rollback, interrupted-job recovery, and global concurrency admission.
+  - [x] Replace new imports' mutable shared-cache reuse with job/workspace-specific storage; retain existing legacy datasets unchanged. Lock owner/workspace authorization during publication and fix concurrent default-workspace creation.
+  - [x] Add 30-second running-job heartbeats, conditional publication/progress, interrupted-job failure after three minutes without a heartbeat, and startup reconciliation of queued work. Abort transfers on heartbeat loss where supported. Do not replay interrupted jobs in place.
+  - [x] Add a shared database admission limit (default two active imports; `SEQDESK_WORKBENCH_IMPORT_CONCURRENCY` supports 1–16), plus request-key idempotency for the Add data UI.
+  - [x] Invalidate stale UI previews and require a matching re-resolved preview fingerprint before Add data starts a transfer. Canvas-triggered imports remain a separate server-resolved execution path.
+  - [x] Preserve empty ENA metadata positions, reject inconsistent lists/unsafe hosts, keep complete runs under the file cap, and bound file-report size. Store collision-safe asset filenames, source URLs, per-file SHA-256 and checksum representation.
+  - [x] Validate four-line FASTQ/gzip structure and expanded size for ENA and local FASTQ uploads; verify declared upload length. Pairing is explicitly not yet validated.
+  - [x] Replace NCBI shell extraction with bounded ZIP extraction: reject traversal, links, duplicate/case-folded paths, encrypted entries, excessive expansion and CRC errors. Reject malformed/unversioned assembly metadata and missing selected FASTA outputs.
+  - [ ] Complete full filesystem/mount capacity reservations across uploads, imports and workflows; the shared import concurrency limit is not a disk quota. Bound NCBI download scratch usage before extraction and add abort/recovery checks for external child processes.
+  - [ ] Add paired-read identifier/count validation, semantic collection compatibility, non-FASTQ content validators, and reference-counted immutable storage. Whole-run selection alone does not prove pairing.
+  - [ ] Add verified resumable upload/download checkpoints and cleanup of abandoned process-crash staging. Current interrupted imports must start a new reviewed attempt; automatic byte resume and ZIP64 are unsupported.
+- [ ] Require per-provider evidence for real bounded search/import/workflow journeys; distinguish pure internal tests, isolated fault-injection tests and real-provider checks. Do not treat skipped or unavailable external checks as passed.
+- [ ] Keep provider setup in authenticated onboarding; optional source failures must not block upload or base readiness.
+- [ ] Evaluate native SRA conversion, GEO, EBI Search and further omics/storage providers only after the common flow works; defer a plugin marketplace and full archive indexing.
+
 ## Milestone 9 — Target-agnostic pipeline execution
 
 - [ ] Add target adapters for `order`, `study`, and `workbench-analysis`.
@@ -582,3 +630,15 @@ Acceptance journey:
 - [x] Convert the facility pipeline-run API family and corresponding UI as one complete slice.
 - [x] Prove that “run a workflow” and “configure installed workflows/pipelines” are separate capabilities.
 - [ ] Use that pattern to convert the remaining APIs incrementally.
+# Shared UI correction — September 7, 2026
+
+- [x] Restore shared SeqDesk branding and Sequencing/Studies navigation; make Canvas optional.
+- [x] Reuse existing Studies list, creation, detail, and metadata pages with workspace-scoped grants.
+- [x] Allow study creation before importing samples, without requiring an order.
+- [x] Show order-independent sequencing entries, read locations/layout/classification/checksums, and source metadata.
+- [x] Route CAMI completion to sequencing entries and shared studies; redirect legacy imported-study pages.
+- [x] Let CAMI target an owned, editable study; recheck ownership on publication.
+- [x] Fix Canvas save-state reload and initialization races; test that source/note nodes survive autosave.
+- [ ] Extract and share the existing order-scoped sequencing editing/QC/pipeline widgets with the order-independent entry page. The initial entry page is an inspection surface, not full editing/pipeline parity.
+- [ ] Extend the scientific publication contract to ENA, local uploads and other source modules; these still produce workspace datasets today.
+- [ ] Add source selection to shared-lab/center profiles without granting private-workspace APIs to those profiles indiscriminately.

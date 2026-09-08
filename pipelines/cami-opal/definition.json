@@ -1,0 +1,87 @@
+{
+  "pipeline": "cami-opal",
+  "name": "CAMI Taxonomic Benchmark (OPAL)",
+  "description": "Compare completed MetaPhlAn profiles with a supplied CAMI taxonomic Ground Truth; never used for profiling reads.",
+  "version": "0.1.0",
+  "url": "https://github.com/CAMI-challenge/OPAL",
+  "minNextflowVersion": "23.04.0",
+  "inputs": [
+    {
+      "id": "samplesheet",
+      "name": "Study sample selection",
+      "description": "SeqDesk sample codes used for exact reference matching",
+      "fileTypes": [
+        ".csv"
+      ],
+      "source": "generated_samplesheet",
+      "sourceDescription": "Existing SeqDesk sample records"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "benchmark_report",
+      "name": "benchmark report",
+      "description": "benchmark report",
+      "fromStep": "benchmark",
+      "fileTypes": [
+        ".html"
+      ],
+      "destination": "study_report",
+      "destinationDescription": "Retained as a versioned pipeline-run output"
+    },
+    {
+      "id": "benchmark_metrics",
+      "name": "benchmark metrics",
+      "description": "benchmark metrics",
+      "fromStep": "benchmark",
+      "fileTypes": [
+        ".tsv"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Retained as a versioned pipeline-run output"
+    },
+    {
+      "id": "benchmark_bundle",
+      "name": "benchmark bundle",
+      "description": "benchmark bundle",
+      "fromStep": "benchmark",
+      "fileTypes": [
+        ".zip"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Retained as a versioned pipeline-run output"
+    },
+    {
+      "id": "benchmark_provenance",
+      "name": "benchmark provenance",
+      "description": "benchmark provenance",
+      "fromStep": "benchmark",
+      "fileTypes": [
+        ".json"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Retained as a versioned pipeline-run output"
+    }
+  ],
+  "steps": [
+    {
+      "id": "benchmark",
+      "name": "Validate inputs and benchmark",
+      "description": "Compare completed MetaPhlAn profiles with a supplied CAMI taxonomic Ground Truth; never used for profiling reads.",
+      "category": "reporting",
+      "dependsOn": [],
+      "processMatchers": [
+        "OPAL"
+      ],
+      "tools": [
+        "OPAL 1.0.12"
+      ],
+      "outputs": [
+        "benchmark_report",
+        "benchmark_metrics",
+        "benchmark_bundle",
+        "benchmark_provenance"
+      ]
+    }
+  ]
+}

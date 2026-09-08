@@ -91,7 +91,7 @@ export function useOrderPipelines(
         const [definitions, runsRes, seqRes] = await Promise.all([
           fetchOrderPipelineDefinitions(),
           fetch(`/api/pipelines/runs?orderId=${orderId}&limit=200`),
-          fetch(`/api/orders/${orderId}/sequencing`),
+          fetch(`/api/orders/${orderId}/pipeline-input`),
         ]);
 
         const runsPayload = runsRes.ok

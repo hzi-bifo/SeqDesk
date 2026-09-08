@@ -104,7 +104,6 @@ describe("NCBI genomes by taxon importer", () => {
           sourceDatabase: "SOURCE_DATABASE_GENBANK",
         },
       }),
-      "not json",
     ].join("\n");
 
     expect(parseNcbiGenomeSummaryLines(output)).toEqual([
@@ -134,9 +133,9 @@ describe("NCBI genomes by taxon importer", () => {
   it("previews capped metadata and passes bounded NCBI summary arguments", async () => {
     mockExecFileSuccess(
       [
-        JSON.stringify({ accession: "GCF_1", organism: { organism_name: "A" } }),
-        JSON.stringify({ accession: "GCF_2", organism: { organism_name: "B" } }),
-        JSON.stringify({ accession: "GCF_3", organism: { organism_name: "C" } }),
+        JSON.stringify({ accession: "GCF_1.1", organism: { organism_name: "A" } }),
+        JSON.stringify({ accession: "GCF_2.1", organism: { organism_name: "B" } }),
+        JSON.stringify({ accession: "GCF_3.1", organism: { organism_name: "C" } }),
       ].join("\n")
     );
 
@@ -171,12 +170,12 @@ describe("NCBI genomes by taxon importer", () => {
       cap: 2,
       hardMax: 500,
     });
-    expect(preview.genomes.map((genome) => genome.accession)).toEqual(["GCF_1", "GCF_2"]);
+    expect(preview.genomes.map((genome) => genome.accession)).toEqual(["GCF_1.1", "GCF_2.1"]);
   });
 
   it("uses Store-managed command paths when previewing", async () => {
     mocks.resolveWorkbenchStoreCommand.mockResolvedValue("/managed/ncbi-datasets-cli/bin/datasets");
-    mockExecFileSuccess(JSON.stringify({ accession: "GCF_1" }));
+    mockExecFileSuccess(JSON.stringify({ accession: "GCF_1.1" }));
 
     await ncbiGenomesTaxonImporter.preview({
       taxon: "Escherichia coli",

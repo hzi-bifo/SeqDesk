@@ -5,6 +5,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const toggleHelpText = vi.fn();
+vi.mock("@/lib/modules", () => ({ useModuleEnabled: () => true }));
 
 const mocks = vi.hoisted(() => ({
   usePathname: vi.fn(),
@@ -343,14 +344,14 @@ describe("sidebar shell quick wins", () => {
       </SidebarContext.Provider>
     );
 
-    expect(screen.getByText("Projects")).toBeTruthy();
+    expect(screen.getByText("Sequencing data")).toBeTruthy();
     expect(screen.getByText("Sequencing Data")).toBeTruthy();
-    expect(screen.getByText("Lab member")).toBeTruthy();
+    expect(screen.getByText("Researcher")).toBeTruthy();
     expect(screen.queryByRole("link", { name: /Application Settings/i })).toBeNull();
     expect(screen.queryByText("Support")).toBeNull();
   });
 
-  it("hides sequencing navigation but keeps admin settings in Workbench mode", () => {
+  it("uses the original sequencing/study switcher in the research preset and hides Canvas", () => {
     mocks.usePathname.mockReturnValue("/orders");
 
     render(
@@ -362,10 +363,9 @@ describe("sidebar shell quick wins", () => {
       </SidebarContext.Provider>
     );
 
-    expect(screen.getByText("Private Workbench")).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Canvas/i }).getAttribute("href")).toBe(
-      "/workbench/data"
-    );
+    expect(screen.getByRole("button", { name: "Sequencing data" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Studies" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Canvas/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /Lab/i })).toBeNull();
     expect(
       screen.getByRole("link", { name: /Application Settings/i }).getAttribute("href")

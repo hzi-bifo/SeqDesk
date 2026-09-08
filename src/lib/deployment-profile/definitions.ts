@@ -6,91 +6,25 @@ import type {
 export const DEFAULT_DEPLOYMENT_PROFILE_ID: DeploymentProfileId =
   "sequencing-center";
 
-export const DEPLOYMENT_PROFILES: Readonly<
-  Record<DeploymentProfileId, DeploymentProfileDefinition>
-> = {
-  "sequencing-center": {
-    id: "sequencing-center",
-    label: "Sequencing center",
-    shortLabel: "Center",
-    description:
-      "A service facility that receives sequencing requests from researchers and manages them through delivery and archive submission.",
-    experience: "sequencing",
-    defaultRoute: "/orders",
-    accountModel: "service-roles",
-    domains: [
-      "core",
-      "facility-intake",
-      "sample-catalog",
-      "sequencing-operations",
-      "analysis",
-      "publishing",
-      "support",
-    ],
-    ownership: { scientificRecords: "requester" },
-    enrollment: { defaultPolicy: "self-registration" },
-    terminology: { member: "Researcher", workItem: "Order" },
-    modules: [
-      "orders",
-      "studies",
-      "sequencing-data",
-      "archive-submissions",
-      "support",
-      "pipelines",
-      "administration",
-    ],
-  },
-  "shared-lab": {
-    id: "shared-lab",
-    label: "Shared lab",
-    shortLabel: "Lab",
-    description:
-      "One laboratory shares sequencing projects and workflows, with one or more administrators responsible for configuration.",
-    experience: "sequencing",
-    defaultRoute: "/orders",
-    accountModel: "collaborative-lab",
-    domains: [
-      "core",
-      "facility-intake",
-      "sample-catalog",
-      "sequencing-operations",
-      "analysis",
-      "publishing",
-    ],
-    ownership: { scientificRecords: "installation" },
-    enrollment: { defaultPolicy: "invite-only" },
-    terminology: { member: "Lab member", workItem: "Project" },
-    modules: [
-      "orders",
-      "studies",
-      "sequencing-data",
-      "archive-submissions",
-      "pipelines",
-      "administration",
-    ],
-  },
-  "research-workbench": {
-    id: "research-workbench",
-    label: "Research workbench",
-    shortLabel: "Workbench",
-    description:
-      "A researcher-focused analysis workspace for uploaded or imported data, pipelines, runs, and results.",
-    experience: "workbench",
-    defaultRoute: "/workbench/data",
-    accountModel: "self-service",
-    domains: ["core", "analysis", "publishing", "workbench"],
-    ownership: { scientificRecords: "workspace" },
-    enrollment: { defaultPolicy: "invite-only" },
-    terminology: { member: "Member", workItem: "Workspace" },
-    modules: [
-      "workbench-data",
-      "data-imports",
-      "pipelines",
-      "runs",
-      "results",
-      "administration",
-    ],
-  },
+// Legacy profile identifiers are installation presets, never different applications.
+// Ownership/enrollment defaults are retained for existing installations.
+const sharedSurface = {
+  experience: "sequencing" as const,
+  defaultRoute: "/orders" as const,
+  domains: ["core", "facility-intake", "sample-catalog", "sequencing-operations", "analysis", "publishing", "support", "workbench"] as const,
+  modules: ["orders", "studies", "sequencing-data", "archive-submissions", "support", "pipelines", "administration", "workbench-data", "data-imports", "runs", "results"] as const,
+  terminology: { member: "Researcher" as const, workItem: "Order" as const },
+};
+export const DEPLOYMENT_PROFILES: Readonly<Record<DeploymentProfileId, DeploymentProfileDefinition>> = {
+  "sequencing-center": { ...sharedSurface, id: "sequencing-center", label: "Sequencing center preset", shortLabel: "Center",
+    description: "SeqDesk with facility sequencing management and raw-read imports.",
+    accountModel: "service-roles", ownership: { scientificRecords: "requester" }, enrollment: { defaultPolicy: "self-registration" } },
+  "shared-lab": { ...sharedSurface, id: "shared-lab", label: "Shared lab preset", shortLabel: "Lab",
+    description: "The same SeqDesk application with collaborative laboratory access.",
+    accountModel: "collaborative-lab", ownership: { scientificRecords: "installation" }, enrollment: { defaultPolicy: "invite-only" } },
+  "research-workbench": { ...sharedSurface, id: "research-workbench", label: "Research preset", shortLabel: "Research",
+    description: "The same SeqDesk application with raw-read imports; facility management is initially disabled.",
+    accountModel: "self-service", ownership: { scientificRecords: "workspace" }, enrollment: { defaultPolicy: "invite-only" } },
 };
 
 export function getDeploymentProfileDefinition(
@@ -119,13 +53,15 @@ const MODULE_PATHS: ReadonlyArray<{
   prefix: string;
   module: DeploymentProfileDefinition["modules"][number];
 }> = [
+  { prefix: "/studies", module: "studies" },
+  { prefix: "/sequencing", module: "studies" },
   { prefix: "/messages", module: "support" },
   { prefix: "/api/tickets", module: "support" },
   { prefix: "/api/orders", module: "orders" },
   { prefix: "/api/form-schema", module: "orders" },
   { prefix: "/api/studies", module: "studies" },
   { prefix: "/api/study-form-schema", module: "studies" },
-  { prefix: "/api/samples", module: "orders" },
+  { prefix: "/api/samples", module: "studies" },
   { prefix: "/api/files", module: "sequencing-data" },
   { prefix: "/api/assemblies", module: "studies" },
   { prefix: "/api/sidebar", module: "orders" },
@@ -189,7 +125,7 @@ export function isRouteAvailableInDeploymentProfile(
     pathname === "/api/workbench" ||
     pathname.startsWith("/api/workbench/")
   ) {
-    return profile.experience === "workbench";
+    return profile.modules.includes("data-imports");
   }
 
   if (

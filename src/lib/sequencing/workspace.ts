@@ -436,6 +436,9 @@ function deriveReadOrigin(
   dataClassSource: ReadDataClassSource,
   pipelineSources: Record<string, string> | null
 ): ReadOrigin {
+  if (dataClassSource === "external_import" || ["cami-benchmark", "ena-fastq-accession"].includes(pipelineSources?.sourceType ?? "")) {
+    return "external_import";
+  }
   if (pipelineSources?.["simulate-reads"]) {
     return "simulated";
   }

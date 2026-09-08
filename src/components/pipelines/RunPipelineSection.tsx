@@ -23,6 +23,7 @@ import { Dna, FlaskConical, Upload, Loader2, Play, AlertCircle, CheckCircle2, XC
 import Link from "next/link";
 import { useCapability } from "@/components/deployment-profile/useCapability";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
+import { pipelineRunOverrides } from "@/lib/pipelines/config-schema-validation";
 import {
   ExecutionTargetControl,
   getExecutionTargetBlockMessage,
@@ -360,7 +361,7 @@ export function RunPipelineSection({ studyId, samples }: RunPipelineSectionProps
           pipelineId: selectedPipeline.pipelineId,
           studyId,
           sampleIds: Array.from(selectedSamples),
-          config: localConfig,
+          config: pipelineRunOverrides(selectedPipeline.configSchema, localConfig),
           ...(canManagePipelines ? { executionMode } : {}),
         }),
       });

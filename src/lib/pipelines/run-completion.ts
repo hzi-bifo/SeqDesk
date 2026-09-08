@@ -3,6 +3,7 @@ import path from "path";
 import type { Prisma } from "@prisma/client";
 
 import { db } from "@/lib/db";
+import { loadStudyRunSamples } from './study-samples';
 
 import { createGenericAdapter } from "./generic-adapter";
 import { getAdapter, registerAdapter } from "./adapters";
@@ -384,7 +385,7 @@ export async function processCompletedPipelineRun(runId: string, pipelineId: str
   const allSamples =
     run.targetType === "order"
       ? run.order?.samples || []
-      : run.study?.samples || [];
+      : run.inputSampleIds ? await loadStudyRunSamples(run) : run.study?.samples || [];
   const samples = selectTargetSamples(
     runId,
     pipelineId,

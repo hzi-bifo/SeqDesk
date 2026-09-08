@@ -48,8 +48,10 @@ import {
   normalizePipelineRunConfig,
 } from '@/lib/pipelines/simulate-reads-config';
 import { getReadCleaningPathIssues } from '@/lib/pipelines/read-cleaning-path-validation';
+import { pipelineConfigOverrideIssues, pipelineSchemaRunIssues } from '@/lib/pipelines/config-schema-validation';
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { supportsPipelineTarget } from '@/lib/pipelines/target';
+import { loadStudyPipelineSamples, scopePipelineStudyTarget } from './study-samples';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import type { ResourceScope } from '@/lib/authorization';
 
@@ -64,6 +66,7 @@ type CreatePipelineRunInput = {
   body: Record<string, unknown>;
   userId: string;
   accessScope: ResourceScope;
+  canManageConfig?: boolean;
 };
 
 type StartPipelineRunInput = {
@@ -427,7 +430,7 @@ export async function listPipelineRunsForOperator(args: {
         { order: { userId: args.userId } },
       ],
     });
-    andFilters.push({ selectedResultSelections: { some: {} } });
+    if (args.publishedOnly !== false) andFilters.push({ selectedResultSelections: { some: {} } });
   } else if (args.readScope === 'workspace') {
     // Facility-targeted runs do not yet carry a Workbench workspace key. Keep
     // this compatibility endpoint limited to runs initiated by the member;
@@ -583,6 +586,7 @@ export async function createPipelineRunForOperator({
   body,
   userId,
   accessScope,
+  canManageConfig = false,
 }: CreatePipelineRunInput): Promise<PipelineServiceResponse> {
   const pipelineId = typeof body.pipelineId === 'string' ? body.pipelineId : '';
   const studyId = typeof body.studyId === 'string' ? body.studyId : undefined;
@@ -615,14 +619,20 @@ export async function createPipelineRunForOperator({
     return jsonResponse({ error: 'Exactly one of studyId or orderId is required' }, 400);
   }
 
-  const target: PipelineTarget = orderId
+  const target: PipelineTarget = scopePipelineStudyTarget(orderId
     ? { type: 'order', orderId, sampleIds: requestedSampleIds }
-    : { type: 'study', studyId: studyId!, sampleIds: requestedSampleIds };
+    : { type: 'study', studyId: studyId! }, pipelineId);
 
   const definition = PIPELINE_REGISTRY[pipelineId];
   if (!definition) {
     return jsonResponse({ error: 'Invalid pipeline ID' }, 400);
   }
+
+  if (config !== undefined && !isRecord(config)) {
+    return jsonResponse({ error: 'Pipeline config must be an object' }, 400);
+  }
+  const overrideIssues = pipelineConfigOverrideIssues(definition.configSchema, asRecord(config) ?? {}, canManageConfig);
+  if (overrideIssues.length) return jsonResponse({ error: 'Pipeline configuration access denied', details: overrideIssues }, 403);
 
   if (!(await getPipelineEnabled(pipelineId))) {
     return jsonResponse({ error: `Pipeline ${pipelineId} is disabled` }, 403);
@@ -672,8 +682,6 @@ export async function createPipelineRunForOperator({
       : Promise.resolve(null),
   ]);
 
-  const samples = target.type === 'study' ? study?.samples || [] : order?.samples || [];
-
   if (target.type === 'study' && !study) {
     return jsonResponse({ error: 'Study not found' }, 404);
   }
@@ -693,6 +701,12 @@ export async function createPipelineRunForOperator({
     return jsonResponse({ error: 'Forbidden' }, 403);
   }
 
+  const samples = target.type === 'study'
+    ? await loadStudyPipelineSamples(target, { userId, installation: accessScope === 'installation' })
+    : order?.samples || [];
+  if (target.type === 'study' && requestedSampleIds?.length === 0) {
+    return jsonResponse({ error: 'Select at least one sample' }, 400);
+  }
   if (requestedSampleIds && requestedSampleIds.length > 0) {
     const sampleIdSet = new Set(samples.map((sample) => sample.id));
     const missingSampleIds = requestedSampleIds.filter((sampleId) => !sampleIdSet.has(sampleId));
@@ -702,6 +716,14 @@ export async function createPipelineRunForOperator({
         400
       );
     }
+  }
+
+  // Pin the actual authorized cohort, including implicit "all", for reproducible
+  // start and output matching. A later link must not silently expand a queued run.
+  if (target.type === 'study') requestedSampleIds = [...new Set(requestedSampleIds ?? samples.map(sample => sample.id))];
+  const selectedSamples = requestedSampleIds?.length ? samples.filter(sample => requestedSampleIds.includes(sample.id)) : samples;
+  if (new Set(selectedSamples.map(sample => sample.sampleId)).size !== selectedSamples.length) {
+    return jsonResponse({ error: 'Selected samples have duplicate sample codes. Select uniquely named samples before running the pipeline.' }, 400);
   }
 
   const validationTarget =
@@ -752,7 +774,7 @@ export async function createPipelineRunForOperator({
   }
 
   const normalizedConfig = launchConfig.config;
-  const configIssues = getPipelineRunConfigIssues(pipelineId, normalizedConfig);
+  const configIssues = [...getPipelineRunConfigIssues(pipelineId, normalizedConfig), ...pipelineSchemaRunIssues(definition.configSchema, normalizedConfig)];
   if (configIssues.length > 0) {
     return jsonResponse(
       { error: 'Pipeline config validation failed', details: configIssues },
@@ -876,12 +898,13 @@ export async function startPipelineRunForOperator({
     return jsonResponse({ error: `Pipeline ${run.pipelineId} is disabled` }, 403);
   }
 
-  const target: PipelineTarget | null =
+  const rawTarget: PipelineTarget | null =
     run.targetType === 'order' && run.orderId
       ? { type: 'order', orderId: run.orderId }
       : run.studyId
         ? { type: 'study', studyId: run.studyId }
         : null;
+  const target = rawTarget ? scopePipelineStudyTarget(rawTarget, run.pipelineId) : null;
 
   if (!target) {
     return jsonResponse({ error: 'Run has no associated target' }, 400);
@@ -920,6 +943,20 @@ export async function startPipelineRunForOperator({
     selectedSampleIds = startBody.sampleIds;
   }
 
+  if (target.type === 'study') {
+    const samples = await loadStudyPipelineSamples(target, { userId, installation: accessScope === 'installation' });
+    const available = new Set(samples.map(sample => sample.id));
+    if (selectedSampleIds?.some(id => !available.has(id))) {
+      return jsonResponse({ error: 'Selected samples are no longer available in this study or you no longer have access. Create a new run with the current selection.' }, 400);
+    }
+    selectedSampleIds = [...new Set(selectedSampleIds ?? samples.map(sample => sample.id))];
+    if (!selectedSampleIds.length) return jsonResponse({ error: 'No accessible samples in study' }, 400);
+    const selected = samples.filter(sample => selectedSampleIds.includes(sample.id));
+    if (new Set(selected.map(sample => sample.sampleId)).size !== selected.length) {
+      return jsonResponse({ error: 'Selected samples have duplicate sample codes. Create a new run with uniquely named samples.' }, 400);
+    }
+  }
+
   const validationTarget =
     selectedSampleIds && selectedSampleIds.length > 0
       ? { ...target, sampleIds: selectedSampleIds }
@@ -956,7 +993,7 @@ export async function startPipelineRunForOperator({
   }
 
   config = launchConfig.config;
-  const configIssues = getPipelineRunConfigIssues(run.pipelineId, config);
+  const configIssues = [...getPipelineRunConfigIssues(run.pipelineId, config), ...pipelineSchemaRunIssues(getPackage(run.pipelineId)?.registry?.configSchema, config)];
   if (configIssues.length > 0) {
     const message = configIssues.join('\n');
     const failed = await markPendingRunValidationFailed(runId, message);

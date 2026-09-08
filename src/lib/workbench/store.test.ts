@@ -57,7 +57,7 @@ describe("workbench store", () => {
   });
 
   it("declares NCBI Datasets CLI as a curated Store tool", () => {
-    expect(listWorkbenchStoreCatalog()).toEqual([
+    expect(listWorkbenchStoreCatalog()).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "ncbi-datasets-cli",
         kind: "tool",
@@ -67,7 +67,7 @@ describe("workbench store", () => {
           packages: expect.arrayContaining(["ncbi-datasets-cli"]),
         }),
       }),
-    ]);
+    ]));
     expect(getWorkbenchStoreItem("missing")).toBeNull();
   });
 

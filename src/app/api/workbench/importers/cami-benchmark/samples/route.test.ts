@@ -1,0 +1,21 @@
+import { beforeEach, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+const mocks = vi.hoisted(() => ({ session: vi.fn(), module: vi.fn(), statuses: vi.fn() }));
+vi.mock("next-auth", () => ({ getServerSession: mocks.session }));
+vi.mock("@/lib/auth", () => ({ authOptions: {} }));
+vi.mock("@/lib/modules/input-modules.server", () => ({ requireRawReadImporter: mocks.module }));
+vi.mock("@/lib/workbench/cami-sample-status.server", () => ({ getCamiSampleStatuses: mocks.statuses }));
+import { GET } from "./route";
+const query = "collection=00e55dcb-9697-4b89-af56-af51bd557a17&dataset=cami2-marine&technology=short";
+const request = (search = query) => new NextRequest("http://localhost/api/workbench/importers/cami-benchmark/samples?" + search);
+beforeEach(() => { vi.resetAllMocks(); process.env.SEQDESK_DEPLOYMENT_PROFILE = "research-workbench"; mocks.session.mockResolvedValue({ user: { id: "owner", role: "RESEARCHER" } }); mocks.statuses.mockResolvedValue([]); });
+it("returns collection-scoped sample statuses without caching", async () => {
+  const response = await GET(request());
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(mocks.statuses).toHaveBeenCalledWith("owner", { collection: "00e55dcb-9697-4b89-af56-af51bd557a17", dataset: "cami2-marine", technology: "short" });
+});
+it("requires login", async () => { mocks.session.mockResolvedValue(null); expect((await GET(request())).status).toBe(401); expect(mocks.statuses).not.toHaveBeenCalled(); });
+it("blocks disabled modules", async () => { mocks.module.mockRejectedValue(new Error("disabled")); expect((await GET(request())).status).toBe(403); expect(mocks.statuses).not.toHaveBeenCalled(); });
+it.each(["", query + "&userId=other", query.replace("short", "assembly"), query.replace("cami2-marine", "arbitrary")])("rejects invalid or extra query input", async search => { expect((await GET(request(search))).status).toBe(400); expect(mocks.statuses).not.toHaveBeenCalled(); });
+it("returns an explicit error when status cannot be checked", async () => { mocks.statuses.mockRejectedValue(new Error("db unavailable")); const response = await GET(request()); expect(response.status).toBe(500); expect((await response.json()).error).toContain("Could not check"); });

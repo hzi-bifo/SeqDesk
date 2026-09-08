@@ -58,7 +58,7 @@ describe("useOrderPipelines hook", () => {
           ],
         });
       }
-      if (url === "/api/orders/order-1/sequencing") {
+      if (url === "/api/orders/order-1/pipeline-input") {
         return jsonResponse({
           summary: {
             readsLinkedSamples: 0,
@@ -92,7 +92,7 @@ describe("useOrderPipelines hook", () => {
       "/api/admin/settings/pipelines?enabled=true&catalog=order"
     );
     expect(fetchMock).toHaveBeenCalledWith("/api/pipelines/runs?orderId=order-1&limit=200");
-    expect(fetchMock).toHaveBeenCalledWith("/api/orders/order-1/sequencing");
+    expect(fetchMock).toHaveBeenCalledWith("/api/orders/order-1/pipeline-input");
 
     unmount();
   });

@@ -5,6 +5,7 @@ import path from 'path';
 import { promisify } from 'util';
 
 import { db } from '@/lib/db';
+import { loadStudyRunSamples } from './study-samples';
 import { getCapabilityGrant, principalFromSession } from '@/lib/authorization';
 import { getServerDeploymentProfile } from '@/lib/deployment-profile/server';
 import { PIPELINE_REGISTRY } from '@/lib/pipelines';
@@ -773,7 +774,7 @@ export async function getPipelineRunDetailsForOperator(runId: string): Promise<P
     size?: number;
     dataClass?: string;
   }[] = [];
-  const targetSamples = run.targetType === 'order' ? run.order?.samples || [] : run.study?.samples || [];
+  const targetSamples = run.targetType === 'order' ? run.order?.samples || [] : run.inputSampleIds ? await loadStudyRunSamples(run) : run.study?.samples || [];
 
   for (const sample of targetSamples) {
     if (selectedSampleIdSet && !selectedSampleIdSet.has(sample.id)) {
@@ -2337,7 +2338,7 @@ export async function getPipelineDebugBundleForOperator(
       : null;
 
   const targetSamples =
-    run.targetType === 'order' ? run.order?.samples || [] : run.study?.samples || [];
+    run.targetType === 'order' ? run.order?.samples || [] : run.inputSampleIds ? await loadStudyRunSamples(run) : run.study?.samples || [];
 
   const selectedSamples = targetSamples
     .filter((sample) => !selectedSampleSet || selectedSampleSet.has(sample.id))

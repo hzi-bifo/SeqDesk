@@ -337,17 +337,25 @@ export async function watchTraceFile(
 ): Promise<() => void> {
   let lastModified = 0;
   let running = true;
+  let checking = false;
 
   const check = async () => {
+    if (!running || checking) return;
+    checking = true;
     try {
       const stat = await fs.stat(tracePath);
-      if (stat.mtimeMs > lastModified) {
-        lastModified = stat.mtimeMs;
+      if (running && stat.mtimeMs > lastModified) {
         const result = await parseTraceFile(tracePath);
+        // Cleanup may run while stat/readFile is still pending.
+        if (!running) return;
         callback(result);
+        // Failed reads must remain eligible for the next poll.
+        lastModified = stat.mtimeMs;
       }
     } catch {
       // File doesn't exist yet or can't be read
+    } finally {
+      checking = false;
     }
   };
 
@@ -356,7 +364,7 @@ export async function watchTraceFile(
 
   // Set up interval
   const interval = setInterval(() => {
-    if (running) check();
+    if (running) void check();
   }, intervalMs);
 
   // Return cleanup function

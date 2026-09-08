@@ -29,15 +29,14 @@ describe("authorizeWorkbenchRequest", () => {
     expect(access).toMatchObject({ allowed: true, userId: "member-1" });
   });
 
-  it("hides Workbench APIs in a sequencing profile", async () => {
+  it("allows the shared import API in a lab preset without changing its owner", async () => {
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("shared-lab")
     );
     const access = authorizeWorkbenchRequest({
       user: { id: "member-1", role: "RESEARCHER" },
     });
-    expect(access.allowed).toBe(false);
-    if (!access.allowed) expect(access.response.status).toBe(404);
+    expect(access).toMatchObject({ allowed: true, userId: "member-1" });
   });
 
   it("keeps server-tool installation administrator-only", async () => {

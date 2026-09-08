@@ -83,6 +83,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (database.resource) {
+      const { resourceApiAction } = await import('@/lib/pipelines/resource-service');
+      return resourceApiAction('preflight', pipelineId, database.resource, customTargetPath);
+    }
+
     const executionSettings = await getExecutionSettings();
     let resolvedTargetPath: string | null = null;
     let resolvedError: string | null = null;

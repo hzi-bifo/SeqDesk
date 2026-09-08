@@ -470,7 +470,7 @@ describe("DELETE /api/studies/[id]", () => {
 
   it("does not block deletion of a study with samples when dynamic-studies is off", async () => {
     mocks.isStudyModuleEnabled.mockReturnValue(false);
-    mocks.db.sample.count.mockResolvedValue(3); // would block if the flag were on
+    mocks.db.sample.count.mockResolvedValue(0); // no order-independent samples
 
     const req = new NextRequest(BASE_URL, { method: "DELETE" });
     const response = await DELETE(req, { params: Promise.resolve({ id: "study-1" }) });

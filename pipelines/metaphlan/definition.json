@@ -1,0 +1,78 @@
+{
+  "pipeline": "metaphlan",
+  "name": "Taxonomic Profiling (MetaPhlAn)",
+  "description": "Profile short shotgun reads from any source, with native and CAMI-format taxonomic profiles.",
+  "version": "0.1.0",
+  "url": "https://github.com/biobakery/MetaPhlAn",
+  "minNextflowVersion": "23.04.0",
+  "inputs": [
+    {
+      "id": "reads",
+      "name": "Selected FASTQ reads",
+      "description": "Validated short-read FASTQ files from any source",
+      "fileTypes": [
+        ".fastq",
+        ".fastq.gz",
+        ".fq",
+        ".fq.gz"
+      ],
+      "source": "sample_reads",
+      "sourceDescription": "Existing SeqDesk sample records"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "taxonomic_profile",
+      "name": "taxonomic profile",
+      "description": "taxonomic profile",
+      "fromStep": "profile",
+      "fileTypes": [
+        ".tsv"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Retained as a versioned pipeline-run output"
+    },
+    {
+      "id": "cami_profile",
+      "name": "cami profile",
+      "description": "cami profile",
+      "fromStep": "profile",
+      "fileTypes": [
+        ".profile"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Retained as a versioned pipeline-run output"
+    },
+    {
+      "id": "provenance",
+      "name": "provenance",
+      "description": "provenance",
+      "fromStep": "profile",
+      "fileTypes": [
+        ".json"
+      ],
+      "destination": "run_artifact",
+      "destinationDescription": "Retained as a versioned pipeline-run output"
+    }
+  ],
+  "steps": [
+    {
+      "id": "profile",
+      "name": "Profile reads and export CAMI",
+      "description": "Profile short shotgun reads from any source, with native and CAMI-format taxonomic profiles.",
+      "category": "processing",
+      "dependsOn": [],
+      "processMatchers": [
+        "METAPHLAN"
+      ],
+      "tools": [
+        "MetaPhlAn 4.2.5"
+      ],
+      "outputs": [
+        "taxonomic_profile",
+        "cami_profile",
+        "provenance"
+      ]
+    }
+  ]
+}

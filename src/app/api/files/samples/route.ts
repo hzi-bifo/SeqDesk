@@ -172,7 +172,8 @@ export async function GET(request: NextRequest) {
     });
 
     // Transform and filter based on needs
-    let results = samples.map((sample) => {
+    let results = samples.flatMap((sample) => {
+      if (!sample.order) return [];
       const read = sample.reads[0];
 
       // Calculate match score if filename provided

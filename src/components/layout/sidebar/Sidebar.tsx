@@ -24,13 +24,12 @@ import { useSidebarEntity } from "./useSidebarEntity";
 import { SidebarHeader } from "./SidebarHeader";
 import { SidebarEntitySwitcher } from "./SidebarEntitySwitcher";
 import { SidebarEntityNav } from "./SidebarEntityNav";
-import { WorkbenchSidebarNav } from "./WorkbenchSidebarNav";
 import { SidebarFieldHelp } from "./SidebarFieldHelp";
 import { SidebarAdminNav } from "./SidebarAdminNav";
 import { SidebarSupportNav } from "./SidebarSupportNav";
 import { SidebarUserMenu } from "./SidebarUserMenu";
 import type { DeploymentProfileDefinition } from "@/lib/deployment-profile";
-import { hasCapability, principalFromSession } from "@/lib/authorization";
+import { hasCapability, principalFromSession } from "@/lib/authorization/client";
 
 interface SidebarProps {
   user: {
@@ -59,7 +58,6 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
   const { focusedField } = useFieldHelp();
   const entityContext = useSidebarEntity();
   const [isResizing, setIsResizing] = useState(false);
-  const workbenchAppMode = deploymentProfile.experience === "workbench";
 
   const principal = principalFromSession({
     user: { ...user, id: user.id || "sidebar-session-user" },
@@ -78,8 +76,6 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
     /^\/orders\/[^/]+\/edit$/.test(pathname) ||
     pathname === "/studies/new" ||
     /^\/studies\/[^/]+\/edit$/.test(pathname);
-  const appMode = workbenchAppMode ? "workbench" : "lab";
-  const isWorkbenchMode = appMode === "workbench";
   const effectiveSidebarWidth = collapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth;
   const canResize = !collapsed && !mobileOpen;
   const isResizeActive = isResizing && canResize;
@@ -191,16 +187,12 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
       )}
       style={{ width: `${effectiveSidebarWidth}px` }}
     >
-      {isWorkbenchMode && (
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-teal-600/75" />
-      )}
 
       {/* Header */}
       <SidebarHeader
         collapsed={collapsed}
         toggle={toggle}
         version={version}
-        mode={isWorkbenchMode ? "workbench" : "lab"}
       />
 
       {isAdminPage && showAdminControls ? (
@@ -233,13 +225,7 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
         </>
       ) : (
         <>
-          {isWorkbenchMode ? (
-            <nav className={cn("flex-1 overflow-y-auto p-3 pt-0", collapsed && "px-2")}>
-              <WorkbenchSidebarNav collapsed={collapsed} />
-            </nav>
-          ) : (
-            <>
-              {/* Regular lab mode: Entity Switcher */}
+              {/* Shared scientific-record navigation for every installation. */}
               <SidebarEntitySwitcher
                 entityContext={entityContext}
                 collapsed={collapsed}
@@ -253,6 +239,7 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
                   collapsed={collapsed}
                   isDemoUser={isDemoUser}
                   showOperationalControls={showOperationalControls}
+                  showPipelineControls={Boolean(principal && hasCapability(deploymentProfile, principal, "analysis.run"))}
                   deploymentProfile={deploymentProfile}
                 />
               </nav>
@@ -273,8 +260,6 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
                   unreadMessages={isDemoUser ? 0 : unreadMessages}
                 />
                 )}
-            </>
-          )}
         </>
       )}
 
@@ -327,10 +312,8 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
           <span
             className={cn(
               "my-3 w-px rounded-full bg-transparent transition-colors",
-              isWorkbenchMode
-                ? "group-hover:bg-teal-600/70 group-focus-visible:bg-teal-600/70"
-                : "group-hover:bg-foreground/35 group-focus-visible:bg-foreground/45",
-              isResizeActive && (isWorkbenchMode ? "bg-teal-600/80" : "bg-foreground/55")
+              "group-hover:bg-foreground/35 group-focus-visible:bg-foreground/45",
+              isResizeActive && "bg-foreground/55"
             )}
           />
         </div>

@@ -9,7 +9,7 @@ import {
   getDeploymentProfileDefinition,
   type DeploymentProfileDefinition,
 } from "@/lib/deployment-profile";
-import { principalFromSession } from "@/lib/authorization";
+import { principalFromSession } from "@/lib/authorization/client";
 
 interface SidebarUserMenuProps {
   user: {

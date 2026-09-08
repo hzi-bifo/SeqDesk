@@ -82,6 +82,7 @@ import {
   type ReadOrigin,
 } from "@/lib/sequencing/constants";
 import { useQuickPrerequisiteStatus } from "@/lib/pipelines/useQuickPrerequisiteStatus";
+import { pipelineRunOverrides } from "@/lib/pipelines/config-schema-validation";
 import { getOrderPipelineSampleReadiness } from "@/lib/pipelines/order-pipeline-readiness";
 import {
   READ_CLEANING_PIPELINE_ID,
@@ -1283,7 +1284,7 @@ export function OrderPipelineView({
             pipelineId: pipeline.pipelineId,
             orderId,
             sampleIds,
-            config: localConfig,
+            config: pipelineRunOverrides(pipeline.configSchema, localConfig),
             ...(canManagePipelines ? { executionMode } : {}),
           }),
         });

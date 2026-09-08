@@ -262,13 +262,11 @@ function WorkbenchCanvasInner() {
       setEdges(toFlowEdges(payload.analysis.canvas.edges));
       setViewport(payload.analysis.canvas.viewport);
       setDirty(false);
-      setSaveState(options?.silent ? saveState : "saved");
-      window.setTimeout(() => {
-        hydratedRef.current = true;
-      }, 0);
+      if (!options?.silent) setSaveState("saved");
+      hydratedRef.current = true;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [saveState]
+    []
   );
 
   const loadAnalyses = useCallback(async () => {
@@ -276,9 +274,9 @@ function WorkbenchCanvasInner() {
     if (!response.ok) return;
     const payload = (await response.json()) as { analyses: WorkbenchAnalysis[] };
     setAnalyses(payload.analyses);
-    const next = payload.analyses.find((analysis) => analysis.id === selectedAnalysisId) || payload.analyses[0];
+    const next = payload.analyses[0];
     if (next) await loadAnalysis(next.id);
-  }, [loadAnalysis, selectedAnalysisId]);
+  }, [loadAnalysis]);
 
   useEffect(() => {
     void loadAnalyses();
@@ -327,7 +325,12 @@ function WorkbenchCanvasInner() {
     [loadAnalysis, selectedAnalysisId]
   );
 
-  const flowNodes = useMemo(() => toFlowNodes(toPersistedNodes(nodes), runNode), [nodes, runNode]);
+  // Preserve React Flow's measured dimensions in live state. Round-tripping
+  // through the persistence format here discarded them on every render,
+  // causing an endless measurement loop and continuously postponing autosave.
+  const flowNodes = useMemo(() => nodes.map(node => ({
+    ...node, type: "workbench", data: { ...node.data, onRun: () => runNode(node.id) },
+  })), [nodes, runNode]);
 
   useEffect(() => {
     if (!selectedAnalysisId || !dirty) return;
@@ -416,7 +419,7 @@ function WorkbenchCanvasInner() {
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
       setNodes((current) => applyNodeChanges(changes, current) as WorkbenchNode[]);
-      markDirty();
+      if (changes.some(change => change.type !== "dimensions" && change.type !== "select")) markDirty();
     },
     [markDirty]
   );

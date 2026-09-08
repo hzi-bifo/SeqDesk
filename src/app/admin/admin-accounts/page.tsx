@@ -46,7 +46,7 @@ import { notifyPanel } from "@/lib/notifications/client";
 import { toast } from "@/components/ui/toast";
 import { PageLoader } from "@/components/ui/page-loader";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
-import { hasCapability, principalFromSession } from "@/lib/authorization";
+import { hasCapability, principalFromSession } from "@/lib/authorization/client";
 
 type InviteSystemRole = "MEMBER" | "ADMIN";
 type InviteFacilityWorkflowRole = "REQUESTER" | "OPERATOR";
@@ -62,7 +62,6 @@ interface Admin {
 
 interface Invite {
   id: string;
-  code: string;
   email: string | null;
   expiresAt: string;
   createdAt: string;
@@ -120,6 +119,7 @@ export default function AdminAccountsPage() {
   const [inviteFacilityRole, setInviteFacilityRole] =
     useState<InviteFacilityWorkflowRole>("REQUESTER");
   const [creating, setCreating] = useState(false);
+  const [createdInviteCode, setCreatedInviteCode] = useState<string | null>(null);
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [inviteToDelete, setInviteToDelete] = useState<Invite | null>(null);
@@ -255,7 +255,7 @@ export default function AdminAccountsPage() {
       });
 
       const payload = (await res.json().catch(() => null)) as
-        | Invite
+        | (Invite & { code: string })
         | { error?: string }
         | null;
 
@@ -267,7 +267,12 @@ export default function AdminAccountsPage() {
         );
       }
 
-      setInvites((prev) => [payload as Invite, ...prev]);
+      if (!payload || !("code" in payload) || typeof payload.code !== "string") {
+        throw new Error("Invitation created without a code. Refresh the list and revoke it before retrying.");
+      }
+      const { code, ...invitation } = payload;
+      setInvites((prev) => [invitation, ...prev]);
+      setCreatedInviteCode(code);
       setCreateDialogOpen(false);
       setInviteEmail("");
       setInviteExpires("7");
@@ -601,7 +606,7 @@ export default function AdminAccountsPage() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <code className="text-xs font-mono font-semibold bg-secondary px-2 py-1 rounded">
-                          {invite.code}
+                          Invitation {invite.id.slice(-8)}
                         </code>
                         <Badge variant={invite.grant.systemRole === "ADMIN" ? "default" : "secondary"}>
                           {invite.grant.systemRole === "ADMIN"
@@ -637,24 +642,7 @@ export default function AdminAccountsPage() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="bg-white"
-                        onClick={() => void copyInviteCode(invite.code)}
-                      >
-                        <Copy className="h-3.5 w-3.5 mr-1.5" />
-                        Code
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="bg-white"
-                        onClick={() => void copyInviteLink(invite.code)}
-                      >
-                        <LinkIcon className="h-3.5 w-3.5 mr-1.5" />
-                        Link
-                      </Button>
+                      <span className="text-xs text-muted-foreground">Code shown only at creation</span>
                       <Button
                         variant="ghost"
                         size="sm"
@@ -705,7 +693,7 @@ export default function AdminAccountsPage() {
                     )}
                     <div className="min-w-0">
                       <code className="font-mono text-xs text-muted-foreground">
-                        {invite.code}
+                        Invitation {invite.id.slice(-8)}
                       </code>
                       {invite.usedBy ? (
                         <p className="text-xs text-muted-foreground">
@@ -860,14 +848,38 @@ export default function AdminAccountsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={createdInviteCode !== null} onOpenChange={(open) => {
+        if (!open) setCreatedInviteCode(null);
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save this invitation</DialogTitle>
+            <DialogDescription>
+              Copy the code or link now. It cannot be retrieved after closing this dialog.
+              If it is lost, revoke the invitation and create another.
+            </DialogDescription>
+          </DialogHeader>
+          <code className="break-all rounded bg-secondary p-3 text-sm">{createdInviteCode}</code>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => createdInviteCode && void copyInviteCode(createdInviteCode)}>
+              <Copy className="mr-2 h-4 w-4" />Copy code
+            </Button>
+            <Button variant="outline" onClick={() => createdInviteCode && void copyInviteLink(createdInviteCode)}>
+              <LinkIcon className="mr-2 h-4 w-4" />Copy link
+            </Button>
+            <Button onClick={() => setCreatedInviteCode(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Revoke Invite</DialogTitle>
             <DialogDescription>
-              Revoke invite code{" "}
+              Revoke invitation{" "}
               <code className="font-mono bg-secondary px-1 rounded">
-                {inviteToDelete?.code}
+                {inviteToDelete?.id.slice(-8)}
               </code>
               ? This cannot be undone.
             </DialogDescription>

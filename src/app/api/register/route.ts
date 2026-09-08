@@ -14,6 +14,7 @@ import {
   type InviteGrant,
 } from "@/lib/accounts/invite-role";
 import { z } from "zod";
+import { inviteCodeLookup } from "@/lib/accounts/invite-secret.server";
 
 const RESEARCHER_ROLES = [
   "PI",
@@ -198,8 +199,8 @@ export async function POST(request: NextRequest) {
     };
 
     if (inviteCode) {
-      invite = await db.adminInvite.findUnique({
-        where: { code: inviteCode.toUpperCase() },
+      invite = await db.adminInvite.findFirst({
+        where: inviteCodeLookup(inviteCode).where,
         include: {
           createdBy: {
             select: { systemRole: true, isActive: true },
@@ -362,6 +363,7 @@ export async function POST(request: NextRequest) {
           data: {
             usedAt: claimedAt,
             usedById: newUser.id,
+            code: null,
           },
         });
         if (claim.count !== 1) {

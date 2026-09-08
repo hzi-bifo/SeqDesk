@@ -81,7 +81,10 @@ function toCompletionStatus(
 
 export function sampleHasStudyOverviewMetadata(sample: StudyOverviewSampleLike): boolean {
   const customFields = parseJsonObject(sample.customFields);
-  if (Object.values(customFields).some((value) => hasProgressValue(value))) {
+  const importProvenanceKeys = new Set(["sourceType", "dataset", "sourceKey", "sourcePage", "synthetic", "originalMetadata", "environment", "subjectId"]);
+  const isImported = customFields.sourceType === "cami-benchmark" || customFields.sourceType === "ena-fastq-accession";
+  // A transfer receipt is not evidence that the study metadata is complete.
+  if (Object.entries(customFields).some(([key, value]) => (!isImported || !importProvenanceKeys.has(key)) && hasProgressValue(value))) {
     return true;
   }
 

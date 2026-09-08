@@ -5,6 +5,7 @@ import { isActiveSession } from "@/lib/auth-session";
 import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
+import { loadStudyPipelineSamples } from '@/lib/pipelines/study-samples';
 import {
   isStudyModuleEnabled,
   loadStudyFormSchema,
@@ -353,7 +354,7 @@ async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
       ...sample,
       preferredAssemblyId: preferredAssemblyBySample.get(sample.id) ?? null,
       assemblies: assembliesBySample.get(sample.id) ?? [],
-      order: orderById.get(sample.orderId) ?? null,
+      order: sample.orderId ? orderById.get(sample.orderId) ?? null : null,
     })),
   };
 }
@@ -399,7 +400,11 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    return NextResponse.json(study);
+    const analysisSamples = await loadStudyPipelineSamples({ type: 'study', studyId: study.id }, {
+      userId: session.user.id, installation: readGrant.scope === 'installation',
+    });
+    // Analysis membership never changes the metadata/submission sample list.
+    return NextResponse.json({ ...study, analysisSamples });
   } catch (error) {
     console.error("Error fetching study:", error);
     return NextResponse.json(
@@ -694,6 +699,9 @@ export async function DELETE(
     }
 
     // Unassign all samples from this study (set studyId to null)
+    if (await db.sample.count({ where: { studyId: resolvedStudyId, orderId: null } })) {
+      return NextResponse.json({ error: "Remove imported samples before deleting their owning study" }, { status: 409 });
+    }
     await db.sample.updateMany({
       where: { studyId: resolvedStudyId },
       data: { studyId: null },
