@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   getServerDeploymentProfile: vi.fn(),
   notifyOrderUpdatedInApp: vi.fn(),
+  getPendingSourceImports: vi.fn(),
   db: {
     order: {
       findUnique: vi.fn(),
@@ -55,11 +56,16 @@ vi.mock("@/lib/notifications/in-app", () => ({
   notifyOrderUpdatedInApp: mocks.notifyOrderUpdatedInApp,
 }));
 
+vi.mock("@/lib/orders/source-metadata.server", () => ({
+  getPendingSourceImports: mocks.getPendingSourceImports,
+}));
+
 import { DELETE, GET, PUT } from "./route";
 
 describe("GET /api/orders/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getPendingSourceImports.mockResolvedValue([]);
     mocks.getServerDeploymentProfile.mockReturnValue({
       id: "sequencing-center",
       domains: [
@@ -237,6 +243,22 @@ describe("GET /api/orders/[id]", () => {
     expect(data.samples).toEqual([]);
     expect(data.statusNotes).toEqual([]);
     expect(data.sequencingFilesPublishedAt).toBeNull();
+    expect(mocks.getPendingSourceImports).not.toHaveBeenCalled();
+  });
+
+  it("loads optional source metadata only for an authorized record", async () => {
+    mocks.getPendingSourceImports.mockResolvedValue([{ id: "pending", providerId: "cami-benchmark" }]);
+    const response = await GET(new NextRequest("http://localhost:3000/api/orders/order-1?includeSources=true"), { params: Promise.resolve({ id: "order-1" }) });
+    expect(response.status).toBe(200);
+    expect((await response.json()).sourceImports).toEqual([{ id: "pending", providerId: "cami-benchmark" }]);
+    expect(mocks.getPendingSourceImports).toHaveBeenCalledWith(expect.objectContaining({ id: "order-1", userId: "user-1" }));
+  });
+
+  it("does not query private import metadata when access to the parent record is denied", async () => {
+    mocks.db.order.findUnique.mockResolvedValue({ id: "order-1", userId: "someone-else" });
+    const response = await GET(new NextRequest("http://localhost:3000/api/orders/order-1?includeSources=true"), { params: Promise.resolve({ id: "order-1" }) });
+    expect(response.status).toBe(403);
+    expect(mocks.getPendingSourceImports).not.toHaveBeenCalled();
   });
 
   it("does not expose unreleased read paths to order owners", async () => {

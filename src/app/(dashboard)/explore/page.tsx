@@ -15,6 +15,7 @@ import { toast } from "@/components/ui/toast";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ExploreLoading } from "@/components/explore/ExploreLoading";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import { fetcher, formatDateTime, postJson, SCOPE_STORAGE_KEY } from "@/lib/explore/client";
 import { isValidTargetKey } from "@/lib/explore/target-key";
@@ -23,7 +24,7 @@ import type { ExploreScope } from "@/lib/explore/types";
 
 export default function ExplorePage() {
   return (
-    <Suspense fallback={<PageContainer><Skeleton className="h-8 w-48" /></PageContainer>}>
+    <Suspense fallback={<PageContainer><Skeleton className="mb-6 h-8 w-48" /><ExploreLoading variant="cards" label="Loading reports…" /></PageContainer>}>
       <ReportsHome />
     </Suspense>
   );
@@ -76,7 +77,7 @@ function ReportsHome() {
   const canEdit = activeScope?.access === "write";
   const scopeQuery = scope ? `?scope=${encodeURIComponent(scope)}` : "";
   const reportsKey = scope ? `/api/explore/reports?targetKey=${encodeURIComponent(scope)}` : null;
-  const { data: reportsData, isLoading: reportsLoading, mutate: mutateReports } = useSWR<{ reports: ReportSummary[] }>(reportsKey, fetcher);
+  const { data: reportsData, error: reportsError, isLoading: reportsLoading, mutate: mutateReports } = useSWR<{ reports: ReportSummary[] }>(reportsKey, fetcher);
   const reports = reportsData?.reports ?? [];
 
   const createReport = async () => {
@@ -131,8 +132,8 @@ function ReportsHome() {
           Reports
         </h1>
         <span className="h-5 w-px bg-border" aria-hidden />
-        {scopesLoading ? (
-          <Skeleton className="h-8 w-56" />
+        {scopesLoading && !scopesData ? (
+          <Skeleton className="h-8 w-56" role="status" aria-label="Loading report scopes…" />
         ) : (
           <Select value={scope ?? undefined} onValueChange={selectScope}>
             <SelectTrigger className="h-8 max-w-[22rem] gap-1.5 border-transparent bg-transparent px-1.5 text-sm font-medium shadow-none hover:bg-secondary" aria-label="Reports scope">
@@ -211,9 +212,9 @@ function ReportsHome() {
         </Popover>
       </div>
 
-      {scopesError && <p className="mt-4 text-sm text-destructive">Could not load your studies and orders: {String(scopesError.message)}</p>}
+      {scopesError && <div role="alert" className="mt-4 space-y-3 text-sm"><p className="text-destructive">Could not load your studies and orders: {String(scopesError.message)}</p><Button size="sm" variant="outline" onClick={() => void mutateScopes()}>Retry loading scopes</Button></div>}
 
-      {!scopesLoading && scopes.length === 0 && (
+      {!scopesLoading && !scopesError && scopes.length === 0 && (
         <div className="mt-4 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           <p>Reports belong to a study or a sequencing order you own, or to a project of their own.</p>
           <Button variant="outline" size="sm" className="mt-4" onClick={() => setProjectDialog({ name: "", description: "" })}>
@@ -223,14 +224,11 @@ function ReportsHome() {
         </div>
       )}
 
-      {activeScope && reportsLoading && !reportsData && (
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Skeleton className="h-28 w-full" />
-          <Skeleton className="h-28 w-full" />
-        </div>
-      )}
+      {((scopesLoading && !scopesData && !scopesError) || (activeScope && reportsLoading && !reportsData && !reportsError)) && <ExploreLoading variant="cards" label="Loading reports…" className="mt-6" />}
 
-      {activeScope && reportsData && reports.length === 0 && (
+      {activeScope && reportsError && <div role="alert" className="mt-6 space-y-3 text-sm"><p className="text-destructive">Could not load the reports.</p><Button size="sm" variant="outline" onClick={() => void mutateReports()}>Retry loading reports</Button></div>}
+
+      {activeScope && reportsData && !reportsError && reports.length === 0 && (
         <div className="mt-6 rounded-lg border border-dashed p-10 text-center">
           <NotebookText className="mx-auto h-8 w-8 text-muted-foreground" />
           <p className="mt-3 text-sm font-medium">No reports yet</p>

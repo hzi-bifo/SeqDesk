@@ -39,6 +39,7 @@ export interface ReportFigure {
   url: string;
   thumbnailUrl: string | null;
   unchanged: boolean;
+  autoInclude?: boolean;
 }
 
 export interface ReportTable {
@@ -47,6 +48,7 @@ export interface ReportTable {
   kind: string;
   /** True for tables written by an analysis, the ones a report is about. */
   output: boolean;
+  autoInclude?: boolean;
   rowCount: number;
   columnCount: number;
   version: number | null;
@@ -182,6 +184,7 @@ export async function collectReportOutputs(targetKey: string, reportId: string |
         url: node.data.url,
         thumbnailUrl: node.data.thumbnailUrl,
         unchanged: Boolean(node.data.unchanged),
+        autoInclude: node.data.autoInclude,
       });
     } else if (node.data.kind === "dataset") {
       tables.push({
@@ -189,6 +192,7 @@ export async function collectReportOutputs(targetKey: string, reportId: string |
         name: node.data.name,
         kind: node.data.datasetKind,
         output: node.data.datasetKind === "derived",
+        autoInclude: node.data.autoInclude,
         rowCount: node.data.rowCount,
         columnCount: node.data.columnCount,
         version: node.data.version,
@@ -205,25 +209,26 @@ export async function collectReportOutputs(targetKey: string, reportId: string |
 
 /** The draft shown before anything is saved: a short intro, every figure, every output table. */
 export function suggestReportBlocks(outputs: ReportOutputs): ReportBlock[] {
-  const outputTables = outputs.tables.filter((table) => table.output);
-  const hasOutputs = outputs.figures.length + outputTables.length > 0;
+  const outputTables = outputs.tables.filter((table) => table.output && table.autoInclude !== false);
+  const figures = outputs.figures.filter(figure => figure.autoInclude !== false);
+  const hasOutputs = figures.length + outputTables.length > 0;
   const blocks: ReportBlock[] = [
     {
       id: "text:intro",
       type: "text",
       markdown: hasOutputs
         ? "The figures and tables below are the current outputs of the analyses in this scope. They update whenever an analysis runs again. Edit this page to describe the results and arrange them."
-        : "No analysis has produced a figure or table yet. Run one on the canvas and its outputs appear here.",
+        : "Edit this page and use Browse data to add metadata, pipeline output tables or saved figures. Charts can be built directly from a table; analyses are optional.",
     },
   ];
-  for (const figure of outputs.figures) {
+  for (const figure of figures) {
     blocks.push({
       id: figureBlockId(figure.analysisId, figure.figureName),
       type: "figure",
       analysisId: figure.analysisId,
       figureName: figure.figureName,
       caption: `${figure.figureName} (${figure.analysisName})`,
-      span: outputs.figures.length > 1 ? 1 : 2,
+      span: figures.length > 1 ? 1 : 2,
     });
   }
   for (const table of outputTables) {

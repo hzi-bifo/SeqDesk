@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import useSWR from "swr";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ExploreLoading } from "../ExploreLoading";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { fetcher } from "@/lib/explore/client";
 import type { HeatmapCurated, HeatmapPayload } from "@/lib/explore/views/heatmap/compute";
@@ -67,7 +67,7 @@ export function HeatmapView({ datasetId, options = {}, compact = false, height, 
   }, [data]);
 
   if (error) return <p className="text-sm text-destructive">{String(error.message)}</p>;
-  if (!data) return <Skeleton className={compact ? "h-full w-full" : "h-[520px] w-full"} />;
+  if (!data) return <ExploreLoading variant="chart" label="Loading heatmap…" height={height ?? (compact ? 160 : 520)} className="w-full" />;
   if (data.samples.length === 0) return <p className="text-sm text-muted-foreground">No samples match.</p>;
 
   if (compact) {

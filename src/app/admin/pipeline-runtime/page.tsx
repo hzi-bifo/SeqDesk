@@ -95,6 +95,7 @@ function isInstalledPipeline(pipeline: PipelineSummary): boolean {
 export default function PipelineRuntimePage() {
   const hasStartedSettingsLoad = useRef(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -187,6 +188,8 @@ export default function PipelineRuntimePage() {
   };
 
   const fetchSettings = useCallback(async () => {
+    setLoading(true);
+    setLoadError(false);
     try {
       const [settingsRes, pipelinesRes] = await Promise.all([
         fetch("/api/admin/settings/pipelines/execution"),
@@ -196,6 +199,9 @@ export default function PipelineRuntimePage() {
         throw new Error("Failed to load settings");
       }
       const data = await settingsRes.json();
+      if (!data?.settings || typeof data.settings !== "object" || Array.isArray(data.settings)) {
+        throw new Error("Unexpected settings response");
+      }
       if (data?.settings) {
         setExecSettings((prev) => ({
           ...prev,
@@ -213,6 +219,7 @@ export default function PipelineRuntimePage() {
       }
     } catch (error) {
       console.error("Failed to load pipeline execution settings:", error);
+      setLoadError(true);
       notifyPanel.error("Failed to load pipeline runtime settings");
     } finally {
       setLoading(false);
@@ -331,13 +338,31 @@ export default function PipelineRuntimePage() {
     return <PageLoader />;
   }
 
+  if (loadError) {
+    return (
+      <PageContainer>
+        <h1 className="text-xl font-semibold">Where pipelines run</h1>
+        <div role="alert" className="mt-4 rounded-xl border border-border bg-card p-5 space-y-3">
+          <p>Pipeline settings could not be loaded. No settings have been changed.</p>
+          <Button variant="outline" onClick={() => void fetchSettings()}>Try again</Button>
+        </div>
+      </PageContainer>
+    );
+  }
+
   return (
     <PageContainer>
       <div className="space-y-8">
         <div className="mb-4">
-          <h1 className="text-xl font-semibold">Pipeline Runtime</h1>
+          <h1 className="text-xl font-semibold">Where pipelines run</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Configure scheduler, paths, and webhook diagnostics for Nextflow execution
+            Choose the SeqDesk server or a SLURM cluster for Nextflow pipelines, and configure the software and working directories they need.
+          </p>
+          <p className="text-sm text-muted-foreground mt-2">
+            Charts and analyses inside reports use separate{" "}
+            <Link href="/admin/settings/analysis" className="underline underline-offset-4">report analysis environments</Link>.
+            {" "}Install pipelines and their databases in the{" "}
+            <Link href="/admin/settings/pipelines" className="underline underline-offset-4">pipeline store</Link>.
           </p>
         </div>
 
@@ -346,12 +371,12 @@ export default function PipelineRuntimePage() {
             <p className="text-xs text-muted-foreground">
               Start with required runtime settings, then enable advanced tuning if needed.
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button asChild variant="outline" size="sm" className="bg-white">
-                <Link href="/admin/data-compute">Overview</Link>
+                <Link href="/admin/data-compute">Storage &amp; compute overview</Link>
               </Button>
               <Button asChild variant="outline" size="sm" className="bg-white">
-                <Link href="/admin/data-storage">Data Storage</Link>
+                <Link href="/admin/data-storage">Data storage</Link>
               </Button>
               <Button
                 variant="outline"
@@ -387,11 +412,11 @@ export default function PipelineRuntimePage() {
             <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
               <Server className="h-4 w-4 text-muted-foreground" />
             </div>
-            <h2 className="text-base font-semibold">Required Configuration</h2>
+            <h2 className="text-base font-semibold">Default execution settings</h2>
             <Badge variant="secondary">Required</Badge>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
-            Set scheduler mode, run directory, and conda environment used by pipeline runs.
+            These defaults apply to pipeline runs unless you configure a pipeline-specific override below. Saving does not start a run or download a database.
           </p>
 
           <GlassCard className="p-6">
@@ -406,9 +431,9 @@ export default function PipelineRuntimePage() {
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-2">
-                    <h3 className="font-semibold">Scheduler</h3>
+                    <h3 className="font-semibold">Run pipelines on</h3>
                     <Badge variant={execSettings.useSlurm ? "default" : "secondary"}>
-                      {execSettings.useSlurm ? "SLURM Cluster" : "Local"}
+                      {execSettings.useSlurm ? "SLURM cluster" : "SeqDesk server (local)"}
                     </Badge>
                   </div>
                   <p className="text-sm text-muted-foreground mb-3">
@@ -425,7 +450,7 @@ export default function PipelineRuntimePage() {
                         clearTestResult("slurm");
                       }}
                     />
-                    <Label htmlFor="runtime-use-slurm">Use SLURM</Label>
+                    <Label htmlFor="runtime-use-slurm">Use a SLURM cluster</Label>
                     {execSettings.useSlurm && (
                       <Button
                         variant="outline"
@@ -738,9 +763,9 @@ export default function PipelineRuntimePage() {
                 <div className="space-y-3 pb-4 border-b">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <h3 className="text-sm font-medium">Per-Pipeline Defaults</h3>
+                      <h3 className="text-sm font-medium">Pipeline-specific defaults</h3>
                       <p className="text-xs text-muted-foreground">
-                        Global target: {execSettings.useSlurm ? "SLURM" : "Local"}
+                        App default: {execSettings.useSlurm ? "SLURM cluster" : "SeqDesk server (local)"}. Leave a pipeline on the app default unless it needs different resources.
                       </p>
                     </div>
                     <Badge variant="outline">
@@ -758,7 +783,7 @@ export default function PipelineRuntimePage() {
                         <thead className="border-b bg-muted/50 text-xs text-muted-foreground">
                           <tr>
                             <th className="px-3 py-2 text-left font-medium">Pipeline</th>
-                            <th className="px-3 py-2 text-left font-medium">Target</th>
+                            <th className="px-3 py-2 text-left font-medium">Run on</th>
                             <th className="px-3 py-2 text-left font-medium">Queue</th>
                             <th className="px-3 py-2 text-left font-medium">Cores</th>
                             <th className="px-3 py-2 text-left font-medium">Memory</th>
@@ -796,14 +821,14 @@ export default function PipelineRuntimePage() {
                                         })
                                       )
                                     }
-                                    className="h-9 w-[128px] rounded-md border bg-background px-2 text-sm"
+                                    className="h-9 w-[170px] rounded-md border bg-background px-2 text-sm"
                                     aria-label={`Execution target for ${pipeline.name}`}
                                   >
                                     <option value="inherit">
-                                      Inherit ({execSettings.useSlurm ? "SLURM" : "Local"})
+                                      App default ({execSettings.useSlurm ? "SLURM" : "server"})
                                     </option>
-                                    <option value="local">Local</option>
-                                    <option value="slurm">SLURM</option>
+                                    <option value="local">SeqDesk server</option>
+                                    <option value="slurm">SLURM cluster</option>
                                   </select>
                                 </td>
                                 <td className="px-3 py-2 align-top">

@@ -92,10 +92,13 @@ agents.md
 
 # private docs
 docs/*
+!docs/unified-files.md
 !docs/architecture/
 docs/architecture/*
 !docs/architecture/unified-input-modules.md
 !docs/architecture/taxonomic-pipeline-verification.md
+!docs/architecture/pipeline-output-contract.md
+!docs/architecture/settings-organization.md
 PIPELINE_STORE_INTEGRATION_REVIEW.md
 
 # local AI tooling state

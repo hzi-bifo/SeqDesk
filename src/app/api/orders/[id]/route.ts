@@ -12,6 +12,7 @@ import {
   notifySamplesMarkedSent,
 } from "@/lib/notifications/dispatcher";
 import { notifyOrderUpdatedInApp } from "@/lib/notifications/in-app";
+import { getPendingSourceImports } from "@/lib/orders/source-metadata.server";
 
 // Order status progression
 const STATUS_ORDER = ["DRAFT", "SUBMITTED", "COMPLETED"];
@@ -269,6 +270,9 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    if (request.nextUrl.searchParams.get("includeSources") === "true") {
+      return NextResponse.json({ ...order, sourceImports: await getPendingSourceImports(order) });
+    }
     return NextResponse.json(order);
   } catch (error) {
     console.error("Error fetching order:", error);

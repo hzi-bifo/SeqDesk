@@ -50,6 +50,7 @@ export function serializeDatasetSummary(dataset: DatasetWithVersion): ExploreDat
     description: dataset.description,
     sensitivity: dataset.sensitivity as ExploreSensitivity,
     roles: parseRoles(dataset.roles),
+    schema: parseSchema(current?.schema),
     currentVersion: current
       ? {
           id: current.id,

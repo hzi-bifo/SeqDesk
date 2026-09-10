@@ -58,6 +58,7 @@
         "pytest"
       ]
     },
+    "fastqc-overview": { "tier": "required", "proofs": ["validate", "pytest"] },
     "table-summary": {
       "tier": "required",
       "proofs": [

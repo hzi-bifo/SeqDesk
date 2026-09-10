@@ -2,7 +2,7 @@
   "pipeline": "nanoplot",
   "name": "NanoPlot (Long-read QC)",
   "description": "Quality control of long reads (Oxford Nanopore / PacBio) with NanoPlot",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "url": "https://github.com/wdecoster/NanoPlot",
   "inputs": [
     {

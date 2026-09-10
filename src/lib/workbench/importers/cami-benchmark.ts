@@ -14,9 +14,9 @@ import type { SourceProcessing } from "../import-processing";
 export const camiReadProcessing: SourceProcessing = { state: "unknown", evidence: "module_documentation", details: "Synthetic benchmark reads (https://cami-challenge.org/faq/). Trimming/filtering history is not established. Archive extraction and pair splitting are not cleaning." };
 import { extractBenchmarkReads, prepareBenchmarkReads } from "../prepare-benchmark-reads";
 
-import { CAMI_PREPARATION_BYTES, requireImportStorage } from "../import-storage-capacity";
+import { CAMI_MAX_BYTES, estimateCamiPreparationBytes, requireImportStorage } from "../import-storage-capacity";
 
-const LIMIT = 100 * 1024 ** 3;
+const LIMIT = CAMI_MAX_BYTES;
 const SUBJECT_MAPPING = "https://s3.bi.denbi.de/swift/v1/cami3__human-gut-toy/sample_subject_mapping.tsv";
 
 async function subjectMetadata(sample: number) {
@@ -116,13 +116,13 @@ export const camiBenchmarkImporter: WorkbenchImporterProvider<z.infer<typeof cam
   },
   async start(context) {
     if (context.preview.contractVersion !== 2) throw new Error("CAMI importer changed from archive-only downloads to sample imports. Preview a new import before continuing.");
-    await requireImportStorage(context.storage.cacheDir, CAMI_PREPARATION_BYTES);
     const expected = camiAsset(context.input);
     const asset = context.preview.assets?.[0];
     if (context.preview.assets?.length !== 1 || !asset || asset.url !== expected.url || asset.filename !== expected.filename || asset.role !== context.input.role) {
       throw new Error("CAMI preview does not match the requested archive");
     }
     camiObjectHeaders(new Headers({ "content-length": String(asset.bytes), etag: asset.etag }));
+    await requireImportStorage(context.storage.cacheDir, estimateCamiPreparationBytes(asset.bytes));
     const signal = AbortSignal.any([AbortSignal.timeout(6 * 60 * 60 * 1000), ...(context.signal ? [context.signal] : [])]);
     signal.throwIfAborted();
     const response = await fetch(expected.url, {
@@ -161,13 +161,11 @@ export const camiBenchmarkImporter: WorkbenchImporterProvider<z.infer<typeof cam
     signal.throwIfAborted();
     const sha256 = hash.digest("hex");
     await context.update({ phase: "extracting read inputs", progress: 65 });
-    await requireImportStorage(context.storage.cacheDir, LIMIT);
     const inputFile = await extractBenchmarkReads(destination, path.join(context.storage.cacheDir, "reads"), signal);
     // Free the outer archive before producing split read files. Its digest and
     // source object version remain in provenance.
     await fs.unlink(destination);
     await context.update({ phase: "validating reads and pairing", progress: 80 });
-    await requireImportStorage(context.storage.cacheDir, context.input.technology === "short" ? LIMIT : 0);
     const reads = await prepareBenchmarkReads(inputFile, context.input.technology, signal);
     await context.update({ phase: "creating sequencing data and sample", progress: 95 });
     const catalog = camiCatalog[context.input.dataset];

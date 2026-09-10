@@ -1,10 +1,15 @@
 import { z } from "zod";
 
-export const camiSampleQuerySchema = z.object({
-  collection: z.string().uuid(),
+export const camiFilesQuerySchema = z.object({
   dataset: z.enum(["cami2-marine", "cami3-toy-human-gut"]),
   technology: z.enum(["short", "long"]),
 }).strict();
+export const camiSampleQuerySchema = camiFilesQuerySchema.extend({ collection: z.string().uuid() });
+export type CamiFilesQuery = z.infer<typeof camiFilesQuerySchema>;
+export interface CamiSampleFileInfo {
+  sample: number;
+  downloadBytes: number | null;
+}
 export type CamiSampleQuery = z.infer<typeof camiSampleQuerySchema>;
 export interface CamiSampleStatus {
   sample: number;

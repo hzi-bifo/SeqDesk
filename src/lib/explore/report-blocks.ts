@@ -41,11 +41,12 @@ const TableBlockSchema = z
   .strict();
 
 /** Charts a report can draw straight from a table, without an analysis. */
-export const CHART_KINDS = ["histogram", "bar", "scatter", "box"] as const;
+export const CHART_KINDS = ["values", "histogram", "bar", "scatter", "box"] as const;
 export type ChartKind = (typeof CHART_KINDS)[number];
 export const CHART_KIND_LABELS: Record<ChartKind, { label: string; description: string; needsY: boolean }> = {
+  values: { label: "Values by sample", description: "A saved measurement for each sample or category; values are not summed", needsY: true },
   histogram: { label: "Histogram", description: "How the values of one numeric column are distributed", needsY: false },
-  bar: { label: "Bar chart", description: "How many rows fall into each value of a column", needsY: false },
+  bar: { label: "Category counts", description: "How many rows fall into each value of a column, not measured read counts", needsY: false },
   scatter: { label: "Dot plot", description: "One dot per row, two numeric columns against each other", needsY: true },
   box: { label: "Box plot", description: "A numeric column summarised per group", needsY: true },
 };

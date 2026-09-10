@@ -3,7 +3,7 @@
   "name": "NanoPlot (Long-read QC)",
   "description": "Quality control of Oxford Nanopore / PacBio long reads with NanoPlot",
   "category": "qc",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "sortOrder": 4,
   "website": "https://github.com/wdecoster/NanoPlot",
   "requires": {

@@ -181,6 +181,19 @@ export function ExecutionTargetControl({
   const localOnly = defaultMode === "local" && effectiveMode === "local" &&
     slurmAvailability?.success === false && !slurmAvailabilityLoading && !slurmAvailabilityError;
 
+  if (localOnly) {
+    return <div className={cn("rounded-xl border border-border bg-card p-4", className)}>
+      <p className="text-xs font-medium">{label}</p>
+      <p className="mt-1 text-sm">Runs on the SeqDesk server</p>
+      <p className="mt-1 text-xs text-muted-foreground">The computer where SeqDesk is installed.</p>
+      <details className="mt-3 text-xs text-muted-foreground">
+        <summary className="cursor-pointer">Compute cluster unavailable</summary>
+        <p className="mt-2">{slurmDisabledReason}</p>
+        {slurmAvailability?.details && <p className="mt-1 whitespace-pre-wrap break-words">{slurmAvailability.details}</p>}
+      </details>
+    </div>;
+  }
+
   const options: Array<{
     value: ExecutionModeRequest;
     label: string;

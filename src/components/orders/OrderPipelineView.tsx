@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { Badge } from "@/components/ui/badge";
@@ -39,21 +39,20 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
   getSampleResultPreview,
   getSampleResultPreviewItem,
 } from "@/lib/pipelines/sample-result";
 import type { PipelineRunResultFile } from "@/lib/pipelines/result-files";
+import { PipelineReportPreview } from "@/components/pipelines/PipelineReportPreview";
 import { PipelineRunResultLinks } from "@/components/pipelines/PipelineRunResultLinks";
+import { PipelineFileDownload, isPipelineReportPath } from "@/components/pipelines/PipelineFileDownload";
+import { pipelinePageRequest } from "@/lib/pipelines/page-request";
+import { useInputMetadataCheck } from "@/lib/pipelines/useInputMetadataCheck";
+import { formatRunDateTime, getRunTiming } from "@/lib/pipelines/run-timing";
 import {
   PipelineRunSettings,
-  type PipelineRunDerivedSetting,
 } from "@/components/pipelines/PipelineRunSettings";
 import type {
   PipelineConfigProperty,
@@ -101,7 +100,7 @@ import {
   type ExecutionModeRequest,
 } from "@/components/pipelines/ExecutionTargetControl";
 
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
+const fetcher = <T,>(url: string) => pipelinePageRequest<T>(url);
 
 function getApiErrorMessage(
   payload: { error?: unknown; details?: unknown } | null,
@@ -146,22 +145,6 @@ type AdminPipeline = {
       pairedEnd: boolean;
       readMode?: "single_or_paired" | "paired_only";
     };
-  };
-};
-
-type MetadataValidation = {
-  valid: boolean;
-  issues: Array<{
-    field: string;
-    message: string;
-    severity: "error" | "warning";
-    fixUrl?: string;
-  }>;
-  derivedSettings?: PipelineRunDerivedSetting[];
-  metadata: {
-    platform?: string;
-    instrumentModel?: string;
-    libraryStrategy?: string;
   };
 };
 
@@ -269,22 +252,6 @@ function formatDateTime(value: string | null): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function formatDuration(start: string | null, end: string | null): string {
-  if (!start) return "-";
-  const startDate = new Date(start);
-  const endDate = end ? new Date(end) : new Date();
-  const diffMs = endDate.getTime() - startDate.getTime();
-  if (diffMs < 0) return "-";
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSecs = seconds % 60;
-  if (minutes < 60) return `${minutes}m ${remainingSecs}s`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMins = minutes % 60;
-  return `${hours}h ${remainingMins}m`;
 }
 
 function getStatusBadge(status: string) {
@@ -827,7 +794,19 @@ interface OrderPipelineViewProps {
   currentUserId?: string;
 }
 
-export function OrderPipelineView({
+function resultSourceRunId(sample: OrderPipelineViewProps["samples"][number], pipelineId: string): string | null {
+  const sources = sample.read?.pipelineSources;
+  // A different pipeline may have produced the active reads or a shared value
+  // (for example, import-provided checksums). Do not attribute that to this one.
+  return sources?.[pipelineId] ?? (sources && Object.keys(sources).length > 0 ? null : sample.read?.pipelineRunId ?? null);
+}
+
+export function OrderPipelineView(props: OrderPipelineViewProps) {
+  // Drafts, pending requests and page cursors must never carry into another collection/pipeline.
+  return <OrderPipelineContent key={`${props.orderId}:${props.pipelineId}`} {...props} />;
+}
+
+function OrderPipelineContent({
   orderId,
   pipelineId,
   samples,
@@ -846,9 +825,7 @@ export function OrderPipelineView({
 }: OrderPipelineViewProps) {
   const [localConfig, setLocalConfig] = useState<Record<string, unknown>>({});
   const [executionMode, setExecutionMode] = useState<ExecutionModeRequest>("default");
-  const [confirmedSetup, setConfirmedSetup] = useState<string | null>(null);
   const setupScope = `${orderId}:${pipelineId}`;
-  const inputStepHeading = useRef<HTMLHeadingElement>(null);
   const [simulateReadsAdvancedOpen, setSimulateReadsAdvancedOpen] = useState(false);
   const [pendingRunSampleIds, setPendingRunSampleIds] = useState<Set<string>>(new Set());
   const [startingRun, setStartingRun] = useState(false);
@@ -856,8 +833,11 @@ export function OrderPipelineView({
   const [sampleSelection, setSampleSelection] = useState<{ scope: string; ids: Set<string> } | null>(null);
   const [error, setError] = useState("");
   const confirm = useConfirm();
-  const [metadataValidation, setMetadataValidation] = useState<MetadataValidation | null>(null);
-  const [loadingMetadata, setLoadingMetadata] = useState(false);
+  const [historyPage, setHistoryPage] = useState(0);
+  const [sourcePage, setSourcePage] = useState(0);
+  const [clearingSampleId, setClearingSampleId] = useState<string | null>(null);
+  const clearingSampleRef = useRef(false);
+  const initializedConfig = useRef(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [deleteTarget, setDeleteTarget] = useState<PipelineRun | null>(null);
   const [deletingRun, setDeletingRun] = useState(false);
@@ -869,13 +849,23 @@ export function OrderPipelineView({
   const deletionSelectMode = selectMode && canPurgeRuns && !isDemo;
   const [selectionUpdatingRunId, setSelectionUpdatingRunId] = useState<string | null>(null);
   const [detailRun, setDetailRun] = useState<PipelineRun | null>(null);
+  const [sourceDetailsLoading, setSourceDetailsLoading] = useState<string | null>(null);
+  const sourceDetailsRequest = useRef<AbortController | null>(null);
+  const historyDescriptionId = useId();
+  const [historyDisclosure, setHistoryDisclosure] = useState<{
+    scope: string;
+    open: boolean;
+    activeIds: string[];
+  } | null>(null);
   const [changeSourceSample, setChangeSourceSample] = useState<{
     id: string;
     sampleId: string;
     currentRunId?: string | null;
   } | null>(null);
   const [changingSource, setChangingSource] = useState(false);
-  const [previewFile, setPreviewFile] = useState<{ path: string; label: string } | null>(null);
+  const [sourceActionError, setSourceActionError] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ path: string; label: string; runId?: string | null } | null>(null);
+  const [timingNow, setTimingNow] = useState(() => Date.now());
   const {
     systemReady,
     checkingSystem,
@@ -894,13 +884,34 @@ export function OrderPipelineView({
     fetcher
   );
   const runsResponse = useSWR<{ runs: PipelineRun[]; total: number }>(
-    `/api/pipelines/runs?orderId=${orderId}&pipelineId=${pipelineId}&limit=50`,
+    `/api/pipelines/runs?orderId=${encodeURIComponent(orderId)}&pipelineId=${encodeURIComponent(pipelineId)}&limit=50`,
     fetcher,
     {
       refreshInterval: isDemo ? 0 : 10000,
       revalidateOnFocus: !isDemo,
       revalidateOnReconnect: !isDemo,
     }
+  );
+
+  const historyQuery = historyPage > 0 || statusFilter !== "all";
+  const historyResponse = useSWR<{ runs: PipelineRun[]; total: number }>(
+    historyQuery ? `/api/pipelines/runs?orderId=${encodeURIComponent(orderId)}&pipelineId=${encodeURIComponent(pipelineId)}&limit=50&offset=${historyPage * 50}${statusFilter === "all" ? "" : `&status=${encodeURIComponent(statusFilter)}`}` : null,
+    fetcher,
+    { refreshInterval: isDemo ? 0 : 10000, revalidateOnFocus: !isDemo }
+  );
+  const displayedHistory = historyQuery ? historyResponse : runsResponse;
+  const mutateRecentRuns = runsResponse.mutate;
+  const mutateHistoryRuns = historyResponse.mutate;
+  const refreshRuns = useCallback(async () => {
+    // Revalidation errors are displayed through SWR; do not turn a completed
+    // mutation into an unhandled rejection or leave an older history page stale.
+    await Promise.allSettled([mutateRecentRuns(), ...(historyQuery ? [mutateHistoryRuns()] : [])]);
+  }, [mutateRecentRuns, mutateHistoryRuns, historyQuery]);
+
+  const sourcesResponse = useSWR<{ runs: PipelineRun[]; total: number }>(
+    changeSourceSample ? `/api/pipelines/runs?orderId=${encodeURIComponent(orderId)}&pipelineId=${encodeURIComponent(pipelineId)}&status=completed&sampleId=${encodeURIComponent(changeSourceSample.id)}&limit=20&offset=${sourcePage * 20}` : null,
+    fetcher,
+    { revalidateOnFocus: false }
   );
 
   const pipeline = useMemo(
@@ -911,18 +922,83 @@ export function OrderPipelineView({
     [pipelinesResponse.data?.pipelines, pipelineId]
   );
 
-  const allRuns = useMemo(() => runsResponse.data?.runs ?? [], [runsResponse.data?.runs]);
+  const allRuns = useMemo(() => [...new Map([
+    ...(historyResponse.data?.runs ?? []), ...(runsResponse.data?.runs ?? []),
+  ].map(run => [run.id, run])).values()], [runsResponse.data?.runs, historyResponse.data?.runs]);
+
+  useEffect(() => {
+    if (allRuns.length === 0) return;
+    const timer = window.setInterval(() => setTimingNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [allRuns.length]);
 
   const hasActiveRuns = useMemo(
-    () => allRuns.some((run) => run.status === "queued" || run.status === "running"),
+    () => allRuns.some((run) => ["pending", "queued", "running"].includes(run.status)),
     [allRuns]
   );
+
+  const historyActiveIds = useMemo(
+    () => allRuns.filter((run) => ["pending", "queued", "running"].includes(run.status)).map((run) => run.id).sort(),
+    [allRuns]
+  );
+  const historyOpen = historyDisclosure?.scope === setupScope
+    ? historyDisclosure.open
+    : historyActiveIds.length > 0;
+
+  useEffect(() => {
+    setHistoryDisclosure((previous) => {
+      if (previous?.scope !== setupScope) {
+        return { scope: setupScope, open: historyActiveIds.length > 0, activeIds: historyActiveIds };
+      }
+      if (previous.activeIds.join(",") === historyActiveIds.join(",")) return previous;
+      const newActiveRun = historyActiveIds.some((id) => !previous.activeIds.includes(id));
+      // Open for a new run, not every poll. Leave the finished run visible and
+      // respect a user's decision to collapse the same ongoing run.
+      return { ...previous, open: previous.open || newActiveRun, activeIds: historyActiveIds };
+    });
+  }, [setupScope, historyActiveIds]);
+
+  useEffect(() => () => sourceDetailsRequest.current?.abort(), [setupScope]);
+
+  const showSourceRun = useCallback(async (runId: string) => {
+    sourceDetailsRequest.current?.abort();
+    setError("");
+    const cached = allRuns.find((run) => run.id === runId);
+    if (cached) {
+      setSourceDetailsLoading(null);
+      setDetailRun(cached);
+      return;
+    }
+
+    // A current result can originate from a run older than the history page.
+    const controller = new AbortController();
+    sourceDetailsRequest.current = controller;
+    setSourceDetailsLoading(runId);
+    try {
+      const response = await fetch(`/api/pipelines/runs/${encodeURIComponent(runId)}`, { signal: controller.signal });
+      const payload = await response.json();
+      if (controller.signal.aborted) return;
+      if (!response.ok || !payload.run) throw new Error(getApiErrorMessage(payload, "Source run details are not available."));
+      setDetailRun({
+        ...payload.run,
+        config: typeof payload.run.config === "string" ? payload.run.config : JSON.stringify(payload.run.config ?? null),
+        inputSampleIds: Array.isArray(payload.run.inputSampleIds) ? JSON.stringify(payload.run.inputSampleIds) : payload.run.inputSampleIds,
+      });
+    } catch (error) {
+      if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Could not load source run details.");
+    } finally {
+      if (sourceDetailsRequest.current === controller) {
+        sourceDetailsRequest.current = null;
+        setSourceDetailsLoading(null);
+      }
+    }
+  }, [allRuns]);
 
   // Derive running sample IDs from active pipeline runs + pending API calls
   const runningSampleIds = useMemo(() => {
     const ids = new Set(pendingRunSampleIds);
     for (const run of allRuns) {
-      if (run.status === "queued" || run.status === "running") {
+      if (["pending", "queued", "running"].includes(run.status)) {
         if (!run.inputSampleIds) {
           // Older order-wide runs have no explicit sample list.
           for (const sample of samples) ids.add(sample.id);
@@ -948,7 +1024,7 @@ export function OrderPipelineView({
   useEffect(() => {
     const currentActiveIds = new Set(
       allRuns
-        .filter((r) => r.status === "queued" || r.status === "running")
+        .filter((r) => ["pending", "queued", "running"].includes(r.status))
         .map((r) => r.id)
     );
     const justCompleted = [...prevActiveRunIdsRef.current].some(
@@ -963,9 +1039,9 @@ export function OrderPipelineView({
   const filteredRuns = useMemo(
     () =>
       statusFilter === "all"
-        ? allRuns
-        : allRuns.filter((run) => run.status === statusFilter),
-    [allRuns, statusFilter]
+        ? displayedHistory.data?.runs ?? []
+        : (displayedHistory.data?.runs ?? []).filter((run) => run.status === statusFilter),
+    [displayedHistory.data?.runs, statusFilter]
   );
 
   const statusCounts = useMemo(() => {
@@ -977,7 +1053,8 @@ export function OrderPipelineView({
   }, [allRuns]);
 
   useEffect(() => {
-    if (!pipeline) return;
+    if (!pipeline || initializedConfig.current) return;
+    initializedConfig.current = true;
     const mergedConfig = {
       ...(pipeline.defaultConfig || {}),
       ...(pipeline.config || {}),
@@ -1064,6 +1141,15 @@ export function OrderPipelineView({
   const selectedInputRevision = JSON.stringify(selectedSamples.map((sample) => [
     sample.id, sample.updatedAt, sample.read?.id, sample.read?.file1, sample.read?.file2,
   ]));
+  const {
+    data: metadataValidation,
+    loading: loadingMetadata,
+    error: metadataCheckError,
+    retry: retryMetadataCheck,
+  } = useInputMetadataCheck({
+    orderId, pipelineId: pipeline?.pipelineId, sampleIdsKey: selectedSampleIdsKey,
+    inputRevision: selectedInputRevision, enabled: canRunPipelines && !isDemo,
+  });
   const allSamplesSelected = selectableSamples.length > 0 && selectedSamples.length === selectableSamples.length;
   const toggleInputSample = (sampleId: string, checked: boolean) => {
     const ids = new Set(selectedSampleIds);
@@ -1098,12 +1184,7 @@ export function OrderPipelineView({
       slurmAvailabilityLoading,
     ]
   );
-  const executionTargetBlocked = Boolean(executionTargetBlockMessage);
   const viewOnly = Boolean(isDemo || (!canRunPipelines && !canManagePipelines));
-  const showInputs = viewOnly || (confirmedSetup === setupScope && !executionTargetBlocked);
-  useEffect(() => {
-    if (showInputs && confirmedSetup === setupScope) inputStepHeading.current?.focus();
-  }, [showInputs, confirmedSetup, setupScope]);
   const metadataErrors = useMemo(
     () =>
       !loadingMetadata && metadataValidation
@@ -1111,50 +1192,16 @@ export function OrderPipelineView({
         : [],
     [loadingMetadata, metadataValidation]
   );
-  const metadataBlockMessage = loadingMetadata
+  const metadataBlockMessage = metadataCheckError ? "Could not check inputs. Retry the check before running."
+    : loadingMetadata
     ? "Pipeline metadata is still loading."
-    : metadataErrors[0]?.message ?? null;
-  const launchBlockMessage = metadataBlockMessage || executionTargetBlockMessage;
+    : metadataErrors[0]?.message ?? (metadataValidation?.valid === false ? "Input metadata did not pass validation." : null);
+  const runListUnavailable = Boolean(runsResponse.error || runsResponse.isLoading);
+  const launchBlockMessage = metadataBlockMessage || executionTargetBlockMessage ||
+    (runListUnavailable ? "Waiting for an up-to-date run list before starting." : null) ||
+    (pipelinesResponse.error ? "Pipeline settings could not be refreshed. Retry before running." : null);
   const launchBlocked =
-    executionTargetBlocked || loadingMetadata || metadataErrors.length > 0;
-
-  useEffect(() => {
-    const sampleIds = JSON.parse(selectedSampleIdsKey) as string[];
-    if (!pipeline || sampleIds.length === 0) {
-      setMetadataValidation(null);
-      setLoadingMetadata(false);
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingMetadata(true);
-
-    const load = async () => {
-      try {
-        const res = await fetch("/api/pipelines/validate-metadata", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            orderId,
-            pipelineId: pipeline.pipelineId,
-            sampleIds,
-          }),
-        });
-        if (!cancelled && res.ok) {
-          setMetadataValidation(await res.json());
-        }
-      } catch {
-        if (!cancelled) setMetadataValidation(null);
-      } finally {
-        if (!cancelled) setLoadingMetadata(false);
-      }
-    };
-
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [orderId, pipeline, selectedSampleIdsKey, selectedInputRevision]);
+    Boolean(launchBlockMessage);
 
   const staleReadsPreservedCount = useMemo(() => {
     if (
@@ -1169,7 +1216,7 @@ export function OrderPipelineView({
 
   const runPipeline = useCallback(
     async (sampleIds: string[]) => {
-      if (!pipeline || !canRunPipelines || !showInputs || isDemo) return;
+      if (!pipeline || !canRunPipelines || isDemo) return;
       if (
         canManagePipelines &&
         isExecutionTargetBlocked({
@@ -1244,11 +1291,14 @@ export function OrderPipelineView({
           toast.success("Pipeline run started");
         }
 
-        await runsResponse.mutate();
+        await refreshRuns();
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to start pipeline";
         setError(message);
         toast.error(message);
+        // Creation may have succeeded even when starting or receiving its reply failed.
+        // Refresh persisted state instead of making that run disappear from the page.
+        await refreshRuns().catch(() => undefined);
       }
     },
     [
@@ -1257,12 +1307,11 @@ export function OrderPipelineView({
       executionTargetBlockMessage,
       canManagePipelines,
       canRunPipelines,
-      showInputs,
       isDemo,
       localConfig,
       orderId,
       pipeline,
-      runsResponse,
+      refreshRuns,
       samples,
       slurmAvailability,
       slurmAvailabilityError,
@@ -1282,7 +1331,7 @@ export function OrderPipelineView({
           const payload = await res.json().catch(() => null);
           throw new Error(getApiErrorMessage(payload, "Failed to delete run"));
         }
-        await runsResponse.mutate();
+        await refreshRuns();
         setDeleteTarget(null);
         onSampleDataChanged?.();
       } catch (err) {
@@ -1291,7 +1340,7 @@ export function OrderPipelineView({
         setDeletingRun(false);
       }
     },
-    [canPurgeRuns, isDemo, runsResponse, onSampleDataChanged]
+    [canPurgeRuns, isDemo, refreshRuns, onSampleDataChanged]
   );
 
   const handleStopRun = useCallback(
@@ -1322,7 +1371,7 @@ export function OrderPipelineView({
         } else {
           toast.success("Run cancelled");
         }
-        await runsResponse.mutate();
+        await refreshRuns();
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to stop run";
         setError(message);
@@ -1331,7 +1380,7 @@ export function OrderPipelineView({
         setStoppingRunId(null);
       }
     },
-    [confirm, runsResponse]
+    [confirm, refreshRuns]
   );
 
   const handleBulkDelete = useCallback(async () => {
@@ -1347,7 +1396,7 @@ export function OrderPipelineView({
           throw new Error(getApiErrorMessage(payload, "Failed to delete run"));
         }
       }
-      await runsResponse.mutate();
+      await refreshRuns();
       setSelectedRunIds(new Set());
       setShowBulkDeleteConfirm(false);
       onSampleDataChanged?.();
@@ -1356,7 +1405,7 @@ export function OrderPipelineView({
     } finally {
       setBulkDeleting(false);
     }
-  }, [canPurgeRuns, selectedRunIds, runsResponse, onSampleDataChanged]);
+  }, [canPurgeRuns, selectedRunIds, refreshRuns, onSampleDataChanged]);
 
   const handleSetVisibleRun = useCallback(
     async (run: PipelineRun, selected: boolean) => {
@@ -1375,7 +1424,7 @@ export function OrderPipelineView({
             getApiErrorMessage(payload, "Failed to update result visibility")
           );
         }
-        await runsResponse.mutate();
+        await refreshRuns();
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Failed to update result visibility"
@@ -1384,7 +1433,7 @@ export function OrderPipelineView({
         setSelectionUpdatingRunId(null);
       }
     },
-    [canResolveOutputs, isDemo, runsResponse]
+    [canResolveOutputs, isDemo, refreshRuns]
   );
 
   // Deletable runs are those not currently running
@@ -1421,14 +1470,14 @@ export function OrderPipelineView({
     if (isDemo || !hasActiveRuns) return;
 
     const interval = window.setInterval(() => {
-      void runsResponse.mutate();
+      void refreshRuns();
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [hasActiveRuns, isDemo, runsResponse]);
+  }, [hasActiveRuns, isDemo, refreshRuns]);
 
   const handleRunSelected = async () => {
-    if (!canRunPipelines || !showInputs || isDemo || initialCheckPending || systemBlocked || launchBlocked || startingRunRef.current || selectedSamples.length === 0) return;
+    if (!canRunPipelines || isDemo || initialCheckPending || systemBlocked || launchBlocked || startingRunRef.current || selectedSamples.length === 0) return;
     const ids = selectedSamples.map((sample) => sample.id);
     startingRunRef.current = true;
     setStartingRun(true);
@@ -1445,7 +1494,9 @@ export function OrderPipelineView({
 
   const handleClearSampleResult = useCallback(
     async (sampleId: string) => {
-      if (!pipeline?.sampleResult) return;
+      if (!pipeline?.sampleResult || !canResolveOutputs || isDemo || clearingSampleRef.current) return;
+      clearingSampleRef.current = true;
+      setClearingSampleId(sampleId);
       setError("");
       const fields = pipeline.sampleResult.values
         .map((v) => {
@@ -1454,9 +1505,13 @@ export function OrderPipelineView({
         })
         .filter((f): f is string => f !== null);
 
-      if (fields.length === 0) return;
-
       try {
+        if (fields.length === 0 || !await confirm({
+          title: "Clear current result?",
+          description: "This removes the current result values and links for this sample. It does not delete files or run history. You can restore saved outputs using Change result source.",
+          confirmLabel: "Clear current result",
+          variant: "destructive",
+        })) return;
         const res = await fetch(`/api/orders/${orderId}/sequencing/reads`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -1469,14 +1524,17 @@ export function OrderPipelineView({
         onSampleDataChanged?.();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to clear result");
+      } finally {
+        clearingSampleRef.current = false;
+        setClearingSampleId(null);
       }
     },
-    [orderId, pipeline?.sampleResult, onSampleDataChanged]
+    [orderId, pipeline?.sampleResult, onSampleDataChanged, canResolveOutputs, isDemo, confirm]
   );
 
   const completedRunsForSample = useMemo(() => {
     if (!changeSourceSample) return [];
-    return allRuns.filter((run) => {
+    return (sourcesResponse.data?.runs ?? []).filter((run) => {
       if (run.status !== "completed") return false;
       // null means "all samples" — the run covered the entire order
       if (!run.inputSampleIds) return true;
@@ -1487,12 +1545,13 @@ export function OrderPipelineView({
         return false;
       }
     });
-  }, [allRuns, changeSourceSample]);
+  }, [sourcesResponse.data?.runs, changeSourceSample]);
 
   const handleChangeSource = useCallback(
     async (runId: string) => {
       if (!changeSourceSample) return;
       setChangingSource(true);
+      setSourceActionError(null);
       setError("");
       try {
         const res = await fetch(
@@ -1512,7 +1571,7 @@ export function OrderPipelineView({
         onSampleDataChanged?.();
         setChangeSourceSample(null);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to change source");
+        setSourceActionError(err instanceof Error ? err.message : "Failed to change source");
       } finally {
         setChangingSource(false);
       }
@@ -1526,6 +1585,13 @@ export function OrderPipelineView({
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
+  }
+
+  if (!pipeline && pipelinesResponse.error) {
+    return <PageNotice variant="error" title="Could not load pipeline settings">
+      <p>{pipelinesResponse.error instanceof Error ? pipelinesResponse.error.message : "Please retry."}</p>
+      <Button size="sm" variant="outline" className="mt-2" onClick={() => { void pipelinesResponse.mutate().catch(() => undefined); }}>Retry settings</Button>
+    </PageNotice>;
   }
 
   if (!pipeline) {
@@ -1549,6 +1615,27 @@ export function OrderPipelineView({
       ? "min-w-[640px]"
       : "min-w-[480px]"
     : "min-w-[640px]";
+
+  const selectedWithResults = selectedSamples.filter(sample => {
+    const preview = getSampleResultPreview(sample, pipeline.sampleResult);
+    const sourceId = resultSourceRunId(sample, pipelineId);
+    const recordedForPipeline = Boolean(sample.read?.pipelineSources?.[pipelineId] || allRuns.some(run => run.id === sourceId && run.pipelineId === pipelineId));
+    return recordedForPipeline && preview && preview.items.length > 0;
+  });
+  const rerunLabel = selectedSamples.length > 0 && selectedWithResults.length === selectedSamples.length
+    ? `Run ${pipeline.name} again` : `Run ${pipeline.name}`;
+  const changedSettings = selectedWithResults.some(sample => {
+    const sourceId = resultSourceRunId(sample, pipelineId);
+    const source = allRuns.find(run => run.id === sourceId);
+    if (!source?.config) return false;
+    try {
+      const recorded = JSON.parse(source.config);
+      if (!recorded || typeof recorded !== "object" || Array.isArray(recorded)) return false;
+      // Compare only settings actually recorded by that run. Missing legacy
+      // snapshots must not be described as identical inputs/settings.
+      return Object.keys(recorded).some(key => key in localConfig && JSON.stringify(recorded[key]) !== JSON.stringify(localConfig[key]));
+    } catch { return false; }
+  });
 
   const renderSimulateReadsSettings = () => {
     if (!pipeline?.configSchema?.properties || !simulateReadsConfig) {
@@ -1809,7 +1896,6 @@ export function OrderPipelineView({
         <div className="flex items-center gap-2">
           <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary" aria-hidden="true">1</span>
           <h2 className="text-sm font-medium">Run setup</h2>
-          {showInputs && <CheckCircle2 className="size-4 text-emerald-600" aria-label="Setup selected" />}
         </div>
       {canManagePipelines && !isDemo ? (
         <ExecutionTargetControl
@@ -1844,13 +1930,18 @@ export function OrderPipelineView({
           serverManagedKeys={serverManagedKeys}
         />
       )}
-      {!viewOnly && !showInputs ? <div className="flex flex-wrap items-center gap-3 border-t pt-4">
-        <Button type="button" size="sm" disabled={executionTargetBlocked || initialCheckPending} onClick={() => setConfirmedSetup(setupScope)}>
-          Continue to input data
-        </Button>
-        <p className="text-xs text-muted-foreground">Next, review your samples. Continuing does not start a pipeline.</p>
-      </div> : null}
       </section>
+
+      {(runsResponse.error || pipelinesResponse.error) && <PageNotice variant="warning" title="Could not refresh this page">
+        <p>{(runsResponse.error ?? pipelinesResponse.error) instanceof Error ? (runsResponse.error ?? pipelinesResponse.error).message : "Connection failed. Your last loaded data is still shown."}</p>
+        <p className="mt-1">Saved results remain available. Refresh the checks before starting another run.</p>
+        <Button size="sm" variant="outline" className="mt-2" onClick={() => { void Promise.allSettled([refreshRuns(), pipelinesResponse.mutate()]); }}>Retry page checks</Button>
+      </PageNotice>}
+
+      {metadataCheckError && <PageNotice variant="error" title="Could not check inputs">
+        <p>{metadataCheckError}</p>
+        <Button size="sm" variant="outline" className="mt-2" onClick={retryMetadataCheck}>Retry input check</Button>
+      </PageNotice>}
 
       {error && (
         <PageNotice variant="error" title="Pipeline action failed" className="rounded-xl border">
@@ -1886,7 +1977,7 @@ export function OrderPipelineView({
         </PageNotice>
       ) : null}
 
-      {showInputs && staleReadsPreservedCount > 0 ? (
+      {staleReadsPreservedCount > 0 ? (
         <PageNotice
           variant="warning"
           title="Stale reads will be preserved"
@@ -1899,7 +1990,7 @@ export function OrderPipelineView({
         </PageNotice>
       ) : null}
 
-      {showInputs && protectedSelectedSamples.length > 0 && pipeline.pipelineId !== READ_CLEANING_PIPELINE_ID ? (
+      {protectedSelectedSamples.length > 0 && pipeline.pipelineId !== READ_CLEANING_PIPELINE_ID ? (
         <PageNotice
           variant="warning"
           title="Raw or unknown reads selected"
@@ -1910,7 +2001,7 @@ export function OrderPipelineView({
         </PageNotice>
       ) : null}
 
-      {showInputs && pipeline.pipelineId === READ_CLEANING_PIPELINE_ID && readySamples.length > 0 ? (
+      {pipeline.pipelineId === READ_CLEANING_PIPELINE_ID && readySamples.length > 0 ? (
         <PageNotice
           variant="info"
           title="Promotion required after cleaning"
@@ -1921,12 +2012,12 @@ export function OrderPipelineView({
       ) : null}
 
       {/* Choose inputs here; reports and earlier runs live below. */}
-      {showInputs ? <section aria-label="Input data" className="overflow-hidden rounded-xl border border-border bg-card">
+      <section aria-label="Input data" className="overflow-hidden rounded-xl border border-border bg-card">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b px-4 py-4">
           <div>
             <div className="flex items-center gap-2">
               <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary" aria-hidden="true">2</span>
-              <h2 ref={inputStepHeading} tabIndex={-1} className="text-sm font-medium outline-none">Choose samples</h2>
+              <h2 className="text-sm font-medium">Choose samples</h2>
             </div>
             <p className="mt-1.5 text-xs text-muted-foreground">
               Select the samples to process, then run {pipeline.name}.
@@ -1938,7 +2029,7 @@ export function OrderPipelineView({
         </div>
         <div className="overflow-x-auto">
           <table className="w-full table-fixed text-sm">
-            <colgroup><col className="w-1/3" /><col /></colgroup>
+            <colgroup><col className="w-[42%] sm:w-1/3" /><col /></colgroup>
             <thead>
               <tr className="border-b bg-secondary/30 text-left text-xs text-muted-foreground">
                 <th className="px-4 py-3 font-medium">
@@ -2003,38 +2094,34 @@ export function OrderPipelineView({
             onClick={() => void handleRunSelected()}
           >
             {startingRun && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
-            {startingRun ? "Starting…" : `Run ${pipeline.name}`}
+            {startingRun ? "Starting…" : rerunLabel}
           </Button>}
         </div>
+        {selectedWithResults.length > 0 && <p className="border-t px-4 py-3 text-xs text-muted-foreground">
+          {selectedWithResults.length} selected sample{selectedWithResults.length === 1 ? " has" : "s have"} saved results. This creates a new run; previous reports remain in run history.
+          {changedSettings && <span className="mt-1 block">Settings differ from the saved source run.</span>}
+        </p>}
         {!startingRun && (launchBlockMessage || initialCheckPending || systemBlocked) && <p className="border-t px-4 py-3 text-xs text-muted-foreground" role="status">
           {launchBlockMessage || (initialCheckPending ? "Checking pipeline setup…" : systemReady?.summary || "Check pipeline setup before starting.")}
         </p>}
-      </section> : <div className="flex items-center gap-3 rounded-xl border border-dashed p-4 text-muted-foreground">
-        <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold" aria-hidden="true">2</span>
-        <div><p className="text-sm font-medium">Choose samples</p><p className="mt-1 text-xs">Continue from run setup to choose samples.</p></div>
-      </div>}
+      </section>
 
-      {sampleResultConfig && samples.length > 0 && <Collapsible className="group overflow-hidden rounded-xl border bg-card">
-        <CollapsibleTrigger asChild>
-          <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left text-sm font-medium">
-            Sample results
-            <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div role="region" aria-label="Sample results">
-            <p className="border-y px-4 py-3 text-xs text-muted-foreground">View saved reports and values, or choose a different result source. This does not start a new run.</p>
+      {sampleResultConfig && samples.length > 0 && <section aria-label="Current results" className="overflow-hidden rounded-xl border bg-card">
+        <div className="border-b px-4 py-4">
+          <h2 className="text-sm font-medium">Current results</h2>
+          <p className="mt-1 text-xs text-muted-foreground">Reports and key values currently used for each sample.</p>
+        </div>
         <div className="overflow-x-auto overflow-y-hidden">
           <table className={cn("w-full table-fixed text-sm", tableMinWidthClass)}>
           <colgroup>
-            <col className="w-[3.5rem]" />
-            <col className="w-[12rem]" />
+            <col className="w-[2.5rem]" />
+            <col className="w-[10rem]" />
             {sampleResultConfig
               ? sampleResultLayout === "columns"
                 ? sampleResultConfig.values.map((descriptor, index) => (
                     <col
                       key={`${descriptor.path}-${index}`}
-                      className="w-[7.5rem]"
+                      className={descriptor.previewable ? "w-[9rem]" : "w-[5.5rem]"}
                     />
                   ))
                 : <col className="w-[17rem]" />
@@ -2043,7 +2130,7 @@ export function OrderPipelineView({
           <thead>
             <tr className="border-b bg-secondary/30">
               <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
-                <span className="sr-only">Clear result</span>
+                <span className="sr-only">Result actions</span>
               </th>
               <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
                 Sample
@@ -2073,16 +2160,14 @@ export function OrderPipelineView({
                 sampleResultConfig,
               );
               const hasSampleResultItems = !!sampleResultPreview && sampleResultPreview.items.length > 0;
-              const sourceRunId =
-                sample.read?.pipelineSources?.[pipelineId] ??
-                sample.read?.pipelineRunId ??
-                null;
+              const sourceRunId = resultSourceRunId(sample, pipelineId);
               const sourceRun = sourceRunId
                 ? allRuns.find((r) => r.id === sourceRunId)
                 : null;
               const sourceLabel =
                 sourceRun?.runNumber ??
-                (sourceRunId ? sample.read?.pipelineRunNumber : null);
+                (sourceRunId && sourceRunId === sample.read?.pipelineRunId ? sample.read?.pipelineRunNumber : null) ??
+                sourceRunId;
               return (
                 <tr
                   key={sample.id}
@@ -2090,30 +2175,21 @@ export function OrderPipelineView({
                 >
                   <td className="px-4 py-3 align-middle">
                     <div className="flex items-center gap-1.5">
-                      {sampleResultLayout === "columns" && hasSampleResultItems ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              className="shrink-0 rounded p-0.5 text-muted-foreground/50 transition-colors hover:bg-destructive/10 hover:text-destructive"
-                              aria-label={`Clear ${sampleResultConfig?.columnLabel ?? "result"} for ${sample.sampleId}`}
-                              disabled={!canResolveOutputs || !!isDemo}
-                              onClick={() => void handleClearSampleResult(sample.id)}
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="right" align="start" sideOffset={8} className="max-w-xs text-left">
-                            <div className="space-y-1">
-                              <p className="font-medium">Clear displayed result</p>
-                              <p>
-                                Removes the values shown in the {sampleResultConfig?.columnLabel ?? "result"} columns for this sample.
-                                It does not delete FASTQ files or the completed pipeline run.
-                              </p>
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : null}
+                      {canResolveOutputs && !isDemo && <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="size-7" aria-label={`Result actions for ${sample.sampleId}`} disabled={clearingSampleId === sample.id}>
+                            <MoreHorizontal className="size-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                          <DropdownMenuItem aria-label={`Change result source for ${sample.sampleId}`} onSelect={() => {
+                            setSourcePage(0);
+                            setSourceActionError(null);
+                            setChangeSourceSample({ id: sample.id, sampleId: sample.sampleId, currentRunId: sourceRunId });
+                          }}>Change result source</DropdownMenuItem>
+                          {hasSampleResultItems && <DropdownMenuItem variant="destructive" aria-label={`Clear current result for ${sample.sampleId}`} disabled={clearingSampleId !== null} onSelect={() => { void handleClearSampleResult(sample.id); }}>Clear current result</DropdownMenuItem>}
+                        </DropdownMenuContent>
+                      </DropdownMenu>}
                     </div>
                   </td>
                   <td className="px-4 py-3 align-middle">
@@ -2123,30 +2199,22 @@ export function OrderPipelineView({
                         {sample.sampleAlias}
                       </div>
                     )}
-                    <div className="mt-1 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
-                      <span className="shrink-0">Source</span>
-                      <button
-                        type="button"
-                        className={cn(
-                          "min-w-0 truncate text-left transition-colors hover:text-foreground hover:underline",
-                          sourceLabel && "font-mono"
-                        )}
-                        title={sourceLabel ?? undefined}
-                        disabled={!canResolveOutputs || !!isDemo}
-                        onClick={() =>
-                          setChangeSourceSample({
-                            id: sample.id,
-                            sampleId: sample.sampleId,
-                            currentRunId: sourceRunId,
-                          })
-                        }
-                      >
-                        {sourceLabel
-                          ? sourceLabel
-                          : sample.read
-                            ? "Manual"
-                            : "Not linked"}
-                      </button>
+                    <div className="mt-1 space-y-1 text-[11px] text-muted-foreground">
+                      {hasSampleResultItems && sourceRunId && sourceLabel ? (
+                        <button
+                          type="button"
+                          className="flex max-w-full items-center gap-1 text-left hover:text-foreground hover:underline"
+                          aria-label={`From run ${sourceLabel} for ${sample.sampleId}`}
+                          title={`View run ${sourceLabel}`}
+                          disabled={sourceDetailsLoading === sourceRunId}
+                          onClick={() => void showSourceRun(sourceRunId)}
+                        >
+                          <span className="shrink-0">From run</span>
+                          <span className="min-w-0 truncate font-mono">{compactRunNumber(sourceLabel)}</span>
+                          {sourceDetailsLoading === sourceRunId && <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden="true" />}
+                        </button>
+                      ) : hasSampleResultItems ? <span>No linked run</span> : null}
+
                     </div>
                   </td>
                   {sampleResultConfig
@@ -2161,28 +2229,38 @@ export function OrderPipelineView({
                             >
                               {item ? (
                                 item.previewPath ? (
+                                  <div className="flex min-w-0 items-center gap-1">
                                   <button
                                     type="button"
                                     className={cn(
-                                      "inline-flex items-center gap-1 whitespace-nowrap font-mono text-xs text-blue-600 hover:text-blue-800 hover:underline cursor-pointer",
-                                      sample.read?.filesMissing && "line-through text-muted-foreground pointer-events-none"
+                                      "inline-flex min-w-0 items-center gap-1 whitespace-nowrap font-mono text-xs text-blue-600 hover:text-blue-800 hover:underline cursor-pointer",
+                                      sample.read?.filesMissing && !isPipelineReportPath(item.previewPath!) && "line-through text-muted-foreground pointer-events-none"
                                     )}
                                     onClick={() =>
                                       setPreviewFile({
                                         path: item.previewPath!,
                                         label: `${descriptor.label ? descriptor.label + " — " : ""}${item.value}`,
+                                        runId: sourceRunId,
                                       })
                                     }
-                                    disabled={!!sample.read?.filesMissing}
+                                    disabled={!!sample.read?.filesMissing && !isPipelineReportPath(item.previewPath!)}
                                   >
-                                    {item.value}
-                                    <ExternalLink className="h-2.5 w-2.5" />
+                                    <span className="truncate" title={item.value}>{item.value}</span>
+                                    <ExternalLink className="h-2.5 w-2.5 shrink-0" />
                                   </button>
+                                  <PipelineFileDownload
+                                    runId={sourceRunId}
+                                    path={item.previewPath}
+                                    label={`${descriptor.label ?? item.value} for ${sample.sampleId}`}
+                                    disabled={!!isDemo}
+                                    verifyAvailability
+                                    reportsOnly
+                                  />
+                                  </div>
                                 ) : (
                                   <span
                                     className={cn(
-                                      "whitespace-nowrap font-mono text-xs",
-                                      sample.read?.filesMissing && "line-through text-muted-foreground"
+                                      "whitespace-nowrap font-mono text-xs"
                                     )}
                                   >
                                     {item.value}
@@ -2218,34 +2296,34 @@ export function OrderPipelineView({
                                           type="button"
                                           className={cn(
                                             "inline-flex items-center gap-0.5 whitespace-nowrap font-mono text-blue-600 hover:text-blue-800 hover:underline cursor-pointer",
-                                            sample.read?.filesMissing && "line-through text-muted-foreground pointer-events-none"
+                                            sample.read?.filesMissing && !isPipelineReportPath(item.previewPath!) && "line-through text-muted-foreground pointer-events-none"
                                           )}
-                                          onClick={() => setPreviewFile({ path: item.previewPath!, label: `${item.label ? item.label + " — " : ""}${item.value}` })}
-                                          disabled={!!sample.read?.filesMissing}
+                                          onClick={() => setPreviewFile({ path: item.previewPath!, label: `${item.label ? item.label + " — " : ""}${item.value}`, runId: sourceRunId })}
+                                          disabled={!!sample.read?.filesMissing && !isPipelineReportPath(item.previewPath!)}
                                         >
                                           {item.value}
                                           <ExternalLink className="h-2.5 w-2.5" />
                                         </button>
                                       ) : (
-                                        <span className={cn("font-mono", sample.read?.filesMissing && "line-through text-muted-foreground")}>{item.value}</span>
+                                        <span className="font-mono">{item.value}</span>
                                       )}
+                                      {item.previewPath && <PipelineFileDownload
+                                        runId={sourceRunId}
+                                        path={item.previewPath}
+                                        label={`${item.label ?? item.value} for ${sample.sampleId}`}
+                                        disabled={!!isDemo}
+                                    verifyAvailability
+                                        reportsOnly
+                                      />}
                                     </div>
                                   ))}
                                   {sample.read?.filesMissing && (
                                     <div className="text-xs text-orange-600">
-                                      Source files deleted
+                                      Input reads are missing. Saved reports are checked separately.
                                     </div>
                                   )}
                                 </div>
-                                <button
-                                  type="button"
-                                  className="mt-0.5 shrink-0 rounded p-0.5 text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                                  title="Clear result"
-                                  disabled={!canResolveOutputs || !!isDemo}
-                              onClick={() => void handleClearSampleResult(sample.id)}
-                                >
-                                  <X className="h-3 w-3" />
-                                </button>
+
                               </div>
                             ) : (
                               <div className="space-y-0.5">
@@ -2254,7 +2332,7 @@ export function OrderPipelineView({
                                 </span>
                                 {sample.read?.filesMissing && (
                                   <div className="text-xs text-orange-600">
-                                    Source files deleted
+                                    Input reads are missing. Saved reports are checked separately.
                                   </div>
                                 )}
                               </div>
@@ -2279,23 +2357,38 @@ export function OrderPipelineView({
         </table>
         </div>
 
-          </div>
-        </CollapsibleContent>
-      </Collapsible>}
+      </section>}
 
-      {/* Pipeline Runs table */}
-      <section aria-label="Pipeline run history">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-medium">Pipeline Runs</h2>
-            {allRuns.length > 0 && (
-              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1.5 text-xs font-medium tabular-nums text-muted-foreground">
-                {allRuns.length}
+      <Collapsible
+        open={historyOpen}
+        onOpenChange={(open) => setHistoryDisclosure({ scope: setupScope, open, activeIds: historyActiveIds })}
+        className="group overflow-hidden rounded-xl border bg-card"
+      >
+        <h2 aria-label="Run history">
+          <CollapsibleTrigger asChild>
+            <button type="button" aria-label="Run history" aria-describedby={historyDescriptionId} className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+              <span className="min-w-0">
+                <span className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                  Run history
+                  {allRuns.length > 0 && <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-muted px-1.5 text-xs font-medium tabular-nums text-muted-foreground">{runsResponse.data?.total ?? allRuns.length}</span>}
+                  {historyActiveIds.length > 0 && <span className="inline-flex items-center gap-1.5 text-xs font-normal text-teal-700 dark:text-teal-300">
+                    <span className="size-1.5 rounded-full bg-current motion-safe:animate-pulse" aria-hidden="true" />
+                    {historyActiveIds.length} in progress
+                  </span>}
+                </span>
+                <span id={historyDescriptionId} className="mt-1 block text-xs font-normal text-muted-foreground">
+                  All attempts, execution reports and technical details.
+                  <span className="sr-only"> {allRuns.length} runs; {historyActiveIds.length} in progress.</span>
+                </span>
               </span>
-            )}
-          </div>
+              <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" aria-hidden="true" />
+            </button>
+          </CollapsibleTrigger>
+        </h2>
+        <CollapsibleContent>
+        <section aria-label="Pipeline run history" className="border-t p-4">
           {allRuns.length > 0 && (
-            <div className="flex items-center gap-2">
+            <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
               {deletionSelectMode ? (
                 <>
                   <span className="text-xs text-muted-foreground">
@@ -2335,7 +2428,7 @@ export function OrderPipelineView({
                       Select
                     </Button>
                   )}
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <Select value={statusFilter} onValueChange={value => { setStatusFilter(value); setHistoryPage(0); }}>
                     <SelectTrigger className="h-8 w-[160px] text-xs">
                       <SelectValue />
                     </SelectTrigger>
@@ -2343,7 +2436,7 @@ export function OrderPipelineView({
                       {STATUS_OPTIONS.map((opt) => (
                         <SelectItem key={opt.value} value={opt.value}>
                           {opt.label}
-                          {opt.value !== "all" && statusCounts[opt.value] ? (
+                          {opt.value !== "all" && (runsResponse.data?.total ?? 0) <= 50 && statusCounts[opt.value] ? (
                             <span className="ml-1 text-muted-foreground">
                               ({statusCounts[opt.value]})
                             </span>
@@ -2357,7 +2450,7 @@ export function OrderPipelineView({
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      onClick={() => setStatusFilter("all")}
+                      onClick={() => { setStatusFilter("all"); setHistoryPage(0); }}
                     >
                       <X className="h-3.5 w-3.5" />
                     </Button>
@@ -2366,21 +2459,23 @@ export function OrderPipelineView({
               )}
             </div>
           )}
-        </div>
 
-        {allRuns.length === 0 ? (
+        {displayedHistory.error ? <div role="alert" className="rounded-lg border p-4 text-sm">
+          <p>{displayedHistory.error instanceof Error ? displayedHistory.error.message : "Run history could not be loaded."}</p>
+          <Button size="sm" variant="outline" className="mt-2" onClick={() => { void displayedHistory.mutate().catch(() => undefined); }}>Retry run history</Button>
+        </div> : displayedHistory.isLoading ? <p role="status" className="rounded-lg bg-muted p-4 text-sm motion-safe:animate-pulse">Loading run history…</p> : !historyQuery && allRuns.length === 0 ? (
           <div className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
             No runs started for this pipeline yet.
           </div>
         ) : (
           <div className="overflow-hidden rounded-xl border border-border bg-card">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[34rem] table-fixed text-sm">
+              <table className="w-full min-w-[40rem] table-fixed text-sm">
                 <colgroup>
                   {deletionSelectMode && <col className="w-10" />}
-                  <col className="w-[24%]" />
-                  <col className="w-[22%]" />
-                  <col className="w-[30%]" />
+                  <col className="w-[23%]" />
+                  <col className="w-[20%]" />
+                  <col className="w-[32%]" />
                   <col />
                   <col className="w-11" />
                 </colgroup>
@@ -2405,7 +2500,7 @@ export function OrderPipelineView({
                       Results
                     </th>
                     <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">
-                      Started
+                      Run time
                     </th>
                     <th className="w-[48px] px-4 py-2.5">
                       {/* Actions */}
@@ -2415,6 +2510,7 @@ export function OrderPipelineView({
                 <tbody className="divide-y divide-border">
                   {filteredRuns.map((run) => {
                     const details = getRunDetails(run);
+                    const timing = getRunTiming(run, timingNow);
                     const sampleCount = getSampleCount(run);
                     const canCancelThisRun =
                       canCancelAllRuns ||
@@ -2508,6 +2604,8 @@ export function OrderPipelineView({
                         >
                           <div className="space-y-1.5">
                             <PipelineRunResultLinks
+                              runId={run.id}
+                              downloadsDisabled={!!isDemo}
                               status={run.status}
                               resultFiles={run.resultFiles}
                               primaryResultFile={run.primaryResultFile}
@@ -2527,12 +2625,10 @@ export function OrderPipelineView({
                           </div>
                         </td>
                         <td className="px-4 py-3 align-top text-xs text-muted-foreground">
-                          <p>{formatDateTime(run.startedAt || run.createdAt)}</p>
-                          <p className="mt-1" title="Duration">
-                            {run.status === "running"
-                              ? formatDuration(run.startedAt, null)
-                              : formatDuration(run.startedAt, run.completedAt)}
-                          </p>
+                          <div title={timing.exactTimes}>
+                            <time dateTime={timing.dateTime} className="block">{timing.relativeLabel}</time>
+                            <p className="mt-1 tabular-nums">{timing.durationLabel}</p>
+                          </div>
                         </td>
                         <td
                           className="px-4 py-3 align-top text-right"
@@ -2629,13 +2725,13 @@ export function OrderPipelineView({
                       </tr>
                     );
                   })}
-                  {filteredRuns.length === 0 && statusFilter !== "all" && (
+                  {filteredRuns.length === 0 && (
                     <tr>
                       <td
                         colSpan={deletionSelectMode ? 6 : 5}
                         className="px-4 py-8 text-center text-muted-foreground"
                       >
-                        No {statusFilter} runs found.
+                        {statusFilter === "all" ? "No runs on this page." : `No ${statusFilter} runs found.`}
                       </td>
                     </tr>
                   )}
@@ -2644,7 +2740,14 @@ export function OrderPipelineView({
             </div>
           </div>
         )}
+        {(historyPage > 0 || (displayedHistory.data?.total ?? 0) > 50) && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+          <Button size="sm" variant="outline" disabled={historyPage === 0 || displayedHistory.isLoading} onClick={() => setHistoryPage(page => page - 1)}>Newer runs</Button>
+          <p>Page {historyPage + 1}{displayedHistory.data ? ` · ${displayedHistory.data.total} runs` : ""}</p>
+          <Button size="sm" variant="outline" disabled={displayedHistory.isLoading || !!displayedHistory.error || (historyPage + 1) * 50 >= (displayedHistory.data?.total ?? 0)} onClick={() => setHistoryPage(page => page + 1)}>Older runs</Button>
+        </div>}
       </section>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Delete confirmation dialog */}
       <Dialog
@@ -2752,21 +2855,23 @@ export function OrderPipelineView({
                   </div>
                 )}
                 <div className="flex gap-2">
+                  <span className="text-muted-foreground">Added:</span>
+                  <span>{formatRunDateTime(detailRun.createdAt)}</span>
+                </div>
+                <div className="flex gap-2">
                   <span className="text-muted-foreground">Started:</span>
-                  <span>{formatDateTime(detailRun.startedAt || detailRun.createdAt)}</span>
+                  <span>{formatRunDateTime(detailRun.startedAt)}</span>
                 </div>
                 {detailRun.completedAt && (
                   <div className="flex gap-2">
-                    <span className="text-muted-foreground">Completed:</span>
-                    <span>{formatDateTime(detailRun.completedAt)}</span>
+                    <span className="text-muted-foreground">Ended:</span>
+                    <span>{formatRunDateTime(detailRun.completedAt)}</span>
                   </div>
                 )}
                 <div className="flex gap-2">
                   <span className="text-muted-foreground">Duration:</span>
                   <span>
-                    {detailRun.status === "running"
-                      ? formatDuration(detailRun.startedAt, null)
-                      : formatDuration(detailRun.startedAt, detailRun.completedAt)}
+                    {getRunTiming(detailRun, timingNow).duration ?? getRunTiming(detailRun, timingNow).durationLabel}
                   </span>
                 </div>
                 {detailRun.user && (
@@ -2833,7 +2938,7 @@ export function OrderPipelineView({
                   isDemo={isDemo}
                   canResolveOutputs={canResolveOutputs}
                   onPromoted={() => {
-                    void runsResponse.mutate();
+                    void refreshRuns();
                     onSampleDataChanged?.();
                   }}
                   onError={setError}
@@ -2862,15 +2967,20 @@ export function OrderPipelineView({
         {changeSourceSample && (
           <DialogContent showCloseButton={false} className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Change Source</DialogTitle>
+              <DialogTitle>Change result source</DialogTitle>
               <DialogDescription>
                 Select which pipeline run provides results for{" "}
                 <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
                   {changeSourceSample.sampleId}
                 </code>
+                . This changes the displayed results; it does not start a new run.
               </DialogDescription>
             </DialogHeader>
-            {completedRunsForSample.length === 0 ? (
+            {sourceActionError && <p role="alert" className="text-sm text-destructive">{sourceActionError}</p>}
+            {sourcesResponse.error ? <div role="alert" className="text-sm">
+              <p>{sourcesResponse.error instanceof Error ? sourcesResponse.error.message : "Could not load result sources."}</p>
+              <Button size="sm" variant="outline" className="mt-2" onClick={() => { void sourcesResponse.mutate().catch(() => undefined); }}>Retry result sources</Button>
+            </div> : sourcesResponse.isLoading ? <p role="status" className="rounded-lg bg-muted p-4 text-sm motion-safe:animate-pulse">Loading result sources…</p> : completedRunsForSample.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No completed runs available for this sample.
               </p>
@@ -2916,6 +3026,11 @@ export function OrderPipelineView({
                 })}
               </div>
             )}
+            {(sourcePage > 0 || (sourcesResponse.data?.total ?? 0) > 20) && <div className="flex items-center justify-between gap-2 text-xs">
+              <Button size="sm" variant="outline" disabled={sourcePage === 0 || changingSource || sourcesResponse.isLoading} onClick={() => setSourcePage(page => page - 1)}>Newer results</Button>
+              <span>Page {sourcePage + 1}</span>
+              <Button size="sm" variant="outline" disabled={(sourcePage + 1) * 20 >= (sourcesResponse.data?.total ?? 0) || changingSource || sourcesResponse.isLoading} onClick={() => setSourcePage(page => page + 1)}>Older results</Button>
+            </div>}
             <DialogFooter>
               <Button
                 variant="outline"
@@ -2976,40 +3091,7 @@ export function OrderPipelineView({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* HTML Report Preview Modal */}
-      {previewFile && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="relative flex h-[90vh] w-[90vw] max-w-6xl flex-col rounded-xl border bg-card shadow-lg">
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <h3 className="text-sm font-medium truncate">{previewFile.label}</h3>
-              <div className="flex items-center gap-2">
-                <a
-                  href={`/api/files/preview?path=${encodeURIComponent(previewFile.path)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                >
-                  Open in new tab
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-                <button
-                  type="button"
-                  className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                  onClick={() => setPreviewFile(null)}
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-            <iframe
-              src={`/api/files/preview?path=${encodeURIComponent(previewFile.path)}`}
-              className="flex-1 w-full rounded-b-xl"
-              title={previewFile.label}
-              sandbox="allow-same-origin allow-scripts"
-            />
-          </div>
-        </div>
-      )}
+      {previewFile && <PipelineReportPreview key={`${previewFile.runId}:${previewFile.path}`} file={previewFile} isDemo={isDemo} onClose={() => setPreviewFile(null)} />}
     </div>
   );
 }

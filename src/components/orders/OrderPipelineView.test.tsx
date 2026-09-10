@@ -32,14 +32,17 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
     children,
     disabled,
     onSelect,
+    "aria-label": ariaLabel,
   }: {
     children: React.ReactNode;
     disabled?: boolean;
     onSelect?: (event: { preventDefault: () => void }) => void;
+    "aria-label"?: string;
   }) => (
     <button
       type="button"
       disabled={disabled}
+      aria-label={ariaLabel}
       onClick={() => onSelect?.({ preventDefault: vi.fn() })}
     >
       {children}
@@ -527,14 +530,12 @@ const samples: React.ComponentProps<typeof OrderPipelineView>["samples"] = [
   },
 ];
 
-// Existing run/result tests start after the user has reviewed run setup.
-// Guided-flow tests use renderComponent directly to cover the initial step.
+// Run-history tests explicitly open history. Presentation tests use
+// renderComponent directly to verify the default collapsed state.
 function render(ui: React.ReactElement) {
   const result = renderComponent(ui);
-  const next = screen.queryByRole("button", { name: "Continue to input data" }) as HTMLButtonElement | null;
-  if (next && !next.disabled) fireEvent.click(next);
-  const results = screen.queryByRole("button", { name: "Sample results" });
-  if (results) fireEvent.click(results);
+  const history = screen.queryByRole("button", { name: "Run history", exact: true });
+  if (history?.getAttribute("aria-expanded") === "false") fireEvent.click(history);
   return result;
 }
 
@@ -545,6 +546,7 @@ describe("OrderPipelineView", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("confirm", vi.fn(() => true));
     mocks.mutateRuns.mockResolvedValue(undefined);
     mocks.useQuickPrerequisiteStatus.mockReturnValue({
       systemReady: { ready: true, summary: "Ready" },
@@ -567,6 +569,7 @@ describe("OrderPipelineView", () => {
       if (url.includes("/api/admin/settings/pipelines")) {
         return { data: { pipelines: [pipeline] }, isLoading: false, mutate: vi.fn() };
       }
+      if (url.includes("&check=1")) return { data: { available: true }, mutate: vi.fn() };
       if (url.includes("/api/pipelines/runs")) {
         return { data: { runs, total: runs.length }, mutate: mocks.mutateRuns };
       }
@@ -610,40 +613,41 @@ describe("OrderPipelineView", () => {
     vi.unstubAllGlobals();
   });
 
-  it("reveals inputs only after confirming setup, without launching a pipeline or hiding existing runs", () => {
+  it("shows step 2 immediately without confirmation, auto-focus, or starting a pipeline", () => {
     const { rerender } = renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
     expect(screen.getByRole("region", { name: "Run setup" })).toBeTruthy();
-    expect(screen.queryByRole("region", { name: "Input data" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Run Simulate Reads" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Pipeline Runs" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Continue to input data" }));
+    expect(screen.queryByRole("button", { name: "Continue to input data" })).toBeNull();
+    expect(screen.queryByText(/Next, review your samples/)).toBeNull();
+    expect(screen.queryByText(/Continue from run setup to choose samples/)).toBeNull();
+    expect(screen.getByRole("heading", { name: "Run history" })).toBeTruthy();
     const inputs = screen.getByRole("region", { name: "Input data" });
-    expect(document.activeElement).toBe(within(inputs).getByRole("heading", { name: "Choose samples" }));
-    expect(within(inputs).getByRole("button", { name: "Run Simulate Reads" })).toBeTruthy();
+    expect(document.activeElement).not.toBe(within(inputs).getByRole("heading", { name: "Choose samples" }));
+    expect(within(inputs).getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ })).toBeTruthy();
     expect(within(inputs).getAllByRole("button")).toHaveLength(1);
     expect(within(inputs).queryByText("Source")).toBeNull();
     expect(within(inputs).getAllByText("Paired-end")).toHaveLength(1);
-    expect(screen.queryByRole("region", { name: "Sample results" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Sample results" }));
-    expect(within(screen.getByRole("region", { name: "Sample results" })).getByRole("button", { name: "RUN-2026-001" })).toBeTruthy();
-    expect(within(inputs).queryByRole("button", { name: "RUN-2026-001" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Current results" })).toBeNull();
+    expect(within(screen.getByRole("region", { name: "Current results" })).getByRole("button", { name: "From run RUN-2026-001 for SAMPLE_A" })).toBeTruthy();
+    expect(within(inputs).queryByRole("button", { name: /From run/ })).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/pipelines/runs")).toBe(false);
     rerender(<OrderPipelineView orderId="order-2" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
-    expect(screen.queryByRole("region", { name: "Input data" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Continue to input data" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Input data" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Continue to input data" })).toBeNull();
   });
 
-  it("requires an explicit local choice when the configured cluster is unavailable", () => {
+  it("shows inputs but blocks launch until a working execution target is selected", async () => {
     const normalSWR = mocks.useSWR.getMockImplementation()!;
     mocks.useSWR.mockImplementation(url => typeof url === "string" && url.includes("test-setting")
       ? { data: { success: false, message: "Not available", details: "Missing required SLURM commands: sinfo, sbatch." }, isLoading: false, mutate: vi.fn() }
       : normalSWR(url));
     renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
-    expect((screen.getByRole("button", { name: "Continue to input data" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.queryByRole("region", { name: "Input data" })).toBeNull();
+    const inputs = screen.getByRole("region", { name: "Input data" });
+    const launch = within(inputs).getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ }) as HTMLButtonElement;
+    expect(launch.disabled).toBe(true);
+    expect(within(inputs).getByRole("status").textContent).toBeTruthy();
+    fireEvent.click(launch);
     fireEvent.click(screen.getByRole("radio", { name: "SeqDesk server (local)" }));
-    expect((screen.getByRole("button", { name: "Continue to input data" }) as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Continue to input data" }));
+    await waitFor(() => expect(launch.disabled).toBe(false));
     expect(screen.getByRole("region", { name: "Input data" })).toBeTruthy();
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/pipelines/runs")).toBe(false);
   });
@@ -652,33 +656,34 @@ describe("OrderPipelineView", () => {
     renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} />);
     const inputs = screen.getByRole("region", { name: "Input data" });
     expect(screen.queryByRole("button", { name: "Continue to input data" })).toBeNull();
-    expect((within(inputs).getByRole("button", { name: "Run Simulate Reads" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(inputs).getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ }) as HTMLButtonElement).disabled).toBe(true);
     expect((within(inputs).getByRole("checkbox", { name: "Select SAMPLE_A" }) as HTMLInputElement).disabled).toBe(true);
   });
 
-  it("hides launch controls again if the selected cluster becomes unavailable", () => {
+  it("keeps inputs visible and disables launch if the selected cluster becomes unavailable", async () => {
     const normalSWR = mocks.useSWR.getMockImplementation()!;
     let clusterAvailable = true;
     mocks.useSWR.mockImplementation(url => typeof url === "string" && url.includes("test-setting")
       ? { data: { success: clusterAvailable, message: clusterAvailable ? "Available" : "Partition is down" }, isLoading: false, mutate: vi.fn() }
       : normalSWR(url));
     const { rerender } = renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
-    fireEvent.click(screen.getByRole("button", { name: "Continue to input data" }));
     expect(screen.getByRole("region", { name: "Input data" })).toBeTruthy();
+    await waitFor(() => expect((screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ }) as HTMLButtonElement).disabled).toBe(false));
     clusterAvailable = false;
     rerender(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
-    expect(screen.queryByRole("region", { name: "Input data" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Run Simulate Reads" })).toBeNull();
-    expect((screen.getByRole("button", { name: "Continue to input data" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByRole("heading", { name: "Pipeline Runs" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Input data" })).toBeTruthy();
+    const launch = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ }) as HTMLButtonElement;
+    expect(launch.disabled).toBe(true);
+    fireEvent.click(launch);
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/pipelines/runs")).toBe(false);
+    expect(screen.getByRole("heading", { name: "Run history" })).toBeTruthy();
   });
 
-  it("allows an empty collection to reach the input step without enabling a run", () => {
+  it("shows the empty collection in step 2 without enabling a run", () => {
     renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[]} isFacilityAdmin />);
-    fireEvent.click(screen.getByRole("button", { name: "Continue to input data" }));
     const inputs = screen.getByRole("region", { name: "Input data" });
     expect(within(inputs).getByText(/No samples in this sequencing data collection/)).toBeTruthy();
-    expect((within(inputs).getByRole("button", { name: "Run Simulate Reads" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(inputs).getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ }) as HTMLButtonElement).disabled).toBe(true);
     expect(within(inputs).getByRole("link", { name: "Manage files" })).toBeTruthy();
   });
 
@@ -721,14 +726,15 @@ describe("OrderPipelineView", () => {
 
     expect(screen.getByText("Simulate Reads")).toBeTruthy();
     expect(screen.getByText("Generate test read files")).toBeTruthy();
-    const runAllButton = screen.getByRole("button", { name: /^Run / });
+    const runAllButton = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/, exact: true });
     await waitFor(() => expect(runAllButton.hasAttribute("disabled")).toBe(false));
     expect(screen.getByText("2 samples selected")).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Input data" })).queryByText("1 active")).toBeNull();
     expect(within(screen.getByRole("region", { name: "Input data" })).queryByText("1 completed")).toBeNull();
     expect(within(screen.getByRole("region", { name: "Input data" })).queryByText("1 failed")).toBeNull();
     expect(screen.getByText("Visible to user")).toBeTruthy();
-    expect(screen.getByRole("link", { name: /combined report/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Combined Report", exact: true })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Download Combined Report" }).getAttribute("href")).toBe("/api/pipelines/runs/run-1/file?path=%2Fruns%2Frun-1%2Foutput%2Fcombined.html&download=1");
     expect(within(screen.getByRole("region", { name: "Input data" })).getByText("SAMPLE_A")).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Input data" })).getByText("SAMPLE_B")).toBeTruthy();
     expect(screen.getAllByText("SAMPLE_A_R1.fastq.gz").length).toBeGreaterThan(0);
@@ -739,7 +745,7 @@ describe("OrderPipelineView", () => {
       target: { value: "24" },
     });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^Run / }).hasAttribute("disabled")).toBe(false);
+      expect(screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/, exact: true }).hasAttribute("disabled")).toBe(false);
     });
     fireEvent.click(runAllButton);
 
@@ -770,7 +776,8 @@ describe("OrderPipelineView", () => {
       "/api/files/preview?path=%2Fdata%2FSAMPLE_A_R1.fastq.gz"
     );
 
-    fireEvent.click(screen.getByLabelText("Clear Generated reads for SAMPLE_A"));
+    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear current result for SAMPLE_A" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/orders/order-1/sequencing/reads",
@@ -778,8 +785,8 @@ describe("OrderPipelineView", () => {
       );
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "RUN-2026-001" }));
-    expect(screen.getByText("Change Source")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Change result source for SAMPLE_A" }));
+    expect(screen.getByRole("dialog", { name: "Change result source" })).toBeTruthy();
     expect(screen.getByText("Current")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
@@ -838,7 +845,7 @@ describe("OrderPipelineView", () => {
       />
     );
 
-    const memberRunAllButton = screen.getByRole("button", { name: /^Run / });
+    const memberRunAllButton = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/, exact: true });
     await waitFor(() =>
       expect(memberRunAllButton.hasAttribute("disabled")).toBe(false)
     );
@@ -872,7 +879,7 @@ describe("OrderPipelineView", () => {
     mockSimulateRunsResponse({ runs: [{ ...runs[0], runNumber, currentStep: "Completed" }], total: 1 });
     render(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
     const history = screen.getByRole("region", { name: "Pipeline run history" });
-    expect(within(history).getAllByRole("columnheader").map(header => header.textContent?.trim())).toEqual(["Run", "Status", "Results", "Started", ""]);
+    expect(within(history).getAllByRole("columnheader").map(header => header.textContent?.trim())).toEqual(["Run", "Status", "Results", "Run time", ""]);
     const row = within(history).getByRole("row", { name: `View details for ${runNumber}` });
     const identifier = within(row).getByText("FASTQC…001");
     expect(identifier.getAttribute("title")).toBe(runNumber);
@@ -880,12 +887,16 @@ describe("OrderPipelineView", () => {
     expect(identifier.tagName).not.toBe("CODE");
     expect(within(row).getAllByText("Completed")).toHaveLength(1);
     expect(within(row).getByText("1 sample")).toBeTruthy();
+    expect(within(row).getByText("Took 1 min")).toBeTruthy();
+    expect(row.querySelector("time")?.getAttribute("datetime")).toBe(runs[0].startedAt);
+    expect(row.querySelector("time")?.parentElement?.title).toContain("Ended:");
     expect(within(history).queryByText("Ada Lovelace")).toBeNull();
     fireEvent.keyDown(row, { key: "Enter" });
     const dialog = screen.getByRole("dialog", { name: `Run Details ${runNumber}` });
     expect(within(dialog).getByText(runNumber)).toBeTruthy();
     expect(within(dialog).getByText("Ada Lovelace")).toBeTruthy();
     expect(within(dialog).getByText("Duration:")).toBeTruthy();
+    expect(within(dialog).getByText("Ended:")).toBeTruthy();
   });
 
   it.each([
@@ -1450,7 +1461,7 @@ describe("OrderPipelineView", () => {
     expect(
       screen.getByText(/Predict antimicrobial resistance markers with ResFinder\/PointFinder\/Kover/i)
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^Run / }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: /^Run MetaxPath(?: again)?$/, exact: true }).hasAttribute("disabled")).toBe(false);
   });
 
   // Build a useSWR mock that serves the standard pipeline + a custom runs payload.
@@ -1538,7 +1549,7 @@ describe("OrderPipelineView", () => {
       screen.getByText("Demo mode — pipeline execution is view-only")
     ).toBeTruthy();
     // Demo mode hides the run-all button entirely.
-    expect(screen.queryByRole("button", { name: /^Run / })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Run Simulate Reads(?: again)?$/, exact: true })).toBeNull();
   });
 
   it("renders queued, cancelled, and unknown status badges with their detail text", () => {
@@ -1642,7 +1653,7 @@ describe("OrderPipelineView", () => {
     );
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select SAMPLE_B" }));
-    const runButton = await screen.findByRole("button", { name: "Run Simulate Reads" });
+    const runButton = await screen.findByRole("button", { name: /^Run Simulate Reads(?: again)?$/ });
     await waitFor(() => expect(runButton.hasAttribute("disabled")).toBe(false));
     fireEvent.click(runButton);
 
@@ -1666,7 +1677,7 @@ describe("OrderPipelineView", () => {
     mockSimulateRunsResponse({ runs: [], total: 0 });
     render(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
     fireEvent.click(screen.getByRole("checkbox", { name: "Select all available samples" }));
-    const launch = screen.getByRole("button", { name: "Run Simulate Reads" }) as HTMLButtonElement;
+    const launch = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ }) as HTMLButtonElement;
     expect(launch.disabled).toBe(true);
     expect(screen.getByText("Select at least one sample to continue.")).toBeTruthy();
     fireEvent.click(launch);
@@ -1683,7 +1694,7 @@ describe("OrderPipelineView", () => {
     const a = screen.getByRole("checkbox", { name: "Select SAMPLE_A" }) as HTMLInputElement;
     expect(a.disabled).toBe(true);
     expect(a.checked).toBe(false);
-    const launch = screen.getByRole("button", { name: "Run Simulate Reads" }) as HTMLButtonElement;
+    const launch = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ }) as HTMLButtonElement;
     if (inputSampleIds === null) {
       expect(launch.disabled).toBe(true);
       expect((screen.getByRole("checkbox", { name: "Select SAMPLE_B" }) as HTMLInputElement).disabled).toBe(true);
@@ -1703,7 +1714,6 @@ describe("OrderPipelineView", () => {
     expect((screen.getByRole("checkbox", { name: "Select NEW_SAMPLE" }) as HTMLInputElement).checked).toBe(false);
     expect(screen.getByText("1 sample selected")).toBeTruthy();
     rerender(<OrderPipelineView orderId="order-2" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
-    fireEvent.click(screen.getByRole("button", { name: "Continue to input data" }));
     expect(screen.getByText("2 samples selected")).toBeTruthy();
   });
 
@@ -1720,7 +1730,7 @@ describe("OrderPipelineView", () => {
     const { rerender } = render(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
     await waitFor(() => expect(screen.getAllByText("SAMPLE_B needs metadata").length).toBeGreaterThan(0));
     fireEvent.click(screen.getByRole("checkbox", { name: "Select SAMPLE_B" }));
-    await waitFor(() => expect((screen.getByRole("button", { name: "Run Simulate Reads" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect((screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ }) as HTMLButtonElement).disabled).toBe(false));
     expect(screen.queryByText("SAMPLE_B needs metadata")).toBeNull();
     const validationCalls = () => fetchMock.mock.calls.filter(([url]) => url === "/api/pipelines/validate-metadata");
     expect(JSON.parse(validationCalls().at(-1)![1].body).sampleIds).toEqual(["sample-a"]);
@@ -1736,7 +1746,7 @@ describe("OrderPipelineView", () => {
     const normalFetch = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation((url, init) => url === "/api/pipelines/runs" ? pendingCreate : normalFetch(url, init));
     render(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
-    const launch = screen.getByRole("button", { name: "Run Simulate Reads" }) as HTMLButtonElement;
+    const launch = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ }) as HTMLButtonElement;
     await waitFor(() => expect(launch.disabled).toBe(false));
     fireEvent.click(launch);
     fireEvent.click(launch);
@@ -1840,14 +1850,13 @@ describe("OrderPipelineView", () => {
       />
     );
 
-    // SAMPLE_B has no linked reads => the source button reads "Not linked".
-    fireEvent.click(screen.getByRole("button", { name: "Not linked" }));
-    expect(screen.getByText("Change Source")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Change result source for SAMPLE_B" }));
+    expect(screen.getByRole("dialog", { name: "Change result source" })).toBeTruthy();
     expect(
       screen.getByText("No completed runs available for this sample.")
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(screen.queryByText("Change Source")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Change result source" })).toBeNull();
   });
 
   it("changes the result source by selecting a non-current completed run", async () => {
@@ -1864,7 +1873,7 @@ describe("OrderPipelineView", () => {
     );
 
     // SAMPLE_A is linked to run-1 (its source). Open the change-source modal.
-    fireEvent.click(screen.getByRole("button", { name: "RUN-2026-001" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change result source for SAMPLE_A" }));
     // run-1 is the current source so it is disabled; there is no other run, so the
     // current run is the only option and clicking it is a no-op. Add a second run
     // scenario by switching to a sample whose source differs.
@@ -1892,10 +1901,10 @@ describe("OrderPipelineView", () => {
     );
 
     // SAMPLE_A's source is run-1 (RUN-2026-001). Open the modal and pick the other run.
-    fireEvent.click(screen.getByRole("button", { name: "RUN-2026-001" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change result source for SAMPLE_A" }));
     // The modal lists completed runs as buttons containing the run number; target the
     // RUN-OTHER row button (distinct from the row's "Actions for RUN-OTHER" trigger).
-    const sourceDialog = screen.getByRole("dialog", { name: "Change Source" });
+    const sourceDialog = screen.getByRole("dialog", { name: "Change result source" });
     fireEvent.click(within(sourceDialog).getByRole("button", { name: /RUN-OTHER/ }));
 
     await waitFor(() => {
@@ -1933,7 +1942,7 @@ describe("OrderPipelineView", () => {
       />
     );
 
-    const launch = await screen.findByRole("button", { name: /^Run / });
+    const launch = await screen.findByRole("button", { name: /^Run Simulate Reads(?: again)?$/, exact: true });
     await waitFor(() => expect(launch.hasAttribute("disabled")).toBe(false));
     fireEvent.click(launch);
 
@@ -1956,12 +1965,50 @@ describe("OrderPipelineView", () => {
     fireEvent.click(screen.getAllByText("SAMPLE_A_R1.fastq.gz")[0]);
     expect(screen.getByText("R1 — SAMPLE_A_R1.fastq.gz")).toBeTruthy();
 
-    // The preview modal close button (the trailing X with no accessible name).
+    // The shared preview dialog supports an accessible close control.
     const openInNewTab = screen.getByRole("link", { name: /Open in new tab/i });
-    const closeButton = openInNewTab.parentElement?.querySelector("button");
+    const closeButton = within(openInNewTab.closest('[role="dialog"]')! as HTMLElement).getByRole("button", { name: "Close", exact: true });
     expect(closeButton).toBeTruthy();
     fireEvent.click(closeButton!);
     expect(screen.queryByText("R1 — SAMPLE_A_R1.fastq.gz")).toBeNull();
+  });
+
+  it.each(["columns", "stack"])("offers R1/R2 report downloads for %s results without rerunning the pipeline", (layout) => {
+    const originalSWR = mocks.useSWR.getMockImplementation()!;
+    const reportPipeline = { ...pipeline, sampleResult: {
+      ...pipeline.sampleResult, layout,
+      values: [
+        { path: "read.fastqcReport1", label: "R1 report", format: "filename", previewable: true },
+        { path: "read.fastqcReport2", label: "R2 report", format: "filename", previewable: true },
+      ],
+    } };
+    mocks.useSWR.mockImplementation((url: string | null) => {
+      if (url === "/api/admin/settings/pipelines?enabled=true&catalog=order") {
+        return { data: { pipelines: [reportPipeline] } };
+      }
+      return originalSWR(url);
+    });
+    const reportSample = { ...samples[0], read: { ...readA,
+      fastqcReport1: "/runs/run-1/output/SAMPLE_A_R1_fastqc.html",
+      fastqcReport2: "/runs/run-1/output/SAMPLE_A_R2_fastqc.html",
+    } };
+    const { rerender } = render(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[reportSample]} isFacilityAdmin />);
+    const results = screen.getByRole("region", { name: "Current results" });
+    for (const end of ["R1", "R2"]) {
+      expect(within(results).getByRole("link", { name: `Download ${end} report for SAMPLE_A` }).getAttribute("href")).toBe(
+        `/api/pipelines/runs/run-1/file?path=${encodeURIComponent(`/runs/run-1/output/SAMPLE_A_${end}_fastqc.html`)}&download=1`
+      );
+    }
+    fireEvent.click(within(results).getByRole("button", { name: "R1 report", exact: true }));
+    expect(screen.getByRole("link", { name: "Download R1 report — R1 report" }).textContent).toBe("Download");
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/pipelines/runs")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    rerender(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[reportSample]} isFacilityAdmin isDemo />);
+    expect(screen.queryByRole("link", { name: /^Download/ })).toBeNull();
+    rerender(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[{ ...reportSample, read: { ...reportSample.read, filesMissing: true } }]} isFacilityAdmin />);
+    expect(within(results).getAllByRole("link", { name: /^Download/ })).toHaveLength(2);
+    expect((within(results).getByRole("button", { name: "R1 report", exact: true }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("shows stale-file styling and 'Source files deleted' for missing result files", () => {
@@ -1989,5 +2036,234 @@ describe("OrderPipelineView", () => {
     // The result file preview buttons are disabled and struck through when files are missing.
     const r1Button = screen.getAllByText("SAMPLE_A_R1.fastq.gz")[0].closest("button");
     expect(r1Button?.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("shows current results immediately and collapses completed run history by default", () => {
+    mockSimulateRunsResponse({ runs: [runs[0]], total: 1 });
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    const results = screen.getByRole("region", { name: "Current results" });
+    expect(within(results).getByRole("heading", { name: "Current results" })).toBeTruthy();
+    expect(within(results).getByText("SAMPLE_A_R1.fastq.gz")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Current results" })).toBeNull();
+    const history = screen.getByRole("button", { name: "Run history" });
+    expect(history.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("region", { name: "Pipeline run history" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Select" })).toBeNull();
+    fireEvent.click(history);
+    expect(screen.getByRole("region", { name: "Pipeline run history" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Download Combined Report" })).toBeTruthy();
+    fireEvent.click(history);
+    expect(within(results).getByText("SAMPLE_A_R1.fastq.gz")).toBeTruthy();
+  });
+
+  it.each(["pending", "queued", "running"])("automatically expands history for a %s run", (status) => {
+    mockSimulateRunsResponse({ runs: [{ ...runs[0], status }], total: 1 });
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect(screen.getByRole("button", { name: "Run history" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("1 in progress")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Pipeline run history" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Current results" })).toBeTruthy();
+  });
+
+  it("respects manual collapse during polling, opens for new work, and stays open when it finishes", () => {
+    const active = { ...runs[0], status: "running" };
+    mockSimulateRunsResponse({ runs: [active], total: 1 });
+    const { rerender } = renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    fireEvent.click(screen.getByRole("button", { name: "Run history" }));
+    mockSimulateRunsResponse({ runs: [{ ...active, progress: 30 }], total: 1 });
+    rerender(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect(screen.getByRole("button", { name: "Run history" }).getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByText("1 in progress")).toBeTruthy();
+
+    const next = { ...runs[0], id: "next-run", status: "queued" };
+    mockSimulateRunsResponse({ runs: [active, next], total: 2 });
+    rerender(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect(screen.getByRole("button", { name: "Run history" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("2 in progress")).toBeTruthy();
+
+    mockSimulateRunsResponse({ runs: [runs[0], { ...next, status: "completed" }], total: 2 });
+    rerender(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect(screen.getByRole("button", { name: "Run history" }).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.queryByText(/in progress$/)).toBeNull();
+    rerender(<OrderPipelineView orderId="other-order" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect(screen.getByRole("button", { name: "Run history" }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("opens history when active runs arrive after the first response", () => {
+    mockSimulateRunsResponse({ runs: [], total: 0 });
+    const { rerender } = renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect(screen.getByRole("button", { name: "Run history" }).getAttribute("aria-expanded")).toBe("false");
+    mockSimulateRunsResponse({ runs: [runs[2]], total: 1 });
+    rerender(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect(screen.getByRole("button", { name: "Run history" }).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("opens source-run details without changing results, including for read-only viewers", () => {
+    mockSimulateRunsResponse({ runs: [runs[0]], total: 1 });
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} />);
+    fireEvent.click(screen.getByRole("button", { name: "From run RUN-2026-001 for SAMPLE_A" }));
+    expect(screen.getByRole("dialog", { name: "Run Details RUN-2026-001" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Change result source/ })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Change result source" })).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/pipelines/runs" || String(url).includes("resolve-outputs"))).toBe(false);
+  });
+
+  it("loads an older source run on demand without borrowing another pipeline's run number", async () => {
+    mockSimulateRunsResponse({ runs: [], total: 0 });
+    const normalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => url === "/api/pipelines/runs/older-source"
+      ? Promise.resolve(jsonResponse({ run: { ...runs[0], id: "older-source", runNumber: "OLDER-RUN", config: { readCount: 42 }, inputSampleIds: ["sample-a"] } }))
+      : normalFetch(url, init));
+    const withOlderSource = { ...samples[0], read: { ...readA, pipelineSources: { "simulate-reads": "older-source" } } };
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[withOlderSource]} />);
+    fireEvent.click(screen.getByRole("button", { name: "From run older-source for SAMPLE_A" }));
+    const details = await screen.findByRole("dialog", { name: "Run Details OLDER-RUN" });
+    expect(within(details).getByText("Read count:")).toBeTruthy();
+    expect(within(details).getByText("42")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith("/api/pipelines/runs/older-source", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it("leaves current results intact if source-run details are unavailable", async () => {
+    mockSimulateRunsResponse({ runs: [], total: 0 });
+    const normalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => url === "/api/pipelines/runs/run-1"
+      ? Promise.resolve(jsonResponse({ error: "Run not found" }, false))
+      : normalFetch(url, init));
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} />);
+    fireEvent.click(screen.getByRole("button", { name: "From run RUN-2026-001 for SAMPLE_A" }));
+    expect(await screen.findByText("Run not found")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: "Current results" })).getByText("SAMPLE_A_R1.fastq.gz")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("does not open stale source details after navigating to another collection", async () => {
+    mockSimulateRunsResponse({ runs: [], total: 0 });
+    let finish!: (value: Response) => void;
+    const pending = new Promise<Response>((resolve) => { finish = resolve; });
+    const normalFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => url === "/api/pipelines/runs/run-1" ? pending : normalFetch(url, init));
+    const { rerender } = renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} />);
+    fireEvent.click(screen.getByRole("button", { name: "From run RUN-2026-001 for SAMPLE_A" }));
+    const request = fetchMock.mock.calls.find(([url]) => url === "/api/pipelines/runs/run-1")!;
+    rerender(<OrderPipelineView orderId="order-2" pipelineId="simulate-reads" samples={samples} />);
+    expect(request[1].signal.aborted).toBe(true);
+    await act(async () => { finish(jsonResponse({ run: runs[0] })); await pending; });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("blocks launch on a failed input check and recovers only after a successful retry", async () => {
+    const normalFetch = fetchMock.getMockImplementation()!;
+    let broken = true;
+    fetchMock.mockImplementation((url, init) => url === "/api/pipelines/validate-metadata" && broken
+      ? Promise.resolve(new Response(JSON.stringify({ error: "Expired" }), { status: 401 })) : normalFetch(url, init));
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect(await screen.findByText(/Your session has expired/)).toBeTruthy();
+    const launch = screen.getByRole("button", { name: /^Run Simulate Reads/ }) as HTMLButtonElement;
+    expect(launch.disabled).toBe(true);
+    fireEvent.click(launch);
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/pipelines/runs")).toBe(false);
+    broken = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry input check" }));
+    await waitFor(() => expect(launch.disabled).toBe(false));
+    expect(screen.queryByText(/Your session has expired/)).toBeNull();
+  });
+
+  it("keeps cached results visible and blocks a new launch when run refresh fails", async () => {
+    const normal = mocks.useSWR.getMockImplementation()!;
+    mocks.useSWR.mockImplementation(url => typeof url === "string" && url.includes("/api/pipelines/runs?")
+      ? { data: { runs, total: runs.length }, error: new Error("Connection lost"), mutate: mocks.mutateRuns } : normal(url));
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect(screen.getByRole("region", { name: "Current results" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: /^Run Simulate Reads/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Retry page checks" }));
+    await waitFor(() => expect(mocks.mutateRuns).toHaveBeenCalled());
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/pipelines/runs")).toBe(false);
+  });
+
+  it("browses older history pages without losing active latest runs or carrying the cursor into another collection", () => {
+    const normal = mocks.useSWR.getMockImplementation()!;
+    const older = { ...runs[0], id: "old-run", runNumber: "OLDER-001" };
+    const latest = [runs[0], { ...runs[2], status: "pending", inputSampleIds: '["sample-b"]' }];
+    mocks.useSWR.mockImplementation(url => typeof url === "string" && url.includes("/api/pipelines/runs?")
+      ? { data: { runs: url.includes("offset=50") ? [older] : latest, total: 101 }, mutate: mocks.mutateRuns } : normal(url));
+    const { rerender } = render(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    fireEvent.click(screen.getByRole("button", { name: "Older runs" }));
+    expect(screen.getByText("OLDER-001")).toBeTruthy();
+    expect(screen.getByText("Page 2 · 101 runs")).toBeTruthy();
+    expect((screen.getByRole("checkbox", { name: "Select SAMPLE_B" }) as HTMLInputElement).disabled).toBe(true);
+    rerender(<OrderPipelineView orderId="order-2" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect(screen.getByText("Page 1 · 101 runs")).toBeTruthy();
+    expect(screen.queryByText("OLDER-001")).toBeNull();
+  });
+
+  it("loads older completed sources independently, scoped to the selected sample", () => {
+    const normal = mocks.useSWR.getMockImplementation()!;
+    const older = { ...runs[0], id: "old-source", runNumber: "OLD-SOURCE-001" };
+    mocks.useSWR.mockImplementation(url => typeof url === "string" && url.includes("sampleId=sample-a")
+      ? { data: { runs: url.includes("offset=20") ? [older] : [runs[0]], total: 21 }, mutate: vi.fn() } : normal(url));
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    fireEvent.click(screen.getByRole("button", { name: "Change result source for SAMPLE_A" }));
+    fireEvent.click(screen.getByRole("button", { name: "Older results" }));
+    expect(within(screen.getByRole("dialog", { name: "Change result source" })).getByText("OLD-SOURCE-001")).toBeTruthy();
+    expect(mocks.useSWR.mock.calls.some(([url]) => url === "/api/pipelines/runs?orderId=order-1&pipelineId=simulate-reads&status=completed&sampleId=sample-a&limit=20&offset=20")).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("resolve-outputs"))).toBe(false);
+  });
+
+  it("confirms clearing a result, allows cancellation, and prevents duplicate clear requests", async () => {
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    const clear = screen.getByRole("button", { name: "Clear current result for SAMPLE_A" });
+    fireEvent.click(clear);
+    await waitFor(() => expect(clear.hasAttribute("disabled")).toBe(false));
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("It does not delete files or run history"));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/sequencing/reads"))).toBe(false);
+    fireEvent.click(clear);
+    fireEvent.click(clear);
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/sequencing/reads"))).toHaveLength(1));
+  });
+
+  it("labels reruns and changes to recorded settings without pretending old inputs are identical", async () => {
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[samples[0]]} isFacilityAdmin />);
+    expect(screen.getByRole("button", { name: "Run Simulate Reads again", exact: true })).toBeTruthy();
+    expect(screen.getByText(/previous reports remain in run history/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Read count"), { target: { value: "34" } });
+    expect(screen.getByText("Settings differ from the saved source run.")).toBeTruthy();
+    expect(screen.queryByText(/identical inputs/)).toBeNull();
+  });
+
+  it("preserves edited settings during catalog refresh", () => {
+    const normal = mocks.useSWR.getMockImplementation()!;
+    let catalog = pipeline;
+    mocks.useSWR.mockImplementation(url => url === "/api/admin/settings/pipelines?enabled=true&catalog=order"
+      ? { data: { pipelines: [catalog] }, mutate: vi.fn() } : normal(url));
+    const { rerender } = renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    fireEvent.change(screen.getByLabelText("Read count"), { target: { value: "42" } });
+    fireEvent.click(screen.getByRole("radio", { name: "SeqDesk server (local)" }));
+    catalog = { ...pipeline, description: "Updated description" };
+    rerender(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    expect((screen.getByLabelText("Read count") as HTMLInputElement).value).toBe("42");
+    expect(screen.getByRole("radio", { name: "SeqDesk server (local)" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("does not call imported values or results from a different pipeline a rerun", () => {
+    const sample = { ...samples[0], read: { ...readA, pipelineRunId: "other-run", pipelineRunNumber: "OTHER-001", pipelineSources: { fastqc: "other-run" } } };
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[sample]} isFacilityAdmin />);
+    expect(screen.getByRole("button", { name: "Run Simulate Reads", exact: true })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /From run OTHER-001/ })).toBeNull();
+    expect(screen.getByText("No linked run")).toBeTruthy();
+    expect(screen.queryByText(/previous reports remain/)).toBeNull();
+  });
+
+  it("refreshes persisted runs after an interrupted start and does not create another run", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => url === "/api/pipelines/runs/created-run/start"
+      ? Promise.reject(new TypeError("Connection interrupted")) : normal(url, init));
+    renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+    const launch = screen.getByRole("button", { name: /^Run Simulate Reads/ }) as HTMLButtonElement;
+    await waitFor(() => expect(launch.disabled).toBe(false));
+    fireEvent.click(launch);
+    await waitFor(() => expect(mocks.mutateRuns).toHaveBeenCalled());
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/pipelines/runs")).toHaveLength(1);
+    expect(await screen.findByText("Connection interrupted")).toBeTruthy();
   });
 });

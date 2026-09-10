@@ -3,13 +3,14 @@
 import { useModules } from "@/lib/modules";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { GlassCard } from "@/components/ui/glass-card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   Loader2,
   Clock,
@@ -19,8 +20,15 @@ import {
   ArrowRight,
   Receipt,
   FileText,
+  Search,
+  Package,
+  Database,
+  Building2,
+  FlaskConical,
+  Mail,
+  ChevronDown,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { Suspense, useState, useEffect, useCallback } from "react";
 import { notifyPanel } from "@/lib/notifications/client";
 import { toast } from "@/components/ui/toast";
 import { PageLoader } from "@/components/ui/page-loader";
@@ -40,6 +48,23 @@ import {
   type FormFieldDefinition,
   type FormFieldGroup,
 } from "@/types/form-config";
+import { importModuleCatalog } from "@/lib/modules/import-catalog";
+
+const CATEGORY_ICONS = {
+  "data-sources": Database,
+  "order-form": FileText,
+  validation: Shield,
+  access: Shield,
+  communication: Mail,
+  analysis: FlaskConical,
+};
+
+const MODULE_SETTINGS_LINKS: Record<string, { href: string; label: string }> = {
+  "sequencing-management": { href: "/admin/form-builder", label: "Configure facility forms" },
+  "notifications": { href: "/admin/settings/notifications", label: "Configure notifications" },
+  "dynamic-studies": { href: "/admin/study-definitions", label: "Configure study definitions" },
+  "explore": { href: "/admin/settings/analysis", label: "Configure report analysis" },
+};
 
 const MODULE_BUILDER_LINKS: Record<string, Array<{ href: string; label: string }>> = {
   "mixs-metadata": [{ href: "/admin/study-form-builder", label: "Study Form Builder" }],
@@ -64,18 +89,31 @@ interface StudyFormConfigState {
   groups: FormFieldGroup[];
 }
 
-export default function ModulesPage() {
+function ModulesPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectedCategory = searchParams.get("category");
+  const activeCategory = selectedCategory && Object.hasOwn(MODULE_CATEGORIES, selectedCategory)
+    ? selectedCategory as ModuleCategory : "all";
+  const [search, setSearch] = useState("");
   const {
     availableModules,
     moduleStates,
     isModuleEnabled,
     setModuleEnabled,
     loading,
+    error,
+    refresh,
+    setGlobalDisabled,
     globalDisabled,
     incompatibleModules,
   } = useModules();
   const deploymentProfile = useDeploymentProfile();
   const [updating, setUpdating] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [resumeDialogOpen, setResumeDialogOpen] = useState(false);
+  const [resumingModules, setResumingModules] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
 
   // Account validation settings state
   const [accountValidationSettings, setAccountValidationSettings] =
@@ -85,57 +123,60 @@ export default function ModulesPage() {
     });
   const [newDomain, setNewDomain] = useState("");
   const [loadingSettings, setLoadingSettings] = useState(true);
+  const [accountSettingsError, setAccountSettingsError] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
 
   // Billing settings state
   const [billingSettings, setBillingSettings] =
     useState<BillingSettings>(DEFAULT_BILLING_SETTINGS);
   const [loadingBillingSettings, setLoadingBillingSettings] = useState(true);
+  const [billingSettingsError, setBillingSettingsError] = useState(false);
   const [savingBillingSettings, setSavingBillingSettings] = useState(false);
   const [orderFormConfig, setOrderFormConfig] =
     useState<OrderFormConfigState | null>(null);
   const [studyFormConfig, setStudyFormConfig] =
     useState<StudyFormConfigState | null>(null);
   const [loadingFormConfigs, setLoadingFormConfigs] = useState(true);
+  const [formConfigError, setFormConfigError] = useState(false);
   const [runningAction, setRunningAction] = useState<string | null>(null);
-  const [activeCategory, setActiveCategory] =
-    useState<ModuleCategory>("order-form");
 
   // Fetch account validation settings
-  useEffect(() => {
-    const fetchSettings = async () => {
+  const fetchAccountSettings = useCallback(async () => {
+      setLoadingSettings(true);
       try {
         const res = await fetch("/api/admin/modules/account-validation");
-        if (res.ok) {
+        if (!res.ok) throw new Error("Failed to load account settings");
           const data = await res.json();
+          if (!data.settings || !Array.isArray(data.settings.allowedDomains)) throw new Error("Invalid account settings");
           setAccountValidationSettings(data.settings);
-        }
+          setAccountSettingsError(false);
       } catch {
+        setAccountSettingsError(true);
         console.error("Failed to load account validation settings");
       } finally {
         setLoadingSettings(false);
       }
-    };
-    fetchSettings();
   }, []);
+  useEffect(() => { void fetchAccountSettings(); }, [fetchAccountSettings]);
 
   // Fetch billing settings
-  useEffect(() => {
-    const fetchBillingSettings = async () => {
+  const fetchBillingSettings = useCallback(async () => {
+      setLoadingBillingSettings(true);
       try {
         const res = await fetch("/api/admin/modules/billing");
-        if (res.ok) {
+        if (!res.ok) throw new Error("Failed to load billing settings");
           const data = await res.json();
+          if (!data.settings || !data.settings.pspPrefixRange || !data.settings.pspSuffixRange) throw new Error("Invalid billing settings");
           setBillingSettings(data.settings);
-        }
+          setBillingSettingsError(false);
       } catch {
+        setBillingSettingsError(true);
         console.error("Failed to load billing settings");
       } finally {
         setLoadingBillingSettings(false);
       }
-    };
-    fetchBillingSettings();
   }, []);
+  useEffect(() => { void fetchBillingSettings(); }, [fetchBillingSettings]);
 
   const fetchFormConfigs = useCallback(async () => {
     setLoadingFormConfigs(true);
@@ -163,7 +204,9 @@ export default function ModulesPage() {
         fields: Array.isArray(studyData.fields) ? studyData.fields : [],
         groups: Array.isArray(studyData.groups) ? studyData.groups : [],
       });
+      setFormConfigError(false);
     } catch {
+      setFormConfigError(true);
       notifyPanel.error("Failed to load form builder configuration");
     } finally {
       setLoadingFormConfigs(false);
@@ -183,6 +226,20 @@ export default function ModulesPage() {
       toast.error("Failed to update module");
     } finally {
       setUpdating(null);
+    }
+  };
+
+  const handleResumeModules = async () => {
+    setResumingModules(true);
+    setResumeError(null);
+    try {
+      await setGlobalDisabled(false);
+      setResumeDialogOpen(false);
+      toast.success("Optional modules resumed. Individual choices were kept.");
+    } catch {
+      setResumeError("Could not confirm the change. Check your connection and try again.");
+    } finally {
+      setResumingModules(false);
     }
   };
 
@@ -551,67 +608,99 @@ export default function ModulesPage() {
     (category) => availableModules.some((module) => module.category === category)
   );
 
-  useEffect(() => {
-    if (categories.length > 0 && !categories.includes(activeCategory)) {
-      setActiveCategory(categories[0]);
-    }
-  }, [activeCategory, categories]);
+  const normalizedSearch = search.trim().toLowerCase();
+  const visibleModules = availableModules.filter(module => {
+    if (activeCategory !== "all" && module.category !== activeCategory) return false;
+    const catalogModule = importModuleCatalog.find(entry => entry.id === module.id);
+    return [module.name, module.description, module.id, MODULE_CATEGORIES[module.category].label,
+      catalogModule?.name, catalogModule?.summary, catalogModule?.formats.join(" ")]
+      .filter(Boolean).join(" ").toLowerCase().includes(normalizedSearch);
+  });
+  const chooseCategory = (category: ModuleCategory | "all") => {
+    const query = new URLSearchParams(searchParams.toString());
+    if (category === "all") query.delete("category");
+    else query.set("category", category);
+    router.replace(`/admin/modules${query.size ? `?${query}` : ""}`, { scroll: false });
+  };
 
   if (loading) {
     return <PageLoader />;
   }
 
-  return (
-    <Tabs
-      value={activeCategory}
-      onValueChange={(value) => setActiveCategory(value as ModuleCategory)}
-      className="gap-0"
-    >
-      <div className="sticky top-0 z-30 border-b border-border bg-card">
-        <div className="relative flex h-[52px] items-center justify-center px-4 sm:px-6 lg:px-8">
-          <span className="absolute left-4 sm:left-6 lg:left-8 text-sm font-medium whitespace-nowrap">Modules</span>
-
-          <TabsList className="h-[52px] min-w-max bg-transparent rounded-none p-0 gap-1">
-            {categories.map((category) => {
-              return (
-                <TabsTrigger
-                  key={category}
-                  value={category}
-                  className="relative h-[52px] border-0 border-b-2 border-b-transparent rounded-none px-4 text-sm font-medium text-muted-foreground transition-colors data-[state=active]:text-foreground data-[state=active]:border-b-foreground data-[state=active]:shadow-none data-[state=active]:bg-transparent hover:text-foreground"
-                >
-                  {MODULE_CATEGORIES[category].label}
-                </TabsTrigger>
-              );
-            })}
-          </TabsList>
-        </div>
+  if (error) {
+    return <PageContainer>
+      <h1 className="text-2xl font-semibold">Modules</h1>
+      <div role="alert" className="mt-6 space-y-3 rounded-xl border bg-card p-6">
+        <p>{error}</p>
+        <p className="text-sm text-muted-foreground">Module availability is unknown until settings can be loaded. No settings have been changed.</p>
+        <Button disabled={retrying} onClick={async () => {
+          setRetrying(true);
+          try { await refresh(); } finally { setRetrying(false); }
+        }}>{retrying ? "Retrying…" : "Try again"}</Button>
       </div>
+    </PageContainer>;
+  }
 
+  return (
       <PageContainer>
-        <div className="space-y-8">
-          <div className="mt-6 space-y-1">
-            <h1 className="text-xl font-semibold">Modules</h1>
-            <p className="text-sm text-muted-foreground">
-              Enable or disable features for your installation.
-            </p>
+        <div className="space-y-6">
+          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+            <div className="space-y-2">
+              <Link href="/admin/settings" className="text-sm text-muted-foreground hover:text-foreground">Application settings</Link>
+              <h1 className="text-2xl font-semibold tracking-tight">Modules</h1>
+              <p className="max-w-2xl text-sm text-muted-foreground">
+                Choose what your SeqDesk can do. Enable data sources and features together, then configure what your users need.
+              </p>
+            </div>
+            <span className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground"><Package className="size-4" aria-hidden="true" />{availableModules.length} included modules</span>
           </div>
 
-          {globalDisabled && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              Modules are globally disabled at installation level. Individual module toggles are paused until global modules are re-enabled.
+          <div className="space-y-4 rounded-xl border bg-card p-4">
+            <div className="relative max-w-lg">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input aria-label="Search modules" placeholder="Find a module, data source or feature…" className="pl-9" value={search} onChange={event => setSearch(event.target.value)} />
             </div>
-          )}
+            <div role="group" aria-label="Module categories" className="flex flex-wrap gap-2">
+              <Button variant={activeCategory === "all" ? "default" : "outline"} size="sm" aria-pressed={activeCategory === "all"} onClick={() => chooseCategory("all")}>All modules</Button>
+              {categories.map(category => <Button key={category} variant={activeCategory === category ? "default" : "outline"} size="sm" aria-pressed={activeCategory === category} onClick={() => chooseCategory(category)}>{MODULE_CATEGORIES[category].label}</Button>)}
+            </div>
+            {activeCategory !== "all" && <p className="text-sm text-muted-foreground">{MODULE_CATEGORIES[activeCategory].description}.</p>}
+          </div>
 
-          {categories.map((category) => {
-            const categoryModules = availableModules.filter(
-              (module) => module.category === category
-            );
-            if (categoryModules.length === 0) return null;
+          <Dialog open={resumeDialogOpen} onOpenChange={open => {
+            if (resumingModules) return;
+            setResumeDialogOpen(open);
+            if (open) setResumeError(null);
+          }}>
+            {globalDisabled && <div className="flex flex-col items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 sm:flex-row sm:items-center">
+              <p className="flex-1">Optional modules are paused for this installation. Individual toggles are locked until the installation-wide module setting is re-enabled. Always-active modules remain available.</p>
+              <DialogTrigger asChild><Button variant="outline" size="sm" className="shrink-0">Resume optional modules</Button></DialogTrigger>
+            </div>}
+            <DialogContent showCloseButton={!resumingModules}>
+              <DialogHeader>
+                <DialogTitle>Resume optional modules?</DialogTitle>
+                <DialogDescription>This restores access to the optional modules that were enabled before the pause. Individually disabled modules stay disabled; existing data and settings are kept.</DialogDescription>
+              </DialogHeader>
+              {resumeError && <p role="alert" className="text-sm text-destructive">{resumeError}</p>}
+              <DialogFooter>
+                <Button variant="outline" disabled={resumingModules} onClick={() => setResumeDialogOpen(false)}>Cancel</Button>
+                <Button disabled={resumingModules} onClick={() => void handleResumeModules()}>{resumingModules ? "Resuming…" : "Resume modules"}</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
-            return (
-              <TabsContent key={category} value={category} className="m-0">
-                <div className="grid gap-3">
-                  {categoryModules.map((module) => {
+          <p className="text-sm text-muted-foreground" aria-live="polite">{visibleModules.length} {visibleModules.length === 1 ? "module" : "modules"}{normalizedSearch ? " found" : " shown"} · {availableModules.filter(module => isModuleEnabled(module.id)).length} enabled</p>
+          {visibleModules.length === 0 && <div className="rounded-xl border border-dashed p-8 text-center">
+            <h2 className="font-medium">No matching modules</h2>
+            <p className="mt-2 text-sm text-muted-foreground">Try a different search or choose another category.</p>
+            <Button variant="link" onClick={() => { setSearch(""); chooseCategory("all"); }}>Show all modules</Button>
+          </div>}
+                <div className="grid items-start gap-4 xl:grid-cols-2">
+                  {visibleModules.map((module) => {
+                    const catalogModule = importModuleCatalog.find(entry => entry.id === module.id);
+                    const displayName = catalogModule?.name ?? module.name;
+                    const Icon = module.id === "sequencing-management" ? Building2 : CATEGORY_ICONS[module.category];
+                    const settingsLink = MODULE_SETTINGS_LINKS[module.id];
                     const isProfileCompatible = !incompatibleModules.includes(module.id);
                     const isAlwaysEnabled =
                       isProfileCompatible && isAlwaysEnabledModule(module.id);
@@ -645,12 +734,31 @@ export default function ModulesPage() {
                     return (
                       <GlassCard
                         key={module.id}
-                        className={`p-4 ${isComingSoon ? "opacity-60" : ""}`}
+                        role="article"
+                        aria-labelledby={`module-title-${module.id}`}
+                        className="min-w-0 overflow-hidden rounded-xl p-0 shadow-none"
                       >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="flex-1 space-y-2">
+                        <div className={`flex items-center justify-between gap-3 border-b px-5 py-4 ${module.category === "data-sources" ? "bg-teal-50/70 dark:bg-teal-950/20" : module.category === "analysis" ? "bg-violet-50/70 dark:bg-violet-950/20" : "bg-muted/35"}`}>
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-card"><Icon className="size-5" aria-hidden="true" /></span>
+                            <span className="text-sm font-medium">{MODULE_CATEGORIES[module.category].label}</span>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {isUpdating && <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Saving module setting" />}
+                            <Switch
+                              id={module.id}
+                              role="switch"
+                              checked={isEnabled}
+                              onCheckedChange={checked => handleToggle(module.id, checked)}
+                              disabled={isAlwaysEnabled || !isProfileCompatible || updating !== null || isComingSoon || globalDisabled}
+                            />
+                            <Label htmlFor={module.id} className="sr-only">Enable {displayName}</Label>
+                          </div>
+                        </div>
+                        <div className="p-5">
+                          <div className="min-w-0 space-y-3">
                             <div className="flex items-center gap-3 flex-wrap">
-                              <h3 className="text-base font-semibold">{module.name}</h3>
+                              <h2 id={`module-title-${module.id}`} className="text-base font-semibold">{displayName}</h2>
                               {!isProfileCompatible ? (
                                 <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
                                   Unavailable in {deploymentProfile.label}
@@ -666,24 +774,19 @@ export default function ModulesPage() {
                                 </span>
                               ) : isEffectivelyEnabled ? (
                                 <span className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 font-medium">
-                                  Active
+                                  Enabled
                                 </span>
                               ) : globalDisabled && isEnabled ? (
                                 <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 font-medium">
-                                  Paused (Global Off)
+                                  Paused by installation setting
                                 </span>
                               ) : (
                                 <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
-                                  Inactive
+                                  Disabled
                                 </span>
                               )}
                             </div>
                             <div className="flex flex-wrap gap-1.5">
-                              {module.hasSettings && (
-                                <span className="rounded bg-blue-500/10 px-2 py-0.5 text-xs font-medium text-blue-700">
-                                  Settings available
-                                </span>
-                              )}
                               {formIntegration && isProfileCompatible && (
                                 <>
                                   <span
@@ -693,7 +796,7 @@ export default function ModulesPage() {
                                         : "bg-amber-500/10 text-amber-700"
                                     }`}
                                   >
-                                    {hasConfiguredFormField ? "Field added" : "Missing field"}
+                                    {loadingFormConfigs ? "Checking form fields…" : formConfigError ? "Could not check form fields" : hasConfiguredFormField ? "Form fields configured" : "Form field not yet added"}
                                   </span>
                                   {!isEffectivelyEnabled && (
                                     <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
@@ -704,8 +807,9 @@ export default function ModulesPage() {
                               )}
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              {module.description}
+                              {catalogModule?.summary ?? module.description}
                             </p>
+                            {catalogModule && <div className="flex flex-wrap gap-1.5">{catalogModule.formats.map(format => <span key={format} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">{format}</span>)}</div>}
                             {!isProfileCompatible && (
                               <p className="text-xs text-muted-foreground">
                                 This module requires application domains that are not part of the selected deployment profile.
@@ -717,6 +821,14 @@ export default function ModulesPage() {
                                 {module.featureLocation}
                               </p>
                             )}
+                            {settingsLink && isProfileCompatible && <Button asChild variant="outline" size="sm" className="h-auto min-h-8 whitespace-normal text-left"><Link href={settingsLink.href}>{settingsLink.label}<ArrowRight className="size-3.5 shrink-0" aria-hidden="true" /></Link></Button>}
+                            {(formIntegration || builderLinks.length > 0) && <details className="group rounded-lg border bg-muted/10">
+                              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-3 text-sm font-medium [&::-webkit-details-marker]:hidden">Configure form fields<ChevronDown className="size-4 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" /></summary>
+                              <div className="space-y-3 border-t p-3">
+                            {formConfigError && <div role="alert" className="space-y-2 text-sm">
+                              <p>Could not load form settings. Existing fields have not been changed.</p>
+                              <Button variant="outline" size="sm" disabled={loadingFormConfigs} onClick={() => void fetchFormConfigs()}>Retry form settings</Button>
+                            </div>}
                             {builderLinks.length > 0 && isProfileCompatible && (
                               <div className="flex flex-wrap gap-2 pt-1">
                                 {builderLinks.map((target) => (
@@ -725,7 +837,7 @@ export default function ModulesPage() {
                                     asChild
                                     variant="outline"
                                     size="sm"
-                                    className="h-7 px-2 text-xs bg-white"
+                                    className="h-auto min-h-7 whitespace-normal px-2 text-left text-xs"
                                   >
                                     <Link href={target.href}>{target.label}</Link>
                                   </Button>
@@ -843,10 +955,11 @@ export default function ModulesPage() {
                                           key={actionId}
                                           variant="outline"
                                           size="sm"
-                                          className="h-7 px-2 text-xs bg-white"
+                                          className="h-auto min-h-7 whitespace-normal px-2 text-left text-xs"
                                           disabled={
                                             isRunning ||
                                             loadingFormConfigs ||
+                                            formConfigError ||
                                             !isEffectivelyEnabled ||
                                             isComingSoon ||
                                             action.disabled
@@ -870,43 +983,29 @@ export default function ModulesPage() {
                                 </div>
                               );
                             })()}
-                          </div>
-
-                          <div className="flex items-center gap-3 flex-shrink-0">
-                            {isUpdating && (
-                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                            )}
-                            <Switch
-                              id={module.id}
-                              checked={isEnabled}
-                              onCheckedChange={(checked) =>
-                                handleToggle(module.id, checked)
-                              }
-                              disabled={
-                                isAlwaysEnabled ||
-                                !isProfileCompatible ||
-                                isUpdating ||
-                                isComingSoon ||
-                                globalDisabled
-                              }
-                            />
-                            <Label htmlFor={module.id} className="sr-only">
-                              Toggle {module.name}
-                            </Label>
+                              </div>
+                            </details>}
                           </div>
                         </div>
 
                         {/* Account Validation Settings Panel */}
                         {module.id === "account-validation" && isEffectivelyEnabled && (
-                    <div className="mt-6 pt-6 border-t border-border">
-                      <div className="flex items-center gap-2 mb-4">
+                    <details className="group border-t px-5">
+                      <summary className="flex cursor-pointer list-none items-center gap-2 py-4 [&::-webkit-details-marker]:hidden">
                         <Shield className="h-4 w-4 text-primary" />
-                        <h4 className="font-medium">Allowed Email Domains</h4>
-                      </div>
+                        <span className="text-sm font-medium">Configure allowed email domains</span>
+                        <ChevronDown className="ml-auto size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
+                      </summary>
+                      <div className="pb-5">
 
                       {loadingSettings ? (
                         <div className="flex items-center justify-center py-4">
                           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : accountSettingsError ? (
+                        <div role="alert" className="space-y-2 text-sm">
+                          <p>Could not load access settings. Reload them before making changes.</p>
+                          <Button variant="outline" size="sm" onClick={() => void fetchAccountSettings()}>Retry access settings</Button>
                         </div>
                       ) : (
                         <div className="space-y-4">
@@ -950,6 +1049,7 @@ export default function ModulesPage() {
                                 @
                               </span>
                               <Input
+                                aria-label="Allowed email domain"
                                 value={newDomain}
                                 onChange={(e) => setNewDomain(e.target.value)}
                                 placeholder="youruniversity.edu"
@@ -1008,26 +1108,34 @@ export default function ModulesPage() {
                                   Saving...
                                 </>
                               ) : (
-                                "Save Settings"
+                                "Save access settings"
                               )}
                             </Button>
                           </div>
                         </div>
                       )}
-                    </div>
+                      </div>
+                    </details>
                   )}
 
                         {/* Billing Settings Panel */}
                         {module.id === "billing-info" && isEffectivelyEnabled && (
-                          <div className="mt-6 pt-6 border-t border-border">
-                            <div className="flex items-center gap-2 mb-4">
+                          <details className="group border-t px-5">
+                            <summary className="flex cursor-pointer list-none items-center gap-2 py-4 [&::-webkit-details-marker]:hidden">
                               <Receipt className="h-4 w-4 text-teal-600" />
-                              <h4 className="font-medium">PSP Element Format</h4>
-                            </div>
+                              <span className="text-sm font-medium">Configure billing fields</span>
+                              <ChevronDown className="ml-auto size-4 shrink-0 group-open:rotate-180" aria-hidden="true" />
+                            </summary>
+                            <div className="pb-5">
 
                             {loadingBillingSettings ? (
                               <div className="flex items-center justify-center py-4">
                                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                              </div>
+                            ) : billingSettingsError ? (
+                              <div role="alert" className="space-y-2 text-sm">
+                                <p>Could not load billing settings. Reload them before making changes.</p>
+                                <Button variant="outline" size="sm" onClick={() => void fetchBillingSettings()}>Retry billing settings</Button>
                               </div>
                             ) : (
                               <div className="space-y-4">
@@ -1039,7 +1147,7 @@ export default function ModulesPage() {
                                 {/* PSP Format Configuration */}
                                 <div className="space-y-4">
                                   {/* Enable/Disable toggles */}
-                                  <div className="flex items-center gap-6">
+                                  <div className="flex flex-wrap items-center gap-4">
                                     <label className="flex items-center gap-2 cursor-pointer">
                                       <input
                                         type="checkbox"
@@ -1072,7 +1180,7 @@ export default function ModulesPage() {
 
                                   {/* PSP Format Settings */}
                                   {billingSettings.pspEnabled && (
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 border border-border/50 rounded-lg bg-muted/20">
+                                    <div className="grid grid-cols-1 gap-4 p-4 border border-border/50 rounded-lg bg-muted/20">
                                       <div className="space-y-2">
                                         <Label className="text-xs">Prefix Range</Label>
                                         <div className="flex items-center gap-2">
@@ -1222,22 +1330,20 @@ export default function ModulesPage() {
                                           Saving...
                                         </>
                                       ) : (
-                                        "Save Settings"
+                                        "Save billing settings"
                                       )}
                                     </Button>
                                   </div>
                                 </div>
                               </div>
                             )}
-                          </div>
+                            </div>
+                          </details>
                         )}
                       </GlassCard>
                     );
                   })}
                 </div>
-              </TabsContent>
-            );
-          })}
 
         {/* Info */}
         <div className="text-sm text-muted-foreground bg-muted/30 rounded-lg p-4">
@@ -1249,6 +1355,9 @@ export default function ModulesPage() {
         </div>
         </div>
       </PageContainer>
-    </Tabs>
   );
+}
+
+export default function ModulesPage() {
+  return <Suspense fallback={<PageLoader />}><ModulesPageContent /></Suspense>;
 }

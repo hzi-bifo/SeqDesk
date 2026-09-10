@@ -14,10 +14,14 @@ import {
 const EMBEDDED_SIDEBAR_COLLAPSE_BREAKPOINT = 1180;
 
 export const SIDEBAR_COLLAPSED_WIDTH = 64;
-export const SIDEBAR_DEFAULT_WIDTH = 256;
+export const SIDEBAR_DEFAULT_WIDTH = 320;
 export const SIDEBAR_MIN_WIDTH = 224;
 export const SIDEBAR_MAX_WIDTH = 360;
-export const SIDEBAR_WIDTH_STORAGE_KEY = "sidebar-width";
+// The old default was persisted even when the user never resized the sidebar.
+// Migrate that default once, while still allowing 256 px as a custom width.
+const LEGACY_SIDEBAR_WIDTH_STORAGE_KEY = "sidebar-width";
+const LEGACY_SIDEBAR_DEFAULT_WIDTH = 256;
+export const SIDEBAR_WIDTH_STORAGE_KEY = "sidebar-width-v2";
 
 export function clampSidebarWidth(width: number): number {
   if (!Number.isFinite(width)) {
@@ -80,6 +84,11 @@ export function SidebarProvider({
     const storedWidth = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
     if (storedWidth) {
       setSidebarWidthValue(clampSidebarWidth(Number(storedWidth)));
+    } else {
+      const legacyWidth = localStorage.getItem(LEGACY_SIDEBAR_WIDTH_STORAGE_KEY);
+      if (legacyWidth && Number(legacyWidth) !== LEGACY_SIDEBAR_DEFAULT_WIDTH) {
+        setSidebarWidthValue(clampSidebarWidth(Number(legacyWidth)));
+      }
     }
 
     setReadyToPersist(true);

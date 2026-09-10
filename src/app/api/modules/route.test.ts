@@ -29,6 +29,7 @@ vi.mock("@/lib/deployment-profile/server", () => ({
 import { GET } from "./route";
 import { getDeploymentProfileDefinition } from "@/lib/deployment-profile/definitions";
 import { DEFAULT_MODULE_STATES } from "@/lib/modules/types";
+import { isModuleEnabled } from "@/lib/modules/form-integration";
 
 describe("GET /api/modules", () => {
   beforeEach(() => {
@@ -144,7 +145,7 @@ describe("GET /api/modules", () => {
     });
   });
 
-  it("returns profile-constrained defaults in Research Workbench", async () => {
+  it("returns shared modules in the research preset with facility management initially disabled", async () => {
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
     );
@@ -160,20 +161,35 @@ describe("GET /api/modules", () => {
 
     expect(response.status).toBe(200);
     expect(data.modules).toMatchObject({
-      "ai-validation": false,
-      "mixs-metadata": false,
-      "ena-sample-fields": false,
-      "sequencing-tech": false,
+      "ai-validation": true,
+      "mixs-metadata": true,
+      "ena-sample-fields": true,
+      "sequencing-tech": true,
+      "sequencing-management": false,
+      "import-cami": true,
+      "import-sra": true,
       notifications: true,
     });
-    expect(data.incompatibleModules).toEqual(
-      expect.arrayContaining([
-        "ai-validation",
-        "mixs-metadata",
-        "ena-sample-fields",
-        "sequencing-tech",
-      ])
-    );
+    expect(data.incompatibleModules).toEqual([]);
+  });
+
+  it.each(["sequencing-center", "shared-lab", "research-workbench"] as const)("retains individual choices and honors a global pause in %s", async profile => {
+    mocks.getServerDeploymentProfile.mockReturnValue(getDeploymentProfileDefinition(profile));
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ modulesConfig: JSON.stringify({ modules: { "sequencing-management": true, "import-cami": false, "import-sra": true }, globalDisabled: false }) });
+    const individual = await (await GET()).json();
+    expect(isModuleEnabled(individual, "sequencing-management")).toBe(true);
+    expect(isModuleEnabled(individual, "import-cami")).toBe(false);
+    expect(isModuleEnabled(individual, "import-sra")).toBe(true);
+
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ modulesConfig: JSON.stringify({ modules: individual.modules, globalDisabled: true }) });
+    const paused = await (await GET()).json();
+    expect(paused.modules).toEqual(individual.modules);
+    expect(paused.globalDisabled).toBe(true);
+    expect(isModuleEnabled(paused, "sequencing-management")).toBe(false);
+    expect(isModuleEnabled(paused, "import-cami")).toBe(false);
+    expect(isModuleEnabled(paused, "import-sra")).toBe(false);
+    expect(isModuleEnabled(paused, "explore")).toBe(false);
+    expect(isModuleEnabled(paused, "sequencing-tech")).toBe(true);
   });
 
   it("returns 500 when the database read fails", async () => {

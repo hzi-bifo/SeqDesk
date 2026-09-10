@@ -22,7 +22,7 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { InfrastructureSetupStatus } from "@/components/admin/infrastructure/InfrastructureSetupStatus";
-import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { useModuleEnabled } from "@/lib/modules";
 
 interface SequencingFilesConfig {
   allowedExtensions: string[];
@@ -43,15 +43,9 @@ interface PathTestResult {
 }
 
 export default function DataStoragePage() {
-  const deploymentProfile = useDeploymentProfile();
-  const usesSequencingStorage = deploymentProfile.experience === "sequencing";
-  const storageLabel =
-    deploymentProfile.id === "research-workbench"
-      ? "Managed Dataset Directory"
-      : deploymentProfile.id === "shared-lab"
-        ? "Shared Data Directory"
-        : "Sequencing Data Directory";
+  const usesSequencingStorage = useModuleEnabled("sequencing-management");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -78,23 +72,36 @@ export default function DataStoragePage() {
   }, []);
 
   const fetchSettings = async () => {
+    setLoading(true);
+    setLoadError(false);
     try {
       const res = await fetch("/api/admin/settings/sequencing-files");
       if (!res.ok) {
         throw new Error("Failed to load settings");
       }
       const data = await res.json();
+      if (!data || typeof data.dataBasePath !== "string" || !data.config || typeof data.config !== "object" || Array.isArray(data.config)) {
+        throw new Error("Unexpected storage settings response");
+      }
+      if (data.config.allowedExtensions !== undefined && (
+        !Array.isArray(data.config.allowedExtensions) ||
+        !data.config.allowedExtensions.every((extension: unknown) => typeof extension === "string")
+      )) {
+        throw new Error("Unexpected file matching settings response");
+      }
       setDataBasePath(data.dataBasePath || "");
       setDataBasePathSource(typeof data.dataBasePathSource === "string" ? data.dataBasePathSource : "none");
       setDataBasePathIsImplicit(Boolean(data.dataBasePathIsImplicit));
       if (data.config) {
-        setSeqFilesConfig({
+        setSeqFilesConfig((defaults) => ({
+          ...defaults,
           ...data.config,
           allowSingleEnd: true,
-        });
+        }));
       }
     } catch (error) {
       console.error("Failed to load sequencing files settings:", error);
+      setLoadError(true);
       notifyPanel.error("Failed to load data storage settings");
     } finally {
       setLoading(false);
@@ -186,15 +193,25 @@ export default function DataStoragePage() {
     return <PageLoader />;
   }
 
+  if (loadError) {
+    return (
+      <PageContainer>
+        <h1 className="text-xl font-semibold">Data storage</h1>
+        <div role="alert" className="mt-4 rounded-xl border border-border bg-card p-5 space-y-3">
+          <p>Data storage settings could not be loaded. No settings have been changed.</p>
+          <Button variant="outline" onClick={() => void fetchSettings()}>Try again</Button>
+        </div>
+      </PageContainer>
+    );
+  }
+
   return (
     <PageContainer>
       <div className="space-y-8">
         <div className="mb-4">
-          <h1 className="text-xl font-semibold">Data Storage</h1>
+          <h1 className="text-xl font-semibold">Data storage</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {usesSequencingStorage
-              ? "Configure where sequencing files are discovered and how they are matched"
-              : "Configure the managed location used for uploaded, imported, and derived datasets"}
+            Choose the server directory for data from import modules, file uploads, and facility sequencing.
           </p>
         </div>
 
@@ -203,12 +220,12 @@ export default function DataStoragePage() {
             <p className="text-xs text-muted-foreground">
               Set and validate the base directory before enabling imports.
             </p>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button asChild variant="outline" size="sm" className="bg-white">
-                <Link href="/admin/data-compute">Overview</Link>
+                <Link href="/admin/data-compute">Storage &amp; compute overview</Link>
               </Button>
               <Button asChild variant="outline" size="sm" className="bg-white">
-                <Link href="/admin/pipeline-runtime">Pipeline Runtime</Link>
+                <Link href="/admin/pipeline-runtime">Where pipelines run</Link>
               </Button>
               <Button
                 variant="outline"
@@ -246,25 +263,21 @@ export default function DataStoragePage() {
             <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
               <HardDrive className="h-4 w-4 text-muted-foreground" />
             </div>
-            <h2 className="text-base font-semibold">Required Configuration</h2>
+            <h2 className="text-base font-semibold">Data location</h2>
             <Badge variant="secondary">Required</Badge>
           </div>
           <p className="text-sm text-muted-foreground mb-4">
-            {usesSequencingStorage
-              ? "Define the server directory used for sequencing file discovery and verify access."
-              : "Define the server directory used for managed Workbench data and verify access."}
+            This storage location is shared by data sources. Changing it does not move existing files; plan any data migration before saving a new location.
           </p>
 
           <GlassCard className="p-6">
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="data-base-path" className="text-base font-medium">
-                  {storageLabel}
+                  Data directory
                 </Label>
                 <p className="text-sm text-muted-foreground">
-                  {usesSequencingStorage
-                    ? "Absolute path to the directory where sequencing files are stored (for example: /data/sequencing)"
-                    : "Absolute path to a dedicated directory where SeqDesk manages datasets (for example: /data/seqdesk)"}
+                  Absolute path on the SeqDesk server, not the computer running your browser (for example: /data/seqdesk).
                 </p>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
@@ -278,11 +291,7 @@ export default function DataStoragePage() {
                         setDataBasePathIsImplicit(false);
                         setPathTestResult(null);
                       }}
-                      placeholder={
-                        usesSequencingStorage
-                          ? "/data/sequencing"
-                          : "/data/seqdesk"
-                      }
+                      placeholder="/data/seqdesk"
                       className="pl-10"
                       disabled={saving || dataBasePathIsOperatorManaged}
                     />
@@ -372,7 +381,7 @@ export default function DataStoragePage() {
           <div id="advanced-data-storage" className="scroll-mt-28">
             <div className="flex items-center justify-between gap-3 mb-3">
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-semibold">Advanced Configuration</h2>
+                <h2 className="text-base font-semibold">Facility file discovery</h2>
                 <Badge variant="outline">Optional</Badge>
               </div>
               <Button
@@ -394,6 +403,10 @@ export default function DataStoragePage() {
                 )}
               </Button>
             </div>
+
+            <p className="text-sm text-muted-foreground mb-4">
+              Used by the sequencing management module to find facility files. Import modules manage their own downloads and file matching.
+            </p>
 
             {showAdvanced && (
               <GlassCard className="p-6">
@@ -444,7 +457,7 @@ export default function DataStoragePage() {
             ) : saved ? (
               <Check className="h-4 w-4 mr-2 text-green-500" />
             ) : null}
-            {saved ? "Saved!" : "Save Data Settings"}
+            {saved ? "Saved!" : "Save storage settings"}
           </Button>
         </div>
       </div>

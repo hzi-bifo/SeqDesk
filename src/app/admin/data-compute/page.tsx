@@ -186,34 +186,34 @@ export default function InfrastructureOverviewPage() {
     <>
       <div className="sticky top-0 z-30 bg-card border-b border-border">
         <div className="relative flex items-center justify-center h-[52px] px-6 lg:px-8">
-          <span className="text-sm font-medium">Infrastructure</span>
+          <span className="text-sm font-medium">Storage &amp; compute overview</span>
         </div>
       </div>
     <PageContainer>
       <div className="space-y-8">
         <div className="mb-4 mt-6">
-          <h1 className="text-xl font-semibold">Infrastructure</h1>
+          <h1 className="text-xl font-semibold">Storage &amp; compute overview</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Configure data storage and runtime prerequisites for imports and pipeline execution
+            Choose where data is stored and where work runs. Pipeline execution and report analyses have separate settings.
           </p>
         </div>
 
         <InfrastructureSetupStatus key={statusRefreshKey} />
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-3">
           <GlassCard className="p-6">
             <div className="flex items-start gap-3">
               <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
                 <HardDrive className="h-5 w-5 text-muted-foreground" />
               </div>
               <div className="flex-1 space-y-2">
-                <h2 className="text-base font-semibold">Data Storage</h2>
+                <h2 className="text-base font-semibold">Data storage</h2>
                 <p className="text-sm text-muted-foreground">
-                  Set the sequencing data directory and file extension matching used by the importer.
+                  Manage the shared data directory for imported reads, uploaded files, and facility sequencing.
                 </p>
                 <Button asChild variant="outline" size="sm" className="bg-white">
                   <Link href="/admin/data-storage">
-                    Open Data Storage
+                    Open data storage
                     <ArrowRight className="h-4 w-4 ml-1" />
                   </Link>
                 </Button>
@@ -227,13 +227,33 @@ export default function InfrastructureOverviewPage() {
                 <Settings2 className="h-5 w-5 text-muted-foreground" />
               </div>
               <div className="flex-1 space-y-2">
-                <h2 className="text-base font-semibold">Pipeline Runtime</h2>
+                <h2 className="text-base font-semibold">Where pipelines run</h2>
                 <p className="text-sm text-muted-foreground">
-                  Configure scheduler, per-pipeline SLURM defaults, conda path, run directory, and webhook diagnostics for Nextflow runs.
+                  Run Nextflow pipelines on the SeqDesk server or a SLURM cluster. Set paths, software environments, and pipeline-specific defaults.
                 </p>
                 <Button asChild variant="outline" size="sm" className="bg-white">
                   <Link href="/admin/pipeline-runtime">
-                    Open Pipeline Runtime
+                    Configure pipeline execution
+                    <ArrowRight className="h-4 w-4 ml-1" />
+                  </Link>
+                </Button>
+              </div>
+            </div>
+          </GlassCard>
+
+          <GlassCard className="p-6">
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
+                <Server className="h-5 w-5 text-muted-foreground" />
+              </div>
+              <div className="flex-1 space-y-2">
+                <h2 className="text-base font-semibold">Report analysis environments</h2>
+                <p className="text-sm text-muted-foreground">
+                  Configure the software environments used to turn report tables into figures and analyses. These are separate from pipeline execution.
+                </p>
+                <Button asChild variant="outline" size="sm" className="bg-white">
+                  <Link href="/admin/settings/analysis">
+                    Configure report analyses
                     <ArrowRight className="h-4 w-4 ml-1" />
                   </Link>
                 </Button>
@@ -246,9 +266,9 @@ export default function InfrastructureOverviewPage() {
           <div className="space-y-4">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1">
-                <h2 className="text-base font-semibold">Import settings.json</h2>
+                <h2 className="text-base font-semibold">Advanced: import a configuration file</h2>
                 <p className="text-sm text-muted-foreground">
-                  Import infrastructure runtime values for this SeqDesk instance. Upload is optional.
+                  Optional shortcut for administrators with an existing settings.json file. Review and validate it before saving; saving applies its storage and execution values to this instance.
                 </p>
               </div>
               <Badge variant="outline">Optional</Badge>
@@ -271,20 +291,20 @@ export default function InfrastructureOverviewPage() {
                   Not included
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-amber-900">
-                  Sequencing order and study form definitions are managed separately. Installer preset
+                  Sequencing data and study field definitions are managed separately. Installer preset
                   paths like <code>orderFormSettings</code> are bootstrap inputs and are ignored
                   by this in-app import.
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Button asChild variant="outline" size="sm" className="h-8 bg-white">
                     <Link href="/admin/form-builder?tab=import-export">
-                      Sequencing Order Form Import / Export
+                      Sequencing data fields: import / export
                       <ExternalLink className="ml-1 h-3.5 w-3.5" />
                     </Link>
                   </Button>
                   <Button asChild variant="outline" size="sm" className="h-8 bg-white">
                     <Link href="/admin/study-form-builder?tab=import-export">
-                      Study Form Import / Export
+                      Study fields: import / export
                       <ExternalLink className="ml-1 h-3.5 w-3.5" />
                     </Link>
                   </Button>
@@ -435,7 +455,7 @@ export default function InfrastructureOverviewPage() {
 
         <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground flex items-center gap-2">
           <Server className="h-4 w-4" />
-          Use JSON import for quick bootstrap, then fine-tune Data Storage and Pipeline Runtime fields.
+          You can configure storage and execution using the pages above. Importing a JSON file is optional.
         </div>
       </div>
     </PageContainer>

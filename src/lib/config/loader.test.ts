@@ -14,6 +14,7 @@ import {
 const ENV_KEYS = [
   "SEQDESK_DEPLOYMENT_PROFILE",
   "SEQDESK_SITE_NAME",
+  "SEQDESK_CONTACT_EMAIL",
   "SEQDESK_DATA_PATH",
   "SEQDESK_PIPELINES_ENABLED",
   "SEQDESK_PIPELINE_MODE",
@@ -157,6 +158,19 @@ describe("config loader", () => {
     const fallback = getConfigValue<number>("runtime.missing.value", 123);
     expect(fallback.value).toBe(123);
     expect(fallback.source).toBe("default");
+  });
+
+  it("tracks the optional contact email through file and environment overrides", async () => {
+    await writeConfigFile(tempDir, { site: { contactEmail: "file@example.org" } });
+    expect(loadConfig(true).sources["site.contactEmail"]).toBe("file");
+    expect(loadConfig().config.site?.contactEmail).toBe("file@example.org");
+    process.env.SEQDESK_CONTACT_EMAIL = "env@example.org";
+    expect(loadConfig(true).sources["site.contactEmail"]).toBe("env");
+    expect(loadConfig().config.site?.contactEmail).toBe("env@example.org");
+    delete process.env.SEQDESK_CONTACT_EMAIL;
+    await writeConfigFile(tempDir, { site: { contactEmail: "" } });
+    expect(loadConfig(true).sources["site.contactEmail"]).toBe("file");
+    expect(loadConfig().config.site?.contactEmail).toBe("");
   });
 
   it("uses cache until forceReload or clearConfigCache", async () => {

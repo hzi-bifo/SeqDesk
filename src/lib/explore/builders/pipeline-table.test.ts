@@ -3,6 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BuildContext } from "./types";
+import { ManifestSchema } from "@/lib/pipelines/manifest-schema";
+import { initialChartSpec } from "../report-source-actions";
+import { buildChart } from "../report-widgets";
 
 const mocks = vi.hoisted(() => ({
   db: { sample: { findMany: vi.fn() }, pipelineRun: { findMany: vi.fn() },
@@ -39,6 +42,28 @@ function run(id: string, artifacts: Awaited<ReturnType<typeof artifact>>[], extr
 }
 
 describe("cohort-safe pipeline table datasets", () => {
+  it("uses a saved artifact's contract after the installed package changes", async () => {
+    const saved = { tableKind: "sample-summary", format: "tsv", schemaId: "internal.measurement", schemaVersion: "old", columns: { value: { type: "number", unit: "percent" } } };
+    const file = { ...await artifact("case"), metadata: JSON.stringify({ seqdeskOutput: { table: saved } }) };
+    mocks.db.pipelineRun.findMany.mockResolvedValue([run("old", [file])]);
+    const sources = await listPipelineTableSources(context);
+    expect(sources[0].table).toMatchObject(saved);
+    expect((await buildPipelineTableDataset(context, options))?.schema).toMatchObject({ schemaVersion: "old", columns: expect.arrayContaining([expect.objectContaining({ key: "value", unit: "percent" })]) });
+  });
+
+  it("keeps saved tables usable when their package is no longer installed", async () => {
+    const file = { ...await artifact("case"), metadata: JSON.stringify({ seqdeskOutput: { table: { tableKind: "sample-summary", format: "tsv" } } }) };
+    mocks.getPackage.mockReturnValue(null);
+    mocks.db.pipelineRun.findMany.mockResolvedValue([run("saved", [file])]);
+    expect((await buildPipelineTableDataset(context, options))?.rows).toHaveLength(1);
+  });
+
+  it("refuses to mix source runs with different declared units", async () => {
+    const file = async (id: string, unit: string) => ({ ...await artifact(id), metadata: JSON.stringify({ seqdeskOutput: { table: { tableKind: "sample-summary", format: "tsv", columns: { value: { type: "number", unit } } } } }) });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([run("first", [await file("case", "percent")]), run("second", [await file("control", "fraction")])]);
+    expect(await listPipelineTableSources(context)).toHaveLength(2);
+    await expect(buildPipelineTableDataset(context, options)).rejects.toThrow(/different output schemas or units/);
+  });
   beforeEach(async () => {
     vi.clearAllMocks();
     root = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-report-table-test-"));
@@ -188,5 +213,84 @@ describe("cohort-safe pipeline table datasets", () => {
     expect(await buildPipelineTableDataset({ ...context, userId: "" }, options)).toBeNull();
     expect(mocks.db.sample.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [] } } }));
     expect(mocks.db.pipelineRun.findMany).not.toHaveBeenCalled();
+  });
+
+  it("exposes existing FastQC summaries with useful labels without rerunning older packages", async () => {
+    mocks.getPackage.mockReturnValue({ manifest: { package: { name: "FastQC" }, outputs: [{ id: "summary", scope: "run" }] } });
+    mocks.db.sample.findMany.mockResolvedValue([caseSample]);
+    const table = { ...await artifact(null, "sample_id\tr1_read_count\tr1_avg_quality\tr2_read_count\tr2_avg_quality\nINTERNAL_case\t16647395\t33.7\t16647395\t31.9\n"), outputId: "summary" };
+    mocks.db.pipelineRun.findMany.mockResolvedValue([run("fastqc", [table], { pipelineId: "fastqc", studyId: "comparison", inputSampleIds: '["case"]' })]);
+    const sources = await listPipelineTableSources(context);
+    expect(sources[0]).toMatchObject({ pipelineName: "FastQC", label: "FastQC quality summary", format: "tsv", columnLabels: { r1_read_count: "R1 reads" } });
+    expect(sources[0].description).toContain("PASS / WARN / FAIL");
+    const result = await buildPipelineTableDataset(context, { pipelineId: "fastqc", outputId: "summary", runIds: ["fastqc"] });
+    expect(result?.schema.columns.find(column => column.key === "r1_avg_quality")?.label).toBe("R1 mean quality (Phred)");
+    expect(result?.provenance.sources).toContainEqual({ type: "pipeline-run", id: "fastqc", label: "INTERNAL_fastqc" });
+    expect(result?.provenance.notes).toContain("Only the explicitly chosen completed runs are used.");
+  });
+
+  it("does not expose FastQC HTML reports as tables", async () => {
+    mocks.getPackage.mockReturnValue(null);
+    mocks.db.pipelineRun.findMany.mockResolvedValue([run("html", [{ ...await artifact("case"), outputId: "sample_qc_reports" }], { pipelineId: "fastqc" })]);
+    expect(await listPipelineTableSources(context)).toEqual([]);
+  });
+
+  it("keeps server identity labels authoritative over package labels", async () => {
+    mocks.getPackage().manifest.outputs[0].table.columnLabels = { value: "Abundance", sample_db_id: "Misleading identity", pipeline_run: "Wrong run" };
+    mocks.db.pipelineRun.findMany.mockResolvedValue([run("source", [await artifact("case")])]);
+    const result = await buildPipelineTableDataset(context, options);
+    expect(result?.schema.columns.find(column => column.key === "value")?.label).toBe("Abundance");
+    expect(result?.schema.columns.find(column => column.key === "sample_db_id")?.label).toBe("Sample record");
+    expect(result?.schema.columns.find(column => column.key === "pipeline_run")?.label).toBe("Pipeline run");
+  });
+
+  it.each(["nanoplot", "read-cleaning"])("supports %s's output contract under an entirely new pipeline and output ID", async pipeline => {
+    const manifest = ManifestSchema.parse(JSON.parse(await fs.readFile(path.join(process.cwd(), `pipelines/${pipeline}/manifest.json`), "utf8")));
+    const declaration = manifest.outputs.find(output => output.table)!;
+    const customId = "new-user-pipeline-without-app-integration";
+    const outputId = "user-defined-measurements";
+    mocks.getPackage.mockImplementation(id => id === customId ? { manifest: {
+      ...manifest, package: { ...manifest.package, id: customId, name: "User's new pipeline" },
+      outputs: [{ ...declaration, id: outputId }],
+    } } : null);
+    mocks.db.sample.findMany.mockResolvedValue([caseSample]);
+    const contents = pipeline === "nanoplot"
+      ? "sample_id\tnum_reads\ttotal_bases\tmean_length\tmedian_length\tread_n50\tmean_quality\nINTERNAL_case\t4\t8000\t2000\t1800\t2200\t14.1\n"
+      : JSON.stringify([{ sample_record: "case", source_sample: "INTERNAL_case", classifier: "Kraken2", classified_read_ids: 4, blastn_unique_ids: null }]);
+    const file = { ...await artifact(null, contents), outputId };
+    mocks.db.pipelineRun.findMany.mockResolvedValue([run("new-tool", [file], { pipelineId: customId, studyId: "comparison", inputSampleIds: '["case"]' })]);
+    const sources = await listPipelineTableSources(context);
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({ pipelineId: customId, pipelineName: "User's new pipeline", outputId, table: declaration.table });
+    const result = await buildPipelineTableDataset(context, { pipelineId: customId, outputId, runIds: ["new-tool"] });
+    expect(result?.rows[0]).toMatchObject({ sample_db_id: "case", sample_id: "INTERNAL_case", cohort_group: "case" });
+    expect(result?.provenance.sources).toContainEqual({ type: "pipeline-run", id: "new-tool", label: "INTERNAL_new-tool" });
+    const columns = result!.schema.columns.filter(column => !column.key.endsWith("_db_id"));
+    const chart = buildChart(result!.rows, columns, initialChartSpec(columns));
+    expect(chart.data[0].x).toEqual(["INTERNAL_case"]);
+    expect(chart.data[0].y).toEqual([4]);
+  });
+
+  it("supports a new row entity, table kind, column vocabulary and unit without pretending it is sample-level QC", async () => {
+    const table = ManifestSchema.shape.outputs.element.shape.table.parse({
+      label: "Instrument signals", tableKind: "user.instrument-signals", format: "json",
+      schemaId: "user.signal-measurements", schemaVersion: "3", rowEntity: "instrument-channel",
+      roles: { value: "amplitude" }, columns: {
+        channel: { type: "string", label: "Channel", required: true },
+        amplitude: { type: "number", label: "Amplitude", unit: "mV", required: true },
+      },
+    });
+    mocks.getPackage.mockReturnValue({ manifest: { package: { name: "Internal instrument fixture" }, outputs: [{ id: "profile", scope: "run", table }] } });
+    mocks.db.pipelineRun.findMany.mockResolvedValue([run("signals", [await artifact(null, JSON.stringify([
+      { channel: "A", amplitude: 12.5 }, { channel: "B", amplitude: 0 },
+    ]))], { studyId: "comparison", inputSampleIds: '["case","control"]' })]);
+    const result = await buildPipelineTableDataset(context, options);
+    expect(result?.tableKind).toBe("user.instrument-signals");
+    expect(result?.schema.rowEntity).toBe("instrument-channel");
+    expect(result?.roles).not.toHaveProperty("sample");
+    expect(result?.rows.every(row => row.sample_db_id === null)).toBe(true);
+    const chart = buildChart(result!.rows, result!.schema.columns, { chart: "values", x: "channel", y: "amplitude" });
+    expect(chart.data[0].y).toEqual([12.5, 0]);
+    expect(chart.layout.yaxis).toEqual({ title: { text: "Amplitude (mV)" } });
   });
 });

@@ -42,7 +42,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       for (const key of keys) picked[key] = record.data[key];
       return picked;
     });
-    return NextResponse.json({ datasetId: dataset.id, version: current?.number ?? null, columns, rows, total: records.length, truncated: records.length > limit });
+    return NextResponse.json({ datasetId: dataset.id, version: current?.number ?? null, rowEntity: schema.rowEntity, columns, rows, total: records.length, truncated: records.length > limit });
   } catch (error) {
     return exploreErrorResponse(error);
   }

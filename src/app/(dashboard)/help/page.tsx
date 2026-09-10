@@ -102,7 +102,7 @@ const workspaceCards = [
 const taskRows = [
   ["Request sequencing", "Sequencing Orders -> New Sequencing Order"],
   ["Check sequencing order progress", "Sequencing Orders -> Sequencing order overview"],
-  ["Review or attach read files", "Sequencing Order -> Sequencing Data"],
+  ["Review or attach read files", "Sequencing Order -> Files"],
   ["Create a scientific sample grouping", "Studies -> New Study"],
   ["Complete metadata", "Study -> Overview and Sequencing Data"],
   ["Run sequencing order or study workflows", "Sequencing Order/Study -> Analysis"],

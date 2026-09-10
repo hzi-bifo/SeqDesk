@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { normalizeReportSummary } from "./report-summary.mjs";
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -47,7 +48,8 @@ async function parseSummaryRows(summaryPath) {
     const lines = content.split(/\r?\n/).filter(Boolean);
     if (lines.length < 2) return new Map();
     const header = lines[0].split("\t");
-    const sampleIndex = header.findIndex((key) => key === "sample" || key === "sample_id");
+    // detaxizer writes an unnamed pandas index as its first column.
+    const sampleIndex = header[0] === "" ? 0 : header.findIndex((key) => key === "sample" || key === "sample_id");
     if (sampleIndex < 0) return new Map();
 
     const rows = new Map();
@@ -173,6 +175,30 @@ async function discoverRemovedReads(payload) {
   return files;
 }
 
+async function writeReportTable(outputDir, content) {
+  const reportPath = path.join(outputDir, "seqdesk-read-screening-summary.json");
+  const staging = await fs.mkdtemp(path.join(outputDir, ".seqdesk-screening-summary-"));
+  try {
+    const stagedFile = path.join(staging, "summary.json");
+    await fs.writeFile(stagedFile, content);
+    try {
+      // Publish a complete file atomically, without replacing another resolver's
+      // output. Concurrent monitor/webhook discovery must never see half a JSON.
+      await fs.link(stagedFile, reportPath);
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const existing = await fs.lstat(reportPath);
+      if (!existing.isFile() || existing.size !== Buffer.byteLength(content) || await fs.readFile(reportPath, "utf8") !== content) {
+        throw new Error("An existing report table differs from this summary; it was left unchanged.");
+      }
+    }
+    return reportPath;
+  } finally {
+    // Only this attempt's freshly created staging directory is removed.
+    await fs.rm(staging, { recursive: true, force: true });
+  }
+}
+
 try {
   const payload = JSON.parse(await readStdin());
   const files = [];
@@ -193,6 +219,15 @@ try {
       fromStep: "classification",
       outputId: "summary",
     });
+    try {
+      if ((await fs.stat(summaryPath)).size > 4 * 1024 * 1024) throw new Error("The screening summary exceeds the 4 MiB report-table limit.");
+      const rows = normalizeReportSummary(await fs.readFile(summaryPath, "utf8"), payload.samples || []);
+      const content = `${JSON.stringify(rows, null, 2)}\n`;
+      const reportPath = await writeReportTable(payload.outputDir, content);
+      files.push({ type: "artifact", name: "Read screening summary", path: reportPath, fromStep: "classification", outputId: "report_summary" });
+    } catch (error) {
+      errors.push(`Report table unavailable: ${error instanceof Error ? error.message : "Unsupported screening summary."} The original summary is still available.`);
+    }
   }
 
   const multiqcPath = path.join(payload.outputDir, "multiqc", "multiqc_report.html");

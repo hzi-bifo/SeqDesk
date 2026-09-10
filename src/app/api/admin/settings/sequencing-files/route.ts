@@ -71,13 +71,10 @@ export async function GET() {
       config,
     });
   } catch {
-    return NextResponse.json({
-      dataBasePath: "",
-      configuredDataBasePath: "",
-      dataBasePathSource: "none",
-      dataBasePathIsImplicit: false,
-      config: DEFAULT_CONFIG,
-    });
+    return NextResponse.json(
+      { error: "Failed to load data storage settings" },
+      { status: 500 }
+    );
   }
 }
 

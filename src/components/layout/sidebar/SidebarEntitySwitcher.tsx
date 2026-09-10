@@ -20,7 +20,6 @@ interface SidebarEntitySwitcherProps {
 export function SidebarEntitySwitcher({
   entityContext,
   collapsed,
-  deploymentProfile,
 }: SidebarEntitySwitcherProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -97,26 +96,26 @@ export function SidebarEntitySwitcher({
           <button
             onClick={() => handleTabClick("orders")}
             className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+              "flex min-w-0 flex-auto items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 text-xs font-medium transition-all",
               activeTab === "orders"
                 ? "bg-card text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <Inbox className="h-3.5 w-3.5" />
-            {orderLabel}
+            <Inbox className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{orderLabel}</span>
           </button>
           <button
             onClick={() => handleTabClick("studies")}
             className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+              "flex min-w-0 flex-auto items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 text-xs font-medium transition-all",
               activeTab === "studies"
                 ? "bg-card text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <BookOpen className="h-3.5 w-3.5" />
-            Studies
+            <BookOpen className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">Studies</span>
           </button>
         </div>
       </div>

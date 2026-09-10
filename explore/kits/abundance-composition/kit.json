@@ -11,6 +11,7 @@
     "label": "Relative abundance profiles",
     "tableKind": "taxon-abundance-long",
     "requiredRoles": ["sample", "taxon", "value", "rank"],
+    "requiredRoleTypes": { "value": { "type": "number", "unit": "percent" } },
     "optionalRoles": ["taxon_id", "group"]
   }],
   "params": {

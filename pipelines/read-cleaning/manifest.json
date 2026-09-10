@@ -3,7 +3,7 @@
   "package": {
     "id": "read-cleaning",
     "name": "Read Cleaning",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Screen raw or unknown reads for host/contaminant sequences with nf-core/detaxizer and stage cleaned reads for admin review",
     "provider": "nf-core",
     "website": "https://nf-co.re/detaxizer"
@@ -114,6 +114,38 @@
       "fromStep": "classification",
       "discovery": {
         "pattern": "summary/summary.tsv"
+      }
+    },
+    {
+      "id": "report_summary",
+      "scope": "run",
+      "required": false,
+      "destination": "run_artifact",
+      "type": "artifact",
+      "fromStep": "classification",
+      "table": {
+        "label": "Read screening summary",
+        "description": "Read IDs flagged by the selected contaminant classifier, with optional BLAST validation counts. These are screening counts, not total, retained or removed reads; this table does not approve cleaned reads.",
+        "tableKind": "sample-summary",
+        "format": "json",
+        "sampleColumn": "sample_record",
+        "schemaId": "seqdesk.read-screening-summary",
+        "schemaVersion": "1",
+        "rowEntity": "sample",
+        "roles": { "count": "classified_read_ids" },
+        "columns": {
+          "sample_record": { "type": "string", "label": "Source sample record", "required": true, "nullable": false },
+          "source_sample": { "type": "string", "label": "Original sample label", "required": true, "nullable": false },
+          "classifier": { "type": "string", "label": "Classification method", "required": true, "nullable": false },
+          "classified_read_ids": { "type": "number", "label": "Flagged read IDs", "unit": "read IDs", "required": true, "nullable": false },
+          "blastn_unique_ids": { "type": "number", "label": "Read IDs with BLAST hits", "unit": "read IDs", "nullable": true },
+          "blastn_lines": { "type": "number", "label": "BLAST hits", "unit": "hits", "nullable": true },
+          "filteredblastn_unique_ids": { "type": "number", "label": "Read IDs passing BLAST validation", "unit": "read IDs", "nullable": true },
+          "filteredblastn_lines": { "type": "number", "label": "BLAST hits passing validation", "unit": "hits", "nullable": true }
+        }
+      },
+      "discovery": {
+        "pattern": "seqdesk-read-screening-summary.json"
       }
     },
     {

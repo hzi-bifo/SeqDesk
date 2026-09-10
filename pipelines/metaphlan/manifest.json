@@ -119,7 +119,17 @@
       "id": "cami_profile",
       "table": {
         "label": "MetaPhlAn relative abundance (CAMI profile)",
+        "description": "Taxonomic percentages with rank and lineage for each sample. Percentages are not read counts.",
         "tableKind": "taxon-abundance-long",
+        "schemaId": "cami.taxonomic-profile",
+        "schemaVersion": "1",
+        "rowEntity": "sample-taxon",
+        "columns": {
+          "TAXPATHSN": { "type": "string", "label": "Taxon lineage", "required": true },
+          "TAXID": { "type": "string", "label": "Taxonomy ID", "required": true },
+          "RANK": { "type": "string", "label": "Taxonomic rank", "required": true },
+          "PERCENTAGE": { "type": "number", "label": "Relative abundance", "unit": "percent", "required": true, "nullable": false }
+        },
         "format": "tsv",
         "headerLinePrefix": "@@",
         "skipLinesStartingWith": "@",

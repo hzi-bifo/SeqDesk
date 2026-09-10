@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { fetchDatasetRows } from "./datasets";
 import { parseInputBindings } from "./analyses";
+import { generationSnapshot } from "./report-generation";
 import { getKit } from "./kits/loader";
 import { viewRoleHints } from "./dataset-kinds";
 import { parseStoredBlocks } from "./report-blocks";
@@ -102,6 +103,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
   const reportBlocks = storedBlocks.length > 0 ? storedBlocks : null;
 
   const analysisIds = new Set(analyses.map((analysis) => analysis.id));
+  const guidedAnalyses = new Set(analyses.filter(analysis => generationSnapshot(analysis.revisions[0]?.inputs)).map(analysis => analysis.id));
   const runToAnalysis = new Map(runs.map((run) => [run.id, run.analysisId] as const));
   const producerOf = (dataset: (typeof allDatasets)[number]): string | null => {
     const sourceConfig = parseJsonObject(dataset.sourceConfig);
@@ -121,8 +123,8 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
   const reportFigures = new Set(reportBlocks?.filter((block) => block.type === "figure").map((block) => `${block.analysisId}:${block.figureName}`) ?? []);
   const reportTables = new Set(reportBlocks?.filter((block) => block.type === "table").map((block) => block.datasetId) ?? []);
   const reportViews = new Set(reportBlocks?.filter((block) => block.type === "view").map((block) => `${block.datasetId}:${block.view}`) ?? []);
-  const figureInReport = (analysisId: string, name: string) => (reportBlocks ? reportFigures.has(`${analysisId}:${name}`) : true);
-  const tableInReport = (datasetId: string, derived: boolean) => (reportBlocks ? reportTables.has(datasetId) : derived);
+  const figureInReport = (analysisId: string, name: string) => (reportBlocks ? reportFigures.has(`${analysisId}:${name}`) : !guidedAnalyses.has(analysisId));
+  const tableInReport = (datasetId: string, derived: boolean, producer: string | null) => (reportBlocks ? reportTables.has(datasetId) : derived && (!producer || !guidedAnalyses.has(producer)));
 
   const nodes: CanvasNode[] = [];
   const edges: CanvasEdge[] = [];
@@ -203,13 +205,15 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         columnCount: schema.columns.length,
         previewColumns,
         columns: schema.columns,
+        schema,
         roles,
         previewRows: preview.rows.map((row) => row.data),
         views: timelineReady ? ["subject-timeline", "heatmap"] : [],
         usedColumns,
         latestWrite,
         roleHints: viewRoleHints(roles),
-        inReport: tableInReport(dataset.id, dataset.kind === "derived"),
+        inReport: tableInReport(dataset.id, dataset.kind === "derived", producingAnalysis),
+        autoInclude: !producingAnalysis || !guidedAnalyses.has(producingAnalysis),
         ...(producerActive ? { refreshing: true } : {}),
       },
     });
@@ -317,6 +321,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         thumbnailUrl: entry.image ? artifactUrl(entry.image) : null,
         unchanged: Boolean(before && main.checksum && before.checksum === main.checksum),
         inReport: figureInReport(analysis.id, name),
+        autoInclude: !guidedAnalyses.has(analysis.id),
         ...(active ? { refreshing: true } : {}),
       };
       nodes.push({ id: figureNodeId, data });

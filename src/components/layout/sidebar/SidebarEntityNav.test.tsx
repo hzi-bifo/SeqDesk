@@ -152,7 +152,7 @@ describe("SidebarEntityNav", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders order navigation, nested subitems, and sequencing association fetch state", async () => {
+  it("renders one Files entry while retaining facility metadata and pipeline navigation", () => {
     render(
       <SidebarEntityNav
         entityContext={{
@@ -166,33 +166,99 @@ describe("SidebarEntityNav", () => {
       />
     );
 
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/orders/order-1/sequencing");
-    });
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/orders/order-1/sequencing");
 
     const overviewLinks = screen.getAllByRole("link", { name: /Metadata/i });
     expect(
       overviewLinks.some((link) => link.getAttribute("href") === "/orders/order-1")
     ).toBe(true);
     expect(screen.getByText("Facility Fields")).toBeTruthy();
-    expect(screen.getByText("Sequencing Data")).toBeTruthy();
+    expect(screen.getAllByRole("link", { name: "Files" })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Files" }).getAttribute("href")).toBe("/orders/order-1/samples-files");
+    expect(screen.queryByText("Sequencing Data")).toBeNull();
+    expect(screen.queryByText("Data source")).toBeNull();
+    expect(screen.queryByText("Stream")).toBeNull();
     expect(screen.getByText("Pipelines")).toBeTruthy();
     expect(screen.getByText("Samples")).toBeTruthy();
     const detailsLink = screen.getByRole("link", { name: /Details/i });
     expect(detailsLink.getAttribute("href")).toBe("/orders/order-1/edit?step=details");
     expect(screen.getByText("Order Fields")).toBeTruthy();
     expect(screen.getByText("Sample Fields")).toBeTruthy();
-    expect(screen.getByText("Associate")).toBeTruthy();
+    expect(screen.queryByText("Associate")).toBeNull();
     expect(screen.getByText("FASTQ Checksum")).toBeTruthy();
     const pipelineLink = screen.getByRole("link", { name: /FASTQ Checksum/i });
     const pipelineDot = pipelineLink.querySelector("span[aria-hidden='true']");
     expect(pipelineDot?.className).toContain("bg-[#00BD7D]");
   });
+  it.each(["facility", "import"] as const)("puts Files before Metadata for %s sequencing data", (dataOrigin) => {
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          ...entityContextDefaults,
+          entityType: "order",
+          entityId: "order-1",
+          entityData: { ...entityData("Order 1"), dataOrigin },
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+    const links = screen.getAllByRole("link");
+    expect(links[0]).toBe(screen.getByRole("link", { name: "Files" }));
+    expect(links[1]).toBe(screen.getByRole("link", { name: "Metadata" }));
+  });
+
+  it.each([
+    ["/orders/order-1", "Sequencing data details"],
+    ["/orders/order-1/edit", "Sequencing Order Details"],
+  ])("uses the appropriate metadata/form label on %s", (pathname, label) => {
+    mocks.usePathname.mockReturnValue(pathname);
+    mocks.useOrderFormSteps.mockReturnValue({
+      steps: [{ id: "group_details", label: "Sequencing Order Details", status: "complete" }],
+      facilitySections: [],
+      loading: false,
+    });
+    render(
+      <SidebarEntityNav
+        entityContext={{ ...entityContextDefaults, entityType: "order", entityId: "order-1", entityData: entityData("Order 1") }}
+        collapsed={false}
+      />
+    );
+    expect(screen.getByText(label).closest("a")?.getAttribute("href")).toBe(
+      "/orders/order-1/edit?step=group_details"
+    );
+  });
+
   it("highlights Files rather than Metadata on the import progress route", () => {
     mocks.usePathname.mockReturnValue("/orders/order-1/samples-files");
     mocks.useSearchParams.mockReturnValue(new URLSearchParams());
     render(<SidebarEntityNav entityContext={{ ...entityContextDefaults, entityType: "order", entityId: "order-1", entityData: { ...entityData("Order 1"), dataOrigin: "import" } }} collapsed={false} />);
     expect(screen.getByRole("link", { name: "Files" }).className).toContain("font-medium");
+    expect(screen.getByRole("link", { name: "Metadata" }).className).not.toContain("font-medium");
+  });
+
+  it.each([
+    ["/orders/import", "orderId=order-1&source=sra"],
+    ["/orders/order-1/files", ""],
+    ["/orders/order-1/sequencing", ""],
+    ["/orders/order-1/sequencing", "view=discover"],
+    ["/orders/order-1/sequencing", "view=stream"],
+    ["/orders/order-1", "section=reads"],
+  ])("keeps Files active for the legacy file route %s?%s", (pathname, query) => {
+    mocks.usePathname.mockReturnValue(pathname);
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams(query));
+    render(<SidebarEntityNav entityContext={{ ...entityContextDefaults, entityType: "order", entityId: "order-1", entityData: entityData("Order 1") }} collapsed={false} showOperationalControls />);
+    expect(screen.getByRole("link", { name: "Files" }).className).toContain("font-medium");
+    expect(screen.getByRole("link", { name: "Metadata" }).className).not.toContain("font-medium");
+    expect(screen.getByRole("link", { name: "Pipelines" }).className).not.toContain("font-medium");
+  });
+
+  it.each(["view=analysis", "pipeline=fastq-checksum"])("keeps legacy pipeline context %s under Pipelines", (query) => {
+    mocks.usePathname.mockReturnValue("/orders/order-1/sequencing");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams(query));
+    render(<SidebarEntityNav entityContext={{ ...entityContextDefaults, entityType: "order", entityId: "order-1", entityData: entityData("Order 1") }} collapsed={false} showOperationalControls />);
+    expect(screen.getByRole("link", { name: "Pipelines" }).className).toContain("font-medium");
+    expect(screen.getByRole("link", { name: "Files" }).className).not.toContain("font-medium");
     expect(screen.getByRole("link", { name: "Metadata" }).className).not.toContain("font-medium");
   });
 

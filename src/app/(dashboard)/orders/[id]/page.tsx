@@ -55,6 +55,13 @@ import { mapPerSampleFieldToColumn } from "@/lib/sample-fields";
 import { DEFAULT_GROUPS, type FormFieldDefinition, type FormFieldGroup } from "@/types/form-config";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 import { hasCapability, principalFromSession } from "@/lib/authorization/client";
+import { SequencingSourceMetadata } from "@/components/orders/SequencingSourceMetadata";
+import type { SourceImportSnapshot } from "@/lib/orders/source-metadata";
+import { startVisiblePolling } from "@/lib/polling";
+import {
+  getSequencingDataFieldLabel,
+  getSequencingDataSectionLabel,
+} from "@/lib/orders/sequencing-data-labels";
 
 const DATA_HANDLING_SETTINGS_HREF = "/admin/form-builder?tab=settings#data-handling";
 
@@ -146,7 +153,7 @@ function renderOrderDeleteError(message: string): React.ReactNode {
 
   return (
     <>
-      Deletion of submitted orders is disabled. Enable it in{" "}
+      Deletion of non-draft sequencing data is disabled. Enable it in{" "}
       <Link href={DATA_HANDLING_SETTINGS_HREF} className="underline underline-offset-2">
         Settings &gt; Data Handling
       </Link>
@@ -241,6 +248,7 @@ function formatSchemaFieldValue(field: FormFieldDefinition, value: unknown): str
 interface Order {
   dataOrigin?: string;
   sourceMetadata?: string | null;
+  sourceImports?: SourceImportSnapshot[];
   id: string;
   name: string;
   status: string;
@@ -409,7 +417,7 @@ export default function OrderDetailPage({
       setLoading(true);
     }
     try {
-      const res = await fetch(`/api/orders/${orderId}`);
+      const res = await fetch(`/api/orders/${orderId}?includeSources=true`);
       if (!res.ok) {
         if (res.status === 404) {
           // Handle stale/mismatched links: if this ID belongs to a study,
@@ -423,9 +431,9 @@ export default function OrderDetailPage({
           } catch {
             // Ignore fallback lookup errors and show default order error.
           }
-          setError("Sequencing Order not found");
+          setError("Sequencing data not found");
         } else if (res.status === 403) {
-          setError("You don't have permission to view this sequencing order");
+          setError("You don't have permission to view this sequencing data");
         } else {
           throw new Error("Failed to fetch order");
         }
@@ -434,13 +442,19 @@ export default function OrderDetailPage({
       const data = await res.json();
       setOrder(data);
     } catch {
-      setError("Failed to load sequencing order");
+      setError("Failed to load sequencing data");
     } finally {
       if (!options?.silent) {
         setLoading(false);
       }
     }
   }, [orderId, router]);
+
+  const hasPendingSourceImports = Boolean(order?.sourceImports?.some(job => ["queued", "running"].includes(job.status)));
+  useEffect(() => {
+    if (!hasPendingSourceImports) return;
+    return startVisiblePolling(() => void fetchOrder({ silent: true }), 10000);
+  }, [fetchOrder, hasPendingSourceImports]);
 
   const fetchPublishedRuns = useCallback(async () => {
     setPublishedRunsLoading(true);
@@ -585,7 +599,7 @@ export default function OrderDetailPage({
     const isSubmitted = order.status !== "DRAFT";
 
     if (isSubmitted && deleteConfirmText !== "DELETE") {
-      setError("You must type DELETE to confirm deletion of a submitted sequencing order.");
+      setError("You must type DELETE to confirm deletion of this sequencing data entry.");
       return;
     }
 
@@ -598,13 +612,13 @@ export default function OrderDetailPage({
 
       if (!res.ok) {
         const data = await res.json();
-        setError(data.error || "Failed to delete sequencing order");
+        setError(data.error || "Failed to delete sequencing data");
         return;
       }
 
       router.push("/orders");
     } catch {
-      setError("Failed to delete sequencing order");
+      setError("Failed to delete sequencing data");
     } finally {
       setUpdating(false);
     }
@@ -856,7 +870,7 @@ export default function OrderDetailPage({
         <Button variant="ghost" size="sm" asChild className="mb-4">
           <Link href="/orders">
             <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Sequencing Orders
+            Back to sequencing data
           </Link>
         </Button>
         <div className="bg-card rounded-lg border p-8 text-center">
@@ -916,7 +930,7 @@ export default function OrderDetailPage({
     .filter((step) => step.kind === "group")
     .map((step) => ({
       id: step.id,
-      title: step.label,
+      title: getSequencingDataSectionLabel(step.id, step.label),
       rows: visibleRegularOrderFields
         .filter((field) => field.groupId === step.id)
         .slice()
@@ -1035,11 +1049,11 @@ export default function OrderDetailPage({
     <>
       <PageContainer>
         {error && (
-          <PageNotice variant="error" title="Sequencing Order action failed" className="mb-6 rounded-xl border">
+          <PageNotice variant="error" title="Sequencing data action failed" className="mb-6 rounded-xl border">
             {renderOrderDeleteError(error)}
           </PageNotice>
         )}
-        {order.dataOrigin === "import" && <Link className="mb-4 inline-block underline" href={`/orders/${order.id}/samples-files`}>View samples, files and import progress</Link>}
+        {activeSection === "overview" && <SequencingSourceMetadata order={order} />}
           {/* Order Process - only when there are samples */}
           {activeSection === "overview" && order.dataOrigin !== "import" && !isFacilityAdmin && order.samples.length > 0 && (() => {
             const isSubmitted = order.status === "SUBMITTED" || order.status === "COMPLETED";
@@ -1448,7 +1462,7 @@ export default function OrderDetailPage({
                     <div className="divide-y divide-border border-t">
                       {section.rows.map(({ field, value }) => (
                         <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
-                          <span className="text-muted-foreground">{field.label}</span>
+                          <span className="text-muted-foreground">{getSequencingDataFieldLabel(field)}</span>
                           <span className="font-medium text-right max-w-[60%] break-words">
                             {formatSchemaFieldValue(field, value)}
                           </span>
@@ -1473,7 +1487,7 @@ export default function OrderDetailPage({
                     <div className="divide-y divide-border border-t">
                       {ungroupedOverviewRows.map(({ field, value }) => (
                         <div key={field.id} className="flex justify-between items-start px-5 py-3 text-sm">
-                          <span className="text-muted-foreground">{field.label}</span>
+                          <span className="text-muted-foreground">{getSequencingDataFieldLabel(field)}</span>
                           <span className="font-medium text-right max-w-[60%] break-words">
                             {formatSchemaFieldValue(field, value)}
                           </span>
@@ -1545,7 +1559,7 @@ export default function OrderDetailPage({
                     </div>
                   ) : (
                     <div className="border-t px-5 py-6 text-sm text-muted-foreground">
-                      No MIxS checklist selected for this sequencing order.
+                      No MIxS checklist selected for this sequencing data.
                     </div>
                   )}
                 </div>
@@ -1691,7 +1705,7 @@ export default function OrderDetailPage({
                   })}
                   {order.samples.length === 0 ? (
                     <div className="border-t px-5 py-6 text-sm text-muted-foreground">
-                      No samples have been added to this sequencing order yet.
+                      No samples have been added to this sequencing data entry yet.
                     </div>
                   ) : visibleAdminSampleFields.length === 0 ? (
                     <div className="border-t px-5 py-6 text-sm text-muted-foreground">
@@ -1746,15 +1760,15 @@ export default function OrderDetailPage({
             <div className="bg-card rounded-lg border overflow-hidden mt-4">
               <div className="px-5 py-4 flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold">Sequencing Order Information</h2>
+                  <h2 className="text-sm font-semibold">Sequencing metadata</h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Update the sequencing order details, contact, or metadata fields.
+                    Update the name, descriptions and metadata for this sequencing data.
                   </p>
                 </div>
                 <Button size="sm" variant="outline" asChild>
                   <Link href={`/orders/${order.id}/edit`}>
                     <Pencil className="h-3.5 w-3.5 mr-1.5" />
-                    Change Sequencing Order Information
+                    Edit metadata
                   </Link>
                 </Button>
               </div>
@@ -1898,14 +1912,14 @@ export default function OrderDetailPage({
           </div>
           )}
 
-          {/* Delete Sequencing Order */}
+          {/* Delete sequencing data */}
           {activeSection === "overview" && (isOwner || isFacilityAdmin) && (order.status === "DRAFT" || isFacilityAdmin) && (
             <div className="bg-card rounded-lg border overflow-hidden mt-4">
               <div className="px-5 py-4 flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold">Delete Sequencing Order</h2>
+                  <h2 className="text-sm font-semibold">Delete sequencing data</h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Permanently remove this sequencing order and all its data.
+                    Permanently remove this sequencing data entry and its associated records.
                   </p>
                 </div>
                 <Button
@@ -2038,17 +2052,18 @@ export default function OrderDetailPage({
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-destructive">Delete Sequencing Order</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="text-destructive">Delete sequencing data</DialogTitle>
+            <DialogDescription asChild>
+              <div>
               {order?.status !== "DRAFT" ? (
                 <>
                   <p className="mb-2">
-                    <strong>Warning:</strong> This sequencing order has been submitted (status: {order?.status}).
+                    <strong>Warning:</strong> This sequencing data entry is no longer a draft (status: {order?.status}).
                   </p>
                   <p className="mb-2">Deleting will permanently remove:</p>
                   <ul className="list-disc list-inside mb-4 text-sm">
-                    <li>{order?._count?.samples || 0} samples</li>
-                    <li>All associated sequencing data</li>
+                    <li>{order?._count?.samples || 0} sample records</li>
+                    <li>Associated metadata and file links</li>
                     <li>Status history</li>
                   </ul>
                   <p className="mb-2">
@@ -2062,8 +2077,9 @@ export default function OrderDetailPage({
                   />
                 </>
               ) : (
-                <p>Are you sure you want to delete this sequencing order? This cannot be undone.</p>
+                <p>Are you sure you want to delete this sequencing data entry? This cannot be undone.</p>
               )}
+              </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -2075,7 +2091,7 @@ export default function OrderDetailPage({
               onClick={handleDeleteConfirm}
               disabled={order?.status !== "DRAFT" && deleteConfirmText !== "DELETE"}
             >
-              Delete Sequencing Order
+              Delete sequencing data
             </Button>
           </DialogFooter>
         </DialogContent>

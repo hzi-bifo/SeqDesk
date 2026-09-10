@@ -2,9 +2,10 @@ import fs from "fs/promises";
 import path from "path";
 import { db } from "@/lib/db";
 import { getPackage, type PackageOutputTable } from "@/lib/pipelines/package-loader";
+import { ManifestSchema } from "@/lib/pipelines/manifest-schema";
 import { getTableKind, suggestRoles } from "../dataset-kinds";
-import { parseDelimited } from "../parsers/delimited";
-import { inferSchema } from "../schema";
+import { parsePipelineTable } from "../parsers/pipeline-table";
+import { applyTableContract, inferSchema } from "../schema";
 import type { ExploreProvenanceSource, ExploreRole, ExploreRoleMap, ExploreRowData } from "../types";
 import { knownPipelineTable } from "../pipeline-tables";
 import { ExploreBuildInputError, type BuildContext, type BuiltDataset } from "./types";
@@ -27,12 +28,16 @@ export interface PipelineTableSource {
   pipelineName: string;
   outputId: string;
   label: string;
+  description?: string;
+  format?: "tsv" | "csv" | "json";
+  table?: PackageOutputTable;
+  columnLabels?: Record<string, string>;
   tableKind: string;
   scope: string;
   runs: Array<{ id: string; runNumber: string; completedAt: string | null; selected: boolean; artifactCount: number }>;
 }
 
-async function loadScopeSamples(context: BuildContext) {
+export async function loadScopeSamples(context: BuildContext) {
   return db.sample.findMany({
     where: exploreSampleWhere(context),
     select: { id: true, sampleId: true, sampleAlias: true, studyId: true,
@@ -41,7 +46,7 @@ async function loadScopeSamples(context: BuildContext) {
   });
 }
 
-async function completedRunsForTarget(context: BuildContext, sampleIds: Set<string>, pipelineId?: string) {
+export async function completedRunsForTarget(context: BuildContext, sampleIds: Set<string>, pipelineId?: string) {
   if (!sampleIds.size) return [];
   const targetWhere = context.target.type === "study" ? { studyId: context.target.id }
     : context.target.type === "order" ? { orderId: context.target.id } : { id: { in: [] as string[] } };
@@ -57,7 +62,7 @@ async function completedRunsForTarget(context: BuildContext, sampleIds: Set<stri
       orderId: true,
       inputSampleIds: true,
       runFolder: true,
-      artifacts: { select: { id: true, outputId: true, sampleId: true, path: true, checksum: true } },
+      artifacts: { select: { id: true, outputId: true, sampleId: true, path: true, checksum: true, name: true, type: true, size: true, metadata: true } },
     },
     orderBy: [{ completedAt: "desc" }, { id: "desc" }],
   });
@@ -73,7 +78,7 @@ function frozenSampleIds(run: SourceRun): string[] {
   } catch { return []; }
 }
 
-function eligibleArtifacts(run: SourceRun, context: BuildContext, sampleIds: Set<string>) {
+export function eligibleArtifacts(run: SourceRun, context: BuildContext, sampleIds: Set<string>) {
   const sameTarget = context.target.type === "study" ? run.studyId === context.target.id
     : context.target.type === "order" && run.orderId === context.target.id;
   const frozen = frozenSampleIds(run);
@@ -83,11 +88,24 @@ function eligibleArtifacts(run: SourceRun, context: BuildContext, sampleIds: Set
   return run.artifacts.filter(artifact => artifact.sampleId ? sampleIds.has(artifact.sampleId) : aggregateAllowed);
 }
 
-function resolveTableSpec(pipelineId: string, outputId: string, explicit?: PackageOutputTable) {
+export function resolveTableSpec(pipelineId: string, outputId: string, explicit?: PackageOutputTable, metadata?: string | null) {
   const pkg = getPackage(pipelineId);
   const output = pkg?.manifest.outputs.find((entry) => entry.id === outputId) ?? null;
-  const spec = output?.table ?? knownPipelineTable(pipelineId, outputId) ?? explicit ?? null;
+  let snapshot: PackageOutputTable | undefined;
+  if (metadata) {
+    try {
+      const value = JSON.parse(metadata).seqdeskOutput?.table;
+      if (value) snapshot = ManifestSchema.shape.outputs.element.shape.table.parse(value);
+    } catch { /* Legacy parsed metadata is not an output descriptor. */ }
+  }
+  const spec = snapshot ?? output?.table ?? knownPipelineTable(pipelineId, outputId) ?? explicit ?? null;
   return { pkg, output, spec };
+}
+
+/** Presentation text may change; identity, units and row meaning must not be mixed across runs. */
+export function tableContractSignature(spec: PackageOutputTable) {
+  return JSON.stringify([spec.schemaId, spec.schemaVersion, spec.rowEntity, spec.tableKind, spec.format, spec.sampleColumn,
+    Object.entries(spec.roles ?? {}).sort(), Object.entries(spec.columns ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, column]) => [key, column.type, column.unit, column.nullable])]);
 }
 
 /** Which pipeline table outputs exist for a scope, with the completed runs that produced them. */
@@ -105,11 +123,12 @@ export async function listPipelineTableSources(context: BuildContext): Promise<P
   for (const run of runs) {
     const pkg = getPackage(run.pipelineId);
     const artifacts = eligibleArtifacts(run, context, sampleIds);
-    const outputIds = new Set(artifacts.map((artifact) => artifact.outputId).filter((id): id is string => Boolean(id)));
-    for (const outputId of outputIds) {
-      const { output, spec } = resolveTableSpec(run.pipelineId, outputId);
+    for (const artifact of artifacts) {
+      const outputId = artifact.outputId;
+      if (!outputId) continue;
+      const { output, spec } = resolveTableSpec(run.pipelineId, outputId, undefined, artifact.metadata);
       if (!spec) continue;
-      const key = `${run.pipelineId}:${outputId}`;
+      const key = `${run.pipelineId}:${outputId}:${tableContractSignature(spec)}`;
       const entry =
         grouped.get(key) ??
         {
@@ -120,15 +139,21 @@ export async function listPipelineTableSources(context: BuildContext): Promise<P
             (spec as { label?: string }).label ??
             `${pkg?.manifest.package.name ?? run.pipelineId}: ${outputId}`,
           tableKind: spec.tableKind,
+          table: spec,
+          description: spec.description,
+          format: spec.format,
+          columnLabels: spec.columnLabels,
           scope: output?.scope ?? "sample",
           runs: [],
         };
-      entry.runs.push({
+      const existingRun = entry.runs.find(entry => entry.id === run.id);
+      if (existingRun) existingRun.artifactCount++;
+      else entry.runs.push({
         id: run.id,
         runNumber: run.runNumber,
         completedAt: run.completedAt ? run.completedAt.toISOString() : null,
         selected: selectedByPipeline.get(run.pipelineId) === run.id,
-        artifactCount: artifacts.filter((artifact) => artifact.outputId === outputId).length,
+        artifactCount: 1,
       });
       grouped.set(key, entry);
     }
@@ -145,11 +170,8 @@ export async function buildPipelineTableDataset(
   context: BuildContext,
   options: PipelineTableOptions
 ): Promise<BuiltDataset | null> {
-  const { pkg, output, spec } = resolveTableSpec(options.pipelineId, options.outputId, options.table);
-  if (!spec) {
-    throw new Error(`Output ${options.outputId} of ${options.pipelineId} is not declared as a table`);
-  }
-  const tableKind = getTableKind(spec.tableKind);
+  const { pkg, output, spec: currentSpec } = resolveTableSpec(options.pipelineId, options.outputId, options.table);
+  let spec = currentSpec;
   const warnings: string[] = [];
 
   const samples = await loadScopeSamples(context);
@@ -188,6 +210,13 @@ export async function buildPipelineTableDataset(
       runFolder: run.runFolder, inputSampleIds: frozenSampleIds(run) }));
   });
   if (artifacts.length === 0) return null;
+  const resolvedSpecs = artifacts.map(artifact => resolveTableSpec(options.pipelineId, options.outputId, options.table, artifact.metadata).spec);
+  spec = resolvedSpecs[0] ?? spec;
+  if (!spec) throw new ExploreBuildInputError(`Output ${options.outputId} is not declared as a table.`);
+  const tableKind = getTableKind(spec.tableKind);
+  if (resolvedSpecs.some(other => other && tableContractSignature(other) !== tableContractSignature(spec!))) {
+    throw new ExploreBuildInputError("These runs use different output schemas or units. Choose one compatible run instead of mixing their results.");
+  }
 
   const sampleById = new Map(samples.map((sample) => [sample.id, sample] as const));
   const sampleByLabel = new Map<string, Set<string>>();
@@ -219,18 +248,19 @@ export async function buildPipelineTableDataset(
       warnings.push(`${path.basename(artifact.path)} could not be read and was skipped.`);
       continue;
     }
-    let parsed: ReturnType<typeof parseDelimited>;
+    let parsed: ReturnType<typeof parsePipelineTable>;
     try {
-      parsed = parseDelimited(text, {
-        delimiter: spec.format === "csv" ? "," : spec.format === "tsv" ? "\t" : "auto",
-        skipLinesStartingWith: spec.skipLinesStartingWith,
-        headerLinePrefix: spec.headerLinePrefix,
-      });
+      parsed = parsePipelineTable(text, spec);
     } catch {
       warnings.push(`${path.basename(artifact.path)} does not match its declared table format and was skipped.`);
       continue;
     }
     if (parsed.columns.length === 0) continue;
+    try {
+      applyTableContract(inferSchema(parsed.rows), parsed.rows, spec, ["sample_db_id", "sample_id", "pipeline_run", ...Object.keys(COHORT_LABELS)]);
+    } catch (error) {
+      throw new ExploreBuildInputError(`${path.basename(artifact.path)}: ${error instanceof Error ? error.message : "Output schema mismatch."}`);
+    }
     const artifactSample = artifact.sampleId ? sampleById.get(artifact.sampleId) ?? null : null;
     const before = rows.length;
     for (const row of parsed.rows) {
@@ -280,16 +310,21 @@ export async function buildPipelineTableDataset(
   const represented = new Set(rows.map(row => row.sample_db_id).filter(Boolean));
   if (represented.size && represented.size < samples.length) warnings.push(`${samples.length - represented.size} accessible samples have no usable result in this dataset.`);
 
-  const labels: Record<string, string> = { ...COHORT_LABELS, sample_db_id: "Sample record", sample_id: "Sample ID", pipeline_run: "Pipeline run" };
+  const labels: Record<string, string> = { ...spec.columnLabels, ...COHORT_LABELS, sample_db_id: "Sample record", sample_id: "Sample ID", pipeline_run: "Pipeline run" };
   const groups: Record<string, string> = Object.fromEntries(columnKeys.map((key) => [key, key.startsWith("sample") || key === "pipeline_run" ? "identity" : "pipeline"]));
   const schema = inferSchema(rows, { labels, roles, groups });
+  try {
+    Object.assign(schema, applyTableContract(schema, rows, spec, ["sample_db_id", "sample_id", "pipeline_run", ...Object.keys(COHORT_LABELS)]));
+  } catch (error) {
+    throw new ExploreBuildInputError(error instanceof Error ? error.message : "The table does not match its declared schema.");
+  }
   const pipelineName = pkg?.manifest.package.name ?? options.pipelineId;
   const label = (spec as { label?: string }).label ?? `${pipelineName}: ${options.outputId}`;
   return {
     kind: "pipeline-table",
     tableKind: spec.tableKind,
     name: label,
-    description: `${tableKind?.description ?? "Pipeline table"} Built from ${usedFiles} ${output?.scope ?? "sample"}-scoped output files of ${usedRuns.size} run${usedRuns.size === 1 ? "" : "s"}.`,
+    description: `${spec.description ?? tableKind?.description ?? "Pipeline table"} Built from ${usedFiles} ${output?.scope ?? "sample"}-scoped output files of ${usedRuns.size} run${usedRuns.size === 1 ? "" : "s"}.`,
     sensitivity: "standard",
     roles,
     schema,
@@ -298,7 +333,9 @@ export async function buildPipelineTableDataset(
       builtAt: new Date().toISOString(),
       builder: "pipeline-table@2",
       sources,
-      notes: [`${rows.length} rows from ${usedFiles} files`, "Selected results take precedence; remaining samples use their latest eligible completed run."],
+      notes: [`${rows.length} rows from ${usedFiles} files`, options.runIds
+        ? "Only the explicitly chosen completed runs are used."
+        : "Selected results take precedence; remaining samples use their latest eligible completed run."],
     },
     keys: { sample: "sample_db_id", key: roles.taxon_id ?? roles.taxon },
     sourceConfig: {

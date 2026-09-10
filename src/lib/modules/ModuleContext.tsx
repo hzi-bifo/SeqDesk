@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
 import {
   AVAILABLE_MODULES,
   getModuleDefinition,
@@ -19,6 +19,8 @@ interface ModuleContextValue {
   availableModules: ModuleDefinition[];
   // Loading state
   loading: boolean;
+  // A failed load is unknown state, not an installation with everything disabled.
+  error: string | null;
   // For admin: update module state
   setModuleEnabled: (moduleId: string, enabled: boolean) => Promise<void>;
   // Refresh from server
@@ -38,45 +40,44 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
   const [incompatibleModules, setIncompatibleModules] = useState<string[]>([]);
   const [globalDisabled, setGlobalDisabledState] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Load module states from API
-  const loadModuleStates = async () => {
+  const loadModuleStates = useCallback(async () => {
     try {
       const res = await fetch("/api/modules");
-      if (res.ok) {
-        const data = await res.json();
-        setModuleStates(
-          data.modules && typeof data.modules === "object" ? data.modules : {}
-        );
-        setIncompatibleModules(
-          Array.isArray(data.incompatibleModules)
-            ? data.incompatibleModules.filter(
-                (moduleId: unknown): moduleId is string =>
-                  typeof moduleId === "string"
-              )
-            : []
-        );
-        setGlobalDisabledState(data.globalDisabled || false);
+      if (!res.ok) throw new Error("Could not load module settings. Please try again.");
+      const data = await res.json();
+      if (!data || !data.modules || typeof data.modules !== "object" || Array.isArray(data.modules)) {
+        throw new Error("The module settings response was invalid. Please try again.");
       }
+      setModuleStates(data.modules);
+      setIncompatibleModules(
+        Array.isArray(data.incompatibleModules)
+          ? data.incompatibleModules.filter(
+              (moduleId: unknown): moduleId is string => typeof moduleId === "string"
+            )
+          : []
+      );
+      setGlobalDisabledState(data.globalDisabled === true);
+      setError(null);
     } catch (error) {
       console.error("Failed to load module states:", error);
-      // Without a server-resolved profile, fail closed rather than exposing
-      // facility defaults in a Workbench installation.
-      setModuleStates({});
-      setIncompatibleModules([]);
-      setGlobalDisabledState(false);
+      // Keep the last known values for display, but fail closed until a retry
+      // succeeds. A failed refresh must not look like all modules were disabled.
+      setError("Could not load module settings. Please try again.");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadModuleStates();
-  }, []);
+  }, [loadModuleStates]);
 
   const isModuleEnabled = (moduleId: string): boolean => {
     if (incompatibleModules.includes(moduleId)) return false;
-    if (loading) return false;
+    if (loading || error) return false;
     if (isAlwaysEnabledModule(moduleId)) return moduleStates[moduleId] === true;
     // If global disabled, everything is off
     if (globalDisabled) return false;
@@ -84,6 +85,7 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
   };
 
   const setModuleEnabled = async (moduleId: string, enabled: boolean) => {
+    const previousEnabled = moduleStates[moduleId] ?? false;
     // Optimistic update
     setModuleStates((prev) => ({ ...prev, [moduleId]: enabled }));
 
@@ -95,11 +97,10 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
       });
 
       if (!res.ok) {
-        // Revert on failure
-        setModuleStates((prev) => ({ ...prev, [moduleId]: !enabled }));
         throw new Error("Failed to update module");
       }
     } catch (error) {
+      setModuleStates((prev) => ({ ...prev, [moduleId]: previousEnabled }));
       console.error("Failed to update module:", error);
       throw error;
     }
@@ -118,11 +119,10 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
       });
 
       if (!res.ok) {
-        // Revert on failure
-        setGlobalDisabledState(prevState);
         throw new Error("Failed to update global setting");
       }
     } catch (error) {
+      setGlobalDisabledState(prevState);
       console.error("Failed to update global setting:", error);
       throw error;
     }
@@ -134,6 +134,7 @@ export function ModuleProvider({ children }: { children: ReactNode }) {
     getModule: getModuleDefinition,
     availableModules: AVAILABLE_MODULES,
     loading,
+    error,
     setModuleEnabled,
     refresh: loadModuleStates,
     globalDisabled,

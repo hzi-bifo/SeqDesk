@@ -3,7 +3,7 @@
   "name": "Read Cleaning",
   "description": "Screen raw or unknown FASTQ reads for host/contaminant sequences and stage cleaned reads for admin promotion",
   "category": "qc",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "sortOrder": 1,
   "website": "https://nf-co.re/detaxizer",
   "requires": {
@@ -33,7 +33,15 @@
     {
       "type": "report",
       "name": "summary",
-      "description": "Run-level detaxizer classification and filtering summary",
+      "description": "Original detaxizer classification and optional BLAST validation summary",
+      "visibility": "admin",
+      "downloadable": true
+    },
+    {
+      "type": "data",
+      "name": "report_summary",
+      "description": "Read screening counts with sample identities, labels and units for report tables and charts",
+      "model": "PipelineArtifact",
       "visibility": "admin",
       "downloadable": true
     }

@@ -36,6 +36,7 @@ import { ErrorBanner } from "@/components/ui/error-banner";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
 import { hasCapability, principalFromSession } from "@/lib/authorization/client";
 import { formatSequencingIdentifier } from "@/lib/orders/format-identifier";
+import { useModuleEnabled } from "@/lib/modules";
 
 interface Order {
   id: string;
@@ -80,7 +81,7 @@ function renderOrderDeleteError(message: string): ReactNode {
 
   return (
     <>
-      Deletion of submitted orders is disabled. Enable it in{" "}
+      Deletion of non-draft sequencing data is disabled. Enable it in{" "}
       <Link href={DATA_HANDLING_SETTINGS_HREF} className="underline underline-offset-2 text-white">
         Settings &gt; Data Handling
       </Link>
@@ -92,6 +93,7 @@ function renderOrderDeleteError(message: string): ReactNode {
 export default function OrdersPage() {
   const { data: session } = useSession();
   const deploymentProfile = useDeploymentProfile();
+  const facilityEnabled = useModuleEnabled("sequencing-management");
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -129,7 +131,7 @@ export default function OrdersPage() {
         setOrders(data.orders || data);
         setSharingMode(data.sharingMode || "personal");
       } catch {
-        setError("Failed to load sequencing orders");
+        setError("Failed to load sequencing data");
       } finally {
         setLoading(false);
       }
@@ -167,7 +169,7 @@ export default function OrdersPage() {
 
   const getStatusDisplay = (order: Order) => {
     const baseStatus = STATUS_CONFIG[order.status] || STATUS_CONFIG.DRAFT;
-    if (order.dataOrigin === "import") return { ...baseStatus, label: "Imported" };
+    if (order.dataOrigin === "import") return { label: "Data collection", color: "text-muted-foreground", dot: "bg-muted-foreground" };
     const samplesSent = order.statusNotes.length > 0;
 
     if (order.status === "SUBMITTED") {
@@ -305,7 +307,7 @@ export default function OrdersPage() {
 
     const isSubmitted = targetOrders.some((order) => order.status !== "DRAFT");
     if (isSubmitted && deleteConfirmText !== "DELETE") {
-      setError("You must type DELETE to confirm deletion of submitted sequencing orders.");
+      setError("You must type DELETE to confirm deletion of these sequencing data entries.");
       return;
     }
 
@@ -345,7 +347,7 @@ export default function OrdersPage() {
       }
 
       if (failed.length > 0) {
-        setError(failed[0].error || "Failed to delete some sequencing orders");
+        setError(failed[0].error || "Failed to delete some sequencing data entries");
         return;
       }
 
@@ -353,7 +355,7 @@ export default function OrdersPage() {
       setOrderToDelete(null);
       setDeleteConfirmText("");
     } catch {
-      setError("Failed to delete sequencing order");
+      setError("Failed to delete sequencing data");
     } finally {
       setDeletingOrder(false);
     }
@@ -409,7 +411,7 @@ export default function OrdersPage() {
   return (
     <PageContainer>
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold">
             {isFacilityAdmin ? "All Sequencing data" : sharingMode === "department" ? "Department Sequencing data" : "My Sequencing data"}
@@ -420,7 +422,7 @@ export default function OrdersPage() {
           </p>
         </div>
         {canCreateOrder && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {isFacilityAdmin && (
               bulkEditMode ? (
                 <Button size="sm" variant="outline" onClick={exitBulkEditMode}>
@@ -432,9 +434,14 @@ export default function OrdersPage() {
                 </Button>
               )
             )}
-            <Button size="sm" variant="outline" asChild>
+            {facilityEnabled && (
+              <Button size="sm" variant="outline" asChild>
+                <Link href="/orders/new?source=facility">Request sequencing</Link>
+              </Button>
+            )}
+            <Button size="sm" asChild>
               <Link href="/orders/new">
-                Add sequencing data
+                New collection
               </Link>
             </Button>
           </div>
@@ -452,12 +459,12 @@ export default function OrdersPage() {
         <div className="bg-card rounded-xl p-12 text-center border border-border">
           <h2 className="text-lg font-medium mb-2">No sequencing data yet</h2>
           <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
-            Choose an enabled data source to submit a facility order or import raw sequencing reads and metadata.
+            Create a collection to import data or add files for your samples.{facilityEnabled && " You can also request sequencing from your facility."}
           </p>
           {canCreateOrder && (
             <Button size="sm" variant="outline" asChild>
               <Link href="/orders/new">
-                Add sequencing data
+                New collection
               </Link>
             </Button>
           )}
@@ -467,7 +474,7 @@ export default function OrdersPage() {
           {isFacilityAdmin && bulkEditMode && selectedOrders.length > 0 && (
             <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/40 px-4 py-3">
               <p className="text-sm text-muted-foreground">
-                {selectedOrders.length} sequencing order{selectedOrders.length !== 1 ? "s" : ""} selected
+                {selectedOrders.length} sequencing data {selectedOrders.length === 1 ? "entry" : "entries"} selected
               </p>
               <Button size="sm" variant="destructive" onClick={handleBulkDeleteClick}>
                 Delete Selected
@@ -692,7 +699,7 @@ export default function OrdersPage() {
                                 onClick={() => handleDeleteClick(order)}
                               >
                                 <Trash2 className="h-4 w-4" />
-                                Delete sequencing order
+                                Delete sequencing data
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -784,7 +791,7 @@ export default function OrdersPage() {
                                 onClick={() => handleDeleteClick(order)}
                               >
                                 <Trash2 className="h-4 w-4" />
-                                Delete sequencing order
+                                Delete sequencing data
                               </DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -807,7 +814,7 @@ export default function OrdersPage() {
 
           {filteredOrders.length === 0 && hasActiveFilters && (
             <div className="py-12 text-center text-muted-foreground">
-              <p className="text-sm">No sequencing orders match your filters</p>
+              <p className="text-sm">No sequencing data matches your filters</p>
               <button
                 onClick={clearFilters}
                 className="mt-2 text-sm text-primary hover:underline"
@@ -831,15 +838,15 @@ export default function OrdersPage() {
       >
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-destructive">Delete Sequencing Order</DialogTitle>
+            <DialogTitle className="text-destructive">Delete sequencing data</DialogTitle>
             <DialogDescription asChild>
               <div>
                 {(orderToDelete ? orderToDelete.status !== "DRAFT" : hasSubmittedSelection) ? (
                   <>
                     <p className="mb-2">
                       <strong>Warning:</strong> {orderToDelete
-                        ? `This sequencing order has been submitted (status: ${orderToDelete.status}).`
-                        : "One or more selected sequencing orders have already been submitted."}
+                        ? `This sequencing data entry is no longer a draft (status: ${orderToDelete.status}).`
+                        : "One or more selected sequencing data entries are no longer drafts."}
                     </p>
                     <p className="mb-2">Deleting will permanently remove:</p>
                     <ul className="mb-4 list-inside list-disc text-sm">
@@ -847,9 +854,9 @@ export default function OrdersPage() {
                         {orderToDelete
                           ? orderToDelete._count.samples || 0
                           : selectedOrders.reduce((sum, order) => sum + order._count.samples, 0)}{" "}
-                        samples
+                        sample records
                       </li>
-                      <li>All associated sequencing data</li>
+                      <li>Associated metadata and file links</li>
                       <li>Status history</li>
                     </ul>
                     <p className="mb-2">
@@ -865,7 +872,7 @@ export default function OrdersPage() {
                 ) : (
                   <p>
                     Are you sure you want to delete{" "}
-                    {orderToDelete ? "this sequencing order" : `${selectedOrders.length} selected sequencing orders`}?
+                    {orderToDelete ? "this sequencing data entry" : `${selectedOrders.length} selected sequencing data entries`}?
                     This cannot be undone.
                   </p>
                 )}
@@ -890,7 +897,7 @@ export default function OrdersPage() {
               disabled={deletingOrder || ((orderToDelete ? orderToDelete.status !== "DRAFT" : hasSubmittedSelection) && deleteConfirmText !== "DELETE")}
             >
               {deletingOrder ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Delete Sequencing Order
+              Delete sequencing data
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -136,8 +136,8 @@ function missingBlockingLabels(
 }
 
 /**
- * Verify the workflow runtime needed by the research-workbench onboarding
- * journey. The check does not install software, create the configured run
+ * Verify the workflow runtime when pipeline execution is enabled.
+ * The check does not install software, create the configured run
  * directory, submit a workflow, or persist onboarding evidence.
  */
 export async function checkWorkflowRuntimeReadiness(): Promise<WorkflowRuntimeReadiness> {

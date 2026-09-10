@@ -1,0 +1,17 @@
+{
+  "inputs": {
+    "qc": {
+      "path": "inputs/qc.tsv",
+      "schemaPath": "inputs/qc.schema.json",
+      "tableKind": "sample-summary",
+      "roles": { "sample": "sample_db_id" },
+      "datasetId": "fastqc-regression-fixture",
+      "versionId": "fastqc-regression-v1",
+      "name": "FastQC quality summary"
+    }
+  },
+  "params": {},
+  "outputDir": "outputs",
+  "run": { "id": "fastqc-kit-test", "runNumber": "INTERNAL-TEST", "revision": 1 },
+  "curation": { "lists": [] }
+}

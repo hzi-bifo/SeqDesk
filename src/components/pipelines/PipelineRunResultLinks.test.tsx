@@ -47,6 +47,33 @@ describe("PipelineRunResultLinks", () => {
     expect(screen.getByText("-")).toBeTruthy();
   });
 
+  it("offers a separate download for the Nextflow execution report", () => {
+    const report: PipelineRunResultFile = { ...primary, name: "Nextflow report", path: "/runs/run-1/report.html", source: "technical" };
+    render(<PipelineRunResultLinks runId="run-1" status="completed" resultFiles={[report]} />);
+    expect(screen.getByRole("link", { name: "Nextflow report", exact: true }).getAttribute("href")).toContain("/api/files/preview?");
+    const download = screen.getByRole("link", { name: "Download Nextflow report" });
+    expect(download.getAttribute("href")).toBe("/api/pipelines/runs/run-1/file?path=%2Fruns%2Frun-1%2Freport.html&download=1");
+    expect(download.hasAttribute("download")).toBe(true);
+  });
+
+  it("keeps report previews but hides downloads in the demo", () => {
+    render(<PipelineRunResultLinks runId="run-1" downloadsDisabled status="completed" resultFiles={[primary]} />);
+    expect(screen.getByRole("link", { name: "Combined Report", exact: true })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /^Download/ })).toBeNull();
+  });
+
+  it("downloads additional reports and archives from More files", async () => {
+    const table = { ...primary, id: "table", name: "Quality summary", path: "/runs/run-1/quality.tsv" };
+    const archive = { ...primary, id: "zip", name: "FastQC archive", path: "/runs/run-1/fastqc.zip", previewable: false };
+    render(<PipelineRunResultLinks runId="run-1" status="completed" resultFiles={[primary, table, archive]} />);
+    fireEvent.keyDown(screen.getByRole("button", { name: "More files" }), { key: "Enter" });
+    for (const file of [table, archive]) {
+      const download = await screen.findByRole("menuitem", { name: `Download ${file.name}` });
+      expect(download.getAttribute("href")).toBe(`/api/pipelines/runs/run-1/file?path=${encodeURIComponent(file.path)}&download=1`);
+      expect(download.hasAttribute("download")).toBe(true);
+    }
+  });
+
   it("opens a files menu for additional result files", async () => {
     const dotplot: PipelineRunResultFile = {
       id: "dotplot-1",

@@ -92,7 +92,7 @@ describe("GET /api/admin/modules", () => {
     expect(data.globalDisabled).toBe(true);
   });
 
-  it("reports unavailable facility modules as disabled in Research Workbench", async () => {
+  it("keeps shared metadata modules available in the research preset", async () => {
     mocks.getServerSession.mockResolvedValue(adminSession);
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
@@ -108,12 +108,13 @@ describe("GET /api/admin/modules", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.modules["billing-info"]).toBe(false);
-    expect(data.modules["sequencing-tech"]).toBe(false);
+    expect(data.modules["billing-info"]).toBe(true);
+    expect(data.modules["sequencing-tech"]).toBe(true);
+    expect(data.modules["sequencing-management"]).toBe(false);
+    expect(data.modules["import-cami"]).toBe(true);
+    expect(data.modules["import-sra"]).toBe(true);
     expect(data.modules.notifications).toBe(true);
-    expect(data.incompatibleModules).toEqual(
-      expect.arrayContaining(["billing-info", "sequencing-tech"])
-    );
+    expect(data.incompatibleModules).toEqual([]);
   });
 });
 
@@ -172,9 +173,9 @@ describe("PUT /api/admin/modules", () => {
 
   it("rejects a feature module that requires a domain outside the deployment profile", async () => {
     mocks.getServerSession.mockResolvedValue(adminSession);
-    mocks.getServerDeploymentProfile.mockReturnValue(
-      getDeploymentProfileDefinition("research-workbench")
-    );
+    const profile = getDeploymentProfileDefinition("research-workbench");
+    // Exercise domain enforcement without relying on a removed preset split.
+    mocks.getServerDeploymentProfile.mockReturnValue({ ...profile, domains: profile.domains.filter(domain => domain !== "facility-intake") });
 
     const req = new NextRequest("http://localhost/api/admin/modules", {
       method: "PUT",
@@ -185,10 +186,23 @@ describe("PUT /api/admin/modules", () => {
     expect(res.status).toBe(409);
     await expect(res.json()).resolves.toMatchObject({
       code: "PROFILE_MODULE_INCOMPATIBLE",
-      error: expect.stringContaining("Research workbench cannot enable modules.billing-info"),
+      error: expect.stringContaining("cannot enable modules.billing-info"),
     });
     expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
     expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("allows a research-preset administrator to enable facility management alongside imports", async () => {
+    mocks.getServerSession.mockResolvedValue(adminSession);
+    mocks.getServerDeploymentProfile.mockReturnValue(getDeploymentProfileDefinition("research-workbench"));
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ modulesConfig: JSON.stringify({ modules: { "import-cami": true, "import-sra": false }, globalDisabled: true }) });
+    const response = await PUT(new NextRequest("http://localhost/api/admin/modules", {
+      method: "PUT", body: JSON.stringify({ moduleId: "sequencing-management", enabled: true }),
+    }));
+    expect(response.status).toBe(200);
+    const saved = JSON.parse(mocks.db.siteSettings.upsert.mock.calls[0][0].update.modulesConfig);
+    expect(saved.modules).toMatchObject({ "sequencing-management": true, "import-cami": true, "import-sra": false });
+    expect(saved.globalDisabled).toBe(true);
   });
 
   it("rejects unknown feature-module switches before writing settings", async () => {

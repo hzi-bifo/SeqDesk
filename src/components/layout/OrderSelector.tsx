@@ -204,7 +204,7 @@ export function OrderSelector({
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
             >
               <Plus className="h-3.5 w-3.5 shrink-0" />
-              Add sequencing data
+              New collection
             </button>
           </div>
 

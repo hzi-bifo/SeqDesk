@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { fireEvent, render, screen, cleanup, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, cleanup, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { CamiImportCard } from "./CamiImportCard";
 
@@ -14,6 +14,10 @@ function appApi() {
   const previewFailures = new Set<number>(), queueFailures = new Set<number>();
   const previews = vi.fn(), starts = vi.fn(), onStarted = vi.fn().mockResolvedValue(undefined);
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.startsWith("/api/workbench/importers/cami-benchmark/files?")) {
+      const query = new URL(url, "http://localhost").searchParams;
+      return json({ files: Array.from({ length: query.get("dataset") === "cami2-marine" ? 10 : 20 }, (_, sample) => ({ sample, downloadBytes: (sample + 1) * 1024 ** 3 })) });
+    }
     if (url.startsWith("/api/workbench/importers/cami-benchmark/samples?")) {
       const query = new URL(url, "http://localhost").searchParams;
       return json({ samples: Array.from({ length: query.get("dataset") === "cami2-marine" ? 10 : 20 }, (_, sample) => ({
@@ -46,6 +50,124 @@ async function open(api: ReturnType<typeof appApi>) {
   await waitFor(() => expect(screen.getByRole("button", { name: "Select all available" }).hasAttribute("disabled")).toBe(false));
 }
 const select = (sample: number) => fireEvent.click(screen.getByRole("checkbox", { name: "Select sample_" + sample }));
+
+it("fills each card with read layout, format, source size and the files produced by import", async () => {
+  const api = appApi(); await open(api);
+  const card = within(screen.getByRole("checkbox", { name: "Select sample_0" }).closest("label")!);
+  expect(card.getByText("Paired-end")).toBeTruthy();
+  expect(card.getByText("FASTQ")).toBeTruthy();
+  expect(await card.findByText("1.00 GiB download")).toBeTruthy();
+  expect(card.getByText("2 FASTQ.gz files after import")).toBeTruthy();
+  const second = within(screen.getByRole("checkbox", { name: "Select sample_1" }).closest("label")!);
+  expect(second.getByText("2.00 GiB download")).toBeTruthy();
+  select(0); select(1);
+  expect(api.fetch.mock.calls.filter(([url]) => url.includes("/files?")).length).toBe(1);
+  expect(api.previews).not.toHaveBeenCalled();
+  expect(api.starts).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Technology"), { target: { value: "long" } });
+  await waitFor(() => expect(api.fetch.mock.calls.filter(([url]) => url.includes("/files?")).length).toBe(2));
+  expect(card.getByText("Single-end")).toBeTruthy();
+  expect(card.getByText("1 FASTQ.gz file after import")).toBeTruthy();
+});
+
+it("keeps samples selectable when file-size lookup fails and allows a retry", async () => {
+  const api = appApi();
+  const normalFetch = api.fetch.getMockImplementation()!;
+  let failSizes = true;
+  api.fetch.mockImplementation((url, init) => url.includes("/files?") && failSizes ? Promise.resolve(json({ error: "File headers unavailable" }, 502)) : normalFetch(url, init));
+  await open(api);
+  expect(await screen.findAllByText("Size unavailable")).toHaveLength(10);
+  select(0);
+  expect(screen.getByRole("checkbox", { name: "Select sample_0", checked: true })).toBeTruthy();
+  failSizes = false;
+  fireEvent.click(screen.getByRole("button", { name: "Retry file sizes" }));
+  expect(await screen.findByText("1.00 GiB download")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Retry file sizes" })).toBeNull();
+  expect(api.starts).not.toHaveBeenCalled();
+});
+
+it("does not reuse stale sizes after switching technologies, even if the old request finishes late", async () => {
+  const api = appApi();
+  const normalFetch = api.fetch.getMockImplementation()!;
+  let finishShort!: (response: Response) => void;
+  api.fetch.mockImplementation((url, init) => url.includes("/files?") && url.includes("technology=short") ? new Promise<Response>(resolve => { finishShort = resolve; }) : normalFetch(url, init));
+  await open(api);
+  expect(screen.getAllByText("Checking size…")).toHaveLength(10);
+  fireEvent.change(screen.getByLabelText("Technology"), { target: { value: "long" } });
+  await screen.findByText("1.00 GiB download");
+  await act(async () => finishShort(json({ files: Array.from({ length: 10 }, (_, sample) => ({ sample, downloadBytes: 42 * 1024 ** 3 })) })));
+  expect(screen.queryByText("42.00 GiB download")).toBeNull();
+  expect(screen.getAllByText("Single-end")).toHaveLength(10);
+});
+
+it("uses refreshed preview sizes instead of cached display sizes", async () => {
+  const api = appApi(); await open(api);
+  const card = within(screen.getByRole("checkbox", { name: "Select sample_1" }).closest("label")!);
+  expect(await card.findByText("2.00 GiB download")).toBeTruthy();
+  select(1);
+  fireEvent.click(screen.getByRole("button", { name: "Preview 1 selected sample" }));
+  expect(await card.findByText("1.00 GiB download")).toBeTruthy();
+  expect(api.starts).not.toHaveBeenCalled();
+});
+
+it("shows accessible, reduced-motion-aware sample skeletons until status is known", async () => {
+  const api = appApi();
+  let resolve!: (response: Response) => void;
+  api.fetch.mockImplementationOnce(() => new Promise<Response>(done => { resolve = done; }));
+  render(<CamiImportCard initiallyOpen collection={collection} enablePolling={false} onStarted={api.onStarted} />);
+  expect(screen.getByRole("group", { name: "CAMI samples" }).getAttribute("aria-busy")).toBe("true");
+  expect(screen.getAllByLabelText("Loading sample status")).toHaveLength(10);
+  expect(screen.getAllByLabelText("Loading sample status")[0].className).toContain("motion-reduce:animate-none");
+  expect(screen.getAllByRole("checkbox").every(checkbox => checkbox.hasAttribute("disabled"))).toBe(true);
+  await act(async () => resolve(json({ samples: Array.from({ length: 10 }, (_, sample) => ({ sample, status: "available" })) })));
+  expect(screen.getByRole("group", { name: "CAMI samples" }).getAttribute("aria-busy")).toBe("false");
+  expect(screen.queryAllByLabelText("Loading sample status")).toHaveLength(0);
+});
+
+it("keeps selected cards teal while retaining native checkbox and preview behavior", async () => {
+  const api = appApi(); await open(api);
+  select(1);
+  const checkbox = screen.getByRole("checkbox", { name: "Select sample_1", checked: true });
+  expect(checkbox.closest("label")?.parentElement?.className).toContain("border-teal-500");
+  fireEvent.click(screen.getByRole("button", { name: "Preview 1 selected sample" }));
+  expect(await screen.findByRole("region", { name: "Review CAMI import" })).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Review import" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Import 1 reviewed sample" }).className).toContain("bg-teal-700");
+  expect(api.starts).not.toHaveBeenCalled();
+});
+
+it("gives every sample card the same height while keeping long progress details accessible", async () => {
+  const api = appApi();
+  api.statuses["cami2-marine:short:0"] = "running";
+  api.phases[0] = "Downloading · 2134 MiB / 5.17 GiB · 40.3% · 2.6 MiB/s · ~21 min download remaining";
+  api.statuses["cami2-marine:short:1"] = "queued";
+  api.phases[1] = "Queued—waiting for enough disk space. " + "The current download is still being prepared. ".repeat(15);
+  await open(api);
+  const cards = screen.getAllByRole("checkbox").map(checkbox => checkbox.closest("label")!.parentElement!);
+  expect(cards).toHaveLength(10);
+  for (const card of cards) {
+    expect(card.className).toContain("h-56");
+    expect(card.className).toContain("flex-col");
+  }
+  expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("40.3");
+  const runningCard = within(cards[0]);
+  expect(runningCard.getByText("Paired-end")).toBeTruthy();
+  expect(runningCard.getByText("FASTQ")).toBeTruthy();
+  expect(runningCard.getByText("1.00 GiB download")).toBeTruthy();
+  expect(runningCard.queryByText("2 FASTQ.gz files after import")).toBeNull();
+  const bar = runningCard.getByRole("progressbar");
+  expect(bar.parentElement?.firstElementChild).toBe(bar);
+  for (const sample of [0, 1]) {
+    const details = screen.getByRole("group", { name: `Details for sample_${sample}` });
+    expect(details.className).toContain("overflow-y-auto");
+    expect(details.className).toContain("min-h-0");
+    expect(details.tabIndex).toBe(0);
+    expect(details.textContent).toContain(api.phases[sample]);
+  }
+  select(2);
+  expect(screen.getByRole("checkbox", { name: "Select sample_2", checked: true })).toBeTruthy();
+  expect(screen.queryByRole("group", { name: "Details for sample_2" })).toBeNull();
+});
 
 it("opens the collection only after the complete batch is queued", async () => {
   const api = appApi(); const onQueued = vi.fn();

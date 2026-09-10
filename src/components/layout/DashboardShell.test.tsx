@@ -138,7 +138,7 @@ describe("DashboardShell", () => {
 
     expect(screen.getByTestId("sidebar").textContent).toContain("Ada-1.2.3");
     expect(screen.getByTestId("order-selector").textContent).toContain("Order 42");
-    expect(screen.getByText("Sequencing Data")).toBeTruthy();
+    expect(screen.getByText("Files / Facility processing")).toBeTruthy();
     expect(screen.getByTestId("update-banner")).toBeTruthy();
     expect(screen.queryByTestId("demo-banner")).toBeNull();
     expect(
@@ -147,6 +147,45 @@ describe("DashboardShell", () => {
     expect(screen.getByText("content").closest("main")?.parentElement?.className).toContain(
       "pb-[calc(var(--seqdesk-footer-height,2.5rem)+2rem)]"
     );
+  });
+
+  it.each([
+    ["samples-files", "", "Files"],
+    ["files", "", "Files"],
+    ["sequencing", "view=discover", "Files / Facility file association"],
+    ["sequencing", "view=stream", "Files / Live sequencer"],
+    ["sequencing", "view=analysis", "Pipelines"],
+    ["sequencing", "pipeline=fastq-checksum", "Pipelines"],
+  ])("derives the title for %s?%s", (subview, query, title) => {
+    mocks.usePathname.mockReturnValue(`/orders/order-1/${subview}`);
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams(query));
+    render(<DashboardShell user={{ name: "Ada" }} deploymentProfile={sequencingCenterProfile}><div>content</div></DashboardShell>);
+    expect(screen.getByText(title)).toBeTruthy();
+  });
+
+  it.each(["/explore/reports/report-1", "/explore/reports/report-1/"])("keeps the full-height report sidebar flush with the footer at %s", pathname => {
+    mocks.usePathname.mockReturnValue(pathname);
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("mode=edit&view=page"));
+    render(<DashboardShell user={{ name: "Ada" }} deploymentProfile={sequencingCenterProfile}><div>report content</div></DashboardShell>);
+    const shell = screen.getByText("report content").closest("main")!.parentElement!;
+    expect(shell.classList.contains("pb-[var(--seqdesk-footer-height,2.5rem)]")).toBe(true);
+    expect(shell.classList.contains("pb-[calc(var(--seqdesk-footer-height,2.5rem)+2rem)]")).toBe(false);
+    expect(screen.getByTestId("footer")).toBeTruthy();
+  });
+
+  it.each(["/explore", "/orders", "/studies"])("preserves normal page spacing outside the report workspace at %s", pathname => {
+    mocks.usePathname.mockReturnValue(pathname);
+    render(<DashboardShell user={{ name: "Ada" }} deploymentProfile={sequencingCenterProfile}><div>page content</div></DashboardShell>);
+    const shell = screen.getByText("page content").closest("main")!.parentElement!;
+    expect(shell.classList.contains("pb-[calc(var(--seqdesk-footer-height,2.5rem)+2rem)]")).toBe(true);
+  });
+
+  it("keeps repository imports in the Files context", () => {
+    mocks.usePathname.mockReturnValue("/orders/import");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("orderId=order-1&source=sra"));
+    render(<DashboardShell user={{ name: "Ada" }} deploymentProfile={sequencingCenterProfile}><div>content</div></DashboardShell>);
+    expect(screen.getByText("Files / Import data with SeqDesk")).toBeTruthy();
+    expect(screen.getByTestId("order-selector").textContent).toContain("Order 42");
   });
 
   it("renders demo embedded mode and posts a ready message", () => {

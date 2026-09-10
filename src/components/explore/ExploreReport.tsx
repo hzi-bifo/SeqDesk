@@ -1,11 +1,15 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import useSWR from "swr";
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp, Copy, Download, ExternalLink, Globe, LayoutGrid, Loader2, RectangleHorizontal, Share2, Square, Trash2, Undo2, Unlink } from "lucide-react";
 import { Sketch, type StoreGroup } from "@/components/explore/ElementStore";
+import { AddDataMenu } from "./AddDataMenu";
+import { TableChartDialog } from "./TableChartDialog";
+import { ReportPageComposer, type ReportInsertKind } from "./ReportPageComposer";
+import { insertReportBlock, moveReportBlock, reportBlockSpan, type ReportInsertPosition } from "@/lib/explore/report-layout";
 import { Markdown } from "@/components/explore/Markdown";
 import { insertIntoActiveEditor, RichTextEditor } from "@/components/explore/RichTextEditor";
 import { VariablesContext } from "@/components/explore/VariableNode";
@@ -18,7 +22,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ExploreLoading } from "./ExploreLoading";
+import { ReportImage } from "./ReportImage";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { exactValue, fetcher, formatCell, formatDateTime, postJson } from "@/lib/explore/client";
@@ -94,10 +99,14 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
   const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
   // While an analysis runs, the page asks often so cited numbers and cards update the moment it finishes.
-  const { data, error, isLoading, mutate } = useSWR<ReportResponse>(key, fetcher, {
+  const { data, error, mutate } = useSWR<ReportResponse>(key, fetcher, {
     refreshInterval: (latest) => (latest?.report?.outputs.analyses.some((analysis) => analysis.latestRun && ACTIVE_RUN_STATUS.has(analysis.latestRun.status)) ? 3000 : 15000),
   });
   const [draft, setDraft] = useState<ReportInput | null>(null);
+  const [chartSetup, setChartSetup] = useState<{ chart?: ChartKind; position?: ReportInsertPosition } | null>(null);
+  const [dataPicker, setDataPicker] = useState<{ open: boolean; position: ReportInsertPosition }>({ open: false, position: null });
+  const [dataPickerTrigger, setDataPickerTrigger] = useState<HTMLDivElement | null>(null);
+  const currentBlocksRef = useRef<ReportBlock[]>([]);
   // Changes save on their own a moment after they stop; Undo walks back through them.
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error" | "conflict">("idle");
   const saveStateRef = useRef(saveState);
@@ -117,6 +126,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const savedInputRef = useRef<ReportInput | null>(null);
   const active = NO_ACTIVE;
   const report = data?.report;
+  useEffect(() => { currentBlocksRef.current = draft?.blocks ?? (report ? toInput(report).blocks : []); }, [draft, report]);
 
   const editingNow = editRequested && canEdit;
   const variables = useMemo(() => buildVariables(data?.report?.outputs.analyses ?? []), [data]);
@@ -240,14 +250,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const handlersFor = (id: string) => handlers.get(id) ?? { onPatch: (patch: Partial<ReportBlock>) => patchBlock(id, patch), onMove: (delta: number) => moveBlock(id, delta), onRemove: () => removeBlock(id) };
 
   if (error) return <p className="mt-6 text-sm text-destructive">Could not load the report: {String(error.message)}</p>;
-  if (!report || (isLoading && !data)) {
-    return (
-      <div className="mt-6 space-y-3">
-        <Skeleton className="h-8 w-1/2" />
-        <Skeleton className="h-40 w-full" />
-      </div>
-    );
-  }
+  if (!report) return <ExploreLoading variant="report" label="Loading report content…" />;
 
   const editing = editRequested && canEdit;
   // The working copy starts from the saved page and lives in state once something changes.
@@ -268,7 +271,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
     setDraft(previous);
   };
   const outputTables = report.outputs.tables.filter((table) => table.output);
-  const hasOutputs = report.outputs.figures.length + outputTables.length > 0;
+  const hasOutputs = !report.draft || report.outputs.figures.some(figure => figure.autoInclude !== false) || outputTables.some(table => table.autoInclude !== false);
   const resolvedById = new Map(report.blocks.map((block) => [block.id, block] as const));
   const figureByKey = new Map(report.outputs.figures.map((figure) => [figureKey(figure.analysisId, figure.figureName), figure] as const));
   const tableById = new Map(report.outputs.tables.map((table) => [table.datasetId, table] as const));
@@ -280,8 +283,51 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
   const usedTables = new Set(blocks.filter((block) => block.type === "table").map((block) => block.datasetId));
   const usedViews = new Set(blocks.filter((block) => block.type === "view").map((block) => `${block.datasetId}:${block.view}`));
 
-  const addBlock = (block: ReportBlock) => update((current) => (current.some((entry) => entry.id === block.id) ? current : [...current, block]));
+  const insertBlock = (block: ReportBlock, position: ReportInsertPosition = null) => {
+    if (!editing || saveStateRef.current === "conflict") throw new Error("Reload the page to resolve the editing conflict before adding data.");
+    const next = insertReportBlock(currentBlocksRef.current, block, position);
+    if (next === currentBlocksRef.current) return;
+    currentBlocksRef.current = next;
+    update(() => next);
+  };
+  const addBlock = (block: ReportBlock) => {
+    try { insertBlock(block); }
+    catch (error) { toast.error(error instanceof Error ? error.message : "Could not add the block."); }
+  };
+  const moveTo = (id: string, position: ReportInsertPosition) => {
+    if (!editing || saveStateRef.current === "conflict") return false;
+    try {
+      const next = moveReportBlock(currentBlocksRef.current, id, position);
+      if (next !== currentBlocksRef.current) { currentBlocksRef.current = next; update(() => next); return true; }
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Could not move the block."); }
+    return false;
+  };
+  const insertAt = (kind: ReportInsertKind, position: ReportInsertPosition) => {
+    if (!editing || saveStateRef.current === "conflict") return;
+    if (kind === "chart") setChartSetup({ position });
+    else if (kind === "data") setDataPicker({ open: true, position });
+    else {
+      try {
+        const id = newBlockId("text");
+        insertBlock({ id, type: "text", markdown: "", span: 2 }, position);
+        requestAnimationFrame(() => {
+          const element = document.getElementById(id);
+          element?.scrollIntoView({ block: "nearest" });
+          element?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus({ preventScroll: true });
+        });
+      }
+      catch (error) { toast.error(error instanceof Error ? error.message : "Could not add the block."); }
+    }
+  };
   const storeGroups: StoreGroup[] = [
+    {
+      label: "Data sources",
+      items: [],
+      content: <div className="space-y-2 rounded-lg border bg-teal-50/40 p-3 dark:bg-teal-950/20">
+        <p className="text-xs text-muted-foreground">Metadata, pipeline outputs, saved figures and your files.</p>
+        <div ref={setDataPickerTrigger} />
+      </div>,
+    },
     {
       label: "Build from a table",
       items: [
@@ -294,10 +340,11 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           disabled: !report.outputs.analyses.some((analysis) => Object.keys(analysis.metrics).length > 0) && !report.outputs.tables.some((table) => table.columns.some((column) => column.type === "number")),
           onSelect: () => addBlock(defaultKeyFiguresBlock(report.outputs.analyses, report.outputs.tables)),
         },
-        { id: "histogram", title: "Histogram", hint: "How the values of a numeric column spread", sketch: "histogram", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "histogram" } as ReportBlock) },
-        { id: "bar", title: "Bar chart", hint: "How many rows have each value", sketch: "bar", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "bar" } as ReportBlock) },
-        { id: "scatter", title: "Dot plot", hint: "Two numeric columns against each other", sketch: "scatter", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "scatter" } as ReportBlock) },
-        { id: "box", title: "Box plot", hint: "A numeric column per group", sketch: "box", disabled: report.outputs.tables.length === 0, onSelect: () => addBlock({ ...defaultChartBlock(report.outputs.tables), chart: "box" } as ReportBlock) },
+        { id: "values", title: "Values by sample", hint: "Choose a table and show a saved measurement for each sample", sketch: "bar", onSelect: () => setChartSetup({ chart: "values" }) },
+        { id: "histogram", title: "Histogram", hint: "Choose a table and a numeric column", sketch: "histogram", onSelect: () => setChartSetup({ chart: "histogram" }) },
+        { id: "bar", title: "Category counts", hint: "Count rows by category, not measured read counts", sketch: "bar", onSelect: () => setChartSetup({ chart: "bar" }) },
+        { id: "scatter", title: "Dot plot", hint: "Choose a table and two numeric columns", sketch: "scatter", onSelect: () => setChartSetup({ chart: "scatter" }) },
+        { id: "box", title: "Box plot", hint: "Choose a table, groups and a numeric column", sketch: "box", onSelect: () => setChartSetup({ chart: "box" }) },
         {
           id: "taxon-explorer",
           title: "Taxon explorer",
@@ -383,13 +430,6 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
       label: "Tables",
       empty: "No tables in this scope yet.",
       items: [
-        {
-          id: "new-table",
-          title: "New table",
-          hint: "On the canvas: bring one in from samples, sequencing, a pipeline or a file, or let an analysis write one",
-          sketch: "import" as const,
-          onSelect: () => onOpenCanvas(),
-        },
         ...report.outputs.tables.map((table) => {
         const used = usedTables.has(table.datasetId);
         return {
@@ -413,16 +453,16 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
       {actionsContainer && createPortal(
         editing ? (
           <>
-            <span className="min-w-14 text-right text-xs text-muted-foreground" aria-live="polite">
+            <span className="max-w-full break-words text-right text-xs text-muted-foreground" aria-live="polite">
               {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : saveState === "conflict" ? (
                 <span className="text-destructive">
                   Changed elsewhere; <button type="button" className="underline" onClick={() => window.location.reload()}>reload</button> to continue
                 </span>
               ) : ""}
             </span>
-            <Button variant="ghost" size="sm" className="h-8" onClick={undo} disabled={history.length === 0 && !dirty} title="Take back the last change">
-              <Undo2 className="h-3.5 w-3.5 lg:mr-1.5" />
-              <span className="hidden lg:inline">Undo</span>
+            <Button variant="ghost" size="sm" className="h-8 shrink-0" onClick={undo} disabled={history.length === 0 && !dirty} aria-label="Undo" title="Take back the last change">
+              <Undo2 className="h-3.5 w-3.5 @[34rem]/report-header:mr-1.5" />
+              <span className="hidden @[34rem]/report-header:inline">Undo</span>
             </Button>
           </>
         ) : (
@@ -446,7 +486,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
           )}
           {report.draft && (
             <p className="mt-1 text-sm text-muted-foreground">
-              A draft assembled from every output of this report; nothing is saved until you edit the page.
+              This page is a draft. Edit it to add data and arrange its layout.
             </p>
           )}
         </div>
@@ -468,17 +508,17 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
 
       {!hasOutputs && !editing && (
         <div className="mt-6 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          <p>Nothing to report yet. Outputs are made on the canvas: connect a dataset to an analysis and run it, and its figures and tables land here.</p>
-          <Button variant="outline" size="sm" className="mt-4" onClick={onOpenCanvas}>
+          <p>{canEdit ? "Choose Edit, then Browse data to add metadata, saved pipeline tables or existing figures. You can build charts directly from a table." : "No results have been added to this report yet."}</p>
+          {canEdit && <Button variant="outline" size="sm" className="mt-4" onClick={onOpenCanvas}>
             <LayoutGrid className="mr-2 h-4 w-4" />
-            Open the canvas
-          </Button>
+            Open analysis canvas
+          </Button>}
         </div>
       )}
 
       {(hasOutputs || editing) && (
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
-          {blocks.map((block, index) => (
+        <ReportPageComposer blocks={blocks} editing={editing} disabled={saveState === "conflict"} onMove={moveTo} onInsert={insertAt}
+          renderBlock={(block, index, dragHandle) => (
             <ReportBlockCard
               key={block.id}
               block={block}
@@ -486,6 +526,7 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
               figure={block.type === "figure" ? (figureByKey.get(figureKey(block.analysisId, block.figureName)) ?? null) : null}
               tableInfo={block.type === "table" ? (tableById.get(block.datasetId) ?? null) : null}
               editing={editing}
+              dragHandle={dragHandle}
               first={index === 0}
               last={index === blocks.length - 1}
               onPatch={handlersFor(block.id).onPatch}
@@ -500,14 +541,13 @@ export function ExploreReport({ reportId, scope, canEdit, editing: editRequested
               filters={filters}
               active={active}
             />
-          ))}
-          {editing && blocks.length === 0 && (
-            <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground md:col-span-2">The page is empty. Add a text block, a figure or a table from the panel.</div>
-          )}
-        </div>
+          )} />
       )}
       </div>
       {editing && panelContainer && createPortal(<ReportSidePanel groups={storeGroups} variables={variables} />, panelContainer)}
+      {editing && <AddDataMenu scope={scope} reportId={reportId} outputs={report.outputs} blocks={blocks} onBuilt={() => mutate()} onInsertBlock={block => insertBlock(block, dataPicker.position)} disabled={saveState === "conflict"} label="Browse data" className="w-full" triggerContainer={dataPickerTrigger}
+        open={dataPicker.open} onOpenChange={open => setDataPicker(previous => ({ open, position: open ? null : previous.position }))} />}
+      {editing && chartSetup && <TableChartDialog tables={report.outputs.tables} initialChart={chartSetup.chart} onClose={() => setChartSetup(null)} onAdd={block => insertBlock(block, chartSetup.position)} />}
     </div>
     </VariablesContext.Provider>
   );
@@ -537,6 +577,7 @@ function ReportSidePanel({ groups, variables }: { groups: StoreGroup[]; variable
     <div className="space-y-4 p-3 text-sm">
       <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a figure, table or variable" className="h-8 text-xs" aria-label="Find in the panel" />
       {groups.map((group) => {
+        if (group.content) return <section key={group.label}><h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h3>{group.content}</section>;
         const items = group.items.filter((item) => matches(`${item.title} ${item.hint ?? ""}`));
         if (items.length === 0 && (needle || !group.empty)) return null;
         return (
@@ -623,6 +664,7 @@ interface ReportBlockCardProps {
   figure: ReportFigure | null;
   tableInfo: ReportTable | null;
   editing: boolean;
+  dragHandle?: ReactNode;
   first: boolean;
   last: boolean;
   onPatch: (patch: Partial<ReportBlock>) => void;
@@ -642,12 +684,13 @@ interface ReportBlockCardProps {
 
 const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Dashboard numbers" };
 
-const ReportBlockCard = memo(function ReportBlockCard({ block, resolved, figure, tableInfo, editing, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope, variables }: ReportBlockCardProps) {
-  const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
+const ReportBlockCard = memo(function ReportBlockCard({ block, resolved, figure, tableInfo, editing, dragHandle, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope, variables }: ReportBlockCardProps) {
+  const span = reportBlockSpan(block);
   const label = BLOCK_LABELS[block.type];
   const blockTable = "datasetId" in block ? (tables.find((table) => table.datasetId === block.datasetId) ?? null) : null;
   const actions = (
     <>
+      {dragHandle}
       <button type="button" className="rounded p-1 hover:bg-muted hover:text-foreground" onClick={() => onPatch({ span: span === 2 ? 1 : 2 })} title={span === 2 ? "Make half width" : "Make full width"} aria-label={span === 2 ? "Make half width" : "Make full width"}>
         {span === 2 ? <RectangleHorizontal className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
       </button>
@@ -840,7 +883,7 @@ function Caption({ editing, value, fallback, onChange }: { editing: boolean; val
 function InteractiveFigure({ url }: { url: string }) {
   const { data, error } = useSWR<{ data?: unknown[]; layout?: Record<string, unknown> }>(url, fetcher);
   if (error) return <p className="text-sm text-destructive">Could not load the figure.</p>;
-  if (!data) return <Skeleton className="h-72 w-full" />;
+  if (!data) return <ExploreLoading variant="chart" label="Loading figure…" height={380} />;
   return <PlotlyChart data={Array.isArray(data.data) ? data.data : []} layout={{ ...(data.layout ?? {}), autosize: true }} height={380} className="w-full" />;
 }
 
@@ -851,8 +894,7 @@ function FigureContent({ figure, scopeQuery, reportId }: { figure: ReportFigure;
       {figure.format === "plotly-json" ? (
         <InteractiveFigure url={figure.url} />
       ) : image ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={image} alt={figure.figureName} className="mx-auto max-h-[480px] max-w-full object-contain" />
+        <ReportImage src={image} alt={figure.figureName} height={380} />
       ) : (
         <a href={figure.url} className="text-sm underline" target="_blank" rel="noreferrer">
           Open figure
@@ -934,13 +976,6 @@ type MetricBlock = Extract<ReportBlock, { type: "metric" }>;
 
 function firstTable(tables: ReportTable[]): ReportTable | undefined {
   return tables.find((table) => table.output && table.columns.length > 0) ?? tables.find((table) => table.columns.length > 0) ?? tables[0];
-}
-
-function defaultChartBlock(tables: ReportTable[]): ReportBlock {
-  const table = firstTable(tables);
-  const numeric = table ? numericColumns(table.columns) : [];
-  const x = numeric[0]?.key ?? table?.columns[0]?.key ?? "";
-  return { id: newBlockId("chart"), type: "chart", datasetId: table?.datasetId ?? "", chart: numeric.length > 0 ? "histogram" : "bar", x, span: 1 };
 }
 
 /** A dashboard numbers block: the first analysis with numbers, else the row count of the first table. */
@@ -1159,7 +1194,7 @@ function TableBlockView({ block, table, filters, active, scopeQuery, reportId }:
     return rows;
   }, [filtered, columns, frame, query, sort]);
   if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
-  if (!frame) return <Skeleton className="h-40 w-full" />;
+  if (!frame) return <ExploreLoading variant="table" label="Loading table rows…" height={240} />;
   const limit = block.rows ?? 12;
   const narrowed = filtersApply(table, filters, active);
   const parts: string[] = [];
@@ -1406,7 +1441,7 @@ function ChartControls({ block, tables, onPatch }: { block: ChartBlock; tables: 
       </label>
       <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
         <span>{block.chart === "box" ? "Groups (x axis)" : block.chart === "scatter" ? "X axis" : "Column"}</span>
-        <ColumnSelect value={block.x} columns={columns} onChange={(x) => patch({ x })} label="Column" numericFirst={block.chart !== "box" && block.chart !== "bar"} />
+        <ColumnSelect value={block.x} columns={columns} onChange={(x) => patch({ x })} label="Column" numericFirst={block.chart !== "box" && block.chart !== "bar" && block.chart !== "values"} />
       </label>
       {needsY && (
         <label className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
@@ -1429,7 +1464,7 @@ function ChartBlockView({ block, table, filters, active }: { block: ChartBlock; 
   if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
   if (!block.x) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a column.</div>;
   if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
-  if (!frame) return <Skeleton className="h-64 w-full" />;
+  if (!frame) return <ExploreLoading variant="chart" label="Loading chart data…" height={320} />;
   const narrowed = filtersApply(table, filters, active);
   const result = buildChart(rows, table.columns, { chart: block.chart, x: block.x, y: block.y, color: block.color }, frame.truncated ? frame.total : undefined);
   return (
@@ -1490,7 +1525,7 @@ function MetricBlockView({ block, table, filters, active }: { block: MetricBlock
   if (!table) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>;
   if (!block.column) return <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a column.</div>;
   if (error) return <p className="text-sm text-destructive">Could not load the rows.</p>;
-  if (!frame) return <Skeleton className="h-20 w-full" />;
+  if (!frame) return <ExploreLoading variant="metrics" label="Loading summary values…" height={80} />;
   const narrowed = filtersApply(table, filters, active);
   const stats = computeStats(rows, block.column);
   return (

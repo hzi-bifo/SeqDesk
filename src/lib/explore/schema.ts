@@ -8,6 +8,7 @@ import type {
   ExploreRowData,
   ExploreSchema,
 } from "./types";
+import type { TableContract } from "./table-contract";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
 
@@ -162,9 +163,46 @@ export function computeContentHash(schema: ExploreSchema, rows: ExploreRowData[]
     .join("|");
   const digest = crypto.createHash("sha256");
   digest.update(columnSignature);
+  // Metadata changes can change scientific meaning even when values are identical.
+  // Retain legacy hashes for legacy schemas, but version declared units/contracts.
+  if (schema.schemaId || schema.schemaVersion || schema.rowEntity || schema.columns.some(column => column.unit || column.nullable !== undefined)) {
+    digest.update(stableStringify({ schemaId: schema.schemaId, schemaVersion: schema.schemaVersion, rowEntity: schema.rowEntity,
+      columns: schema.columns.map(({ key, unit, nullable }) => ({ key, unit, nullable })).sort((a, b) => a.key.localeCompare(b.key)) }));
+  }
   digest.update("\n");
   for (const hash of rowHashes) digest.update(hash);
   return digest.digest("hex");
+}
+
+/** Validate actual cells before attaching package metadata; never silently turn bad values into null. */
+export function applyTableContract(schema: ExploreSchema, rows: ExploreRowData[], contract: TableContract, protectedKeys: string[] = []): ExploreSchema {
+  const protectedSet = new Set(protectedKeys);
+  const actual = new Map(schema.columns.map(column => [column.key, column]));
+  for (const [key, declaration] of Object.entries(contract.columns ?? {})) {
+    if (protectedSet.has(key)) continue;
+    const column = actual.get(key);
+    if (!column) {
+      if (declaration.required) throw new Error(`Required column "${key}" is missing.`);
+      continue;
+    }
+    for (const row of rows) {
+      const value = row[key] ?? null;
+      if (value === null) {
+        if (declaration.nullable === false) throw new Error(`Column "${key}" contains a missing value.`);
+        continue;
+      }
+      const numeric = typeof value === "number" || (typeof value === "string" && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(value));
+      const valid = declaration.type === "number" ? numeric && Number.isFinite(Number(value))
+        : declaration.type === "boolean" ? typeof value === "boolean" || /^(true|false|1|0)$/i.test(String(value))
+        : declaration.type === "date" ? DATE_PATTERN.test(String(value)) && Number.isFinite(Date.parse(String(value)))
+        : declaration.type === "json" ? (() => { try { JSON.parse(String(value)); return true; } catch { return false; } })()
+        : true;
+      if (!valid) throw new Error(`Column "${key}" must contain ${declaration.type} values.`);
+    }
+    Object.assign(column, { type: declaration.type, label: declaration.label ?? column.label,
+      description: declaration.description ?? column.description, unit: declaration.unit, nullable: declaration.nullable });
+  }
+  return { ...schema, schemaId: contract.schemaId, schemaVersion: contract.schemaVersion, rowEntity: contract.rowEntity };
 }
 
 export function parseSchema(raw: string | null | undefined): ExploreSchema {

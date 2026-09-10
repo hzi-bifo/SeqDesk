@@ -1547,6 +1547,12 @@ export default function OrderSequencingPage({
     );
   };
 
+  const backToFiles = (
+    <Button variant="link" className="mb-4 h-auto p-0" asChild>
+      <Link href={`/orders/${orderId}/samples-files`}>Back to Files</Link>
+    </Button>
+  );
+
   if (sessionStatus === "loading" || loading) {
     return (
       <PageContainer className="flex min-h-[400px] items-center justify-center">
@@ -1558,9 +1564,10 @@ export default function OrderSequencingPage({
   if (!canManageSequencing) {
     return (
       <PageContainer>
+        {backToFiles}
         <Card>
           <CardHeader>
-            <CardTitle>Sequencing Data</CardTitle>
+            <CardTitle>Facility processing</CardTitle>
             <CardDescription>
               Your account cannot manage sequencing data in this deployment.
             </CardDescription>
@@ -1573,11 +1580,12 @@ export default function OrderSequencingPage({
   if (error && !data) {
     return (
       <PageContainer>
+        {backToFiles}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <AlertCircle className="h-4 w-4 text-destructive" />
-              Sequencing Data
+              Facility processing
             </CardTitle>
             <CardDescription>{error}</CardDescription>
           </CardHeader>
@@ -1593,6 +1601,7 @@ export default function OrderSequencingPage({
   if (activeView === "discover" && !activePipelineId) {
     return (
       <PageContainer>
+        {backToFiles}
         <SequencingDiscoverView
           orderId={orderId}
           samples={data.samples}
@@ -1607,6 +1616,7 @@ export default function OrderSequencingPage({
   if (activeView === "stream" && !activePipelineId) {
     return (
       <PageContainer>
+        {backToFiles}
         <SequencingStreamView
           orderId={orderId}
           samples={data.samples}
@@ -1766,10 +1776,11 @@ export default function OrderSequencingPage({
   return (
     <>
       <PageContainer>
+        {backToFiles}
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-semibold">Sequencing Data</h1>
+              <h1 className="text-xl font-semibold">Facility processing</h1>
               <p className="text-sm text-muted-foreground mt-0.5">
                 {sampleOptions.length} sample{sampleOptions.length !== 1 ? "s" : ""} in this sequencing order
               </p>
@@ -1812,7 +1823,7 @@ export default function OrderSequencingPage({
             )}
           </div>
 
-          <HelpBox title="What is the sequencing overview?">
+          <HelpBox title="What is facility processing?">
             The overview shows each sample&apos;s sequencing status, linked read files, checksums,
             and generated QC or report artifacts. Use it to quickly see which samples are ready,
             missing data, or need facility review.

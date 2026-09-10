@@ -180,6 +180,11 @@ export async function GET(
       return NextResponse.json({ error: "Not a file" }, { status: 400 });
     }
 
+    // A cheap, authenticated availability check; never read/stream file content.
+    if (searchParams.get("check") === "1") {
+      return NextResponse.json({ available: true, size: stat.size }, { headers: { "Cache-Control": "no-store" } });
+    }
+
     if (downloadRequested) {
       const fileName = path.basename(absolutePath);
       const stream = createReadStream(absolutePath);

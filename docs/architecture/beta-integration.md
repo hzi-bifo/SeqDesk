@@ -53,6 +53,26 @@ The optional CAMI/OPAL ground-truth comparison remains a separate study-level
 pipeline with explicit reference/taxonomy configuration. It is not silently
 run by the importer or the report kit.
 
+## CAMI import storage
+
+The global 100 GiB archive/expanded-read safety limits are not free-space
+reservations. Queue admission uses three times the selected download size
+(capped at the overall preparation limit), plus a 1 GiB safety reserve. For the
+5,550,020,311-byte CAMI II Marine sample archive, this is about 16.51 GiB rather
+than a fixed 201 GiB. It is an initial estimate, not a promise about final size.
+
+Extraction checks the actual read entry size from the tar header; benchmark
+truth files are drained without being written. The outer archive is removed
+before pairing. Pair preparation checks the measured, validated FASTQ byte
+count plus gzip overhead, and long reads reuse the extracted file. Periodic
+free-space checks, cancellation, checksums and archive safety limits remain.
+
+If space runs out later, the worker cleans only that attempt's partial cache
+and retains its learned peak requirement in the job directory. It will not
+re-download the same archive until that requirement fits. Signed previews and
+idempotency keys are unchanged; waiting messages expose only the import's
+requirement, not installation-wide free-space figures.
+
 ## Authorization and cohort integration
 
 Implemented on `beta` after explicit user approval:

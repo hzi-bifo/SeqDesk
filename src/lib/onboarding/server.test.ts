@@ -182,7 +182,8 @@ describe("automatic profile onboarding", () => {
       });
   });
 
-  it("adds the workflow-runtime evidence gate only for Research Workbench", async () => {
+  it("adds the workflow-runtime evidence gate when execution is enabled", async () => {
+    mocks.loadConfig.mockReturnValue({ config: { deployment: { onboardingVersion: 1 }, pipelines: { enabled: true } } });
     mocks.profile = {
       id: "research-workbench",
       experience: "workbench",
@@ -382,5 +383,56 @@ describe("automatic profile onboarding", () => {
       })
     ).rejects.toThrow("cannot be changed manually");
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it.each(["sequencing-center", "shared-lab", "research-workbench"])("checks the enabled runtime in %s", async (profileId) => {
+    mocks.profile = { id: profileId, experience: "sequencing" };
+    mocks.loadConfig.mockReturnValue({ config: { deployment: { onboardingVersion: 1 }, pipelines: { enabled: true } } });
+    mocks.siteSettings.findUnique.mockResolvedValue({ extraSettings: storedState() });
+
+    const status = await verifyAutomaticOnboarding({ actorUserId: "admin-1" });
+
+    expect(status.requiredTotalCount).toBe(2);
+    expect(status.complete).toBe(true);
+    expect(mocks.checkWorkflowRuntimeReadiness).toHaveBeenCalledTimes(1);
+    const persisted = JSON.parse(mocks.siteSettings.update.mock.calls[0][0].data.extraSettings);
+    expect(persisted.profileOnboarding.automaticVerifications["verify-workflow-runtime"].configurationFingerprint).toBe(runtimeFingerprint);
+  });
+
+  it("does not probe or gate disabled execution even for the research preset", async () => {
+    mocks.profile = { id: "research-workbench", experience: "sequencing" };
+    mocks.siteSettings.findUnique.mockResolvedValue({ extraSettings: storedState(), modulesConfig: JSON.stringify({ modules: { explore: true } }) });
+
+    const status = await verifyAutomaticOnboarding({ actorUserId: "admin-1" });
+
+    expect(status.requiredTotalCount).toBe(1);
+    expect(status.items.some(item => item.id === "review-report-analysis")).toBe(true);
+    expect(mocks.checkWorkflowRuntimeReadiness).not.toHaveBeenCalled();
+    expect(mocks.resolveWorkflowRuntimeFingerprint).not.toHaveBeenCalled();
+  });
+
+  it("resolves live module settings and rejects hidden checklist actions", async () => {
+    mocks.siteSettings.findUnique.mockResolvedValue({ extraSettings: storedState(), modulesConfig: JSON.stringify({ globalDisabled: true }) });
+    const status = await getOnboardingStatus();
+    expect(new Set(status.items.map(item => item.section))).toEqual(new Set(["essentials"]));
+
+    await expect(setOnboardingItemCompletion({ itemId: "configure-intake", complete: true, actorUserId: "admin-1" })).rejects.toThrow("Unknown onboarding item");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("can uncheck migrated confirmations without losing other audit or feature evidence", async () => {
+    const completion = { completedAt: checkedAt, completedByUserId: "admin-1" };
+    mocks.siteSettings.findUnique.mockResolvedValue({ extraSettings: JSON.stringify({
+      unrelatedSetting: "preserved",
+      profileOnboarding: { schemaVersion: 1, profile: "shared-lab", items: { "configure-shared-instruments": completion, "confirm-import-policy": completion }, automaticVerifications: { "verify-workflow-runtime": { ...completion, verifierVersion: 1, configurationFingerprint: runtimeFingerprint } } },
+    }) });
+
+    const status = await setOnboardingItemCompletion({ itemId: "configure-sequencers", complete: false, actorUserId: "admin-1" });
+
+    expect(status.items.find(item => item.id === "configure-sequencers")?.complete).toBe(false);
+    const persisted = JSON.parse(mocks.siteSettings.update.mock.calls[0][0].data.extraSettings);
+    expect(persisted.unrelatedSetting).toBe("preserved");
+    expect(persisted.profileOnboarding.items).toEqual({ "confirm-import-policy": completion });
+    expect(persisted.profileOnboarding.automaticVerifications["verify-workflow-runtime"].configurationFingerprint).toBe(runtimeFingerprint);
   });
 });

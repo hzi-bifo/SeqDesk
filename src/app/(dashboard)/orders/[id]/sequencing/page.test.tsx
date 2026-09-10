@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   useSession: vi.fn(),
+  useSearchParams: vi.fn(),
 }));
 
 vi.mock("next-auth/react", () => ({
@@ -13,7 +14,7 @@ vi.mock("next-auth/react", () => ({
 }));
 
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: mocks.useSearchParams,
 }));
 
 vi.mock("@/lib/notifications/client", () => ({
@@ -149,6 +150,7 @@ describe("OrderSequencingPage delivery controls", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams());
     currentDelivery = unpublishedDelivery;
     mocks.useSession.mockReturnValue({
       status: "authenticated",
@@ -241,9 +243,21 @@ describe("OrderSequencingPage delivery controls", () => {
     await renderPage("shared-lab");
 
     expect(await screen.findByText("Delivery to user")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Facility processing" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to Files" }).getAttribute("href")).toBe("/orders/order-1/samples-files");
     expect(
       screen.queryByText("Your account cannot manage sequencing data in this deployment.")
     ).toBeNull();
+  });
+
+  it.each([
+    ["discover", "Sequencing discover view"],
+    ["stream", "Sequencing stream view"],
+  ])("preserves the legacy %s workspace with a return to Files", async (view, content) => {
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams({ view }));
+    await renderPage();
+    expect(await screen.findByText(content)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to Files" }).getAttribute("href")).toBe("/orders/order-1/samples-files");
   });
 
   it("shows delivery readiness and publishes through the confirmation modal", async () => {

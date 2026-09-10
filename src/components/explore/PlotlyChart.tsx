@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ComponentType } from "react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ExploreLoading } from "./ExploreLoading";
 import { cn } from "@/lib/utils";
 
 type PlotProps = {
@@ -85,7 +85,7 @@ export function PlotlyChart({ data, layout, height = 360, onClick, className, st
   }, []);
 
   if (failed) return <p className="text-sm text-destructive">{failed}</p>;
-  if (!Plot) return <Skeleton className={className} style={{ height }} />;
+  if (!Plot) return <ExploreLoading variant="chart" label="Preparing chart…" className={className} height={height} />;
   return (
     <div ref={frameRef} className={cn("min-w-0 overflow-hidden", className)}>
       <Plot

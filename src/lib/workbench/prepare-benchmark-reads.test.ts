@@ -3,13 +3,17 @@ import os from "node:os";
 import path from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { pack } from "tar-stream";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { extractBenchmarkReads, prepareBenchmarkReads, pairedReadIdentity } from "./prepare-benchmark-reads";
+import { benchmarkReadOutputBytes, IMPORT_STORAGE_HEADROOM, ImportStorageUnavailable } from "./import-storage-capacity";
 
 // Local internal format fixtures, not simulated CAMI API responses or datasets.
 let root: string;
-beforeEach(async () => { root = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-format-test-")); });
-afterEach(async () => { await fs.rm(root, { recursive: true, force: true }); });
+beforeEach(async () => {
+  root = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-format-test-"));
+  vi.spyOn(fs, "statfs").mockResolvedValue({ bavail: 256 * 1024 ** 3, bsize: 1 } as Awaited<ReturnType<typeof fs.statfs>>);
+});
+afterEach(async () => { vi.restoreAllMocks(); await fs.rm(root, { recursive: true, force: true }); });
 const pair = "@local/1\nACGT\n+\n!!!!\n@local/2\nTGCA\n+\n####\n";
 async function archive(entries: { name: string; body: Buffer; type?: string }[]) {
   const tar = pack();
@@ -58,5 +62,50 @@ it.each([pair.replace("@local/2", "@other/2"), pair.slice(0, pair.indexOf("@loca
 it("preserves validated long reads without inventing mates", async () => {
   const file = path.join(root, "input.fastq.gz"); await fs.writeFile(file, gzipSync("@long\nACGT\n+\n!!!!\n"));
   expect(await prepareBenchmarkReads(file, "long")).toHaveLength(1);
+  expect(fs.statfs).not.toHaveBeenCalled(); // No additional read file is created.
   expect(() => pairedReadIdentity("@local/2", 1)).toThrow();
+});
+
+it("budgets only the actual archived read file, not drained benchmark truth", async () => {
+  const reads = gzipSync(pair);
+  const file = await archive([
+    { name: "local/reads_mapping.tsv", body: Buffer.alloc(1024 * 1024, 65) },
+    { name: "local/anonymous_reads.fq.gz", body: reads },
+  ]);
+  vi.mocked(fs.statfs).mockResolvedValue({ bsize: 1, bavail: IMPORT_STORAGE_HEADROOM + reads.length } as Awaited<ReturnType<typeof fs.statfs>>);
+  const extracted = await extractBenchmarkReads(file, path.join(root, "reads"));
+  expect(await fs.readFile(extracted)).toEqual(reads);
+  expect(fs.statfs).toHaveBeenCalledTimes(1);
+});
+
+it("stops before extracting a read entry that does not fit", async () => {
+  const reads = gzipSync(pair);
+  const file = await archive([{ name: "local/anonymous_reads.fq.gz", body: reads }]);
+  vi.mocked(fs.statfs).mockResolvedValue({ bsize: 1, bavail: IMPORT_STORAGE_HEADROOM + reads.length - 1 } as Awaited<ReturnType<typeof fs.statfs>>);
+  await expect(extractBenchmarkReads(file, path.join(root, "reads"))).rejects.toMatchObject({
+    name: "ImportStorageUnavailable", additionalBytes: reads.length,
+  });
+  expect(await fs.readdir(path.join(root, "reads"))).toEqual([]);
+});
+
+it("uses measured expanded bytes for pairing and creates no partial outputs when space is low", async () => {
+  const input = path.join(root, "input.fastq.gz");
+  await fs.writeFile(input, gzipSync(pair));
+  const outputBudget = benchmarkReadOutputBytes(Buffer.byteLength(pair));
+  vi.mocked(fs.statfs).mockResolvedValue({ bsize: 1, bavail: IMPORT_STORAGE_HEADROOM + outputBudget - 1 } as Awaited<ReturnType<typeof fs.statfs>>);
+  await expect(prepareBenchmarkReads(input, "short")).rejects.toBeInstanceOf(ImportStorageUnavailable);
+  expect(await fs.readdir(root)).toEqual(["input.fastq.gz"]);
+  vi.mocked(fs.statfs).mockResolvedValue({ bsize: 1, bavail: IMPORT_STORAGE_HEADROOM + outputBudget } as Awaited<ReturnType<typeof fs.statfs>>);
+  const reads = await prepareBenchmarkReads(input, "short");
+  expect(reads).toHaveLength(2);
+  expect(reads.reduce((sum, read) => sum + read.bytes, 0)).toBeLessThanOrEqual(outputBudget);
+});
+
+it("preserves non-ASCII header bytes while splitting within the measured output bound", async () => {
+  const input = path.join(root, "input.fastq.gz");
+  const content = Buffer.from(pair.replaceAll("local", "local-é"), "latin1");
+  await fs.writeFile(input, gzipSync(content));
+  const reads = await prepareBenchmarkReads(input, "short");
+  expect(gunzipSync(await fs.readFile(reads[0].path))).toEqual(Buffer.from("@local-é/1\nACGT\n+\n!!!!\n", "latin1"));
+  expect(gunzipSync(await fs.readFile(reads[1].path))).toEqual(Buffer.from("@local-é/2\nTGCA\n+\n####\n", "latin1"));
 });

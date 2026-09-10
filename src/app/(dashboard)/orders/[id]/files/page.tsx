@@ -2,7 +2,6 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { isActiveSession } from "@/lib/auth-session";
-import { decideServerCapability } from "@/lib/authorization/api";
 
 export default async function LegacyOrderFilesPage({
   params,
@@ -16,12 +15,5 @@ export default async function LegacyOrderFilesPage({
     redirect("/login");
   }
 
-  if (
-    decideServerCapability(session, "sequencing.files.manage").allowed &&
-    !session.user.isDemo
-  ) {
-    redirect(`/orders/${id}/sequencing`);
-  }
-
-  redirect(`/orders/${id}`);
+  redirect(`/orders/${id}/samples-files`);
 }

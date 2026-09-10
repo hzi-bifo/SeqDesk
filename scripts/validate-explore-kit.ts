@@ -185,7 +185,7 @@ function validateTestData(kitId: string, dir: string, manifest: KitManifest, iss
           if (schemaKeys && !schemaKeys.includes(column)) push("error", `test-data input "${input.alias}": role "${role}" maps to "${column}", which is not in the schema`, schemaPath!);
         }
         for (const [role, column] of Object.entries(roles)) {
-          if (input.requiredRoles.includes(role)) continue;
+          if (input.requiredRoles.some(required => required === role)) continue;
           if (typeof column !== "string" || !column) continue;
           if (header && !header.includes(column)) push("error", `test-data input "${input.alias}": role "${role}" maps to "${column}", which is not a column of the table`, tablePath!);
         }

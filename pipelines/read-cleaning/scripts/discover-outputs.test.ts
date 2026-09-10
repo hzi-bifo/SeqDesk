@@ -63,7 +63,8 @@ describe("read-cleaning discover-outputs script", () => {
     await touch(s1R2);
     await touch(s2Long);
     await touch(removed);
-    await touch(summary, "sample\tclassified_reads\nS1\t12\nS2_longReads\t7\n");
+    // Internal fixture using the real detaxizer 1.3.0 unnamed-index format.
+    await touch(summary, "\tclassified with kraken2\nS1\t12\nS2_longReads\t7\n");
     await touch(multiqc, "<html>report</html>");
     await touch(trace, "trace");
 
@@ -111,7 +112,7 @@ describe("read-cleaning discover-outputs script", () => {
         readLayout: "paired",
         sourceFile1: s1R1,
         sourceFile2: s1R2,
-        classified_reads: 12,
+        "classified with kraken2": 12,
       },
     });
     expect(s2Candidate).toMatchObject({
@@ -121,13 +122,14 @@ describe("read-cleaning discover-outputs script", () => {
         readLayout: "long",
         sourceFile1: s2Long,
         sourceFile2: null,
-        classified_reads: 7,
+        "classified with kraken2": 7,
       },
     });
     expect(parsed.files).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ outputId: "removed_reads", path: removed }),
         expect.objectContaining({ outputId: "summary", path: summary }),
+        expect.objectContaining({ outputId: "report_summary", path: path.join(outputDir, "seqdesk-read-screening-summary.json") }),
         expect.objectContaining({ outputId: "multiqc_report", path: multiqc, type: "report" }),
         expect.objectContaining({ outputId: "pipeline_info", path: trace }),
       ]),
@@ -135,8 +137,63 @@ describe("read-cleaning discover-outputs script", () => {
     expect(parsed.summary).toEqual({
       assembliesFound: 0,
       binsFound: 0,
-      artifactsFound: 5,
+      artifactsFound: 6,
       reportsFound: 1,
     });
+    expect(JSON.parse(await fs.readFile(path.join(outputDir, "seqdesk-read-screening-summary.json"), "utf8"))).toEqual([
+      expect.objectContaining({ sample_record: "sample-1", source_sample: "S1", classified_read_ids: 12, blastn_unique_ids: null }),
+      expect.objectContaining({ sample_record: "sample-2", source_sample: "S2_longReads", classified_read_ids: 7 }),
+    ]);
+  });
+
+  it("is repeatable and leaves the original summary unchanged", async () => {
+    const original = "\tclassified with bbduk\nS1\t0\n";
+    const summary = path.join(tempDir, "summary/summary.tsv");
+    await touch(summary, original);
+    const payload = { outputDir: tempDir, samples: [{ id: "s1", sampleId: "S1" }] };
+    const first = JSON.parse((await runScript(payload)).stdout);
+    const second = JSON.parse((await runScript(payload)).stdout);
+    expect(first.errors).toEqual([]);
+    expect(second).toEqual(first);
+    expect(await fs.readFile(summary, "utf8")).toBe(original);
+    expect(JSON.parse(await fs.readFile(path.join(tempDir, "seqdesk-read-screening-summary.json"), "utf8"))[0].classified_read_ids).toBe(0);
+  });
+
+  it.each(["file", "symlink"])("does not overwrite a conflicting %s report table", async type => {
+    await touch(path.join(tempDir, "summary/summary.tsv"), "\tclassified with kraken2\nS1\t1\n");
+    const preserved = path.join(tempDir, "preserved.json");
+    await touch(preserved, "keep me");
+    const report = path.join(tempDir, "seqdesk-read-screening-summary.json");
+    if (type === "symlink") await fs.symlink(preserved, report);
+    else await touch(report, "keep me");
+    const result = JSON.parse((await runScript({ outputDir: tempDir, samples: [{ id: "s1", sampleId: "S1" }] })).stdout);
+    expect(result.files.some((file: { outputId: string }) => file.outputId === "report_summary")).toBe(false);
+    expect(result.errors.join()).toContain("left unchanged");
+    expect(await fs.readFile(preserved, "utf8")).toBe("keep me");
+    expect(await fs.readFile(report, "utf8")).toBe("keep me");
+    expect((await fs.readdir(tempDir)).some(name => name.startsWith(".seqdesk-screening-summary-"))).toBe(false);
+  });
+
+  it("publishes one complete table during concurrent output discovery", async () => {
+    const samples = Array.from({ length: 2000 }, (_, i) => ({ id: `record-${i}`, sampleId: `INTERNAL_${i}` }));
+    await touch(path.join(tempDir, "summary/summary.tsv"), `\tclassified with kraken2\n${samples.map(sample => `${sample.sampleId}\t12`).join("\n")}\n`);
+    const results = await Promise.all(Array.from({ length: 3 }, () => runScript({ outputDir: tempDir, samples })));
+    for (const result of results) {
+      expect(result.code).toBe(0);
+      const parsed = JSON.parse(result.stdout);
+      expect(parsed.errors).toEqual([]);
+      expect(parsed.files).toContainEqual(expect.objectContaining({ outputId: "report_summary" }));
+    }
+    expect(JSON.parse(await fs.readFile(path.join(tempDir, "seqdesk-read-screening-summary.json"), "utf8"))).toHaveLength(samples.length);
+    expect((await fs.readdir(tempDir)).some(name => name.startsWith(".seqdesk-screening-summary-"))).toBe(false);
+  });
+
+  it("keeps the raw summary downloadable when normalization is unsupported", async () => {
+    const summary = path.join(tempDir, "summary/summary.tsv");
+    await touch(summary, "sample\tunrecognized_measurement\nS1\t12\n");
+    const result = JSON.parse((await runScript({ outputDir: tempDir, samples: [{ id: "s1", sampleId: "S1" }] })).stdout);
+    expect(result.files).toContainEqual(expect.objectContaining({ outputId: "summary", path: summary }));
+    expect(result.files.some((file: { outputId: string }) => file.outputId === "report_summary")).toBe(false);
+    expect(result.errors.join()).toContain("The original summary is still available");
   });
 });

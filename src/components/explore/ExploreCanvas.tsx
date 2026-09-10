@@ -55,6 +55,7 @@ import {
   X,
 } from "lucide-react";
 import { AddDataMenu } from "@/components/explore/AddDataMenu";
+import { toInput } from "@/lib/explore/report-input";
 import { HeatmapView } from "@/components/explore/views/HeatmapView";
 import { SubjectTimelineOverview } from "@/components/explore/views/SubjectTimelineOverview";
 import { CodeEditor } from "@/components/explore/CodeEditor";
@@ -64,6 +65,8 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ExploreLoading } from "./ExploreLoading";
+import { ReportImage } from "./ReportImage";
 import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { exactValue, fetcher, formatCell, postJson, ROLE_LABELS } from "@/lib/explore/client";
@@ -90,7 +93,8 @@ import {
   type CanvasViewData,
   type BuiltInView,
 } from "@/lib/explore/canvas-layout";
-import { DATASET_KIND_DEFINITIONS, TABLE_KIND_DEFINITIONS, datasetFitsInput } from "@/lib/explore/dataset-kinds";
+import { DATASET_KIND_DEFINITIONS, datasetFitsInput, datasetFitMessage } from "@/lib/explore/dataset-kinds";
+import type { InputRequirements } from "@/lib/explore/table-contract";
 import { figureBlockId, tableBlockId, viewBlockId, type ReportBlock } from "@/lib/explore/report-blocks";
 import type { ReportView } from "@/lib/explore/reports";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
@@ -103,7 +107,7 @@ export interface KitSummary {
   name: string;
   description: string;
   language: "python" | "r";
-  inputs: Array<{ alias: string; label: string; tableKind?: string | null; requiredRoles: ExploreRole[]; optionalRoles: ExploreRole[]; optional?: boolean }>;
+  inputs: Array<{ alias: string; label: string; tableKind?: string | null; requiredRoles: ExploreRole[]; optionalRoles: ExploreRole[]; optional?: boolean } & InputRequirements>;
   params?: CanvasParamsSchema;
 }
 
@@ -306,7 +310,7 @@ function DatasetNode({ id, data, width, height, positionAbsoluteX, positionAbsol
     });
 
   return (
-    <div className={cn("relative flex h-full w-full flex-col rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
+    <div className={cn("relative flex h-full w-full flex-col rounded-lg border bg-card shadow-sm", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
       <Resizer kind="dataset" />
       {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={cn(handleClass, data.hasInput && "!opacity-0")} />
@@ -351,9 +355,7 @@ function DatasetNode({ id, data, width, height, positionAbsoluteX, positionAbsol
             { label: "Open table", href: `/explore/datasets/${data.datasetId}${data.scopeQuery}` },
             { label: "Columns and roles", href: `/explore/datasets/${data.datasetId}${data.scopeQuery}&tab=columns` },
             { label: "Edits", href: `/explore/datasets/${data.datasetId}${data.scopeQuery}&tab=edits` },
-            ...(data.datasetKind === "derived"
-              ? [{ label: data.inReport ? "Take off the report" : "Add to the report", onSelect: () => void data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name }) }]
-              : []),
+            { label: data.inReport ? "Take off the page" : "Add table to page", onSelect: () => void data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name }) },
             { label: "Delete table", destructive: true, onSelect: () => void data.onDelete("dataset", data.datasetId, data.name) },
           ]}
         />
@@ -444,9 +446,7 @@ function DatasetNode({ id, data, width, height, positionAbsoluteX, positionAbsol
           connectTargets={data.connectTargets}
           onConnect={(target) => data.onConnect(data.datasetId, target)}
         />
-        {data.datasetKind === "derived" && (
-          <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name })} compact={compact} colours={colours} />
-        )}
+        <ReportToggle inReport={Boolean(data.inReport)} onToggle={() => data.onToggleReport({ type: "table", datasetId: data.datasetId, label: data.name })} compact={compact} colours={colours} />
         {data.views.length === 0 && data.roleHints && data.roleHints.length > 0 && (
           <Link
             href={`/explore/datasets/${data.datasetId}${data.scopeQuery}&tab=columns`}
@@ -564,12 +564,8 @@ function AnalyseList({
       {kits.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No templates installed.</div>}
       {kits.map((kit) => {
         const input = kit.inputs[0];
-        const fit = input ? datasetFitsInput({ tableKind: dataset.tableKind, roles: dataset.roles }, input) : ({ ok: true } as const);
-        const reason = fit.ok
-          ? null
-          : fit.reason === "table-kind"
-            ? `needs a ${TABLE_KIND_DEFINITIONS[fit.tableKind]?.label ?? fit.tableKind} table`
-            : `map ${fit.missing.map((role) => ROLE_LABELS[role].toLowerCase()).join(", ")} first`;
+        const fit = input ? datasetFitsInput({ tableKind: dataset.tableKind, roles: dataset.roles, schema: dataset.schema ?? { columns: dataset.columns } }, input) : ({ ok: true } as const);
+        const reason = datasetFitMessage(fit);
         return (
           <DropdownMenuItem key={kit.id} disabled={!fit.ok} onSelect={() => onPick(kit.id)} title={reason ?? kit.description}>
             <FlaskConical className="mr-2 h-4 w-4 shrink-0" />
@@ -611,11 +607,11 @@ function ReportToggle({ inReport, onToggle, compact = false, colours }: { inRepo
       className={cn("nodrag inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10px] font-medium hover:brightness-95", inReport ? "border-transparent bg-secondary" : "bg-card text-muted-foreground")}
       style={inReport && colours ? { background: colours.chip, color: colours.strong } : undefined}
       title={inReport ? "Shown on the report page; click to take it off" : "Not on the report page; click to add it"}
-      aria-label={inReport ? "In report" : "Add to report"}
+      aria-label={inReport ? "On page" : "Add to page"}
       aria-pressed={inReport}
     >
       {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : inReport ? <BookmarkCheck className="h-3 w-3" /> : <BookmarkPlus className="h-3 w-3" />}
-      {!compact && (inReport ? "In report" : "Add to report")}
+      {!compact && (inReport ? "On page" : "Add to page")}
     </button>
   );
 }
@@ -859,7 +855,7 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
 function PlotlyThumbnail({ url, height }: { url: string; height: number }) {
   const { data, error } = useSWR<{ data?: unknown[]; layout?: Record<string, unknown> }>(url, fetcher);
   if (error) return <ImageIcon className="h-8 w-8 text-muted-foreground/60" />;
-  if (!data) return <Skeleton className="h-full w-full" />;
+  if (!data) return <ExploreLoading variant="chart" label="Loading figure preview…" height={height} className="w-full" />;
   return (
     <PlotlyChart
       data={Array.isArray(data.data) ? data.data : []}
@@ -877,14 +873,13 @@ function FigureNode({ data, width, height }: NodeProps<FigureNodeType>) {
   const compact = (width ?? CANVAS_SIZES.figure.width) < 340;
   const area = Math.max(80, (height ?? CANVAS_SIZES.figure.height) - 34);
   return (
-    <div className={cn("relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm", data.refreshing && "animate-pulse", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
+    <div className={cn("relative flex h-full w-full flex-col overflow-hidden rounded-lg border bg-card shadow-sm", data.justUpdated && "ring-2 ring-emerald-400")} style={{ borderColor: colours.border }}>
       <Resizer kind="figure" />
       {data.refreshing && <RefreshingOverlay label="updating" />}
       <Handle type="target" position={Position.Left} className={cn(handleClass, data.hasInput && "!opacity-0")} />
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/30">
         {image ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={image} alt={data.name} className="max-h-full max-w-full object-contain" />
+          <ReportImage src={image} alt={data.name} height={area} />
         ) : data.format === "plotly-json" ? (
           <PlotlyThumbnail url={data.url} height={area} />
         ) : (
@@ -1294,18 +1289,7 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
       const key = `/api/explore/reports/${encodeURIComponent(reportId)}`;
       try {
         const { report } = (await fetcher(key)) as { report: ReportView };
-        const blocks: ReportBlock[] = report.blocks.map((block) => {
-          if (block.type === "text") return { id: block.id, type: "text", markdown: block.markdown, span: block.span };
-          if (block.type === "figure") return { id: block.id, type: "figure", analysisId: block.analysisId, figureName: block.figureName, caption: block.caption, span: block.span };
-          if (block.type === "chart") return { id: block.id, type: "chart", datasetId: block.datasetId, chart: block.chart, x: block.x, y: block.y, color: block.color, caption: block.caption, span: block.span };
-          if (block.type === "metric") return { id: block.id, type: "metric", datasetId: block.datasetId, column: block.column, stats: block.stats, label: block.label, span: block.span };
-          if (block.type === "view") return { id: block.id, type: "view", datasetId: block.datasetId, view: block.view, options: block.options, caption: block.caption, span: block.span };
-          if (block.type === "taxon-explorer") return { id: block.id, type: "taxon-explorer", datasetId: block.datasetId, taxon: block.taxon, caption: block.caption, span: block.span };
-          if (block.type === "subject") return { id: block.id, type: "subject", datasetId: block.datasetId, subject: block.subject, measure: block.measure, caption: block.caption, span: block.span };
-          if (block.type === "curated") return { id: block.id, type: "curated", datasetId: block.datasetId, role: block.role, lists: block.lists, limit: block.limit, caption: block.caption, span: block.span };
-          if (block.type === "run-metric") return { id: block.id, type: "run-metric", analysisId: block.analysisId, metrics: block.metrics, label: block.label, span: block.span };
-          return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, span: block.span };
-        });
+        const blocks = toInput(report).blocks;
         const id = target.type === "figure" ? figureBlockId(target.analysisId, target.figureName) : target.type === "view" ? viewBlockId(target.datasetId, target.view) : tableBlockId(target.datasetId);
         const present = blocks.some((block) => block.id === id);
         const next = present
@@ -1605,7 +1589,7 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
   }, [arrange]);
 
   if (error) return <p className="text-sm text-destructive">Could not load the canvas: {String(error.message)}</p>;
-  if (isLoading && !graph) return <Skeleton className={cn("h-[560px] w-full", className)} />;
+  if (isLoading && !graph) return <div ref={containerRef}><ExploreLoading variant="canvas" label="Loading analysis canvas…" height={fillViewport ? height : 640} className={className} /></div>;
   if (graph && graph.nodes.length === 0) {
     return (
       <div className={cn("rounded-lg border border-dashed p-8", className)}>
@@ -1623,7 +1607,7 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
             </li>
             <li className="rounded-lg border bg-card p-4">
               <div className="flex items-center gap-2 font-medium"><span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-secondary text-xs">3</span> Run and report</div>
-              <p className="mt-1 text-muted-foreground">Run writes figures and tables as cards; they land on the Report page for others to read.</p>
+              <p className="mt-1 text-muted-foreground">Use Add to page on a table or a finished figure. Run an analysis only when you need additional calculations.</p>
             </li>
           </ol>
         </div>
@@ -1635,7 +1619,7 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
   return (
     <div ref={containerRef} className={cn("relative w-full overflow-hidden rounded-lg border bg-muted/20", className)} style={{ height: fillViewport ? height : 640 }}>
       <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
-        <AddDataMenu scope={scope} reportId={reportId} onBuilt={() => mutate()} label="Add" variant="outline" />
+        <AddDataMenu scope={scope} reportId={reportId} onBuilt={() => mutate()} label="Add data" variant="outline" />
         <CanvasLegend />
         <Button size="sm" variant="outline" onClick={() => setMinimap(minimap === "shown" ? "hidden" : "shown")} title={minimap === "shown" ? "Hide the overview map" : "Show the overview map"} aria-pressed={minimap === "shown"}>
           <MapIcon className="mr-2 h-4 w-4" />
@@ -1837,7 +1821,7 @@ function CodePanel({
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {error && <p className="text-sm text-destructive">{String(error.message)}</p>}
-        {!analysis && !error && <Skeleton className="h-64 w-full" />}
+        {!analysis && !error && <ExploreLoading variant="text" label="Loading analysis code…" height={256} />}
         {analysis && tab === "code" && (
           <CodeEditor value={draft ?? analysis.code} onChange={setDraft} language={analysis.language} height="100%" ariaLabel={`Code of ${analysis.name}`} />
         )}

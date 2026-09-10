@@ -1,9 +1,48 @@
-import type { DeploymentProfileId } from "@/lib/deployment-profile";
+import { getDeploymentProfileDefinition, type DeploymentProfileId } from "@/lib/deployment-profile";
+import { isModuleEnabled, parseModulesConfig } from "@/lib/modules/form-integration";
+import { importModuleCatalog } from "@/lib/modules/import-catalog";
 
 export const ONBOARDING_SCHEMA_VERSION = 1 as const;
 
+export const ONBOARDING_COMPLETION_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  "configure-sequencers": ["configure-shared-instruments"],
+  "review-analysis-pipelines": ["review-shared-pipelines", "review-workbench-pipelines"],
+};
+
+export const ONBOARDING_SECTIONS = {
+  essentials: { label: "Installation essentials", description: "Storage, access and responsibilities shared by every SeqDesk installation." },
+  facility: { label: "Facility sequencing", description: "Shown because sequencing management is enabled." },
+  imports: { label: "Data imports", description: "Prepare the enabled import modules for your team." },
+  pipelines: { label: "Pipelines", description: "Check the execution service before running workflows." },
+  reports: { label: "Reports & analysis", description: "Use existing metadata and pipeline results in reports." },
+} as const;
+
+export type OnboardingCapabilities = {
+  facilityEnabled: boolean;
+  importModules: ReadonlyArray<{ id: string; name: string }>;
+  pipelinesEnabled: boolean;
+  reportsEnabled: boolean;
+};
+
+/** Resolve the same effective toggles used by the application, including global disable. */
+export function resolveOnboardingCapabilities(args: {
+  profile: DeploymentProfileId;
+  modulesConfig: string | null;
+  pipelinesEnabled: boolean;
+}): OnboardingCapabilities {
+  const modules = parseModulesConfig(args.modulesConfig, getDeploymentProfileDefinition(args.profile));
+  return {
+    facilityEnabled: isModuleEnabled(modules, "sequencing-management"),
+    importModules: importModuleCatalog.filter(module => isModuleEnabled(modules, module.id)),
+    // Workflow execution is configured independently of the feature-module switch.
+    pipelinesEnabled: args.pipelinesEnabled,
+    reportsEnabled: isModuleEnabled(modules, "explore"),
+  };
+}
+
 export type OnboardingItem = {
   id: string;
+  section?: keyof typeof ONBOARDING_SECTIONS;
   requirement: "required" | "recommended";
   /** Omitted items are deliberate human confirmations. */
   completionMode?: "automatic";
@@ -15,159 +54,110 @@ export type OnboardingItem = {
 
 const COMMON_ITEMS: readonly OnboardingItem[] = [
   {
-    id: "confirm-profile-and-identity",
-    requirement: "recommended",
+    id: "confirm-profile-and-identity", section: "essentials", requirement: "recommended",
     label: "Confirm installation identity",
-    description:
-      "Review the installation name, contact details, and the operating profile selected during installation.",
-    href: "/admin/settings",
-    actionLabel: "Review info",
+    description: "Review the installation name and contact details shown to your team. Installation-managed values may need to be changed by your server operator.",
+    href: "/admin/settings/system", actionLabel: "Review identity",
   },
   {
-    id: "verify-storage",
-    requirement: "required",
-    completionMode: "automatic",
+    id: "verify-storage", section: "essentials", requirement: "required", completionMode: "automatic",
     label: "Verify managed storage",
-    description:
-      "SeqDesk checks that the selected managed-data location exists and can safely create and remove files. Backup responsibility remains a separate recommendation.",
-    href: "/admin/data-storage",
-    actionLabel: "Check storage",
+    description: "SeqDesk checks that the managed-data location exists and can safely create and remove files. This does not verify your backups.",
+    href: "/admin/data-storage", actionLabel: "Check storage",
   },
   {
-    id: "acknowledge-backups",
-    requirement: "recommended",
+    id: "acknowledge-backups", section: "essentials", requirement: "recommended",
     label: "Document backup responsibility",
-    description:
-      "Record who backs up PostgreSQL and scientific data, how often, and how a restore is tested.",
+    description: "Record who backs up PostgreSQL and scientific data, how often, and how a restore is tested.",
   },
   {
-    id: "review-members-and-enrollment",
-    requirement: "recommended",
-    label: "Review members and enrollment",
-    description:
-      "Invite the people who need access and confirm whether this profile uses invitations or researcher self-registration.",
-    href: "/admin/users",
-    actionLabel: "Manage members",
+    id: "review-members-and-enrollment", section: "essentials", requirement: "recommended",
+    label: "Review members and access",
+    description: "Invite the people who need access, choose administrators and review registration and sharing rules.",
+    href: "/admin/users", actionLabel: "Manage members",
   },
   {
-    id: "review-modules-and-secrets",
-    requirement: "recommended",
+    id: "review-modules-and-secrets", section: "essentials", requirement: "recommended",
     label: "Review modules and credentials",
-    description:
-      "Enable only the modules the team needs and configure real credentials for external services before use.",
-    href: "/admin/modules",
-    actionLabel: "Review modules",
+    description: "Enable the features the team needs. Configure service credentials only where the selected module requires them.",
+    href: "/admin/modules", actionLabel: "Review modules",
   },
-] as const;
+  {
+    id: "document-retention-and-quotas", section: "essentials", requirement: "recommended",
+    label: "Agree on data retention and storage limits",
+    description: "Document how long raw data and results are kept and who can remove them. A checklist confirmation does not enforce quotas or delete files.",
+    href: "/admin/data-storage", actionLabel: "Review storage",
+  },
+];
 
-const PROFILE_ITEMS: Readonly<Record<DeploymentProfileId, readonly OnboardingItem[]>> = {
-  "sequencing-center": [
+const FACILITY_ITEMS: readonly OnboardingItem[] = [
+  {
+    id: "configure-intake", section: "facility", requirement: "recommended",
+    label: "Configure sequencing intake",
+    description: "Review the request form, sample metadata and facility handoff fields.",
+    href: "/admin/form-builder", actionLabel: "Configure intake",
+  },
+  {
+    id: "configure-sequencers", section: "facility", requirement: "recommended",
+    label: "Configure sequencing technology",
+    description: "Add the instruments and sequencing technologies the facility or lab operates.",
+    href: "/admin/sequencing-tech", actionLabel: "Configure instruments",
+  },
+  {
+    id: "configure-delivery-and-publishing", section: "facility", requirement: "recommended",
+    label: "Review delivery and archive publishing",
+    description: "Confirm how results are delivered. Configure ENA credentials only if you submit data to the archive; downloading public reads does not require submission credentials.",
+    href: "/admin/ena", actionLabel: "Review publishing",
+  },
+  {
+    id: "test-center-journey", section: "facility", requirement: "recommended",
+    label: "Try a sequencing request",
+    description: "Create a small request, receive it as facility staff and verify the delivery path.",
+    href: "/orders/new", actionLabel: "Create test request",
+  },
+];
+
+export function getOnboardingItems(
+  profile: DeploymentProfileId,
+  capabilities: OnboardingCapabilities = resolveOnboardingCapabilities({
+    profile, modulesConfig: null, pipelinesEnabled: false,
+  }),
+): OnboardingItem[] {
+  const items = [...COMMON_ITEMS];
+  if (capabilities.facilityEnabled) items.push(...FACILITY_ITEMS);
+  if (capabilities.importModules.length) items.push(
     {
-      id: "configure-intake",
-      requirement: "recommended",
-      label: "Configure sequencing intake",
-      description: "Review the request form, sample metadata, and facility handoff fields.",
-      href: "/admin/form-builder",
-      actionLabel: "Configure intake",
+      id: "confirm-import-policy", section: "imports", requirement: "recommended",
+      label: "Review enabled data sources",
+      description: `Enabled modules: ${capabilities.importModules.map(module => module.name).join(", ")}. Review supported raw reads, source metadata and storage requirements before importing.`,
+      href: "/admin/modules", actionLabel: "Review import modules",
     },
     {
-      id: "configure-sequencers",
-      requirement: "recommended",
-      label: "Configure sequencing technology",
-      description: "Add the instruments and sequencing technologies the facility actually operates.",
-      href: "/admin/sequencing-tech",
-      actionLabel: "Configure sequencers",
+      id: "test-import-journey", section: "imports", requirement: "recommended",
+      label: "Try a small data import",
+      description: "Name a sequencing-data collection, choose an import module and import a small dataset. Check its files and source metadata; linking it to a study can wait.",
+      href: "/orders/import", actionLabel: "Open import modules",
     },
+  );
+  if (capabilities.pipelinesEnabled) items.push(
     {
-      id: "configure-delivery-and-publishing",
-      requirement: "recommended",
-      label: "Review delivery and archive publishing",
-      description:
-        "Confirm how results are delivered and configure real ENA credentials only if archive submission is used.",
-      href: "/admin/ena",
-      actionLabel: "Review data upload",
-    },
-    {
-      id: "test-center-journey",
-      requirement: "recommended",
-      label: "Complete a test order handoff",
-      description: "Create a small request, receive it as facility staff, and verify the delivery path.",
-      href: "/orders/new",
-      actionLabel: "Create test order",
-    },
-  ],
-  "shared-lab": [
-    {
-      id: "configure-shared-instruments",
-      requirement: "recommended",
-      label: "Configure shared instruments",
-      description: "Add the instruments the lab uses and confirm who maintains their settings.",
-      href: "/admin/sequencing-tech",
-      actionLabel: "Configure instruments",
-    },
-    {
-      id: "review-shared-pipelines",
-      requirement: "recommended",
-      label: "Review the shared pipeline catalog",
-      description: "Enable only approved workflows and confirm the runtime available to lab members.",
-      href: "/admin/settings/pipelines",
-      actionLabel: "Review pipelines",
-    },
-    {
-      id: "document-retention-and-quotas",
-      requirement: "recommended",
-      label: "Document retention and quotas",
-      description:
-        "Agree how long raw data and results are retained, who may purge them, and what storage limits apply to shared work.",
-    },
-    {
-      id: "test-shared-journey",
-      requirement: "recommended",
-      label: "Complete one shared project",
-      description: "Create a small project and verify that another lab member can continue the work safely.",
-      href: "/orders/new",
-      actionLabel: "Create test project",
-    },
-  ],
-  "research-workbench": [
-    {
-      id: "confirm-import-policy",
-      requirement: "recommended",
-      label: "Confirm upload and import policy",
-      description:
-        "Document file-size, retention, and allowed public-repository rules before members add datasets.",
-      href: "/workbench/imports",
-      actionLabel: "Review imports",
-    },
-    {
-      id: "verify-workflow-runtime",
-      requirement: "required",
-      completionMode: "automatic",
+      id: "verify-workflow-runtime", section: "pipelines", requirement: "required", completionMode: "automatic",
       label: "Verify the workflow runtime",
-      description:
-        "SeqDesk checks the selected local or Slurm executor, writable run directory, Conda environment, Java, and Nextflow runtime.",
-      href: "/admin/pipeline-runtime",
-      actionLabel: "Check runtime",
+      description: "SeqDesk checks the configured execution location, writable run directory, Conda environment, Java and Nextflow. Individual pipelines may still need additional tools or databases.",
+      href: "/admin/pipeline-runtime", actionLabel: "Check runtime",
     },
     {
-      id: "review-workbench-pipelines",
-      requirement: "recommended",
-      label: "Review analysis pipelines",
-      description: "Install and enable the approved starter analyses available to workspace members.",
-      href: "/admin/settings/pipelines",
-      actionLabel: "Review pipelines",
+      id: "review-analysis-pipelines", section: "pipelines", requirement: "recommended",
+      label: "Review pipelines and their requirements",
+      description: "Enable the workflows your team needs and review each pipeline’s prerequisites. Enabling a pipeline is not confirmation that its databases are installed.",
+      href: "/admin/settings/pipelines", actionLabel: "Review pipelines",
     },
-    {
-      id: "test-workbench-journey",
-      requirement: "recommended",
-      label: "Import or upload a small dataset",
-      description: "Create a workspace, add a small real or test dataset, and run one starter analysis.",
-      href: "/workbench/data",
-      actionLabel: "Open Workbench",
-    },
-  ],
-};
-
-export function getOnboardingItems(profile: DeploymentProfileId): OnboardingItem[] {
-  return [...COMMON_ITEMS, ...PROFILE_ITEMS[profile]];
+  );
+  if (capabilities.reportsEnabled) items.push({
+    id: "review-report-analysis", section: "reports", requirement: "recommended",
+    label: "Review report analysis environments",
+    description: "Reports can use saved metadata and pipeline tables without running a workflow. Configure an analysis environment only if your team will run report analyses.",
+    href: "/admin/settings/analysis", actionLabel: "Review environments",
+  });
+  return items;
 }

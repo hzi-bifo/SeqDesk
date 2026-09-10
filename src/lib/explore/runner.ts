@@ -9,7 +9,8 @@ import { allocateRunNumber, parseInputBindings, serializeRun, type RunSummary } 
 import { fetchAllDatasetRows, getDatasetRecord } from "./datasets";
 import { applyEditsToRows, listActiveEdits } from "./edits";
 import { resolveReadyEnvironment } from "./environments";
-import { stageHelperLibrary } from "./kits/loader";
+import { getKit, stageHelperLibrary } from "./kits/loader";
+import { inputContractSnapshot, validateAnalysisInputs } from "./input-validation";
 import { parseSchema } from "./schema";
 import { resolveExploreStorage } from "./storage";
 import { generateInnerScript, generateLocalRunScript, generateSlurmRunScript, INNER_SCRIPT } from "./run-script";
@@ -24,6 +25,8 @@ export interface StartRunInput {
   revisionId?: string | null;
   executionMode?: ExecutionModeRequest;
   createdById: string;
+  /** Internal idempotency identity for guided requests; never accepted by the general run API. */
+  runId?: string;
 }
 
 export class ExploreRunError extends Error {
@@ -115,6 +118,15 @@ async function curationForTarget(targetKey: string) {
  * failed with the reason so nothing is left half-prepared.
  */
 export async function createAndStartRun(input: StartRunInput): Promise<RunSummary> {
+  const existingRequest = async () => {
+    if (!input.runId) return null;
+    const existing = await db.exploreAnalysisRun.findUnique({ where: { id: input.runId }, include: { revision: { select: { number: true } }, _count: { select: { artifacts: true } } } });
+    if (!existing) return null;
+    if (existing.analysisId !== input.analysisId || existing.createdById !== input.createdById) throw new ExploreRunError(409, "This generation request belongs to another analysis.");
+    return serializeRun(existing);
+  };
+  const previous = await existingRequest();
+  if (previous) return previous;
   const analysis = await db.exploreAnalysis.findUnique({
     where: { id: input.analysisId },
     include: { revisions: { orderBy: { number: "desc" } } },
@@ -125,6 +137,14 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     : analysis.revisions.find((entry) => entry.id === analysis.currentRevisionId) ?? analysis.revisions[0];
   if (!revision) throw new ExploreRunError(400, "The analysis has no revision to run");
 
+  let bindings;
+  try {
+    const contract = inputContractSnapshot(revision.inputs) ?? (analysis.kitId ? (await getKit(analysis.kitId))?.manifest.inputs ?? null : null);
+    bindings = await validateAnalysisInputs(analysis.targetKey, parseInputBindings(revision.inputs), contract);
+  } catch (error) {
+    throw new ExploreRunError(400, error instanceof Error ? error.message : "Input validation failed.");
+  }
+
   const environment = await resolveReadyEnvironment(analysis.environmentName);
   if (!environment) {
     throw new ExploreRunError(409, `Environment ${analysis.environmentName} is not built yet. A facility admin can build it under Explore environments.`);
@@ -132,30 +152,44 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
 
   // One run of an analysis at a time: two would write the same output tables.
   const active = await db.exploreAnalysisRun.findFirst({ where: { analysisId: analysis.id, status: { in: ["pending", "queued", "running"] } }, select: { runNumber: true } });
-  if (active) throw new ExploreRunError(409, `Run ${active.runNumber} of this analysis is still active. Wait for it or stop it first.`);
+  if (active) {
+    const repeated = await existingRequest();
+    if (repeated) return repeated;
+    throw new ExploreRunError(409, `Run ${active.runNumber} of this analysis is still active. Wait for it or stop it first.`);
+  }
 
   const settings = await getExecutionSettings();
   const mode: "local" | "slurm" =
     input.executionMode === "local" || input.executionMode === "slurm" ? input.executionMode : settings.useSlurm ? "slurm" : "local";
 
-  const runNumber = await allocateRunNumber();
-  const run = await db.exploreAnalysisRun.create({
+  const allocate = async () => db.exploreAnalysisRun.create({
     data: {
+      ...(input.runId ? { id: input.runId } : {}),
       analysisId: analysis.id,
       revisionId: revision.id,
-      runNumber,
+      runNumber: await allocateRunNumber(),
       status: "pending",
       executionMode: mode,
       createdById: input.createdById,
     },
   });
+  let run;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { run = await allocate(); break; } catch (error) {
+      if (!(error && typeof error === "object" && "code" in error && error.code === "P2002")) throw error;
+      const repeated = await existingRequest();
+      if (repeated) return repeated;
+      if (attempt === 2) throw new ExploreRunError(409, "Another run started at the same time. Try again.");
+    }
+  }
+  if (!run) throw new ExploreRunError(500, "Could not allocate a run.");
+  const runNumber = run.runNumber;
 
   try {
     const storage = await resolveExploreStorage();
     const runFolder = await preparePipelineRunDirectory(storage.runsRoot, runNumber, run.id);
     await fs.mkdir(path.join(runFolder, "outputs"), { recursive: true });
 
-    const bindings = parseInputBindings(revision.inputs);
     const staged: Record<string, Awaited<ReturnType<typeof stageInput>>> = {};
     for (const binding of bindings) {
       staged[binding.alias] = await stageInput(runFolder, binding.alias, binding.datasetId, binding.versionId);

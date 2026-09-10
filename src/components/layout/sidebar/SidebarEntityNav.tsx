@@ -18,6 +18,7 @@ import {
 import { useModuleEnabled } from "@/lib/modules";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getSequencingDataSectionLabel } from "@/lib/orders/sequencing-data-labels";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { SidebarEntityContext } from "./useSidebarEntity";
 import { useOrderFormSteps } from "./useOrderFormSteps";
@@ -128,24 +129,6 @@ export function SidebarEntityNav({
   );
   const facilityStep = orderFormSteps.find((step) => step.id === "_facility");
   const detailOrderSteps = orderFormSteps.filter((step) => step.id !== "_facility");
-
-  // Fetch sequencing association status for the associate sub-item indicator
-  const [seqAssocStatus, setSeqAssocStatus] = useState<"none" | "partial" | "complete">("none");
-  useEffect(() => {
-    if (entityType !== "order" || !entityId || !showOperationalControls) return;
-    let cancelled = false;
-    fetch(`/api/orders/${entityId}/sequencing`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        if (cancelled || !data?.summary) return;
-        const { totalSamples, readsLinkedSamples } = data.summary;
-        if (totalSamples === 0 || readsLinkedSamples === 0) setSeqAssocStatus("none");
-        else if (readsLinkedSamples >= totalSamples) setSeqAssocStatus("complete");
-        else setSeqAssocStatus("partial");
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [entityType, entityId, showOperationalControls, pathname]);
 
   const [studyReadFileStatus, setStudyReadFileStatus] = useState<{
     studyId: string | null;
@@ -311,9 +294,8 @@ export function SidebarEntityNav({
       : null);
 
   const orderItems: NavItem[] = [
-    { key: "source", label: "Data source", href: entityContext.entityData?.collectionKey ? `/orders/import?${new URLSearchParams({ collection: entityContext.entityData.collectionKey, name: entityContext.entityData.label, ...(entityId ? { orderId: entityId } : {}) })}` : "/orders/import", icon: HardDrive, show: true },
-    { key: "details", label: "Metadata", href: entityId ? `/orders/${entityId}` : undefined, icon: FileText, show: true },
     { key: "samples-files", label: "Files", href: entityId ? `/orders/${entityId}/samples-files` : undefined, icon: HardDrive, show: true },
+    { key: "details", label: "Metadata", href: entityId ? `/orders/${entityId}` : undefined, icon: FileText, show: true },
     {
       key: "facility",
       label:
@@ -322,7 +304,6 @@ export function SidebarEntityNav({
       icon: Building2,
       show: facilityEnabled && entityContext.entityData?.dataOrigin !== "import" && showOperationalControls && !!facilityStep,
     },
-    { key: "sequencing", label: "Sequencing Data", href: entityId ? `/orders/${entityId}/sequencing` : undefined, icon: HardDrive, show: showOperationalControls },
     { key: "analysis", label: "Pipelines", href: entityId ? `/orders/${entityId}/pipelines` : undefined, icon: FlaskConical, show: pipelineAccess },
     { key: "explore", label: "Reports", href: entityId ? `/explore?scope=order:${entityId}` : undefined, icon: NotebookText, show: exploreEnabled },
   ];
@@ -358,12 +339,22 @@ export function SidebarEntityNav({
     if (item.key === "explore") return isExploreRoute;
 
     // Orders
-    if (item.key === "source") return pathname === "/orders/import";
-    if (item.key === "samples-files") return currentOrderSubview === "samples-files";
+    if (item.key === "samples-files") {
+      return (
+        !isOrderAnalysisContext &&
+        !isExploreRoute &&
+        ((pathname === "/orders/import" && searchParams.get("orderId") === entityId) ||
+          currentOrderSubview === "samples-files" ||
+          currentOrderSubview === "files" ||
+          (currentOrderSubview === "sequencing" &&
+            !requestedPipelineId && searchParams.get("view") !== "analysis") ||
+          (!currentOrderSubview && currentOrderSection === "reads"))
+      );
+    }
     if (item.key === "details") {
       if (currentOrderSubview === "pipelines") return false;
       if (pathname === "/orders/import") return false;
-      if (currentOrderSubview === "samples-files") return false;
+      if (["samples-files", "files", "sequencing"].includes(currentOrderSubview ?? "")) return false;
       if (isOrderAnalysisContext || isExploreRoute) {
         return false;
       }
@@ -377,16 +368,6 @@ export function SidebarEntityNav({
         currentOrderSection === "facility" ||
         currentOrderEditStep === "_facility" ||
         (currentOrderEditScope === "facility" && currentOrderEditStep === "samples")
-      );
-    }
-    if (item.key === "sequencing") {
-      const hasPipelineParam = !!requestedPipelineId;
-      const hasAnalysisView = searchParams.get("view") === "analysis";
-      return (
-        !isOrderAnalysisContext &&
-        ((currentOrderSubview === "sequencing" && !hasPipelineParam && !hasAnalysisView) ||
-          currentOrderSubview === "files" ||
-          (!currentOrderSubview && currentOrderSection === "reads"))
       );
     }
     if (item.key === "analysis") {
@@ -436,11 +417,6 @@ export function SidebarEntityNav({
             item.key === "facility" &&
             !!entityId &&
             (facilitySections.length > 0 || orderFormLoading);
-          const shouldShowSequencingDataSubitems =
-            !collapsed &&
-            activeTab === "orders" &&
-            item.key === "sequencing" &&
-            !!entityId;
           const shouldShowSequencingSubitems =
             !collapsed &&
             activeTab === "orders" &&
@@ -493,7 +469,6 @@ export function SidebarEntityNav({
             !shouldShowOrderSubitems &&
             !shouldShowFacilitySubitems &&
             !shouldShowStudySequencingSubitems &&
-            !shouldShowSequencingDataSubitems &&
             !shouldShowSequencingSubitems &&
             !shouldShowStudyPipelineSubitems &&
             !shouldShowStudyPublishingSubitems &&
@@ -754,7 +729,11 @@ export function SidebarEntityNav({
                           )}
                           aria-hidden="true"
                         />
-                        <span className="truncate">{step.label}</span>
+                        <span className="truncate">
+                          {currentOrderSubview === "edit"
+                            ? step.label
+                            : getSequencingDataSectionLabel(step.id, step.label)}
+                        </span>
                         <span className="sr-only">
                           {getOrderProgressIndicatorLabel(indicatorStatus)}
                         </span>
@@ -812,55 +791,6 @@ export function SidebarEntityNav({
                   })}
                 </div>
               )}
-              {shouldShowSequencingDataSubitems && (() => {
-                const seqSubItems = [
-                  { id: "overview", label: "Overview", href: `/orders/${entityId}/sequencing` },
-                  { id: "discover", label: "Associate", href: `/orders/${entityId}/sequencing?view=discover` },
-                  { id: "stream", label: "Stream", href: `/orders/${entityId}/sequencing?view=stream` },
-                ];
-                return (
-                  <div className="ml-5 border-l border-border/70 pl-2">
-                    {seqSubItems.map((sub) => {
-                      const isSubActive =
-                        sub.id === "discover"
-                          ? currentOrderSubview === "sequencing" && searchParams.get("view") === "discover"
-                          : sub.id === "stream"
-                            ? currentOrderSubview === "sequencing" && searchParams.get("view") === "stream"
-                            : currentOrderSubview === "sequencing" && !searchParams.get("view") && !requestedPipelineId;
-                      const indicatorStatus =
-                        sub.id === "discover"
-                          ? seqAssocStatus === "complete"
-                            ? "complete"
-                            : seqAssocStatus === "partial"
-                              ? "partial"
-                              : "empty"
-                          : "empty";
-                      return (
-                        <Link
-                          key={sub.id}
-                          href={sub.href}
-                          className={cn(
-                            "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                            isSubActive
-                              ? "bg-secondary text-foreground font-medium"
-                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
-                          )}
-                        >
-                          <span className={cn(
-                            "h-2 w-2 rounded-full shadow-sm",
-                            getOrderProgressIndicatorClassName(indicatorStatus),
-                            isSubActive && "ring-2 ring-background"
-                          )} aria-hidden="true" />
-                          <span className="truncate">{sub.label}</span>
-                          <span className="sr-only">
-                            {getOrderProgressIndicatorLabel(indicatorStatus)}
-                          </span>
-                        </Link>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
               {shouldShowSequencingSubitems && (
                 <div className="ml-5 border-l border-border/70 pl-2">
                   {orderPipelines.map((pipeline) => {

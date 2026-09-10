@@ -72,10 +72,15 @@ export interface ExploreColumn {
   /** Where the column came from: a builder group label such as "study" or "pipeline". */
   group?: string;
   description?: string;
+  unit?: string;
+  nullable?: boolean;
 }
 
 export interface ExploreSchema {
   columns: ExploreColumn[];
+  schemaId?: string;
+  schemaVersion?: string;
+  rowEntity?: string;
 }
 
 export type ExploreRoleMap = Partial<Record<ExploreRole, string>>;
@@ -129,6 +134,8 @@ export interface ExploreDatasetSummary {
   description: string | null;
   sensitivity: ExploreSensitivity;
   roles: ExploreRoleMap;
+  /** Current-version schema for compatibility checks, without fetching the rows. */
+  schema?: ExploreSchema;
   currentVersion: {
     id: string;
     number: number;

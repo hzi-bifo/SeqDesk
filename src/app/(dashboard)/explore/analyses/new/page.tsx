@@ -14,7 +14,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/toast";
 import { ParamsForm, type ParamsSchema } from "@/components/explore/ParamsForm";
 import { fetcher, postJson, ROLE_LABELS } from "@/lib/explore/client";
-import { TABLE_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
+import { datasetFitsInput, datasetFitMessage, TABLE_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
+import type { InputRequirements } from "@/lib/explore/table-contract";
 import { isValidTargetKey } from "@/lib/explore/target-key";
 import type { ExploreDatasetSummary, ExploreRole } from "@/lib/explore/types";
 
@@ -24,7 +25,7 @@ interface KitSummary {
   description: string;
   language: "python" | "r";
   environment: string;
-  inputs: Array<{ alias: string; label: string; description?: string; tableKind?: string | null; requiredRoles: ExploreRole[]; optionalRoles: ExploreRole[]; optional?: boolean }>;
+  inputs: Array<{ alias: string; label: string; description?: string; tableKind?: string | null; requiredRoles: ExploreRole[]; optionalRoles: ExploreRole[]; optional?: boolean } & InputRequirements>;
   params?: ParamsSchema;
   outputs: Array<{ name: string; kind: string; description?: string }>;
   tags: string[];
@@ -86,11 +87,19 @@ function NewAnalysisForm() {
     return defaults;
   }, [kit]);
   const requestedDatasetId = searchParams.get("dataset");
+  const requestedInput = searchParams.get("input");
   const defaultBindings = useMemo(() => {
     const auto: Record<string, string> = {};
     const requested = requestedDatasetId ? datasets.find((dataset) => dataset.id === requestedDatasetId) : undefined;
     let requestedUsed = false;
     for (const input of inputs) {
+      if (requested && requestedInput === input.alias) {
+        // Preserve the user's requested source even when it needs correction.
+        // Do not silently substitute a different compatible dataset.
+        auto[input.alias] = requested.id;
+        requestedUsed = true;
+        continue;
+      }
       if (requested && !requestedUsed && datasetFits(requested, input).ok) {
         auto[input.alias] = requested.id;
         requestedUsed = true;
@@ -100,7 +109,7 @@ function NewAnalysisForm() {
       if (match) auto[input.alias] = match.id;
     }
     return auto;
-  }, [inputs, datasets, requestedDatasetId]);
+  }, [inputs, datasets, requestedDatasetId, requestedInput]);
   const params = useMemo(
     () => ({ ...defaultParams, ...(paramOverrides.kitId === kitId ? paramOverrides.values : {}) }),
     [defaultParams, paramOverrides, kitId]
@@ -133,7 +142,7 @@ function NewAnalysisForm() {
         kitId: kit?.id ?? null,
         name: name.trim() || undefined,
         language: kit?.language ?? "python",
-        inputs: inputs.filter((input) => bindings[input.alias]).map((input) => ({ alias: input.alias, datasetId: bindings[input.alias] })),
+        inputs: inputs.filter((input) => bindings[input.alias]).map((input) => ({ alias: input.alias, datasetId: bindings[input.alias], versionId: datasets.find(dataset => dataset.id === bindings[input.alias])?.currentVersion?.id })),
         params,
       });
       toast.success("Analysis created");
@@ -154,7 +163,7 @@ function NewAnalysisForm() {
   }
 
   return (
-    <PageContainer maxWidth="wide">
+    <PageContainer>
       <Link href={report ? `/explore/reports/${encodeURIComponent(report)}?scope=${encodeURIComponent(validScope)}&mode=edit&view=canvas` : `/explore?scope=${encodeURIComponent(validScope)}`} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="h-4 w-4" />
         {report ? "Back to the report" : "Reports"}
@@ -281,14 +290,8 @@ function NewAnalysisForm() {
 
 function datasetFits(
   dataset: ExploreDatasetSummary,
-  input: { tableKind?: string | null; requiredRoles: ExploreRole[] }
+  input: { tableKind?: string | null; requiredRoles: ExploreRole[] } & InputRequirements
 ): { ok: boolean; reason?: string } {
-  if (input.tableKind && dataset.tableKind !== input.tableKind) {
-    return { ok: false, reason: `needs a ${TABLE_KIND_DEFINITIONS[input.tableKind]?.label ?? input.tableKind} table` };
-  }
-  const missing = input.requiredRoles.filter((role) => !dataset.roles[role]);
-  if (missing.length > 0) {
-    return { ok: false, reason: `set the ${missing.map((role) => ROLE_LABELS[role]).join(", ")} role on the table first` };
-  }
-  return { ok: true };
+  const fit = datasetFitsInput(dataset, input);
+  return { ok: fit.ok, reason: datasetFitMessage(fit) ?? undefined };
 }

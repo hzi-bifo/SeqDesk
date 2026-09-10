@@ -24,6 +24,8 @@ export interface StoreItem {
 export interface StoreGroup {
   label: string;
   items: StoreItem[];
+  /** A richer source picker, or a loading/error state, in place of tiles. */
+  content?: ReactNode;
   /** Shown when the group has no items. */
   empty?: string;
 }
@@ -53,7 +55,7 @@ export function ElementStore({ open, onOpenChange, title, description, groups }:
           {groups.map((group) => (
             <section key={group.label} aria-label={group.label}>
               <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{group.label}</h3>
-              {group.items.length === 0 ? (
+              {group.content ?? (group.items.length === 0 ? (
                 <p className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">{group.empty ?? "Nothing here yet."}</p>
               ) : (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
@@ -88,7 +90,7 @@ export function ElementStore({ open, onOpenChange, title, description, groups }:
                     </button>
                   ))}
                 </div>
-              )}
+              ))}
             </section>
           ))}
         </div>

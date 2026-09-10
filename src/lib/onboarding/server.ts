@@ -12,7 +12,10 @@ import {
   resolveWorkflowRuntimeFingerprint,
   WORKFLOW_RUNTIME_READINESS_VERSION,
 } from "./workflow-runtime-readiness";
-import { getOnboardingItems, ONBOARDING_SCHEMA_VERSION } from "./definitions";
+import {
+  getOnboardingItems, ONBOARDING_SCHEMA_VERSION, ONBOARDING_COMPLETION_ALIASES, resolveOnboardingCapabilities,
+  type OnboardingCapabilities,
+} from "./definitions";
 import { buildOnboardingStatus, parseStoredOnboardingState } from "./status";
 import type {
   OnboardingAutomaticCheck,
@@ -62,7 +65,7 @@ function storedVerificationMatches(args: {
 }
 
 async function resolveStoredAutomaticChecks(args: {
-  profile: ReturnType<typeof getServerDeploymentProfile>;
+  capabilities: OnboardingCapabilities;
   stored?: StoredOnboardingState;
 }): Promise<Partial<Record<string, OnboardingAutomaticCheck>>> {
   const checks: Partial<Record<string, OnboardingAutomaticCheck>> = {};
@@ -85,7 +88,7 @@ async function resolveStoredAutomaticChecks(args: {
           : "Run the automatic managed-storage check for this configuration."
       );
 
-  if (args.profile.id === "research-workbench") {
+  if (args.capabilities.pipelinesEnabled) {
     const runtimeVerification =
       args.stored?.automaticVerifications?.[WORKFLOW_RUNTIME_ITEM_ID];
     try {
@@ -119,14 +122,20 @@ async function readStoredOnboardingState(
 ): Promise<{
   extra: Record<string, unknown>;
   stored?: StoredOnboardingState;
+  capabilities: OnboardingCapabilities;
 }> {
   const settings = await db.siteSettings.findUnique({
     where: { id: "singleton" },
-    select: { extraSettings: true },
+    select: { extraSettings: true, modulesConfig: true },
   });
   const extra = parseExtraSettings(settings?.extraSettings);
   return {
     extra,
+    capabilities: resolveOnboardingCapabilities({
+      profile: profileId,
+      modulesConfig: settings?.modulesConfig ?? null,
+      pipelinesEnabled: loadConfig().config.pipelines?.enabled === true,
+    }),
     stored: parseStoredOnboardingState(
       extra[ONBOARDING_EXTRA_SETTINGS_KEY],
       profileId
@@ -136,9 +145,9 @@ async function readStoredOnboardingState(
 
 export async function getOnboardingStatus(): Promise<OnboardingStatus> {
   const profile = getServerDeploymentProfile();
-  const { stored } = await readStoredOnboardingState(profile.id);
+  const { stored, capabilities } = await readStoredOnboardingState(profile.id);
   const automaticChecks = await resolveStoredAutomaticChecks({
-    profile,
+    capabilities,
     stored,
   });
   return buildOnboardingStatus({
@@ -146,6 +155,7 @@ export async function getOnboardingStatus(): Promise<OnboardingStatus> {
     requiredVersion: requiredOnboardingVersion(),
     stored,
     automaticChecks,
+    capabilities,
   });
 }
 
@@ -155,7 +165,8 @@ export async function setOnboardingItemCompletion(args: {
   actorUserId: string;
 }): Promise<OnboardingStatus> {
   const profile = getServerDeploymentProfile();
-  const definitions = getOnboardingItems(profile.id);
+  const { capabilities } = await readStoredOnboardingState(profile.id);
+  const definitions = getOnboardingItems(profile.id, capabilities);
   const definition = definitions.find((item) => item.id === args.itemId);
   if (!definition) {
     throw new Error("Unknown onboarding item.");
@@ -181,6 +192,9 @@ export async function setOnboardingItemCompletion(args: {
       profile.id
     );
     const items = { ...(current?.items ?? {}) };
+    for (const legacyId of ONBOARDING_COMPLETION_ALIASES[args.itemId] ?? []) {
+      delete items[legacyId];
+    }
     if (args.complete) {
       items[args.itemId] = {
         completedAt: now,
@@ -226,7 +240,7 @@ export async function setOnboardingItemCompletion(args: {
   });
 
   const automaticChecks = await resolveStoredAutomaticChecks({
-    profile,
+    capabilities,
     stored,
   });
   return buildOnboardingStatus({
@@ -234,6 +248,7 @@ export async function setOnboardingItemCompletion(args: {
     requiredVersion,
     stored,
     automaticChecks,
+    capabilities,
   });
 }
 
@@ -241,10 +256,11 @@ export async function verifyAutomaticOnboarding(args: {
   actorUserId: string;
 }): Promise<OnboardingStatus> {
   const profile = getServerDeploymentProfile();
+  const { capabilities } = await readStoredOnboardingState(profile.id);
   const requiredVersion = requiredOnboardingVersion();
   const [storage, runtime] = await Promise.all([
     checkManagedStorageReadiness(),
-    profile.id === "research-workbench"
+    capabilities.pipelinesEnabled
       ? checkWorkflowRuntimeReadiness()
       : Promise.resolve(null),
   ]);
@@ -330,7 +346,7 @@ export async function verifyAutomaticOnboarding(args: {
       delete automaticVerifications[WORKFLOW_RUNTIME_ITEM_ID];
     }
 
-    const requiredItems = getOnboardingItems(profile.id).filter(
+    const requiredItems = getOnboardingItems(profile.id, capabilities).filter(
       (item) => item.requirement === "required"
     );
     const allRequiredComplete = requiredItems
@@ -385,5 +401,6 @@ export async function verifyAutomaticOnboarding(args: {
     requiredVersion,
     stored,
     automaticChecks,
+    capabilities,
   });
 }

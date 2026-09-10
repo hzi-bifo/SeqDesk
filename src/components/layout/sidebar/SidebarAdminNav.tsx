@@ -1,402 +1,89 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
-import {
-  Users,
-  Settings,
-  ChevronRight,
-  AlertTriangle,
-  ClipboardCheck,
-} from "lucide-react";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { AlertTriangle, ChevronRight, ClipboardCheck, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { startVisiblePolling } from "@/lib/polling";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useModuleEnabled } from "@/lib/modules";
 import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { getSettingsSections, isSettingsLinkActive, type SettingsSection } from "@/lib/settings/catalog";
 
-interface SidebarAdminNavProps {
-  collapsed: boolean;
-  unreadMessages: number;
-  isDemoUser?: boolean;
+interface SidebarAdminNavProps { collapsed: boolean; unreadMessages: number; isDemoUser?: boolean }
+interface InfrastructureReadiness {
+  requiredMissing: string[];
+  recommendedMissing: string[];
+  firstMissingHref: string;
+  missingItems: Array<{ key: string; label: string; href: string; severity: "required" | "recommended" }>;
 }
 
-export function SidebarAdminNav({
-  collapsed,
-  unreadMessages,
-  isDemoUser = false,
-}: SidebarAdminNavProps) {
+const linkClass = (active: boolean) => cn("flex min-w-0 items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors motion-reduce:transition-none", active ? "bg-secondary font-medium text-foreground" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground");
+
+function SettingsNavGroup({ section, pathname, collapsed, unreadMessages, readiness }: {
+  section: SettingsSection; pathname: string; collapsed: boolean; unreadMessages: number; readiness?: InfrastructureReadiness | null;
+}) {
+  const links = section.links.filter(link => !link.overviewOnly);
+  const active = links.some(link => isSettingsLinkActive(pathname, link.href));
+  // A new destination opens its section; a deliberate collapse applies only on that page.
+  const [override, setOverride] = useState<{ pathname: string; open: boolean } | null>(null);
+  const open = override?.pathname === pathname ? override.open : active;
+  const required = readiness?.requiredMissing.length ?? 0;
+  const recommended = readiness?.recommendedMissing.length ?? 0;
+  const hasReadinessWarning = Boolean((required || recommended) && readiness);
+  const gapLabel = (required || recommended) + " " + (required ? "required infrastructure settings missing" : "recommended infrastructure settings pending");
+
+  if (collapsed || links.length === 1) return <Link href={links[0].href} title={collapsed ? section.title : undefined} aria-label={section.title} aria-current={active ? "page" : undefined} className={cn(linkClass(active), collapsed && "justify-center px-0 py-2.5")}><section.icon className={collapsed ? "size-5 shrink-0" : "size-4 shrink-0"} aria-hidden />{!collapsed && section.title}</Link>;
+
+  return <div>
+    <div className="relative">
+      <button type="button" aria-expanded={open} aria-controls={"settings-nav-" + section.id} onClick={() => setOverride({ pathname, open: !open })} className={cn(linkClass(active), "w-full text-left")}>
+        <section.icon className="size-4 shrink-0" aria-hidden /><span className={cn("min-w-0 flex-1", hasReadinessWarning && "pr-8")}>{section.title}</span><ChevronRight className={cn("size-3.5 shrink-0 transition-transform motion-reduce:transition-none", open && "rotate-90")} aria-hidden />
+      </button>
+      {hasReadinessWarning && readiness && <Tooltip><TooltipTrigger asChild>
+        <Link href={readiness.firstMissingHref} aria-label={gapLabel} className={cn("absolute right-9 top-1/2 -translate-y-1/2 inline-flex size-6 items-center justify-center rounded-full text-xs font-semibold", required ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700")}><AlertTriangle className="size-3.5" aria-hidden /></Link>
+      </TooltipTrigger><TooltipContent side="right" className="max-w-xs"><p className="font-medium">{gapLabel}</p><ul className="mt-1 space-y-1">{readiness.missingItems.map(item => <li key={item.key}>{item.label}</li>)}</ul></TooltipContent></Tooltip>}
+    </div>
+    {open && <ul id={"settings-nav-" + section.id} className="ml-5 mt-1 space-y-0.5 border-l pl-2">
+      {links.map(link => <li key={link.href}><Link href={link.href} aria-current={isSettingsLinkActive(pathname, link.href) ? "page" : undefined} className={linkClass(isSettingsLinkActive(pathname, link.href))}>
+        <span className="min-w-0 flex-1">{link.label}</span>{link.href === "/messages" && unreadMessages > 0 && <span className="rounded-full bg-foreground px-1.5 text-xs text-background">{unreadMessages > 9 ? "9+" : unreadMessages}</span>}
+      </Link></li>)}
+    </ul>}
+  </div>;
+}
+
+export function SidebarAdminNav({ collapsed, unreadMessages, isDemoUser = false }: SidebarAdminNavProps) {
   const pathname = usePathname();
-  const router = useRouter();
+  const profile = useDeploymentProfile();
   const dynamicStudiesEnabled = useModuleEnabled("dynamic-studies");
-  const deploymentProfile = useDeploymentProfile();
-  const usesSequencingExperience = deploymentProfile.experience === "sequencing";
-  const settingsLanding = usesSequencingExperience
-    ? "/admin/form-builder"
-    : "/admin/onboarding";
-
-  const isAccountsPage = (path: string) =>
-    path.startsWith("/admin/users") ||
-    path.startsWith("/admin/departments") ||
-    path.startsWith("/messages");
-
-  const isConfigPage = (path: string) =>
-    path.startsWith("/admin") &&
-    !path.startsWith("/admin/users") &&
-    !path.startsWith("/admin/departments");
-
-  const [adminExpanded, setAdminExpanded] = useState(isConfigPage(pathname));
-  const [accountsExpanded, setAccountsExpanded] = useState(isAccountsPage(pathname));
-  const [infrastructureReadiness, setInfrastructureReadiness] = useState<{
-    loading: boolean;
-    ready: boolean;
-    requiredMissingCount: number;
-    recommendedMissingCount: number;
-    firstMissingHref: string;
-    missingItems: Array<{
-      key: string;
-      label: string;
-      href: string;
-      severity: "required" | "recommended";
-    }>;
-  }>({
-    loading: true,
-    ready: true,
-    requiredMissingCount: 0,
-    recommendedMissingCount: 0,
-    firstMissingHref: "/admin/data-compute",
-    missingItems: [],
-  });
+  const facilityEnabled = useModuleEnabled("sequencing-management");
+  const sections = getSettingsSections({ dynamicStudiesEnabled, centerAccounts: profile.id === "sequencing-center" });
+  const [readiness, setReadiness] = useState<InfrastructureReadiness | null>(null);
 
   useEffect(() => {
-    if (isConfigPage(pathname)) {
-      setAdminExpanded(true);
-    }
-    if (isAccountsPage(pathname)) {
-      setAccountsExpanded(true);
-    }
-  }, [pathname]);
-
-  // Fetch infrastructure readiness
-  useEffect(() => {
-    if (isDemoUser) {
-      setInfrastructureReadiness((current) => ({
-        ...current,
-        loading: false,
-        ready: true,
-        requiredMissingCount: 0,
-        recommendedMissingCount: 0,
-        missingItems: [],
-      }));
-      return;
-    }
-
+    if (isDemoUser) return;
     let mounted = true;
-
-    const fetchInfrastructureReadiness = async () => {
+    const load = async () => {
       try {
-        const res = await fetch("/api/admin/infrastructure/readiness");
-        if (!res.ok) throw new Error("Failed to load readiness");
-        const data = (await res.json()) as {
-          ready?: boolean;
-          requiredMissing?: string[];
-          recommendedMissing?: string[];
-          firstMissingHref?: string;
-          missingItems?: Array<{
-            key: string;
-            label: string;
-            href: string;
-            severity: "required" | "recommended";
-          }>;
-        };
-        if (!mounted) return;
-        setInfrastructureReadiness({
-          loading: false,
-          ready: Boolean(data.ready),
-          requiredMissingCount: data.requiredMissing?.length || 0,
-          recommendedMissingCount: data.recommendedMissing?.length || 0,
-          firstMissingHref: data.firstMissingHref || "/admin/data-compute",
-          missingItems: data.missingItems || [],
-        });
+        const response = await fetch("/api/admin/infrastructure/readiness");
+        if (!response.ok) throw new Error("Could not check infrastructure");
+        const data = await response.json();
+        if (mounted) setReadiness({ requiredMissing: data.requiredMissing ?? [], recommendedMissing: data.recommendedMissing ?? [], firstMissingHref: data.firstMissingHref || "/admin/data-compute", missingItems: data.missingItems ?? [] });
       } catch {
-        if (!mounted) return;
-        setInfrastructureReadiness((prev) => ({ ...prev, loading: false }));
+        if (mounted) setReadiness(null);
       }
     };
-
-    void fetchInfrastructureReadiness();
-    const stopPolling = startVisiblePolling(
-      () => void fetchInfrastructureReadiness(),
-      120000
-    );
-    return () => {
-      mounted = false;
-      stopPolling();
-    };
+    void load();
+    const stop = startVisiblePolling(() => void load(), 120000);
+    return () => { mounted = false; stop(); };
   }, [isDemoUser]);
 
-  const isActive = (path: string) => {
-    if (path === "/admin" && pathname === "/admin") return true;
-    if (path !== "/admin" && pathname.startsWith(path)) return true;
-    return false;
-  };
-
-  const navIconClass = collapsed ? "h-5 w-5 shrink-0" : "h-4 w-4 shrink-0";
-
-  const navItemClass = (path: string) =>
-    cn(
-      "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm",
-      collapsed && "justify-center px-0 py-2.5",
-      isActive(path)
-        ? "bg-secondary text-foreground font-medium"
-        : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-    );
-
-  const adminSubItemClass = (path: string, exact = false) =>
-    cn(
-      "block px-3 py-1.5 rounded-lg transition-colors text-sm",
-      collapsed ? "ml-0 text-center" : "ml-7",
-      (exact ? pathname === path : isActive(path))
-        ? "bg-secondary text-foreground font-medium"
-        : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-    );
-
-  const hasRequiredInfrastructureGaps = infrastructureReadiness.requiredMissingCount > 0;
-  const hasRecommendedInfrastructureGaps =
-    !hasRequiredInfrastructureGaps && infrastructureReadiness.recommendedMissingCount > 0;
-
-  return (
-    <>
-      {/* Users section */}
-      {collapsed ? (
-        <Link href="/admin/users" className={navItemClass("/admin/users")} title="Users">
-          <Users className={navIconClass} />
-        </Link>
-      ) : (
-        <>
-          <button
-            onClick={() => setAccountsExpanded(!accountsExpanded)}
-            className={cn(
-              "flex items-center justify-between w-full px-3 py-2 rounded-lg transition-colors text-sm",
-              isAccountsPage(pathname)
-                ? "bg-secondary text-foreground font-medium"
-                : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-            )}
-          >
-            <span className="flex items-center gap-3">
-              <Users className="h-4 w-4" />
-              Users
-            </span>
-            <ChevronRight
-              className={cn(
-                "h-4 w-4 transition-transform duration-200",
-                accountsExpanded && "rotate-90"
-              )}
-            />
-          </button>
-
-          <div
-            className={cn(
-              "overflow-hidden transition-all duration-200",
-              accountsExpanded ? "max-h-32 opacity-100 mt-1" : "max-h-0 opacity-0"
-            )}
-          >
-            <Link href="/admin/users" className={adminSubItemClass("/admin/users")}>
-              {deploymentProfile.terminology.member}s
-            </Link>
-            {deploymentProfile.id === "sequencing-center" && (
-              <Link href="/admin/departments" className={adminSubItemClass("/admin/departments")}>
-                Departments
-              </Link>
-            )}
-            {deploymentProfile.id === "sequencing-center" && <Link
-              href="/messages"
-              className={cn(
-                adminSubItemClass("/messages"),
-                "flex items-center justify-between gap-2"
-              )}
-            >
-              <span>Support</span>
-              {unreadMessages > 0 && (
-                <span className="flex items-center justify-center text-xs font-medium text-white bg-foreground rounded-full h-5 min-w-5 px-1.5">
-                  {unreadMessages > 9 ? "9+" : unreadMessages}
-                </span>
-              )}
-            </Link>}
-          </div>
-        </>
-      )}
-
-      {/* Settings section */}
-      {collapsed ? (
-        <Link href={settingsLanding} className={navItemClass(settingsLanding)} title="Settings">
-          <Settings className={navIconClass} />
-        </Link>
-      ) : (
-        <>
-          <button
-            onClick={() => setAdminExpanded(!adminExpanded)}
-            className={cn(
-              "flex items-center justify-between w-full px-3 py-2 rounded-lg transition-colors text-sm",
-              pathname.startsWith("/admin") &&
-                !pathname.startsWith("/admin/users") &&
-                !pathname.startsWith("/admin/departments")
-                ? "bg-secondary text-foreground font-medium"
-                : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-            )}
-          >
-            <span className="flex items-center gap-3">
-              <Settings className="h-4 w-4" />
-              Settings
-            </span>
-            <ChevronRight
-              className={cn(
-                "h-4 w-4 transition-transform duration-200",
-                adminExpanded && "rotate-90"
-              )}
-            />
-          </button>
-
-          <div
-            className={cn(
-              "overflow-hidden transition-all duration-200",
-              adminExpanded ? "max-h-[28rem] opacity-100 mt-1" : "max-h-0 opacity-0"
-            )}
-          >
-            <Link href="/admin/onboarding" className={adminSubItemClass("/admin/onboarding")}>
-              <span className="flex items-center gap-2">
-                <ClipboardCheck className="h-3.5 w-3.5" /> Setup checklist
-              </span>
-            </Link>
-            {usesSequencingExperience && (
-              <>
-                <Link href="/admin/form-builder" className={adminSubItemClass("/admin/form-builder")}>
-                  Sequencing Order Form
-                </Link>
-                <Link
-                  href={dynamicStudiesEnabled ? "/admin/study-definitions" : "/admin/study-form-builder"}
-                  className={adminSubItemClass(
-                    dynamicStudiesEnabled ? "/admin/study-definitions" : "/admin/study-form-builder"
-                  )}
-                >
-                  {dynamicStudiesEnabled ? "Define Studies" : "Study Forms"}
-                </Link>
-                <Link href="/admin/mixs-checklists" className={adminSubItemClass("/admin/mixs-checklists")}>
-                  MIxS Checklists
-                </Link>
-              </>
-            )}
-            <Link href="/admin/modules" className={adminSubItemClass("/admin/modules")}>
-              Modules
-            </Link>
-            {usesSequencingExperience && (
-              <>
-                <Link href="/admin/sequencing-tech" className={adminSubItemClass("/admin/sequencing-tech")}>
-                  Sequencers
-                </Link>
-                <Link href="/admin/minknow-stream" className={adminSubItemClass("/admin/minknow-stream")}>
-                  MinKNOW Stream
-                </Link>
-              </>
-            )}
-            <div
-              className={cn(
-                adminSubItemClass("/admin/data-compute"),
-                "flex items-center justify-between gap-2"
-              )}
-            >
-              <Link href="/admin/data-compute" className="min-w-0 flex-1">
-                Infrastructure
-              </Link>
-              {!infrastructureReadiness.loading &&
-                (hasRequiredInfrastructureGaps || hasRecommendedInfrastructureGaps) && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          router.push(infrastructureReadiness.firstMissingHref);
-                        }}
-                        className={cn(
-                          "inline-flex items-center justify-center h-5 min-w-5 px-1 rounded-full text-[11px] font-semibold",
-                          hasRequiredInfrastructureGaps
-                            ? "bg-red-100 text-red-700"
-                            : "bg-amber-100 text-amber-700"
-                        )}
-                        aria-label={
-                          hasRequiredInfrastructureGaps
-                            ? `${infrastructureReadiness.requiredMissingCount} required infrastructure settings missing`
-                            : `${infrastructureReadiness.recommendedMissingCount} recommended infrastructure settings pending`
-                        }
-                      >
-                        {hasRequiredInfrastructureGaps ? (
-                          "!"
-                        ) : (
-                          <AlertTriangle className="h-3 w-3" />
-                        )}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="right" align="start" sideOffset={8} className="max-w-xs text-left">
-                      <div className="space-y-2">
-                        <p className="font-medium">
-                          {hasRequiredInfrastructureGaps
-                            ? `${infrastructureReadiness.requiredMissingCount} required setting${
-                                infrastructureReadiness.requiredMissingCount === 1 ? "" : "s"
-                              } missing`
-                            : `${infrastructureReadiness.recommendedMissingCount} recommended setting${
-                                infrastructureReadiness.recommendedMissingCount === 1 ? "" : "s"
-                              } pending`}
-                        </p>
-                        <ul className="space-y-1">
-                          {infrastructureReadiness.missingItems.map((item) => (
-                            <li key={item.key} className="flex items-center gap-1.5">
-                              <span
-                                className={cn(
-                                  "h-1.5 w-1.5 rounded-full",
-                                  item.severity === "required" ? "bg-red-300" : "bg-amber-300"
-                                )}
-                              />
-                              <Link
-                                href={item.href}
-                                className="underline underline-offset-2 hover:opacity-90"
-                              >
-                                {item.label}
-                              </Link>
-                            </li>
-                          ))}
-                        </ul>
-                        <p className="opacity-80">
-                          Click the badge to jump to the first missing item.
-                        </p>
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-            </div>
-            <Link href="/admin/background-workers" className={adminSubItemClass("/admin/background-workers")}>
-              Background Workers
-            </Link>
-            <Link href="/admin/admin-accounts" className={adminSubItemClass("/admin/admin-accounts")}>
-              Accounts
-            </Link>
-            {usesSequencingExperience && (
-              <Link href="/admin/ena" className={adminSubItemClass("/admin/ena")}>
-                Data Upload
-              </Link>
-            )}
-            <Link href="/admin/settings/pipelines" className={adminSubItemClass("/admin/settings/pipelines")}>
-              Pipelines
-            </Link>
-            <Link href="/admin/settings/notifications" className={adminSubItemClass("/admin/settings/notifications")}>
-              Notifications
-            </Link>
-            <Link href="/admin/settings" className={adminSubItemClass("/admin/settings", true)}>
-              Info
-            </Link>
-          </div>
-        </>
-      )}
-    </>
-  );
+  return <nav aria-label="Application settings" className="space-y-1">
+    {!collapsed && <p className="px-3 pb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Application settings</p>}
+    <Link href="/admin/settings" aria-label="Settings overview" aria-current={pathname === "/admin/settings" ? "page" : undefined} title={collapsed ? "Settings overview" : undefined} className={cn(linkClass(pathname === "/admin/settings"), collapsed && "justify-center px-0 py-2.5")}><Settings className={collapsed ? "size-5" : "size-4"} aria-hidden />{!collapsed && "Overview"}</Link>
+    <Link href="/admin/onboarding" aria-label="Setup checklist" aria-current={pathname === "/admin/onboarding" ? "page" : undefined} title={collapsed ? "Setup checklist" : undefined} className={cn(linkClass(pathname === "/admin/onboarding"), collapsed && "justify-center px-0 py-2.5")}><ClipboardCheck className={collapsed ? "size-5" : "size-4"} aria-hidden />{!collapsed && "Setup checklist"}</Link>
+    <div className="my-3 border-t" />
+    {sections.filter(section => !section.moduleId || facilityEnabled || section.links.some(link => isSettingsLinkActive(pathname, link.href))).map(section => <SettingsNavGroup key={section.id} section={section} pathname={pathname} collapsed={collapsed} unreadMessages={unreadMessages} readiness={section.id === "storage" && !isDemoUser ? readiness : null} />)}
+  </nav>;
 }

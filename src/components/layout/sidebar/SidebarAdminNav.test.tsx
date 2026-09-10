@@ -1,319 +1,140 @@
 // @vitest-environment jsdom
-
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ModuleProvider } from "@/lib/modules";
 import { DeploymentProfileProvider } from "@/components/deployment-profile/DeploymentProfileProvider";
 import { getDeploymentProfileDefinition } from "@/lib/deployment-profile";
 
-const fetchMock = vi.fn();
-
-const mocks = vi.hoisted(() => ({
-  usePathname: vi.fn(),
-  useRouter: vi.fn(),
-  push: vi.fn(),
-}));
-
-vi.mock("next/navigation", () => ({
-  usePathname: mocks.usePathname,
-  useRouter: mocks.useRouter,
-}));
-
-vi.mock("next/link", () => ({
-  default: ({
-    href,
-    children,
-    ...props
-  }: {
-    href: string;
-    children: React.ReactNode;
-  }) => (
-    <a href={href} {...props}>
-      {children}
-    </a>
-  ),
-}));
-
+const mocks = vi.hoisted(() => ({ pathname: "/admin/settings", enabled: new Set<string>(), fetch: vi.fn() }));
+vi.mock("next/navigation", () => ({ usePathname: () => mocks.pathname }));
+vi.mock("@/lib/modules", () => ({ useModuleEnabled: (id: string) => mocks.enabled.has(id) }));
+vi.mock("next/link", () => ({ default: ({ children, ...props }: React.ComponentProps<"a">) => <a {...props}>{children}</a> }));
 vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
-
-function readinessResponse(body: unknown, ok = true) {
-  return {
-    ok,
-    status: ok ? 200 : 500,
-    json: async () => body,
-  };
-}
-
 import { SidebarAdminNav } from "./SidebarAdminNav";
 
-describe("SidebarAdminNav", () => {
+const ready = { requiredMissing: [], recommendedMissing: [], missingItems: [], firstMissingHref: "/admin/data-compute" };
+const response = (data: unknown, ok = true) => ({ ok, json: async () => data });
+const open = (name: string) => fireEvent.click(screen.getByRole("button", { name }));
+
+describe("settings sidebar", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.stubGlobal("fetch", fetchMock);
-    mocks.useRouter.mockReturnValue({ push: mocks.push });
-    mocks.usePathname.mockReturnValue("/admin/form-builder");
-    fetchMock.mockResolvedValue(
-      readinessResponse({
-        ready: true,
-        requiredMissing: [],
-        recommendedMissing: [],
-        firstMissingHref: "/admin/data-compute",
-        missingItems: [],
-      })
-    );
+    vi.clearAllMocks(); mocks.pathname = "/admin/settings"; mocks.enabled = new Set();
+    mocks.fetch.mockResolvedValue(response(ready)); vi.stubGlobal("fetch", mocks.fetch);
   });
-
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-  });
-
-  it("links to Study Forms by default (dynamic-studies module off)", () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  it("starts with the overview and checklist, not a form builder", () => {
     render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
-    expect(screen.getByRole("link", { name: "Study Forms" })).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Define Studies" })).toBeNull();
-  });
-
-  it("does not fetch infrastructure readiness for demo users", () => {
-    render(
-      <SidebarAdminNav
-        collapsed={false}
-        unreadMessages={0}
-        isDemoUser
-      />
-    );
-
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("links to Define Studies when the dynamic-studies module is enabled", async () => {
-    // ModuleProvider fetches /api/modules; the nav also fetches readiness.
-    fetchMock.mockImplementation((url: string | URL) =>
-      Promise.resolve(
-        String(url).includes("/api/modules")
-          ? {
-              ok: true,
-              status: 200,
-              json: async () => ({
-                modules: { "dynamic-studies": true },
-                globalDisabled: false,
-              }),
-            }
-          : readinessResponse({
-              ready: true,
-              requiredMissing: [],
-              recommendedMissing: [],
-              firstMissingHref: "/admin/data-compute",
-              missingItems: [],
-            })
-      )
-    );
-
-    render(
-      <ModuleProvider>
-        <SidebarAdminNav collapsed={false} unreadMessages={0} />
-      </ModuleProvider>
-    );
-
-    await waitFor(() =>
-      expect(screen.getByRole("link", { name: "Define Studies" })).toBeTruthy()
-    );
-    expect(screen.queryByRole("link", { name: "Study Forms" })).toBeNull();
-    expect(
-      screen.getByRole("link", { name: "Define Studies" }).getAttribute("href")
-    ).toBe("/admin/study-definitions");
-  });
-
-  it("renders the expanded admin nav with the MIxS Checklists link and settings items", async () => {
-    render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/admin/infrastructure/readiness");
-    });
-
-    const mixsLink = screen.getByRole("link", { name: "MIxS Checklists" });
-    expect(mixsLink.getAttribute("href")).toBe("/admin/mixs-checklists");
-
-    // Accounts section header plus the settings tree items.
-    expect(screen.getByRole("button", { name: /Users/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Settings/i })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Researchers" }).getAttribute("href")).toBe(
-      "/admin/users"
-    );
-    expect(screen.getByRole("link", { name: "Sequencing Order Form" }).getAttribute("href")).toBe(
-      "/admin/form-builder"
-    );
-    expect(screen.getByRole("link", { name: "Sequencers" }).getAttribute("href")).toBe(
-      "/admin/sequencing-tech"
-    );
-    expect(screen.getByRole("link", { name: "Pipelines" }).getAttribute("href")).toBe(
-      "/admin/settings/pipelines"
-    );
-
-    // The settings section is active because the path is a config page.
-    expect(screen.getByRole("link", { name: "Sequencing Order Form" }).className).toContain("bg-secondary");
-  });
-
-  it("shows the same administration configuration in the research preset", async () => {
-    mocks.usePathname.mockReturnValue("/admin/onboarding");
-
-    render(
-      <DeploymentProfileProvider
-        profile={getDeploymentProfileDefinition("research-workbench")}
-      >
-        <SidebarAdminNav collapsed={false} unreadMessages={0} />
-      </DeploymentProfileProvider>
-    );
-
+    expect(screen.getByRole("link", { name: "Settings overview" }).getAttribute("href")).toBe("/admin/settings");
+    expect(screen.getByRole("link", { name: "Settings overview" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: "Setup checklist" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Modules" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Pipelines" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Sequencing Order Form" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Study Forms" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "MIxS Checklists" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Sequencers" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "MinKNOW Stream" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Data Upload" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Metadata & forms" }).getAttribute("aria-expanded")).toBe("false");
   });
-
-  it("uses the shared settings destination in the collapsed research preset", () => {
-    render(
-      <DeploymentProfileProvider
-        profile={getDeploymentProfileDefinition("research-workbench")}
-      >
-        <SidebarAdminNav collapsed unreadMessages={0} />
-      </DeploymentProfileProvider>
-    );
-
-    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe(
-      "/admin/form-builder"
-    );
+  it("keeps shared metadata accessible without the facility module", () => {
+    render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
+    expect(screen.queryByRole("button", { name: "Facility sequencing" })).toBeNull();
+    open("Metadata & forms");
+    expect(screen.getByRole("link", { name: "Sequencing data fields" }).getAttribute("href")).toBe("/admin/form-builder");
+    expect(screen.getByRole("link", { name: "Study fields" }).getAttribute("href")).toBe("/admin/study-form-builder");
+    expect(screen.getByRole("link", { name: "MIxS checklists" })).toBeTruthy();
   });
-
-  it("shows the unread support badge and toggles the accounts section", () => {
-    mocks.usePathname.mockReturnValue("/admin/users");
-
+  it("uses the configured dynamic study definition", () => {
+    mocks.enabled.add("dynamic-studies"); mocks.pathname = "/admin/study-definitions";
+    render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
+    expect(screen.getByRole("link", { name: "Study definitions" }).getAttribute("href")).toBe("/admin/study-definitions");
+    expect(screen.queryByRole("link", { name: "Study fields" })).toBeNull();
+  });
+  it("shows instruments and run fields when sequencing management is enabled", () => {
+    mocks.enabled.add("sequencing-management");
+    render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
+    open("Facility sequencing");
+    expect(screen.getByRole("link", { name: "Sequencers & kits" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Sequencing run fields" }).getAttribute("href")).toBe("/admin/sequencing-run-form-builder");
+    expect(screen.getByRole("link", { name: "MinKNOW integration" })).toBeTruthy();
+  });
+  it("retains navigation for an already-open facility settings URL", () => {
+    mocks.pathname = "/admin/sequencing-tech";
+    render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
+    expect(screen.getByRole("link", { name: "Sequencers & kits" }).getAttribute("aria-current")).toBe("page");
+  });
+  it("keeps one UI for the research preset without center-only accounts", () => {
+    render(<DeploymentProfileProvider profile={getDeploymentProfileDefinition("research-workbench")}><SidebarAdminNav collapsed={false} unreadMessages={0} /></DeploymentProfileProvider>);
+    open("Users & access"); open("Pipelines & analysis");
+    expect(screen.getByRole("link", { name: "Members" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Report analysis settings" }).getAttribute("href")).toBe("/admin/settings/analysis");
+    expect(screen.queryByRole("link", { name: "Departments" })).toBeNull();
+  });
+  it("auto-opens the active section when navigating after a manual collapse", () => {
+    mocks.pathname = "/admin/form-builder";
+    const { rerender } = render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
+    open("Metadata & forms");
+    expect(screen.queryByRole("link", { name: "Study fields" })).toBeNull();
+    mocks.pathname = "/admin/study-form-builder";
+    rerender(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
+    expect(screen.getByRole("link", { name: "Study fields" }).getAttribute("aria-current")).toBe("page");
+  });
+  it("does not incorrectly mark overview active on a nested settings page", () => {
+    mocks.pathname = "/admin/settings/system";
+    render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
+    expect(screen.getByRole("link", { name: "Settings overview" }).getAttribute("aria-current")).toBeNull();
+    expect(screen.getByRole("link", { name: "System & maintenance" }).getAttribute("aria-current")).toBe("page");
+  });
+  it("keeps unread support messages visible in the services group", () => {
+    mocks.pathname = "/messages";
     render(<SidebarAdminNav collapsed={false} unreadMessages={12} />);
-
-    const supportLink = screen.getByRole("link", { name: /Support/i });
-    expect(supportLink.getAttribute("href")).toBe("/messages");
-    // Counts above nine collapse to a "9+" badge.
+    expect(screen.getByRole("link", { name: /Support messages/ }).getAttribute("href")).toBe("/messages");
     expect(screen.getByText("9+")).toBeTruthy();
-
-    const accountsButton = screen.getByRole("button", { name: /Users/i });
-    // Accounts page is active so the header carries active styling.
-    expect(accountsButton.className).toContain("bg-secondary");
-    fireEvent.click(accountsButton);
-    fireEvent.click(screen.getByRole("button", { name: /Settings/i }));
   });
-
-  it("renders collapsed icon links without the expandable sections", async () => {
-    render(<SidebarAdminNav collapsed unreadMessages={3} />);
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/admin/infrastructure/readiness");
-    });
-
-    const usersLink = screen.getByRole("link", { name: "Users" });
-    expect(usersLink.getAttribute("href")).toBe("/admin/users");
-    const settingsLink = screen.getByRole("link", { name: "Settings" });
-    expect(settingsLink.getAttribute("href")).toBe("/admin/form-builder");
-
-    // Expandable tree items and the MIxS link are not rendered while collapsed.
-    expect(screen.queryByRole("link", { name: "MIxS Checklists" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Settings/i })).toBeNull();
+  it("gives collapsed icons accessible names and preserves overview as a destination", () => {
+    render(<SidebarAdminNav collapsed unreadMessages={0} />);
+    expect(screen.getByRole("link", { name: "Settings overview" }).getAttribute("href")).toBe("/admin/settings");
+    expect(screen.getByRole("link", { name: "Users & access" }).getAttribute("href")).toBe("/admin/users");
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
-
-  it("shows a required infrastructure gap badge that navigates to the first missing item", async () => {
-    fetchMock.mockResolvedValue(
-      readinessResponse({
-        ready: false,
-        requiredMissing: ["data-compute", "storage"],
-        recommendedMissing: [],
-        firstMissingHref: "/admin/data-compute",
-        missingItems: [
-          {
-            key: "data-compute",
-            label: "Compute backend",
-            href: "/admin/data-compute",
-            severity: "required",
-          },
-        ],
-      })
-    );
-
-    const { container } = render(
-      <SidebarAdminNav collapsed={false} unreadMessages={0} />
-    );
-
-    const badge = await screen.findByRole("button", {
-      name: /2 required infrastructure settings missing/i,
-    });
-    expect(badge.textContent).toBe("!");
+  it("does not fetch readiness for demo accounts", () => {
+    render(<SidebarAdminNav collapsed={false} unreadMessages={0} isDemoUser />);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+  it("links required gaps directly to the setting without nested interactive elements", async () => {
+    mocks.fetch.mockResolvedValue(response({ ...ready, requiredMissing: ["Storage", "Runtime"], firstMissingHref: "/admin/data-storage", missingItems: [{ key: "dataPath", label: "Storage", href: "/admin/data-storage", severity: "required" }] }));
+    const { container } = render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
+    const badge = await screen.findByRole("link", { name: "2 required infrastructure settings missing" });
+    expect(badge.getAttribute("href")).toBe("/admin/data-storage");
     expect(badge.className).toContain("bg-red-100");
-    expect(badge.tagName).toBe("BUTTON");
-    expect(badge.getAttribute("type")).toBe("button");
-
-    const infrastructureLink = screen.getByRole("link", { name: "Infrastructure" });
-    const missingItemLink = screen.getByRole("link", { name: "Compute backend" });
-    expect(missingItemLink.getAttribute("href")).toBe(
-      "/admin/data-compute"
-    );
-    expect(infrastructureLink.contains(missingItemLink)).toBe(false);
-    expect(container.querySelector("a a")).toBeNull();
-
-    fireEvent.click(badge);
-    expect(mocks.push).toHaveBeenCalledWith("/admin/data-compute");
+    expect(container.querySelector("a a, button a, a button")).toBeNull();
+    const storage = screen.getByRole("button", { name: "Storage" });
+    const users = screen.getByRole("button", { name: "Users & access" });
+    expect(storage.parentElement?.classList.contains("relative")).toBe(true);
+    expect(badge.parentElement).toBe(storage.parentElement);
+    expect(badge.classList.contains("absolute")).toBe(true);
+    expect(badge.classList.contains("right-9")).toBe(true);
+    for (const button of [storage, users]) {
+      expect(button.classList.contains("w-full")).toBe(true);
+      expect(button.lastElementChild?.matches("svg.lucide-chevron-right")).toBe(true);
+    }
+    expect(storage.lastElementChild?.getAttribute("class")).toBe(users.lastElementChild?.getAttribute("class"));
+    fireEvent.click(storage);
+    expect(storage.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("link", { name: "Data storage" })).toBeTruthy();
+    fireEvent.click(storage);
+    expect(storage.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("link", { name: "Data storage" })).toBeNull();
   });
-
-  it("shows a recommended infrastructure gap badge when nothing is required", async () => {
-    fetchMock.mockResolvedValue(
-      readinessResponse({
-        ready: false,
-        requiredMissing: [],
-        recommendedMissing: ["notifications"],
-        firstMissingHref: "/admin/settings/notifications",
-        missingItems: [
-          {
-            key: "notifications",
-            label: "Notifications channel",
-            href: "/admin/settings/notifications",
-            severity: "recommended",
-          },
-        ],
-      })
-    );
-
+  it("distinguishes recommendations from missing required settings", async () => {
+    mocks.fetch.mockResolvedValue(response({ ...ready, recommendedMissing: ["Weblog"] }));
     render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
-
-    const badge = await screen.findByRole("button", {
-      name: /1 recommended infrastructure settings pending/i,
-    });
+    const badge = await screen.findByRole("link", { name: "1 recommended infrastructure settings pending" });
     expect(badge.className).toContain("bg-amber-100");
-    expect(screen.getByText(/1 recommended setting pending/i)).toBeTruthy();
-
-    fireEvent.click(badge);
-    expect(mocks.push).toHaveBeenCalledWith("/admin/settings/notifications");
   });
-
-  it("stops loading without a badge when the readiness fetch fails", async () => {
-    fetchMock.mockResolvedValue(readinessResponse({}, false));
-
+  it("keeps settings usable if readiness cannot be fetched", async () => {
+    mocks.fetch.mockResolvedValue(response({}, false));
     render(<SidebarAdminNav collapsed={false} unreadMessages={0} />);
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/admin/infrastructure/readiness");
-    });
-
-    // No gaps reported, so no readiness badge button is rendered.
-    expect(
-      screen.queryByRole("button", { name: /infrastructure settings/i })
-    ).toBeNull();
-    expect(screen.getByRole("link", { name: "Infrastructure" })).toBeTruthy();
+    await waitFor(() => expect(mocks.fetch).toHaveBeenCalledWith("/api/admin/infrastructure/readiness"));
+    expect(screen.queryByRole("link", { name: /infrastructure settings/ })).toBeNull();
+    open("Storage");
+    expect(screen.getByRole("link", { name: "Data storage" })).toBeTruthy();
   });
 });

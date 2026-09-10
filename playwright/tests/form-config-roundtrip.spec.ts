@@ -130,7 +130,7 @@ async function addField(
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/admin/form-builder");
-  await expect(page.getByRole("heading", { name: "Sequencing Order Configuration" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sequencing data fields" })).toBeVisible();
   baselineConfig = await readFormConfig(page);
 });
 

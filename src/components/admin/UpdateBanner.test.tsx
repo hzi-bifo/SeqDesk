@@ -96,7 +96,7 @@ describe("UpdateBanner", () => {
     expect(await screen.findByText(/SeqDesk 1.1.80/)).toBeTruthy();
     expect(screen.getByText(/Pipeline fixes/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Update now" }).getAttribute("href")).toBe(
-      "/admin/settings"
+      "/admin/settings/system"
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
@@ -149,7 +149,7 @@ describe("UpdateBanner", () => {
 
     expect(await screen.findByText(/Restart pending/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "View status" }).getAttribute("href")).toBe(
-      "/admin/settings"
+      "/admin/settings/system"
     );
     expect(screen.queryByText(/Pipeline fixes/)).toBeNull();
   });

@@ -151,6 +151,16 @@ describe("GET /api/pipelines/runs", () => {
     expect(response.status).toBe(401);
   });
 
+  it("paginates completed result sources for a sample without dropping ownership constraints", async () => {
+    const response = await GET(new NextRequest("http://localhost/api/pipelines/runs?orderId=order-1&pipelineId=fastqc&status=completed&sampleId=sample-a&limit=20&offset=40"));
+    expect(response.status).toBe(200);
+    const query = mocks.db.pipelineRun.findMany.mock.calls[0][0];
+    expect(query).toMatchObject({ take: 20, skip: 40, where: { orderId: "order-1", pipelineId: "fastqc", status: "completed" } });
+    expect(query.where.AND).toContainEqual({ OR: [{ study: { userId: "user-1" } }, { order: { userId: "user-1" } }] });
+    expect(query.where.AND).toContainEqual({ OR: [{ inputSampleIds: null }, { inputSampleIds: { contains: '"sample-a"' } }] });
+    expect(mocks.db.pipelineRun.count).toHaveBeenCalledWith({ where: query.where });
+  });
+
   it("applies ownership filters for non-admin users and enriches runs", async () => {
     const response = await GET(
       new NextRequest(

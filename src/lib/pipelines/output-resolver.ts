@@ -69,6 +69,7 @@ interface ResolvedOutputContract {
   destination?: PackageOutput['destination'];
   fromStep?: string;
   writeback?: PackageOutput['writeback'];
+  table?: PackageOutput['table'];
 }
 
 type ReadWritebackValue = string | number | null;
@@ -428,7 +429,9 @@ async function createArtifact(
         pipelineRunId: runId,
         producedByStepId: file.fromStep || output.fromStep,
         // Persist parsed metadata from adapters
-        metadata: file.metadata ? JSON.stringify(file.metadata) : null,
+        metadata: output.table ? JSON.stringify({ ...file.metadata, seqdeskOutput: {
+          table: output.table, packageVersion: getPackage(pipelineId)?.manifest.package.version,
+        } }) : file.metadata ? JSON.stringify(file.metadata) : null,
       },
     });
     return { success: true };

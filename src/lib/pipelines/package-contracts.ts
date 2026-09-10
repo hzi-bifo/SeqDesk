@@ -71,6 +71,7 @@ export type PipelineWritebackPolicy = (typeof PIPELINE_WRITEBACK_POLICIES)[numbe
 
 export interface PackageOutputResultPreview {
   label?: string;
+  description?: string;
   primary?: boolean;
   previewable?: boolean;
 }

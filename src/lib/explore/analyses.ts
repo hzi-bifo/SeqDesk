@@ -2,6 +2,8 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getKit, type LoadedKit } from "./kits/loader";
 import { stepSlug } from "./variables";
+import { inputContractSnapshot, serializeInputs } from "./input-validation";
+import { generationSnapshot, type GenerationSnapshot } from "./report-generation";
 
 export type AnalysisLanguage = "python" | "r";
 
@@ -91,7 +93,8 @@ function parseJsonObject(raw: string | null | undefined): Record<string, unknown
 export function parseInputBindings(raw: string | null | undefined): AnalysisInputBinding[] {
   if (!raw) return [];
   try {
-    const parsed = JSON.parse(raw) as unknown;
+    const value = JSON.parse(raw);
+    const parsed: unknown = value?.version === 1 ? value.bindings : value;
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
@@ -227,9 +230,9 @@ export interface CreateAnalysisInput {
  * kit's entrypoint) or blank. The kit stays the template; the copy is what
  * runs and what the user edits.
  */
-export async function createAnalysis(input: CreateAnalysisInput): Promise<AnalysisSummary> {
-  let kit: LoadedKit | null = null;
-  if (input.kitId) {
+export async function createAnalysis(input: CreateAnalysisInput, generation?: { id: string; kit: LoadedKit; snapshot: GenerationSnapshot }): Promise<AnalysisSummary> {
+  let kit: LoadedKit | null = generation?.kit ?? null;
+  if (input.kitId && !kit) {
     kit = await getKit(input.kitId);
     if (!kit) throw new Error(`Unknown kit: ${input.kitId}`);
   }
@@ -250,8 +253,12 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
   let slug = stepSlug(name);
   for (let index = 2; taken.has(slug); index += 1) slug = `${stepSlug(name)}_${index}`;
 
-  const analysis = await db.exploreAnalysis.create({
+  // The stable guided-request id and its first revision commit together. A retry
+  // can never observe an analysis that has lost its input/manifest snapshot.
+  const write = async (client: Prisma.TransactionClient) => {
+  const analysis = await client.exploreAnalysis.create({
     data: {
+      ...(generation ? { id: generation.id } : {}),
       targetKey: input.targetKey,
       name,
       slug,
@@ -263,22 +270,24 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
       createdById: input.createdById,
     },
   });
-  const revision = await db.exploreAnalysisRevision.create({
+  const revision = await client.exploreAnalysisRevision.create({
     data: {
       analysisId: analysis.id,
       number: 1,
       code,
       params: JSON.stringify(params),
-      inputs: JSON.stringify(input.inputs),
+      inputs: serializeInputs(input.inputs, kit?.manifest.inputs ?? null, generation?.snapshot),
       author: "user",
       authorUserId: input.createdById,
       message: kit ? `Created from kit ${kit.manifest.id}` : "Created",
     },
   });
-  await db.exploreAnalysis.update({ where: { id: analysis.id }, data: { currentRevisionId: revision.id } });
-  const record = await db.exploreAnalysis.findUnique({ where: { id: analysis.id }, include: analysisInclude });
+  await client.exploreAnalysis.update({ where: { id: analysis.id }, data: { currentRevisionId: revision.id } });
+  const record = await client.exploreAnalysis.findUnique({ where: { id: analysis.id }, include: analysisInclude });
   if (!record) throw new Error("Analysis vanished after creation");
   return serializeAnalysis(record);
+  };
+  return db.$transaction(write);
 }
 
 export function defaultParams(kit: LoadedKit | null): Record<string, unknown> {
@@ -320,7 +329,7 @@ export async function createRevision(input: CreateRevisionInput): Promise<Revisi
       number: (latest?.number ?? 0) + 1,
       code: input.code ?? current?.code ?? "",
       params: JSON.stringify(input.params ?? parseJsonObject(current?.params)),
-      inputs: JSON.stringify(input.inputs ?? parseInputBindings(current?.inputs)),
+      inputs: serializeInputs(input.inputs ?? parseInputBindings(current?.inputs), inputContractSnapshot(current?.inputs), generationSnapshot(current?.inputs)),
       author: input.author,
       authorUserId: input.authorUserId,
       message: input.message ?? null,

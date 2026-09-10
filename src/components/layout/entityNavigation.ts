@@ -88,7 +88,7 @@ export function getOrderHref(
     return "/orders";
   }
 
-  const orderSubview = pathname.match(/^\/orders\/[^/]+\/(edit|files|sequencing|studies)$/)?.[1];
+  const orderSubview = pathname.match(/^\/orders\/[^/]+\/(edit|files|samples-files|pipelines|sequencing|studies)$/)?.[1];
   if (orderSubview === "edit") {
     const step = searchParams.get("step");
     const scope = searchParams.get("scope");
@@ -100,12 +100,21 @@ export function getOrderHref(
     return scope ? `/orders/${orderId}/edit?scope=${scope}` : `/orders/${orderId}/edit`;
   }
 
-  if (orderSubview === "files" || orderSubview === "sequencing" || orderSubview === "studies") {
+  if (orderSubview === "samples-files" || orderSubview === "files") {
+    return `/orders/${orderId}/samples-files`;
+  }
+
+  if (orderSubview === "pipelines") {
+    const pipeline = searchParams.get("pipeline");
+    return `/orders/${orderId}/pipelines${pipeline ? `?${new URLSearchParams({ pipeline })}` : ""}`;
+  }
+
+  if (orderSubview === "sequencing" || orderSubview === "studies") {
     return `/orders/${orderId}/${orderSubview}`;
   }
 
-  if (searchParams.get("section") === "reads") {
-    return `/orders/${orderId}/sequencing`;
+  if (searchParams.get("section") === "reads" || pathname === "/orders/import") {
+    return `/orders/${orderId}/samples-files`;
   }
 
   if (searchParams.get("section") === "facility") {

@@ -92,6 +92,37 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
     expect(response.status).toBe(401);
   });
 
+  it("checks report availability without reading or streaming the report", async () => {
+    const res = await GET(new NextRequest("http://localhost/api/pipelines/runs/run-1/file?path=report.html&check=1"), { params: Promise.resolve({ id: "run-1" }) });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ available: true, size: 12 });
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(mocks.fs.readFile).not.toHaveBeenCalled();
+    expect(mocks.createReadStream).not.toHaveBeenCalled();
+  });
+
+  it("does not expose availability to a signed-out user", async () => {
+    mocks.getServerSession.mockResolvedValue(null);
+    const res = await GET(new NextRequest("http://localhost/api/pipelines/runs/run-1/file?path=report.html&check=1"), { params: Promise.resolve({ id: "run-1" }) });
+    expect(res.status).toBe(401);
+    expect(mocks.fs.stat).not.toHaveBeenCalled();
+  });
+
+  it("does not expose availability outside the owner's collection", async () => {
+    mocks.getServerSession.mockResolvedValue({ user: { id: "stranger", role: "RESEARCHER" } });
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ runFolder: "/tmp/run-1", order: { userId: "owner" }, study: null, selectedResultSelections: [{ id: "published" }] });
+    const res = await GET(new NextRequest("http://localhost/api/pipelines/runs/run-1/file?path=report.html&check=1"), { params: Promise.resolve({ id: "run-1" }) });
+    expect(res.status).toBe(403);
+    expect(mocks.fs.stat).not.toHaveBeenCalled();
+  });
+
+  it("rejects symlink escapes during availability checks", async () => {
+    mocks.fs.realpath.mockImplementation(async (p: string) => p === "/tmp/run-1" ? p : "/other/report.html");
+    const res = await GET(new NextRequest("http://localhost/api/pipelines/runs/run-1/file?path=report.html&check=1"), { params: Promise.resolve({ id: "run-1" }) });
+    expect(res.status).toBe(400);
+    expect(mocks.fs.stat).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid file paths", async () => {
     mocks.ensureWithinBase.mockImplementation(() => {
       throw new Error("Path escapes base directory");
@@ -406,5 +437,19 @@ describe("GET /api/pipelines/runs/[id]/file", () => {
     );
     expect(response.headers.get("Content-Length")).toBe("3");
     expect(await response.text()).toBe("abc");
+  });
+
+  it.each(["signed-out", "other-owner", "escaping-symlink"])("keeps download access checks for %s", async (scenario) => {
+    if (scenario === "signed-out") mocks.getServerSession.mockResolvedValue(null);
+    if (scenario === "other-owner") {
+      mocks.getServerSession.mockResolvedValue({ user: { id: "other", role: "RESEARCHER" } });
+      mocks.db.pipelineRun.findUnique.mockResolvedValue({ runFolder: "/tmp/run-1", order: { userId: "owner" }, selectedResultSelections: [{ id: "selection" }] });
+    }
+    if (scenario === "escaping-symlink") {
+      mocks.fs.realpath.mockImplementation(async (p: string) => p === "/tmp/run-1" ? p : "/elsewhere/private.html");
+    }
+    const response = await GET(new NextRequest("http://localhost:3000/api/pipelines/runs/run-1/file?path=report.html&download=1"), { params: Promise.resolve({ id: "run-1" }) });
+    expect(response.status).toBe(scenario === "signed-out" ? 401 : scenario === "other-owner" ? 403 : 400);
+    expect(mocks.createReadStream).not.toHaveBeenCalled();
   });
 });

@@ -87,8 +87,15 @@ export interface ChartResult {
   notes: string[];
 }
 
+export function chartColumnLabel(column: ExploreColumn): string {
+  const unit = column.unit;
+  const alreadyLabelled = unit && (column.label.toLowerCase().endsWith(`(${unit.toLowerCase()})`) || column.label.toLowerCase().endsWith(` ${unit.toLowerCase()}`));
+  return `${column.label}${unit && !alreadyLabelled ? ` (${unit})` : ""}`;
+}
+
 function labelOf(columns: ExploreColumn[], key: string): string {
-  return columns.find((column) => column.key === key)?.label ?? key;
+  const column = columns.find((column) => column.key === key);
+  return column ? chartColumnLabel(column) : key;
 }
 
 function groupsOf(rows: ExploreRowData[], key: string | undefined): Map<string, ExploreRowData[]> {
@@ -121,6 +128,28 @@ export function buildChart(rows: ExploreRowData[], columns: ExploreColumn[], spe
   const xLabel = labelOf(columns, spec.x);
   const base = { margin: { l: 48, r: 16, t: 16, b: 48 }, legend: { orientation: "h" as const, y: -0.25 } };
   const xNumeric = numericValues(rows, spec.x).length > 0 && numericValues(rows, spec.x).length === rows.filter((row) => !isMissing(row[spec.x])).length;
+
+  if (spec.chart === "histogram" && columns.find(column => column.key === spec.x)?.type === "number" && !xNumeric) {
+    return { data: [], layout: base, notes: ["No valid numeric distribution is available for this column. Missing or invalid measurements are not converted to category counts."] };
+  }
+
+  if (spec.chart === "values") {
+    if (!spec.y) return { data: [], layout: base, notes: ["Choose the measurement to show."] };
+    const valid = rows.filter(row => !isMissing(row[spec.x]) && toNumber(row[spec.y!]) !== null);
+    if (valid.length < rows.length) notes.push(`${rows.length - valid.length} rows with missing labels or measurements were omitted; missing values are not zero.`);
+    const identities = valid.map(row => JSON.stringify([String(row[spec.x]), spec.color ? String(row[spec.color] ?? "") : ""]));
+    if (new Set(identities).size !== identities.length) return { data: [], layout: base, notes: ["More than one measurement has the same label. Choose a distinguishing colour column or a more specific table; values are not combined automatically."] };
+    const categories = [...new Set(valid.map(row => String(row[spec.x])))];
+    const shown = new Set(categories.slice(0, MAX_CATEGORIES));
+    if (categories.length > MAX_CATEGORIES) notes.push(`Only the first ${MAX_CATEGORIES} labels are shown.`);
+    const groups = [...groupsOf(valid.filter(row => shown.has(String(row[spec.x]))), spec.color).entries()];
+    if (groups.length > MAX_GROUPS) notes.push(`Only the first ${MAX_GROUPS} colour groups are shown.`);
+    return {
+      data: groups.slice(0, MAX_GROUPS).filter(([, group]) => group.length > 0).map(([name, group]) => ({ type: "bar", name: name || labelOf(columns, spec.y!), x: group.map(row => String(row[spec.x])), y: group.map(row => toNumber(row[spec.y!])) })),
+      layout: { ...base, barmode: "group", xaxis: { title: { text: xLabel }, type: "category" }, yaxis: { title: { text: labelOf(columns, spec.y) } }, showlegend: groups.length > 1 },
+      notes,
+    };
+  }
 
   if (spec.chart === "histogram" && xNumeric) {
     const groups = spec.color ? groupsOf(rows, spec.color) : new Map([["", rows]]);
@@ -174,7 +203,7 @@ export function buildChart(rows: ExploreRowData[], columns: ExploreColumn[], spe
         }
       }
       return { type: "scatter", mode: "markers", name: name || `${yLabel} by ${xLabel}`, x, y, marker: { size: 7, opacity: 0.75 } };
-    });
+    }).filter(trace => trace.x.length > 0);
     return { data, layout: { ...base, xaxis: { title: { text: xLabel } }, yaxis: { title: { text: yLabel } }, showlegend: groups.length > 1 }, notes };
   }
 
@@ -184,7 +213,7 @@ export function buildChart(rows: ExploreRowData[], columns: ExploreColumn[], spe
   const groups = [...groupsOf(rows, spec.x).entries()];
   if (groups.length > MAX_CATEGORIES) notes.push(`Only the first ${MAX_CATEGORIES} groups of ${xLabel} are shown.`);
   return {
-    data: groups.slice(0, MAX_CATEGORIES).map(([name, group]) => ({ type: "box", name, y: numericValues(group, spec.y!), boxpoints: "outliers" })),
+    data: groups.slice(0, MAX_CATEGORIES).map(([name, group]) => ({ type: "box", name, y: numericValues(group, spec.y!), boxpoints: "outliers" })).filter(trace => trace.y.length > 0),
     layout: { ...base, xaxis: { title: { text: xLabel }, type: "category" }, yaxis: { title: { text: yLabel } }, showlegend: false },
     notes,
   };

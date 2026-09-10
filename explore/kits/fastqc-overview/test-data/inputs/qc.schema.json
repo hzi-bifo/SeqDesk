@@ -1,0 +1,17 @@
+{
+  "schema": { "columns": [
+    { "key": "sample_db_id", "label": "Sample record", "type": "string", "role": "sample" },
+    { "key": "sample_id", "label": "Sample", "type": "string" },
+    { "key": "r1_pass", "label": "R1 passed checks", "type": "number" },
+    { "key": "r1_warn", "label": "R1 warnings", "type": "number" },
+    { "key": "r1_fail", "label": "R1 failed checks", "type": "number" },
+    { "key": "r1_read_count", "label": "R1 reads", "type": "number" },
+    { "key": "r1_avg_quality", "label": "R1 mean quality (Phred)", "type": "number" },
+    { "key": "r2_pass", "label": "R2 passed checks", "type": "number" },
+    { "key": "r2_warn", "label": "R2 warnings", "type": "number" },
+    { "key": "r2_fail", "label": "R2 failed checks", "type": "number" },
+    { "key": "r2_read_count", "label": "R2 reads", "type": "number" },
+    { "key": "r2_avg_quality", "label": "R2 mean quality (Phred)", "type": "number" },
+    { "key": "pipeline_run", "label": "Pipeline run", "type": "string" }
+  ] }
+}

@@ -6,6 +6,21 @@ import type { PackageOutputTable } from "@/lib/pipelines/package-loader";
  * this list only keeps older packages usable.
  */
 export const KNOWN_PIPELINE_TABLES: Record<string, PackageOutputTable & { label: string }> = {
+  // Older FastQC installations already wrote this TSV. Expose those saved
+  // artifacts without reinstalling the package or rerunning the FASTQs.
+  "fastqc:summary": {
+    label: "FastQC quality summary",
+    description: "Read counts, mean Phred quality and FastQC PASS / WARN / FAIL check counts for R1 and R2. One row per sample; missing R2 values stay empty for single-end reads.",
+    tableKind: "sample-summary",
+    format: "tsv",
+    sampleColumn: "sample_id",
+    columnLabels: {
+      r1_pass: "R1 passed checks", r1_warn: "R1 warnings", r1_fail: "R1 failed checks",
+      r1_read_count: "R1 reads", r1_avg_quality: "R1 mean quality (Phred)",
+      r2_pass: "R2 passed checks", r2_warn: "R2 warnings", r2_fail: "R2 failed checks",
+      r2_read_count: "R2 reads", r2_avg_quality: "R2 mean quality (Phred)",
+    },
+  },
   "metaxpath:sample_profile": {
     label: "MetaxPath per-sample profiles",
     tableKind: "taxon-profile-long",

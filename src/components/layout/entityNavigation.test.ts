@@ -64,16 +64,25 @@ describe("getOrderHref", () => {
 
   it("keeps explicit order subviews", () => {
     expect(getOrderHref("order-1", "/orders/order-1/files", new URLSearchParams())).toBe(
-      "/orders/order-1/files"
+      "/orders/order-1/samples-files"
     );
     expect(getOrderHref("order-1", "/orders/order-1/studies", new URLSearchParams())).toBe(
       "/orders/order-1/studies"
     );
   });
 
-  it("maps read sections to sequencing and preserves facility subsections", () => {
+  it.each([
+    ["/orders/order-1/samples-files", "", "/orders/order-2/samples-files"],
+    ["/orders/order-1/pipelines", "", "/orders/order-2/pipelines"],
+    ["/orders/order-1/pipelines", "pipeline=fastq-checksum", "/orders/order-2/pipelines?pipeline=fastq-checksum"],
+    ["/orders/import", "orderId=order-1&collection=old-collection&source=sra", "/orders/order-2/samples-files"],
+  ])("keeps the selected section when switching from %s?%s", (pathname, query, expected) => {
+    expect(getOrderHref("order-2", pathname, new URLSearchParams(query))).toBe(expected);
+  });
+
+  it("maps read sections to Files and preserves facility subsections", () => {
     expect(getOrderHref("order-1", "/orders/order-1", new URLSearchParams("section=reads"))).toBe(
-      "/orders/order-1/sequencing"
+      "/orders/order-1/samples-files"
     );
     expect(
       getOrderHref(

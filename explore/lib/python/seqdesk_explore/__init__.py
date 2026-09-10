@@ -602,12 +602,18 @@ def save_table(
     table_kind: str | None = None,
     roles: Mapping[str, str] | None = None,
     float_format: str | None = None,
+    columns: Mapping[str, Mapping[str, Any]] | None = None,
+    schema_id: str | None = None,
+    schema_version: str | None = None,
+    row_entity: str | None = None,
 ) -> dict[str, Any]:
     """Write ``df`` as ``<name>.tsv`` (no index, empty cell for missing values,
     tabs and newlines inside cells replaced by spaces) and register it.
 
     ``table_kind`` and ``roles`` describe the table for the app so the result
     can be attached as a new dataset; role columns must exist in ``df``.
+    ``columns`` can declare type, label, unit, description and nullability.
+    Schema identity/version and row meaning follow the same contract as pipeline tables.
     """
     import pandas as pd
 
@@ -640,7 +646,11 @@ def save_table(
         path,
         title,
         description,
-        {"table": {"tableKind": table_kind, "roles": role_map, "rowCount": int(len(out))}},
+        {"table": {"tableKind": table_kind, "roles": role_map, "rowCount": int(len(out)),
+                   **({"columns": dict(columns)} if columns is not None else {}),
+                   **({"schemaId": schema_id} if schema_id is not None else {}),
+                   **({"schemaVersion": schema_version} if schema_version is not None else {}),
+                   **({"rowEntity": row_entity} if row_entity is not None else {})}},
     )
 
 

@@ -4,7 +4,8 @@ import { useEffect, useState, type ComponentType, type ReactElement } from "reac
 import type { Config, Data, Layout } from "plotly.js";
 import type { PlotParams } from "react-plotly.js";
 import { Download } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ExploreLoading } from "./ExploreLoading";
+import { ReportImage } from "./ReportImage";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
@@ -161,10 +162,10 @@ export function buildDownloadUrl(url: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}download=1`;
 }
 
-function FigureSkeleton({ height }: { height: number }): ReactElement {
+function FigureSkeleton({ height, variant = "chart" }: { height: number; variant?: "table" | "text" | "chart" }): ReactElement {
   return (
-    <div className="p-2" style={{ height }} aria-busy="true" data-testid="figure-skeleton">
-      <Skeleton className="h-full w-full" />
+    <div style={{ height }} aria-busy="true" data-testid="figure-skeleton">
+      <ExploreLoading variant={variant} label="Loading figure…" height={height} />
     </div>
   );
 }
@@ -275,10 +276,7 @@ export function FigureView({ url, format, title, description, height = 420, clas
     case "png":
     case "svg":
       body = (
-        <div className="flex items-center justify-center p-2" style={{ minHeight: Math.min(height, 120) }}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- Artifacts are streamed by an API route without known intrinsic dimensions, which next/image cannot optimize. */}
-          <img src={url} alt={title ?? "Figure"} className="h-auto max-w-full" style={{ maxHeight: height }} loading="lazy" decoding="async" />
-        </div>
+        <ReportImage src={url} alt={title ?? "Figure"} height={height} />
       );
       break;
     case "html":
@@ -306,7 +304,7 @@ export function FigureView({ url, format, title, description, height = 420, clas
       break;
     default: {
       if (!current) {
-        body = <FigureSkeleton height={height} />;
+        body = <FigureSkeleton height={height} variant={format === "plotly-json" ? "chart" : format === "csv" || format === "tsv" ? "table" : "text"} />;
       } else if (current.status === "error") {
         body = <FigureError message={current.message} height={height} />;
       } else if (current.content.kind === "table") {

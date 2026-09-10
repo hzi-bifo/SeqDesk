@@ -1,0 +1,43 @@
+{
+  "kitVersion": 1,
+  "id": "fastqc-overview",
+  "name": "FastQC quality overview",
+  "description": "Turn a saved FastQC quality summary into read-count, mean-quality and check-status figures plus a downloadable per-mate QC table. Uses the small summary table only: no FASTQ processing or database downloads.",
+  "language": "python",
+  "environment": "seqdesk-explore-python",
+  "entrypoint": "analysis.py",
+  "inputs": [{
+    "alias": "qc",
+    "label": "FastQC quality summary",
+    "description": "Add FastQC quality summary from Pipeline outputs. Needs r1_read_count, r1_avg_quality and r1_pass/warn/fail; the equivalent R2 columns are optional.",
+    "tableKind": "sample-summary",
+    "requiredRoles": ["sample"],
+    "requiredColumns": {
+      "r1_read_count": { "type": "number", "unit": "reads" },
+      "r1_avg_quality": { "type": "number", "unit": "Phred" },
+      "r1_pass": { "type": "number", "unit": "checks" },
+      "r1_warn": { "type": "number", "unit": "checks" },
+      "r1_fail": { "type": "number", "unit": "checks" }
+    },
+    "optionalRoles": []
+  }],
+  "outputs": [
+    { "name": "read_counts", "label": "Read counts by sample and mate", "kind": "figure", "optional": true, "report": { "span": 1 }, "description": "Reads per sample and mate; reads are not counted as read pairs." },
+    { "name": "mean_quality", "label": "Mean read quality", "kind": "figure", "optional": true, "report": { "span": 1 }, "description": "Mean per-sequence Phred quality for R1 and R2, not Q30." },
+    { "name": "check_status", "label": "Quality checks", "kind": "figure", "description": "FastQC PASS, WARN and FAIL check counts per mate." },
+    { "name": "qc_by_mate", "label": "Quality measurements by mate", "kind": "table", "description": "One row per sample and available mate, with saved run provenance and missing values preserved." }
+  ],
+  "report": {
+    "introduction": "Quality overview based on saved FastQC measurements. PASS, WARN and FAIL refer to individual quality checks, not to pipeline execution. Interpret these checks in the context of the samples and consult the original FastQC reports for details.",
+    "metrics": [
+      { "key": "n_samples", "label": "Samples", "digits": 0 },
+      { "key": "n_read_files", "label": "Read files", "digits": 0 },
+      { "key": "total_reads", "label": "Total reads (not pairs)", "unit": "reads", "digits": 0 },
+      { "key": "files_with_failed_checks", "label": "Files with failed checks", "digits": 0 }
+    ]
+  },
+  "tags": ["qc", "fastqc", "sequencing", "report"],
+  "provider": "SeqDesk",
+  "citation": "Measurements: FastQC (retain the source pipeline's version and citation). Tabular processing: pandas. Figures: Plotly. Analysis code and environment: SeqDesk run provenance.",
+  "version": "1.0.0"
+}

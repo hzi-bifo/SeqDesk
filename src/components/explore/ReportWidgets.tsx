@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ExploreLoading } from "./ExploreLoading";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { SubjectCompositionPanel } from "@/components/explore/views/SubjectComposition";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ import type { ExploreColumn, ExploreRowData } from "@/lib/explore/types";
 export interface TableFrame {
   datasetId: string;
   version: number | null;
+  rowEntity?: string;
   columns: ExploreColumn[];
   rows: ExploreRowData[];
   total: number;
@@ -269,7 +271,7 @@ export function TaxonExplorerView({
     return <p className="text-sm text-muted-foreground">{table.name} needs sample, taxon and count roles for a taxon explorer.</p>;
   }
   if (error) return <p className="text-sm text-destructive">Could not load the table.</p>;
-  if (!frame) return <Skeleton className="h-64 w-full" />;
+  if (!frame) return <ExploreLoading variant="chart" label="Loading taxon data…" height={260} />;
 
   const sampleKey = roles.sample;
   const groupKey = roles.group ?? null;
@@ -384,7 +386,7 @@ export function SubjectView({
   }, [rows, roles.subject, roles.sample]);
   if (!ready) return <p className="text-sm text-muted-foreground">{table.name} needs sample, subject, timepoint, taxon and count roles for a subject view.</p>;
   if (error) return <p className="text-sm text-destructive">Could not load the table.</p>;
-  if (!frame) return <Skeleton className="h-64 w-full" />;
+  if (!frame) return <ExploreLoading variant="chart" label="Loading subject data…" height={300} />;
   const groupKey = roles.group ?? null;
   const allGroups = groupKey ? distinctValues(rows, groupKey).map((entry) => entry.value).slice(0, 2) : [];
   const subjectGroups = current && groupKey ? distinctValues(rows.filter((row) => cellText(row[roles.subject!]) === current), groupKey).map((entry) => entry.value).filter((group) => allGroups.includes(group)) : allGroups.length ? [] : [""];
@@ -560,7 +562,7 @@ function TableFigureCard({ figureKey: key, index, keys, figure, table, options, 
   const defaultLabel = `${METRIC_STAT_LABELS[figure.stat]} of ${table ? columnLabel(table.columns, figure.column) : figure.column}`;
   if (!table) return <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">This table is not in the scope any more.</div>;
   if (error) return <div className="rounded-md border border-dashed px-3 py-2 text-xs text-destructive">Could not load {table.name}.</div>;
-  if (!data) return <Skeleton className="h-[4.5rem] w-full" />;
+  if (!data) return <ExploreLoading variant="metric" label="Loading summary value…" height={72} />;
   const value = computeStats(data.rows, figure.column)[figure.stat];
   return (
     <KeyFigureCard figureKey={key} index={index} keys={keys} value={value} defaultLabel={defaultLabel} history={null} timelineSource={tableTimeline(table)} figure={figure} options={options} editing={editing} footnote={data.truncated ? `first ${data.rows.length.toLocaleString()} of ${data.total.toLocaleString()} rows` : null} />
@@ -724,7 +726,7 @@ function TimelineSpark({ source, measure, format }: { source: AnalysisTimeline; 
     { revalidateOnFocus: false }
   );
   if (error) return <div className="mt-1 truncate text-[11px] text-destructive">timeline unavailable</div>;
-  if (!data) return <Skeleton className="mt-1 h-6 w-full" />;
+  if (!data) return <Skeleton className="mt-1 h-6 w-full" role="status" aria-label="Loading timeline…" />;
   const series = data.series;
   if (!series || series.buckets.length < 2) return <div className="mt-1 truncate text-[11px] text-muted-foreground">too few points along the {source.axis.label}s</div>;
   const points = sparklinePoints(series.buckets.map((bucket) => bucket.cumulative), 160, 24);
@@ -849,7 +851,7 @@ export function CuratedOrganismsView({
 
   if (!ready) return <p className="text-sm text-muted-foreground">{table.name} needs sample, taxon and count roles for organisms of interest.</p>;
   if (error || curationError) return <p className="text-sm text-destructive">Could not load the table or the curation lists.</p>;
-  if (!frame || !curation) return <Skeleton className="h-40 w-full" />;
+  if (!frame || !curation) return <ExploreLoading variant="table" label="Loading organisms of interest…" height={240} />;
 
   const sampleKey = roles.sample!;
   const taxonKey = roles.taxon!;

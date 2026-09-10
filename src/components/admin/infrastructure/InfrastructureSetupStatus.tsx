@@ -3,15 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Loader2, AlertCircle, CheckCircle2, RotateCw } from "lucide-react";
-import { useDeploymentProfile } from "@/components/deployment-profile/DeploymentProfileProvider";
+import { Loader2, AlertCircle, CheckCircle2, Clock3, RotateCw } from "lucide-react";
+import { useModuleEnabled } from "@/lib/modules";
 
 type StatusKey = "dataPath" | "runDir" | "conda" | "weblog";
 
 interface StatusItem {
   key: StatusKey;
   label: string;
-  ok: boolean;
+  ok: boolean | null;
   message: string;
   fixHref: string;
 }
@@ -63,17 +63,22 @@ export function InfrastructureSetupStatus({
 }: {
   fixLinks?: Partial<Record<StatusKey, string>>;
 }) {
-  const deploymentProfile = useDeploymentProfile();
-  const scanForSequencingFiles =
-    deploymentProfile.experience === "sequencing";
+  const scanForSequencingFiles = useModuleEnabled("sequencing-management");
   const [items, setItems] = useState<StatusItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [hasRunChecks, setHasRunChecks] = useState(false);
 
+  // Parents pass inline fixLinks objects. Depend on the actual hrefs so typing
+  // in a settings form does not trigger another request or erase check results.
+  const dataPathHref = fixLinks?.dataPath ?? DEFAULT_FIX_LINKS.dataPath;
+  const runDirHref = fixLinks?.runDir ?? DEFAULT_FIX_LINKS.runDir;
+  const condaHref = fixLinks?.conda ?? DEFAULT_FIX_LINKS.conda;
+  const weblogHref = fixLinks?.weblog ?? DEFAULT_FIX_LINKS.weblog;
   const mergedFixLinks = useMemo(
-    () => ({ ...DEFAULT_FIX_LINKS, ...(fixLinks || {}) }),
-    [fixLinks]
+    () => ({ dataPath: dataPathHref, runDir: runDirHref, conda: condaHref, weblog: weblogHref }),
+    [dataPathHref, runDirHref, condaHref, weblogHref]
   );
 
   const testPipelineSetting = useCallback(
@@ -103,7 +108,7 @@ export function InfrastructureSetupStatus({
     []
   );
 
-  const loadStatuses = useCallback(async () => {
+  const loadStatuses = useCallback(async (runChecks = false) => {
     setLoadError(null);
 
     const [seqRes, execRes] = await Promise.all([
@@ -145,6 +150,17 @@ export function InfrastructureSetupStatus({
     const condaPath = execData?.settings?.condaPath?.trim() || "";
     const weblogUrl = execData?.settings?.weblogUrl?.trim() || "";
     const weblogSecret = execData?.settings?.weblogSecret || "";
+
+    if (!runChecks) {
+      setHasRunChecks(false);
+      setItems([
+        { key: "dataPath", label: "Data directory", ok: dataBasePath ? null : false, message: dataBasePath ? "Configured · not checked" : "Not configured", fixHref: mergedFixLinks.dataPath },
+        { key: "runDir", label: "Pipeline working directory", ok: pipelineRunDir && pipelineRunDir !== "/" ? null : false, message: pipelineRunDir && pipelineRunDir !== "/" ? "Configured · not checked" : "Not configured", fixHref: mergedFixLinks.runDir },
+        { key: "conda", label: "Pipeline software (Conda)", ok: null, message: condaPath ? "Configured · not checked" : "Auto-detection · not checked", fixHref: mergedFixLinks.conda },
+        { key: "weblog", label: "Run progress connection", ok: weblogUrl ? null : false, message: weblogUrl ? "Configured · not checked" : "Not configured", fixHref: mergedFixLinks.weblog },
+      ]);
+      return;
+    }
 
     const dataPathStatusPromise = (async () => {
       if (!dataBasePath) {
@@ -228,28 +244,28 @@ export function InfrastructureSetupStatus({
     const nextItems: StatusItem[] = [
       {
         key: "dataPath",
-        label: "Data Path",
+        label: "Data directory",
         ok: dataPath.ok,
         message: dataPath.message,
         fixHref: mergedFixLinks.dataPath,
       },
       {
         key: "runDir",
-        label: "Run Directory",
+        label: "Pipeline working directory",
         ok: runDir.ok,
         message: runDir.message,
         fixHref: mergedFixLinks.runDir,
       },
       {
         key: "conda",
-        label: "Conda",
+        label: "Pipeline software (Conda)",
         ok: conda.ok,
         message: conda.message,
         fixHref: mergedFixLinks.conda,
       },
       {
         key: "weblog",
-        label: "Weblog",
+        label: "Run progress connection",
         ok: weblog.ok,
         message: weblog.message,
         fixHref: mergedFixLinks.weblog,
@@ -257,12 +273,13 @@ export function InfrastructureSetupStatus({
     ];
 
     setItems(nextItems);
+    setHasRunChecks(true);
   }, [mergedFixLinks, scanForSequencingFiles, testPipelineSetting]);
 
-  const refreshStatuses = useCallback(async () => {
+  const refreshStatuses = useCallback(async (runChecks = false) => {
     setRefreshing(true);
     try {
-      await loadStatuses();
+      await loadStatuses(runChecks);
     } catch (error) {
       setLoadError(
         error instanceof Error ? error.message : "Failed to refresh setup status"
@@ -281,7 +298,7 @@ export function InfrastructureSetupStatus({
     return (
       <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground flex items-center gap-2">
         <Loader2 className="h-4 w-4 animate-spin" />
-        Checking setup status...
+        Loading saved configuration...
       </div>
     );
   }
@@ -289,25 +306,27 @@ export function InfrastructureSetupStatus({
   return (
     <div className="space-y-2">
       <div className="rounded-lg border border-border bg-muted/20 p-3">
-        <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
-            <h2 className="text-sm font-semibold">Setup Status</h2>
+            <h2 className="text-sm font-semibold">Storage &amp; pipeline checks</h2>
             <p className="text-xs text-muted-foreground">
-              Validate key runtime requirements before imports and pipeline runs
+              {hasRunChecks ? "Checks use the saved configuration, not unsaved edits in this form." : "Saved configuration only. Run checks to test directory access, pipeline software and the configured progress connection."}
             </p>
           </div>
           <Button
             variant="outline"
             size="sm"
             className="bg-card"
-            onClick={() => void refreshStatuses()}
+            onClick={() => void refreshStatuses(true)}
             disabled={refreshing}
+            aria-label="Run storage and pipeline checks"
           >
             {refreshing ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <RotateCw className="h-4 w-4" />
             )}
+            {refreshing ? "Checking…" : hasRunChecks ? "Run checks again" : "Run checks"}
           </Button>
         </div>
 
@@ -316,7 +335,9 @@ export function InfrastructureSetupStatus({
             <div
               key={item.key}
               className={`rounded-md border px-3 py-2 ${
-                item.ok
+                item.ok === null
+                  ? "border-border bg-card"
+                  : item.ok
                   ? "border-green-200 bg-green-50"
                   : "border-amber-200 bg-amber-50"
               }`}
@@ -324,15 +345,17 @@ export function InfrastructureSetupStatus({
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-xs font-medium">{item.label}</p>
-                  <p className="text-xs mt-0.5 truncate">{item.message}</p>
+                  <p className="text-xs mt-0.5 break-words">{item.message}</p>
                 </div>
-                {item.ok ? (
+                {item.ok === null ? (
+                  <Clock3 className="h-4 w-4 text-muted-foreground flex-shrink-0" aria-label="Not checked" />
+                ) : item.ok ? (
                   <CheckCircle2 className="h-4 w-4 text-green-600 flex-shrink-0" />
                 ) : (
                   <AlertCircle className="h-4 w-4 text-amber-700 flex-shrink-0" />
                 )}
               </div>
-              {!item.ok && (
+              {item.ok === false && (
                 <div className="mt-2">
                   <Button asChild variant="link" size="sm" className="h-auto p-0 text-xs">
                     <Link href={item.fixHref}>Fix</Link>
@@ -345,7 +368,7 @@ export function InfrastructureSetupStatus({
       </div>
 
       {loadError && (
-        <p className="text-xs text-destructive">{loadError}</p>
+        <p role="alert" className="text-xs text-destructive">{loadError}</p>
       )}
     </div>
   );

@@ -185,6 +185,20 @@ describe("database-merge", () => {
     expect(result.sources["ena.testMode"]).toBe("env");
   });
 
+  it.each(["env", "file"] as const)("honors %s-managed contact addresses, including an intentionally empty address", async source => {
+    mocks.loadConfig.mockReturnValue(makeResolvedConfig({
+      config: { site: { name: "SeqDesk", contactEmail: "" } },
+      sources: { "site.name": "default", "site.contactEmail": source },
+    }));
+    mocks.db.siteSettings.findFirst.mockResolvedValue({
+      id: "singleton", siteName: "My lab", contactEmail: "db@example.org", extraSettings: "{}",
+    });
+    const result = await getEffectiveConfig();
+    expect(result.config.site?.name).toBe("My lab");
+    expect(result.config.site?.contactEmail).toBe("");
+    expect(result.sources["site.contactEmail"]).toBe(source);
+  });
+
   it("falls back to file config when extraSettings JSON is invalid", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fileConfig = makeResolvedConfig();

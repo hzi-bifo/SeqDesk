@@ -1,4 +1,5 @@
-import type { ExploreDatasetKind, ExploreRole, ExploreRoleMap } from "./types";
+import type { ExploreDatasetKind, ExploreRole, ExploreRoleMap, ExploreSchema } from "./types";
+import type { InputRequirements } from "./table-contract";
 
 export interface ExploreDatasetKindDefinition {
   id: ExploreDatasetKind;
@@ -170,17 +171,39 @@ export function missingRequiredRoles(
 // Fit checks shared by the analysis wizard and the canvas.
 // ---------------------------------------------------------------------------
 
-export type DatasetFit = { ok: true } | { ok: false; reason: "table-kind"; tableKind: string } | { ok: false; reason: "roles"; missing: ExploreRole[] };
+export type DatasetFit = { ok: true } | { ok: false; reason: "table-kind"; tableKind: string } | { ok: false; reason: "roles"; missing: ExploreRole[] }
+  | { ok: false; reason: "contract"; message: string };
 
 /** Whether a table can be bound to a kit input: right table kind, required roles mapped. */
 export function datasetFitsInput(
-  dataset: { tableKind: string | null; roles: ExploreRoleMap },
-  input: { tableKind?: string | null; requiredRoles: ExploreRole[] }
+  dataset: { tableKind: string | null; roles: ExploreRoleMap; schema?: ExploreSchema },
+  input: { tableKind?: string | null; requiredRoles: ExploreRole[] } & InputRequirements
 ): DatasetFit {
   if (input.tableKind && dataset.tableKind !== input.tableKind) return { ok: false, reason: "table-kind", tableKind: input.tableKind };
   const missing = input.requiredRoles.filter((role) => !dataset.roles[role]);
   if (missing.length > 0) return { ok: false, reason: "roles", missing };
+  const reject = (message: string): DatasetFit => ({ ok: false, reason: "contract", message });
+  if (input.schemaId && dataset.schema?.schemaId !== input.schemaId) return reject(`Needs data schema ${input.schemaId}.`);
+  if (input.schemaVersions && !input.schemaVersions.includes(dataset.schema?.schemaVersion ?? "")) return reject(`Needs schema version ${input.schemaVersions.join(" or ")}.`);
+  if (input.rowEntity && dataset.schema?.rowEntity !== input.rowEntity) return reject(`Needs one row per ${input.rowEntity}.`);
+  const requirements = [
+    ...Object.entries(input.requiredColumns ?? {}),
+    ...Object.entries(input.requiredRoleTypes ?? {}).map(([role, requirement]) => [dataset.roles[role as ExploreRole] ?? `(${role} role)`, requirement] as const),
+  ];
+  for (const [key, requirement] of requirements) {
+    const column = dataset.schema?.columns.find(column => column.key === key);
+    if (!column) return reject(`Required column ${key} is missing.`);
+    if (column.type !== requirement.type) return reject(`${column.label} must contain ${requirement.type} values.`);
+    if (requirement.unit && column.unit !== requirement.unit) return reject(`${column.label} needs unit ${requirement.unit}; found ${column.unit ?? "unspecified units"}.`);
+  }
   return { ok: true };
+}
+
+export function datasetFitMessage(fit: DatasetFit): string | null {
+  if (fit.ok) return null;
+  if (fit.reason === "contract") return fit.message;
+  if (fit.reason === "table-kind") return `Needs a ${TABLE_KIND_DEFINITIONS[fit.tableKind]?.label ?? fit.tableKind} table.`;
+  return `Map the ${fit.missing.join(", ")} role${fit.missing.length === 1 ? "" : "s"} first.`;
 }
 
 /** Roles each built-in view needs before a table can open in it. */

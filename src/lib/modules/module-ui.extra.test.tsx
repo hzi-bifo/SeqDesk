@@ -196,6 +196,55 @@ describe("module UI helpers", () => {
     expect(screen.getByTestId("hook-probe").textContent).toBe("ai-validation");
   });
 
+  it.each(["http", "network", "malformed"])("exposes an explicit %s load error and clears it after retry", async failure => {
+    if (failure === "network") fetchMock.mockRejectedValueOnce(new Error("offline"));
+    else fetchMock.mockResolvedValueOnce(jsonResponse(failure === "malformed" ? { modules: [] } : {}, failure !== "http"));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ modules: { "import-cami": true }, incompatibleModules: [], globalDisabled: false }));
+    const { result } = renderHook(() => useModules(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toContain("Could not load module settings");
+    expect(result.current.isModuleEnabled("import-cami")).toBe(false);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.error).toBeNull();
+    expect(result.current.isModuleEnabled("import-cami")).toBe(true);
+  });
+
+  it("retains the last known settings on refresh failure but fails closed until retry", async () => {
+    const loaded = { modules: { "import-cami": true }, incompatibleModules: ["import-sra"], globalDisabled: false };
+    fetchMock.mockResolvedValueOnce(jsonResponse(loaded))
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(jsonResponse(loaded));
+    const { result } = renderHook(() => useModules(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.moduleStates).toEqual(loaded.modules);
+    expect(result.current.incompatibleModules).toEqual(["import-sra"]);
+    expect(result.current.error).toBeTruthy();
+    expect(result.current.isModuleEnabled("import-cami")).toBe(false);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.isModuleEnabled("import-cami")).toBe(true);
+  });
+
+  it.each(["http", "network"])("restores the actual previous values for failed %s module and global saves", async failure => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ modules: { "import-cami": true }, incompatibleModules: [], globalDisabled: true }));
+    const { result } = renderHook(() => useModules(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    for (const requested of [false, true]) {
+      if (failure === "network") fetchMock.mockRejectedValueOnce(new Error("offline"));
+      else fetchMock.mockResolvedValueOnce(jsonResponse({}, false));
+      await act(async () => {
+        await expect(result.current.setModuleEnabled("import-cami", requested)).rejects.toThrow();
+      });
+      expect(result.current.moduleStates["import-cami"]).toBe(true);
+      if (failure === "network") fetchMock.mockRejectedValueOnce(new Error("offline"));
+      else fetchMock.mockResolvedValueOnce(jsonResponse({}, false));
+      await act(async () => {
+        await expect(result.current.setGlobalDisabled(requested)).rejects.toThrow();
+      });
+      expect(result.current.globalDisabled).toBe(true);
+    }
+  });
+
   it("keeps profile-incompatible modules disabled even if a stale response says true", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({

@@ -41,7 +41,8 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/modules/input-modules.server", () => ({ requireRawReadImporter: mocks.requireRawReadImporter }));
 
-vi.mock("@/lib/workbench/storage", () => ({
+vi.mock("@/lib/workbench/storage", async importOriginal => ({
+  getPathSizeBytes: (await importOriginal<typeof import("@/lib/workbench/storage")>()).getPathSizeBytes,
   resolveWorkbenchImportStorage: mocks.resolveWorkbenchImportStorage,
   resolveWorkbenchStorageBase: mocks.resolveWorkbenchStorageBase,
   assertPathInsideBase: (targetPath: string, basePath: string, label = "Path") => {
@@ -60,7 +61,7 @@ vi.mock("@/lib/workbench/analyses", () => ({
   updateWorkbenchAnalysisNodeForImportJob: mocks.updateWorkbenchAnalysisNodeForImportJob,
 }));
 
-import { CAMI_PREPARATION_BYTES, IMPORT_STORAGE_HEADROOM, ImportStorageUnavailable, STORAGE_WAITING, STORAGE_UNKNOWN, PREPARATION_WAITING } from "./import-storage-capacity";
+import { estimateCamiPreparationBytes, IMPORT_STORAGE_HEADROOM, ImportStorageUnavailable, readImportStorageRequirement, STORAGE_WAITING, STORAGE_UNKNOWN, PREPARATION_WAITING } from "./import-storage-capacity";
 import { createWorkbenchImportJob, runWorkbenchImportJob } from "./import-jobs";
 
 const provider: WorkbenchImporterProvider<{ taxon: string }> = {
@@ -77,6 +78,8 @@ const provider: WorkbenchImporterProvider<{ taxon: string }> = {
 
 const now = new Date("2026-05-20T10:00:00.000Z");
 let tempDir: string;
+const CAMI_ARCHIVE_BYTES = 5 * 1024 ** 3;
+const CAMI_TEST_BUDGET = estimateCamiPreparationBytes(CAMI_ARCHIVE_BYTES);
 
 describe("workbench import jobs", () => {
   beforeEach(async () => {
@@ -112,14 +115,16 @@ describe("workbench import jobs", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  function camiJob() {
-    mocks.db.workbenchImportJob.findUnique.mockResolvedValue({
+  function camiJob(preview: unknown = { assets: [{ bytes: CAMI_ARCHIVE_BYTES }] }) {
+    const job = {
       id: "job-1", providerId: "cami-benchmark", status: "queued",
       workspaceId: "workspace-1", createdById: "user-1",
-      request: JSON.stringify({ taxon: "test" }), preview: "{}",
-    });
+      request: JSON.stringify({ taxon: "test" }), preview: JSON.stringify(preview),
+    };
+    mocks.db.workbenchImportJob.findUnique.mockResolvedValue(job);
     mocks.getWorkbenchImporter.mockReturnValue({ ...provider, id: "cami-benchmark" });
-    mocks.resolveWorkbenchStorageBase.mockResolvedValue({ cacheRoot: tempDir });
+    mocks.resolveWorkbenchStorageBase.mockResolvedValue({ cacheRoot: tempDir, jobsRoot: path.join(tempDir, "workbench", "jobs") });
+    return job;
   }
 
   it("keeps insufficient storage queued, then starts automatically when capacity returns", async () => {
@@ -128,9 +133,9 @@ describe("workbench import jobs", () => {
     await runWorkbenchImportJob("job-1");
     expect(provider.start).not.toHaveBeenCalled();
     expect(mocks.db.workbenchImportJob.updateMany).toHaveBeenLastCalledWith({
-      where: { id: "job-1", status: "queued" }, data: { phase: STORAGE_WAITING },
+      where: { id: "job-1", status: "queued" }, data: { phase: expect.stringContaining(STORAGE_WAITING) },
     });
-    capacity.mockResolvedValue({ bavail: CAMI_PREPARATION_BYTES + IMPORT_STORAGE_HEADROOM, bsize: 1 } as Awaited<ReturnType<typeof fs.statfs>>);
+    capacity.mockResolvedValue({ bavail: CAMI_TEST_BUDGET + IMPORT_STORAGE_HEADROOM, bsize: 1 } as Awaited<ReturnType<typeof fs.statfs>>);
     await runWorkbenchImportJob("job-1");
     expect(provider.start).toHaveBeenCalledTimes(1);
   });
@@ -159,7 +164,7 @@ describe("workbench import jobs", () => {
   it("stops an active transfer when the periodic check detects low storage", async () => {
     vi.useFakeTimers();
     camiJob();
-    const capacity = vi.spyOn(fs, "statfs").mockResolvedValue({ bavail: CAMI_PREPARATION_BYTES + IMPORT_STORAGE_HEADROOM, bsize: 1 } as Awaited<ReturnType<typeof fs.statfs>>);
+    const capacity = vi.spyOn(fs, "statfs").mockResolvedValue({ bavail: CAMI_TEST_BUDGET + IMPORT_STORAGE_HEADROOM, bsize: 1 } as Awaited<ReturnType<typeof fs.statfs>>);
     let started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });
     vi.mocked(provider.start).mockImplementationOnce(async context => {
@@ -175,7 +180,7 @@ describe("workbench import jobs", () => {
     await running;
     expect(mocks.db.workbenchImportJob.updateMany).toHaveBeenLastCalledWith({
       where: { id: "job-1", status: "running", NOT: { phase: "cancelling" } },
-      data: expect.objectContaining({ status: "queued", phase: STORAGE_WAITING }),
+      data: expect.objectContaining({ status: "queued", phase: expect.stringContaining(STORAGE_WAITING) }),
     });
     expect(mocks.db.workbenchDataset.upsert).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
@@ -183,7 +188,7 @@ describe("workbench import jobs", () => {
 
   it.each(["preflight", "ENOSPC", "EDQUOT"])("cleans partial files before requeuing after %s", async failure => {
     camiJob();
-    vi.spyOn(fs, "statfs").mockResolvedValue({ bavail: CAMI_PREPARATION_BYTES + IMPORT_STORAGE_HEADROOM, bsize: 1 } as Awaited<ReturnType<typeof fs.statfs>>);
+    vi.spyOn(fs, "statfs").mockResolvedValue({ bavail: CAMI_TEST_BUDGET + IMPORT_STORAGE_HEADROOM, bsize: 1 } as Awaited<ReturnType<typeof fs.statfs>>);
     const storage = await mocks.resolveWorkbenchImportStorage();
     vi.mocked(provider.start).mockImplementationOnce(async () => {
       await fs.mkdir(storage.cacheDir, { recursive: true });
@@ -203,6 +208,42 @@ describe("workbench import jobs", () => {
       data: expect.objectContaining({ status: "queued", phase: STORAGE_WAITING, progress: 0, error: null }),
     });
     expect(mocks.db.workbenchDataset.upsert).not.toHaveBeenCalled();
+  });
+
+  it("remembers a larger preparation requirement instead of repeatedly downloading the same archive", async () => {
+    const job = camiJob();
+    vi.spyOn(fs, "statfs").mockResolvedValue({ bavail: CAMI_TEST_BUDGET + IMPORT_STORAGE_HEADROOM, bsize: 1 } as Awaited<ReturnType<typeof fs.statfs>>);
+    const storage = await mocks.resolveWorkbenchImportStorage();
+    const partialBytes = 1024 * 1024;
+    const nextStageBytes = 20 * 1024 ** 3;
+    vi.mocked(provider.start).mockImplementationOnce(async () => {
+      await fs.mkdir(storage.cacheDir, { recursive: true });
+      await fs.writeFile(path.join(storage.cacheDir, "partial"), Buffer.alloc(partialBytes));
+      throw new ImportStorageUnavailable(STORAGE_WAITING, nextStageBytes);
+    });
+
+    await runWorkbenchImportJob("job-1");
+    expect(await readImportStorageRequirement(storage.jobDir)).toBe(partialBytes + nextStageBytes);
+    await expect(fs.access(storage.cacheDir)).rejects.toThrow();
+    await runWorkbenchImportJob("job-1");
+    expect(provider.start).toHaveBeenCalledTimes(1);
+    expect(mocks.db.workbenchImportJob.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "job-1", status: "queued" },
+      data: { phase: expect.stringContaining("21.01 GiB") },
+    });
+    expect(job.preview).toBe(JSON.stringify({ assets: [{ bytes: CAMI_ARCHIVE_BYTES }] }));
+    expect(mocks.db.workbenchDataset.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each([null, {}, { assets: [] }, { assets: [{ bytes: 0 }] }, { assets: [{ bytes: "5" }] }])("fails an invalid stored CAMI preview instead of queueing forever for space: %j", async preview => {
+    camiJob(preview);
+    await runWorkbenchImportJob("job-1");
+    expect(provider.start).not.toHaveBeenCalled();
+    expect(mocks.resolveWorkbenchStorageBase).not.toHaveBeenCalled();
+    expect(mocks.db.workbenchImportJob.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "job-1", status: "running", NOT: { phase: "cancelling" } },
+      data: expect.objectContaining({ status: "error", phase: "failed", error: expect.stringContaining("CAMI archive size") }),
+    });
   });
 
   it("creates jobs in the user's lazily-created default workspace", async () => {

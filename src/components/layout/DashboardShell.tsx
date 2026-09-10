@@ -42,7 +42,12 @@ interface DashboardShellProps {
 
 const subscribeToEmbedState = () => () => {};
 
-function derivePageTitle(pathname: string, section: string | null): string | null {
+function derivePageTitle(
+  pathname: string,
+  section: string | null,
+  view: string | null,
+  pipeline: string | null
+): string | null {
   if (pathname === "/workbench" || pathname === "/workbench/data") return "Canvas (experimental)";
   if (pathname === "/workbench/imports") return "Add sequencing data";
   if (pathname.startsWith("/sequencing/")) return "Sequencing entry";
@@ -51,7 +56,7 @@ function derivePageTitle(pathname: string, section: string | null): string | nul
   if (pathname === "/workbench/results") return "Workbench Results";
 
   // Orders
-  if (pathname === "/orders/import") return "Data source";
+  if (pathname === "/orders/import") return "Files / Import data with SeqDesk";
   if (pathname === "/orders") return null; // list page, no title needed
   if (pathname.match(/^\/orders\/new/)) return "Add sequencing data";
   const orderMatch = pathname.match(/^\/orders\/([^/]+)(\/(.+))?$/);
@@ -59,10 +64,16 @@ function derivePageTitle(pathname: string, section: string | null): string | nul
     const subview = orderMatch[3];
     if (subview === "samples-files") return "Files";
     if (subview === "pipelines") return "Pipelines";
-    if (subview === "files" || subview === "sequencing") return "Sequencing Data";
+    if (subview === "files") return "Files";
+    if (subview === "sequencing") {
+      if (view === "analysis" || pipeline) return "Pipelines";
+      if (view === "discover") return "Files / Facility file association";
+      if (view === "stream") return "Files / Live sequencer";
+      return "Files / Facility processing";
+    }
     if (subview === "studies") return "Studies";
     if (subview === "edit") return "Edit sequencing metadata";
-    if (section === "reads") return "Sequencing Data";
+    if (section === "reads") return "Files";
     return "Sequencing data details";
   }
 
@@ -108,6 +119,7 @@ function DashboardContent({
   const isOrdersView = pathname.startsWith("/orders");
   const isStudiesView = pathname.startsWith("/studies");
   const isAdminView = pathname.startsWith("/admin") || pathname.startsWith("/messages");
+  const isReportPage = /^\/explore\/reports\/[^/]+\/?$/.test(pathname);
   const currentStudyId = entityContext.entityType === "study" ? entityContext.entityId : null;
   const currentOrderId = entityContext.entityType === "order" ? entityContext.entityId : null;
   const currentStudyTitle = entityContext.entityType === "study" ? entityContext.entityData?.label ?? null : null;
@@ -117,7 +129,12 @@ function DashboardContent({
   const pageTitle =
     pathname.startsWith("/workbench")
       ? null
-      : derivePageTitle(pathname, section);
+      : derivePageTitle(
+          pathname,
+          section,
+          searchParams.get("view"),
+          searchParams.get("pipeline")
+        );
   const selectorType = isOrdersView ? "orders" : isStudiesView ? "studies" : null;
   const hasTopbarSelector = Boolean(selectorType);
   const centerTopbarTitle = Boolean(hasTopbarSelector && pageTitle);
@@ -195,7 +212,13 @@ function DashboardContent({
 
       <div
         className={cn(
-          "min-h-screen pb-[calc(var(--seqdesk-footer-height,2.5rem)+2rem)] transition-all duration-300",
+          "min-h-screen transition-all duration-300",
+          // Report panels are viewport-height and sticky. Extra space outside
+          // their page pulls them above the footer at the end of a long report.
+          // The report's PageContainer already supplies its content padding.
+          isReportPage
+            ? "pb-[var(--seqdesk-footer-height,2.5rem)]"
+            : "pb-[calc(var(--seqdesk-footer-height,2.5rem)+2rem)]",
           // Desktop: offset by sidebar width
           "md:ml-[var(--sidebar-offset)] md:transition-[margin-left]",
         )}

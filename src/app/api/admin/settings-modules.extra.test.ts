@@ -381,15 +381,9 @@ describe("admin settings and modules coverage quick wins", () => {
     });
 
     mocks.db.siteSettings.findUnique.mockRejectedValueOnce(new Error("db down"));
-    const fallback = await getSequencingFiles();
-    expect(fallback.status).toBe(200);
-    expect(await fallback.json()).toEqual({
-      dataBasePath: "",
-      configuredDataBasePath: "",
-      dataBasePathSource: "none",
-      dataBasePathIsImplicit: false,
-      config: defaultSequencingFilesConfig,
-    });
+    const unavailable = await getSequencingFiles();
+    expect(unavailable.status).toBe(500);
+    expect(await unavailable.json()).toEqual({ error: "Failed to load data storage settings" });
 
     mocks.getServerSession.mockResolvedValueOnce({ user: { id: "user-1", role: "RESEARCHER" } });
     const unauthorizedPut = await putSequencingFiles(

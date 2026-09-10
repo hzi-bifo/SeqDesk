@@ -82,6 +82,23 @@
     },
     {
       "id": "bracken_abundance",
+      "table": {
+        "label": "Taxonomic read counts and abundance",
+        "description": "Bracken estimates per taxon. Abundance is a fraction from 0 to 1, not a percentage.",
+        "tableKind": "taxon-profile-long",
+        "schemaId": "bracken.abundance",
+        "schemaVersion": "1",
+        "rowEntity": "sample-taxon",
+        "format": "tsv",
+        "roles": { "taxon": "name", "taxon_id": "taxonomy_id", "rank": "taxonomy_lvl", "count": "new_est_reads", "value": "fraction_total_reads" },
+        "columns": {
+          "name": { "type": "string", "label": "Taxon", "required": true },
+          "taxonomy_id": { "type": "string", "label": "Taxonomy ID", "required": true },
+          "taxonomy_lvl": { "type": "string", "label": "Taxonomic rank", "required": true },
+          "new_est_reads": { "type": "number", "label": "Estimated reads", "unit": "reads", "required": true },
+          "fraction_total_reads": { "type": "number", "label": "Relative abundance", "unit": "fraction", "required": true }
+        }
+      },
       "scope": "sample",
       "destination": "run_artifact",
       "type": "artifact",

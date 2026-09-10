@@ -98,7 +98,7 @@ export function UpdateBanner() {
             )}
           </span>
           <Link
-            href="/admin/settings"
+            href="/admin/settings/system"
             className="ml-1 text-sm font-medium text-primary hover:underline shrink-0"
           >
             {restartPending ? "View status" : "Update now"}

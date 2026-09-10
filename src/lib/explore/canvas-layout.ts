@@ -3,7 +3,7 @@
  * selection and the layered layout. No server imports here so the React Flow
  * component can use it.
  */
-import type { ExploreColumn, ExploreRole, ExploreRoleMap, ExploreRowData } from "./types";
+import type { ExploreColumn, ExploreRole, ExploreRoleMap, ExploreRowData, ExploreSchema } from "./types";
 
 /** A JSON-schema-like description of an analysis' parameters, as kits declare it. */
 export interface CanvasParamsSchema {
@@ -49,6 +49,7 @@ export type CanvasDatasetData = {
   previewColumns: ExploreColumn[];
   /** All columns in schema order, for the expanded card. */
   columns: ExploreColumn[];
+  schema?: ExploreSchema;
   roles: ExploreRoleMap;
   previewRows: ExploreRowData[];
   views: Array<"subject-timeline" | "heatmap">;
@@ -60,6 +61,8 @@ export type CanvasDatasetData = {
   roleHints?: CanvasRoleHint[];
   /** For outputs: true when the report page shows this table. */
   inReport?: boolean;
+  /** Guided outputs require review before entering an automatically assembled page. */
+  autoInclude?: boolean;
   /** True while the analysis that writes this dataset is running again. */
   refreshing?: boolean;
 }
@@ -109,6 +112,7 @@ export type CanvasFigureData = {
   unchanged?: boolean;
   /** True when the report page shows this figure. */
   inReport?: boolean;
+  autoInclude?: boolean;
   refreshing?: boolean;
 }
 

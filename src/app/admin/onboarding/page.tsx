@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   ArrowRight,
@@ -16,32 +16,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { OnboardingStatus } from "@/lib/onboarding";
-
-const PROFILE_COPY = {
-  "sequencing-center": {
-    label: "Sequencing center",
-    destination: "/orders",
-    journey: "a test request from intake through delivery",
-  },
-  "shared-lab": {
-    label: "Shared lab",
-    destination: "/orders",
-    journey: "one shared project with another lab member",
-  },
-  "research-workbench": {
-    label: "Research workbench",
-    destination: "/workbench/data",
-    journey: "a small import or upload followed by a starter analysis",
-  },
-} as const;
+import { Skeleton } from "@/components/ui/skeleton";
+import { ONBOARDING_SECTIONS, type OnboardingStatus } from "@/lib/onboarding";
 
 export default function OnboardingPage() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loadError, setLoadError] = useState("");
   const [updatingItemId, setUpdatingItemId] = useState<string | null>(null);
   const [verifying, setVerifying] = useState(false);
-  const automaticVerificationStarted = useRef(false);
 
   const load = useCallback(async () => {
     setLoadError("");
@@ -85,22 +67,8 @@ export default function OnboardingPage() {
     }
   }, []);
 
-  useEffect(() => {
-    if (
-      !status ||
-      automaticVerificationStarted.current ||
-      !status.items.some(
-        (item) => item.completionMode === "automatic" && !item.complete
-      )
-    ) {
-      return;
-    }
-    automaticVerificationStarted.current = true;
-    void verifyAutomaticItems();
-  }, [status, verifyAutomaticItems]);
-
   const progress = useMemo(
-    () => (status ? Math.round((status.completedCount / status.totalCount) * 100) : 0),
+    () => (status?.totalCount ? Math.round((status.completedCount / status.totalCount) * 100) : 0),
     [status]
   );
 
@@ -125,9 +93,11 @@ export default function OnboardingPage() {
 
   if (!status && !loadError) {
     return (
-      <PageContainer className="flex min-h-[calc(100vh-4rem)] items-center justify-center">
-        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <Loader2 className="h-5 w-5 animate-spin" /> Loading setup checklist…
+      <PageContainer>
+        <div role="status" aria-label="Loading setup checklist" className="space-y-6 py-6">
+          <span className="sr-only">Loading setup checklist…</span>
+          <Skeleton className="h-8 w-64" /><Skeleton className="h-4 w-full max-w-xl" />
+          {[0, 1, 2].map(index => <Skeleton key={index} className="h-32 w-full" />)}
         </div>
       </PageContainer>
     );
@@ -149,20 +119,18 @@ export default function OnboardingPage() {
     );
   }
 
-  const profile = PROFILE_COPY[status.profile];
-
   return (
     <PageContainer>
       <div className="space-y-6 py-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="mb-2 flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <ClipboardCheck className="h-4 w-4" /> {profile.label} setup
+              <ClipboardCheck className="h-4 w-4" /> Application settings
             </div>
-            <h1 className="text-2xl font-semibold tracking-tight">Finish setting up SeqDesk</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Setup checklist</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Confirm the operational choices that cannot be safely guessed by the installer. This
-              checklist remains available under Settings after required setup is complete.
+              A checklist for your enabled modules, all in the same SeqDesk application.
+              Required checks confirm operational readiness; recommendations help your team get started.
             </p>
           </div>
           <div className="min-w-48 space-y-3">
@@ -172,7 +140,7 @@ export default function OnboardingPage() {
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-secondary">
               <div
-                className="h-full rounded-full bg-primary transition-all"
+                className="h-full rounded-full bg-primary transition-all motion-reduce:transition-none"
                 style={{ width: `${progress}%` }}
               />
             </div>
@@ -184,16 +152,17 @@ export default function OnboardingPage() {
                 size="sm"
                 className="w-full"
                 onClick={() => void verifyAutomaticItems()}
-                disabled={verifying}
+                disabled={verifying || updatingItemId !== null}
               >
                 {verifying ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <RotateCw className="mr-2 h-4 w-4" />
                 )}
-                {verifying ? "Checking…" : "Run checks again"}
+                {verifying ? "Checking…" : "Check readiness"}
               </Button>
             )}
+            <p className="text-xs text-muted-foreground">Checks do not install software or download data.</p>
           </div>
         </div>
 
@@ -213,17 +182,26 @@ export default function OnboardingPage() {
         )}
 
         {loadError && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             {loadError}
           </div>
         )}
 
-        <div className="space-y-3">
-          {status.items.map((item) => {
+        <div className="space-y-8">
+          {Object.entries(ONBOARDING_SECTIONS).map(([sectionId, section]) => {
+            const sectionItems = status.items.filter(item => (item.section ?? "essentials") === sectionId);
+            if (!sectionItems.length) return null;
+            return <section key={sectionId} aria-labelledby={`setup-${sectionId}`} className="space-y-3">
+              <div>
+                <h2 id={`setup-${sectionId}`} className="text-lg font-semibold">{section.label}</h2>
+                <p className="text-sm text-muted-foreground">{section.description}</p>
+              </div>
+          {sectionItems.map((item) => {
             const automatic = item.completionMode === "automatic";
             return (
               <Card
                 key={item.id}
+                id={item.id}
                 className={
                   item.complete ? "border-emerald-200 bg-emerald-50/30" : ""
                 }
@@ -239,7 +217,7 @@ export default function OnboardingPage() {
                     <Checkbox
                       id={item.id}
                       checked={item.complete}
-                      disabled={updatingItemId !== null}
+                      disabled={updatingItemId !== null || verifying}
                       onCheckedChange={(checked) =>
                         void setItem(item.id, checked === true)
                       }
@@ -308,6 +286,8 @@ export default function OnboardingPage() {
               </Card>
             );
           })}
+            </section>;
+          })}
         </div>
 
         {status.complete && (
@@ -316,16 +296,16 @@ export default function OnboardingPage() {
               <div className="flex gap-3">
                 <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-700" />
                 <div>
-                  <p className="font-medium text-emerald-950">Required setup is complete</p>
+                  <p className="font-medium text-emerald-950">{status.required ? "Required setup is complete" : "SeqDesk is available"}</p>
                   <p className="mt-1 text-sm text-emerald-800">
                     {status.recommendationsComplete
-                      ? `The recommended first journey is ${profile.journey}.`
-                      : "SeqDesk is available to members. You can finish the remaining recommendations later."}
+                      ? "Your checklist is complete. Add sequencing data, organize studies and use the modules you have enabled."
+                      : "SeqDesk is available to members. You can finish the remaining checklist items later."}
                   </p>
                 </div>
               </div>
               <Button asChild>
-                <Link href={profile.destination}>Continue to SeqDesk</Link>
+                <Link href="/orders">Continue to SeqDesk</Link>
               </Button>
             </CardContent>
           </Card>

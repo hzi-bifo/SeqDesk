@@ -414,6 +414,7 @@ export async function listPipelineRunsForOperator(args: {
   status?: string | null;
   studyId?: string | null;
   orderId?: string | null;
+  sampleId?: string | null;
   publishedOnly?: boolean;
   limit?: number;
   offset?: number;
@@ -464,6 +465,14 @@ export async function listPipelineRunsForOperator(args: {
   }
   if (args.orderId) {
     where.orderId = args.orderId;
+  }
+  if (args.sampleId) {
+    // inputSampleIds is serialized JSON. Match a complete quoted ID, not an
+    // ID prefix. Legacy order-wide runs have no explicit selection.
+    andFilters.push({ OR: [
+      { inputSampleIds: null },
+      { inputSampleIds: { contains: JSON.stringify(args.sampleId) } },
+    ] });
   }
   if (andFilters.length > 0) {
     where.AND = andFilters;

@@ -52,6 +52,7 @@ export async function GET(request: NextRequest) {
       status: searchParams.get('status'),
       studyId: searchParams.get('studyId'),
       orderId: searchParams.get('orderId'),
+      sampleId: searchParams.get('sampleId'),
       publishedOnly,
       limit: parseInt(searchParams.get('limit') || '50', 10),
       offset: parseInt(searchParams.get('offset') || '0', 10),

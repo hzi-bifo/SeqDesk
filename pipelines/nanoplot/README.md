@@ -25,6 +25,14 @@ For each sample's long-read FASTQ file, NanoPlot computes and reports:
 
 A run-level summary TSV combines the per-sample metrics.
 
+The package declares that TSV as a typed `sample-summary` table in its manifest.
+The shared report data picker offers it for tables and charts using the declared
+labels and units (`reads`, `bp`, `Phred`); no NanoPlot-specific report UI is needed.
+Each row summarizes one sample. A chart of mean lengths across samples must not
+be interpreted as a distribution of individual read lengths; use the original
+NanoPlot HTML report for those plots. Existing compatible summary TSV artifacts
+can be used after the package declaration is updated without rerunning NanoPlot.
+
 ## Dependencies
 
 - `NanoPlot` (installed via Conda from Bioconda, `nanoplot=1.42.0`), with

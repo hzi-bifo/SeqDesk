@@ -1235,9 +1235,9 @@ export default function FormBuilderPage() {
 
     <PageContainer>
       <div className="mb-4 mt-6">
-        <h1 className="text-xl font-semibold">Sequencing Order Configuration</h1>
+        <h1 className="text-xl font-semibold">Sequencing data fields</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Define what information users provide when creating sequencing orders
+          Configure shared sequencing-data and sample metadata, including fields used by facility request forms.
         </p>
       </div>
 

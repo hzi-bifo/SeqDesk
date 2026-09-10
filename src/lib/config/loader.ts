@@ -29,6 +29,9 @@ const DEFAULT_CONFIG: SeqDeskConfig = {
   site: {
     name: 'SeqDesk',
     dataBasePath: './data',
+    // Keep optional identity fields in the source-tracking tree so a contact
+    // address managed by a file/environment cannot be shadowed by a UI save.
+    contactEmail: undefined,
   },
   pipelines: {
     enabled: false,

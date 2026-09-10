@@ -1,5 +1,5 @@
 import type { DeploymentProfileId } from "@/lib/deployment-profile";
-import { getOnboardingItems, ONBOARDING_SCHEMA_VERSION } from "./definitions";
+import { getOnboardingItems, ONBOARDING_SCHEMA_VERSION, ONBOARDING_COMPLETION_ALIASES, type OnboardingCapabilities } from "./definitions";
 import type {
   OnboardingAutomaticCheck,
   OnboardingAutomaticVerification,
@@ -87,15 +87,19 @@ export function buildOnboardingStatus(args: {
   profile: DeploymentProfileId;
   requiredVersion: number;
   stored?: StoredOnboardingState;
+  capabilities?: OnboardingCapabilities;
   automaticChecks?: Partial<Record<string, OnboardingAutomaticCheck>>;
 }): OnboardingStatus {
-  const definitions = getOnboardingItems(args.profile);
+  const definitions = getOnboardingItems(args.profile, args.capabilities);
   const storedItems = args.stored?.items ?? {};
   const items = definitions.map((item) => {
     const completionMode: "manual" | "automatic" =
       item.completionMode ?? "manual";
     const automaticCheck = args.automaticChecks?.[item.id];
-    const completion = storedItems[item.id];
+    // Keep equivalent confirmations from the former installation-preset checklists.
+    // Automatic evidence is never migrated from checkboxes or renamed checks.
+    const completion = storedItems[item.id] ?? ONBOARDING_COMPLETION_ALIASES[item.id]
+      ?.map(id => storedItems[id]).find(Boolean);
     return {
       ...item,
       completionMode,

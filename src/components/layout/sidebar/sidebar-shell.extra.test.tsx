@@ -345,7 +345,9 @@ describe("sidebar shell quick wins", () => {
     );
 
     expect(screen.getByText("Sequencing data")).toBeTruthy();
-    expect(screen.getByText("Sequencing Data")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /^Files/ }).getAttribute("href")).toBe(
+      "/orders/order-1/samples-files"
+    );
     expect(screen.getByText("Researcher")).toBeTruthy();
     expect(screen.queryByRole("link", { name: /Application Settings/i })).toBeNull();
     expect(screen.queryByText("Support")).toBeNull();
@@ -363,8 +365,12 @@ describe("sidebar shell quick wins", () => {
       </SidebarContext.Provider>
     );
 
-    expect(screen.getByRole("button", { name: "Sequencing data" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Studies" })).toBeTruthy();
+    for (const name of ["Sequencing data", "Studies"]) {
+      const tab = screen.getByRole("button", { name });
+      expect(tab.className).toContain("whitespace-nowrap");
+      expect(tab.className).toContain("flex-auto");
+      expect(tab.querySelector("svg")?.classList.contains("shrink-0")).toBe(true);
+    }
     expect(screen.queryByRole("link", { name: /Canvas/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /Lab/i })).toBeNull();
     expect(

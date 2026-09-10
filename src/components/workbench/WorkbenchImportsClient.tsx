@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
+  ArrowRight,
+  Bell,
   CheckCircle2,
   Database,
   Download,
-  Globe2,
+  FileSearch,
+  FolderOpen,
   Loader2,
   PackageCheck,
   PackagePlus,
@@ -16,6 +20,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -29,6 +35,8 @@ import { CamiImportCard } from "./CamiImportCard";
 import type { ImportCollection } from "@/lib/workbench/import-collection";
 import { ImportFileDetails } from "./ImportFileDetails";
 import { ImportProgress } from "./ImportProgress";
+import { CancelImportButton } from "./CancelImportButton";
+import { ImportModuleHeader, ImportStepHeading, importModuleTheme } from "./ImportModuleUI";
 
 interface ImporterSummary {
   id: string;
@@ -198,6 +206,8 @@ export function WorkbenchImportsClient({
   const importRequestKey = useRef("");
   const enaImportRequestKey = useRef("");
   const moduleProviderId = source === "cami" ? "cami-benchmark" : source === "sra" ? enaProviderId : null;
+  const sourceTheme = source === "sra" ? importModuleTheme.sra : importModuleTheme.cami;
+  const collectionOrderId = collection ? jobs.find(job => job.collectionOrderId && job.request?.collection?.key === collection.key)?.collectionOrderId : undefined;
   // Module selection is not a job-history page. Recover only active transfers
   // for this module/collection, and retain results started here for their links.
   const visibleJobs = moduleProviderId ? jobs.filter(job => Boolean(collection) && job.providerId === moduleProviderId && (
@@ -448,11 +458,10 @@ export function WorkbenchImportsClient({
     referenceStoreItem.status.state === "setup-needed";
 
   return (
-    <div className="space-y-6">
-      {!source && <a className="text-sm underline" href="/orders">View sequencing data</a>}
+    <div className="@container space-y-6">
+      {!source && <Link className="text-sm underline" href="/orders">View sequencing data</Link>}
       {(!source || source === "cami") && <CamiImportCard initiallyOpen={source === "cami"} onStarted={trackStartedImport} onQueued={onCollectionReady} collection={collection} enablePolling={enablePolling} />}
-      {collection && jobs.some(job => job.collectionOrderId && job.request?.collection?.key === collection.key) && <div className="rounded border bg-muted/20 p-4"><a className="font-medium underline" href={`/orders/${jobs.find(job => job.collectionOrderId && job.request?.collection?.key === collection.key)!.collectionOrderId}/samples-files`}>Open {collection.name} · Files</a><p className="mt-2 text-sm">You can leave this page. Imports continue on the server; keep your local server and computer running. Completion and failure notifications appear in SeqDesk.</p></div>}
-      {(!source || source === "sra") && <section className="rounded-lg border border-border bg-card">
+      {(!source || source === "sra") && <section aria-label="SRA / ENA import" className="@container overflow-hidden rounded-xl border bg-card">
         {!source && <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -473,30 +482,44 @@ export function WorkbenchImportsClient({
           </Button>
         </div>}
 
-        <div className="border-b border-border p-4">
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(340px,0.9fr)]">
-            <div className="space-y-4">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Globe2 className="h-4 w-4 text-teal-700" />
-                  <h3 className="text-base font-semibold text-foreground">
-                    {source ? "SRA / ENA import module" : enaImporter?.label || "ENA FASTQ by accession"}
-                  </h3>
-                  <WorkbenchStatusBadge tone="accent">No local tool required</WorkbenchStatusBadge>
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Enter a public ENA, SRA, or DRA run, sample, or project accession. SeqDesk
-                  previews the real archive files before importing sequencing data and metadata into SeqDesk.
-                  Repository study and BioProject metadata are retained as provenance; no SeqDesk study is created.
-                </p>
+        <ImportModuleHeader source="sra" title={source ? "SRA / ENA import module" : enaImporter?.label || "ENA FASTQ by accession"} description="Find public sequencing reads by run, sample or project accession. Preview the files, then import reads with their original source metadata.">
+          <Badge variant="outline" className="border-sky-200 bg-card/60 font-normal dark:border-sky-800">Single & paired-end FASTQ</Badge>
+          <Badge variant="outline" className="border-sky-200 bg-card/60 font-normal dark:border-sky-800">No local tool required</Badge>
+        </ImportModuleHeader>
+        <div className="p-5 sm:p-6">
+          <div className="grid items-start gap-6 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
+            <div className="min-w-0 space-y-5">
+              <ImportStepHeading source="sra" step={1} title="Find sequencing reads" />
+              <div className="grid gap-3 @lg:grid-cols-[minmax(0,1fr)_120px]">
+                <label className="min-w-0 space-y-1.5">
+                  <span className="text-sm font-medium">Accession</span>
+                  <Input
+                    className="h-10 bg-card font-mono focus-visible:ring-sky-600/30"
+                    value={enaAccession}
+                    onChange={(event) => setEnaAccession(event.target.value.toUpperCase())}
+                    placeholder="ERR…, SRR…, DRR…, ERS…, or PRJEB…"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">Max files</span>
+                  <Input
+                    className="h-10 bg-card focus-visible:ring-sky-600/30"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={enaMaxFiles}
+                    onChange={(event) => setEnaMaxFiles(Number(event.target.value))}
+                  />
+                </label>
               </div>
-              <div className="rounded-lg border border-border bg-muted/30 p-3">
+              <p className="text-xs leading-relaxed text-muted-foreground">Accepts public ENA, SRA and DRA accessions. Repository study and BioProject metadata are retained as provenance; no SeqDesk study is created.</p>
+              <div className="space-y-3 rounded-xl border bg-muted/20 p-4">
                 <p className="text-sm font-medium">Try a public example</p>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="text-xs leading-relaxed text-muted-foreground">
                   Choose an example, then select Preview files. Examples set a two-file limit.
                   Previewing fetches archive metadata only; files are downloaded when you import.
                 </p>
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="grid gap-2">
                   {[
                     { accession: "ERR164407", label: "Marine metagenome run" },
                     { accession: "DRR099973", label: "Mouse gut metagenome run" },
@@ -507,7 +530,7 @@ export function WorkbenchImportsClient({
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-auto flex-col items-start gap-0.5 py-2 text-left whitespace-normal"
+                      className={cn("h-auto min-h-14 flex-row items-center justify-between gap-3 px-3 py-2.5 text-left whitespace-normal hover:border-sky-300 dark:hover:border-sky-700", enaAccession === example.accession && "border-sky-300 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/30")}
                       disabled={enaLoadingPreview || enaStarting}
                       onClick={() => {
                         setEnaAccession(example.accession);
@@ -515,91 +538,88 @@ export function WorkbenchImportsClient({
                         setEnaError(null);
                       }}
                     >
-                      <span>{example.label}</span>
-                      <span className="font-mono text-xs text-muted-foreground">{example.accession}</span>
+                      <span className="min-w-0 space-y-0.5"><span className="block">{example.label}</span><span className="block font-mono text-xs text-muted-foreground">{example.accession}</span></span>
+                      <ArrowRight className="size-4 text-sky-700 dark:text-sky-300" aria-hidden="true" />
                     </Button>
                   ))}
                 </div>
               </div>
-              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_120px]">
-                <label className="space-y-1.5">
-                  <span className="text-xs font-medium text-muted-foreground">Accession</span>
-                  <Input
-                    value={enaAccession}
-                    onChange={(event) => setEnaAccession(event.target.value.toUpperCase())}
-                    placeholder="ERR…, SRR…, DRR…, ERS…, or PRJEB…"
-                  />
-                </label>
-                <label className="space-y-1.5">
-                  <span className="text-xs font-medium text-muted-foreground">Max files</span>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={enaMaxFiles}
-                    onChange={(event) => setEnaMaxFiles(Number(event.target.value))}
-                  />
-                </label>
-              </div>
               {enaError && (
-                <div className="flex gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>{enaError}</span>
+                <div role="alert" className="flex gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 break-words">{enaError}</span>
                 </div>
               )}
               <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
+                  className={cn("h-10", importModuleTheme.sra.action)}
                   onClick={() => void runEnaPreview()}
                   disabled={enaLoadingPreview || !enaAccession.trim()}
                 >
-                  {enaLoadingPreview ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                  {enaLoadingPreview ? <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" /> : <Search className="h-4 w-4" aria-hidden="true" />}
                   Preview files
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void startEnaImport()}
-                  disabled={!enaPreview || enaStarting}
-                >
-                  {enaStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                  Import sequencing data
                 </Button>
               </div>
             </div>
 
-            <div className="rounded-lg border border-border bg-background p-4">
-              {enaPreview ? (
+            <section aria-label="SRA file preview" aria-busy={enaLoadingPreview} className="min-w-0 overflow-hidden rounded-xl border border-sky-200 dark:border-sky-800">
+              <div className={cn("space-y-1 border-b p-4", importModuleTheme.sra.surface, importModuleTheme.sra.border)}>
+                <ImportStepHeading source="sra" step={2} title="Review files" />
+              </div>
+              <div className="space-y-4 p-4">
+              {enaLoadingPreview ? (
+                <div role="status" className="space-y-4">
+                  <p className="flex items-center gap-2 text-sm text-sky-700 dark:text-sky-300"><Loader2 className="size-4 shrink-0 motion-safe:animate-spin" aria-hidden="true" />Looking up archive files…</p>
+                  {[0, 1, 2].map(index => <div key={index} aria-hidden="true" className="space-y-3 rounded-lg border p-3"><Skeleton className="h-4 w-3/4 bg-sky-100 dark:bg-sky-900/40 motion-reduce:animate-none" /><Skeleton className="h-3 w-1/2 motion-reduce:animate-none" /></div>)}
+                </div>
+              ) : enaPreview ? (
                 <div className="space-y-3">
-                  <p className="text-sm font-medium text-foreground">
+                  <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <CheckCircle2 className="size-4 shrink-0 text-sky-700 dark:text-sky-300" aria-hidden="true" />
                     {enaPreview.summary.selectedCount} FASTQ file(s) selected
                   </p>
                   {enaPreview.warnings?.map((warning) => (
-                    <p key={warning} className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    <p key={warning} className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                       {warning}
                     </p>
                   ))}
-                  <div className="max-h-48 space-y-2 overflow-auto">
+                  <div className="max-h-96 space-y-3 overflow-auto">
                     {enaPreview.files.map((file) => (
-                      <div key={`${file.runAccession}:${file.filename}`} className="rounded border border-border px-3 py-2">
-                        <p className="truncate text-sm font-medium">{file.filename}</p>
-                        <ImportFileDetails file={{ ...file, sourceMd5: file.md5 }} />
-                        <p className="text-xs text-muted-foreground">
+                      <div key={`${file.runAccession}:${file.filename}`} className="space-y-2 rounded-lg border bg-card p-3">
+                        <p className="break-words text-sm font-medium">{file.filename}</p>
+                        <p className="break-words text-xs leading-relaxed text-muted-foreground">
                           {file.runAccession}
                           {file.scientificName ? ` · ${file.scientificName}` : ""}
                           {file.libraryLayout ? ` · ${file.libraryLayout}` : ""}
                           {file.bytes !== undefined ? ` · ${(file.bytes / 1024 ** 2).toFixed(1)} MiB` : " · size unknown"}
                         </p>
+                        <ImportFileDetails file={{ ...file, sourceMd5: file.md5 }} />
                       </div>
                     ))}
                   </div>
                 </div>
               ) : (
-                <div className="flex min-h-36 items-center justify-center text-center text-sm text-muted-foreground">
-                  Preview archive metadata and file counts before any data is downloaded.
+                <div className="flex min-h-64 flex-col items-center justify-center gap-3 px-3 py-8 text-center">
+                  <span className={cn("flex size-14 items-center justify-center rounded-2xl", importModuleTheme.sra.surface)}><FileSearch className="size-7" strokeWidth={1.5} aria-hidden="true" /></span>
+                  <p className="text-sm font-medium">Your file preview appears here</p>
+                  <p className="max-w-xs text-sm leading-relaxed text-muted-foreground">Preview archive metadata and file counts before any data is downloaded.</p>
                 </div>
               )}
-            </div>
+              </div>
+              <div className="space-y-3 border-t bg-muted/20 p-4">
+                <Button
+                  type="button"
+                  className={cn("h-auto min-h-10 w-full whitespace-normal", importModuleTheme.sra.action)}
+                  onClick={() => void startEnaImport()}
+                  disabled={!enaPreview || enaStarting}
+                >
+                  {enaStarting ? <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
+                  Import sequencing data
+                </Button>
+                <p className="text-xs leading-relaxed text-muted-foreground">Check the files and metadata above before starting your download.</p>
+              </div>
+            </section>
           </div>
         </div>
 
@@ -899,9 +919,17 @@ export function WorkbenchImportsClient({
         )}
       </section>}
 
-      {(!moduleProviderId || visibleJobs.length > 0) && <section className="overflow-hidden rounded-lg border border-border bg-card">
-        <div className="border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold text-foreground">{moduleProviderId ? "Import progress" : "Import jobs"}</h2>
+      {collection && collectionOrderId && <aside className={cn("flex flex-col justify-between gap-4 rounded-xl border p-5 @xl:flex-row", sourceTheme.border, sourceTheme.surface)}>
+        <div className="min-w-0 space-y-2">
+          <p className="flex items-center gap-2 text-sm font-semibold"><Bell className="size-4 shrink-0" aria-hidden="true" />Your imports continue in the background</p>
+          <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">You can leave this page. Imports continue on the server; keep your local server and computer running. Completion and failure notifications appear in SeqDesk.</p>
+        </div>
+        <Button variant="outline" className="h-auto min-h-10 max-w-full self-start whitespace-normal text-left" asChild><Link href={`/orders/${collectionOrderId}/samples-files`}><FolderOpen className="size-4" aria-hidden="true" /><span className="min-w-0 break-words">Open {collection.name} · Files</span><ArrowRight className="size-4" aria-hidden="true" /></Link></Button>
+      </aside>}
+
+      {(!moduleProviderId || visibleJobs.length > 0) && <section aria-label={moduleProviderId ? "Import progress" : "Import jobs"} className="@container overflow-hidden rounded-xl border bg-card">
+        <div className={cn("border-b px-5 py-4", moduleProviderId && sourceTheme.surface)}>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground"><Download className={cn("size-4", moduleProviderId && sourceTheme.text)} aria-hidden="true" />{moduleProviderId ? "Import progress" : "Import jobs"}</h2>
         </div>
         {visibleJobs.length === 0 ? (
           <div className="px-6 py-12 text-center text-sm text-muted-foreground">
@@ -910,7 +938,7 @@ export function WorkbenchImportsClient({
         ) : (
           <div className="divide-y divide-border">
             {visibleJobs.map((job) => (
-              <div key={job.id} className="grid gap-3 px-4 py-4 md:grid-cols-[1.2fr_0.8fr_1fr_1.2fr] md:items-center">
+              <div key={job.id} className="grid gap-3 px-4 py-4 @xl:grid-cols-2 @xl:items-start @4xl:grid-cols-[1.2fr_0.8fr_1.4fr_1.2fr]">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-foreground">{job.providerId}</p>
                   <p className="text-xs text-muted-foreground">{formatDate(job.createdAt)}</p>
@@ -918,11 +946,14 @@ export function WorkbenchImportsClient({
                 <div>
                   <WorkbenchStatusBadge tone={statusTone(job.status)}>{job.status}</WorkbenchStatusBadge>
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  <ImportProgress status={job.status} phase={job.phase} />
+                <div className="min-w-0 text-sm text-muted-foreground">
+                  <ImportProgress status={job.status} phase={job.phase} source={job.providerId === enaProviderId ? "sra" : "cami"} />
                 </div>
-                <div className={cn("text-sm", job.error ? "text-destructive" : "text-muted-foreground")}>
-                  {job.error || (job.scientificRecords ? <span>Imported sequencing data into <a className="underline" href={job.scientificRecords.orderId ? `/orders/${job.scientificRecords.orderId}` : `/sequencing/${job.scientificRecords.sampleId}`}>{job.scientificRecords.orderTitle ?? job.scientificRecords.sampleTitle} — open sequencing data</a>. {job.scientificRecords.studyId ? <a className="underline" href={`/studies/${job.scientificRecords.studyId}`}>{job.scientificRecords.studyTitle} — open study</a> : <>No study created. <a className="underline" href="/studies">Link samples to a study later</a>.</>}</span> : job.resultDatasetId ? "Dataset ready" : job.status === "running" ? "Import continues in the background" : job.status === "queued" ? "Queued on the server" : job.status)}
+                <div className="min-w-0 space-y-3 text-sm">
+                  <div className={job.error ? "text-destructive" : "text-muted-foreground"}>
+                    {job.error || (job.scientificRecords ? <span>Imported sequencing data into <Link className="underline" href={job.scientificRecords.orderId ? `/orders/${job.scientificRecords.orderId}` : `/sequencing/${job.scientificRecords.sampleId}`}>{job.scientificRecords.orderTitle ?? job.scientificRecords.sampleTitle} — open sequencing data</Link>. {job.scientificRecords.studyId ? <Link className="underline" href={`/studies/${job.scientificRecords.studyId}`}>{job.scientificRecords.studyTitle} — open study</Link> : <>No study created. <Link className="underline" href="/studies">Link samples to a study later</Link>.</>}</span> : job.resultDatasetId ? "Dataset ready" : job.phase === "cancelling" ? "Cancellation requested. Waiting for the worker to stop." : job.status === "running" ? "Import continues in the background" : job.status === "queued" ? "Queued on the server" : job.status)}
+                  </div>
+                  <CancelImportButton jobId={job.id} status={job.status} phase={job.phase} />
                 </div>
               </div>
             ))}

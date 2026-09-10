@@ -8,8 +8,9 @@ import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { extract } from "tar-stream";
 import { validateFastqFile } from "./fastq-validation";
+import { benchmarkReadOutputBytes, CAMI_MAX_BYTES, requireImportStorage } from "./import-storage-capacity";
 
-const MAX = 100 * 1024 ** 3;
+const MAX = CAMI_MAX_BYTES;
 /** Never materialize archive paths. Only one anonymous reads file is accepted;
  * ancillary benchmark truth is drained, never published as scientific inputs. */
 export async function extractBenchmarkReads(archive: string, directory: string, signal?: AbortSignal) {
@@ -33,6 +34,8 @@ export async function extractBenchmarkReads(archive: string, directory: string, 
       if (reads && found) throw new Error("Multiple reads files require an explicit collection layout");
       if (reads) {
         found = true;
+        // Only this entry is written to disk; truth/ancillary entries are drained.
+        await requireImportStorage(directory, header.size);
         await pipeline(stream, createWriteStream(output, { flags: "wx" }), { signal });
       } else { for await (const _chunk of stream) { signal?.throwIfAborted(); } }
     })().then(() => next(), error => { tar.destroy(error); });
@@ -76,6 +79,7 @@ export function pairedReadIdentity(header: string, mate: 1 | 2) {
 export async function prepareBenchmarkReads(input: string, technology: "short" | "long", signal?: AbortSignal) {
   const validated = await validateFastqFile(input, { gzip: true, maxExpandedBytes: MAX, signal });
   if (technology === "long") return [{ ...await describeRead(input), records: validated.records }];
+  await requireImportStorage(path.dirname(input), benchmarkReadOutputBytes(validated.expandedBytes));
   const outputs = [path.join(path.dirname(input), "R1.fastq.gz"), path.join(path.dirname(input), "R2.fastq.gz")];
   const writers = outputs.map(() => createGzip({ level: 1 }));
   const tasks = writers.map((writer, i) => pipeline(writer, createWriteStream(outputs[i], { flags: "wx" }), { signal }));
@@ -90,7 +94,9 @@ export async function prepareBenchmarkReads(input: string, technology: "short" |
   async function flush(i: number) {
     if (writeError) throw writeError;
     if (!buffers[i]) return;
-    if (!writers[i].write(buffers[i])) await once(writers[i], "drain");
+    // Preserve input bytes, including non-ASCII read names. UTF-8 re-encoding
+    // here would corrupt those names and invalidate the measured output bound.
+    if (!writers[i].write(buffers[i], "latin1")) await once(writers[i], "drain");
     buffers[i] = "";
   }
   async function line(text: string) {

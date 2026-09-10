@@ -116,11 +116,10 @@ describe("ExecutionTargetControl", () => {
     const onChange = vi.fn();
     render(<ExecutionTargetControl value="default" onChange={onChange} executionPolicy={{ mode: "local", source: "global" }} slurmAvailability={{ success: false, message: "Not available", details: "Missing required SLURM commands: sinfo, sbatch." }} />);
     expect(screen.queryByRole("radio", { name: "Use default" })).toBeNull();
-    expect(screen.getByRole("radio", { name: "SeqDesk server (local)" }).getAttribute("aria-checked")).toBe("true");
-    const slurm = screen.getByRole("radio", { name: "Compute cluster (SLURM)" }) as HTMLButtonElement;
-    expect(slurm.disabled).toBe(true);
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.getByText("Runs on the SeqDesk server")).toBeTruthy();
+    expect(screen.getByText("Compute cluster unavailable").closest("details")?.open).toBe(false);
     expect(screen.getByText(/SLURM is not set up on this SeqDesk server/)).toBeTruthy();
-    expect(document.getElementById(slurm.getAttribute("aria-describedby")!)?.textContent).toContain("required cluster tools are missing or unavailable");
     expect(onChange).not.toHaveBeenCalled();
     expect(isExecutionTargetBlocked({ executionMode: "default", executionPolicy: { mode: "local", source: "global" }, slurmAvailability: { success: false, message: "Not available" } })).toBe(false);
   });

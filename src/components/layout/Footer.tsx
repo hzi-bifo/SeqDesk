@@ -31,6 +31,7 @@ import {
   SidebarContext,
 } from "./SidebarContext";
 import { useFooterNoteValue } from "./FooterNote";
+import { FooterPopover } from "./FooterPopover";
 
 const FOOTER_HEIGHT_PROPERTY = "--seqdesk-footer-height";
 
@@ -486,9 +487,14 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
   const [busyActivityId, setBusyActivityId] = useState<string | null>(null);
   const [busyWorkerAction, setBusyWorkerAction] = useState<BusyWorkerAction | null>(null);
   const [workerActionErrors, setWorkerActionErrors] = useState<Record<string, WorkerActionError>>({});
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [pipelineLoadOpen, setPipelineLoadOpen] = useState(false);
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [openPanel, setOpenPanel] = useState<"details" | "pipelines" | "notifications" | null>(null);
+  const detailsOpen = openPanel === "details";
+  const pipelineLoadOpen = openPanel === "pipelines";
+  const notificationsOpen = openPanel === "notifications";
+  const changePanel = useCallback((panel: "details" | "pipelines" | "notifications", open: boolean) => {
+    // A closing panel must not dismiss the other panel just opened by its trigger.
+    setOpenPanel(current => open ? panel : current === panel ? null : current);
+  }, []);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [notifications, setNotifications] = useState<FooterNotification[]>([]);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
@@ -635,7 +641,7 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
       const enabled = payload.enabled !== false;
       setNotificationsEnabled(enabled);
       if (!enabled) {
-        setNotificationsOpen(false);
+        changePanel("notifications", false);
         setNotifications([]);
         setUnreadNotificationCount(0);
         return;
@@ -648,7 +654,7 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
       setNotifications([]);
       setUnreadNotificationCount(0);
     }
-  }, []);
+  }, [changePanel]);
 
   const hideActivity = async (job: AdminActivityJob) => {
     setBusyActivityId(job.id);
@@ -871,7 +877,7 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
   useEffect(() => {
     if (isDemo) {
       setNotificationsEnabled(false);
-      setNotificationsOpen(false);
+      changePanel("notifications", false);
       setNotifications([]);
       setUnreadNotificationCount(0);
       return;
@@ -890,7 +896,7 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
       cancelled = true;
       stopPolling();
     };
-  }, [isDemo, refreshNotifications]);
+  }, [isDemo, refreshNotifications, changePanel]);
 
   useEffect(() => {
     if (isDemo) {
@@ -964,42 +970,419 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
     });
   };
 
+  const pipelineLoadContent = pipelineLoadOpen && activePipelineLoad && (
+    <div className="space-y-3">
+      <section className="rounded border border-border/70 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="font-medium text-foreground">
+              {formatPlural(activePipelineLoad.totalActive, "job")} active
+            </p>
+            <p className="mt-0.5 text-muted-foreground">
+              {formatPipelineLoadSummary(activePipelineLoad)}
+            </p>
+          </div>
+          {activePipelineLoad.staleActive > 0 && (
+            <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+              {formatPlural(activePipelineLoad.staleActive, "stale job")}
+            </span>
+          )}
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <div>
+            <p className="text-[11px] uppercase text-muted-foreground">Status</p>
+            <p className="mt-0.5 text-foreground">
+              {formatPipelineStatusBreakdown(activePipelineLoad.statuses)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase text-muted-foreground">Execution</p>
+            <p className="mt-0.5 text-foreground">
+              {formatPipelineModeBreakdown(activePipelineLoad.modes)}
+            </p>
+          </div>
+          {activePipelineLoad.staleActive > 0 && (
+            <div className="sm:col-span-2">
+              <p className="text-[11px] uppercase text-muted-foreground">Stale jobs</p>
+              <p className="mt-0.5 text-foreground">
+                {formatPipelineStatusBreakdown(activePipelineLoad.staleByStatus)}
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section>
+        <p className="mb-1.5 text-[11px] uppercase text-muted-foreground">Active jobs</p>
+        {visiblePipelineRuns.length > 0 ? (
+          <div className="space-y-1.5">
+            {visiblePipelineRuns.map((run) => (
+              <div
+                key={run.id}
+                className="rounded border border-border/70 p-2"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <Link
+                      href={`/analysis/${run.id}`}
+                      className="font-mono text-[11px] font-medium text-foreground hover:underline"
+                      onClick={() => changePanel("pipelines", false)}
+                    >
+                      {run.runNumber}
+                    </Link>
+                    <p className="mt-0.5 truncate text-muted-foreground">
+                      {run.pipelineId}
+                      {run.targetLabel ? ` · ${run.targetLabel}` : ""}
+                      {" · "}
+                      {run.userName}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] ${
+                      run.stale
+                        ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                        : "border-border bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {formatPipelineRunElapsed(run)}
+                  </span>
+                </div>
+                <div className="mt-2 grid gap-1 text-muted-foreground sm:grid-cols-2">
+                  <p>
+                    {formatRunMode(run)}
+                    {run.queueStatus ? ` · ${run.queueStatus}` : ""}
+                  </p>
+                  <p>{formatPipelineRunResources(run.resources)}</p>
+                </div>
+                {run.queueReason && (
+                  <p className="mt-1 break-all text-muted-foreground">
+                    Reason: {run.queueReason}
+                  </p>
+                )}
+              </div>
+            ))}
+            {(activePipelineLoad.hiddenRunCount ?? 0) > 0 && (
+              <p className="text-muted-foreground">
+                +{activePipelineLoad.hiddenRunCount} more jobs
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="rounded border border-border/70 p-2 text-muted-foreground">
+            Per-job timing is not available yet.
+          </p>
+        )}
+      </section>
+
+      <section>
+        <p className="mb-1.5 text-[11px] uppercase text-muted-foreground">Users</p>
+        {visiblePipelineUsers.length > 0 ? (
+          <div className="space-y-1">
+            {visiblePipelineUsers.map((user) => (
+              <div
+                key={user.userId}
+                className="rounded border border-border/70 p-2"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-foreground">
+                    {user.name}
+                    {user.email && user.email !== user.name ? (
+                      <span className="text-muted-foreground"> · {user.email}</span>
+                    ) : null}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {formatPipelineUserSummary(user)}
+                  </span>
+                </div>
+              </div>
+            ))}
+            {activePipelineLoad.hiddenUserCount > 0 && (
+              <p className="text-muted-foreground">
+                +{activePipelineLoad.hiddenUserCount} more users
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="rounded border border-border/70 p-2 text-muted-foreground">
+            No active users reported.
+          </p>
+        )}
+      </section>
+    </div>
+  );
+  const detailsContent = detailsOpen && hasDetails && (
+    <div className="space-y-3">
+      {statusWarnings.length > 0 && (
+        <section className="rounded border border-amber-200 bg-amber-50/60 p-2 text-muted-foreground">
+          <div className="mb-1 font-medium text-amber-900">Status warnings</div>
+          <div className="space-y-1">
+            {statusWarnings.map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section>
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="font-medium text-foreground">Admin activity</span>
+          <span className="text-[11px] text-muted-foreground">
+            {visibleJobs.length} active
+          </span>
+        </div>
+        {visibleJobs.length > 0 ? (
+          <div className="space-y-2">
+            {visibleJobs.slice(0, 4).map((job) => {
+              const isBusy = busyActivityId === job.id;
+              const canCancel =
+                job.type === "pipeline-db-download" &&
+                job.state === "running" &&
+                Boolean(parsePipelineDatabaseActivityId(job.id));
+              return (
+                <div key={job.id} className="rounded border border-border/70 p-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <p
+                      className={`min-w-0 flex-1 basis-48 ${
+                        job.state === "error" ? "text-destructive" : "text-foreground"
+                      }`}
+                    >
+                      {formatActivitySummary(job)}
+                    </p>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {canCancel && (
+                        <button
+                          type="button"
+                          className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                          disabled={isBusy}
+                          onClick={() => void cancelDatabaseDownload(job)}
+                        >
+                          {isBusy ? "Cancelling" : "Cancel"}
+                        </button>
+                      )}
+                      {canHideActivity(job) && (
+                        <button
+                          type="button"
+                          className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                          disabled={isBusy}
+                          onClick={() => void hideActivity(job)}
+                        >
+                          {isBusy ? "Hiding" : "Hide"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {job.targetPath && (
+                    <p className="mt-1 break-all text-muted-foreground">
+                      Target: {job.targetPath}
+                    </p>
+                  )}
+                  {job.logExcerpt && job.logExcerpt.length > 0 && (
+                    <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-[11px] text-muted-foreground">
+                      {job.logExcerpt.join("\n")}
+                    </pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="rounded border border-border/70 p-2 text-muted-foreground">
+            No running or failed admin activity.
+          </p>
+        )}
+      </section>
+
+      <section className="border-t border-border/70 pt-3">
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-3">
+          <span className="font-medium text-foreground">Background workers</span>
+          <Link
+            href="/admin/background-workers"
+            className="shrink-0 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            onClick={() => changePanel("details", false)}
+          >
+            Open full page
+          </Link>
+        </div>
+        {visibleWorkers.length > 0 ? (
+          <div className="space-y-2">
+            {visibleWorkers.map((worker) => {
+              const status = getWorkerStatus(worker);
+              const logOpen = Boolean(openWorkerLogs[worker.name]);
+              const log = workerLogs[worker.name];
+              const isStarting =
+                busyWorkerAction?.name === worker.name && busyWorkerAction.action === "start";
+              const isStopping =
+                busyWorkerAction?.name === worker.name && busyWorkerAction.action === "stop";
+              const isClearing =
+                busyWorkerAction?.name === worker.name && busyWorkerAction.action === "clear";
+              const actionError = workerActionErrors[worker.name];
+              return (
+                <div key={worker.name} className="rounded border border-border/70 p-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1 basis-48">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-foreground">{worker.label}</span>
+                        <span
+                          className={`rounded border px-1.5 py-0.5 text-[11px] ${workerBadgeClass(
+                            status
+                          )}`}
+                        >
+                          {formatWorkerStatus(status)}
+                        </span>
+                      </div>
+                      {worker.latest ? (
+                        <p className="mt-1 text-muted-foreground">
+                          pid {worker.latest.pid} · started{" "}
+                          {formatRelative(worker.latest.startedAt)}
+                          {worker.latest.startedByEmail
+                            ? ` by ${worker.latest.startedByEmail}`
+                            : ""}
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-muted-foreground">No process row recorded.</p>
+                      )}
+                      {worker.latest?.lastErrorMsg && (
+                        <p className="mt-1 break-all text-destructive">
+                          {worker.latest.lastErrorMsg}
+                        </p>
+                      )}
+                      {actionError && (
+                        <p className="mt-1 break-all text-destructive">
+                          {actionError.message}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {canStartWorker(status) && (
+                        <button
+                          type="button"
+                          aria-label={`Start ${worker.label}`}
+                          title={`Start ${worker.label}`}
+                          className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                          disabled={workerActionBusy}
+                          onClick={() => void runWorkerAction(worker, "start")}
+                        >
+                          {isStarting ? (
+                            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Play className="h-3 w-3" aria-hidden="true" />
+                          )}
+                          {isStarting ? "Starting" : "Start"}
+                        </button>
+                      )}
+                      {canStopWorker(status) && (
+                        <button
+                          type="button"
+                          aria-label={`Stop ${worker.label}`}
+                          title={`Stop ${worker.label}`}
+                          className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          disabled={workerActionBusy}
+                          onClick={() => void runWorkerAction(worker, "stop")}
+                        >
+                          {isStopping ? (
+                            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Square className="h-3 w-3" aria-hidden="true" />
+                          )}
+                          {isStopping ? "Stopping" : "Stop"}
+                        </button>
+                      )}
+                      {canClearWorker(status) && (
+                        <button
+                          type="button"
+                          aria-label={`Clear zombie status for ${worker.label}`}
+                          title={`Clear zombie status for ${worker.label}`}
+                          className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          disabled={workerActionBusy}
+                          onClick={() => void runWorkerAction(worker, "clear")}
+                        >
+                          {isClearing ? (
+                            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Eraser className="h-3 w-3" aria-hidden="true" />
+                          )}
+                          {isClearing ? "Clearing" : "Clear"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        aria-label={logOpen ? `Hide log for ${worker.label}` : `Show log for ${worker.label}`}
+                        title={logOpen ? `Hide log for ${worker.label}` : `Show log for ${worker.label}`}
+                        className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                        onClick={() => {
+                          setOpenWorkerLogs((prev) => ({
+                            ...prev,
+                            [worker.name]: !prev[worker.name],
+                          }));
+                          if (!logOpen) void refreshWorkerLog(worker.name);
+                        }}
+                      >
+                        {logOpen ? "Hide log" : "Show log"}
+                      </button>
+                    </div>
+                  </div>
+                  {logOpen && (
+                    <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-[11px] text-muted-foreground">
+                      {log?.lines?.length
+                        ? log.lines.join("\n")
+                        : log?.message || "(no log output yet)"}
+                    </pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="rounded border border-border/70 p-2 text-muted-foreground">
+            No running workers need attention.
+          </p>
+        )}
+      </section>
+    </div>
+  );
+
   const renderPipelineLoadButton = (
     load: PipelineLoadSummary,
     summary: string,
     maxWidthClass: string
   ) => (
-    <button
-      type="button"
-      aria-expanded={pipelineLoadOpen}
-      aria-label={`Pipeline jobs, ${summary}`}
-      title={summary}
-      className={`inline-flex min-w-0 items-center rounded border px-1.5 py-0.5 text-left transition-colors ${maxWidthClass} ${pipelineLoadButtonClass(
-        load
-      )}`}
-      onClick={() => {
-        setPipelineLoadOpen((open) => !open);
-        setDetailsOpen(false);
-      }}
+    <FooterPopover
+      open={pipelineLoadOpen}
+      onOpenChange={open => changePanel("pipelines", open)}
+      title="Pipeline jobs"
+      subtitle={`Updated ${formatRelative(load.updatedAt)}`}
+      width={480}
+      trigger={(
+        <button
+          type="button"
+          aria-label={`Pipeline jobs, ${summary}`}
+          title={summary}
+          className={`inline-flex min-w-0 items-center rounded border px-1.5 py-0.5 text-left transition-colors ${maxWidthClass} ${pipelineLoadButtonClass(
+            load
+          )}`}
+        >
+          <span className="min-w-0 truncate">
+            <span className="hidden @min-[600px]/footer:inline">{summary}</span>
+            <span className="@min-[600px]/footer:hidden">{formatCompactPipelineLoadSummary(load)}</span>
+          </span>
+        </button>
+      )}
     >
-      <span className="min-w-0 truncate">
-        <span className="hidden sm:inline">{summary}</span>
-        <span className="sm:hidden">{formatCompactPipelineLoadSummary(load)}</span>
-      </span>
-    </button>
+      {pipelineLoadContent}
+    </FooterPopover>
   );
 
   return (
     <footer
       ref={footerRef}
-      className="fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-background px-2 py-1 transition-all duration-300 md:left-[var(--seqdesk-sidebar-offset)] sm:px-4 sm:py-1.5"
+      className="@container/footer fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-background px-2 py-1 transition-all duration-300 md:left-[var(--seqdesk-sidebar-offset)] sm:px-4 sm:py-1.5"
       style={{
         "--seqdesk-sidebar-offset": `${footerOffset}px`,
         right: "var(--entity-notes-sidebar-offset, 0px)",
       } as CSSProperties}
     >
       <div className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted-foreground">
-        <div className="relative flex min-w-0 items-center gap-2 sm:gap-4">
+        <div className="relative flex min-w-0 flex-1 items-center gap-2 @min-[600px]/footer:gap-4">
           {isLoaded && (
             <button
               onClick={toggleHelpText}
@@ -1010,8 +1393,8 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
               title={showHelpText ? "Hide help text" : "Show help text"}
             >
               <span className={`h-1.5 w-1.5 rounded-full ${showHelpText ? "bg-foreground" : "bg-muted-foreground"}`} />
-              <span className="hidden sm:inline">Help tips {showHelpText ? "on" : "off"}</span>
-              <span className="sm:hidden">Tips {showHelpText ? "on" : "off"}</span>
+              <span className="hidden @min-[600px]/footer:inline">Help tips {showHelpText ? "on" : "off"}</span>
+              <span className="@min-[600px]/footer:hidden">Tips {showHelpText ? "on" : "off"}</span>
             </button>
           )}
           {primarySummary && (
@@ -1041,16 +1424,22 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
                     {primarySummary}
                   </span>
                   {hasDetails && (
-                    <button
-                      type="button"
-                      className="shrink-0 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                      onClick={() => {
-                        setDetailsOpen((open) => !open);
-                        setPipelineLoadOpen(false);
-                      }}
+                    <FooterPopover
+                      open={detailsOpen}
+                      onOpenChange={open => changePanel("details", open)}
+                      title="Admin status"
+                      width={860}
+                      trigger={(
+                        <button
+                          type="button"
+                          className="shrink-0 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                        >
+                          details
+                        </button>
+                      )}
                     >
-                      details
-                    </button>
+                      {detailsContent}
+                    </FooterPopover>
                   )}
                 </>
               )}
@@ -1070,565 +1459,153 @@ export function Footer({ isDemo = false }: { isDemo?: boolean } = {}) {
               )}
             </div>
           )}
-          {pipelineLoadOpen && activePipelineLoad && (
-            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 z-50 max-h-[70vh] w-[min(480px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <div>
-                  <span className="font-medium text-foreground">Pipeline jobs</span>
-                  <span className="ml-2 text-[11px] text-muted-foreground">
-                    Updated {formatRelative(activePipelineLoad.updatedAt)}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground"
-                  onClick={() => setPipelineLoadOpen(false)}
-                >
-                  Close
-                </button>
-              </div>
-
-              <div className="space-y-3">
-                <section className="rounded border border-border/70 p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-medium text-foreground">
-                        {formatPlural(activePipelineLoad.totalActive, "job")} active
-                      </p>
-                      <p className="mt-0.5 text-muted-foreground">
-                        {formatPipelineLoadSummary(activePipelineLoad)}
-                      </p>
-                    </div>
-                    {activePipelineLoad.staleActive > 0 && (
-                      <span className="shrink-0 rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-                        {formatPlural(activePipelineLoad.staleActive, "stale job")}
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <div>
-                      <p className="text-[11px] uppercase text-muted-foreground">Status</p>
-                      <p className="mt-0.5 text-foreground">
-                        {formatPipelineStatusBreakdown(activePipelineLoad.statuses)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[11px] uppercase text-muted-foreground">Execution</p>
-                      <p className="mt-0.5 text-foreground">
-                        {formatPipelineModeBreakdown(activePipelineLoad.modes)}
-                      </p>
-                    </div>
-                    {activePipelineLoad.staleActive > 0 && (
-                      <div className="sm:col-span-2">
-                        <p className="text-[11px] uppercase text-muted-foreground">Stale jobs</p>
-                        <p className="mt-0.5 text-foreground">
-                          {formatPipelineStatusBreakdown(activePipelineLoad.staleByStatus)}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </section>
-
-                <section>
-                  <p className="mb-1.5 text-[11px] uppercase text-muted-foreground">Active jobs</p>
-                  {visiblePipelineRuns.length > 0 ? (
-                    <div className="space-y-1.5">
-                      {visiblePipelineRuns.map((run) => (
-                        <div
-                          key={run.id}
-                          className="rounded border border-border/70 p-2"
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <Link
-                                href={`/analysis/${run.id}`}
-                                className="font-mono text-[11px] font-medium text-foreground hover:underline"
-                                onClick={() => setPipelineLoadOpen(false)}
-                              >
-                                {run.runNumber}
-                              </Link>
-                              <p className="mt-0.5 truncate text-muted-foreground">
-                                {run.pipelineId}
-                                {run.targetLabel ? ` · ${run.targetLabel}` : ""}
-                                {" · "}
-                                {run.userName}
-                              </p>
-                            </div>
-                            <span
-                              className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] ${
-                                run.stale
-                                  ? "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
-                                  : "border-border bg-muted text-muted-foreground"
-                              }`}
-                            >
-                              {formatPipelineRunElapsed(run)}
-                            </span>
-                          </div>
-                          <div className="mt-2 grid gap-1 text-muted-foreground sm:grid-cols-2">
-                            <p>
-                              {formatRunMode(run)}
-                              {run.queueStatus ? ` · ${run.queueStatus}` : ""}
-                            </p>
-                            <p>{formatPipelineRunResources(run.resources)}</p>
-                          </div>
-                          {run.queueReason && (
-                            <p className="mt-1 break-all text-muted-foreground">
-                              Reason: {run.queueReason}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                      {(activePipelineLoad.hiddenRunCount ?? 0) > 0 && (
-                        <p className="text-muted-foreground">
-                          +{activePipelineLoad.hiddenRunCount} more jobs
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="rounded border border-border/70 p-2 text-muted-foreground">
-                      Per-job timing is not available yet.
-                    </p>
-                  )}
-                </section>
-
-                <section>
-                  <p className="mb-1.5 text-[11px] uppercase text-muted-foreground">Users</p>
-                  {visiblePipelineUsers.length > 0 ? (
-                    <div className="space-y-1">
-                      {visiblePipelineUsers.map((user) => (
-                        <div
-                          key={user.userId}
-                          className="rounded border border-border/70 p-2"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="min-w-0 truncate text-foreground">
-                              {user.name}
-                              {user.email && user.email !== user.name ? (
-                                <span className="text-muted-foreground"> · {user.email}</span>
-                              ) : null}
-                            </span>
-                            <span className="shrink-0 text-muted-foreground">
-                              {formatPipelineUserSummary(user)}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                      {activePipelineLoad.hiddenUserCount > 0 && (
-                        <p className="text-muted-foreground">
-                          +{activePipelineLoad.hiddenUserCount} more users
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <p className="rounded border border-border/70 p-2 text-muted-foreground">
-                      No active users reported.
-                    </p>
-                  )}
-                </section>
-              </div>
-            </div>
-          )}
-          {detailsOpen && hasDetails && (
-            <div className="absolute bottom-[calc(100%+0.5rem)] left-0 z-50 max-h-[70vh] w-[min(860px,calc(100vw-2rem))] overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="font-medium text-foreground">Admin status</span>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground"
-                  onClick={() => setDetailsOpen(false)}
-                >
-                  Close
-                </button>
-              </div>
-              <div className="space-y-3">
-                {statusWarnings.length > 0 && (
-                  <section className="rounded border border-amber-200 bg-amber-50/60 p-2 text-muted-foreground">
-                    <div className="mb-1 font-medium text-amber-900">Status warnings</div>
-                    <div className="space-y-1">
-                      {statusWarnings.map((warning) => (
-                        <p key={warning}>{warning}</p>
-                      ))}
-                    </div>
-                  </section>
-                )}
-
-                <section>
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="font-medium text-foreground">Admin activity</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      {visibleJobs.length} active
-                    </span>
-                  </div>
-                  {visibleJobs.length > 0 ? (
-                    <div className="space-y-2">
-                      {visibleJobs.slice(0, 4).map((job) => {
-                        const isBusy = busyActivityId === job.id;
-                        const canCancel =
-                          job.type === "pipeline-db-download" &&
-                          job.state === "running" &&
-                          Boolean(parsePipelineDatabaseActivityId(job.id));
-                        return (
-                          <div key={job.id} className="rounded border border-border/70 p-2">
-                            <div className="flex items-start justify-between gap-2">
-                              <p
-                                className={
-                                  job.state === "error" ? "text-destructive" : "text-foreground"
-                                }
-                              >
-                                {formatActivitySummary(job)}
-                              </p>
-                              <div className="flex shrink-0 items-center gap-1">
-                                {canCancel && (
-                                  <button
-                                    type="button"
-                                    className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-                                    disabled={isBusy}
-                                    onClick={() => void cancelDatabaseDownload(job)}
-                                  >
-                                    {isBusy ? "Cancelling" : "Cancel"}
-                                  </button>
-                                )}
-                                {canHideActivity(job) && (
-                                  <button
-                                    type="button"
-                                    className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-                                    disabled={isBusy}
-                                    onClick={() => void hideActivity(job)}
-                                  >
-                                    {isBusy ? "Hiding" : "Hide"}
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                            {job.targetPath && (
-                              <p className="mt-1 break-all text-muted-foreground">
-                                Target: {job.targetPath}
-                              </p>
-                            )}
-                            {job.logExcerpt && job.logExcerpt.length > 0 && (
-                              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-[11px] text-muted-foreground">
-                                {job.logExcerpt.join("\n")}
-                              </pre>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="rounded border border-border/70 p-2 text-muted-foreground">
-                      No running or failed admin activity.
-                    </p>
-                  )}
-                </section>
-
-                <section className="border-t border-border/70 pt-3">
-                  <div className="mb-1.5 flex items-center justify-between gap-3">
-                    <span className="font-medium text-foreground">Background workers</span>
-                    <Link
-                      href="/admin/background-workers"
-                      className="shrink-0 text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                    >
-                      Open full page
-                    </Link>
-                  </div>
-                  {visibleWorkers.length > 0 ? (
-                    <div className="space-y-2">
-                      {visibleWorkers.map((worker) => {
-                        const status = getWorkerStatus(worker);
-                        const logOpen = Boolean(openWorkerLogs[worker.name]);
-                        const log = workerLogs[worker.name];
-                        const isStarting =
-                          busyWorkerAction?.name === worker.name && busyWorkerAction.action === "start";
-                        const isStopping =
-                          busyWorkerAction?.name === worker.name && busyWorkerAction.action === "stop";
-                        const isClearing =
-                          busyWorkerAction?.name === worker.name && busyWorkerAction.action === "clear";
-                        const actionError = workerActionErrors[worker.name];
-                        return (
-                          <div key={worker.name} className="rounded border border-border/70 p-2">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-medium text-foreground">{worker.label}</span>
-                                  <span
-                                    className={`rounded border px-1.5 py-0.5 text-[11px] ${workerBadgeClass(
-                                      status
-                                    )}`}
-                                  >
-                                    {formatWorkerStatus(status)}
-                                  </span>
-                                </div>
-                                {worker.latest ? (
-                                  <p className="mt-1 text-muted-foreground">
-                                    pid {worker.latest.pid} · started{" "}
-                                    {formatRelative(worker.latest.startedAt)}
-                                    {worker.latest.startedByEmail
-                                      ? ` by ${worker.latest.startedByEmail}`
-                                      : ""}
-                                  </p>
-                                ) : (
-                                  <p className="mt-1 text-muted-foreground">No process row recorded.</p>
-                                )}
-                                {worker.latest?.lastErrorMsg && (
-                                  <p className="mt-1 break-all text-destructive">
-                                    {worker.latest.lastErrorMsg}
-                                  </p>
-                                )}
-                                {actionError && (
-                                  <p className="mt-1 break-all text-destructive">
-                                    {actionError.message}
-                                  </p>
-                                )}
-                              </div>
-                              <div className="flex shrink-0 items-center gap-1">
-                                {canStartWorker(status) && (
-                                  <button
-                                    type="button"
-                                    aria-label={`Start ${worker.label}`}
-                                    title={`Start ${worker.label}`}
-                                    className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-                                    disabled={workerActionBusy}
-                                    onClick={() => void runWorkerAction(worker, "start")}
-                                  >
-                                    {isStarting ? (
-                                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                                    ) : (
-                                      <Play className="h-3 w-3" aria-hidden="true" />
-                                    )}
-                                    {isStarting ? "Starting" : "Start"}
-                                  </button>
-                                )}
-                                {canStopWorker(status) && (
-                                  <button
-                                    type="button"
-                                    aria-label={`Stop ${worker.label}`}
-                                    title={`Stop ${worker.label}`}
-                                    className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50"
-                                    disabled={workerActionBusy}
-                                    onClick={() => void runWorkerAction(worker, "stop")}
-                                  >
-                                    {isStopping ? (
-                                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                                    ) : (
-                                      <Square className="h-3 w-3" aria-hidden="true" />
-                                    )}
-                                    {isStopping ? "Stopping" : "Stop"}
-                                  </button>
-                                )}
-                                {canClearWorker(status) && (
-                                  <button
-                                    type="button"
-                                    aria-label={`Clear zombie status for ${worker.label}`}
-                                    title={`Clear zombie status for ${worker.label}`}
-                                    className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-0.5 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-50"
-                                    disabled={workerActionBusy}
-                                    onClick={() => void runWorkerAction(worker, "clear")}
-                                  >
-                                    {isClearing ? (
-                                      <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                                    ) : (
-                                      <Eraser className="h-3 w-3" aria-hidden="true" />
-                                    )}
-                                    {isClearing ? "Clearing" : "Clear"}
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  aria-label={logOpen ? `Hide log for ${worker.label}` : `Show log for ${worker.label}`}
-                                  title={logOpen ? `Hide log for ${worker.label}` : `Show log for ${worker.label}`}
-                                  className="rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                                  onClick={() => {
-                                    setOpenWorkerLogs((prev) => ({
-                                      ...prev,
-                                      [worker.name]: !prev[worker.name],
-                                    }));
-                                    if (!logOpen) void refreshWorkerLog(worker.name);
-                                  }}
-                                >
-                                  {logOpen ? "Hide log" : "Show log"}
-                                </button>
-                              </div>
-                            </div>
-                            {logOpen && (
-                              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-[11px] text-muted-foreground">
-                                {log?.lines?.length
-                                  ? log.lines.join("\n")
-                                  : log?.message || "(no log output yet)"}
-                              </pre>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="rounded border border-border/70 p-2 text-muted-foreground">
-                      No running workers need attention.
-                    </p>
-                  )}
-                </section>
-              </div>
-            </div>
-          )}
         </div>
         <div className="relative flex shrink-0 items-center gap-2 sm:gap-3">
           {notificationsEnabled && (
-            <div className="relative">
-              <button
-                type="button"
-                aria-label={`Notifications${unreadNotificationCount > 0 ? `, ${unreadNotificationCount} unread` : ""}`}
-                title="Notifications"
-                className="relative inline-flex h-6 items-center gap-1.5 rounded border border-transparent px-1.5 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
-                onClick={() => setNotificationsOpen((open) => !open)}
-              >
-                <Bell className="h-3.5 w-3.5" aria-hidden="true" />
-                <span className="hidden sm:inline">Notifications</span>
-                {unreadNotificationCount > 0 && (
-                  <span className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold leading-none text-white shadow-[0_0_0_1px_rgba(255,255,255,0.55)]">
-                    {formatUnreadCount(unreadNotificationCount)}
-                  </span>
-                )}
-              </button>
-              {notificationsOpen && (
-                <div className="fixed bottom-[calc(var(--seqdesk-footer-height,2.5rem)+0.5rem)] left-2 right-2 z-50 max-h-[70vh] w-auto overflow-auto rounded-md border border-border bg-background p-3 text-xs shadow-lg sm:absolute sm:bottom-[calc(100%+0.5rem)] sm:left-auto sm:right-0 sm:w-[min(420px,calc(100vw-2rem))]">
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                  <div>
-                    <span className="font-medium text-foreground">Notifications</span>
-                    {unreadNotificationCount > 0 && (
-                      <span className="ml-2 text-[11px] text-muted-foreground">
-                        {unreadNotificationCount} unread
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {unreadNotificationCount > 0 && (
-                      <button
-                        type="button"
-                        className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
-                        disabled={busyNotificationId === "__all__"}
-                        onClick={() => void markAllNotificationsRead()}
+            <FooterPopover
+              open={notificationsOpen}
+              onOpenChange={open => changePanel("notifications", open)}
+              title="Notifications"
+              subtitle={unreadNotificationCount > 0 ? `${unreadNotificationCount} unread` : undefined}
+              align="end"
+              trigger={(
+                <button
+                  type="button"
+                  aria-label={`Notifications${unreadNotificationCount > 0 ? `, ${unreadNotificationCount} unread` : ""}`}
+                  title="Notifications"
+                  className="relative inline-flex h-6 items-center gap-1.5 rounded border border-transparent px-1.5 text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground"
+                >
+                  <Bell className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span className="hidden @min-[500px]/footer:inline">Notifications</span>
+                  {unreadNotificationCount > 0 && (
+                    <span className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold leading-none text-white shadow-[0_0_0_1px_rgba(255,255,255,0.55)]">
+                      {formatUnreadCount(unreadNotificationCount)}
+                    </span>
+                  )}
+                </button>
+              )}
+              actions={unreadNotificationCount > 0 ? (
+                <button
+                  type="button"
+                  className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+                  disabled={busyNotificationId === "__all__"}
+                  onClick={() => void markAllNotificationsRead()}
+                >
+                  Mark all read
+                </button>
+              ) : undefined}
+            >
+              {notifications.length === 0 ? (
+                <p className="rounded border border-border/70 p-3 text-muted-foreground">
+                  No notifications.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {notifications.map((notification) => {
+                    const isUnread = !notification.readAt;
+                    const isExpanded = Boolean(expandedNotificationIds[notification.id]);
+                    const isBusy = busyNotificationId === notification.id;
+                    return (
+                      <div
+                        key={notification.id}
+                        className={`rounded border border-border/70 p-2 ${
+                          isUnread ? "bg-muted/40" : ""
+                        }`}
                       >
-                        Mark all read
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="text-muted-foreground hover:text-foreground"
-                      onClick={() => setNotificationsOpen(false)}
-                    >
-                      Close
-                    </button>
-                  </div>
-                </div>
-
-                {notifications.length === 0 ? (
-                  <p className="rounded border border-border/70 p-3 text-muted-foreground">
-                    No notifications.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {notifications.map((notification) => {
-                      const isUnread = !notification.readAt;
-                      const isExpanded = Boolean(expandedNotificationIds[notification.id]);
-                      const isBusy = busyNotificationId === notification.id;
-                      return (
-                        <div
-                          key={notification.id}
-                          className={`rounded border border-border/70 p-2 ${
-                            isUnread ? "bg-muted/40" : ""
-                          }`}
-                        >
-                          <div className="flex items-start gap-2">
-                            <span
-                              className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${notificationSeverityClass(
-                                notification.severity
-                              )}`}
-                            />
-                            <div className="min-w-0 flex-1">
-                              <button
-                                type="button"
-                                className="flex w-full items-start justify-between gap-2 text-left"
-                                onClick={() =>
-                                  setExpandedNotificationIds((prev) => ({
-                                    ...prev,
-                                    [notification.id]: !prev[notification.id],
-                                  }))
-                                }
-                              >
-                                <span className="min-w-0">
-                                  <span className="block truncate font-medium text-foreground">
-                                    {notification.title}
-                                  </span>
-                                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                                    {formatRelative(notification.createdAt)}
-                                    {isUnread ? " · unread" : ""}
-                                  </span>
+                        <div className="flex items-start gap-2">
+                          <span
+                            className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${notificationSeverityClass(
+                              notification.severity
+                            )}`}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <button
+                              type="button"
+                              aria-expanded={isExpanded}
+                              className="flex w-full items-start justify-between gap-2 text-left"
+                              onClick={() =>
+                                setExpandedNotificationIds((prev) => ({
+                                  ...prev,
+                                  [notification.id]: !prev[notification.id],
+                                }))
+                              }
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate font-medium text-foreground" title={notification.title}>
+                                  {notification.title}
                                 </span>
-                                <ChevronDown
-                                  className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
-                                    isExpanded ? "rotate-180" : ""
-                                  }`}
-                                  aria-hidden="true"
-                                />
-                              </button>
-                              {isExpanded && notification.body && (
-                                <p className="mt-2 whitespace-pre-wrap text-muted-foreground">
-                                  {notification.body}
-                                </p>
-                              )}
-                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                                {!notification.readAt && (
-                                  <button
-                                    type="button"
-                                    aria-label={`Mark ${notification.title} read`}
-                                    className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-                                    disabled={isBusy}
-                                    onClick={() => void markNotificationRead(notification)}
-                                  >
-                                    <Check className="h-3 w-3" aria-hidden="true" />
-                                    Mark read
-                                  </button>
-                                )}
-                                {notification.linkPath && (
-                                  <Link
-                                    href={notification.linkPath}
-                                    className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                                    onClick={() => void markNotificationRead(notification)}
-                                  >
-                                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                                    Open
-                                  </Link>
-                                )}
+                                <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                                  {formatRelative(notification.createdAt)}
+                                  {isUnread ? " · unread" : ""}
+                                </span>
+                              </span>
+                              <ChevronDown
+                                className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${
+                                  isExpanded ? "rotate-180" : ""
+                                }`}
+                                aria-hidden="true"
+                              />
+                            </button>
+                            {isExpanded && notification.body && (
+                              <p className="mt-2 whitespace-pre-wrap text-muted-foreground">
+                                {notification.body}
+                              </p>
+                            )}
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                              {!notification.readAt && (
                                 <button
                                   type="button"
-                                  aria-label={`Hide ${notification.title}`}
+                                  aria-label={`Mark ${notification.title} read`}
                                   className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
                                   disabled={isBusy}
-                                  onClick={() => void archiveNotification(notification)}
+                                  onClick={() => void markNotificationRead(notification)}
                                 >
-                                  <Archive className="h-3 w-3" aria-hidden="true" />
-                                  Hide
+                                  <Check className="h-3 w-3" aria-hidden="true" />
+                                  Mark read
                                 </button>
-                              </div>
+                              )}
+                              {notification.linkPath && (
+                                <Link
+                                  href={notification.linkPath}
+                                  className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                                  onClick={() => {
+                                    changePanel("notifications", false);
+                                    void markNotificationRead(notification);
+                                  }}
+                                >
+                                  <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                                  Open
+                                </Link>
+                              )}
+                              <button
+                                type="button"
+                                aria-label={`Hide ${notification.title}`}
+                                className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                                disabled={isBusy}
+                                onClick={() => void archiveNotification(notification)}
+                              >
+                                <Archive className="h-3 w-3" aria-hidden="true" />
+                                Hide
+                              </button>
                             </div>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
-            </div>
+            </FooterPopover>
           )}
           {pageNote && (
-            <span className="hidden max-w-[40vw] truncate md:inline" title={pageNote}>
+            <span className="hidden max-w-60 truncate @min-[1050px]/footer:inline" title={pageNote}>
               {pageNote}
             </span>
           )}
           {currentTime && (
             <>
-              <span className="hidden sm:inline">{formatDate(currentTime)}</span>
-              <span className="font-mono">{formatTime(currentTime)}</span>
+              <span className="hidden @min-[750px]/footer:inline">{formatDate(currentTime)}</span>
+              <span className="hidden font-mono @min-[280px]/footer:inline">{formatTime(currentTime)}</span>
             </>
           )}
         </div>

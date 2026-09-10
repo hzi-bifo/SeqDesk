@@ -1,0 +1,2 @@
+sample_db_id	sample_id	r1_pass	r1_warn	r1_fail	r1_read_count	r1_avg_quality	r2_pass	r2_warn	r2_fail	r2_read_count	r2_avg_quality	pipeline_run
+test-sample-record	sample_0	9	1	0	16647395	33.7	8	1	1	16647395	31.9	FASTQC-20260908-001

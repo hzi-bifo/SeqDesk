@@ -965,7 +965,7 @@ test(
         }),
       );
       await expect(
-        page.getByRole("heading", { name: "Pipeline Runtime" }),
+        page.getByRole("heading", { name: "Where pipelines run" }),
       ).toBeVisible({ timeout: 30_000 });
       const runDirectoryInput = page.getByLabel("Pipeline Run Directory");
       await expect(runDirectoryInput).toHaveValue(blockedRuntimeDirectory, {

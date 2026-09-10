@@ -145,7 +145,7 @@ const form = new URLSearchParams({
   csrfToken,
   email,
   password,
-  callbackUrl: new URL("/admin/settings", baseUrl).toString(),
+  callbackUrl: new URL("/admin/settings/system", baseUrl).toString(),
   json: "true",
 });
 

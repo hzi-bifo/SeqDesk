@@ -6,7 +6,7 @@ import { Database, FlaskConical, Plus } from "lucide-react";
 import { AddDataMenu } from "@/components/explore/AddDataMenu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ExploreLoading } from "./ExploreLoading";
 import { DATASET_KIND_DEFINITIONS, TABLE_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
 import { fetcher, formatDateTime } from "@/lib/explore/client";
 import type { ExploreDatasetSummary } from "@/lib/explore/types";
@@ -23,11 +23,11 @@ interface AnalysisRow {
 /** The tables of the scope and the analysis steps of one report, as plain lists. */
 export function ExploreListView({ scope, reportId }: { scope: string; reportId: string }) {
   const scopeQuery = `?scope=${encodeURIComponent(scope)}`;
-  const { data: datasetsData, mutate: mutateDatasets, isLoading: datasetsLoading } = useSWR<{ datasets: ExploreDatasetSummary[] }>(
+  const { data: datasetsData, error: datasetsError, mutate: mutateDatasets } = useSWR<{ datasets: ExploreDatasetSummary[] }>(
     `/api/explore/datasets?targetKey=${encodeURIComponent(scope)}`,
     fetcher
   );
-  const { data: analysesData } = useSWR<{ analyses: AnalysisRow[] }>(
+  const { data: analysesData, error: analysesError, mutate: mutateAnalyses } = useSWR<{ analyses: AnalysisRow[] }>(
     `/api/explore/analyses?targetKey=${encodeURIComponent(scope)}&reportId=${encodeURIComponent(reportId)}`,
     fetcher,
     { shouldRetryOnError: false }
@@ -42,17 +42,16 @@ export function ExploreListView({ scope, reportId }: { scope: string; reportId: 
           <div className="flex items-center gap-2">
             <Database className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-base font-semibold">Tables</h2>
-            <span className="text-sm text-muted-foreground">{datasets.length}</span>
+            {datasetsData && <span className="text-sm text-muted-foreground">{datasets.length}</span>}
             <span className="text-xs text-muted-foreground">shared by every report of this scope</span>
           </div>
           <AddDataMenu scope={scope} reportId={reportId} onBuilt={() => mutateDatasets()} withAnalysis={false} label="Add table" />
         </div>
 
-        {datasetsLoading ? (
-          <div className="mt-4 space-y-2">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
+        {datasetsError ? (
+          <div role="alert" className="mt-4 space-y-3 rounded-lg border p-4 text-sm"><p>Could not load the tables.</p><Button variant="outline" size="sm" onClick={() => void mutateDatasets()}>Retry loading tables</Button></div>
+        ) : !datasetsData ? (
+          <ExploreLoading variant="table" label="Loading tables…" className="mt-4" />
         ) : datasets.length === 0 ? (
           <div className="mt-4 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
             No tables yet. Add one from the samples, the sequencing runs or a pipeline output of this scope, or import a file.
@@ -103,7 +102,7 @@ export function ExploreListView({ scope, reportId }: { scope: string; reportId: 
           <div className="flex items-center gap-2">
             <FlaskConical className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-base font-semibold">Analysis steps</h2>
-            <span className="text-sm text-muted-foreground">{analyses.length}</span>
+            {analysesData && <span className="text-sm text-muted-foreground">{analyses.length}</span>}
             <span className="text-xs text-muted-foreground">of this report</span>
           </div>
           <Button asChild size="sm" variant="outline" disabled={datasets.length === 0}>
@@ -113,7 +112,11 @@ export function ExploreListView({ scope, reportId }: { scope: string; reportId: 
             </Link>
           </Button>
         </div>
-        {analyses.length === 0 ? (
+        {analysesError ? (
+          <div role="alert" className="mt-4 space-y-3 rounded-lg border p-4 text-sm"><p>Could not load the analysis steps.</p><Button variant="outline" size="sm" onClick={() => void mutateAnalyses()}>Retry loading analysis steps</Button></div>
+        ) : !analysesData ? (
+          <ExploreLoading variant="table" label="Loading analysis steps…" className="mt-4" />
+        ) : analyses.length === 0 ? (
           <div className="mt-4 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
             No analysis steps yet. Press Analyse on a table card of the canvas, or start one here from a template or a blank Python script.
           </div>

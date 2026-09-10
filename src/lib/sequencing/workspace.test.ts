@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { safeJoin, toRelativePath } from "@/lib/files/paths";
 
 const mocks = vi.hoisted(() => ({
   db: {
@@ -455,6 +456,65 @@ describe("assignOrderSequencingReads", () => {
 });
 
 describe("getOrderSequencingSummary", () => {
+  it.each([
+    { label: "absolute imported", file1: "/data/sequencing/workbench/cache/cami/reads/R1.fastq.gz", missing: false },
+    { label: "relative facility", file1: "workbench/cache/cami/reads/R1.fastq.gz", missing: false },
+    { label: "missing imported mate", file1: "/data/sequencing/workbench/cache/cami/reads/R1.fastq.gz", missing: true },
+  ])("resolves $label read paths without duplicating the storage root", async ({ file1, missing }) => {
+    mocks.files.safeJoin.mockImplementation(safeJoin);
+    mocks.files.toRelativePath.mockImplementation(toRelativePath);
+    mocks.db.order.findUnique.mockResolvedValue(createOrder({
+      samples: [{
+        id: "sample-1",
+        sampleId: "sample_0",
+        facilityStatus: "READY",
+        updatedAt: new Date("2026-09-08T12:00:00.000Z"),
+        reads: [{ id: "read-1", file1, file2: file1.replace("R1", "R2"), isActive: true }],
+        sequencingArtifacts: [],
+      }],
+    }));
+    mocks.fs.stat.mockImplementation(async (filePath: string) => {
+      if (missing && filePath.endsWith("R2.fastq.gz")) throw new Error("ENOENT");
+      return { size: 123 };
+    });
+
+    const result = await getOrderSequencingSummary("order-1");
+
+    expect(mocks.fs.stat).toHaveBeenCalledWith("/data/sequencing/workbench/cache/cami/reads/R1.fastq.gz");
+    expect(mocks.fs.stat).toHaveBeenCalledWith("/data/sequencing/workbench/cache/cami/reads/R2.fastq.gz");
+    expect(result.samples[0].read).toEqual(expect.objectContaining({
+      file1,
+      fileSize1: 123,
+      fileSize2: missing ? null : 123,
+      filesMissing: missing,
+    }));
+  });
+
+  it.each([
+    "/other/reads/R1.fastq.gz",
+    "/data/sequencing-other/reads/R1.fastq.gz",
+    "/data/sequencing/../outside.fastq.gz",
+    "../outside.fastq.gz",
+  ])("keeps out-of-storage reads blocked: %s", async (file1) => {
+    mocks.files.safeJoin.mockImplementation(safeJoin);
+    mocks.files.toRelativePath.mockImplementation(toRelativePath);
+    mocks.db.order.findUnique.mockResolvedValue(createOrder({
+      samples: [{
+        id: "sample-1",
+        sampleId: "sample_0",
+        facilityStatus: "READY",
+        updatedAt: new Date("2026-09-08T12:00:00.000Z"),
+        reads: [{ id: "read-1", file1, file2: null, isActive: true }],
+        sequencingArtifacts: [],
+      }],
+    }));
+
+    const result = await getOrderSequencingSummary("order-1");
+
+    expect(mocks.fs.stat).not.toHaveBeenCalled();
+    expect(result.samples[0].read).toEqual(expect.objectContaining({ filesMissing: true }));
+  });
+
   it("summarizes reads, qc artifacts, and missing files", async () => {
     const baseTime = new Date("2026-03-24T09:00:00.000Z");
     mocks.db.order.findUnique.mockResolvedValue(

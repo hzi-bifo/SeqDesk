@@ -372,7 +372,7 @@ export default function MinknowStreamSettingsPage() {
 
         <HelpBox title="How it works">
           When configured, facility admins can attach a running MinKNOW sequencing run to an order from
-          Sequencing Data &rarr; Stream. A long-lived stream-monitor daemon (started outside the web app via
+          Files &rarr; Live sequencer. A long-lived stream-monitor daemon (started outside the web app via
           <code className="font-mono"> npm run stream:monitor</code>) watches the output folder and links new
           FASTQ files to samples by barcode as MinKNOW writes them. This admin form records the configuration
           the daemon reads on startup — if the daemon isn&apos;t running, nothing is ingested even when the

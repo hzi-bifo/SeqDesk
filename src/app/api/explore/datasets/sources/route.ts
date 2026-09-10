@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { exploreBuildContext, requireTargetAccess } from "@/lib/explore/authorization";
-import { listPipelineTableSources } from "@/lib/explore/builders/pipeline-table";
-import { exploreErrorResponse, requireExploreSession } from "../../_shared";
+import { listPipelineOutputs } from "@/lib/explore/pipeline-outputs";
+import { withPipelineOutputUsage } from "@/lib/explore/pipeline-output-usage";
+import { db } from "@/lib/db";
+import { ExploreRouteError, exploreErrorResponse, requireExploreSession } from "../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,8 +14,17 @@ export async function GET(request: NextRequest) {
     const session = await requireExploreSession();
     const targetKey = request.nextUrl.searchParams.get("targetKey") ?? "";
     const target = await requireTargetAccess(session, targetKey, "read");
-    const pipelineTables = await listPipelineTableSources(exploreBuildContext(session, target, targetKey));
-    return NextResponse.json({ pipelineTables });
+    const context = exploreBuildContext(session, target, targetKey);
+    const reportId = request.nextUrl.searchParams.get("reportId");
+    const report = reportId ? await db.exploreReport.findFirst({ where: { id: reportId, targetKey }, select: { blocks: true } }) : null;
+    if (reportId && !report) throw new ExploreRouteError(404, "Report not found in this scope.");
+    const [available, datasets] = await Promise.all([
+      listPipelineOutputs(context),
+      db.exploreDataset.findMany({ where: { targetKey, kind: "pipeline-table" }, select: { id: true, sourceConfig: true, currentVersionId: true, versions: { orderBy: { number: "desc" }, take: 1, select: { id: true, rowCount: true, provenance: true } } } }),
+    ]);
+    const outputs = withPipelineOutputUsage(available, datasets, report?.blocks ?? []);
+    const pipelineTables = outputs.flatMap(output => output.table ? [output.table] : []);
+    return NextResponse.json({ pipelineTables, outputs });
   } catch (error) {
     return exploreErrorResponse(error);
   }

@@ -3,7 +3,7 @@
   "package": {
     "id": "nanoplot",
     "name": "NanoPlot (Long-read QC)",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Quality control of Oxford Nanopore / PacBio long reads with NanoPlot, producing an interactive HTML report and per-read statistics",
     "website": "https://github.com/wdecoster/NanoPlot",
     "provider": "SeqDesk"
@@ -103,6 +103,25 @@
       "destination": "run_artifact",
       "type": "artifact",
       "fromStep": "collect_stats",
+      "table": {
+        "label": "Long-read quality summary",
+        "description": "Read counts, total bases, length statistics and mean Phred quality. One row per sample; length statistics describe each sample, not individual reads.",
+        "tableKind": "sample-summary",
+        "format": "tsv",
+        "sampleColumn": "sample_id",
+        "schemaId": "seqdesk.nanoplot-summary",
+        "schemaVersion": "1",
+        "rowEntity": "sample",
+        "roles": { "count": "num_reads" },
+        "columns": {
+          "num_reads": { "type": "number", "label": "Read count", "unit": "reads", "required": true, "nullable": false },
+          "total_bases": { "type": "number", "label": "Total bases", "unit": "bp", "required": true, "nullable": false },
+          "mean_length": { "type": "number", "label": "Mean read length", "unit": "bp", "required": true, "nullable": false },
+          "median_length": { "type": "number", "label": "Median read length", "unit": "bp", "required": true, "nullable": false },
+          "read_n50": { "type": "number", "label": "Read N50", "unit": "bp", "required": true, "nullable": false },
+          "mean_quality": { "type": "number", "label": "Mean read quality", "unit": "Phred", "required": true, "nullable": false }
+        }
+      },
       "discovery": {
         "pattern": "summary/nanoplot-summary.tsv"
       }

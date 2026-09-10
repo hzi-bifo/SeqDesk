@@ -23,4 +23,8 @@ describe("coexisting raw input modules", () => {
     await expect(requireRawReadImporter("ncbi-genomes-taxon")).rejects.toThrow("unsupported");
     await expect(requireRawReadImporter("anything")).rejects.toThrow("unsupported");
   });
+  it("does not treat the facility storefront card as a raw-read download provider", async () => {
+    await expect(requireRawReadImporter("facility")).rejects.toThrow("unsupported");
+    await expect(requireRawReadImporter("sequencing-management")).rejects.toThrow("unsupported");
+  });
 });

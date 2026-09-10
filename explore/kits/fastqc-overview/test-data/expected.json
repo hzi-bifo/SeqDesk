@@ -1,0 +1,11 @@
+{
+  "artifacts": [
+    { "name": "read_counts", "kind": "figure", "format": "plotly-json" },
+    { "name": "mean_quality", "kind": "figure", "format": "plotly-json" },
+    { "name": "check_status", "kind": "figure", "format": "plotly-json" },
+    { "name": "qc_by_mate", "kind": "table", "format": "tsv" }
+  ],
+  "metrics": { "n_samples": 1, "n_read_files": 2, "total_reads": 33294790, "files_with_warnings": 2, "files_with_failed_checks": 1 },
+  "notes_contain": ["not as read pairs", "not pipeline execution failures", "not independent biological replicates"],
+  "notes_absent": ["PNG export", "kaleido"]
+}

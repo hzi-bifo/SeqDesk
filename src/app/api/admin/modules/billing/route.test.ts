@@ -75,16 +75,25 @@ describe("GET /api/admin/modules/billing", () => {
     expect(response.status).toBe(200);
   });
 
-  it("returns 404 when billing has no order domain in Workbench", async () => {
-    mocks.getServerDeploymentProfile.mockReturnValue(
-      getDeploymentProfileDefinition("research-workbench")
-    );
+  it("returns 404 when the order domain is genuinely absent", async () => {
+    const profile = getDeploymentProfileDefinition("research-workbench");
+    mocks.getServerDeploymentProfile.mockReturnValue({ ...profile, domains: profile.domains.filter(domain => domain !== "facility-intake") });
 
     const response = await GET();
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "Not found" });
     expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("allows research-preset members to read shared non-secret field formats", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(getDeploymentProfileDefinition("research-workbench"));
+    mocks.getServerSession.mockResolvedValue(memberSession);
+    mocks.db.siteSettings.findUnique.mockResolvedValue(null);
+    const response = await GET();
+    expect(response.status).toBe(200);
+    expect((await response.json()).settings.costCenterEnabled).toBe(true);
+    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
   });
 });
 
@@ -137,10 +146,9 @@ describe("PUT /api/admin/modules/billing", () => {
     expect(response.status).toBe(403);
   });
 
-  it("returns 404 before mutation when billing is unavailable in Workbench", async () => {
-    mocks.getServerDeploymentProfile.mockReturnValue(
-      getDeploymentProfileDefinition("research-workbench")
-    );
+  it("returns 404 before mutation when the order domain is genuinely absent", async () => {
+    const profile = getDeploymentProfileDefinition("research-workbench");
+    mocks.getServerDeploymentProfile.mockReturnValue({ ...profile, domains: profile.domains.filter(domain => domain !== "facility-intake") });
 
     const request = new NextRequest("http://localhost/api/admin/modules/billing", {
       method: "PUT",
@@ -151,6 +159,18 @@ describe("PUT /api/admin/modules/billing", () => {
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "Not found" });
     expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("lets a research-preset admin configure billing without enabling the module", async () => {
+    mocks.getServerDeploymentProfile.mockReturnValue(getDeploymentProfileDefinition("research-workbench"));
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ modulesConfig: JSON.stringify({ modules: { "billing-info": false }, globalDisabled: true }) });
+    const settings = { pspEnabled: false, costCenterEnabled: false };
+    const response = await PUT(new NextRequest("http://localhost/api/admin/modules/billing", {
+      method: "PUT", body: JSON.stringify({ settings }),
+    }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).settings).toEqual(settings);
+    expect(mocks.db.siteSettings.upsert.mock.calls[0][0].update).not.toHaveProperty("modulesConfig");
   });
 
   it("returns 400 when settings are missing", async () => {

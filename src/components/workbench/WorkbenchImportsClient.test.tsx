@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchImportsClient } from "./WorkbenchImportsClient";
 
@@ -44,6 +44,26 @@ describe("WorkbenchImportsClient", () => {
     vi.restoreAllMocks();
     cleanup();
   });
+
+  it("shows the SRA-themed loading preview and recovers visibly from lookup errors", async () => {
+    let resolve!: (response: Response) => void;
+    const pending = new Promise<Response>(done => { resolve = done; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => input.toString().endsWith("/preview") ? pending : jsonResponse({ jobs: [], importers: [] })));
+    render(<WorkbenchImportsClient source="sra" enablePolling={false} />);
+    const preview = screen.getByRole("region", { name: "SRA file preview" });
+    expect(screen.getByRole("heading", { name: "SRA / ENA import module" }).closest("header")?.className).toContain("bg-sky-50");
+    expect(screen.getByRole("button", { name: "Import sequencing data" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.change(screen.getByLabelText("Accession"), { target: { value: "ERR164407" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preview files" }));
+    expect(preview.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByText("Looking up archive files…")).toBeTruthy();
+    expect(preview.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(6);
+    await act(async () => resolve(jsonResponse({ error: "Internal lookup unavailable" }, { status: 503 })));
+    expect(preview.getAttribute("aria-busy")).toBe("false");
+    expect(screen.queryByText("Looking up archive files…")).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("Internal lookup unavailable");
+    expect(screen.getByRole("button", { name: "Import sequencing data" }).hasAttribute("disabled")).toBe(true);
+  });
   it.each(["cami", "sra"] as const)("does not show job history or an empty jobs panel when choosing %s", async source => {
     const collection = { key: "00e55dcb-9697-4b89-af56-af51bd557a17", name: "Controls" };
     const provider = source === "cami" ? "cami-benchmark" : "ena-fastq-accession";
@@ -55,11 +75,12 @@ describe("WorkbenchImportsClient", () => {
     ] } : { importers: [] }));
     vi.stubGlobal("fetch", api);
     render(<WorkbenchImportsClient source={source} collection={collection} enablePolling={false} />);
-    await waitFor(() => expect(api).toHaveBeenCalledTimes(source === "cami" ? 3 : 2));
+    await waitFor(() => expect(api).toHaveBeenCalledWith(`/api/workbench/imports?collection=${collection.key}`, { cache: "no-store" }));
     expect(screen.queryByRole("heading", { name: "Import jobs" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Import progress" })).toBeNull();
     expect(screen.queryByText("No import jobs yet.")).toBeNull();
     expect(screen.queryByText(/unrelated-transfer|past-result|other-module-transfer|legacy-transfer/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Stop download|Cancel queued import/ })).toBeNull();
   });
   it.each(["cami", "sra"] as const)("recovers only active progress for the selected %s module and collection", async source => {
     const collection = { key: "00e55dcb-9697-4b89-af56-af51bd557a17", name: "Controls" };
@@ -72,12 +93,59 @@ describe("WorkbenchImportsClient", () => {
     expect(await screen.findByRole("heading", { name: "Import progress" })).toBeTruthy();
     expect(screen.getByRole("status", { name: "Processing" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Import jobs" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Stop download" })).toBeTruthy();
     status = "success";
     view.rerender(<WorkbenchImportsClient source={source} collection={collection} />);
     expect((await screen.findAllByText("success")).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Import progress" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Stop download|Cancel queued import/ })).toBeNull();
     view.rerender(<WorkbenchImportsClient source={source} collection={{ ...collection, key: "different-collection" }} enablePolling={false} />);
     expect(screen.queryByRole("heading", { name: "Import progress" })).toBeNull();
+  });
+
+  it.each([
+    ["cami", "running"], ["cami", "queued"], ["sra", "running"], ["sra", "queued"],
+  ] as const)("confirms cancellation of the exact %s %s job from its progress panel", async (source, status) => {
+    const collection = { key: "00e55dcb-9697-4b89-af56-af51bd557a17", name: "Controls" };
+    const api = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return jsonResponse({ success: true });
+      return jsonResponse(input.toString().startsWith("/api/workbench/imports") ? { jobs: [{
+        id: "selected-job", providerId: source === "cami" ? "cami-benchmark" : "ena-fastq-accession", status,
+        phase: status === "running" ? "Downloading · 16.2%" : "queued", request: { collection },
+        createdAt: "2026-09-09T12:46:00Z", updatedAt: "2026-09-09T12:46:00Z",
+      }] } : { importers: [] });
+    });
+    vi.stubGlobal("fetch", api);
+    render(<WorkbenchImportsClient source={source} collection={collection} enablePolling={false} />);
+    const panel = within(await screen.findByRole("region", { name: "Import progress" }));
+    const action = status === "running" ? "Stop download" : "Cancel queued import";
+    fireEvent.click(panel.getByRole("button", { name: action }));
+    expect(panel.getByText(/Partial files will be removed/)).toBeTruthy();
+    expect(api.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    fireEvent.click(panel.getByRole("button", { name: status === "running" ? "Keep downloading" : "Keep queued" }));
+    expect(panel.queryByRole("button", { name: "Confirm cancellation" })).toBeNull();
+    expect(api.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+    fireEvent.click(panel.getByRole("button", { name: action }));
+    fireEvent.click(panel.getByRole("button", { name: "Confirm cancellation" }));
+    await panel.findByText(status === "running" ? "Stopping…" : "Cancellation requested");
+    expect(api.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([
+      ["/api/workbench/imports/selected-job/cancel", { method: "POST" }],
+    ]);
+    expect(panel.queryByRole("button", { name: action })).toBeNull();
+  });
+
+  it("does not offer another stop or claim normal downloading when a recovered job is cancelling", async () => {
+    const collection = { key: "00e55dcb-9697-4b89-af56-af51bd557a17", name: "Controls" };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => jsonResponse(input.toString().startsWith("/api/workbench/imports") ? { jobs: [{
+      id: "stopping-job", providerId: "cami-benchmark", status: "running", phase: "cancelling", request: { collection },
+      createdAt: "2026-09-09T12:46:00Z", updatedAt: "2026-09-09T12:46:00Z",
+    }] } : { importers: [] })));
+    render(<WorkbenchImportsClient source="cami" collection={collection} enablePolling={false} />);
+    const panel = within(await screen.findByRole("region", { name: "Import progress" }));
+    expect(panel.getByText("Stopping…")).toBeTruthy();
+    expect(panel.getByText("Cancellation requested. Waiting for the worker to stop.")).toBeTruthy();
+    expect(panel.queryByText("Import continues in the background")).toBeNull();
+    expect(panel.queryByRole("button")).toBeNull();
   });
 
   it("loads imports once without arming the refresh timer when polling is disabled", async () => {

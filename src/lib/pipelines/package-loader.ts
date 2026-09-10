@@ -13,6 +13,7 @@
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
+import type { TableContract } from '../explore/table-contract';
 import { ManifestSchema } from './manifest-schema';
 import type { PipelineResource } from './resource-schema';
 import {
@@ -98,11 +99,15 @@ export interface PackageOutputParsed {
   map: Record<string, string>;  // Field mapping
 }
 
-export interface PackageOutputTable {
+export interface PackageOutputTable extends TableContract {
   label?: string;
+  /** What this table contains, shown when choosing report data. */
+  description?: string;
+  /** Human-readable names for source columns; keys and values stay unchanged. */
+  columnLabels?: Record<string, string>;
   /** Explore table kind, e.g. "taxon-profile-long" */
   tableKind: string;
-  format?: 'tsv' | 'csv';
+  format?: 'tsv' | 'csv' | 'json';
   /** Column that names the sample in combined (study/run scoped) tables */
   sampleColumn?: string;
   /** Explore role -> column name */

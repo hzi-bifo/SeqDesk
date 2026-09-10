@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { renderHook, act, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -77,6 +78,51 @@ describe("SidebarContext", () => {
 
     await waitFor(() => {
       expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("340");
+    });
+  });
+
+  it("uses the wider default for a fresh browser", async () => {
+    const { result } = renderHook(() => useSidebar(), {
+      wrapper: ({ children }) => <SidebarProvider>{children}</SidebarProvider>,
+    });
+
+    expect(result.current.sidebarWidth).toBe(320);
+    await waitFor(() => {
+      expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("320");
+    });
+  });
+
+  it("migrates the saved old default without overriding later manual resizing", async () => {
+    localStorage.setItem("sidebar-width", "256");
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <SidebarProvider>{children}</SidebarProvider>
+    );
+    const { result, unmount } = renderHook(() => useSidebar(), { wrapper });
+
+    await waitFor(() => {
+      expect(result.current.sidebarWidth).toBe(320);
+      expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("320");
+    });
+
+    act(() => result.current.setSidebarWidth(256));
+    await waitFor(() => {
+      expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("256");
+    });
+    unmount();
+
+    const remounted = renderHook(() => useSidebar(), { wrapper });
+    expect(remounted.result.current.sidebarWidth).toBe(256);
+  });
+
+  it("preserves an existing custom width when migrating the preference", async () => {
+    localStorage.setItem("sidebar-width", "300");
+    const { result } = renderHook(() => useSidebar(), {
+      wrapper: ({ children }) => <SidebarProvider>{children}</SidebarProvider>,
+    });
+
+    await waitFor(() => {
+      expect(result.current.sidebarWidth).toBe(300);
+      expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe("300");
     });
   });
 

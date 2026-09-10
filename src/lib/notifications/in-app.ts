@@ -487,7 +487,7 @@ export async function notifyAppUpdateStartedInApp(options: {
       body: options.repair
         ? `Update repair for v${sourceId} started. SeqDesk will attempt an automatic restart.`
         : `SeqDesk update to v${sourceId} started. SeqDesk will attempt an automatic restart.`,
-      linkPath: "/admin/settings",
+      linkPath: "/admin/settings/system",
       sourceType: "appUpdate",
       sourceId,
       dedupeKey: (recipient) => `${eventType}:${sourceId}:${eventId}:${recipient.id}`,
@@ -514,9 +514,9 @@ export async function notifyAppUpdateProgressInApp(
       severity: failed ? "error" : "success",
       title: failed ? "SeqDesk update failed" : "SeqDesk update complete",
       body: failed
-        ? progress.error || progress.message || "The update failed. Check Platform Info for details."
+        ? progress.error || progress.message || "The update failed. Check System & maintenance for details."
         : progress.message || `SeqDesk update to v${sourceId} completed.`,
-      linkPath: "/admin/settings",
+      linkPath: "/admin/settings/system",
       sourceType: "appUpdate",
       sourceId,
       dedupeKey: (recipient) => `${eventType}:${sourceId}${errorKey}:${recipient.id}`,

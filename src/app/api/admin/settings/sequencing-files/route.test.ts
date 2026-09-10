@@ -108,6 +108,14 @@ describe("GET /api/admin/settings/sequencing-files", () => {
     expect(body.config.allowSingleEnd).toBe(true);
   });
 
+  it("returns an explicit error instead of editable defaults when reading settings fails", async () => {
+    mocks.db.siteSettings.findUnique.mockRejectedValueOnce(new Error("Database unavailable"));
+    const response = await GET();
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "Failed to load data storage settings" });
+    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
+  });
+
   it("handles invalid JSON in extraSettings gracefully", async () => {
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       dataBasePath: null,

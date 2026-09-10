@@ -180,6 +180,9 @@ function applyTransform(
     case 'to_lower':
       return value.toLowerCase();
     case 'prepend_path': {
+      // Imports and pipeline outputs can already store full paths. Prepending
+      // the storage root again would point Nextflow at a nonexistent file.
+      if (path.isAbsolute(value)) return value;
       const base = (transform.base || '').replace('${DATA_BASE_PATH}', dataBasePath);
       return base ? path.join(base, value) : value;
     }

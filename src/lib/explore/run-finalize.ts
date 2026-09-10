@@ -6,7 +6,8 @@ import { readTail } from "@/lib/pipelines/nextflow";
 import { createDataset, writeDatasetVersion } from "./datasets";
 import { parseDelimited } from "./parsers/delimited";
 import { readRunIsolation, sandboxFromLog } from "./sandbox/prepare";
-import { inferSchema } from "./schema";
+import { applyTableContract, inferSchema } from "./schema";
+import { TableContractSchema, type TableContract } from "./table-contract";
 import type { ExploreRole, ExploreRoleMap, ExploreSensitivity } from "./types";
 import { SENSITIVITY_RANK } from "./types";
 
@@ -20,7 +21,7 @@ interface ManifestArtifact {
   path?: unknown;
   title?: unknown;
   description?: unknown;
-  table?: { tableKind?: unknown; roles?: unknown } | null;
+  table?: { tableKind?: unknown; roles?: unknown; columns?: unknown; schemaId?: unknown; schemaVersion?: unknown; rowEntity?: unknown } | null;
 }
 
 interface OutputManifest {
@@ -115,6 +116,7 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
         continue;
       }
       try {
+        const contract = TableContractSchema.parse({ columns: entry.table?.columns, schemaId: entry.table?.schemaId, schemaVersion: entry.table?.schemaVersion, rowEntity: entry.table?.rowEntity });
         const derivedId = await promoteTable(run, artifact.id, absolute, {
           artifactName: name,
           name: typeof entry.title === "string" && entry.title.trim() ? entry.title.trim() : name,
@@ -122,6 +124,7 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
           tableKind: typeof entry.table?.tableKind === "string" ? entry.table.tableKind : null,
           roles: entry.table?.roles && typeof entry.table.roles === "object" ? (entry.table.roles as Record<string, string>) : {},
           sensitivity,
+          contract,
         });
         await db.exploreArtifact.update({ where: { id: artifact.id }, data: { derivedDatasetId: derivedId } });
       } catch (error) {
@@ -167,7 +170,7 @@ async function promoteTable(
   run: { id: string; runNumber: string; analysisId: string; analysis: { targetKey: string; name: string; createdById: string }; revision: { number: number } },
   artifactId: string,
   filePath: string,
-  options: { artifactName: string; name: string; format: "tsv" | "csv"; tableKind: string | null; roles: Record<string, string>; sensitivity: ExploreSensitivity }
+  options: { artifactName: string; name: string; format: "tsv" | "csv"; tableKind: string | null; roles: Record<string, string>; sensitivity: ExploreSensitivity; contract: TableContract }
 ): Promise<string> {
   const text = await fs.readFile(filePath, "utf8");
   const parsed = parseDelimited(text, { delimiter: options.format === "csv" ? "," : "\t" });
@@ -176,7 +179,7 @@ async function promoteTable(
   for (const [role, column] of Object.entries(options.roles)) {
     if (parsed.columns.includes(column)) roles[role as ExploreRole] = column;
   }
-  const schema = inferSchema(parsed.rows, { roles, groups: Object.fromEntries(parsed.columns.map((key) => [key, "analysis"])) });
+  const schema = applyTableContract(inferSchema(parsed.rows, { roles, groups: Object.fromEntries(parsed.columns.map((key) => [key, "analysis"])) }), parsed.rows, options.contract);
   const datasetName = `${options.name} (${run.analysis.name})`;
   const description = `Written by analysis ${run.analysis.name}, revision ${run.revision.number}, run ${run.runNumber}.`;
   const sourceConfig = { builder: "analysis-run", analysisId: run.analysisId, artifactName: options.artifactName, runId: run.id, artifactId };

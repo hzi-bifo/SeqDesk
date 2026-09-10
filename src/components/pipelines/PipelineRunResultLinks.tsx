@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ExternalLink, FileText, Files } from "lucide-react";
+import { ChevronDown, Download, ExternalLink, FileText, Files } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -11,8 +11,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { PipelineRunResultFile } from "@/lib/pipelines/result-files";
+import { PipelineFileDownload, pipelineFileDownloadHref } from "./PipelineFileDownload";
 
 type PipelineRunResultLinksProps = {
+  runId?: string;
+  downloadsDisabled?: boolean;
   status: string;
   resultFiles?: PipelineRunResultFile[] | null;
   primaryResultFile?: PipelineRunResultFile | null;
@@ -46,6 +49,8 @@ function formatSize(size: number | null): string | null {
 }
 
 export function PipelineRunResultLinks({
+  runId,
+  downloadsDisabled = false,
   status,
   resultFiles,
   primaryResultFile,
@@ -72,6 +77,7 @@ export function PipelineRunResultLinks({
 
   return (
     <div className="flex min-w-0 max-w-[260px] flex-col items-start gap-1" onClick={(event) => event.stopPropagation()}>
+      <div className="flex w-full min-w-0 items-center gap-1">
       {primary.previewable ? (
         <a
           href={fileHref(primary)}
@@ -90,6 +96,8 @@ export function PipelineRunResultLinks({
           <span className="truncate">{primary.name}</span>
         </span>
       )}
+        <PipelineFileDownload runId={runId} path={primary.path} label={primary.name} disabled={downloadsDisabled} />
+      </div>
 
       {(secondary.length > 0 || hasOmittedFiles) && (
         <DropdownMenu>
@@ -108,7 +116,8 @@ export function PipelineRunResultLinks({
               const size = formatSize(file.size);
               const detail = [fileKindLabel(file), size].filter(Boolean).join(" · ");
               return file.previewable ? (
-                <DropdownMenuItem key={file.id} asChild>
+                <div key={file.id} className="flex items-center">
+                <DropdownMenuItem asChild className="min-w-0 flex-1">
                   <a
                     href={fileHref(file)}
                     target="_blank"
@@ -126,6 +135,23 @@ export function PipelineRunResultLinks({
                       )}
                     </span>
                     <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                </DropdownMenuItem>
+                {runId && !downloadsDisabled && <DropdownMenuItem asChild>
+                  <a href={pipelineFileDownloadHref(runId, file.path)} download aria-label={`Download ${file.name}`} title={`Download ${file.name}`} onClick={(event) => event.stopPropagation()}>
+                    <Download className="size-4" aria-hidden="true" />
+                  </a>
+                </DropdownMenuItem>}
+                </div>
+              ) : runId && !downloadsDisabled ? (
+                <DropdownMenuItem key={file.id} asChild>
+                  <a href={pipelineFileDownloadHref(runId, file.path)} download aria-label={`Download ${file.name}`} title={file.path} onClick={(event) => event.stopPropagation()}>
+                    <FileText className="size-4" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{file.name}</span>
+                      {detail && <span className="block truncate text-xs text-muted-foreground">{detail}</span>}
+                    </span>
+                    <Download className="size-4" aria-hidden="true" />
                   </a>
                 </DropdownMenuItem>
               ) : (

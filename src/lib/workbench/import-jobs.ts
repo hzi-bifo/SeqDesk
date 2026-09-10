@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import type { Prisma } from "@prisma/client";
-import { CAMI_PREPARATION_BYTES, ImportStorageUnavailable, PREPARATION_WAITING, STORAGE_UNKNOWN, STORAGE_WAITING, requireImportStorage } from "./import-storage-capacity";
+import { estimateCamiPreparationBytes, ImportStorageUnavailable, PREPARATION_WAITING, STORAGE_UNKNOWN, STORAGE_WAITING, readImportStorageRequirement, rememberImportStorageRequirement, requireImportStorage } from "./import-storage-capacity";
 import path from "path";
 import { createHash } from "node:crypto";
 import { lockWorkbenchPublicationAccess } from "./publication-access";
@@ -11,7 +11,7 @@ import { processingDeclarationSchema } from "./import-processing";
 import { requireRawReadImporter } from "@/lib/modules/input-modules.server";
 import { db } from "@/lib/db";
 import { updateWorkbenchAnalysisNodeForImportJob } from "@/lib/workbench/analyses";
-import { assertPathInsideBase, resolveWorkbenchStorageBase, resolveWorkbenchImportStorage } from "@/lib/workbench/storage";
+import { assertPathInsideBase, getPathSizeBytes, resolveWorkbenchStorageBase, resolveWorkbenchImportStorage } from "@/lib/workbench/storage";
 import { getOrCreateDefaultWorkbenchWorkspace, serializeWorkbenchImportJob } from "@/lib/workbench/workspaces";
 import { getWorkbenchImporter } from "./importers/registry";
 import type { WorkbenchImportPreview, WorkbenchImportResult } from "./importers/types";
@@ -243,6 +243,19 @@ export async function runWorkbenchImportJob(jobId: string): Promise<void> {
   });
   if (!job) return;
 
+  let preparationBytes = 0;
+  let preparationError: Error | undefined;
+  if (job.providerId === "cami-benchmark") {
+    try {
+      const preview = JSON.parse(job.preview || "{}");
+      preparationBytes = estimateCamiPreparationBytes(Array.isArray(preview?.assets) && preview.assets.length === 1 ? preview.assets[0]?.bytes : undefined);
+    } catch (error) {
+      // Claim malformed legacy jobs only to report a normal terminal error below;
+      // never park them indefinitely as an unknown disk-space problem.
+      preparationError = error instanceof Error ? error : new Error("Invalid CAMI import preview");
+    }
+  }
+
   // Compete with other runners and queued cancellation in the database, not
   // against the stale snapshot above. Terminal/running jobs are never replayed.
   const claimed = await db.$transaction(async (tx) => {
@@ -254,10 +267,13 @@ export async function runWorkbenchImportJob(jobId: string): Promise<void> {
       let waiting: string | undefined;
       if (await tx.workbenchImportJob.count({ where: { status: "running", providerId: "cami-benchmark" } })) {
         waiting = PREPARATION_WAITING;
-      } else {
+      } else if (!preparationError) {
         try {
           const storageBase = await resolveWorkbenchStorageBase();
-          await requireImportStorage(storageBase.cacheRoot, CAMI_PREPARATION_BYTES);
+          const jobDirectory = path.join(storageBase.jobsRoot, jobId);
+          assertPathInsideBase(jobDirectory, storageBase.jobsRoot, "Import job directory");
+          const learned = await readImportStorageRequirement(jobDirectory);
+          await requireImportStorage(storageBase.cacheRoot, Math.max(preparationBytes, learned));
         } catch (error) {
           waiting = error instanceof ImportStorageUnavailable ? error.message : STORAGE_UNKNOWN;
         }
@@ -319,6 +335,7 @@ export async function runWorkbenchImportJob(jobId: string): Promise<void> {
   }
   try {
     await requireRawReadImporter(provider.id);
+    if (preparationError) throw preparationError;
     const destination = await db.workbenchWorkspace.findFirst({
       where: { id: job.workspaceId, ownerId: job.createdById, owner: { isActive: true } },
       select: { id: true },
@@ -417,7 +434,17 @@ export async function runWorkbenchImportJob(jobId: string): Promise<void> {
       // Retain the running reservation until the writer has stopped and cleanup
       // succeeds. A failed cleanup follows the normal error path below.
       try {
-        if (storage) await fs.rm(storage.cacheDir, { recursive: true, force: true });
+        if (storage) {
+          const partialBytes = await getPathSizeBytes(storage.cacheDir).catch(error => {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+            throw error;
+          });
+          // On retry the filesystem will no longer include these partial files.
+          // Remember the whole attempt's peak, not just the next stage's delta.
+          const requirement = Math.max(preparationBytes, partialBytes + storageError.additionalBytes);
+          await fs.rm(storage.cacheDir, { recursive: true, force: true });
+          await rememberImportStorageRequirement(storage.jobDir, requirement);
+        }
         const deferred = await db.workbenchImportJob.updateMany({
           where: { id: jobId, status: "running", NOT: { phase: "cancelling" } },
           data: { status: "queued", phase: storageError.message, progress: 0,

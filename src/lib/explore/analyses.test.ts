@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   db: {
+    $transaction: vi.fn(),
     exploreAnalysis: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     exploreAnalysisRevision: { create: vi.fn(), findUnique: vi.fn() },
     exploreAnalysisRun: { findFirst: vi.fn() },
@@ -17,6 +18,7 @@ import { allocateRunNumber, createAnalysis, createRevision, parseInputBindings }
 describe("explore analyses", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.db.$transaction.mockImplementation((callback: (client: typeof mocks.db) => Promise<unknown>) => callback(mocks.db));
     mocks.db.exploreAnalysis.create.mockResolvedValue({ id: "a1" });
     mocks.db.exploreAnalysis.update.mockResolvedValue({});
     mocks.db.exploreAnalysisRevision.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: "r1", createdAt: new Date(), ...data }));
@@ -81,5 +83,6 @@ describe("explore analyses", () => {
   it("parses input bindings defensively", () => {
     expect(parseInputBindings('[{"alias":"a","datasetId":"d"},{"alias":"","datasetId":"x"},5]')).toEqual([{ alias: "a", datasetId: "d", versionId: null }]);
     expect(parseInputBindings("not json")).toEqual([]);
+    expect(parseInputBindings('{"version":1,"bindings":[{"alias":"table","datasetId":"d1","versionId":"pinned"}],"contract":[]}')).toEqual([{ alias: "table", datasetId: "d1", versionId: "pinned" }]);
   });
 });

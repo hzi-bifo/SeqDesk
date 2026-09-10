@@ -358,7 +358,7 @@ describe("in-app notifications", () => {
       eventType: "app.update.started",
       severity: "info",
       title: "SeqDesk update started",
-      linkPath: "/admin/settings",
+      linkPath: "/admin/settings/system",
       sourceType: "appUpdate",
       sourceId: "2.0.0",
     });
@@ -411,11 +411,13 @@ describe("in-app notifications", () => {
     expect(completeData[0]).toMatchObject({
       eventType: "app.update.completed",
       severity: "success",
+      linkPath: "/admin/settings/system",
       dedupeKey: "app.update.completed:2.0.0:admin-1",
     });
     expect(failedData[0]).toMatchObject({
       eventType: "app.update.failed",
       severity: "error",
+      linkPath: "/admin/settings/system",
       body: "Migration failed",
       dedupeKey: "app.update.failed:2.0.0:Migration failed:admin-1",
     });

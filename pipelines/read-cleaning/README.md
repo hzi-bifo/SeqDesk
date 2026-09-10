@@ -15,6 +15,27 @@ Required runtime configuration:
 SeqDesk intentionally does not pick or download a contaminant database
 implicitly.
 
+## Report table
+
+The package's output-discovery script preserves `summary/summary.tsv` and writes
+an additional standard JSON table, `seqdesk-read-screening-summary.json`. Its
+manifest owns the sample identity mapping, measurement labels, types and units;
+Explore uses the same table preview and chart controls as for any other package.
+
+The adapter follows the pinned [detaxizer 1.3.0 summary format](https://nf-co.re/detaxizer/1.3.0/docs/output#summary):
+an unnamed sample-index column, classifier-dependent headers and `_longReads`
+sample suffixes. Ambiguous sample names, unexpected columns or malformed counts
+prevent the derived table from being registered. The original summary remains
+available, with a discovery error explaining why the report table is unavailable.
+Repeated discovery reuses an identical table; existing files are not overwritten.
+
+`classified_read_ids` counts IDs flagged by the contaminant classification step,
+**not** total, retained or necessarily removed reads. Missing BLAST validation
+statistics are null, not zero. Reporting never promotes cleaned reads or changes
+the existing admin-review policy. For historical runs, the JSON artifact must be
+created and registered by explicitly re-discovering outputs; simply opening a
+report never runs this adapter or reruns the pipeline.
+
 ## Citation
 
 This package runs the **nf-core/detaxizer** Nextflow pipeline (host/contaminant

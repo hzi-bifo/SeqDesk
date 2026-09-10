@@ -14,6 +14,10 @@ const outputs: ReportOutputs = {
 };
 
 describe("suggestReportBlocks", () => {
+  it("keeps guided outputs out of the automatic draft until the user chooses to add them", () => {
+    const blocks = suggestReportBlocks({ ...outputs, figures: outputs.figures.map(figure => ({ ...figure, autoInclude: false })), tables: outputs.tables.map(table => ({ ...table, autoInclude: false })) });
+    expect(blocks.map(block => block.type)).toEqual(["text"]);
+  });
   it("opens with an intro, then every figure, then every output table", () => {
     const blocks = suggestReportBlocks(outputs);
     expect(blocks.map((block) => block.type)).toEqual(["text", "figure", "figure", "table"]);
@@ -27,7 +31,8 @@ describe("suggestReportBlocks", () => {
     const blocks = suggestReportBlocks({ figures: [], tables: [], analyses: [] });
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toMatchObject({ type: "text" });
-    expect((blocks[0] as { markdown: string }).markdown).toContain("Run one on the canvas");
+    expect((blocks[0] as { markdown: string }).markdown).toContain("Browse data");
+    expect((blocks[0] as { markdown: string }).markdown).toContain("analyses are optional");
   });
 });
 

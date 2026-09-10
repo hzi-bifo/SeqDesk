@@ -2,7 +2,7 @@
 
 import useSWR from "swr";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ExploreLoading } from "../ExploreLoading";
 import { PlotlyChart } from "@/components/explore/PlotlyChart";
 import { fetcher } from "@/lib/explore/client";
 import type { SubjectCompositionPayload } from "@/lib/explore/views/subject-timeline/types";
@@ -35,7 +35,7 @@ export function SubjectCompositionPanel({
     fetcher
   );
   if (error) return <p className="text-sm text-destructive">{String(error.message)}</p>;
-  if (!data) return <Skeleton className="h-72 w-full" />;
+  if (!data) return <ExploreLoading variant="chart" label="Loading composition…" height={height ?? 360} />;
   if (data.days.length === 0) return <p className="text-sm text-muted-foreground">{group}: no retained taxa on any day.</p>;
   const stacked = measure === "ra" ? data.stacked : data.stacked_reads;
   const traces = data.taxa.map((taxon, index) => ({

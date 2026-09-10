@@ -102,6 +102,50 @@ describe("samplesheet-generator", () => {
     );
   });
 
+  it.each(["absolute", "relative"])("generates usable paired-end inputs from %s stored paths", async (kind) => {
+    const base = "/data/base";
+    const prefix = kind === "absolute" ? `${base}/` : "";
+    mocks.getPackageSamplesheet.mockReturnValue({ samplesheet: {
+      format: "csv",
+      filename: "samplesheet.csv",
+      rows: { scope: "sample" },
+      columns: [
+        { name: "sample_id", source: "sample.sampleId", required: true },
+        ...[1, 2].map(mate => ({
+          name: `fastq_${mate}`,
+          source: `read.file${mate}`,
+          required: mate === 1,
+          transform: { type: "prepend_path", base: "${DATA_BASE_PATH}" },
+        })),
+      ],
+    } });
+    mocks.db.sample.findMany.mockResolvedValue([{
+      id: "sample-1",
+      sampleId: "sample_0",
+      reads: [{
+        id: "read-1",
+        file1: `${prefix}workbench/cache/cami/reads/R1.fastq.gz`,
+        file2: `${prefix}workbench/cache/cami/reads/R2.fastq.gz`,
+        isActive: true,
+        dataClass: "unknown",
+      }],
+      order: { id: "order-1" },
+      study: null,
+    }]);
+
+    const result = await new SamplesheetGenerator("fastqc").generate({
+      target: { type: "order", orderId: "order-1", sampleIds: ["sample-1"] },
+      dataBasePath: base,
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.sampleCount).toBe(1);
+    expect(result.content).toBe([
+      "sample_id,fastq_1,fastq_2",
+      "sample_0,/data/base/workbench/cache/cami/reads/R1.fastq.gz,/data/base/workbench/cache/cami/reads/R2.fastq.gz",
+    ].join("\n"));
+  });
+
   it("reports missing config and hasSamplesheetConfig=false", async () => {
     mocks.getPackageSamplesheet.mockReturnValue(null);
 

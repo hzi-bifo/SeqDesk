@@ -1,50 +1,94 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
-import { Building2, Database, Package, Search, Store } from "lucide-react";
+import { useId, useState } from "react";
+import { Search, Store, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useModuleEnabled } from "@/lib/modules";
-import { importModuleCatalog } from "@/lib/modules/import-catalog";
+import { dataSourceModuleCatalog } from "@/lib/modules/import-catalog";
+import { cn } from "@/lib/utils";
 import type { ImportCollection } from "@/lib/workbench/import-collection";
+import { ImportModuleCard } from "./ImportModuleCard";
 
-function sourceHref(source: string, collection?: ImportCollection, orderId?: string) {
-  const query = new URLSearchParams({ source });
-  if (orderId && source !== "facility") query.set("orderId", orderId);
-  if (collection) { query.set("name", collection.name); query.set("collection", collection.key); }
-  return `${source === "facility" ? "/orders/new" : "/orders/import"}?${query}`;
-}
-
-function ImportModuleCard({ module, collection, orderId }: { module: typeof importModuleCatalog[number]; collection?: ImportCollection; orderId?: string }) {
-  const enabled = useModuleEnabled(module.id);
-  return <section className="flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-5">
-    <div className="flex items-start justify-between gap-2"><Database className="h-6 w-6 text-primary" /><span className="rounded bg-muted px-2 py-1 text-xs">Bundled · {enabled ? "Enabled" : "Disabled"}</span></div>
-    <div><p className="mb-1 text-xs text-muted-foreground">{module.category} · Import module</p><h3 className="font-semibold">{module.name}</h3></div>
-    <p className="flex-1 text-sm text-muted-foreground">{module.description}</p>
-    <div className="flex flex-wrap gap-2">{module.formats.map(format => <span key={format} className="rounded border px-2 py-1 text-xs text-muted-foreground">{format}</span>)}</div>
-    {enabled ? <Button variant="outline" asChild><Link href={sourceHref(module.source, collection, orderId)}>Use {module.source === "cami" ? "CAMI" : "SRA / ENA"} module</Link></Button> : <Button variant="outline" disabled>Disabled by administrator</Button>}
-  </section>;
-}
+const categories = ["All modules", ...new Set(dataSourceModuleCatalog.map(module => module.category))];
 
 export function RawDataSources({ collection, orderId }: { collection?: ImportCollection; orderId?: string } = {}) {
-  const facility = useModuleEnabled("sequencing-management");
   const [search, setSearch] = useState("");
-  const visible = importModuleCatalog.filter(module => `${module.name} ${module.description} ${module.category} ${module.formats.join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()));
-  return <div className="space-y-6">
-    <section className="flex flex-col gap-4 rounded-lg border bg-card p-5 sm:flex-row sm:items-center">
-      <Building2 className="h-6 w-6 shrink-0 text-muted-foreground" />
-      <div className="flex-1"><h2 className="font-semibold">Facility sequencing</h2><p className="mt-1 text-sm text-muted-foreground">Submit samples to the facility using the existing sequencing order form.</p></div>
-      {facility ? <Button variant="outline" asChild><Link href={sourceHref("facility", collection)}>Use facility sequencing</Link></Button> : <Button variant="outline" disabled>Disabled by administrator</Button>}
-    </section>
-    <section aria-labelledby="import-store-title" className="space-y-4">
-      <div className="flex items-start gap-3"><Store className="mt-1 h-5 w-5 shrink-0" /><div><h2 id="import-store-title" className="font-semibold">Import module store</h2><p className="mt-1 text-sm text-muted-foreground">Choose a module to browse its source, preview files and import raw reads with metadata. All modules add data to the same SeqDesk application.</p></div></div>
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-        <p className="flex items-center gap-2 text-sm text-muted-foreground"><Package className="h-4 w-4" />Loaded import modules · {importModuleCatalog.length} bundled</p>
-        <div className="relative sm:w-72"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input aria-label="Search import modules" className="pl-9" placeholder="Search import modules…" value={search} onChange={event => setSearch(event.target.value)} /></div>
+  const [category, setCategory] = useState("All modules");
+  const storeId = useId();
+  const resultsId = `${storeId}-results`;
+  const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const visible = dataSourceModuleCatalog.filter(module => {
+    const text = `${module.name} ${module.description} ${module.category} ${module.formats.join(" ")}`.toLowerCase();
+    return (category === "All modules" || category === module.category) && terms.every(term => text.includes(term));
+  });
+  const filtered = terms.length > 0 || category !== "All modules";
+
+  return (
+    <section aria-labelledby={storeId} className="@container space-y-5">
+      <div className="flex flex-col justify-between gap-4 @3xl:flex-row @3xl:items-center">
+        <div className="space-y-1.5">
+          <h2 id={storeId} className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+            <Store className="size-5 shrink-0" aria-hidden="true" /> Import module store
+          </h2>
+          <p className="text-sm text-muted-foreground">Find the right source for your sequencing data.</p>
+        </div>
+        <div className="relative w-full @3xl:w-72 @3xl:shrink-0">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input
+            type="search"
+            aria-label="Search import modules"
+            aria-controls={resultsId}
+            className="h-10 pr-10 pl-9 [&::-webkit-search-cancel-button]:appearance-none"
+            placeholder="Search modules or data types…"
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+          />
+          {search && (
+            <Button type="button" variant="ghost" size="icon-sm" className="absolute top-1/2 right-1 -translate-y-1/2" aria-label="Clear search" onClick={() => setSearch("")}>
+              <X aria-hidden="true" />
+            </Button>
+          )}
+        </div>
       </div>
-      <div className="grid gap-4 md:grid-cols-2">{visible.map(module => <ImportModuleCard key={module.id} module={module} collection={collection} orderId={orderId} />)}</div>
-      {!visible.length && <p role="status" className="rounded-lg border p-5 text-sm text-muted-foreground">No loaded import modules match “{search}”. Try another module name or data type.</p>}
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+        <div role="group" aria-label="Filter import modules by category" className="flex flex-wrap gap-1.5">
+          {categories.map(value => (
+            <Button
+              key={value}
+              type="button"
+              size="sm"
+              variant={category === value ? "secondary" : "ghost"}
+              className={cn("rounded-full", category === value && "bg-foreground text-background hover:bg-foreground/90 hover:text-background")}
+              aria-pressed={category === value}
+              aria-controls={resultsId}
+              onClick={() => setCategory(value)}
+            >
+              {value}
+            </Button>
+          ))}
+        </div>
+        <p role="status" className="text-xs tabular-nums text-muted-foreground">
+          {visible.length}{filtered && ` of ${dataSourceModuleCatalog.length}`} {visible.length === 1 && !filtered ? "module" : "modules"}
+        </p>
+      </div>
+
+      <div id={resultsId}>
+        {visible.length ? (
+          <div className="grid gap-4 @xl:grid-cols-2 @3xl:grid-cols-3">
+            {visible.map(module => <ImportModuleCard key={module.id} module={module} collection={collection} orderId={orderId} />)}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed px-5 py-12 text-center">
+            <Search className="mb-1 size-6 text-muted-foreground" aria-hidden="true" />
+            <h3 className="font-medium">No modules found</h3>
+            <p className="max-w-md break-words text-sm text-muted-foreground">
+              {search.trim() ? `No modules match “${search.trim()}”${category !== "All modules" ? ` in ${category}` : ""}.` : `No modules match ${category}.`} Try another search or category.
+            </p>
+            <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => { setSearch(""); setCategory("All modules"); }}>Clear filters</Button>
+          </div>
+        )}
+      </div>
     </section>
-  </div>;
+  );
 }

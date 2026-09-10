@@ -781,11 +781,17 @@ export async function getOrderSequencingSummary(
             if (!filePath || !row.read) return;
             anyLinked = true;
             try {
-              const resolved = safeJoin(basePath, filePath);
+              // Imported reads store absolute paths; facility reads may be
+              // relative. Normalize only paths inside the configured storage
+              // root before applying the same traversal guard to both.
+              const relativePath = path.isAbsolute(filePath)
+                ? toRelativePath(basePath, filePath)
+                : filePath;
+              const resolved = safeJoin(basePath, relativePath);
               const stats = await stat(resolved);
               row.read[key] = stats.size;
             } catch {
-              // File does not exist on disk
+              // File is missing, inaccessible, or outside configured storage.
               anyMissing = true;
             }
           })

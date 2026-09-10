@@ -1,7 +1,7 @@
 // Module system types
 // Allows features to be enabled/disabled globally
 
-export type ModuleCategory = "order-form" | "validation" | "access" | "communication" | "analysis";
+export type ModuleCategory = "data-sources" | "order-form" | "validation" | "access" | "communication" | "analysis";
 
 export interface ModuleDefinition {
   id: string;
@@ -17,16 +17,20 @@ export interface ModuleDefinition {
 
 // Category labels and descriptions
 export const MODULE_CATEGORIES: Record<ModuleCategory, { label: string; description: string }> = {
+  "data-sources": {
+    label: "Data sources",
+    description: "Bring in sequencing data from your facility or public sources, with its metadata",
+  },
   "order-form": {
-    label: "Form Modules",
-    description: "Add specialized field types to your sequencing order and study forms",
+    label: "Metadata & forms",
+    description: "Choose the information collected about samples, studies and facility submissions",
   },
   validation: {
     label: "Validation",
     description: "Enhanced validation and quality checks",
   },
   access: {
-    label: "Access Control",
+    label: "Users & access",
     description: "Control who can access your installation",
   },
   communication: {
@@ -58,9 +62,9 @@ export interface AccountValidationSettings {
 
 // Available modules in the system
 export const AVAILABLE_MODULES: ModuleDefinition[] = [
-  { id: "sequencing-management", name: "Sequencing management", description: "Facility submission, sample intake and instrument sequencing. Can coexist with raw-read import modules.", category: "order-form", featureLocation: "Sequencing data > Facility processing" },
-  { id: "import-cami", name: "CAMI raw reads", description: "Import CAMI short or long raw reads and source metadata into shared records.", category: "order-form", featureLocation: "Sequencing data > Data source" },
-  { id: "import-sra", name: "SRA / ENA raw reads", description: "Import public raw reads and archive metadata using ENA/SRA accessions.", category: "order-form", featureLocation: "Sequencing data > Data source" },
+  { id: "sequencing-management", name: "Facility sequencing", description: "Accept sample submissions, manage sequencing orders and record instrument runs alongside imported data.", category: "data-sources", featureLocation: "Sequencing data > Facility processing" },
+  { id: "import-cami", name: "CAMI raw reads", description: "Import CAMI short or long raw reads and source metadata into shared records.", category: "data-sources", featureLocation: "Sequencing data > Data source" },
+  { id: "import-sra", name: "SRA / ENA raw reads", description: "Import public raw reads and archive metadata using ENA/SRA accessions.", category: "data-sources", featureLocation: "Sequencing data > Data source" },
   // Form Extensions
   {
     id: "mixs-metadata",

@@ -3,7 +3,7 @@
   "name": "Read Cleaning",
   "description": "Host/contaminant screening and non-destructive cleaned read staging with nf-core/detaxizer",
   "url": "https://nf-co.re/detaxizer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "inputs": [
     {
       "id": "raw_reads",
@@ -44,14 +44,23 @@
     },
     {
       "id": "summary",
-      "name": "Cleaning summary",
-      "description": "Run-level detaxizer classification and filtering summary",
+      "name": "Original screening summary",
+      "description": "Original detaxizer classification and optional BLAST validation summary",
       "fromStep": "classification",
       "fileTypes": [
         ".tsv"
       ],
       "destination": "run_artifact",
       "destinationDescription": "Stored as a run artifact for review and download"
+    },
+    {
+      "id": "report_summary",
+      "name": "Read screening report table",
+      "description": "Package-normalized classification counts with sample identities for Explore tables and charts. Does not infer total or removed reads.",
+      "fromStep": "classification",
+      "fileTypes": [".json"],
+      "destination": "run_artifact",
+      "destinationDescription": "Stored beside the unchanged original summary for reporting"
     },
     {
       "id": "multiqc_report",
@@ -97,7 +106,8 @@
         "bbduk"
       ],
       "outputs": [
-        "summary"
+        "summary",
+        "report_summary"
       ]
     },
     {

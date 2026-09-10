@@ -23,6 +23,23 @@ import { finalizeExploreRun } from "./run-finalize";
 describe("finalizeExploreRun", () => {
   let runFolder: string;
 
+  it("carries declared labels and units into derived tables", async () => {
+    await fs.writeFile(path.join(runFolder, "outputs", "measurements.tsv"), "sample\tvalue\nS1\t14\n");
+    await fs.writeFile(path.join(runFolder, "outputs", "manifest.json"), JSON.stringify({ artifacts: [{ name: "measurements", kind: "table", format: "tsv", path: "outputs/measurements.tsv",
+      table: { tableKind: "custom", roles: { sample: "sample" }, schemaId: "lab.measurements", schemaVersion: "1", rowEntity: "specimen", columns: { value: { type: "number", label: "Abundance", unit: "percent", required: true } } } }] }));
+    await finalizeExploreRun("run1", 0);
+    expect(mocks.writeDatasetVersion).toHaveBeenCalledWith(expect.objectContaining({ schema: expect.objectContaining({ schemaId: "lab.measurements", rowEntity: "specimen", columns: expect.arrayContaining([expect.objectContaining({ key: "value", label: "Abundance", unit: "percent", type: "number" })]) }) }));
+  });
+
+  it("does not promote derived tables that violate their declared types", async () => {
+    await fs.writeFile(path.join(runFolder, "outputs", "invalid.tsv"), "value\nbroken\n");
+    await fs.writeFile(path.join(runFolder, "outputs", "manifest.json"), JSON.stringify({ artifacts: [{ name: "invalid", kind: "table", format: "tsv", path: "outputs/invalid.tsv", table: { columns: { value: { type: "number" } } } }] }));
+    await finalizeExploreRun("run1", 0);
+    expect(mocks.writeDatasetVersion).not.toHaveBeenCalled();
+    expect(mocks.db.exploreArtifact.upsert).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(mocks.db.exploreAnalysisRun.updateMany.mock.calls[0][0].data.results).warnings).toEqual([expect.stringContaining("must contain number")]);
+  });
+
   beforeEach(async () => {
     vi.clearAllMocks();
     runFolder = await fs.mkdtemp(path.join(os.tmpdir(), "explore-run-"));

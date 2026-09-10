@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TableContractSchema } from "../explore/table-contract";
 import { PipelineResourceSchema } from "./resource-schema";
 import {
   PACKAGE_TARGET_TYPES,
@@ -88,6 +89,7 @@ const PipelineResultContractSchema = z
     preview: z
       .object({
         label: z.string().min(1).optional(),
+        description: z.string().max(2000).optional(),
         primary: z.boolean().optional(),
         previewable: z.boolean().optional(),
       })
@@ -262,11 +264,13 @@ export const ManifestSchema = z
           result: PipelineResultContractSchema.optional(),
           // Declares that this output is a delimited table Explore can turn
           // into a dataset. `roles` maps Explore column roles to column names.
-          table: z
-            .object({
+          table: TableContractSchema
+            .extend({
               tableKind: z.string().min(1),
               label: z.string().min(1).max(200).optional(),
-              format: z.enum(["tsv", "csv"]).optional(),
+              description: z.string().min(1).max(2000).optional(),
+              columnLabels: z.record(z.string().min(1).max(200), z.string().min(1).max(200)).optional(),
+              format: z.enum(["tsv", "csv", "json"]).optional(),
               sampleColumn: z.string().min(1).optional(),
               roles: z.record(z.string().min(1), z.string().min(1)).optional(),
               skipLinesStartingWith: z.string().min(1).optional(),

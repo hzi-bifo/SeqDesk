@@ -429,11 +429,9 @@ describe("Footer admin activity", () => {
     fireEvent.click(screen.getByRole("button", { name: /pipeline jobs, 8 jobs active/i }));
 
     expect(screen.getByText("Pipeline jobs")).toBeTruthy();
-    expect(
-      Array.from(container.querySelectorAll("div")).some((element) =>
-        element.className.includes("bottom-[calc(100%+0.5rem)]")
-      )
-    ).toBe(true);
+    const panel = screen.getByRole("dialog", { name: "Pipeline jobs", exact: true });
+    expect(container.contains(panel)).toBe(false); // Portal escapes the footer stacking context.
+    expect(panel.getAttribute("data-side")).toBe("top");
     expect(screen.getByText("8 jobs active")).toBeTruthy();
     expect(screen.getByText("2 stale jobs")).toBeTruthy();
     expect(screen.getByText("1 running · 1 pending")).toBeTruthy();
@@ -465,11 +463,9 @@ describe("Footer admin activity", () => {
     fireEvent.click(screen.getByRole("button", { name: /details/i }));
 
     expect(screen.getByText("Status warnings")).toBeTruthy();
-    expect(
-      Array.from(container.querySelectorAll("div")).some((element) =>
-        element.className.includes("bottom-[calc(100%+0.5rem)]")
-      )
-    ).toBe(true);
+    const panel = screen.getByRole("dialog", { name: "Admin status", exact: true });
+    expect(container.contains(panel)).toBe(false); // Portal escapes the footer stacking context.
+    expect(panel.getAttribute("data-side")).toBe("top");
     expect(screen.getByText("Some background worker status could not be loaded.")).toBeTruthy();
     expect(screen.getByText("Pipeline load could not be loaded.")).toBeTruthy();
   });
@@ -595,6 +591,32 @@ describe("Footer admin activity", () => {
     ).toBe("/orders/order-1");
   });
 
+  it("switches between footer panels without stacking them or marking notifications read", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url === "/api/admin/workers") return jsonResponse({ workers: [], pipelineLoad: makePipelineLoad() });
+      if (url.startsWith("/api/notifications")) return jsonResponse({ notifications: [makeNotification()], unreadCount: 1 });
+      return jsonResponse({ jobs: [{ id: "activity-1", label: "Import", state: "error", error: "Download interrupted" }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<Footer />);
+    const pipelineTrigger = await screen.findByRole("button", { name: /Pipeline jobs, / });
+    const detailsTrigger = screen.getByRole("button", { name: "details", exact: true });
+    const notificationsTrigger = screen.getByRole("button", { name: /Notifications, 1 unread/ });
+    for (const [trigger, title] of [
+      [detailsTrigger, "Admin status"], [notificationsTrigger, "Notifications"],
+      [pipelineTrigger, "Pipeline jobs"], [detailsTrigger, "Admin status"],
+    ] as const) {
+      fireEvent.click(trigger);
+      expect(screen.getAllByRole("dialog")).toHaveLength(1);
+      expect(screen.getByRole("dialog", { name: title, exact: true })).toBeTruthy();
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    }
+    fireEvent.click(detailsTrigger);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).endsWith("/read"))).toBe(true);
+  });
+
   it("marks notification rows read and archives hidden notifications", async () => {
     let read = false;
     let archived = false;
@@ -678,11 +700,9 @@ describe("Footer admin activity", () => {
     fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
 
     expect(screen.getByText("No notifications.")).toBeTruthy();
-    expect(
-      Array.from(container.querySelectorAll("div")).some((element) =>
-        element.className.includes("bottom-[calc(100%+0.5rem)]")
-      )
-    ).toBe(true);
+    const panel = screen.getByRole("dialog", { name: "Notifications", exact: true });
+    expect(container.contains(panel)).toBe(false); // Portal escapes the footer stacking context.
+    expect(panel.getAttribute("data-side")).toBe("top");
   });
 
   it("hides the notification panel when in-app notifications are disabled", async () => {

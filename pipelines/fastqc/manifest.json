@@ -44,6 +44,7 @@
   "outputs": [
     {
       "id": "sample_qc_reports",
+      "result": { "kind": "run_artifact", "preview": { "label": "Original quality reports", "description": "The saved FastQC HTML report for each read file." } },
       "scope": "sample",
       "destination": "run_artifact",
       "type": "artifact",
@@ -55,6 +56,7 @@
     },
     {
       "id": "sample_qc_data",
+      "result": { "kind": "download", "preview": { "label": "Raw QC results", "description": "FastQC ZIP files for reuse in other tools.", "previewable": false } },
       "scope": "sample",
       "destination": "run_artifact",
       "type": "artifact",
@@ -92,6 +94,40 @@
       "scope": "run",
       "destination": "run_artifact",
       "type": "artifact",
+      "table": {
+        "label": "FastQC quality summary",
+        "description": "Read counts, mean Phred quality and FastQC PASS / WARN / FAIL check counts for R1 and R2. One row per sample; missing R2 values stay empty for single-end reads.",
+        "tableKind": "sample-summary",
+        "schemaId": "seqdesk.fastqc-summary",
+        "schemaVersion": "1",
+        "rowEntity": "sample",
+        "columns": {
+          "r1_pass": { "type": "number", "unit": "checks", "required": true },
+          "r1_warn": { "type": "number", "unit": "checks", "required": true },
+          "r1_fail": { "type": "number", "unit": "checks", "required": true },
+          "r1_read_count": { "type": "number", "unit": "reads", "required": true },
+          "r1_avg_quality": { "type": "number", "unit": "Phred", "required": true },
+          "r2_pass": { "type": "number", "unit": "checks", "nullable": true },
+          "r2_warn": { "type": "number", "unit": "checks", "nullable": true },
+          "r2_fail": { "type": "number", "unit": "checks", "nullable": true },
+          "r2_read_count": { "type": "number", "unit": "reads", "nullable": true },
+          "r2_avg_quality": { "type": "number", "unit": "Phred", "nullable": true }
+        },
+        "format": "tsv",
+        "sampleColumn": "sample_id",
+        "columnLabels": {
+          "r1_pass": "R1 passed checks",
+          "r1_warn": "R1 warnings",
+          "r1_fail": "R1 failed checks",
+          "r1_read_count": "R1 reads",
+          "r1_avg_quality": "R1 mean quality (Phred)",
+          "r2_pass": "R2 passed checks",
+          "r2_warn": "R2 warnings",
+          "r2_fail": "R2 failed checks",
+          "r2_read_count": "R2 reads",
+          "r2_avg_quality": "R2 mean quality (Phred)"
+        }
+      },
       "fromStep": "fastqc",
       "discovery": {
         "pattern": "summary/fastqc-summary.tsv"
