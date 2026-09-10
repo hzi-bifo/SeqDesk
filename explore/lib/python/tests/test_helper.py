@@ -82,6 +82,32 @@ def _fresh_state():
 # --------------------------------------------------------------------------- #
 #  Locating the run
 # --------------------------------------------------------------------------- #
+def test_original_file_input(tmp_path):
+    run = write_run(tmp_path)
+    source = run / "inputs" / "source.bin"
+    content = bytes([0, 255, 10, 128])
+    source.write_bytes(content)
+    document = json.loads((run / "inputs.json").read_text())
+    document["files"] = {"source": {"path": "inputs/source.bin", "fileId": "file-1"}}
+    (run / "inputs.json").write_text(json.dumps(document))
+    sx.set_run_dir(run)
+    assert sx.file_path("source").read_bytes() == content
+    with pytest.raises(sx.ExploreInputError, match="No file input"):
+        sx.file_path("unknown")
+
+
+def test_original_file_input_refuses_escape(tmp_path):
+    run = write_run(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private")
+    document = json.loads((run / "inputs.json").read_text())
+    document["files"] = {"source": {"path": "../outside.txt"}}
+    (run / "inputs.json").write_text(json.dumps(document))
+    sx.set_run_dir(run)
+    with pytest.raises(sx.ExploreInputError, match="outside the run directory"):
+        sx.file_path("source")
+
+
 def test_run_dir_from_argv(tmp_path, monkeypatch):
     run = write_run(tmp_path)
     monkeypatch.setattr(sys, "argv", ["analysis.py", "--run-dir", str(run)])

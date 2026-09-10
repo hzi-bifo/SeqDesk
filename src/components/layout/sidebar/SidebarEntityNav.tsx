@@ -16,6 +16,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { useModuleEnabled } from "@/lib/modules";
+import type { ReportListResponse } from "@/lib/explore/reports";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -33,6 +34,7 @@ import {
   getPipelineProgressIndicatorClassName,
   getPipelineProgressIndicatorLabel,
 } from "./pipelineProgress";
+import { SidebarReportLink } from "./SidebarReportLink";
 
 interface SidebarEntityNavProps {
   entityContext: SidebarEntityContext;
@@ -175,13 +177,14 @@ export function SidebarEntityNav({
   // The reports of this study or order sit under the Reports entry; one click opens each.
   const router = useRouter();
   const reportsScope = entityId && (entityType === "study" || entityType === "order") ? `${entityType}:${entityId}` : null;
-  const { data: reportsData, mutate: mutateReports } = useSWR<{ reports: Array<{ id: string; title: string }> }>(
+  const { data: reportsData, mutate: mutateReports } = useSWR<ReportListResponse>(
     exploreEnabled && reportsScope && !collapsed ? `/api/explore/reports?targetKey=${encodeURIComponent(reportsScope)}` : null,
     async (url: string) => {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Request failed: ${response.status}`);
       return response.json();
-    }
+    },
+    { refreshInterval: isDemoUser ? 0 : 5000 }
   );
   const reports = reportsData?.reports ?? [];
   const activeReportId = pathname.match(/^\/explore\/reports\/([^/]+)/)?.[1] ?? null;
@@ -319,7 +322,7 @@ export function SidebarEntityNav({
 
   // Determine active state
   const getIsActive = (item: NavItem): boolean => {
-    if (!hasEntity) return false;
+    if (!hasEntity || pathname === "/files") return false;
 
     if (activeTab === "studies") {
       const isStudyOverviewTab =
@@ -484,24 +487,15 @@ export function SidebarEntityNav({
               {link}
               {shouldShowReportSubitems && reportsScope && (
                 <div className="ml-5 border-l border-border/70 pl-2">
-                  {reports.map((report) => {
-                    const isReportActive = activeReportId === report.id;
-                    return (
-                      <Link
-                        key={report.id}
-                        href={`/explore/reports/${report.id}?scope=${encodeURIComponent(reportsScope)}`}
-                        className={cn(
-                          "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                          isReportActive
-                            ? "bg-secondary text-foreground font-medium"
-                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
-                        )}
-                      >
-                        <span className={cn("h-2 w-2 shrink-0 rounded-full bg-slate-300 shadow-sm", isReportActive && "ring-2 ring-background")} aria-hidden="true" />
-                        <span className="truncate">{report.title}</span>
-                      </Link>
-                    );
-                  })}
+                  {reports.map((report) => (
+                    <SidebarReportLink
+                      key={report.id}
+                      report={report}
+                      scope={reportsScope}
+                      active={activeReportId === report.id}
+                      canEdit={reportsData?.canEdit === true && !isDemoUser}
+                    />
+                  ))}
                   <button
                     type="button"
                     onClick={() => void createReport()}

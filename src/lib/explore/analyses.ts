@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getKit, type LoadedKit } from "./kits/loader";
 import { stepSlug } from "./variables";
+import { parseStoredFileBindings, type AnalysisFileBinding } from "@/lib/files/library-types";
 
 export type AnalysisLanguage = "python" | "r";
 
@@ -24,6 +25,7 @@ export interface RevisionSummary {
   createdAt: string;
   params: Record<string, unknown>;
   inputs: AnalysisInputBinding[];
+  fileInputs: AnalysisFileBinding[];
 }
 
 export interface RunSummary {
@@ -120,6 +122,7 @@ function serializeRevision(revision: RevisionRecord): RevisionSummary {
     createdAt: revision.createdAt.toISOString(),
     params: parseJsonObject(revision.params),
     inputs: parseInputBindings(revision.inputs),
+    fileInputs: parseStoredFileBindings(revision.fileInputs),
   };
 }
 
@@ -218,6 +221,7 @@ export interface CreateAnalysisInput {
   language?: AnalysisLanguage;
   environmentName?: string | null;
   inputs: AnalysisInputBinding[];
+  fileInputs?: AnalysisFileBinding[];
   params?: Record<string, unknown>;
   createdById: string;
 }
@@ -235,7 +239,10 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
   }
   const language: AnalysisLanguage = kit?.manifest.language ?? input.language ?? "python";
   const environmentName = kit?.manifest.environment ?? input.environmentName ?? (language === "r" ? "seqdesk-explore-r" : "seqdesk-explore-python");
-  const code = kit?.code ?? (language === "r" ? BLANK_R : BLANK_PYTHON);
+  const fileOnlyCode = input.fileInputs?.length && input.inputs.length === 0
+    ? `from seqdesk_explore import file_path, note, finish\n\nsource = file_path(${JSON.stringify(input.fileInputs[0].alias)})\n# Read source with the library for your file format, then save figures or tables.\nnote(f"Input file: {source.name} ({source.stat().st_size} bytes)")\nfinish()\n`
+    : BLANK_PYTHON;
+  const code = kit?.code ?? (language === "r" ? BLANK_R : fileOnlyCode);
   const params = { ...defaultParams(kit), ...(input.params ?? {}) };
   let reportId: string | null = null;
   if (input.reportId) {
@@ -270,6 +277,7 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
       code,
       params: JSON.stringify(params),
       inputs: JSON.stringify(input.inputs),
+      fileInputs: JSON.stringify(input.fileInputs ?? []),
       author: "user",
       authorUserId: input.createdById,
       message: kit ? `Created from kit ${kit.manifest.id}` : "Created",
@@ -297,6 +305,7 @@ export interface CreateRevisionInput {
   code?: string;
   params?: Record<string, unknown>;
   inputs?: AnalysisInputBinding[];
+  fileInputs?: AnalysisFileBinding[];
   author: "user" | "agent";
   authorUserId: string;
   message?: string | null;
@@ -321,6 +330,7 @@ export async function createRevision(input: CreateRevisionInput): Promise<Revisi
       code: input.code ?? current?.code ?? "",
       params: JSON.stringify(input.params ?? parseJsonObject(current?.params)),
       inputs: JSON.stringify(input.inputs ?? parseInputBindings(current?.inputs)),
+      fileInputs: JSON.stringify(input.fileInputs ?? parseStoredFileBindings(current?.fileInputs)),
       author: input.author,
       authorUserId: input.authorUserId,
       message: input.message ?? null,

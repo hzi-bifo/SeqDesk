@@ -149,6 +149,7 @@ export function prepareImport(
   if (parsed.columns.includes("timepoint")) roles.timepoint = "timepoint";
   if (parsed.columns.includes("specimen_type")) roles.group = "specimen_type";
   for (const [role, column] of Object.entries(options.roles ?? {})) {
+    if (column === "") delete roles[role as ExploreRole];
     if (column && parsed.columns.includes(column)) roles[role as ExploreRole] = column;
   }
   const warnings = [...parsed.warnings];

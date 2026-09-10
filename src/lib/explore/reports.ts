@@ -301,11 +301,26 @@ export interface ReportSummary {
   analysisCount: number;
   /** Saved blocks; zero means the page is a draft assembled from the outputs. */
   blockCount: number;
+  /** At least one analysis on this report's canvas has completed successfully. */
+  hasSuccessfulRun: boolean;
 }
 
-type StoredReportRow = { id: string; targetKey: string; title: string; blocks: unknown; createdAt: Date; updatedAt: Date; _count: { analyses: number } };
+export interface ReportListResponse {
+  reports: ReportSummary[];
+  canEdit: boolean;
+}
 
-const withCounts = { _count: { select: { analyses: true } } } as const;
+const withSummary = {
+  _count: { select: { analyses: true } },
+  // Check the full run history, so a failed rerun does not erase an earlier success.
+  analyses: {
+    where: { runs: { some: { status: "completed" } } },
+    select: { id: true },
+    take: 1,
+  },
+} as const;
+
+type StoredReportRow = Prisma.ExploreReportGetPayload<{ include: typeof withSummary }>;
 
 function summarize(report: StoredReportRow): ReportSummary {
   return {
@@ -316,12 +331,13 @@ function summarize(report: StoredReportRow): ReportSummary {
     updatedAt: report.updatedAt.toISOString(),
     analysisCount: report._count.analyses,
     blockCount: parseStoredBlocks(report.blocks).length,
+    hasSuccessfulRun: report.analyses.length > 0,
   };
 }
 
 /** The reports of a scope, oldest first. */
 export async function listReports(targetKey: string): Promise<ReportSummary[]> {
-  const reports = await db.exploreReport.findMany({ where: { targetKey }, orderBy: { createdAt: "asc" }, include: withCounts });
+  const reports = await db.exploreReport.findMany({ where: { targetKey }, orderBy: { createdAt: "asc" }, include: withSummary });
   return reports.map(summarize);
 }
 
@@ -329,7 +345,7 @@ export async function listReports(targetKey: string): Promise<ReportSummary[]> {
 export async function createReport(targetKey: string, userId: string, title?: string | null): Promise<ReportSummary> {
   const count = await db.exploreReport.count({ where: { targetKey } });
   const name = (title?.trim() || `Report ${count + 1}`).slice(0, 200);
-  const created = await db.exploreReport.create({ data: { targetKey, title: name, blocks: [], createdById: userId }, include: withCounts });
+  const created = await db.exploreReport.create({ data: { targetKey, title: name, blocks: [], createdById: userId }, include: withSummary });
   return summarize(created);
 }
 
@@ -391,7 +407,7 @@ export async function renameReport(reportId: string, title: string): Promise<Rep
   if (!name) throw new ExploreReportError(400, "A report needs a title");
   const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true } });
   if (!existing) throw new ExploreReportError(404, "Report not found");
-  const updated = await db.exploreReport.update({ where: { id: reportId }, data: { title: name }, include: withCounts });
+  const updated = await db.exploreReport.update({ where: { id: reportId }, data: { title: name }, include: withSummary });
   return summarize(updated);
 }
 

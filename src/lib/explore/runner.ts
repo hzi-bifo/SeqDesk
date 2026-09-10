@@ -16,6 +16,8 @@ import { generateInnerScript, generateLocalRunScript, generateSlurmRunScript, IN
 import { prepareRunSandbox, SandboxRefusedError } from "./sandbox/prepare";
 import { getSandboxSettings } from "./sandbox/settings";
 import type { ExploreCell } from "./types";
+import { parseStoredFileBindings } from "@/lib/files/library-types";
+import { stageLibraryFileInputs } from "@/lib/files/library";
 
 export type ExecutionModeRequest = "default" | "local" | "slurm";
 
@@ -163,6 +165,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     const params = JSON.parse(revision.params || "{}") as Record<string, unknown>;
     const inputsJson = {
       inputs: staged,
+      files: await stageLibraryFileInputs(runFolder, analysis.targetKey, parseStoredFileBindings(revision.fileInputs)),
       params,
       outputDir: "outputs",
       run: { id: run.id, runNumber, analysisId: analysis.id, analysisName: analysis.name, revision: revision.number },

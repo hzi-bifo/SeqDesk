@@ -203,7 +203,9 @@ function SourceNode({ data }: NodeProps<SourceNodeType>) {
   return (
     <div className="h-full w-full rounded-lg border border-dashed bg-card px-3 py-2 text-xs shadow-sm">
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{data.sourceType.replace("-", " ")}</div>
-      <div className="truncate font-medium" title={data.label}>{data.label}</div>
+      {data.url
+        ? <Link href={data.url} className="nodrag nopan block truncate font-medium text-primary hover:underline" title={`Open ${data.label} in Files`}>{data.label}</Link>
+        : <div className="truncate font-medium" title={data.label}>{data.label}</div>}
       <Handle type="source" position={Position.Right} className={handleClass} />
     </div>
   );

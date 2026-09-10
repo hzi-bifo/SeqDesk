@@ -20,6 +20,8 @@ import { ParamsForm, type ParamsSchema } from "@/components/explore/ParamsForm";
 import { fetcher, formatDateTime, postJson } from "@/lib/explore/client";
 import type { AnalysisDetail, RevisionSummary, RunSummary } from "@/lib/explore/analyses";
 import type { ExploreDatasetSummary } from "@/lib/explore/types";
+import { FileInputPicker } from "@/components/explore/FileInputPicker";
+import type { AnalysisFileBinding } from "@/lib/files/library-types";
 
 interface KitSummary {
   id: string;
@@ -52,6 +54,7 @@ export default function ExploreAnalysisPage() {
   });
 
   const [code, setCode] = useState("");
+  const [fileInputs, setFileInputs] = useState<AnalysisFileBinding[]>([]);
   const [message, setMessage] = useState("");
   const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
   const [compare, setCompare] = useState<{ a: string; b: string } | null>(null);
@@ -61,19 +64,20 @@ export default function ExploreAnalysisPage() {
     if (analysis) {
       setCode(analysis.code);
       setParamValues(analysis.currentRevision?.params ?? {});
+      setFileInputs(analysis.currentRevision?.fileInputs ?? []);
     }
   }, [analysis?.currentRevision?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const kit = useMemo(() => kitsData?.kits.find((entry) => entry.id === analysis?.kitId) ?? null, [kitsData, analysis?.kitId]);
   const datasets = datasetsData?.datasets ?? [];
   const environment = environmentsData?.environments.find((entry) => entry.name === analysis?.environmentName) ?? null;
-  const dirty = analysis ? code !== analysis.code : false;
+  const dirty = analysis ? code !== analysis.code || JSON.stringify(fileInputs) !== JSON.stringify(analysis.currentRevision?.fileInputs ?? []) : false;
 
   const saveRevision = useCallback(
     async (extra?: { params?: Record<string, unknown> }) => {
       setBusy("save");
       try {
-        await postJson(`${key}/revisions`, { code, params: extra?.params ?? paramValues, message: message.trim() || undefined });
+        await postJson(`${key}/revisions`, { code, params: extra?.params ?? paramValues, fileInputs, message: message.trim() || undefined });
         setMessage("");
         await mutate();
         toast.success("New version saved");
@@ -83,13 +87,13 @@ export default function ExploreAnalysisPage() {
         setBusy(null);
       }
     },
-    [key, code, paramValues, message, mutate]
+    [key, code, paramValues, fileInputs, message, mutate]
   );
 
   const run = useCallback(async () => {
     setBusy("run");
     try {
-      if (dirty) await postJson(`${key}/revisions`, { code, params: paramValues, message: "Saved before run" });
+      if (dirty) await postJson(`${key}/revisions`, { code, params: paramValues, fileInputs, message: "Saved before run" });
       const result = await postJson<{ run: RunSummary }>(`${key}/runs`, {});
       await mutate();
       toast.success(`Run ${result.run.runNumber} started`);
@@ -99,7 +103,7 @@ export default function ExploreAnalysisPage() {
     } finally {
       setBusy(null);
     }
-  }, [dirty, key, code, paramValues, mutate, router]);
+  }, [dirty, key, code, paramValues, fileInputs, mutate, router]);
 
   const remove = useCallback(async () => {
     if (!analysis || !window.confirm(`Delete "${analysis.name}" with all versions and runs?`)) return;
@@ -137,7 +141,7 @@ export default function ExploreAnalysisPage() {
       if (dirty && !window.confirm(`Discard the unsaved code changes and restore revision ${revision.number}?`)) return;
       setBusy("restore");
       try {
-        await postJson(`${key}/revisions`, { code: revision.code, params: revision.params, inputs: revision.inputs, message: `Restored revision ${revision.number}` });
+        await postJson(`${key}/revisions`, { code: revision.code, params: revision.params, inputs: revision.inputs, fileInputs: revision.fileInputs ?? [], message: `Restored revision ${revision.number}` });
         setCode(revision.code);
         setParamValues(revision.params);
         await mutate();
@@ -205,6 +209,7 @@ export default function ExploreAnalysisPage() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-4 space-y-6">
+          <div className="rounded-lg border p-4"><FileInputPicker scope={analysis.targetKey} reportId={analysis.reportId} value={fileInputs} onChange={setFileInputs} disabled={!!busy} /></div>
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-lg border p-4 text-sm">
               <h3 className="font-semibold">Inputs</h3>

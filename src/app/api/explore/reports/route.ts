@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireTargetAccess } from "@/lib/explore/authorization";
+import { ExploreAuthorizationError, requireTargetAccess, resolveTargetAccess } from "@/lib/explore/authorization";
 import { createReport, ExploreReportError, listReports } from "@/lib/explore/reports";
 import { exploreErrorResponse, optionalString, readJsonBody, requireExploreSession, requireString } from "../_shared";
 
@@ -16,8 +16,12 @@ export async function GET(request: NextRequest) {
   try {
     const session = await requireExploreSession();
     const targetKey = request.nextUrl.searchParams.get("targetKey") ?? "";
-    await requireTargetAccess(session, targetKey, "read");
-    return NextResponse.json({ reports: await listReports(targetKey) });
+    const access = await resolveTargetAccess(session, targetKey);
+    if (!access.target || access.level === "none") throw new ExploreAuthorizationError(404, "Not found");
+    return NextResponse.json({
+      reports: await listReports(targetKey),
+      canEdit: access.level === "write" && !session.user.isDemo,
+    });
   } catch (error) {
     return reportError(error);
   }

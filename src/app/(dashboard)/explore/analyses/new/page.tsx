@@ -17,6 +17,8 @@ import { fetcher, postJson, ROLE_LABELS } from "@/lib/explore/client";
 import { TABLE_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
 import { isValidTargetKey } from "@/lib/explore/target-key";
 import type { ExploreDatasetSummary, ExploreRole } from "@/lib/explore/types";
+import { FileInputPicker } from "@/components/explore/FileInputPicker";
+import type { AnalysisFileBinding } from "@/lib/files/library-types";
 
 interface KitSummary {
   id: string;
@@ -55,6 +57,10 @@ function NewAnalysisForm() {
   const validScope = scope && isValidTargetKey(scope) ? scope : null;
   const [selectedKitId, setKitId] = useState<string>(searchParams.get("kit") ?? "");
   const [name, setName] = useState("");
+  const [fileInputs, setFileInputs] = useState<AnalysisFileBinding[]>(() => {
+    const fileId = searchParams.get("file");
+    return fileId ? [{ alias: "file", fileId }] : [];
+  });
   // Overrides are keyed by kit so switching kits starts from that kit's defaults again.
   const [bindingOverrides, setBindingOverrides] = useState<{ kitId: string; values: Record<string, string> }>({ kitId: "", values: {} });
   const [paramOverrides, setParamOverrides] = useState<{ kitId: string; values: Record<string, unknown> }>({ kitId: "", values: {} });
@@ -75,8 +81,8 @@ function NewAnalysisForm() {
   const environment = environmentsData?.environments.find((entry) => entry.name === environmentName) ?? null;
 
   const inputs = useMemo(
-    () => (kit ? kit.inputs : [{ alias: "table", label: "Table", requiredRoles: [] as ExploreRole[], optionalRoles: [] as ExploreRole[], tableKind: null, optional: false }]),
-    [kit]
+    () => (kit ? kit.inputs : [{ alias: "table", label: "Table", requiredRoles: [] as ExploreRole[], optionalRoles: [] as ExploreRole[], tableKind: null, optional: fileInputs.length > 0 }]),
+    [kit, fileInputs.length]
   );
   const defaultParams = useMemo(() => {
     const defaults: Record<string, unknown> = {};
@@ -96,11 +102,12 @@ function NewAnalysisForm() {
         requestedUsed = true;
         continue;
       }
+      if (!kit && input.optional) continue;
       const match = datasets.find((dataset) => datasetFits(dataset, input).ok);
       if (match) auto[input.alias] = match.id;
     }
     return auto;
-  }, [inputs, datasets, requestedDatasetId]);
+  }, [inputs, datasets, requestedDatasetId, kit]);
   const params = useMemo(
     () => ({ ...defaultParams, ...(paramOverrides.kitId === kitId ? paramOverrides.values : {}) }),
     [defaultParams, paramOverrides, kitId]
@@ -134,10 +141,11 @@ function NewAnalysisForm() {
         name: name.trim() || undefined,
         language: kit?.language ?? "python",
         inputs: inputs.filter((input) => bindings[input.alias]).map((input) => ({ alias: input.alias, datasetId: bindings[input.alias] })),
+        fileInputs,
         params,
       });
       toast.success("Analysis created");
-      router.push(`/explore/analyses/${result.analysis.id}?scope=${encodeURIComponent(validScope)}`);
+      router.push(`/explore/analyses/${result.analysis.id}?scope=${encodeURIComponent(validScope)}${report ? `&report=${encodeURIComponent(report)}` : ""}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not create the analysis");
       setBusy(false);
@@ -187,7 +195,7 @@ function NewAnalysisForm() {
             className={`w-full rounded-lg border border-dashed p-3 text-left transition-colors ${kitId === BLANK ? "border-primary bg-secondary" : "hover:bg-muted/40"}`}
           >
             <div className="flex items-center gap-2 font-medium"><Code2 className="h-4 w-4" /> Blank Python script</div>
-            <p className="mt-1 text-xs text-muted-foreground">Start from a minimal script that loads one table.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Start from a minimal script using a table or original files.</p>
           </button>
           {kitsData?.problems && kitsData.problems.length > 0 && (
             <p className="text-xs text-amber-700">{kitsData.problems.length} template{kitsData.problems.length === 1 ? "" : "s"} could not be loaded; check the server log.</p>
@@ -255,9 +263,11 @@ function NewAnalysisForm() {
                   </div>
                 );
               })}
-              {datasets.length === 0 && <p className="text-sm text-muted-foreground">This scope has no datasets yet. Build or import one first.</p>}
+              {datasets.length === 0 && <p className="text-sm text-muted-foreground">This study or order has no tables yet. Prepare one from Files, or choose original file inputs for a custom analysis.</p>}
             </div>
           </div>
+
+          <div className="rounded-lg border p-4"><FileInputPicker scope={validScope} reportId={report} value={fileInputs} onChange={setFileInputs} disabled={busy} /></div>
 
           <div className="rounded-lg border p-4">
             <h2 className="text-sm font-semibold">Parameters</h2>

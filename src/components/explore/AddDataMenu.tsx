@@ -10,6 +10,7 @@ import { ElementStore, type StoreGroup } from "@/components/explore/ElementStore
 import { fetcher, postJson } from "@/lib/explore/client";
 import { TABLE_KIND_DEFINITIONS } from "@/lib/explore/dataset-kinds";
 import type { ExploreDatasetSummary } from "@/lib/explore/types";
+import { filesHref } from "@/lib/files/library-types";
 
 export interface PipelineTableSource {
   pipelineId: string;
@@ -91,7 +92,7 @@ export function AddDataMenu({ scope, reportId, onBuilt, withAnalysis = true, lab
     {
       label: "Bring your own",
       items: [
-        { id: "import", title: "Import a file", hint: "TSV, CSV or Excel from your computer", sketch: "import", onSelect: () => router.push(`/explore/datasets/import?scope=${encodeURIComponent(scope)}`) },
+        { id: "import", title: "Add from Files", hint: "Reuse an upload or add new source data and reference files", sketch: "import", onSelect: () => router.push(filesHref(scope, reportId)) },
         ...(withAnalysis
           ? [{ id: "analysis", title: "New analysis", hint: "From a template or a blank script", sketch: "analysis" as const, onSelect: () => router.push(`/explore/analyses/new?scope=${encodeURIComponent(scope)}${reportId ? `&report=${encodeURIComponent(reportId)}` : ""}`) }]
           : []),

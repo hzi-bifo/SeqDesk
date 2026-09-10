@@ -89,6 +89,7 @@ __all__ = [
     "curated_role",
     "load_schema",
     "load_dataset",
+    "file_path",
     "role_column",
     "roles",
     "output_dir",
@@ -308,6 +309,17 @@ def _resolve_input_file(entry_path: Any, alias: str, what: str) -> Path:
     if not path.is_file():
         raise ExploreInputError(f'{what} of input "{alias}" not found: {path}')
     return path
+
+
+def file_path(alias: str) -> Path:
+    """Path to the immutable upload copied into this run as a file input.
+
+    Use the library appropriate to the original format to read this file.
+    """
+    files = load_inputs().get("files", {})
+    if not isinstance(files, dict) or not isinstance(files.get(alias), dict):
+        raise ExploreInputError(f'No file input named "{alias}" is attached to this analysis')
+    return _resolve_input_file(files[alias].get("path"), alias, "file path")
 
 
 def load_schema(alias: str) -> dict[str, Any]:
