@@ -8,6 +8,7 @@ import { ExploreAuthorizationError, requireExplorePrincipal, requireTargetAccess
 import { getDatasetRecord } from "@/lib/explore/datasets";
 import { isExploreModuleEnabled } from "@/lib/explore/module";
 import { ExploreBuildInputError } from "@/lib/explore/builders/types";
+import { FileLibraryError } from "@/lib/files/library";
 
 export class ExploreRouteError extends Error {
   status: number;
@@ -39,7 +40,7 @@ export function exploreErrorResponse(error: unknown): NextResponse {
   if (error instanceof ExploreBuildInputError) {
     return NextResponse.json({ error: error.message }, { status: 422 });
   }
-  if (error instanceof ExploreRouteError || error instanceof ExploreAuthorizationError) {
+  if (error instanceof ExploreRouteError || error instanceof ExploreAuthorizationError || error instanceof FileLibraryError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
   console.error("[explore] unexpected error", error);

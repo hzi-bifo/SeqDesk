@@ -16,6 +16,7 @@ import { DataGrid, type DataGridColumn, type DataGridRow } from "@/components/ex
 import { DATASET_KIND_DEFINITIONS, TABLE_KIND_DEFINITIONS, missingRequiredRoles } from "@/lib/explore/dataset-kinds";
 import { fetcher, formatDateTime, postJson, ROLE_LABELS } from "@/lib/explore/client";
 import { EXPLORE_ROLES, type ExploreDatasetDetail, type ExploreRole, type ExploreRowRecord } from "@/lib/explore/types";
+import { filesHref } from "@/lib/files/library-types";
 
 interface EditRecord {
   id: string;
@@ -238,6 +239,9 @@ function ExploreDatasetPageContent() {
             )}
           </div>
           {dataset.description && <p className="mt-2 max-w-3xl text-sm text-muted-foreground">{dataset.description}</p>}
+          {typeof dataset.sourceConfig?.fileId === "string" && <p className="mt-2 text-sm">
+            <Link className="text-primary hover:underline" href={`${filesHref(dataset.targetKey)}#file-${encodeURIComponent(dataset.sourceConfig.fileId)}`}>View original upload in Files</Link>
+          </p>}
           {missingRoles.length > 0 && (
             <p className="mt-2 text-sm text-amber-700">
               Missing roles for this table kind: {missingRoles.map((role) => ROLE_LABELS[role]).join(", ")}. Set them under Columns and roles.

@@ -124,6 +124,7 @@ export interface CreateDatasetInput {
   sensitivity?: ExploreSensitivity;
   roles?: ExploreRoleMap;
   sourceConfig?: Record<string, unknown> | null;
+  sourceFileId?: string | null;
   createdById: string;
 }
 
@@ -138,6 +139,7 @@ export async function createDataset(input: CreateDatasetInput) {
       sensitivity: input.sensitivity ?? "standard",
       roles: input.roles ? JSON.stringify(input.roles) : null,
       sourceConfig: input.sourceConfig ? JSON.stringify(input.sourceConfig) : null,
+      sourceFileId: input.sourceFileId ?? null,
       createdById: input.createdById,
     },
   });

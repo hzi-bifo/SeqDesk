@@ -10,9 +10,14 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: state.replace }),
   useSearchParams: () => new URLSearchParams({ scope: "order:qa", mode: "edit", view: state.view }),
 }));
-vi.mock("swr", () => ({ default: (key: string) => key === "/api/explore/scopes"
-  ? { data: { scopes: [{ targetKey: "order:qa", label: "Layout test", access: "write" }] } }
-  : state.report() }));
+vi.mock("swr", () => ({
+  useSWRConfig: () => ({ mutate: state.retry }),
+  default: (key: string) => key === "/api/explore/scopes"
+    ? { data: { scopes: [{ targetKey: "order:qa", label: "Layout test", access: "write" }] } }
+    : key === "/api/explore/reports/report/files"
+      ? { data: { files: [] }, mutate: state.retry }
+      : state.report(),
+}));
 vi.mock("@/components/explore/ExploreCanvas", () => ({ ExploreCanvas: () => null }));
 vi.mock("@/components/explore/ExploreListView", () => ({ ExploreListView: () => null }));
 // A stateful editor probe catches accidental remounts when the sidebar changes.

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireTargetAccess } from "@/lib/explore/authorization";
 import { createAnalysis, listAnalyses } from "@/lib/explore/analyses";
+import { validateFileBindings } from "@/lib/files/library";
 import { ExploreRouteError, exploreErrorResponse, optionalString, parseBindings, readJsonBody, requireExploreSession, requireString } from "../_shared";
 
 export const runtime = "nodejs";
@@ -33,6 +34,7 @@ export async function POST(request: NextRequest) {
       language,
       environmentName: optionalString(body.environmentName, 120),
       inputs: await parseBindings(body.inputs, targetKey),
+      fileInputs: await validateFileBindings(body.fileInputs, targetKey),
       params: body.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : undefined,
       createdById: session.user.id,
     });

@@ -16,6 +16,8 @@ import {
   Workflow,
 } from "lucide-react";
 import { useModuleEnabled } from "@/lib/modules";
+import type { ReportListResponse } from "@/lib/explore/reports";
+import { filesHref } from "@/lib/files/library-types";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getSequencingDataSectionLabel } from "@/lib/orders/sequencing-data-labels";
@@ -38,6 +40,7 @@ import {
   getDeploymentProfileDefinition,
   type DeploymentProfileDefinition,
 } from "@/lib/deployment-profile";
+import { SidebarReportLink } from "./SidebarReportLink";
 
 interface SidebarEntityNavProps {
   entityContext: SidebarEntityContext;
@@ -173,13 +176,14 @@ export function SidebarEntityNav({
   // The reports of this study or order sit under the Reports entry; one click opens each.
   const router = useRouter();
   const reportsScope = entityId && (entityType === "study" || entityType === "order") ? `${entityType}:${entityId}` : null;
-  const { data: reportsData, mutate: mutateReports } = useSWR<{ reports: Array<{ id: string; title: string }> }>(
+  const { data: reportsData, mutate: mutateReports } = useSWR<ReportListResponse>(
     exploreEnabled && reportsScope && !collapsed ? `/api/explore/reports?targetKey=${encodeURIComponent(reportsScope)}` : null,
     async (url: string) => {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Request failed: ${response.status}`);
       return response.json();
-    }
+    },
+    { refreshInterval: isDemoUser ? 0 : 5000 }
   );
   const reports = reportsData?.reports ?? [];
   const activeReportId = pathname.match(/^\/explore\/reports\/([^/]+)/)?.[1] ?? null;
@@ -320,6 +324,7 @@ export function SidebarEntityNav({
   // Determine active state
   const getIsActive = (item: NavItem): boolean => {
     if (!hasEntity) return false;
+    if (pathname === "/files") return activeTab === "orders" && item.key === "samples-files";
 
     if (activeTab === "studies") {
       const isStudyOverviewTab =
@@ -436,6 +441,8 @@ export function SidebarEntityNav({
             !!entityId;
           const shouldShowReportSubitems =
             !collapsed && item.key === "explore" && !!reportsScope && exploreEnabled;
+          const shouldShowFileSubitems =
+            !collapsed && item.key === "samples-files" && entityType === "order" && !!entityId;
 
           const link = (
             <Link
@@ -474,7 +481,8 @@ export function SidebarEntityNav({
             !shouldShowStudyPublishingSubitems &&
             !shouldShowStudyOverviewSubitems &&
             !shouldShowStudyFacilitySubitems &&
-            !shouldShowReportSubitems
+            !shouldShowReportSubitems &&
+            !shouldShowFileSubitems
           ) {
             return link;
           }
@@ -482,26 +490,29 @@ export function SidebarEntityNav({
           return (
             <div key={item.key} className="space-y-1">
               {link}
+              {shouldShowFileSubitems && (
+                <div className="ml-5 border-l border-border/70 pl-2">
+                  {[
+                    { label: "Samples & reads", href: `/orders/${entityId}/samples-files`, active: isActive && pathname !== "/files" },
+                    { label: "Source files", href: filesHref(`order:${entityId}`), active: pathname === "/files" },
+                  ].map((entry) => (
+                    <Link key={entry.label} href={entry.href} aria-current={entry.active ? "page" : undefined} className={cn("flex rounded-md px-2 py-1 text-xs transition-colors", entry.active ? "bg-secondary font-medium text-foreground" : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground")}>
+                      {entry.label}
+                    </Link>
+                  ))}
+                </div>
+              )}
               {shouldShowReportSubitems && reportsScope && (
                 <div className="ml-5 border-l border-border/70 pl-2">
-                  {reports.map((report) => {
-                    const isReportActive = activeReportId === report.id;
-                    return (
-                      <Link
-                        key={report.id}
-                        href={`/explore/reports/${report.id}?scope=${encodeURIComponent(reportsScope)}`}
-                        className={cn(
-                          "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                          isReportActive
-                            ? "bg-secondary text-foreground font-medium"
-                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
-                        )}
-                      >
-                        <span className={cn("h-2 w-2 shrink-0 rounded-full bg-slate-300 shadow-sm", isReportActive && "ring-2 ring-background")} aria-hidden="true" />
-                        <span className="truncate">{report.title}</span>
-                      </Link>
-                    );
-                  })}
+                  {reports.map((report) => (
+                    <SidebarReportLink
+                      key={report.id}
+                      report={report}
+                      scope={reportsScope}
+                      active={activeReportId === report.id}
+                      canEdit={reportsData?.canEdit === true && !isDemoUser}
+                    />
+                  ))}
                   <button
                     type="button"
                     onClick={() => void createReport()}

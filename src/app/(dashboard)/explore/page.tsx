@@ -21,6 +21,7 @@ import { fetcher, formatDateTime, postJson, SCOPE_STORAGE_KEY } from "@/lib/expl
 import { isValidTargetKey } from "@/lib/explore/target-key";
 import type { ReportSummary } from "@/lib/explore/reports";
 import type { ExploreScope } from "@/lib/explore/types";
+import { filesHref } from "@/lib/files/library-types";
 
 export default function ExplorePage() {
   return (
@@ -185,10 +186,10 @@ function ReportsHome() {
         <span className="flex-1" />
         {activeScope && canEdit && (
           <>
-            <Button asChild variant="outline" size="sm" className="h-8" title="Import a TSV, CSV or Excel file as a table of this scope">
-              <Link href={`/explore/datasets/import${scopeQuery}`}>
+            <Button asChild variant="outline" size="sm" className="h-8" title="Upload and manage original files for these reports">
+              <Link href={filesHref(scope!)}>
                 <Upload className="h-3.5 w-3.5 lg:mr-1.5" />
-                <span className="hidden lg:inline">Import table</span>
+                <span className="hidden lg:inline">Browse Files</span>
               </Link>
             </Button>
             <Button size="sm" className="h-8" onClick={() => void createReport()} disabled={creating} title="A new report with its own analysis steps">

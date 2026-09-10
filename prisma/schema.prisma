@@ -894,11 +894,42 @@ model AdminInvite {
 // shape PipelineResultSelection uses.
 // ---------------------------------------------------------------------------
 
+model ManagedFile {
+  id             String   @id @default(cuid())
+  targetKey      String
+  originalName   String
+  storagePath    String   @unique
+  mimeType       String
+  sizeBytes      BigInt
+  checksumSha256 String
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  datasets ExploreDataset[]
+  reports  ExploreReportFile[]
+
+  @@index([targetKey, createdAt])
+}
+
+model ExploreReportFile {
+  reportId String
+  fileId   String
+  linkedAt DateTime @default(now())
+
+  report ExploreReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  file   ManagedFile   @relation(fields: [fileId], references: [id], onDelete: Restrict)
+
+  @@id([reportId, fileId])
+  @@index([fileId])
+}
+
 model ExploreDataset {
   id               String   @id @default(cuid())
   targetKey        String
   kind             String   // samples | sequencing | pipeline-table | external | derived
   tableKind        String?  // e.g. taxon-profile-long
+  sourceFileId     String?
+  sourceFile       ManagedFile? @relation(fields: [sourceFileId], references: [id], onDelete: Restrict)
   name             String
   description      String?
   sensitivity      String   @default("standard") // standard | pseudonymous | clinical
@@ -997,6 +1028,7 @@ model ExploreReport {
   updatedAt   DateTime  @updatedAt
 
   analyses ExploreAnalysis[] // the analysis steps that belong to this report
+  files    ExploreReportFile[]
 
   @@index([targetKey])
 }
@@ -1063,6 +1095,7 @@ model ExploreAnalysisRevision {
   code         String
   params       String   // JSON
   inputs       String   // JSON [{alias, datasetId, versionId}]
+  fileInputs   String   @default("[]") // JSON [{alias, fileId}]; originals are immutable
   author       String   // user | agent
   authorUserId String?
   prompt       String?

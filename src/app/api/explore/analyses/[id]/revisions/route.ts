@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createRevision, getAnalysisDetail } from "@/lib/explore/analyses";
+import { validateFileBindings } from "@/lib/files/library";
 import { ExploreRouteError, exploreErrorResponse, loadAccessibleAnalysis, optionalString, parseBindings, readJsonBody, requireExploreSession } from "../../../_shared";
 
 export const runtime = "nodejs";
@@ -39,6 +40,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       code,
       params: body.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : undefined,
       inputs,
+      fileInputs: body.fileInputs === undefined ? undefined : await validateFileBindings(body.fileInputs, analysis.targetKey),
       author: "user",
       authorUserId: session.user.id,
       message: optionalString(body.message, 500),

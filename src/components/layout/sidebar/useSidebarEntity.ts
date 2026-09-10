@@ -34,7 +34,7 @@ export function useSidebarEntity(): SidebarEntityContext {
   const orderMatch = pathname.match(/^\/orders\/([^/]+)(\/(.+))?$/);
   const studyMatch = pathname.match(/^\/studies\/([^/]+)(\/(.+))?$/);
   const analysisMatch = pathname.match(/^\/analysis\/([^/]+)/);
-  const exploreMatch = pathname === "/explore" || pathname.startsWith("/explore/");
+  const exploreMatch = pathname === "/explore" || pathname.startsWith("/explore/") || pathname === "/files";
 
   if (pathname === "/orders/import" && searchParams.get("orderId")) {
     entityType = "order";
@@ -55,7 +55,7 @@ export function useSidebarEntity(): SidebarEntityContext {
     if (scopeMatch) {
       entityType = scopeMatch[1] as "study" | "order";
       entityId = scopeMatch[2];
-      currentSubPage = "explore";
+      currentSubPage = pathname === "/files" ? "files" : "explore";
     }
   } else if (analysisMatch) {
     // On analysis pages, restore sidebar context from query params

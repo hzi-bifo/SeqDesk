@@ -175,6 +175,7 @@ describe("SidebarEntityNav", () => {
     expect(screen.getByText("Facility Fields")).toBeTruthy();
     expect(screen.getAllByRole("link", { name: "Files" })).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Files" }).getAttribute("href")).toBe("/orders/order-1/samples-files");
+    expect(screen.getByRole("link", { name: "Source files" }).getAttribute("href")).toBe("/files?scope=order%3Aorder-1");
     expect(screen.queryByText("Sequencing Data")).toBeNull();
     expect(screen.queryByText("Data source")).toBeNull();
     expect(screen.queryByText("Stream")).toBeNull();
@@ -205,7 +206,7 @@ describe("SidebarEntityNav", () => {
     );
     const links = screen.getAllByRole("link");
     expect(links[0]).toBe(screen.getByRole("link", { name: "Files" }));
-    expect(links[1]).toBe(screen.getByRole("link", { name: "Metadata" }));
+    expect(links.indexOf(screen.getByRole("link", { name: "Metadata" }))).toBeGreaterThan(0);
   });
 
   it.each([

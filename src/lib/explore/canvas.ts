@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { filesHref, parseStoredFileBindings } from "@/lib/files/library-types";
 import { fetchDatasetRows } from "./datasets";
 import { parseInputBindings } from "./analyses";
 import { generationSnapshot } from "./report-generation";
@@ -128,6 +129,20 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
 
   const nodes: CanvasNode[] = [];
   const edges: CanvasEdge[] = [];
+  const fileIds = new Set([
+    ...datasets.flatMap((dataset) => dataset.sourceFileId ? [dataset.sourceFileId] : []),
+    ...analyses.flatMap((analysis) => parseStoredFileBindings(analysis.revisions[0]?.fileInputs).map((binding) => binding.fileId)),
+  ]);
+  const sourceFiles = fileIds.size ? await db.managedFile.findMany({
+    where: { targetKey, id: { in: [...fileIds] } }, select: { id: true, originalName: true },
+  }) : [];
+  const sourceFileIds = new Set(sourceFiles.map((file) => file.id));
+  for (const file of sourceFiles) {
+    nodes.push({ id: `file:${file.id}`, data: {
+      kind: "source", sourceType: "file", label: file.originalName,
+      url: `${filesHref(targetKey, reportId)}#file-${file.id}`,
+    } });
+  }
   const datasetNodeIds = new Set(datasets.map((dataset) => `dataset:${dataset.id}`));
   const analysisNames = new Map(analyses.map((analysis) => [analysis.id, analysis.name] as const));
   const latestRunByAnalysis = new Map<string, (typeof runs)[number]>();
@@ -221,6 +236,9 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
     if (producingAnalysis) {
       edges.push({ id: `wrote:${producingAnalysis}:${dataset.id}`, source: `analysis:${producingAnalysis}`, target: nodeId, label: "wrote" });
     }
+    if (dataset.sourceFileId && sourceFileIds.has(dataset.sourceFileId)) {
+      edges.push({ id: `imported:${dataset.sourceFileId}:${dataset.id}`, source: `file:${dataset.sourceFileId}`, target: nodeId, label: "prepared as table" });
+    }
     // Built-in views are elements of their own: drawn from the table, placeable on the report.
     if (timelineReady) {
       for (const view of ["subject-timeline", "heatmap"] as const) {
@@ -245,6 +263,11 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
   for (const analysis of analyses) {
     const nodeId = `analysis:${analysis.id}`;
     const revision = analysis.revisions[0] ?? null;
+    for (const binding of parseStoredFileBindings(revision?.fileInputs)) {
+      if (sourceFileIds.has(binding.fileId)) {
+        edges.push({ id: `file-input:${analysis.id}:${binding.alias}`, source: `file:${binding.fileId}`, target: nodeId, label: binding.alias });
+      }
+    }
     const latest = latestRunByAnalysis.get(analysis.id) ?? null;
     nodes.push({
       id: nodeId,

@@ -16,6 +16,8 @@ import { fetcher } from "@/lib/explore/client";
 import { useStoredPreference } from "@/lib/explore/use-stored-preference";
 import type { ReportView } from "@/lib/explore/reports";
 import type { ExploreScope } from "@/lib/explore/types";
+import { filesHref } from "@/lib/files/library-types";
+import { ReportSourceFiles } from "@/components/explore/ReportSourceFiles";
 
 type EditView = "canvas" | "page" | "list";
 
@@ -123,10 +125,10 @@ function ReportScreen() {
     <div className="ml-auto flex min-h-9 min-w-0 max-w-full flex-wrap items-center justify-end gap-2" role="group" aria-label="Report actions">
       {mode === "edit" && canEdit && view !== "page" && (
         <>
-          <Button asChild variant="outline" size="sm" className="h-8" title="Import a TSV, CSV or Excel file as a table">
-            <Link href={`/explore/datasets/import${scopeQuery}`}>
+          <Button asChild variant="outline" size="sm" className="h-8" title="Choose existing files or upload source data and references">
+            <Link href={filesHref(scopeKey, reportId)}>
               <Upload className="h-3.5 w-3.5 lg:mr-1.5" />
-              <span className="hidden lg:inline">Import table</span>
+              <span className="hidden lg:inline">Add from Files</span>
             </Link>
           </Button>
           <Button asChild variant="outline" size="sm" className="h-8" title="Start an analysis step from a template or a blank script">
@@ -226,6 +228,7 @@ function ReportScreen() {
         </div>
       )}
       {mode === "edit" && view === "list" && <ExploreListView scope={scopeKey} reportId={reportId} />}
+      <ReportSourceFiles reportId={reportId} scope={scopeKey} canEdit={canEdit} />
     </PageContainer>
     </div>
     {panelOpen && (

@@ -31,6 +31,7 @@ export type CanvasSourceData = {
   kind: "source";
   sourceType: string; // study | order | pipeline-run | file | artifact | analysis-run
   label: string;
+  url?: string;
 }
 
 export type CanvasDatasetData = {
