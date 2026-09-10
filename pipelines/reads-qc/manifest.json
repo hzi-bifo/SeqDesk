@@ -21,6 +21,10 @@
       "study"
     ]
   },
+  "sequencingCompatibility": {
+    "readLengthClass": "both",
+    "readLayouts": ["single", "paired"]
+  },
   "inputs": [
     {
       "id": "reads",

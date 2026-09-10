@@ -1,4 +1,3 @@
-import { stat } from "fs/promises";
 import * as path from "path";
 import { Prisma } from "@prisma/client";
 import {
@@ -8,7 +7,6 @@ import {
   matchPairedEndFiles,
   hasAllowedExtension,
   scanDirectoryWithReport,
-  safeJoin,
   toRelativePath,
   validateFilePair,
   type FileInfo,
@@ -41,6 +39,9 @@ import {
   writeSequencingUploadChunk,
 } from "./storage";
 import { normalizeBarcode } from "./run-plan";
+import { resolveSampleSequencingTechnology } from "./input-metadata";
+import { loadSequencingTechnologyMap } from "./input-metadata-service";
+import { inspectReadFiles } from "./read-files-inspection";
 import type {
   OrderSequencingSummaryResponse,
   SequencingArtifactSummary,
@@ -87,6 +88,7 @@ const ORDER_WITH_SEQUENCING_SELECT = Prisma.validator<Prisma.OrderSelect>()({
       sampleAlias: true,
       sampleTitle: true,
       customFields: true,
+      checklistData: true,
       facilityStatus: true,
       facilityStatusUpdatedAt: true,
       updatedAt: true,
@@ -495,7 +497,7 @@ function toReadSummary(
     classifiedAt: read.classifiedAt?.toISOString() ?? null,
     classifiedById: read.classifiedById,
     classificationNote: read.classificationNote,
-    filesMissing: false,
+    filesMissing: null,
   };
 }
 
@@ -642,9 +644,10 @@ async function updateSampleStatusAfterReadChange(
 export async function getOrderSequencingSummary(
   orderId: string
 ): Promise<OrderSequencingSummaryResponse> {
-  const [order, configResult] = await Promise.all([
+  const [order, configResult, technologies] = await Promise.all([
     loadOrderWithSequencing(orderId),
     getSequencingFilesConfig(),
+    loadSequencingTechnologyMap(),
   ]);
 
   if (!order) {
@@ -706,6 +709,9 @@ export async function getOrderSequencingSummary(
   const statusCounts: SequencingStatusCounts = { ...DEFAULT_STATUS_COUNTS };
   const rows: SequencingSampleRow[] = order.samples.map((sample) => {
     const read = selectActiveRead(sample.reads);
+    const activeReads = sample.reads
+      .filter((item) => item.isActive !== false)
+      .map((item) => toReadSummary(item));
     const protectedProvenanceReads = sample.reads.filter(
       (item) => !item.isActive && isProtectedReadDataClass(item.dataClass) && (item.file1 || item.file2)
     );
@@ -738,12 +744,19 @@ export async function getOrderSequencingSummary(
       sampleId: sample.sampleId,
       sampleAlias: sample.sampleAlias,
       sampleTitle: sample.sampleTitle,
+      sequencingTechnology: resolveSampleSequencingTechnology({
+        orderCustomFields: order.customFields,
+        sampleCustomFields: sample.customFields,
+        sampleChecklistData: sample.checklistData,
+        technologies,
+      }),
       facilityStatus: sample.facilityStatus,
       facilityStatusUpdatedAt: sample.facilityStatusUpdatedAt?.toISOString() ?? null,
       updatedAt: new Date(latestTimestamp).toISOString(),
       read: read
-        ? toReadSummary(read)
+        ? activeReads.find((item) => item.id === read.id) ?? toReadSummary(read)
         : null,
+      reads: activeReads,
       integrityStatus,
       hasReads: Boolean(read?.file1 || read?.file2),
       protectedProvenanceCount: protectedProvenanceReads.length,
@@ -764,44 +777,12 @@ export async function getOrderSequencingSummary(
     };
   });
 
-  // Resolve file sizes in parallel for samples that have reads
-  if (configResult.dataBasePath) {
-    const basePath = configResult.dataBasePath;
-    await Promise.all(
-      rows.map(async (row) => {
-        if (!row.read) return;
-        const files = [
-          { key: "fileSize1" as const, filePath: row.read.file1 },
-          { key: "fileSize2" as const, filePath: row.read.file2 },
-        ];
-        let anyLinked = false;
-        let anyMissing = false;
-        await Promise.all(
-          files.map(async ({ key, filePath }) => {
-            if (!filePath || !row.read) return;
-            anyLinked = true;
-            try {
-              // Imported reads store absolute paths; facility reads may be
-              // relative. Normalize only paths inside the configured storage
-              // root before applying the same traversal guard to both.
-              const relativePath = path.isAbsolute(filePath)
-                ? toRelativePath(basePath, filePath)
-                : filePath;
-              const resolved = safeJoin(basePath, relativePath);
-              const stats = await stat(resolved);
-              row.read[key] = stats.size;
-            } catch {
-              // File is missing, inaccessible, or outside configured storage.
-              anyMissing = true;
-            }
-          })
-        );
-        if (row.read) {
-          row.read.filesMissing = anyLinked && anyMissing;
-        }
-      })
-    );
-  }
+  await Promise.all(rows.map(async (row) => {
+    const reads = new Set([...(row.reads ?? []), ...(row.read ? [row.read] : [])]);
+    await Promise.all([...reads].map(async (read) => {
+      Object.assign(read, await inspectReadFiles(configResult.dataBasePath, read));
+    }));
+  }));
 
   return {
     orderId: order.id,

@@ -23,6 +23,14 @@ export interface SequencingTechSelectionSummary {
   platform: string | null;
 }
 
+/** Selected sequencing metadata, kept separate from a technology's capabilities. */
+export interface SampleSequencingTechnology {
+  technologyId?: string;
+  platformFamily?: string;
+  readLengthClass?: "short" | "long" | "both" | "unknown";
+  readLayout?: "single" | "paired";
+}
+
 export interface SequencingReadSummary {
   id: string;
   file1: string | null;
@@ -52,8 +60,8 @@ export interface SequencingReadSummary {
   classifiedAt: string | null;
   classifiedById: string | null;
   classificationNote: string | null;
-  /** True when linked read files no longer exist on disk */
-  filesMissing: boolean;
+  /** True for missing/unusable linked files; null when storage was not verified. */
+  filesMissing: boolean | null;
 }
 
 export interface SequencingArtifactSummary {
@@ -122,10 +130,13 @@ export interface SequencingSampleRow {
   sampleId: string;
   sampleAlias: string | null;
   sampleTitle: string | null;
+  sequencingTechnology?: SampleSequencingTechnology | null;
   facilityStatus: FacilitySampleStatus | string;
   facilityStatusUpdatedAt: string | null;
   updatedAt: string;
   read: SequencingReadSummary | null;
+  /** All active input records, for matching the pipeline's actual read selection. */
+  reads?: SequencingReadSummary[];
   integrityStatus: SequencingIntegrityStatus;
   hasReads: boolean;
   protectedProvenanceCount: number;

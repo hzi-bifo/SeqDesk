@@ -1152,6 +1152,68 @@ describe("StudyPipelinesSection", () => {
     expect(screen.getByText("No reads")).toBeTruthy();
   });
 
+  it("launches compatible and unknown samples while excluding known technology mismatches", async () => {
+    mocks.useSWR.mockImplementation(makeSwr({ pipelines: [{
+      ...metaxPathPipeline,
+      sequencingCompatibility: { readLengthClass: "short", readLayouts: ["single", "paired"] },
+    }] }));
+    const defaultFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/pipelines/runs") return Promise.resolve(jsonResponse({ run: { id: "created-run" } }));
+      if (url === "/api/pipelines/runs/created-run/start") return Promise.resolve(jsonResponse({ ok: true }));
+      return defaultFetch(input, init);
+    });
+    const inputSamples = (["short", "long", "unknown"] as const).map((length) => ({
+      ...samples[0],
+      id: `sample-${length}`,
+      sampleId: `SAMPLE_${length.toUpperCase()}`,
+      reads: [{
+        ...samples[0].reads[0],
+        id: `read-${length}`,
+        filesMissing: false,
+        isActive: true,
+      }],
+      sequencingTechnology: length === "unknown" ? null : {
+        readLengthClass: length,
+        readLayout: "single" as const,
+      },
+    }));
+
+    render(<StudyPipelinesSection studyId="study-1" samples={inputSamples} selectedPipelineId="metaxpath" />);
+
+    const startButton = await screen.findByRole("button", { name: "Start Pipeline" });
+    await waitFor(() => expect(startButton.hasAttribute("disabled")).toBe(false));
+    expect(screen.getAllByText(/Requires short reads; available data is long-read/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Unknown compatibility can still be checked when starting a run/)).toBeTruthy();
+    fireEvent.click(startButton);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pipelines/runs", expect.objectContaining({ method: "POST" })
+    ));
+    const createBody = JSON.parse(fetchMock.mock.calls.find(([url]) => url === "/api/pipelines/runs")![1].body);
+    expect(createBody.sampleIds).toEqual(["sample-short", "sample-unknown"]);
+  });
+
+  it.each([
+    { limits: { minSamples: 3 }, message: "Requires at least 3 samples per run" },
+    { limits: { maxSamples: 1 }, message: "Accepts at most 1 sample per run" },
+  ])("blocks study launch outside sample-count limits: $message", async ({ limits, message }) => {
+    mocks.useSWR.mockImplementation(makeSwr({ pipelines: [{
+      ...metaxPathPipeline,
+      input: { ...metaxPathPipeline.input, ...limits },
+    }] }));
+    const inputSamples = [samples[0], { ...samples[0], id: "sample-b", sampleId: "SAMPLE_B" }];
+
+    render(<StudyPipelinesSection studyId="study-1" samples={inputSamples} selectedPipelineId="metaxpath" />);
+
+    const startButton = await screen.findByRole("button", { name: "Start Pipeline" });
+    expect(startButton.hasAttribute("disabled")).toBe(true);
+    expect(startButton.getAttribute("title")).toBe(message);
+    fireEvent.click(startButton);
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/pipelines/runs")).toBe(false);
+  });
+
   // ---------------------------------------------------------------------------
   // System-readiness header button branches
   // ---------------------------------------------------------------------------

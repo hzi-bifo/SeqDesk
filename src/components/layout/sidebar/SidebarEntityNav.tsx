@@ -33,13 +33,10 @@ import {
   getOrderProgressIndicatorLabel,
 } from "@/lib/orders/progress-status";
 import {
-  getPipelineProgressIndicatorClassName,
-  getPipelineProgressIndicatorLabel,
-} from "./pipelineProgress";
-import {
   getDeploymentProfileDefinition,
   type DeploymentProfileDefinition,
 } from "@/lib/deployment-profile";
+import { SidebarPipelineLink } from "./SidebarPipelineLink";
 import { SidebarReportLink } from "./SidebarReportLink";
 
 interface SidebarEntityNavProps {
@@ -679,29 +676,12 @@ export function SidebarEntityNav({
                       currentStudyTab === "publishing" &&
                       (searchParams.get("publisher") === pipeline.pipelineId || requestedPipelineId === pipeline.pipelineId);
                     return (
-                      <Link
+                      <SidebarPipelineLink
                         key={pipeline.pipelineId}
+                        pipeline={pipeline}
                         href={`/studies/${entityId}?tab=publishing&publisher=${encodeURIComponent(pipeline.pipelineId)}`}
-                        className={cn(
-                          "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                          isPipelineActive
-                            ? "bg-secondary text-foreground font-medium"
-                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "h-2 w-2 rounded-full shadow-sm",
-                            getPipelineProgressIndicatorClassName(pipeline.status),
-                            isPipelineActive && "ring-2 ring-background"
-                          )}
-                          aria-hidden="true"
-                        />
-                        <span className="truncate">{pipeline.name}</span>
-                        <span className="sr-only">
-                          {getPipelineProgressIndicatorLabel(pipeline.status)}
-                        </span>
-                      </Link>
+                        active={isPipelineActive}
+                      />
                     );
                   })}
                 </div>
@@ -809,29 +789,12 @@ export function SidebarEntityNav({
                       (currentOrderSubview === "sequencing" || currentOrderSubview === "pipelines" || isOrderAnalysisContext) &&
                       activeOrderPipelineId === pipeline.pipelineId;
                     return (
-                      <Link
+                      <SidebarPipelineLink
                         key={pipeline.pipelineId}
+                        pipeline={pipeline}
                         href={`/orders/${entityId}/pipelines?pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
-                        className={cn(
-                          "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                          isPipelineActive
-                            ? "bg-secondary text-foreground font-medium"
-                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "h-2 w-2 rounded-full shadow-sm",
-                            getPipelineProgressIndicatorClassName(pipeline.status),
-                            isPipelineActive && "ring-2 ring-background"
-                          )}
-                          aria-hidden="true"
-                        />
-                        <span className="truncate">{pipeline.name}</span>
-                        <span className="sr-only">
-                          {getPipelineProgressIndicatorLabel(pipeline.status)}
-                        </span>
-                      </Link>
+                        active={isPipelineActive}
+                      />
                     );
                   })}
                 </div>
@@ -842,29 +805,12 @@ export function SidebarEntityNav({
                     const isPipelineActive =
                       activeStudyPipelineId === pipeline.pipelineId;
                     return (
-                      <Link
+                      <SidebarPipelineLink
                         key={pipeline.pipelineId}
+                        pipeline={pipeline}
                         href={`/studies/${entityId}?tab=pipelines&pipeline=${encodeURIComponent(pipeline.pipelineId)}`}
-                        className={cn(
-                          "flex items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors",
-                          isPipelineActive
-                            ? "bg-secondary text-foreground font-medium"
-                            : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "h-2 w-2 rounded-full shadow-sm",
-                            getPipelineProgressIndicatorClassName(pipeline.status),
-                            isPipelineActive && "ring-2 ring-background"
-                          )}
-                          aria-hidden="true"
-                        />
-                        <span className="truncate">{pipeline.name}</span>
-                        <span className="sr-only">
-                          {getPipelineProgressIndicatorLabel(pipeline.status)}
-                        </span>
-                      </Link>
+                        active={isPipelineActive}
+                      />
                     );
                   })}
                 </div>

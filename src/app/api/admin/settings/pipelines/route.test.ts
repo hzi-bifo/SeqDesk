@@ -375,6 +375,54 @@ describe("GET /api/admin/settings/pipelines", () => {
     expect(response.status).toBe(400);
   });
 
+  it("returns the installed manifest input requirements and explicit unverified input sources", async () => {
+    mocks.getAllPipelineIds.mockReturnValue(["fastqc"]);
+    mocks.getPackageManifest.mockReturnValue({
+      files: { scripts: { samplesheet: "scripts/inputs.js" } },
+      sequencingCompatibility: { readLengthClass: "short", readLayouts: ["paired"], platformFamilies: ["illumina"] },
+      execution: {
+        pipeline: "./workflow", version: "0.1.0",
+        priorRunArtifacts: { scope: "study", configKey: "input", sources: { fastqc: ["report"] } },
+      },
+      inputs: [{ id: "reads", source: "sample.reads", scope: "sample", required: true }],
+      outputs: [],
+    });
+    const response = await GET(new NextRequest("http://localhost/api/admin/settings/pipelines"));
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.pipelines[0].sequencingCompatibility).toEqual({
+      readLengthClass: "short", readLayouts: ["paired"], platformFamilies: ["illumina"],
+    });
+    expect(payload.pipelines[0].inputSelection).toBe("custom");
+    expect(payload.pipelines[0].inputCompatibilityWarnings).toEqual([
+      "Inputs from previous pipeline runs have not been checked",
+      "Custom pipeline input selection has not been checked",
+    ]);
+  });
+
+  it.each([
+    { pipelineId: "fastqc", samplesheet: undefined, selection: "standard" },
+    { pipelineId: "read-cleaning", samplesheet: "scripts/generate-samplesheet.mjs", selection: "read-cleaning" },
+  ])("identifies $selection input selection without a custom-input warning", async ({ pipelineId, samplesheet, selection }) => {
+    Object.assign(mocks.pipelineRegistry, { "read-cleaning": { ...mocks.pipelineRegistry.fastqc, name: "Read Cleaning" } });
+    try {
+      mocks.getAllPipelineIds.mockReturnValue([pipelineId]);
+      mocks.getPackageManifest.mockReturnValue({
+        files: { scripts: { samplesheet } },
+        execution: { pipeline: "./workflow", version: "0.1.0" },
+        inputs: [{ id: "reads", source: "sample.reads", scope: "sample", required: true }],
+        outputs: [],
+      });
+      const response = await GET(new NextRequest("http://localhost/api/admin/settings/pipelines"));
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.pipelines[0].inputSelection).toBe(selection);
+      expect(payload.pipelines[0].inputCompatibilityWarnings).toEqual([]);
+    } finally {
+      Reflect.deleteProperty(mocks.pipelineRegistry, "read-cleaning");
+    }
+  });
+
   it("returns 403 when user is not FACILITY_ADMIN", async () => {
     mocks.getServerSession.mockResolvedValue({
       user: { id: "member-1", role: "RESEARCHER" },

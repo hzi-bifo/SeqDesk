@@ -1,21 +1,20 @@
 import { pipelineRequiresPairedReads } from "@/lib/pipelines/read-mode";
+import { selectPipelineInputRead } from "@/lib/pipelines/input-read-selection";
+import {
+  assessPipelineSampleCompatibility,
+  type PipelineCompatibilityRead,
+  type PipelineCompatibilitySample,
+  type PipelineInputRequirements,
+} from "@/lib/pipelines/input-compatibility";
 
-export interface StudyPipelineLike {
-  input?: {
-    perSample?: {
-      reads?: boolean;
-      pairedEnd?: boolean;
-      readMode?: "single_or_paired" | "paired_only";
-    };
-  } | null;
-}
+export type StudyPipelineLike = PipelineInputRequirements;
 
-export interface StudyReadLike {
+export interface StudyReadLike extends PipelineCompatibilityRead {
   file1: string | null;
   file2: string | null;
 }
 
-export interface StudySampleLike {
+export interface StudySampleLike extends PipelineCompatibilitySample {
   id: string;
   sampleId: string;
   reads?: StudyReadLike[] | null;
@@ -147,24 +146,18 @@ function studyPipelineRequiresPairedReads(
 }
 
 export function sampleHasAnyReads(sample: StudySampleLike): boolean {
-  return sample.reads?.some((read) => hasText(read.file1)) ?? false;
+  return sample.reads?.some((read) => read.isActive !== false && hasText(read.file1)) ?? false;
 }
 
 export function sampleHasPairedReads(sample: StudySampleLike): boolean {
-  return sample.reads?.some((read) => hasText(read.file1) && hasText(read.file2)) ?? false;
+  return sample.reads?.some((read) => read.isActive !== false && hasText(read.file1) && hasText(read.file2)) ?? false;
 }
 
 export function sampleHasRequiredReads(
   sample: StudySampleLike,
   pipeline: StudyPipelineLike | null | undefined
 ): boolean {
-  if (!pipelineRequiresReads(pipeline)) {
-    return true;
-  }
-
-  return studyPipelineRequiresPairedReads(pipeline)
-    ? sampleHasPairedReads(sample)
-    : sampleHasAnyReads(sample);
+  return assessPipelineSampleCompatibility(pipeline, sample).status !== "incompatible";
 }
 
 export function getEligibleStudySampleIds(
@@ -194,30 +187,12 @@ export function getStudySampleReadIssue(
   sample: StudySampleLike,
   pipeline: StudyPipelineLike | null | undefined
 ): string | null {
-  if (!pipelineRequiresReads(pipeline)) {
-    return null;
-  }
-
-  if (studyPipelineRequiresPairedReads(pipeline)) {
-    if (sampleHasPairedReads(sample)) {
-      return null;
-    }
-    return sampleHasAnyReads(sample) ? "Missing R2 file" : "Missing reads";
-  }
-
-  return sampleHasAnyReads(sample) ? null : "Missing reads";
+  const compatibility = assessPipelineSampleCompatibility(pipeline, sample);
+  return compatibility.status === "incompatible" ? compatibility.reason ?? "Incompatible inputs" : null;
 }
 
 export function getPreferredStudyRead(sample: StudySampleLike): StudyReadLike | null {
-  if (!sample.reads || sample.reads.length === 0) {
-    return null;
-  }
-
-  return (
-    sample.reads.find((read) => hasText(read.file1) && hasText(read.file2)) ??
-    sample.reads.find((read) => hasText(read.file1)) ??
-    null
-  );
+  return selectPipelineInputRead(sample.reads ?? []);
 }
 
 function getFirstRunError(run: StudyPipelineRunLike): string | null {

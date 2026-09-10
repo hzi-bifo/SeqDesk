@@ -1468,7 +1468,7 @@ describe("OrderPipelineView", () => {
   function mockSimulateRunsResponse(runsPayload: {
     runs: unknown[];
     total: number;
-  }) {
+  }, pipelineResponse: unknown = pipeline) {
     mocks.useSWR.mockImplementation((url: string | null) => {
       if (typeof url !== "string") {
         return { data: undefined, isLoading: false, mutate: vi.fn() };
@@ -1481,7 +1481,7 @@ describe("OrderPipelineView", () => {
         };
       }
       if (url.includes("/api/admin/settings/pipelines")) {
-        return { data: { pipelines: [pipeline] }, isLoading: false, mutate: vi.fn() };
+        return { data: { pipelines: [pipelineResponse] }, isLoading: false, mutate: vi.fn() };
       }
       if (url.includes("/api/pipelines/runs")) {
         return { data: runsPayload, mutate: mocks.mutateRuns };
@@ -1489,6 +1489,80 @@ describe("OrderPipelineView", () => {
       return { data: undefined, mutate: vi.fn() };
     });
   }
+
+  it("excludes known read-technology mismatches while allowing unknown inputs to launch", async () => {
+    const inputPipeline = {
+      ...pipeline,
+      pipelineId: "fastqc",
+      name: "FastQC",
+      config: {},
+      defaultConfig: {},
+      configSchema: { properties: {} },
+      input: { perSample: { reads: true, pairedEnd: false } },
+      sequencingCompatibility: { readLengthClass: "short", readLayouts: ["single", "paired"] },
+    };
+    mockSimulateRunsResponse({ runs: [], total: 0 }, inputPipeline);
+    const inputSamples = (["short", "long", "unknown"] as const).map((length) => {
+      const read = {
+        ...readA,
+        id: `read-${length}`,
+        file1: `/data/${length}.fastq.gz`,
+        file2: null,
+        isSimulated: false,
+        pipelineRunId: null,
+        pipelineSources: {},
+      };
+      return {
+        ...samples[0],
+        id: `sample-${length}`,
+        sampleId: `SAMPLE_${length.toUpperCase()}`,
+        read,
+        reads: [read],
+        sequencingTechnology: length === "unknown" ? null : {
+          readLengthClass: length,
+          readLayout: "single" as const,
+        },
+      };
+    });
+
+    render(<OrderPipelineView orderId="order-1" pipelineId="fastqc" samples={inputSamples} isFacilityAdmin />);
+
+    const runSelected = await screen.findByRole("button", { name: "Run FastQC", exact: true });
+    await waitFor(() => expect(runSelected.hasAttribute("disabled")).toBe(false));
+    expect(screen.getByText("2 samples selected")).toBeTruthy();
+    expect(screen.getAllByText(/Requires short reads; available data is long-read/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Unknown compatibility can still be checked when starting a run/)).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "Select SAMPLE_LONG" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("checkbox", { name: "Select SAMPLE_UNKNOWN" }).hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(runSelected);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/pipelines/runs", expect.objectContaining({ method: "POST" })
+    ));
+    const createBody = JSON.parse(fetchMock.mock.calls.find(([url]) => url === "/api/pipelines/runs")![1].body);
+    expect(createBody.sampleIds).toEqual(["sample-short", "sample-unknown"]);
+  });
+
+  it.each([
+    { limits: { minSamples: 3 }, message: "Requires at least 3 samples per run", singleBlocked: true },
+    { limits: { maxSamples: 1 }, message: "Accepts at most 1 sample per run", singleBlocked: false },
+  ])("checks the selected samples against sample-count limits: $message", async ({ limits, message, singleBlocked }) => {
+    mockSimulateRunsResponse({ runs: [], total: 0 }, {
+      ...pipeline,
+      input: { ...pipeline.input, ...limits },
+    });
+
+    render(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={samples} isFacilityAdmin />);
+
+    await waitFor(() => expect(screen.queryByText("Pipeline metadata is still loading.")).toBeNull());
+    const runSelected = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ });
+    expect(runSelected.hasAttribute("disabled")).toBe(true);
+    expect(screen.getAllByText(message).length).toBeGreaterThan(0);
+    fireEvent.click(runSelected);
+    expect(fetchMock.mock.calls.some(([url]) => url === "/api/pipelines/runs")).toBe(false);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select SAMPLE_B" }));
+    await waitFor(() => expect(runSelected.hasAttribute("disabled")).toBe(singleBlocked));
+  });
 
   it("shows a spinner while the pipeline catalog is loading", () => {
     mocks.useSWR.mockImplementation((url: string | null) => {

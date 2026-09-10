@@ -108,10 +108,10 @@ describe("SidebarEntityNav", () => {
       ],
     });
     mocks.useOrderPipelines.mockReturnValue([
-      { pipelineId: "fastq-checksum", name: "FASTQ Checksum", status: "complete", runIds: ["run-1"] },
+      { pipelineId: "fastq-checksum", name: "FASTQ Checksum", status: "complete", runIds: ["run-1"], compatibility: { status: "incompatible", compatibleSamples: 0, totalSamples: 1, summary: "0 of 1 samples have compatible inputs", reasons: [{ count: 1, reason: "Missing reads" }] } },
     ]);
     mocks.useStudyPipelines.mockReturnValue([
-      { pipelineId: "mag", name: "MAG", category: "analysis", status: "active", runIds: ["run-1"] },
+      { pipelineId: "mag", name: "MAG", category: "analysis", status: "active", runIds: ["run-1"], compatibility: { status: "compatible", compatibleSamples: 1, totalSamples: 1, summary: "Compatible inputs for all 1 sample", reasons: [] } },
     ]);
     mocks.progressClassName.mockImplementation((status: string) => {
       if (status === "complete") return "bg-[#00BD7D]";
@@ -189,7 +189,8 @@ describe("SidebarEntityNav", () => {
     expect(screen.getByText("FASTQ Checksum")).toBeTruthy();
     const pipelineLink = screen.getByRole("link", { name: /FASTQ Checksum/i });
     const pipelineDot = pipelineLink.querySelector("span[aria-hidden='true']");
-    expect(pipelineDot?.className).toContain("bg-[#00BD7D]");
+    expect(pipelineDot?.getAttribute("data-compatibility")).toBe("incompatible");
+    expect(pipelineLink.querySelector("[data-run-status=complete]")).toBeTruthy();
   });
   it.each(["facility", "import"] as const)("puts Files before Metadata for %s sequencing data", (dataOrigin) => {
     render(
@@ -411,7 +412,7 @@ describe("SidebarEntityNav", () => {
     });
   });
 
-  it("renders study analysis pipeline subitems with progress dots", () => {
+  it("renders study input compatibility with a separate run indicator", () => {
     mocks.usePathname.mockReturnValue("/studies/study-1");
     mocks.useSearchParams.mockReturnValue(new URLSearchParams("tab=pipelines&pipeline=mag"));
 
@@ -433,7 +434,44 @@ describe("SidebarEntityNav", () => {
       "/studies/study-1?tab=pipelines&pipeline=mag"
     );
     const pipelineDot = pipelineLink.querySelector("span[aria-hidden='true']");
-    expect(pipelineDot?.className).toContain("bg-blue-500");
+    expect(pipelineDot?.getAttribute("data-compatibility")).toBe("compatible");
+    expect(pipelineLink.querySelector("[data-run-status=active]")).toBeTruthy();
+  });
+
+  it("shows compatibility on publishing pipelines without changing their destination", () => {
+    mocks.usePathname.mockReturnValue("/studies/study-1");
+    mocks.useSearchParams.mockReturnValue(new URLSearchParams("tab=publishing&publisher=submg"));
+    mocks.useStudyPipelines.mockReturnValue([{
+      pipelineId: "submg",
+      name: "SubMG",
+      category: "submission",
+      status: "empty",
+      runIds: [],
+      compatibility: {
+        status: "unknown",
+        compatibleSamples: 0,
+        totalSamples: 1,
+        summary: "Input compatibility is unknown",
+        reasons: [{ count: 1, reason: "Assembly inputs have not been checked" }],
+      },
+    }]);
+    render(
+      <SidebarEntityNav
+        entityContext={{
+          ...entityContextDefaults,
+          entityType: "study",
+          entityId: "study-1",
+          entityData: entityData("Study 1"),
+        }}
+        collapsed={false}
+        showAdminControls
+      />
+    );
+    const link = screen.getByRole("link", { name: /SubMG.*Input compatibility is unknown/ });
+    expect(link.getAttribute("href")).toBe("/studies/study-1?tab=publishing&publisher=submg");
+    expect(link.getAttribute("aria-current")).toBe("page");
+    expect(link.querySelector("[data-compatibility=unknown]")).toBeTruthy();
+    expect(link.querySelector("[data-run-status]")).toBeNull();
   });
 
   it("marks study analysis and the selected pipeline active on analysis detail pages", () => {

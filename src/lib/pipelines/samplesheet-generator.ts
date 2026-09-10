@@ -19,7 +19,7 @@ import { resolveOrderPlatform } from './order-platform';
 import path from 'path';
 import type { PipelineTarget } from './types';
 import { getPipelineSampleWhere, isStudyTarget, studySampleSelectionIssues } from './target';
-import { normalizeReadDataClass } from '@/lib/sequencing/constants';
+import { selectPipelineInputRead } from './input-read-selection';
 
 type PackageSamplesheet = PackageSamplesheetConfig['samplesheet'];
 type PackageColumn = PackageSamplesheet['columns'][number];
@@ -31,12 +31,6 @@ type SamplesheetRead = {
   isActive?: boolean | null;
 };
 
-const READ_DATA_CLASS_RANK = {
-  cleaned: 0,
-  raw: 1,
-  unknown: 2,
-} as const;
-
 export interface GenerateOptions {
   target: PipelineTarget;
   dataBasePath: string;
@@ -47,47 +41,6 @@ export interface GenerateResult {
   sampleCount: number;
   errors: string[];
   warnings: string[];
-}
-
-/**
- * Resolve a source path like "read.file1" or "sample.reads[paired].file1" to actual data
- */
-function selectRead(
-  reads: SamplesheetRead[],
-  filters?: Record<string, unknown>
-): { file1: string | null; file2: string | null } | null {
-  const paired = typeof filters?.paired === 'boolean' ? filters.paired : undefined;
-  const requestedDataClasses = [
-    ...(typeof filters?.dataClass === 'string' ? [filters.dataClass] : []),
-    ...(Array.isArray(filters?.dataClassIn)
-      ? filters.dataClassIn.filter((value): value is string => typeof value === 'string')
-      : []),
-  ].map((value) => normalizeReadDataClass(value));
-  const activeReads = reads.filter((read) => read.isActive !== false);
-  const dataClassReads = requestedDataClasses.length > 0
-    ? activeReads.filter((read) => requestedDataClasses.includes(normalizeReadDataClass(read.dataClass)))
-    : activeReads;
-  const candidates = dataClassReads;
-  const sortedReads = [...candidates].sort((a, b) => {
-    const aClass = normalizeReadDataClass(a.dataClass);
-    const bClass = normalizeReadDataClass(b.dataClass);
-    const classDifference =
-      READ_DATA_CLASS_RANK[aClass] - READ_DATA_CLASS_RANK[bClass];
-    if (classDifference !== 0) return classDifference;
-    if (a.id < b.id) return -1;
-    if (a.id > b.id) return 1;
-    return 0;
-  });
-
-  if (paired === true) {
-    return sortedReads.find(r => r.file1 && r.file2) || null;
-  }
-
-  if (paired === false) {
-    return sortedReads.find(r => r.file1 && !r.file2) || null;
-  }
-
-  return sortedReads.find(r => r.file1 && r.file2) || sortedReads.find(r => r.file1) || null;
 }
 
 function resolveSource(
@@ -131,7 +84,7 @@ function resolveSource(
   // Handle reads with filters like "read.file1" + filters
   if (source.startsWith('read.')) {
     const field = source.split('.')[1];
-    const matchingRead = selectRead(sample.reads, column.filters);
+    const matchingRead = selectPipelineInputRead(sample.reads, column.filters);
     if (!matchingRead) return null;
     const value = field === 'file1' ? matchingRead.file1 : matchingRead.file2;
     return value || null;
@@ -141,7 +94,7 @@ function resolveSource(
   const readsMatch = source.match(/^sample\.reads\[(\w+)\]\.(\w+)$/);
   if (readsMatch) {
     const [, filter, field] = readsMatch;
-    const matchingRead = selectRead(sample.reads, { paired: filter === 'paired' ? true : filter === 'single' ? false : undefined });
+    const matchingRead = selectPipelineInputRead(sample.reads, { paired: filter === 'paired' ? true : filter === 'single' ? false : undefined });
     if (!matchingRead) return null;
     const value = field === 'file1' ? matchingRead.file1 : matchingRead.file2;
     return value || null;

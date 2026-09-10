@@ -30,7 +30,7 @@ describe("useOrderPipelines hook", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("maps fetched pipelines and resets read-dependent completions when reads are missing", async () => {
+  it("preserves completed runs when current reads are missing", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url === "/api/admin/settings/pipelines?enabled=true&catalog=order") {
         return jsonResponse({
@@ -39,13 +39,14 @@ describe("useOrderPipelines hook", () => {
               pipelineId: "fastq-checksum",
               name: "FASTQ Checksum",
               enabled: true,
-              capabilities: { requiresLinkedReads: true },
+              input: { perSample: { reads: true, pairedEnd: false } },
+              sequencingCompatibility: { readLengthClass: "both" },
             },
             {
               pipelineId: "simulate-reads",
               name: "Simulate Reads",
               enabled: true,
-              capabilities: { requiresLinkedReads: false },
+              input: { perSample: { reads: false, pairedEnd: false } },
             },
           ],
         });
@@ -60,9 +61,7 @@ describe("useOrderPipelines hook", () => {
       }
       if (url === "/api/orders/order-1/pipeline-input") {
         return jsonResponse({
-          summary: {
-            readsLinkedSamples: 0,
-          },
+          samples: [{ read: null }],
         });
       }
       throw new Error(`Unexpected URL: ${url}`);
@@ -76,12 +75,16 @@ describe("useOrderPipelines hook", () => {
         {
           pipelineId: "fastq-checksum",
           name: "FASTQ Checksum",
-          status: "empty",
+          category: "analysis",
+          compatibility: expect.objectContaining({ status: "incompatible" }),
+          status: "complete",
           runIds: ["run-1"],
         },
         {
           pipelineId: "simulate-reads",
           name: "Simulate Reads",
+          category: "analysis",
+          compatibility: expect.objectContaining({ status: "compatible" }),
           status: "active",
           runIds: ["run-2"],
         },
@@ -106,7 +109,7 @@ describe("useOrderPipelines hook", () => {
               pipelineId: "simulate-reads",
               name: "Simulate Reads",
               enabled: true,
-              capabilities: { requiresLinkedReads: false },
+              input: { perSample: { reads: false, pairedEnd: false } },
             },
           ],
         });
@@ -115,7 +118,7 @@ describe("useOrderPipelines hook", () => {
         return jsonResponse({ runs: [] });
       }
       if (url.startsWith("/api/orders/")) {
-        return jsonResponse({ summary: { readsLinkedSamples: 1 } });
+        return jsonResponse({ samples: [{ read: null }] });
       }
       throw new Error(`Unexpected URL: ${url}`);
     });
@@ -128,6 +131,8 @@ describe("useOrderPipelines hook", () => {
         {
           pipelineId: "simulate-reads",
           name: "Simulate Reads",
+          category: "analysis",
+          compatibility: expect.objectContaining({ status: "compatible" }),
           status: "empty",
           runIds: [],
         },
@@ -142,6 +147,8 @@ describe("useOrderPipelines hook", () => {
         {
           pipelineId: "simulate-reads",
           name: "Simulate Reads",
+          category: "analysis",
+          compatibility: expect.objectContaining({ status: "compatible" }),
           status: "empty",
           runIds: [],
         },

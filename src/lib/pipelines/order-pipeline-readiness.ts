@@ -1,26 +1,8 @@
-import { pipelineRequiresPairedReads } from "@/lib/pipelines/read-mode";
-import { READ_CLEANING_PIPELINE_ID } from "@/lib/pipelines/simulate-reads-config";
-import { isProtectedReadDataClass } from "@/lib/sequencing/constants";
-
-type OrderPipelineReadinessPipeline = {
-  pipelineId?: string;
-  input: {
-    perSample: {
-      reads: boolean;
-      pairedEnd: boolean;
-      readMode?: "single_or_paired" | "paired_only";
-    };
-  };
-};
-
-type OrderPipelineReadinessSample = {
-  read?: {
-    file1?: string | null;
-    file2?: string | null;
-    dataClass?: string | null;
-    filesMissing?: boolean | null;
-  } | null;
-};
+import {
+  assessPipelineSampleCompatibility,
+  type PipelineCompatibilitySample,
+  type PipelineInputRequirements,
+} from "./input-compatibility";
 
 export type OrderPipelineSampleReadiness = {
   ready: boolean;
@@ -31,29 +13,16 @@ export function getOrderPipelineSampleReadiness({
   pipeline,
   sample,
 }: {
-  pipeline: OrderPipelineReadinessPipeline | null;
-  sample: OrderPipelineReadinessSample;
+  pipeline: PipelineInputRequirements | null;
+  sample: PipelineCompatibilitySample;
 }): OrderPipelineSampleReadiness {
   if (!pipeline) return { ready: false, reason: "Pipeline not loaded" };
 
-  if (pipeline.input.perSample.reads && !sample.read?.file1) {
-    return { ready: false, reason: "Missing reads" };
+  const compatibility = assessPipelineSampleCompatibility(pipeline, sample);
+  if (compatibility.status === "incompatible") {
+    return { ready: false, reason: compatibility.reason };
   }
-
-  if (
-    pipeline.pipelineId === READ_CLEANING_PIPELINE_ID &&
-    !isProtectedReadDataClass(sample.read?.dataClass)
-  ) {
-    return { ready: false, reason: "Needs raw or unknown reads" };
-  }
-
-  if (pipelineRequiresPairedReads(pipeline.input.perSample) && !sample.read?.file2) {
-    return { ready: false, reason: "Missing R2 file" };
-  }
-
-  if (pipeline.input.perSample.reads && sample.read?.filesMissing) {
-    return { ready: false, reason: "Files missing" };
-  }
-
+  // Unknown compatibility is advisory; existing launch validation remains the
+  // authority for packages or older data without complete input declarations.
   return { ready: true };
 }

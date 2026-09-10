@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { HelpBox } from "@/components/ui/help-box";
 import { PageNotice } from "@/components/ui/page-notice";
+import { PipelineInputCompatibilityNotice } from "@/components/pipelines/PipelineInputCompatibilityNotice";
+import { getPipelineSampleCountIssue, type PipelineSequencingCompatibility } from "@/lib/pipelines/input-compatibility";
 import { toast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
@@ -122,6 +124,9 @@ function getApiErrorMessage(
 }
 
 type AdminPipeline = {
+  sequencingCompatibility?: PipelineSequencingCompatibility | null;
+  inputCompatibilityWarnings?: string[];
+  inputSelection?: "standard" | "read-cleaning" | "custom";
   pipelineId: string;
   name: string;
   description: string;
@@ -139,6 +144,8 @@ type AdminPipeline = {
     properties?: Record<string, PipelineConfigProperty>;
   };
   input: {
+    minSamples?: number;
+    maxSamples?: number;
     supportedScopes: string[];
     perSample: {
       reads: boolean;
@@ -1197,7 +1204,8 @@ function OrderPipelineContent({
     ? "Pipeline metadata is still loading."
     : metadataErrors[0]?.message ?? (metadataValidation?.valid === false ? "Input metadata did not pass validation." : null);
   const runListUnavailable = Boolean(runsResponse.error || runsResponse.isLoading);
-  const launchBlockMessage = metadataBlockMessage || executionTargetBlockMessage ||
+  const selectedSampleCountIssue = getPipelineSampleCountIssue(pipeline, selectedSamples.length);
+  const launchBlockMessage = metadataBlockMessage || executionTargetBlockMessage || selectedSampleCountIssue ||
     (runListUnavailable ? "Waiting for an up-to-date run list before starting." : null) ||
     (pipelinesResponse.error ? "Pipeline settings could not be refreshed. Retry before running." : null);
   const launchBlocked =
@@ -1217,6 +1225,11 @@ function OrderPipelineContent({
   const runPipeline = useCallback(
     async (sampleIds: string[]) => {
       if (!pipeline || !canRunPipelines || isDemo) return;
+      const countIssue = getPipelineSampleCountIssue(pipeline, sampleIds.length);
+      if (countIssue) {
+        setError(countIssue);
+        return;
+      }
       if (
         canManagePipelines &&
         isExecutionTargetBlocked({
@@ -2010,6 +2023,8 @@ function OrderPipelineContent({
           Read Cleaning will not change active reads when the run completes. Review the reports and use Set as active cleaned reads on selected candidates after the run.
         </PageNotice>
       ) : null}
+
+      {!isDemo && <PipelineInputCompatibilityNotice pipeline={pipeline} samples={samples} />}
 
       {/* Choose inputs here; reports and earlier runs live below. */}
       <section aria-label="Input data" className="overflow-hidden rounded-xl border border-border bg-card">

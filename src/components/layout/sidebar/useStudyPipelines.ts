@@ -1,132 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { PipelineRunStatus } from "@/lib/pipelines/types";
-import { startVisiblePolling } from "@/lib/polling";
-import {
-  getPipelineProgressStatuses,
-  type PipelineProgressIndicatorStatus,
-} from "./pipelineProgress";
+import { useEntityPipelines, type EntityPipelineNavItem } from "./useEntityPipelines";
 
-export interface StudyPipelineNavItem {
-  pipelineId: string;
-  name: string;
-  category: string;
-  status: PipelineProgressIndicatorStatus;
-  runIds: string[];
-}
-
-interface StudyPipelineDefinition {
-  pipelineId: string;
-  name: string;
-  category: string;
-}
-
-interface PipelineRunSummary {
-  id?: string;
-  pipelineId: string;
-  status: PipelineRunStatus;
-  createdAt?: string | Date | null;
-}
-
-const cache = new Map<string, StudyPipelineDefinition[]>();
-
-async function fetchStudyPipelineDefinitions(): Promise<StudyPipelineDefinition[]> {
-  const cacheKey = "study-pipelines";
-  const cached = cache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  const res = await fetch("/api/admin/settings/pipelines?enabled=true&catalog=study");
-  if (!res.ok) {
-    throw new Error("Failed to fetch study pipeline definitions");
-  }
-
-  const data = (await res.json()) as {
-    pipelines?: {
-      pipelineId: string;
-      name: string;
-      category?: string;
-      enabled: boolean;
-    }[];
-  };
-
-  const items: StudyPipelineDefinition[] = (data.pipelines ?? [])
-    .filter((pipeline) => pipeline.enabled)
-    .map((pipeline) => ({
-      pipelineId: pipeline.pipelineId,
-      name: pipeline.name,
-      category: pipeline.category ?? "analysis",
-    }));
-
-  cache.set(cacheKey, items);
-  return items;
-}
+export type StudyPipelineNavItem = EntityPipelineNavItem;
 
 export function useStudyPipelines(
   showAdminControls: boolean,
   studyId: string | null,
   enablePolling = true
 ): StudyPipelineNavItem[] {
-  const [fetchedPipelines, setFetchedPipelines] = useState<StudyPipelineNavItem[]>([]);
-
-  useEffect(() => {
-    if (!showAdminControls || !studyId) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const refresh = async () => {
-      try {
-        const [definitions, runsRes] = await Promise.all([
-          fetchStudyPipelineDefinitions(),
-          fetch(`/api/pipelines/runs?studyId=${studyId}&limit=200`),
-        ]);
-
-        const runsPayload = runsRes.ok
-          ? (await runsRes.json()) as { runs?: PipelineRunSummary[] }
-          : null;
-        const statusByPipeline = getPipelineProgressStatuses(
-          runsPayload?.runs ?? []
-        );
-        const runIdsByPipeline = new Map<string, string[]>();
-        for (const run of runsPayload?.runs ?? []) {
-          if (!run.id) continue;
-          const runIds = runIdsByPipeline.get(run.pipelineId) ?? [];
-          runIds.push(run.id);
-          runIdsByPipeline.set(run.pipelineId, runIds);
-        }
-
-        if (!cancelled) {
-          setFetchedPipelines(
-            definitions.map((pipeline) => ({
-              pipelineId: pipeline.pipelineId,
-              name: pipeline.name,
-              category: pipeline.category,
-              status: statusByPipeline[pipeline.pipelineId] ?? "empty",
-              runIds: runIdsByPipeline.get(pipeline.pipelineId) ?? [],
-            }))
-          );
-        }
-      } catch {
-        if (!cancelled) {
-          setFetchedPipelines([]);
-        }
-      }
-    };
-
-    void refresh();
-    const stopPolling = enablePolling
-      ? startVisiblePolling(() => void refresh(), 15000)
-      : () => undefined;
-
-    return () => {
-      cancelled = true;
-      stopPolling();
-    };
-  }, [enablePolling, showAdminControls, studyId]);
-
-  return showAdminControls && studyId ? fetchedPipelines : [];
+  return useEntityPipelines("study", showAdminControls, studyId, enablePolling);
 }

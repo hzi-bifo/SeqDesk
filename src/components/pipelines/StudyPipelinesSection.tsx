@@ -8,6 +8,8 @@ import { useCapability } from "@/components/deployment-profile/useCapability";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { PageNotice } from "@/components/ui/page-notice";
+import { PipelineInputCompatibilityNotice } from "./PipelineInputCompatibilityNotice";
+import { getPipelineSampleCountIssue, type PipelineCompatibilitySample, type PipelineSequencingCompatibility } from "@/lib/pipelines/input-compatibility";
 import { toast } from "@/components/ui/toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
@@ -149,6 +151,9 @@ interface SubmgCoverageSummary {
 }
 
 interface Pipeline {
+  sequencingCompatibility?: PipelineSequencingCompatibility | null;
+  inputCompatibilityWarnings?: string[];
+  inputSelection?: "standard" | "read-cleaning" | "custom";
   pipelineId: string;
   name: string;
   description: string;
@@ -167,6 +172,8 @@ interface Pipeline {
   };
   runtimeWarnings?: string[];
   input?: {
+    minSamples?: number;
+    maxSamples?: number;
     perSample?: {
       reads?: boolean;
       pairedEnd?: boolean;
@@ -175,7 +182,7 @@ interface Pipeline {
   } | null;
 }
 
-interface Sample {
+interface Sample extends PipelineCompatibilitySample {
   id: string;
   sampleId: string;
   sampleAlias?: string | null;
@@ -713,6 +720,8 @@ function getReadinessIssues(params: {
     issues.push(getStudySelectionEmptyMessage(pipeline));
     return issues;
   }
+  const countIssue = getPipelineSampleCountIssue(pipeline, selectedSamples.length);
+  if (countIssue) issues.push(countIssue);
 
   // System prerequisites
   if (!checkingSystem && systemReady && !systemReady.ready) {
@@ -1232,6 +1241,11 @@ export function StudyPipelinesSection({
 
   const handleStartPipeline = async () => {
     if (!selectedPipeline || !canRunPipelines) return;
+    const countIssue = getPipelineSampleCountIssue(selectedPipeline, eligibleSampleIds.size);
+    if (countIssue) {
+      setError(countIssue);
+      return;
+    }
     if (
       canManagePipelines &&
       isExecutionTargetBlocked({
@@ -1850,6 +1864,8 @@ export function StudyPipelinesSection({
           </div>
         </PageNotice>
       )}
+
+      {!isDemoUser && <PipelineInputCompatibilityNotice pipeline={selectedPipeline} samples={samplesWithAssemblySelection} />}
 
       {/* Section 2b: Study-level metadata warnings */}
       {metadataValidation && !loadingMetadata && (() => {

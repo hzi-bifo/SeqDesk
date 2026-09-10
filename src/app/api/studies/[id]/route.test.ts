@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { mkdtemp, writeFile, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -7,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   loadStudyFormSchema: vi.fn(),
   parseStudyModulesConfig: vi.fn(),
   isStudyModuleEnabled: vi.fn(),
+  getSequencingFilesConfig: vi.fn(),
   db: {
     study: {
       findUnique: vi.fn(),
@@ -46,6 +50,15 @@ vi.mock("@/lib/db", () => ({
 vi.mock("@/lib/deployment-profile/server", () => ({
   getServerDeploymentProfile: mocks.getServerDeploymentProfile,
 }));
+
+vi.mock("@/lib/files/sequencing-config", () => ({
+  getSequencingFilesConfig: mocks.getSequencingFilesConfig,
+}));
+
+beforeEach(() => {
+  mocks.getSequencingFilesConfig.mockResolvedValue({ dataBasePath: null });
+  mocks.db.siteSettings.findUnique.mockResolvedValue(null);
+});
 
 vi.mock("@/lib/studies/schema", () => ({
   loadStudyFormSchema: mocks.loadStudyFormSchema,
@@ -164,6 +177,56 @@ describe("GET /api/studies/[id]", () => {
     expect(response.status).toBe(200);
     const data = await response.json();
     expect(data.id).toBe("study-1");
+  });
+
+  it("enriches sample input metadata and verifies files without returning private order fields", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "seqdesk-study-compatibility-"));
+    try {
+      await writeFile(join(directory, "reads_R1.fastq"), "@read\nACGT\n+\nIIII\n");
+      mocks.getSequencingFilesConfig.mockResolvedValue({ dataBasePath: directory });
+      mocks.getServerSession.mockResolvedValue({ user: { id: "user-1", role: "RESEARCHER" } });
+      mocks.db.order.findMany.mockResolvedValue([{
+        id: "order-1", orderNumber: "O1", name: "Order", status: "COMPLETED",
+        customFields: JSON.stringify({
+          confidential: "internal order notes",
+          _sequencing_tech: {
+            technologyId: "illumina", platformFamily: "illumina", readLengthClass: "short",
+            supportedReadLayouts: ["single", "paired"],
+          },
+        }),
+      }]);
+      setupFindUniqueMock({ samples: [{
+        id: "sample-1", orderId: "order-1", checklistData: JSON.stringify({ library_layout: "PAIRED" }),
+        customFields: null, reads: [
+          { id: "r1", file1: "reads_R1.fastq", file2: null },
+          { id: "r2", file1: "missing.fastq", file2: null },
+        ],
+      }] });
+      const response = await GET(new NextRequest(BASE_URL), { params: Promise.resolve({ id: "study-1" }) });
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.samples[0].sequencingTechnology).toEqual({
+        technologyId: "illumina", platformFamily: "illumina", readLengthClass: "short", readLayout: "paired",
+      });
+      expect(data.samples[0].reads.map((read: { filesMissing: boolean }) => read.filesMissing)).toEqual([false, true]);
+      expect(data.samples[0].order).not.toHaveProperty("customFields");
+      expect(JSON.stringify(data)).not.toContain("internal order notes");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps unknown technology and unverified file availability explicit", async () => {
+    mocks.getServerSession.mockResolvedValue({ user: { id: "user-1", role: "RESEARCHER" } });
+    setupFindUniqueMock({ samples: [{
+      id: "sample-1", orderId: "order-1", checklistData: "invalid", customFields: null,
+      reads: [{ id: "r1", file1: "reads_R1.fastq", file2: null }],
+    }] });
+    const response = await GET(new NextRequest(BASE_URL), { params: Promise.resolve({ id: "study-1" }) });
+    expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data.samples[0].sequencingTechnology).toBeNull();
+    expect(data.samples[0].reads[0].filesMissing).toBeNull();
   });
 
   it("returns 404 for non-existent study", async () => {

@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
     order: {
       findUnique: vi.fn(),
     },
+    siteSettings: {
+      findUnique: vi.fn(),
+    },
     $transaction: vi.fn(),
     read: {
       update: vi.fn(),
@@ -186,6 +189,7 @@ function resetWorkspaceMocks() {
     },
   });
   mocks.db.read.update.mockResolvedValue({});
+  mocks.db.siteSettings.findUnique.mockResolvedValue(null);
   mocks.db.read.create.mockResolvedValue({ id: "new-read" });
   // Default $transaction simply runs the callback with a tx mirroring db.read.
   mocks.db.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
@@ -208,6 +212,7 @@ function resetWorkspaceMocks() {
   mocks.db.streamIngestedFile.groupBy.mockResolvedValue([]);
   mocks.db.streamIngestedFile.findMany.mockResolvedValue([]);
   mocks.fs.stat.mockResolvedValue({
+    isFile: () => true,
     size: 123,
     mtime: new Date("2026-03-24T09:00:00.000Z"),
   });
@@ -474,8 +479,8 @@ describe("getOrderSequencingSummary", () => {
       }],
     }));
     mocks.fs.stat.mockImplementation(async (filePath: string) => {
-      if (missing && filePath.endsWith("R2.fastq.gz")) throw new Error("ENOENT");
-      return { size: 123 };
+      if (missing && filePath.endsWith("R2.fastq.gz")) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return { size: 123, isFile: () => true };
     });
 
     const result = await getOrderSequencingSummary("order-1");
@@ -626,9 +631,10 @@ describe("getOrderSequencingSummary", () => {
     );
     mocks.fs.stat.mockImplementation(async (absolutePath: string) => {
       if (absolutePath.endsWith("S2_R2.fastq.gz")) {
-        throw new Error("ENOENT: missing");
+        throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
       }
       return {
+        isFile: () => true,
         size: absolutePath.endsWith("S1_R1.fastq.gz") ? 111 : 222,
         mtime: baseTime,
       };
@@ -716,6 +722,47 @@ describe("getOrderSequencingSummary", () => {
         plannedBarcodeRunId: null,
       })
     );
+  });
+
+  it("exposes all active pipeline inputs with selected metadata and shared file inspection", async () => {
+    mocks.db.siteSettings.findUnique.mockResolvedValue({ extraSettings: JSON.stringify({ sequencingTechConfig: {
+      technologies: [{ id: "illumina", platformFamily: "illumina", readLengthClass: "short", supportedReadLayouts: ["single", "paired"] }],
+    } }) });
+    mocks.db.order.findUnique.mockResolvedValue(createOrder({
+      customFields: JSON.stringify({ _sequencing_tech: "illumina", read_layout: "PE" }),
+      samples: [{
+        id: "sample-1", sampleId: "S1", facilityStatus: "SEQUENCED", updatedAt: new Date(),
+        sequencingArtifacts: [],
+        reads: [
+          { id: "cleaned", isActive: true, dataClass: "cleaned", file1: "cleaned.fastq", file2: null },
+          { id: "raw", isActive: true, dataClass: "raw", file1: "raw_R1.fastq", file2: "raw_R2.fastq" },
+          { id: "old", isActive: false, dataClass: "cleaned", file1: "old.fastq", file2: null },
+        ],
+      }],
+    }));
+    const result = await getOrderSequencingSummary("order-1");
+    expect(result.samples[0].sequencingTechnology).toEqual({
+      technologyId: "illumina", platformFamily: "illumina", readLengthClass: "short", readLayout: "paired",
+    });
+    expect(result.samples[0].reads?.map((read) => read.id)).toEqual(["cleaned", "raw"]);
+    expect(result.samples[0].read?.id).toBe("cleaned");
+    expect(result.samples[0].reads?.every((read) => read.filesMissing === false)).toBe(true);
+    expect(mocks.fs.stat).toHaveBeenCalledTimes(3);
+  });
+
+  it("marks linked inputs unverified when the data storage path is not configured", async () => {
+    mocks.sequencingConfig.getSequencingFilesConfig.mockResolvedValue({
+      dataBasePath: null, config: { allowedExtensions: [".fastq"], allowSingleEnd: true },
+    });
+    mocks.db.order.findUnique.mockResolvedValue(createOrder({ samples: [{
+      id: "sample-1", sampleId: "S1", facilityStatus: "SEQUENCED", updatedAt: new Date(),
+      sequencingArtifacts: [], reads: [{ id: "r1", file1: "reads.fastq", file2: null }],
+    }] }));
+    const result = await getOrderSequencingSummary("order-1");
+    expect(result.samples[0].sequencingTechnology).toBeNull();
+    expect(result.samples[0].read?.filesMissing).toBeNull();
+    expect(result.samples[0].reads?.[0].filesMissing).toBeNull();
+    expect(mocks.fs.stat).not.toHaveBeenCalled();
   });
 
   it("treats traversal read paths as stale instead of resolving outside storage", async () => {
@@ -2369,7 +2416,7 @@ describe("getOrderSequencingSummary stream + read-origin branches", () => {
         ],
       })
     );
-    mocks.fs.stat.mockResolvedValue({ size: 50, mtime: baseTime });
+    mocks.fs.stat.mockResolvedValue({ size: 50, mtime: baseTime, isFile: () => true });
 
     const result = await getOrderSequencingSummary("order-1");
 
@@ -2443,7 +2490,7 @@ describe("getOrderSequencingSummary stream + read-origin branches", () => {
         ],
       })
     );
-    mocks.fs.stat.mockResolvedValue({ size: 50, mtime: baseTime });
+    mocks.fs.stat.mockResolvedValue({ size: 50, mtime: baseTime, isFile: () => true });
 
     const result = await getOrderSequencingSummary("order-1");
 

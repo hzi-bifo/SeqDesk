@@ -108,6 +108,9 @@ export interface ManagedPipelineCatalogEntry {
 }
 
 export interface ManagedPipelineStatus extends ManagedPipelineCatalogEntry {
+  sequencingCompatibility: PackageManifest["sequencingCompatibility"] | null;
+  inputCompatibilityWarnings: string[];
+  inputSelection?: "standard" | "read-cleaning" | "custom";
   config: Record<string, unknown>;
   configSchema: PipelineConfigSchema;
   defaultConfig: Record<string, unknown>;
@@ -280,6 +283,9 @@ async function buildInstalledManagedPipelineStatus(
     ...parsePipelineConfig(dbConfig?.config),
   };
   const manifest = getPackageManifest(pipelineId) || null;
+  const inputSelection = manifest?.files?.scripts?.samplesheet
+    ? pipelineId === "read-cleaning" ? "read-cleaning" : "custom"
+    : "standard";
   const supportedTargets = deriveManifestTargets(manifest, definition);
   const catalogs = derivePipelineCatalogs(supportedTargets);
   const capabilities = derivePipelineCapabilities(manifest, definition);
@@ -365,6 +371,16 @@ async function buildInstalledManagedPipelineStatus(
     configSchema: extendedConfigSchema,
     defaultConfig: extendedDefaultConfig,
     input: definition.input,
+    sequencingCompatibility: manifest?.sequencingCompatibility ?? null,
+    inputSelection,
+    inputCompatibilityWarnings: [
+      ...(manifest?.execution.priorRunArtifacts
+        ? ["Inputs from previous pipeline runs have not been checked"]
+        : []),
+      ...(inputSelection === "custom"
+        ? ["Custom pipeline input selection has not been checked"]
+        : []),
+    ],
     sampleResult: definition.sampleResult ?? null,
     visibility: definition.visibility,
     requires: definition.requires,

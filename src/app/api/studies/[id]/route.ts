@@ -6,6 +6,10 @@ import { decideCapability } from "@/lib/authorization";
 import { db } from "@/lib/db";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { loadStudyPipelineSamples } from '@/lib/pipelines/study-samples';
+import { getSequencingFilesConfig } from "@/lib/files/sequencing-config";
+import { resolveSampleSequencingTechnology } from "@/lib/sequencing/input-metadata";
+import { loadSequencingTechnologyMap } from "@/lib/sequencing/input-metadata-service";
+import { inspectReadFiles } from "@/lib/sequencing/read-files-inspection";
 import {
   isStudyModuleEnabled,
   loadStudyFormSchema,
@@ -324,11 +328,40 @@ async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
           orderNumber: true,
           name: true,
           status: true,
+          customFields: true,
         },
       })
     : [];
 
   const orderById = new Map(orders.map((order) => [order.id, order]));
+  const [technologies, sequencingConfig] = await Promise.all([
+    loadSequencingTechnologyMap(),
+    getSequencingFilesConfig(),
+  ]);
+  const samples = await Promise.all(study.samples.map(async (sample) => {
+    const order = sample.orderId ? orderById.get(sample.orderId) : undefined;
+    return {
+      ...sample,
+      reads: await Promise.all(sample.reads.map(async (read) => ({
+        ...read,
+        ...await inspectReadFiles(sequencingConfig.dataBasePath, read),
+      }))),
+      sequencingTechnology: resolveSampleSequencingTechnology({
+        orderCustomFields: order?.customFields,
+        sampleCustomFields: sample.customFields,
+        sampleChecklistData: sample.checklistData,
+        technologies,
+      }),
+      preferredAssemblyId: preferredAssemblyBySample.get(sample.id) ?? null,
+      assemblies: assembliesBySample.get(sample.id) ?? [],
+      order: order ? {
+        id: order.id,
+        orderNumber: order.orderNumber,
+        name: order.name,
+        status: order.status,
+      } : null,
+    };
+  }));
 
   const notes = "notes" in study ? study.notes ?? null : null;
   const notesEditedAt = "notesEditedAt" in study ? study.notesEditedAt ?? null : null;
@@ -350,12 +383,7 @@ async function getStudyWithResolvedOrders(idOrAliasOrOrderId: string) {
         lastName: null,
         email: "",
       } as const),
-    samples: study.samples.map((sample) => ({
-      ...sample,
-      preferredAssemblyId: preferredAssemblyBySample.get(sample.id) ?? null,
-      assemblies: assembliesBySample.get(sample.id) ?? [],
-      order: sample.orderId ? orderById.get(sample.orderId) ?? null : null,
-    })),
+    samples,
   };
 }
 
