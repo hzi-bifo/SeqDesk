@@ -11,6 +11,7 @@ import { knownPipelineTable } from "../pipeline-tables";
 import { ExploreBuildInputError, type BuildContext, type BuiltDataset } from "./types";
 import { COHORT_LABELS, cohortColumns, cohortMembershipSelection, exploreSampleWhere } from "../sample-scope";
 import { resolveContainedPath } from "../storage";
+import { bundledDemoPipelineFile, isSeededDemoArtifact } from "@/lib/demo/bundled-files";
 
 const MAX_TABLE_FILE_BYTES = 200 * 1024 * 1024;
 
@@ -237,7 +238,9 @@ export async function buildPipelineTableDataset(
     let text: string;
     try {
       if (!artifact.runFolder) throw new Error("Missing run folder");
-      const file = await resolveContainedPath(artifact.runFolder, artifact.path);
+      // Demo runs have no folder on disk; their tables ship with the app.
+      const bundled = isSeededDemoArtifact(artifact.metadata) ? await bundledDemoPipelineFile(artifact.path) : null;
+      const file = bundled ?? (await resolveContainedPath(artifact.runFolder, artifact.path));
       const stat = await fs.stat(file);
       if (!stat.isFile() || stat.size > MAX_TABLE_FILE_BYTES) {
         warnings.push(`${path.basename(artifact.path)} exceeds the size limit and was skipped.`);

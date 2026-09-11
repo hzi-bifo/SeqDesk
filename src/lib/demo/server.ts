@@ -74,6 +74,7 @@ import {
   normalizeStudyFormSchema,
 } from "@/lib/studies/fixed-sections";
 import { STUDY_FORM_DEFAULTS_VERSION } from "@/lib/modules/default-form-fields";
+import { seedDemoReports } from "@/lib/demo/reports";
 
 function orderPlatformFields(profile: PlatformProfile) {
   return {
@@ -1009,6 +1010,8 @@ async function createDemoWorkspaceInternal(
           type: artifactType,
           name: artifactName,
           path: `${demoRoot}/runs/${pipelineId}-demo/output/report/${reportBasename}`,
+          // Tables are declared as the pipeline's summary output so Reports can build from them.
+          outputId: reportBasename.endsWith(".tsv") ? "summary" : undefined,
           metadata: JSON.stringify({ seeded: true }),
         },
       });
@@ -1075,6 +1078,7 @@ async function createDemoWorkspaceInternal(
           type: artifactType,
           name: artifactName,
           path: `${demoRoot}/runs/mouse-${pipelineId}-demo/output/report/${reportBasename}`,
+          outputId: reportBasename.endsWith(".tsv") ? "summary" : undefined,
           metadata: JSON.stringify({ seeded: true, demo: true }),
         },
       });
@@ -1480,6 +1484,7 @@ async function createDemoWorkspaceInternal(
         type: "qc_report",
         name: "Taxonomic profile (top taxa per sample)",
         path: `${demoRoot}/runs/human-kraken2-bracken-demo/output/report/human-gut-kraken-summary.tsv`,
+        outputId: "summary",
         producedByStepId: "summary",
         metadata: JSON.stringify({ seeded: true, demo: true }),
       },
@@ -1594,6 +1599,9 @@ async function createDemoWorkspaceInternal(
       adminUserId: facilityAdmin.id,
     };
   });
+
+  // Reports over the seeded pipeline tables, outside the transaction; a problem here must not cost the demo.
+  await seedDemoReports(result.researcherUserId);
 
   return {
     expiresAt,

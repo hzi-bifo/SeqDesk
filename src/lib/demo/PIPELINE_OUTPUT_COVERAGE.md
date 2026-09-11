@@ -63,3 +63,18 @@ showcase.
       (PRJDB6165) study now showcases four pipelines on **real ENA data**.
 - [ ] `read-cleaning` + a long-read pipeline still missing for the mouse study
       (read-cleaning has no standalone report; no long-read mouse data).
+
+## Demo reports (Explore)
+
+Each fresh demo workspace also gets Explore reports built the way a researcher
+would build them (`src/lib/demo/reports.ts`, run after the seed transaction):
+
+| Study | Report | Tables built | Extra |
+|---|---|---|---|
+| Human Gut Shotgun Metagenomes | Human gut cohort: taxonomic profile | `kraken2-bracken:summary` (bundled `human-gut-kraken-summary.tsv`), samples | numbers, bar + histogram, tables |
+| Mouse Gut Microbiome | Mouse gut metagenome: read quality | `fastqc:summary` (bundled `mouse-fastqc-summary.tsv`), samples | numbers, histogram + scatter, an unrun `fastqc-overview` analysis step |
+| Surface Resistome Pilot | none | — | the bundled `fastqc-summary.tsv` / `simulation-summary.tsv` / `checksum-summary.tsv` carry CI sample ids (`CMQUCU39-*`), which do not match the pilot's SR-01/02, so the builder refuses them and no page is written |
+
+Seeded TSV artifacts now carry `outputId: "summary"`; the Explore pipeline-table
+builder reads seeded artifacts from `public/demo/pipeline/` by basename
+(`src/lib/demo/bundled-files.ts`), the same way the preview serves them.
