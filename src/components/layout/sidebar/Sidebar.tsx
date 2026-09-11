@@ -235,8 +235,9 @@ export function Sidebar({ user, version, deploymentProfile }: SidebarProps) {
 
               {/* Navigation */}
               <nav className={cn("flex-1 p-3 space-y-1 overflow-y-auto", collapsed && "px-2")}>
-                {(entityContext.entityType !== "order" || !entityContext.entityId) && <Link
-                  href={entityContext.entityType && entityContext.entityId ? filesHref(`${entityContext.entityType}:${entityContext.entityId}`) : "/files"}
+                {/* Files belong to a scope: orders list them in their own navigation, studies get this link, and nothing shows without a selection. */}
+                {entityContext.entityType === "study" && entityContext.entityId && <Link
+                  href={filesHref(`study:${entityContext.entityId}`)}
                   aria-current={pathname === "/files" ? "page" : undefined}
                   title="Files"
                   className={cn("mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors", collapsed && "justify-center px-0", pathname === "/files" ? "bg-secondary font-medium text-foreground" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground")}
