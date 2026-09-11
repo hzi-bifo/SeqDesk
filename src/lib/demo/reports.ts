@@ -96,7 +96,7 @@ export function mouseGutBlocks(qc: BuiltTable | null, samples: BuiltTable | null
       [
         { column: "sample_id", stat: "count", label: "Samples" },
         { column: "r1_read_count", stat: "sum", label: "R1 reads" },
-        { column: "r1_avg_quality", stat: "mean", label: "Mean R1 quality", unit: "Phred", digits: 1 },
+        { column: "r1_avg_quality", stat: "mean", label: "Mean R1 quality (Phred)", digits: 1 },
         { column: "r1_fail", stat: "sum", label: "Failed checks (R1)" },
       ],
       "Read quality in numbers"
@@ -125,7 +125,7 @@ export function pilotBlocks(qc: BuiltTable | null, simulation: BuiltTable | null
       [
         { column: "sample_id", stat: "count", label: "Samples" },
         { column: "r1_read_count", stat: "sum", label: "R1 reads" },
-        { column: "r1_avg_quality", stat: "mean", label: "Mean R1 quality", unit: "Phred", digits: 1 },
+        { column: "r1_avg_quality", stat: "mean", label: "Mean R1 quality (Phred)", digits: 1 },
       ],
       "Pilot QC in numbers"
     );
