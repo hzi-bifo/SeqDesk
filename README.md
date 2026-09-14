@@ -758,6 +758,12 @@ software across releases, or cite
 requires the exact archived version. Add the article DOI as the preferred
 citation after the SeqDesk paper is published.
 
+## Generative AI disclosure
+
+Parts of the SeqDesk source code and documentation were generated with assistance
+from generative AI tools, including GPT (OpenAI) and Claude (Anthropic). The
+maintainers remain responsible for the software and its documentation.
+
 ## License
 
 Licensed under the Apache License 2.0 — see [LICENSE](./LICENSE).
