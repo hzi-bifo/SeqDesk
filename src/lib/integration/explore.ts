@@ -1,0 +1,645 @@
+import fs from "fs/promises";
+import { createReadStream } from "fs";
+import path from "path";
+import { Readable } from "stream";
+import { randomUUID } from "node:crypto";
+import { NextResponse, type NextRequest } from "next/server";
+import { db } from "@/lib/db";
+import { createAnalysis, createRevision, deleteAnalysis, getAnalysisDetail, listAnalyses, listRuns, serializeRun, updateAnalysis, type AnalysisInputBinding } from "@/lib/explore/analyses";
+import { listEnvironments } from "@/lib/explore/environments";
+import { loadKits, serializeKit } from "@/lib/explore/kits/loader";
+import { cascadeFromRun } from "@/lib/explore/run-cascade";
+import { cancelRun, createAndStartRun, ExploreRunError } from "@/lib/explore/runner";
+import { collectHostFacts } from "@/lib/explore/sandbox/host";
+import { getSandboxSettings } from "@/lib/explore/sandbox/settings";
+import { EXPLORE_ROLES, EXPLORE_SENSITIVITIES, type ExploreRole, type ExploreRoleMap, type ExploreSensitivity } from "@/lib/explore/types";
+import { readTail } from "@/lib/pipelines/nextflow";
+import { ExploreAuthorizationError, requireExplorePrincipal, requireTargetAccess, resolveTargetAccess } from "@/lib/explore/authorization";
+import { decideServerCapability } from "@/lib/authorization/api";
+import { parseTargetKey, type ExploreTargetKey } from "@/lib/explore/target-key";
+import { ExploreBuildInputError } from "@/lib/explore/builders/types";
+import { loadCanvasGraph } from "@/lib/explore/canvas";
+import { importDatasetFromForm, isImportInputError } from "@/lib/explore/dataset-import";
+import { computeDatasetCacheToken, deleteDataset, fetchAllDatasetRows, fetchDatasetRows, getDatasetDetail, getDatasetRecord, listDatasets, updateDatasetRoles } from "@/lib/explore/datasets";
+import { applyEditsToRows, listActiveEdits } from "@/lib/explore/edits";
+import { createFlow, deleteFlow, getFlow, getFlowRecord, listFlows, updateFlow } from "@/lib/explore/flows";
+import { isExploreModuleEnabled } from "@/lib/explore/module";
+import { renderReportHtml } from "@/lib/explore/report-export";
+import { createReport, deleteReport, ExploreReportError, getReportRecord, getReportView, listReports, renameReport, resetReport, saveReport, setShareMode, shareModeOf, shareReport, unshareReport, type ReportViewOptions } from "@/lib/explore/reports";
+import { ExploreRouteError } from "@/lib/explore/route-error";
+import { readRunIsolation } from "@/lib/explore/sandbox/prepare";
+import { parseSchema } from "@/lib/explore/schema";
+import { resolveContainedPath } from "@/lib/explore/storage";
+import type { ExploreScope } from "@/lib/explore/types";
+import { FileLibraryError, getLibraryFile, listLibraryFiles, readLibraryFile, removeLibraryFile, storeLibraryFile, updateLibraryFile, validateFileBindings } from "@/lib/files/library";
+import { MAX_FILE_DESCRIPTION_LENGTH, MAX_LIBRARY_FILE_BYTES, normalizeFileTags } from "@/lib/files/library-types";
+import { IntegrationAccessError, type IntegrationSession } from "./identity";
+
+/** Capabilities advertised by /info while the Explore module is on. */
+export const EXPLORE_INTEGRATION_CAPABILITIES = ["explore.files", "explore.datasets", "explore.reports", "explore.flows"] as const;
+
+/** Flow pages read every flow of their study and start empty; the author composes them. */
+const FLOW_REPORT_VIEW: ReportViewOptions = { outputs: "scope", suggest: false };
+
+const ARTIFACT_CONTENT_TYPES: Record<string, string> = {
+  "plotly-json": "application/json; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  png: "image/png",
+  svg: "image/svg+xml",
+  html: "text/html; charset=utf-8",
+  tsv: "text/tab-separated-values; charset=utf-8",
+  csv: "text/csv; charset=utf-8",
+  md: "text/markdown; charset=utf-8",
+  txt: "text/plain; charset=utf-8",
+  pdf: "application/pdf",
+};
+
+const STUDY_NAME_MAX = 200;
+const STUDY_DESCRIPTION_MAX = 2000;
+
+/** A Flow study as the client sees it: an Explore project scope plus its link. */
+export type FlowStudy = ExploreScope & { id: string; description: string | null; createdAt: string };
+
+function studyOf(project: { id: string; name: string; description: string | null; createdAt: Date }, access: "read" | "write"): FlowStudy {
+  return { id: project.id, targetKey: `project:${project.id}`, type: "project", label: project.name, description: project.description, createdAt: project.createdAt.toISOString(), access };
+}
+
+function studyAccess(session: IntegrationSession): "read" | "write" {
+  return decideServerCapability(session, "analysis.run").allowed ? "write" : "read";
+}
+
+/**
+ * The studies a collaboration workspace shares: the Explore projects linked
+ * to it, newest first. Only a session whose account may read Explore data
+ * sees them; the link table, not project ownership, carries the access.
+ */
+export async function listFlowStudies(session: IntegrationSession): Promise<FlowStudy[]> {
+  requireExplorePrincipal(session);
+  const { authority, workspaceId } = session.integration;
+  const links = await db.integrationExploreScope.findMany({ where: { authority, workspaceId, projectId: "" }, select: { targetKey: true } });
+  const ids = links.map((link) => parseTargetKey(link.targetKey)).filter((target): target is ExploreTargetKey => !!target && target.type === "project").map((target) => target.id);
+  if (!ids.length) return [];
+  const projects = await db.exploreProject.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, description: true, createdAt: true }, orderBy: { createdAt: "desc" } });
+  const access = studyAccess(session);
+  return projects.map((project) => studyOf(project, access));
+}
+
+/** A new study: an Explore project owned by the caller's account, linked to the workspace. */
+export async function createFlowStudy(session: IntegrationSession, name: string, description: string | null): Promise<FlowStudy> {
+  if (studyAccess(session) !== "write") throw new IntegrationAccessError(403, "Your SeqDesk account may not create studies.");
+  const { authority, workspaceId } = session.integration;
+  const project = await db.exploreProject.create({
+    data: { name, description, ownerId: session.user.id },
+    select: { id: true, name: true, description: true, createdAt: true },
+  });
+  await db.integrationExploreScope.create({ data: { id: randomUUID(), authority, workspaceId, projectId: "", targetKey: `project:${project.id}`, createdBy: session.user.id } });
+  return studyOf(project, "write");
+}
+
+export async function updateFlowStudy(session: IntegrationSession, id: string, changes: { name?: string; description?: string | null }): Promise<FlowStudy> {
+  const targetKey = `project:${id}`;
+  await requireTargetAccess(session, targetKey, "write");
+  const project = await db.exploreProject.update({ where: { id }, data: changes, select: { id: true, name: true, description: true, createdAt: true } });
+  return studyOf(project, "write");
+}
+
+function statusOf(error: unknown): { status: number; message: string } | null {
+  if (error instanceof ExploreBuildInputError) return { status: 422, message: error.message };
+  if (error instanceof Error && !(error instanceof ExploreRouteError) && /Unknown kit/.test(error.message)) return { status: 400, message: error.message };
+  if (error instanceof ExploreRouteError || error instanceof ExploreAuthorizationError || error instanceof FileLibraryError || error instanceof ExploreReportError || error instanceof ExploreRunError) {
+    return { status: error.status, message: error.message };
+  }
+  if (isImportInputError(error)) return { status: 400, message: (error as Error).message };
+  return null;
+}
+
+function readJson(request: Request): Promise<Record<string, unknown>> {
+  return request.json()
+    .then((body) => (body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : {}))
+    .catch(() => ({}));
+}
+
+function requireString(value: unknown, field: string, maxLength = 200): string {
+  if (typeof value !== "string" || !value.trim()) throw new ExploreRouteError(400, `${field} is required`);
+  return value.trim().slice(0, maxLength);
+}
+function optionalString(value: unknown, maxLength = 2000): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : null;
+}
+const MAX_CODE_BYTES = 512 * 1024;
+
+/** Input bindings as the client sends them; every table must belong to the analysis' own scope. */
+async function parseBindings(raw: unknown, targetKey: string): Promise<AnalysisInputBinding[]> {
+  if (!Array.isArray(raw)) return [];
+  const bindings: AnalysisInputBinding[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const alias = typeof (entry as { alias?: unknown }).alias === "string" ? (entry as { alias: string }).alias.trim() : "";
+    const datasetId = typeof (entry as { datasetId?: unknown }).datasetId === "string" ? (entry as { datasetId: string }).datasetId : "";
+    const versionId = typeof (entry as { versionId?: unknown }).versionId === "string" ? (entry as { versionId: string }).versionId : null;
+    if (!/^[a-z][a-z0-9_]{0,39}$/.test(alias) || !datasetId) throw new ExploreRouteError(400, "Each input needs an alias and a datasetId");
+    const dataset = await getDatasetRecord(datasetId);
+    if (!dataset || dataset.targetKey !== targetKey) throw new ExploreRouteError(400, `Dataset for input ${alias} does not belong to this scope`);
+    bindings.push({ alias, datasetId, versionId });
+  }
+  return bindings;
+}
+function parseRoles(raw: unknown): ExploreRoleMap {
+  if (!raw || typeof raw !== "object") throw new ExploreRouteError(400, "roles is required");
+  const roles: ExploreRoleMap = {};
+  for (const [role, column] of Object.entries(raw as Record<string, unknown>)) {
+    if (!EXPLORE_ROLES.includes(role as ExploreRole)) throw new ExploreRouteError(400, `Unknown role: ${role}`);
+    if (typeof column === "string" && column.trim()) roles[role as ExploreRole] = column.trim().slice(0, 120);
+  }
+  return roles;
+}
+
+async function loadReport(session: IntegrationSession, id: string, level: "read" | "write") {
+  const record = await getReportRecord(id);
+  if (!record) throw new ExploreRouteError(404, "Report not found");
+  await requireTargetAccess(session, record.targetKey, level);
+  return record;
+}
+
+async function loadFlow(session: IntegrationSession, id: string, level: "read" | "write") {
+  const record = await getFlowRecord(id);
+  if (!record) throw new ExploreRouteError(404, "Flow not found");
+  await requireTargetAccess(session, record.targetKey, level);
+  return record;
+}
+
+async function loadDataset(session: IntegrationSession, id: string, level: "read" | "write") {
+  const dataset = await getDatasetRecord(id);
+  if (!dataset) throw new ExploreRouteError(404, "Not found");
+  await requireTargetAccess(session, dataset.targetKey, level);
+  return dataset;
+}
+
+async function loadAnalysis(session: IntegrationSession, id: string, level: "read" | "write") {
+  const analysis = await db.exploreAnalysis.findUnique({ where: { id }, select: { id: true, targetKey: true } });
+  if (!analysis) throw new ExploreRouteError(404, "Not found");
+  await requireTargetAccess(session, analysis.targetKey, level);
+  return analysis;
+}
+
+async function loadRun(session: IntegrationSession, id: string, level: "read" | "write" = "read") {
+  const run = await db.exploreAnalysisRun.findUnique({
+    where: { id },
+    include: {
+      revision: { select: { number: true, code: true, params: true, inputs: true } },
+      artifacts: { orderBy: { createdAt: "asc" } },
+      analysis: { select: { id: true, name: true, targetKey: true, language: true } },
+      _count: { select: { artifacts: true } },
+    },
+  });
+  if (!run) throw new ExploreRouteError(404, "Not found");
+  await requireTargetAccess(session, run.analysis.targetKey, level);
+  return run;
+}
+
+/**
+ * Explore for the Analysis integration API: `explore/*` under
+ * /api/integration/v1. The caller has already verified the bearer token; the
+ * scope of every request must be one the session may open, and the Explore
+ * module must be on, otherwise the whole surface answers 404. Response
+ * shapes match the browser routes so clients share one set of types.
+ */
+export async function handleExploreRequest(request: NextRequest, session: IntegrationSession, segments: string[], headers: Headers): Promise<Response> {
+  const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers });
+  const query = request.nextUrl.searchParams;
+  const method = request.method;
+  const [head, id, sub, subId] = segments;
+  try {
+    if (!(await isExploreModuleEnabled())) throw new ExploreRouteError(404, "Not found");
+
+    if (head === "scopes") {
+      if (segments.length === 1 && method === "GET") return json({ scopes: await listFlowStudies(session) });
+      if (segments.length === 1 && method === "POST") {
+        const body = await readJson(request);
+        const name = requireString(body.name, "name", STUDY_NAME_MAX);
+        const description = typeof body.description === "string" && body.description.trim() ? body.description.trim().slice(0, STUDY_DESCRIPTION_MAX) : null;
+        return json({ scope: await createFlowStudy(session, name, description) }, 201);
+      }
+      if (segments.length === 2 && method === "PATCH") {
+        const body = await readJson(request);
+        const changes: { name?: string; description?: string | null } = {};
+        if (body.name !== undefined) changes.name = requireString(body.name, "name", STUDY_NAME_MAX);
+        if (body.description !== undefined) changes.description = typeof body.description === "string" && body.description.trim() ? body.description.trim().slice(0, STUDY_DESCRIPTION_MAX) : null;
+        return json({ scope: await updateFlowStudy(session, id, changes) });
+      }
+    }
+
+    if (head === "files") {
+      if (segments.length === 1 && method === "GET") {
+        const targetKey = query.get("targetKey") ?? "";
+        const access = await resolveTargetAccess(session, targetKey);
+        if (!access.target || access.level === "none") throw new ExploreAuthorizationError(404, "Not found");
+        return json({ files: await listLibraryFiles(targetKey), canEdit: access.level === "write" });
+      }
+      if (segments.length === 1 && method === "POST") {
+        if (Number(request.headers.get("content-length")) > MAX_LIBRARY_FILE_BYTES + 1024 * 1024) throw new FileLibraryError(413, "Files must be 100 MB or smaller.");
+        const form = await request.formData();
+        const targetKey = String(form.get("targetKey") ?? "");
+        await requireTargetAccess(session, targetKey, "write");
+        const file = form.get("file");
+        if (!(file instanceof File)) throw new FileLibraryError(400, "Choose a file to upload.");
+        const stored = await storeLibraryFile({ file, targetKey, createdById: session.user.id });
+        return json({ file: { id: stored.id, originalName: stored.originalName } }, 201);
+      }
+      if (segments.length === 2 && method === "GET") {
+        const file = await getLibraryFile(id);
+        await requireTargetAccess(session, file.targetKey, "read");
+        if (query.get("download") === "1") {
+          const bytes = await readLibraryFile(file);
+          const combined = new Headers(headers);
+          combined.set("Content-Type", "application/octet-stream");
+          combined.set("Content-Length", String(bytes.length));
+          combined.set("Content-Disposition", `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(file.originalName)}`);
+          combined.set("X-Content-Type-Options", "nosniff");
+          return new NextResponse(new Uint8Array(bytes), { headers: combined });
+        }
+        const files = await listLibraryFiles(file.targetKey);
+        return json({ file: files.find((entry) => entry.id === id) ?? null });
+      }
+      if (segments.length === 2 && method === "PATCH") {
+        const file = await getLibraryFile(id);
+        await requireTargetAccess(session, file.targetKey, "write");
+        const body = await readJson(request);
+        const changes: { description?: string | null; tags?: string[]; sensitivity?: ExploreSensitivity } = {};
+        if (body.description !== undefined) changes.description = optionalString(body.description, MAX_FILE_DESCRIPTION_LENGTH);
+        if (body.tags !== undefined) {
+          if (!Array.isArray(body.tags)) throw new ExploreRouteError(400, "tags must be a list");
+          changes.tags = normalizeFileTags(body.tags);
+        }
+        if (body.sensitivity !== undefined) {
+          if (!EXPLORE_SENSITIVITIES.includes(body.sensitivity as ExploreSensitivity)) throw new ExploreRouteError(400, "Unknown sensitivity");
+          changes.sensitivity = body.sensitivity as ExploreSensitivity;
+        }
+        return json({ file: await updateLibraryFile(file.id, changes) });
+      }
+      if (segments.length === 2 && method === "DELETE") {
+        const file = await getLibraryFile(id);
+        await requireTargetAccess(session, file.targetKey, "write");
+        await removeLibraryFile(file.id, session.user.id);
+        return json({ deleted: true });
+      }
+    }
+
+    if (head === "reports") {
+      if (segments.length === 1 && method === "GET") {
+        const targetKey = query.get("targetKey") ?? "";
+        const access = await resolveTargetAccess(session, targetKey);
+        if (!access.target || access.level === "none") throw new ExploreAuthorizationError(404, "Not found");
+        return json({ reports: await listReports(targetKey), canEdit: access.level === "write" });
+      }
+      if (segments.length === 1 && method === "POST") {
+        const body = await readJson(request);
+        const targetKey = requireString(body.targetKey, "targetKey");
+        await requireTargetAccess(session, targetKey, "write");
+        const title = typeof body.title === "string" && body.title.trim() ? body.title.trim().slice(0, 200) : null;
+        return json({ report: await createReport(targetKey, session.user.id, title) }, 201);
+      }
+      if (segments.length === 2) {
+        if (method === "GET") {
+          const record = await loadReport(session, id, "read");
+          return json({ report: await getReportView(record.id, FLOW_REPORT_VIEW) });
+        }
+        if (method === "PUT") {
+          const record = await loadReport(session, id, "write");
+          return json({ report: await saveReport(record.id, await readJson(request), FLOW_REPORT_VIEW) });
+        }
+        if (method === "PATCH") {
+          const record = await loadReport(session, id, "write");
+          const body = await readJson(request);
+          return json({ report: await renameReport(record.id, requireString(body.title, "title", 200)) });
+        }
+        if (method === "DELETE") {
+          const record = await loadReport(session, id, "write");
+          await deleteReport(record.id);
+          return json({ deleted: true });
+        }
+      }
+      if (segments.length === 3 && sub === "files") {
+        if (method === "GET") {
+          const record = await loadReport(session, id, "read");
+          const files = await listLibraryFiles(record.targetKey);
+          return json({ files: files.flatMap((file) => {
+            const usage = file.reports.find((entry) => entry.id === record.id);
+            return usage ? [{ ...file, attached: usage.attached, usedInReport: usage.usedInReport }] : [];
+          }) });
+        }
+        if (method === "POST") {
+          const record = await loadReport(session, id, "write");
+          const body = await readJson(request);
+          const file = await getLibraryFile(requireString(body.fileId, "fileId"));
+          if (file.targetKey !== record.targetKey) throw new ExploreRouteError(400, "Choose a file from this report's workspace.");
+          await db.exploreReportFile.upsert({
+            where: { reportId_fileId: { reportId: record.id, fileId: file.id } },
+            create: { reportId: record.id, fileId: file.id }, update: {},
+          });
+          return json({ linked: true });
+        }
+        if (method === "DELETE") {
+          const record = await loadReport(session, id, "write");
+          const fileId = requireString(query.get("fileId"), "fileId");
+          await db.exploreReportFile.deleteMany({ where: { reportId: record.id, fileId } });
+          return json({ unlinked: true });
+        }
+      }
+      if (segments.length === 3 && sub === "share") {
+        const record = await loadReport(session, id, "write");
+        // The public page lives on this server; the link is absolute so the client can hand it on as is.
+        const shareUrl = (token: string) => new URL(`/share/reports/${token}`, request.nextUrl.origin).toString();
+        if (method === "POST") {
+          const body = await readJson(request).catch(() => ({} as Record<string, unknown>));
+          const share = await shareReport(record.id, body.mode === undefined ? undefined : shareModeOf(body.mode));
+          return json({ share, url: shareUrl(share.token) }, 201);
+        }
+        if (method === "PATCH") {
+          const body = await readJson(request);
+          const share = await setShareMode(record.id, shareModeOf(body.mode));
+          return json({ share, url: shareUrl(share.token) });
+        }
+        if (method === "DELETE") {
+          await unshareReport(record.id);
+          return json({ share: null, url: null });
+        }
+      }
+      if (segments.length === 3 && sub === "export" && method === "GET") {
+        const record = await loadReport(session, id, "read");
+        const { html, title } = await renderReportHtml(record.id, { plotly: "inline", view: FLOW_REPORT_VIEW });
+        const combined = new Headers(headers);
+        combined.set("Content-Type", "text/html; charset=utf-8");
+        combined.set("Content-Disposition", `attachment; filename="report.html"; filename*=UTF-8''${encodeURIComponent(`${title.replace(/[\\/:*?"<>|]+/g, "-").trim() || "report"}.html`)}`);
+        combined.set("X-Content-Type-Options", "nosniff");
+        return new NextResponse(html, { headers: combined });
+      }
+      if (segments.length === 3 && sub === "reset" && method === "POST") {
+        const record = await loadReport(session, id, "write");
+        return json({ report: await resetReport(record.id, FLOW_REPORT_VIEW) });
+      }
+    }
+
+    if (head === "datasets") {
+      if (segments.length === 2 && id === "import" && method === "POST") {
+        const form = await request.formData();
+        const result = await importDatasetFromForm(session, form, query.get("preview") === "1");
+        return json(result.body, result.status);
+      }
+      if (segments.length === 1 && method === "GET") {
+        const targetKey = query.get("targetKey") ?? "";
+        await requireTargetAccess(session, targetKey, "read");
+        return json({ datasets: await listDatasets(targetKey) });
+      }
+      if (segments.length === 2 && method === "GET") {
+        await loadDataset(session, id, "read");
+        return json({ dataset: await getDatasetDetail(id) });
+      }
+      if (segments.length === 2 && method === "DELETE") {
+        await loadDataset(session, id, "write");
+        await deleteDataset(id);
+        return json({ ok: true });
+      }
+      if (segments.length === 2 && method === "PATCH") {
+        await loadDataset(session, id, "write");
+        const body = await readJson(request);
+        await updateDatasetRoles(id, parseRoles(body.roles));
+        return json({ dataset: await getDatasetDetail(id) });
+      }
+      if (segments.length === 3 && sub === "table" && method === "GET") {
+        const dataset = await loadDataset(session, id, "read");
+        const current = dataset.versions.find((version) => version.id === dataset.currentVersionId) ?? dataset.versions[0] ?? null;
+        const schema = parseSchema(current?.schema);
+        const requested = query.get("columns");
+        const wanted = requested ? new Set(requested.split(",").map((key) => key.trim()).filter(Boolean)) : null;
+        const columns = schema.columns.filter((column) => !column.key.endsWith("_db_id") && (!wanted || wanted.has(column.key)));
+        const limitParam = Number.parseInt(query.get("limit") ?? "", 10);
+        const limit = Math.min(250_000, Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 100_000);
+        const records = current ? applyEditsToRows(await fetchAllDatasetRows(current.id), await listActiveEdits(dataset.id)) : [];
+        const keys = columns.map((column) => column.key);
+        const rows = records.slice(0, limit).map((record) => {
+          if (!wanted) return record.data;
+          const picked: Record<string, (typeof record.data)[string]> = {};
+          for (const key of keys) picked[key] = record.data[key];
+          return picked;
+        });
+        return json({ datasetId: dataset.id, version: current?.number ?? null, rowEntity: schema.rowEntity, columns, rows, total: records.length, truncated: records.length > limit });
+      }
+      if (segments.length === 3 && sub === "rows" && method === "GET") {
+        const dataset = await loadDataset(session, id, "read");
+        const versionId = dataset.currentVersionId ?? dataset.versions[0]?.id ?? null;
+        const limit = Number.parseInt(query.get("limit") ?? "", 10);
+        const [page, edits, cacheToken] = await Promise.all([
+          versionId
+            ? fetchDatasetRows(versionId, { cursor: query.get("cursor"), limit: Number.isFinite(limit) ? limit : undefined, sampleId: query.get("sampleId"), subjectId: query.get("subjectId"), key: query.get("key") })
+            : Promise.resolve({ rows: [], nextCursor: null, total: 0 }),
+          listActiveEdits(id),
+          computeDatasetCacheToken(id),
+        ]);
+        const rows = applyEditsToRows(page.rows, edits, { includeExcluded: query.get("includeExcluded") === "1" });
+        return json({ rows, nextCursor: page.nextCursor, total: page.total, cacheToken });
+      }
+    }
+
+    if (head === "flows") {
+      if (segments.length === 1 && method === "GET") {
+        const targetKey = query.get("targetKey") ?? "";
+        const access = await resolveTargetAccess(session, targetKey);
+        if (!access.target || access.level === "none") throw new ExploreAuthorizationError(404, "Not found");
+        return json({ flows: await listFlows(targetKey), canEdit: access.level === "write" });
+      }
+      if (segments.length === 1 && method === "POST") {
+        const body = await readJson(request);
+        const targetKey = requireString(body.targetKey, "targetKey");
+        await requireTargetAccess(session, targetKey, "write");
+        return json({ flow: await createFlow(targetKey, session.user.id, optionalString(body.name, 200), optionalString(body.description)) }, 201);
+      }
+      if (segments.length === 2) {
+        if (method === "GET") {
+          const record = await loadFlow(session, id, "read");
+          return json({ flow: await getFlow(record.id) });
+        }
+        if (method === "PATCH") {
+          const record = await loadFlow(session, id, "write");
+          const body = await readJson(request);
+          const changes: { name?: string; description?: string | null } = {};
+          if (body.name !== undefined) changes.name = requireString(body.name, "name", 200);
+          if (body.description !== undefined) changes.description = optionalString(body.description);
+          return json({ flow: await updateFlow(record.id, changes) });
+        }
+        if (method === "DELETE") {
+          const record = await loadFlow(session, id, "write");
+          await deleteFlow(record.id);
+          return json({ deleted: true });
+        }
+      }
+    }
+
+    if (head === "analyses") {
+      if (segments.length === 1 && method === "GET") {
+        const targetKey = query.get("targetKey") ?? "";
+        await requireTargetAccess(session, targetKey, "read");
+        return json({ analyses: await listAnalyses(targetKey, query.get("reportId") || null, query.get("flowId") || null) });
+      }
+      if (segments.length === 1 && method === "POST") {
+        const body = await readJson(request);
+        const targetKey = requireString(body.targetKey, "targetKey");
+        await requireTargetAccess(session, targetKey, "write");
+        const analysis = await createAnalysis({
+          targetKey, name: optionalString(body.name, 200), description: optionalString(body.description), kitId: optionalString(body.kitId, 80),
+          reportId: optionalString(body.reportId, 80), flowId: optionalString(body.flowId, 80), language: body.language === "r" ? "r" : "python", environmentName: optionalString(body.environmentName, 120),
+          inputs: await parseBindings(body.inputs, targetKey), fileInputs: await validateFileBindings(body.fileInputs, targetKey),
+          params: body.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : undefined, createdById: session.user.id,
+        });
+        return json({ analysis }, 201);
+      }
+      if (segments.length === 2 && method === "GET") {
+        await loadAnalysis(session, id, "read");
+        const analysis = await getAnalysisDetail(id);
+        if (!analysis) throw new ExploreRouteError(404, "Not found");
+        return json({ analysis });
+      }
+      if (segments.length === 2 && method === "PATCH") {
+        await loadAnalysis(session, id, "write");
+        const body = await readJson(request);
+        const data: { name?: string; description?: string | null; descriptionRevisionId?: string | null; environmentName?: string } = {};
+        const name = optionalString(body.name, 200);
+        if (name) data.name = name;
+        // A description written by a person clears the revision mark; the assistant sends the revision it read.
+        if ("description" in body) { data.description = optionalString(body.description); data.descriptionRevisionId = optionalString(body.descriptionRevisionId, 64) ?? null; }
+        const environmentName = optionalString(body.environmentName, 120);
+        if (environmentName) data.environmentName = environmentName;
+        await updateAnalysis(id, data);
+        return json({ analysis: await getAnalysisDetail(id) });
+      }
+      if (segments.length === 2 && method === "DELETE") {
+        await loadAnalysis(session, id, "write");
+        await deleteAnalysis(id);
+        return json({ ok: true });
+      }
+      if (segments.length === 3 && sub === "revisions" && method === "GET") {
+        await loadAnalysis(session, id, "read");
+        const analysis = await getAnalysisDetail(id);
+        if (!analysis) throw new ExploreRouteError(404, "Not found");
+        return json({ revisions: analysis.revisions });
+      }
+      if (segments.length === 3 && sub === "revisions" && method === "POST") {
+        const analysis = await loadAnalysis(session, id, "write");
+        const body = await readJson(request);
+        const code = typeof body.code === "string" ? body.code : undefined;
+        if (code !== undefined && Buffer.byteLength(code, "utf8") > MAX_CODE_BYTES) throw new ExploreRouteError(400, "The code is larger than 512 KB");
+        const revision = await createRevision({
+          analysisId: id, code, params: body.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : undefined,
+          inputs: body.inputs === undefined ? undefined : await parseBindings(body.inputs, analysis.targetKey),
+          fileInputs: body.fileInputs === undefined ? undefined : await validateFileBindings(body.fileInputs, analysis.targetKey),
+          // A client marks code the assistant drafted for the user as agent-written and keeps the request it came from.
+          author: body.author === "agent" ? "agent" : "user", authorUserId: session.user.id, message: optionalString(body.message, 500), prompt: body.author === "agent" ? optionalString(body.prompt, 4000) ?? null : null,
+        });
+        return json({ revision }, 201);
+      }
+      if (segments.length === 3 && sub === "runs" && method === "GET") {
+        await loadAnalysis(session, id, "read");
+        return json({ runs: await listRuns(id) });
+      }
+      if (segments.length === 3 && sub === "runs" && method === "POST") {
+        await loadAnalysis(session, id, "write");
+        const body = await readJson(request);
+        const run = await createAndStartRun({ analysisId: id, revisionId: optionalString(body.revisionId, 80),
+          executionMode: body.executionMode === "local" || body.executionMode === "slurm" ? body.executionMode : "default", createdById: session.user.id });
+        return json({ run }, 201);
+      }
+    }
+
+    if (head === "runs" && segments.length === 3 && sub === "logs" && method === "GET") {
+      const run = await loadRun(session, id);
+      const lines = Math.min(Math.max(Number.parseInt(query.get("lines") ?? "200", 10) || 200, 20), 2000);
+      const [outputTail, errorTail] = run.runFolder
+        ? await Promise.all([readTail(path.join(run.runFolder, "logs", "pipeline.out"), lines), readTail(path.join(run.runFolder, "logs", "pipeline.err"), lines)])
+        : [null, null];
+      return json({ status: run.status, outputTail: outputTail ?? run.outputTail, errorTail: errorTail ?? run.errorTail });
+    }
+    if (head === "runs" && segments.length === 3 && sub === "cancel" && method === "POST") {
+      await loadRun(session, id, "write");
+      const cancelled = await cancelRun(id);
+      return json({ cancelled }, cancelled ? 200 : 409);
+    }
+    if (head === "runs" && segments.length === 3 && sub === "cascade" && method === "POST") {
+      await loadRun(session, id, "write");
+      return json(await cascadeFromRun(id, session.user.id));
+    }
+    if (head === "kits" && segments.length === 1 && method === "GET") {
+      requireExplorePrincipal(session);
+      const { kits, problems } = await loadKits();
+      return json({ kits: kits.map(serializeKit), problems });
+    }
+    if (head === "environments" && segments.length === 1 && method === "GET") {
+      requireExplorePrincipal(session);
+      return json({ environments: await listEnvironments() });
+    }
+    if (head === "sandbox" && segments.length === 1 && method === "GET") {
+      requireExplorePrincipal(session);
+      const [settings, facts] = await Promise.all([getSandboxSettings(), collectHostFacts()]);
+      return json({ settings, host: { platform: facts.platform, tool: facts.toolName, problem: facts.problem } });
+    }
+
+    if (head === "runs" && segments.length === 2 && method === "GET") {
+      const run = await loadRun(session, id);
+      let results: unknown = null;
+      try { results = run.results ? JSON.parse(run.results) : null; } catch { results = null; }
+      return json({ run: {
+        ...serializeRun(run),
+        analysis: run.analysis,
+        results,
+        isolation: await readRunIsolation(run.runFolder),
+        outputTail: run.outputTail,
+        errorTail: run.errorTail,
+        code: run.revision.code,
+        artifacts: run.artifacts.map((artifact) => ({
+          id: artifact.id, kind: artifact.kind, format: artifact.format, name: artifact.name,
+          fileName: artifact.path.split("/").pop(),
+          size: artifact.size === null ? null : Number(artifact.size),
+          derivedDatasetId: artifact.derivedDatasetId,
+          // Relative to the integration base; the client adds the bearer.
+          url: `explore/runs/${run.id}/artifacts/${artifact.id}`,
+        })),
+      } });
+    }
+
+    if (head === "runs" && segments.length === 4 && sub === "artifacts" && method === "GET") {
+      const run = await loadRun(session, id);
+      const artifact = await db.exploreArtifact.findFirst({ where: { id: subId, runId: id } });
+      if (!artifact || !run.runFolder) throw new ExploreRouteError(404, "Not found");
+      const filePath = await resolveContainedPath(run.runFolder, artifact.path).catch(() => null);
+      if (!filePath) throw new ExploreRouteError(404, "Not found");
+      const stat = await fs.stat(filePath).catch(() => null);
+      if (!stat?.isFile()) throw new ExploreRouteError(404, "Not found");
+      const combined = new Headers(headers);
+      combined.set("Content-Type", ARTIFACT_CONTENT_TYPES[artifact.format] ?? "application/octet-stream");
+      combined.set("Content-Length", String(stat.size));
+      combined.set("Cache-Control", "private, max-age=60");
+      combined.set("X-Content-Type-Options", "nosniff");
+      const fileName = path.basename(filePath).replace(/[^A-Za-z0-9._-]+/g, "_");
+      combined.set("Content-Disposition", `${query.get("download") === "1" ? "attachment" : "inline"}; filename="${fileName}"`);
+      if (artifact.format === "html" || artifact.format === "svg") {
+        combined.set("Content-Security-Policy", "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; sandbox allow-scripts");
+      }
+      return new NextResponse(Readable.toWeb(createReadStream(filePath)) as ReadableStream, { headers: combined });
+    }
+
+    if (head === "canvas" && segments.length === 1 && method === "GET") {
+      const targetKey = query.get("targetKey") ?? "";
+      await requireTargetAccess(session, targetKey, "read");
+      return json(await loadCanvasGraph(targetKey, query.get("reportId") || null, query.get("flowId") || null));
+    }
+
+    return json({ error: "Unknown Flow operation." }, 404);
+  } catch (error) {
+    if (error instanceof IntegrationAccessError) return json({ error: error.message }, error.status);
+    const known = statusOf(error);
+    if (known) return json({ error: known.message }, known.status);
+    console.error("[Analysis integration] Flow request failed", error);
+    return json({ error: "The Analysis service is unavailable." }, 503);
+  }
+}

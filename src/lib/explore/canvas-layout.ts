@@ -38,6 +38,8 @@ export type CanvasDatasetData = {
   kind: "dataset";
   datasetId: string;
   name: string;
+  /** The analysis that wrote this table, for tables a step produced. */
+  producer?: string | null;
   datasetKind: string;
   tableKind: string | null;
   sensitivity: string;
@@ -72,6 +74,14 @@ export type CanvasAnalysisData = {
   kind: "analysis";
   analysisId: string;
   name: string;
+  /** The flow this step belongs to, when the scope draws several canvases. */
+  flowId?: string | null;
+  flowName?: string | null;
+  /** What the step does, in the author's or the assistant's words. */
+  description?: string | null;
+  /** True when the assistant wrote the description from the code; outdated once the code has a newer revision. */
+  descriptionFromCode?: boolean;
+  descriptionOutdated?: boolean;
   kitId: string | null;
   language: string;
   revision: number | null;
@@ -81,6 +91,9 @@ export type CanvasAnalysisData = {
   latestRun: { id: string; runNumber: string; status: string; errorTail?: string | null; completedAt?: string | null } | null;
   /** True while the latest run is pending, queued or running. */
   active: boolean;
+  /** What the latest finished run wrote about its result: notes and saved report texts. */
+  notes?: string[];
+  findings?: { name: string; format: string; url: string }[];
   /** Parameters of the current revision and the schema the kit declares for them. */
   params?: Record<string, unknown>;
   paramsSchema?: CanvasParamsSchema | null;

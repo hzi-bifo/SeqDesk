@@ -1,0 +1,1 @@
+ALTER TABLE "ExploreReport" ADD COLUMN IF NOT EXISTS "shareMode" TEXT NOT NULL DEFAULT 'link';

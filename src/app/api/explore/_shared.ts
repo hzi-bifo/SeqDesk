@@ -9,15 +9,9 @@ import { getDatasetRecord } from "@/lib/explore/datasets";
 import { isExploreModuleEnabled } from "@/lib/explore/module";
 import { ExploreBuildInputError } from "@/lib/explore/builders/types";
 import { FileLibraryError } from "@/lib/files/library";
+import { ExploreRouteError } from "@/lib/explore/route-error";
 
-export class ExploreRouteError extends Error {
-  status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+export { ExploreRouteError };
 
 /**
  * Every Explore route starts here: the module must be enabled (otherwise the

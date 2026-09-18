@@ -1,0 +1,249 @@
+import { NextRequest, NextResponse } from "next/server";
+import type { Session } from "next-auth";
+import { isActiveSession } from "@/lib/auth-session";
+import { db } from "@/lib/db";
+import { ensureWithinBase } from "@/lib/files";
+import { authorizePipelineRunRead } from "@/lib/pipelines/run-visibility";
+import { isDemoSession } from "@/lib/demo/server";
+import { serveDemoPipelineFile } from "@/lib/demo/pipeline-preview";
+import fs from "fs/promises";
+import { createReadStream } from "fs";
+import path from "path";
+import { Readable } from "stream";
+
+const MAX_PREVIEW_BYTES = 200 * 1024; // 200 KB
+const TEXT_EXTENSIONS = new Set([
+  "txt",
+  "log",
+  "out",
+  "err",
+  "csv",
+  "tsv",
+  "json",
+  "yaml",
+  "yml",
+  "md",
+  "dot",
+]);
+
+const INLINE_CONTENT_TYPES: Record<string, string> = {
+  html: "text/html; charset=utf-8",
+  htm: "text/html; charset=utf-8",
+  pdf: "application/pdf",
+  txt: "text/plain; charset=utf-8",
+  log: "text/plain; charset=utf-8",
+  out: "text/plain; charset=utf-8",
+  err: "text/plain; charset=utf-8",
+  csv: "text/csv; charset=utf-8",
+  tsv: "text/tab-separated-values; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  yaml: "text/yaml; charset=utf-8",
+  yml: "text/yaml; charset=utf-8",
+  dot: "text/vnd.graphviz; charset=utf-8",
+};
+
+function isTextLikeFile(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith(".out") || lower.endsWith(".err")) return true;
+  const ext = lower.split(".").pop();
+  return !!ext && TEXT_EXTENSIONS.has(ext);
+}
+
+function getExtension(filePath: string): string {
+  return filePath.toLowerCase().split(".").pop() || "";
+}
+
+/**
+ * Re-verify that the resolved target path stays within the run folder after
+ * symlinks are resolved. `ensureWithinBase` is a lexical check only, so a
+ * symlink physically present inside the run folder could otherwise point at
+ * arbitrary host files. Mirrors the realpath containment check used in
+ * src/lib/minknow/security.ts.
+ */
+async function assertRealpathWithinBase(
+  basePath: string,
+  absolutePath: string
+): Promise<string> {
+  const [realBase, realTarget] = await Promise.all([
+    fs.realpath(basePath),
+    fs.realpath(absolutePath),
+  ]);
+  const relative = path.relative(realBase, realTarget);
+  const escapes =
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative);
+  if (escapes) {
+    throw new Error(`Path traversal detected: ${absolutePath} escapes base path`);
+  }
+  return realTarget;
+}
+
+async function readTail(filePath: string, size: number): Promise<Buffer> {
+  const handle = await fs.open(filePath, "r");
+  try {
+    const stat = await handle.stat();
+    const start = Math.max(0, stat.size - size);
+    const length = stat.size - start;
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, start);
+    return buffer;
+  } finally {
+    await handle.close();
+  }
+}
+
+// GET - preview a pipeline run file (text-only)
+export async function servePipelineRunFile(
+  request: NextRequest,
+  session: Session | null,
+  id: string
+) {
+  try {
+    if (!isActiveSession(session)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Demo sessions have no persistent run folder on disk; serve the bundled
+    // demo artifact (public/demo/...) by basename instead of reading runFolder.
+    if (isDemoSession(session)) {
+      const demoTarget = new URL(request.url).searchParams.get("path");
+      const demoResponse = demoTarget
+        ? await serveDemoPipelineFile(demoTarget)
+        : null;
+      if (demoResponse) return demoResponse;
+      return NextResponse.json(
+        { error: "Preview is not available for this file in the demo." },
+        { status: 403 }
+      );
+    }
+
+    const run = await db.pipelineRun.findUnique({
+      where: { id },
+      select: {
+        runFolder: true,
+        study: { select: { userId: true } },
+        order: { select: { userId: true } },
+        selectedResultSelections: {
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
+
+    if (!run) {
+      return NextResponse.json({ error: "Run not found" }, { status: 404 });
+    }
+
+    const accessError = authorizePipelineRunRead(session, run);
+    if (accessError) {
+      return NextResponse.json(accessError.body, { status: accessError.status });
+    }
+
+    if (!run.runFolder) {
+      return NextResponse.json(
+        { error: "Run folder not set" },
+        { status: 400 }
+      );
+    }
+
+    const { searchParams } = new URL(request.url);
+    const targetPath = searchParams.get("path");
+    const downloadRequested =
+      searchParams.get("download") === "1" ||
+      searchParams.get("mode") === "download";
+    const inlineRequested =
+      searchParams.get("inline") === "1" ||
+      searchParams.get("mode") === "inline";
+    if (!targetPath) {
+      return NextResponse.json({ error: "Path is required" }, { status: 400 });
+    }
+
+    let absolutePath: string;
+    try {
+      absolutePath = ensureWithinBase(run.runFolder, targetPath);
+      // Resolve symlinks and re-verify containment so a symlink inside the
+      // run folder cannot be used to read files outside it.
+      absolutePath = await assertRealpathWithinBase(run.runFolder, absolutePath);
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Invalid path" },
+        { status: 400 }
+      );
+    }
+
+    const stat = await fs.stat(absolutePath);
+    if (!stat.isFile()) {
+      return NextResponse.json({ error: "Not a file" }, { status: 400 });
+    }
+
+    // A cheap, authenticated availability check; never read/stream file content.
+    if (searchParams.get("check") === "1") {
+      return NextResponse.json({ available: true, size: stat.size }, { headers: { "Cache-Control": "no-store" } });
+    }
+
+    if (downloadRequested) {
+      const fileName = path.basename(absolutePath);
+      const stream = createReadStream(absolutePath);
+      const webStream = Readable.toWeb(stream) as ReadableStream;
+      return new Response(webStream, {
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": `attachment; filename="${fileName}"`,
+          "Content-Length": String(stat.size),
+        },
+      });
+    }
+
+    if (inlineRequested) {
+      const ext = getExtension(absolutePath);
+      const contentType = INLINE_CONTENT_TYPES[ext];
+      if (!contentType) {
+        return NextResponse.json(
+          { error: "Inline preview is not supported for this file type" },
+          { status: 400 }
+        );
+      }
+
+      const stream = createReadStream(absolutePath);
+      const webStream = Readable.toWeb(stream) as ReadableStream;
+      return new Response(webStream, {
+        headers: {
+          "Content-Type": contentType,
+          "Content-Length": String(stat.size),
+          "Content-Disposition": `inline; filename="${path.basename(absolutePath)}"`,
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    }
+
+    if (!isTextLikeFile(targetPath)) {
+      return NextResponse.json(
+        { error: "Preview supported for text files only" },
+        { status: 400 }
+      );
+    }
+
+    let content = "";
+    let truncated = false;
+    if (stat.size > MAX_PREVIEW_BYTES) {
+      truncated = true;
+      const buffer = await readTail(absolutePath, MAX_PREVIEW_BYTES);
+      content = buffer.toString("utf-8");
+    } else {
+      content = await fs.readFile(absolutePath, "utf-8");
+    }
+
+    return NextResponse.json({
+      content,
+      truncated,
+      size: stat.size,
+    });
+  } catch (error) {
+    console.error("[Run File Preview] Error:", error);
+    return NextResponse.json(
+      { error: "Failed to load file" },
+      { status: 500 }
+    );
+  }
+}

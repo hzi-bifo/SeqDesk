@@ -28,7 +28,7 @@ import Page from "./page";
 
 beforeEach(() => {
   vi.resetAllMocks(); mocks.query = "scope=study:s1&report=r1";
-  mocks.files = ["one.pdf", "two.pdf"].map((originalName, index) => ({ id: `f${index + 1}`, originalName, targetKey: "study:s1", mimeType: "application/pdf", sizeBytes: 5, checksumSha256: "x", createdAt: "2026-09-10T12:00:00Z", canImportTable: false, datasets: [], reports: [] }));
+  mocks.files = ["one.pdf", "two.pdf"].map((originalName, index) => ({ id: `f${index + 1}`, originalName, targetKey: "study:s1", mimeType: "application/pdf", sizeBytes: 5, checksumSha256: "x", createdAt: "2026-09-10T12:00:00Z", description: null, tags: [], sensitivity: "standard", canImportTable: false, datasets: [], reports: [] }));
   mocks.mutate.mockResolvedValue(undefined);
   mocks.replace.mockImplementation((href) => { mocks.query = href.split("?")[1]; });
   mocks.fetch.mockImplementation(async (_url, request) => {

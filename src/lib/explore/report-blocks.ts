@@ -8,7 +8,9 @@ export const MAX_REPORT_BLOCKS = 60;
 
 const BlockId = z.string().min(1).max(120);
 const Span = z.union([z.literal(1), z.literal(2)]).optional();
-const TextBlockSchema = z.object({ id: BlockId, type: z.literal("text"), markdown: z.string().max(20000), span: Span }).strict();
+/** Free size: width in twelfths of the page (span stays the coarse fallback) and a height in pixels. */
+const Size = z.object({ columns: z.number().int().min(2).max(12).optional(), height: z.number().int().min(120).max(2000).optional() }).strict().optional();
+const TextBlockSchema = z.object({ id: BlockId, type: z.literal("text"), markdown: z.string().max(20000), span: Span, size: Size }).strict();
 const FigureBlockSchema = z
   .object({
     id: BlockId,
@@ -16,7 +18,7 @@ const FigureBlockSchema = z
     analysisId: z.string().min(1).max(80),
     figureName: z.string().min(1).max(120),
     caption: z.string().max(500).optional(),
-    span: Span,
+    span: Span, size: Size,
   })
   .strict();
 /** A table of the scope as the page shows it: which columns, which rows, in what order, and what readers may do. */
@@ -36,7 +38,7 @@ const TableBlockSchema = z
     search: z.boolean().optional(),
     sortable: z.boolean().optional(),
     download: z.boolean().optional(),
-    span: Span,
+    span: Span, size: Size,
   })
   .strict();
 
@@ -78,7 +80,7 @@ const ChartBlockSchema = z
     /** A column whose values colour the dots or split the bars. */
     color: z.string().max(200).optional(),
     caption: z.string().max(500).optional(),
-    span: Span,
+    span: Span, size: Size,
   })
   .strict();
 
@@ -90,7 +92,7 @@ const MetricBlockSchema = z
     column: z.string().min(1).max(200),
     stats: z.array(z.enum(METRIC_STATS)).min(1).max(4),
     label: z.string().max(200).optional(),
-    span: Span,
+    span: Span, size: Size,
   })
   .strict();
 
@@ -105,7 +107,7 @@ const ViewBlockSchema = z
     /** View-specific choices, for example the heatmap's value, order and taxa count. */
     options: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
     caption: z.string().max(500).optional(),
-    span: Span,
+    span: Span, size: Size,
   })
   .strict();
 
@@ -118,7 +120,7 @@ const TaxonExplorerBlockSchema = z
     /** The organism shown first; readers can pick another. */
     taxon: z.string().max(200).optional(),
     caption: z.string().max(500).optional(),
-    span: Span,
+    span: Span, size: Size,
   })
   .strict();
 
@@ -131,7 +133,7 @@ const SubjectBlockSchema = z
     subject: z.string().max(200).optional(),
     measure: z.enum(["ra", "reads"]).optional(),
     caption: z.string().max(500).optional(),
-    span: Span,
+    span: Span, size: Size,
   })
   .strict();
 
@@ -147,7 +149,7 @@ const CuratedBlockSchema = z
     lists: z.array(z.string().min(1).max(64)).max(20).optional(),
     limit: z.number().int().min(1).max(200).optional(),
     caption: z.string().max(500).optional(),
-    span: Span,
+    span: Span, size: Size,
   })
   .strict();
 
@@ -196,14 +198,31 @@ const RunMetricBlockSchema = z
     /** What a figure counts along the timeline (distinct:<column>, sum:<column>, count); missing means suggested from its name. */
     timeline: z.record(MetricKey, z.string().max(160)).optional(),
     label: z.string().max(200).optional(),
-    span: Span,
+    span: Span, size: Size,
   })
   .strict()
   .refine((block) => block.metrics.length + (block.figures?.length ?? 0) > 0, { message: "A key figures block needs at least one figure" })
   .refine((block) => block.metrics.length === 0 || Boolean(block.analysisId), { message: "Run figures need an analysis" });
 
+/**
+ * A finding: what a step wrote about its result, verbatim. Without a name the
+ * block shows the step's notes; with a name, the Markdown or HTML report the
+ * step saved under that name.
+ */
+const FindingBlockSchema = z
+  .object({
+    id: BlockId,
+    type: z.literal("finding"),
+    analysisId: z.string().min(1).max(80),
+    name: z.string().max(120).optional(),
+    caption: z.string().max(500).optional(),
+    span: Span, size: Size,
+  })
+  .strict();
+
 export const ReportBlockSchema = z.discriminatedUnion("type", [
   TextBlockSchema,
+  FindingBlockSchema,
   FigureBlockSchema,
   TableBlockSchema,
   ChartBlockSchema,
@@ -226,11 +245,20 @@ export const ReportFilterSchema = z
   .strict();
 export type ReportFilter = z.infer<typeof ReportFilterSchema>;
 export const MAX_REPORT_FILTERS = 6;
+/** What a shared or exported copy may contain beyond the page itself. */
+export const ReportSharingSchema = z
+  .object({
+    /** Whether input tables (uploaded data, not step outputs) show their rows in shared copies. Off by default. */
+    inputRows: z.boolean(),
+  })
+  .strict();
+export type ReportSharing = z.infer<typeof ReportSharingSchema>;
 export const ReportInputSchema = z
   .object({
     title: z.string().trim().min(1).max(200),
     blocks: z.array(ReportBlockSchema).max(MAX_REPORT_BLOCKS),
     filters: z.array(ReportFilterSchema).max(MAX_REPORT_FILTERS).optional(),
+    sharing: ReportSharingSchema.optional(),
     /** The version the editor started from (updatedAt); a save against an older version is refused. */
     expectedUpdatedAt: z.string().max(40).optional(),
   })

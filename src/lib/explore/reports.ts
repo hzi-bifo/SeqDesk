@@ -5,11 +5,13 @@
  * shows a draft assembled from every output of the scope.
  */
 import { randomBytes } from "crypto";
+import { promises as fs } from "fs";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { loadCanvasGraph } from "./canvas";
 import { fetchDatasetRows } from "./datasets";
 import { parseSchema } from "./schema";
+import { resolveContainedPath } from "./storage";
 import type { ExploreColumn, ExploreRowData } from "./types";
 
 export const REPORT_TABLE_ROWS = 12;
@@ -22,11 +24,13 @@ export {
   parseStoredBlocks,
   ReportBlockSchema,
   ReportInputSchema,
+  ReportSharingSchema,
   tableBlockId,
   type ReportBlock,
   type ReportInput,
+  type ReportSharing,
 } from "./report-blocks";
-import { figureBlockId, parseStoredBlocks, ReportFilterSchema, ReportInputSchema, tableBlockId, type ReportBlock, type ReportFilter } from "./report-blocks";
+import { figureBlockId, parseStoredBlocks, ReportFilterSchema, ReportInputSchema, ReportSharingSchema, tableBlockId, type ReportBlock, type ReportFilter, type ReportSharing } from "./report-blocks";
 import type { ExploreRoleMap } from "./types";
 
 export interface ReportFigure {
@@ -40,12 +44,18 @@ export interface ReportFigure {
   thumbnailUrl: string | null;
   unchanged: boolean;
   autoInclude?: boolean;
+  /** The flow whose step drew the figure, when the scope has flows. */
+  flowName?: string | null;
 }
 
 export interface ReportTable {
   datasetId: string;
   name: string;
   kind: string;
+  /** The flow whose step wrote the table, for output tables. */
+  flowName?: string | null;
+  /** The step that wrote the table, for output tables. */
+  producer?: string | null;
   /** True for tables written by an analysis, the ones a report is about. */
   output: boolean;
   autoInclude?: boolean;
@@ -64,6 +74,12 @@ export interface ReportTable {
 export interface ReportAnalysis {
   analysisId: string;
   name: string;
+  /** The flow this step is on, when the scope has flows. */
+  flowId?: string | null;
+  flowName?: string | null;
+  /** What the latest finished run wrote about its result. */
+  notes?: string[];
+  findings?: ReportFindingRef[];
   runNumber: string | null;
   metrics: Record<string, string | number | boolean | null>;
   /** How the page cites this step; fixed once given. */
@@ -105,8 +121,24 @@ export interface ReportTableContent {
   columnCount: number;
 }
 
+/** A report text a step saved (Markdown or HTML), by name. */
+export interface ReportFindingRef {
+  name: string;
+  format: string;
+  url: string;
+}
+/** A finding block's content: the step's notes, or the named report text. */
+export interface ReportFinding {
+  name: string | null;
+  format: string;
+  content: string;
+  runNumber: string | null;
+}
+export const MAX_FINDING_BYTES = 200_000;
+
 export type ResolvedReportBlock =
   | Extract<ReportBlock, { type: "text" }>
+  | (Extract<ReportBlock, { type: "finding" }> & { analysis: ReportAnalysis | null; finding: ReportFinding | null })
   | (Extract<ReportBlock, { type: "figure" }> & { figure: ReportFigure | null })
   | (Extract<ReportBlock, { type: "table" }> & { table: ReportTableContent | null })
   | (Extract<ReportBlock, { type: "chart" }> & { table: ReportTableMeta | null })
@@ -117,11 +149,14 @@ export type ResolvedReportBlock =
   | (Extract<ReportBlock, { type: "curated" }> & { table: ReportTableMeta | null })
   | (Extract<ReportBlock, { type: "run-metric" }> & { analysis: ReportAnalysis | null });
 
-/** A live share link: anyone with the token reads the page without signing in. */
+/** A live share link: with mode "link" anyone with the token reads the page; with "named" only invited people who signed in through the collaboration server, or members of a lab the server serves. */
+export type ReportShareMode = "link" | "named";
 export interface ReportShare {
   token: string;
   publishedAt: string;
+  mode: ReportShareMode;
 }
+export const shareModeOf = (value: unknown): ReportShareMode => value === "named" ? "named" : "link";
 
 export interface ReportView {
   id: string;
@@ -130,6 +165,8 @@ export interface ReportView {
   share: ReportShare | null;
   /** Page filters: columns readers can narrow every block by. */
   filters: ReportFilter[];
+  /** What shared and exported copies may contain beyond the page. */
+  sharing: ReportSharing;
   /** True when nothing is saved yet and the blocks were assembled from the outputs. */
   draft: boolean;
   updatedAt: string | null;
@@ -150,14 +187,20 @@ export class ExploreReportError extends Error {
 export async function collectReportOutputs(targetKey: string, reportId: string | null = null): Promise<ReportOutputs> {
   const graph = await loadCanvasGraph(targetKey, reportId);
   const analysisNames = new Map<string, string>();
+  const flowNames = new Map<string, string | null>();
   const datasetNames = new Map(graph.nodes.flatMap((node) => (node.data.kind === "dataset" ? [[node.data.datasetId, node.data.name] as const] : [])));
   const analyses: ReportAnalysis[] = [];
   for (const node of graph.nodes) {
     if (node.data.kind !== "analysis") continue;
     analysisNames.set(node.data.analysisId, node.data.name);
+    flowNames.set(node.data.analysisId, node.data.flowName ?? null);
     analyses.push({
       analysisId: node.data.analysisId,
       name: node.data.name,
+      flowId: node.data.flowId ?? null,
+      flowName: node.data.flowName ?? null,
+      notes: node.data.notes ?? [],
+      findings: node.data.findings ?? [],
       runNumber: node.data.metricsRunNumber ?? null,
       metrics: node.data.metrics ?? {},
       slug: node.data.slug ?? null,
@@ -185,12 +228,15 @@ export async function collectReportOutputs(targetKey: string, reportId: string |
         thumbnailUrl: node.data.thumbnailUrl,
         unchanged: Boolean(node.data.unchanged),
         autoInclude: node.data.autoInclude,
+        flowName: flowNames.get(node.data.analysisId) ?? null,
       });
     } else if (node.data.kind === "dataset") {
       tables.push({
         datasetId: node.data.datasetId,
         name: node.data.name,
         kind: node.data.datasetKind,
+        flowName: node.data.producer ? flowNames.get(node.data.producer) ?? null : null,
+        producer: node.data.producer ?? null,
         output: node.data.datasetKind === "derived",
         autoInclude: node.data.autoInclude,
         rowCount: node.data.rowCount,
@@ -243,7 +289,39 @@ export type ReportTableLoader = (datasetId: string, limit: number) => Promise<Re
  * Attach live content to blocks. Figures and tables resolve only against the
  * outputs of the report's own scope, so a block can never show another scope's data.
  */
-export async function resolveReportBlocks(blocks: ReportBlock[], outputs: ReportOutputs, loadTable: ReportTableLoader): Promise<ResolvedReportBlock[]> {
+export type ReportFindingLoader = (url: string) => Promise<string | null>;
+
+/** The content of a finding block: the step's notes, or the named report text the step saved with its latest finished run. */
+async function resolveFinding(analysis: ReportAnalysis, name: string | undefined, loadFinding: ReportFindingLoader): Promise<ReportFinding | null> {
+  if (!name) {
+    // Notes the helper writes about the environment (a missing PNG exporter) are not findings.
+    const notes = (analysis.notes ?? []).filter((note) => !/^(PNG export of plotly figures skipped|Kaleido|Chrome)/i.test(note.trim()));
+    return notes.length ? { name: null, format: "md", content: notes.join("\n\n"), runNumber: analysis.runNumber } : null;
+  }
+  const ref = (analysis.findings ?? []).find((entry) => entry.name === name);
+  if (!ref) return null;
+  const content = await loadFinding(ref.url);
+  return content === null ? null : { name, format: ref.format, content, runNumber: analysis.runNumber };
+}
+
+/** Read a saved report text of a run from disk, capped so a page never embeds a huge file. */
+export async function loadFindingContent(url: string): Promise<string | null> {
+  const match = url.match(/\/runs\/([^/]+)\/artifacts\/([^/?]+)/);
+  if (!match) return null;
+  const [, runId, artifactId] = match;
+  const [run, artifact] = await Promise.all([
+    db.exploreAnalysisRun.findUnique({ where: { id: runId }, select: { runFolder: true } }),
+    db.exploreArtifact.findFirst({ where: { id: artifactId, runId } }),
+  ]);
+  if (!run?.runFolder || !artifact) return null;
+  const filePath = await resolveContainedPath(run.runFolder, artifact.path).catch(() => null);
+  if (!filePath) return null;
+  const content = await fs.readFile(filePath).catch(() => null);
+  if (!content) return null;
+  return content.subarray(0, MAX_FINDING_BYTES).toString("utf8") + (content.length > MAX_FINDING_BYTES ? "\n\n… (shortened)" : "");
+}
+
+export async function resolveReportBlocks(blocks: ReportBlock[], outputs: ReportOutputs, loadTable: ReportTableLoader, loadFinding: ReportFindingLoader = loadFindingContent): Promise<ResolvedReportBlock[]> {
   const figureByKey = new Map(outputs.figures.map((figure) => [`${figure.analysisId}:${figure.figureName}`, figure] as const));
   const tableById = new Map(outputs.tables.map((table) => [table.datasetId, table] as const));
   const metaOf = (datasetId: string): ReportTableMeta | null => {
@@ -253,6 +331,10 @@ export async function resolveReportBlocks(blocks: ReportBlock[], outputs: Report
   return Promise.all(
     blocks.map(async (block): Promise<ResolvedReportBlock> => {
       if (block.type === "text") return block;
+      if (block.type === "finding") {
+        const analysis = outputs.analyses.find((entry) => entry.analysisId === block.analysisId) ?? null;
+        return { ...block, analysis, finding: analysis ? await resolveFinding(analysis, block.name, loadFinding) : null };
+      }
       if (block.type === "figure") return { ...block, figure: figureByKey.get(`${block.analysisId}:${block.figureName}`) ?? null };
       if (block.type === "chart" || block.type === "metric") return { ...block, table: metaOf(block.datasetId) };
       if (block.type === "view") return { ...block, table: metaOf(block.datasetId), available: Boolean(tableById.get(block.datasetId)?.views.includes(block.view)) };
@@ -295,6 +377,13 @@ export function parseStoredFilters(raw: unknown): ReportFilter[] {
   return filters;
 }
 
+/** Sharing settings as stored; input rows stay out of shared copies unless the author switched them on. */
+export function parseStoredSharing(raw: unknown): ReportSharing {
+  const settings = raw && typeof raw === "object" ? (raw as { sharing?: unknown }) : null;
+  const parsed = settings ? ReportSharingSchema.safeParse(settings.sharing) : null;
+  return parsed?.success ? parsed.data : { inputRows: false };
+}
+
 /** One report in a list: enough for a card or a sidebar entry. */
 export interface ReportSummary {
   id: string;
@@ -308,6 +397,10 @@ export interface ReportSummary {
   blockCount: number;
   /** At least one analysis on this report's canvas has completed successfully. */
   hasSuccessfulRun: boolean;
+  /** The page's blocks as kinds and widths, enough to sketch a thumbnail of the page. */
+  layout: { type: string; span: 1 | 2 }[];
+  /** Whether a public share link is live. */
+  shared: boolean;
 }
 
 export interface ReportListResponse {
@@ -337,6 +430,8 @@ function summarize(report: StoredReportRow): ReportSummary {
     analysisCount: report._count.analyses,
     blockCount: parseStoredBlocks(report.blocks).length,
     hasSuccessfulRun: report.analyses.length > 0,
+    layout: parseStoredBlocks(report.blocks).map((block) => ({ type: block.type, span: block.span === 1 || block.span === 2 ? block.span : block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2 })),
+    shared: Boolean(report.shareToken && report.publishedAt),
   };
 }
 
@@ -358,27 +453,40 @@ export async function getReportRecord(id: string): Promise<{ id: string; targetK
   return db.exploreReport.findUnique({ where: { id }, select: { id: true, targetKey: true, title: true } });
 }
 
-export async function getReportView(reportId: string): Promise<ReportView> {
+/**
+ * How a report view is assembled: SeqDesk's own pages read the outputs of the
+ * report's canvas and start as a draft of them; Flow pages read every flow of
+ * the scope and start empty, the author composes them.
+ */
+export interface ReportViewOptions {
+  /** "report": the report's own steps (default). "scope": every step of the scope, across flows. */
+  outputs?: "report" | "scope";
+  /** Whether an unsaved page is filled with every output (default true). */
+  suggest?: boolean;
+}
+
+export async function getReportView(reportId: string, options: ReportViewOptions = {}): Promise<ReportView> {
   const stored = await db.exploreReport.findUnique({ where: { id: reportId } });
   if (!stored) throw new ExploreReportError(404, "Report not found");
-  const outputs = await collectReportOutputs(stored.targetKey, stored.id);
+  const outputs = await collectReportOutputs(stored.targetKey, options.outputs === "scope" ? null : stored.id);
   const storedBlocks = parseStoredBlocks(stored.blocks);
   const draft = storedBlocks.length === 0;
   return {
     id: stored.id,
     targetKey: stored.targetKey,
     title: stored.title,
-    share: stored.shareToken && stored.publishedAt ? { token: stored.shareToken, publishedAt: stored.publishedAt.toISOString() } : null,
+    share: stored.shareToken && stored.publishedAt ? { token: stored.shareToken, publishedAt: stored.publishedAt.toISOString(), mode: shareModeOf(stored.shareMode) } : null,
     filters: parseStoredFilters(stored.settings),
+    sharing: parseStoredSharing(stored.settings),
     draft,
     updatedAt: stored.updatedAt.toISOString(),
-    blocks: await resolveReportBlocks(draft ? suggestReportBlocks(outputs) : storedBlocks, outputs, loadTableContent),
+    blocks: await resolveReportBlocks(draft && options.suggest !== false ? suggestReportBlocks(outputs) : storedBlocks, outputs, loadTableContent),
     outputs,
   };
 }
 
 /** Validate and store the page of a report: title, ordered blocks and filters. */
-export async function saveReport(reportId: string, raw: unknown): Promise<ReportView> {
+export async function saveReport(reportId: string, raw: unknown, options: ReportViewOptions = {}): Promise<ReportView> {
   const parsed = ReportInputSchema.safeParse(raw);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
@@ -389,10 +497,10 @@ export async function saveReport(reportId: string, raw: unknown): Promise<Report
     if (ids.has(block.id)) throw new ExploreReportError(400, `Block id ${block.id} is used twice`);
     ids.add(block.id);
   }
-  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true, updatedAt: true } });
+  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true, updatedAt: true, settings: true } });
   if (!existing) throw new ExploreReportError(404, "Report not found");
   const blocks = parsed.data.blocks as unknown as Prisma.InputJsonValue;
-  const settings = { filters: parsed.data.filters ?? [] } as unknown as Prisma.InputJsonValue;
+  const settings = { filters: parsed.data.filters ?? [], sharing: parsed.data.sharing ?? parseStoredSharing(existing.settings) } as unknown as Prisma.InputJsonValue;
   // Two editors: the write only lands on the version the editor saw, so the
   // second save of the same version is refused instead of overwriting the first.
   const expected = parsed.data.expectedUpdatedAt ? new Date(parsed.data.expectedUpdatedAt) : null;
@@ -404,7 +512,7 @@ export async function saveReport(reportId: string, raw: unknown): Promise<Report
   if (written.count === 0) {
     throw new ExploreReportError(409, "This page was changed elsewhere since you opened it; reload to see the latest version before editing further.");
   }
-  return getReportView(reportId);
+  return getReportView(reportId, options);
 }
 
 export async function renameReport(reportId: string, title: string): Promise<ReportSummary> {
@@ -417,20 +525,29 @@ export async function renameReport(reportId: string, title: string): Promise<Rep
 }
 
 /** Drop the saved page so it goes back to the draft assembled from the outputs; the analysis steps stay. */
-export async function resetReport(reportId: string): Promise<ReportView> {
+export async function resetReport(reportId: string, options: ReportViewOptions = {}): Promise<ReportView> {
   const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true } });
   if (!existing) throw new ExploreReportError(404, "Report not found");
   await db.exploreReport.update({ where: { id: reportId }, data: { blocks: [], settings: { filters: [] } } });
-  return getReportView(reportId);
+  return getReportView(reportId, options);
 }
 
 /** Issue (or replace) the share link of a report. */
-export async function shareReport(reportId: string): Promise<ReportShare> {
-  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true } });
+export async function shareReport(reportId: string, mode?: ReportShareMode): Promise<ReportShare> {
+  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true, shareMode: true } });
   if (!existing) throw new ExploreReportError(404, "Report not found");
   const token = randomBytes(18).toString("base64url");
-  const updated = await db.exploreReport.update({ where: { id: reportId }, data: { shareToken: token, publishedAt: new Date() }, select: { shareToken: true, publishedAt: true } });
-  return { token: updated.shareToken ?? token, publishedAt: (updated.publishedAt ?? new Date()).toISOString() };
+  const updated = await db.exploreReport.update({ where: { id: reportId }, data: { shareToken: token, publishedAt: new Date(), ...(mode ? { shareMode: mode } : {}) }, select: { shareToken: true, publishedAt: true, shareMode: true } });
+  return { token: updated.shareToken ?? token, publishedAt: (updated.publishedAt ?? new Date()).toISOString(), mode: shareModeOf(updated.shareMode) };
+}
+
+/** Switch a live link between "anyone with the link" and "invited people"; the token stays. */
+export async function setShareMode(reportId: string, mode: ReportShareMode): Promise<ReportShare> {
+  const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { shareToken: true, publishedAt: true } });
+  if (!existing) throw new ExploreReportError(404, "Report not found");
+  if (!existing.shareToken || !existing.publishedAt) throw new ExploreReportError(400, "Create a share link first");
+  const updated = await db.exploreReport.update({ where: { id: reportId }, data: { shareMode: mode }, select: { shareToken: true, publishedAt: true, shareMode: true } });
+  return { token: updated.shareToken!, publishedAt: updated.publishedAt!.toISOString(), mode: shareModeOf(updated.shareMode) };
 }
 
 /** Withdraw the share link; the old token stops working at once. */
@@ -444,6 +561,11 @@ export async function unshareReport(reportId: string): Promise<void> {
 export async function findSharedReportId(token: string): Promise<string | null> {
   const report = await db.exploreReport.findFirst({ where: { shareToken: token, publishedAt: { not: null } }, select: { id: true } });
   return report?.id ?? null;
+}
+/** The shared report behind a token with what a viewer must satisfy to read it. */
+export async function findSharedReport(token: string): Promise<{ id: string; targetKey: string; mode: ReportShareMode } | null> {
+  const report = await db.exploreReport.findFirst({ where: { shareToken: token, publishedAt: { not: null } }, select: { id: true, targetKey: true, shareMode: true } });
+  return report ? { id: report.id, targetKey: report.targetKey, mode: shareModeOf(report.shareMode) } : null;
 }
 
 /** Delete a report with its analysis steps and their runs; the scope's tables stay. */

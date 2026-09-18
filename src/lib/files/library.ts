@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { parseInputBindings } from "@/lib/explore/analyses";
 import { parseStoredBlocks } from "@/lib/explore/report-blocks";
 import { resolveContainedPath, resolveExploreStorage } from "@/lib/explore/storage";
+import { EXPLORE_SENSITIVITIES, type ExploreSensitivity } from "@/lib/explore/types";
 import { canImportFileAsTable, MAX_LIBRARY_FILE_BYTES, parseStoredFileBindings, type AnalysisFileBinding, type LibraryFileSummary } from "./library-types";
 
 export class FileLibraryError extends Error {
@@ -63,7 +64,7 @@ export async function readLibraryFile(file: { storagePath: string; checksumSha25
 /** Files, imported tables and the reports that reference them, limited to one authorized scope. */
 export async function listLibraryFiles(targetKey: string): Promise<LibraryFileSummary[]> {
   const [files, reports] = await Promise.all([
-    db.managedFile.findMany({ where: { targetKey }, orderBy: { createdAt: "desc" }, include: { datasets: { select: { id: true, name: true } }, reports: { select: { reportId: true } } } }),
+    db.managedFile.findMany({ where: { targetKey, removedAt: null }, orderBy: { createdAt: "desc" }, include: { datasets: { select: { id: true, name: true } }, reports: { select: { reportId: true } } } }),
     db.exploreReport.findMany({ where: { targetKey }, select: {
       id: true, title: true, blocks: true,
       analyses: { select: { revisions: { select: { inputs: true, fileInputs: true } } } },
@@ -81,6 +82,7 @@ export async function listLibraryFiles(targetKey: string): Promise<LibraryFileSu
     id: file.id, targetKey: file.targetKey, originalName: file.originalName,
     mimeType: file.mimeType, sizeBytes: Number(file.sizeBytes), checksumSha256: file.checksumSha256,
     createdAt: file.createdAt.toISOString(), canImportTable: canImportFileAsTable(file.originalName),
+    description: file.description, tags: file.tags, sensitivity: fileSensitivity(file),
     datasets: file.datasets,
     reports: usage.map((report) => ({
       id: report.id, title: report.title,
@@ -98,9 +100,9 @@ export async function validateFileBindings(raw: unknown, targetKey: string): Pro
     throw new FileLibraryError(400, "Each file input needs a unique alias using lowercase letters, numbers and underscores.");
   }
   if (bindings.length === 0) return [];
-  const files = await db.managedFile.findMany({ where: { id: { in: bindings.map((entry) => entry.fileId) }, targetKey }, select: { id: true } });
+  const files = await db.managedFile.findMany({ where: { id: { in: bindings.map((entry) => entry.fileId) }, targetKey, removedAt: null }, select: { id: true } });
   const ids = new Set(files.map((file) => file.id));
-  if (bindings.some((binding) => !ids.has(binding.fileId))) throw new FileLibraryError(400, "A selected file does not belong to this study or order.");
+  if (bindings.some((binding) => !ids.has(binding.fileId))) throw new FileLibraryError(400, "A selected file does not belong to this study or order, or was removed.");
   return bindings;
 }
 
@@ -121,4 +123,26 @@ export async function stageLibraryFileInputs(runFolder: string, targetKey: strin
     staged[binding.alias] = { path: relativePath, fileId: file.id, name: file.originalName, checksumSha256: file.checksumSha256, sizeBytes: bytes.length };
   }
   return staged;
+}
+
+/** The stored tier, read defensively so an unexpected value never breaks a listing. */
+export function fileSensitivity(file: { sensitivity: string }): ExploreSensitivity {
+  return EXPLORE_SENSITIVITIES.includes(file.sensitivity as ExploreSensitivity) ? (file.sensitivity as ExploreSensitivity) : "standard";
+}
+
+/** Notes on a file: what it is, tags to group it by, and the tier that tables read from it inherit. */
+export async function updateLibraryFile(id: string, changes: { description?: string | null; tags?: string[]; sensitivity?: ExploreSensitivity }): Promise<LibraryFileSummary> {
+  const file = await getLibraryFile(id);
+  if (file.removedAt) throw new FileLibraryError(404, "File not found");
+  await db.managedFile.update({ where: { id: file.id }, data: changes });
+  const summary = (await listLibraryFiles(file.targetKey)).find((entry) => entry.id === file.id);
+  if (!summary) throw new FileLibraryError(404, "File not found");
+  return summary;
+}
+
+/** Removal hides the file from the study and blocks new uses; the bytes, tables and existing runs stay for provenance. */
+export async function removeLibraryFile(id: string, removedById: string): Promise<void> {
+  const file = await getLibraryFile(id);
+  if (file.removedAt) return;
+  await db.managedFile.update({ where: { id: file.id }, data: { removedAt: new Date(), removedById } });
 }

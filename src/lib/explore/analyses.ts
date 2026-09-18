@@ -49,9 +49,13 @@ export interface AnalysisSummary {
   targetKey: string;
   name: string;
   description: string | null;
+  /** The code revision an assistant-written description was made from; null when a person wrote it. */
+  descriptionRevisionId: string | null;
   kitId: string | null;
   /** The report this analysis is a step of. */
   reportId: string | null;
+  /** The flow whose canvas this analysis is a step of. */
+  flowId: string | null;
   language: AnalysisLanguage;
   environmentName: string;
   currentRevision: RevisionSummary | null;
@@ -163,8 +167,10 @@ function serializeAnalysis(analysis: AnalysisRecord): AnalysisSummary {
     targetKey: analysis.targetKey,
     name: analysis.name,
     description: analysis.description,
+    descriptionRevisionId: analysis.descriptionRevisionId ?? null,
     kitId: analysis.kitId,
     reportId: analysis.reportId,
+    flowId: analysis.flowId,
     language: analysis.language as AnalysisLanguage,
     environmentName: analysis.environmentName,
     currentRevision: current ? serializeRevision(current) : null,
@@ -174,9 +180,9 @@ function serializeAnalysis(analysis: AnalysisRecord): AnalysisSummary {
   };
 }
 
-export async function listAnalyses(targetKey: string, reportId: string | null = null): Promise<AnalysisSummary[]> {
+export async function listAnalyses(targetKey: string, reportId: string | null = null, flowId: string | null = null): Promise<AnalysisSummary[]> {
   const analyses = await db.exploreAnalysis.findMany({
-    where: reportId ? { targetKey, reportId } : { targetKey },
+    where: flowId ? { targetKey, flowId } : reportId ? { targetKey, reportId } : { targetKey },
     include: analysisInclude,
     orderBy: { updatedAt: "desc" },
   });
@@ -221,6 +227,8 @@ export interface CreateAnalysisInput {
   kitId?: string | null;
   /** The report this analysis is a step of; must belong to the same scope. */
   reportId?: string | null;
+  /** The flow this analysis is a step of; must belong to the same scope. */
+  flowId?: string | null;
   language?: AnalysisLanguage;
   environmentName?: string | null;
   inputs: AnalysisInputBinding[];
@@ -253,10 +261,16 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
     if (!report || report.targetKey !== input.targetKey) throw new Error("The report does not belong to this scope");
     reportId = report.id;
   }
+  let flowId: string | null = null;
+  if (input.flowId) {
+    const flow = await db.exploreFlow.findUnique({ where: { id: input.flowId }, select: { id: true, targetKey: true } });
+    if (!flow || flow.targetKey !== input.targetKey) throw new Error("The flow does not belong to this scope");
+    flowId = flow.id;
+  }
 
   const name = input.name?.trim() || kit?.manifest.name || "Untitled analysis";
-  // The slug the page cites the step by, unique within the report, kept for good.
-  const taken = new Set((await db.exploreAnalysis.findMany({ where: reportId ? { reportId } : { targetKey: input.targetKey }, select: { slug: true } })).map((entry) => entry.slug).filter((entry): entry is string => Boolean(entry)));
+  // The slug the page cites the step by, unique within the scope, kept for good.
+  const taken = new Set((await db.exploreAnalysis.findMany({ where: { targetKey: input.targetKey }, select: { slug: true } })).map((entry) => entry.slug).filter((entry): entry is string => Boolean(entry)));
   let slug = stepSlug(name);
   for (let index = 2; taken.has(slug); index += 1) slug = `${stepSlug(name)}_${index}`;
 
@@ -272,6 +286,7 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
       description: input.description ?? kit?.manifest.description ?? null,
       kitId: kit?.manifest.id ?? null,
       reportId,
+      flowId,
       language,
       environmentName,
       createdById: input.createdById,
@@ -350,7 +365,7 @@ export async function createRevision(input: CreateRevisionInput): Promise<Revisi
   return serializeRevision(revision);
 }
 
-export async function updateAnalysis(id: string, data: { name?: string; description?: string | null; environmentName?: string }) {
+export async function updateAnalysis(id: string, data: { name?: string; description?: string | null; descriptionRevisionId?: string | null; environmentName?: string }) {
   return db.exploreAnalysis.update({ where: { id }, data });
 }
 

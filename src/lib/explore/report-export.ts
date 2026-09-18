@@ -3,9 +3,11 @@
  * can be downloaded as a file or served behind a share link. The renderer is a
  * pure function over data the loader gathers; figures use Plotly in the page.
  */
+import { createHash } from "crypto";
 import fs from "fs/promises";
 import path from "path";
 import { db } from "@/lib/db";
+import { parseInputBindings } from "./analyses";
 import { listCurationForViews } from "./curation";
 import { fetchAllDatasetRows, getDatasetRecord } from "./datasets";
 import { applyEditsToRows, listActiveEdits } from "./edits";
@@ -18,7 +20,7 @@ import { formatWithDigits, metricTrend, sparklinePoints, trendNote } from "./met
 import { analysisTimeline, buildTimeline, detectTimeAxis, parseMeasure, suggestMeasure, timelineNote } from "./time-axis";
 import { figureKeys, tableFigureKey, withUnit } from "./key-figures";
 import { ROLE_LABELS } from "./client";
-import { getReportView, type ReportAnalysis, type ReportView, type ResolvedReportBlock } from "./reports";
+import { getReportView, type ReportAnalysis, type ReportView, type ReportViewOptions, type ResolvedReportBlock } from "./reports";
 import { parseRoles, parseSchema } from "./schema";
 import { parseTargetKey } from "./target-key";
 import { buildVariables, resolveVariablesInMarkdown, type ReportVariables } from "./variables";
@@ -50,9 +52,26 @@ export interface ExportArtifact {
   content: Buffer;
 }
 
+/** Where one cited output came from: the exact code, run, environment and input data. */
+export interface ProvenanceEntry {
+  analysisId: string;
+  flow: string | null;
+  step: string;
+  kit: string | null;
+  revision: number | null;
+  /** First 12 hex digits of the SHA-256 of the code that ran. */
+  codeHash: string | null;
+  runNumber: string | null;
+  completedAt: string | null;
+  environment: string | null;
+  inputs: { alias: string; name: string; version: number | null; hash: string | null; pinned: boolean }[];
+}
+
 export interface RenderInput {
   report: ReportView;
   scopeLabel: string;
+  /** Where every cited figure, table and finding came from; empty when nothing on the page comes from a step. */
+  provenance?: ProvenanceEntry[];
   /** Tables the blocks read, by dataset id. */
   tables: Map<string, ExportTable>;
   /** Figure files by `analysisId:figureName`; null when the file is gone. */
@@ -160,8 +179,12 @@ export function renderReportDocument(input: RenderInput): string {
   };
   const tableOf = (datasetId: string) => input.tables.get(datasetId) ?? null;
   const variables = buildVariables(report.outputs.analyses);
+  // Uploaded data stays out of a shared copy unless the author allowed it; what steps produced is the page's content.
+  const inputTables = new Set(report.outputs.tables.filter((table) => !table.output).map((table) => table.datasetId));
+  const inputRows = report.sharing?.inputRows === true;
 
-  const sections = report.blocks.map((block) => renderBlock(block, { input, filters, active, addPlot, tableOf, variables }));
+  const sections = report.blocks.map((block) => renderBlock(block, { input, filters, active, addPlot, tableOf, variables, inputTables, inputRows }));
+  const provenance = renderProvenance(input.provenance ?? []);
   const headings = report.blocks.flatMap((block) =>
     block.type === "text"
       ? block.markdown
@@ -199,6 +222,7 @@ export function renderReportDocument(input: RenderInput): string {
 <main class="grid">
 ${sections.join("\n")}
 </main>
+${provenance}
 <footer>Made with SeqDesk. Interactive figures need JavaScript.</footer>
 ${plotlyTag}
 <script type="application/json" id="plot-data">${plotJson}</script>
@@ -215,11 +239,43 @@ interface BlockContext {
   addPlot: (data: unknown[], layout: Record<string, unknown>, height: number) => string;
   tableOf: (datasetId: string) => ExportTable | null;
   variables: ReportVariables;
+  /** Tables that are uploaded data rather than step outputs. */
+  inputTables: Set<string>;
+  /** Whether input tables may show their rows in this copy. */
+  inputRows: boolean;
 }
 
-function section(block: ResolvedReportBlock, title: string | null, body: string, footer?: string): string {
+/** The appendix that makes a shared page checkable: one row per cited step with its code, run, environment and data. */
+function renderProvenance(entries: ProvenanceEntry[]): string {
+  if (!entries.length) return "";
+  const rows = entries.map((entry) => {
+    const inputs = entry.inputs.length
+      ? entry.inputs.map((input) => `${escapeHtml(input.name)}${input.version !== null ? ` v${input.version}` : ""}${input.hash ? ` <code>${escapeHtml(input.hash)}</code>` : ""}${input.pinned ? "" : " (current at run time)"}`).join("<br>")
+      : "<span class=\"muted\">none</span>";
+    return `<tr>
+<td>${entry.flow ? `<span class="muted">${escapeHtml(entry.flow)} ·</span> ` : ""}${escapeHtml(entry.step)}${entry.kit ? `<br><span class="muted">kit ${escapeHtml(entry.kit)}</span>` : ""}</td>
+<td>${entry.revision !== null ? `v${entry.revision}` : "—"}${entry.codeHash ? `<br><code>${escapeHtml(entry.codeHash)}</code>` : ""}</td>
+<td>${entry.runNumber ? escapeHtml(entry.runNumber) : "—"}${entry.completedAt ? `<br><span class="muted">${escapeHtml(entry.completedAt.slice(0, 16).replace("T", " "))} UTC</span>` : ""}</td>
+<td>${entry.environment ? escapeHtml(entry.environment) : "—"}</td>
+<td>${inputs}</td>
+</tr>`;
+  });
+  return `<section class="provenance" id="provenance">
+<h2>Provenance</h2>
+<p class="meta">Every figure, table and finding above comes from one of these runs. The code hash names the exact script and the data hash the exact table version, so the result can be checked or reproduced without the underlying data.</p>
+<table><thead><tr><th>Step</th><th>Code</th><th>Run</th><th>Environment</th><th>Input data</th></tr></thead><tbody>${rows.join("")}</tbody></table>
+</section>`;
+}
+
+/** Width in twelfths of the page: the free size when set, else the half or full width of the span. */
+function columnsOf(block: { type: string; span?: 1 | 2; size?: { columns?: number } }): number {
   const span = block.span ?? (block.type === "figure" || block.type === "chart" || block.type === "metric" ? 1 : 2);
-  return `<section class="block span-${span}" id="block-${escapeHtml(block.id)}">${title ? `<h3>${escapeHtml(title)}</h3>` : ""}${body}${footer ? `<p class="footer">${escapeHtml(footer)}</p>` : ""}</section>`;
+  return block.size?.columns ?? (span === 2 ? 12 : 6);
+}
+function section(block: ResolvedReportBlock, title: string | null, body: string, footer?: string): string {
+  const columns = columnsOf(block);
+  const style = `--cols:${columns}${block.size?.height ? `;min-height:${block.size.height}px` : ""}`;
+  return `<section class="block span-${columns === 12 ? 2 : 1}" style="${style}" id="block-${escapeHtml(block.id)}">${title ? `<h3>${escapeHtml(title)}</h3>` : ""}${body}${footer ? `<p class="footer">${escapeHtml(footer)}</p>` : ""}</section>`;
 }
 
 function renderBlock(block: ResolvedReportBlock, context: BlockContext): string {
@@ -227,7 +283,16 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
   switch (block.type) {
     case "text": {
       const html = renderMarkdownHtml(resolveVariablesInMarkdown(block.markdown, context.variables)).replace(/<h2>/, `<h2 id="block-${escapeHtml(block.id)}">`);
-      return `<section class="block span-${block.span ?? 2} prose">${html}</section>`;
+      return `<section class="block span-${columnsOf(block) === 12 ? 2 : 1} prose" style="--cols:${columnsOf(block)}">${html}</section>`;
+    }
+    case "finding": {
+      const title = block.caption?.trim() || (block.name ? block.name : "Finding");
+      if (!block.analysis) return section(block, title, empty("This step is not in the scope any more."));
+      if (!block.finding) return section(block, title, empty(block.name ? "The step no longer saves this text." : "The step recorded no notes."));
+      // Markdown is rendered; anything else is shown as text, so a step can never inject markup into a shared page.
+      const body = block.finding.format === "md" ? `<div class="prose finding">${renderMarkdownHtml(block.finding.content)}</div>` : `<pre class="finding">${escapeHtml(block.finding.content)}</pre>`;
+      const origin = [block.analysis.flowName, block.analysis.name, block.finding.runNumber].filter(Boolean).join(" · ");
+      return section(block, title, body, origin || undefined);
     }
     case "figure": {
       const figure = block.figure;
@@ -254,6 +319,10 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
     case "table": {
       const table = tableOf(block.datasetId);
       if (!table) return section(block, (block.caption?.trim() || undefined) ?? "Table", empty("This table is not in the scope any more."));
+      if (context.inputTables.has(block.datasetId) && !context.inputRows) {
+        const shape = `${table.records.length.toLocaleString("en-US")} rows × ${table.columns.filter((column) => !column.key.endsWith("_db_id")).length} columns`;
+        return section(block, (block.caption?.trim() || undefined) ?? table.name, `<p class="withheld">Input data: <strong>${escapeHtml(table.name)}</strong>, ${escapeHtml(shape)}. The rows are not part of this shared copy.</p>`);
+      }
       let rows = filteredRows(table, filters, active);
       let filterNote = "";
       if (block.filter) {
@@ -608,6 +677,54 @@ export interface ExportOptions {
   active?: ActiveFilters;
   /** Inline the Plotly library (a self-contained file) or reference a script URL. */
   plotly: "inline" | { src: string };
+  /** How the report view is assembled (Flow pages read every flow of the scope). */
+  view?: ReportViewOptions;
+}
+
+/** Where the outputs the page cites came from, one entry per step, in page order. */
+export async function collectProvenance(report: ReportView): Promise<ProvenanceEntry[]> {
+  const cited: string[] = [];
+  const cite = (analysisId: string | null | undefined) => {
+    if (analysisId && !cited.includes(analysisId)) cited.push(analysisId);
+  };
+  for (const block of report.blocks) {
+    if (block.type === "figure" || block.type === "finding" || block.type === "run-metric") cite(block.analysisId);
+    if (block.type === "table") cite(report.outputs.tables.find((table) => table.datasetId === block.datasetId)?.producer);
+  }
+  if (!cited.length) return [];
+  const runIds = cited.flatMap((analysisId) => {
+    const runId = report.outputs.analyses.find((analysis) => analysis.analysisId === analysisId)?.runId;
+    return runId ? [runId] : [];
+  });
+  const runs = await db.exploreAnalysisRun.findMany({
+    where: { id: { in: runIds } },
+    include: { revision: { select: { number: true, code: true, inputs: true } }, analysis: { select: { id: true, name: true, kitId: true, environmentName: true, flow: { select: { name: true } } } } },
+  });
+  const entries: ProvenanceEntry[] = [];
+  for (const analysisId of cited) {
+    const analysis = report.outputs.analyses.find((entry) => entry.analysisId === analysisId);
+    const run = runs.find((entry) => entry.analysis.id === analysisId);
+    if (!analysis && !run) continue;
+    const inputs: ProvenanceEntry["inputs"] = [];
+    for (const binding of parseInputBindings(run?.revision.inputs)) {
+      const dataset = await db.exploreDataset.findUnique({ where: { id: binding.datasetId }, include: { versions: { orderBy: { number: "desc" }, take: 1 } } });
+      const version = binding.versionId ? await db.exploreDatasetVersion.findUnique({ where: { id: binding.versionId } }) : dataset?.versions.find((entry) => entry.id === dataset.currentVersionId) ?? dataset?.versions[0] ?? null;
+      inputs.push({ alias: binding.alias, name: dataset?.name ?? binding.alias, version: version?.number ?? null, hash: version?.contentHash ? version.contentHash.slice(0, 12) : null, pinned: Boolean(binding.versionId) });
+    }
+    entries.push({
+      analysisId,
+      flow: run?.analysis.flow?.name ?? analysis?.flowName ?? null,
+      step: run?.analysis.name ?? analysis?.name ?? "Step",
+      kit: run?.analysis.kitId ?? analysis?.kitId ?? null,
+      revision: run?.revision.number ?? null,
+      codeHash: run ? createHash("sha256").update(run.revision.code).digest("hex").slice(0, 12) : null,
+      runNumber: run?.runNumber ?? analysis?.runNumber ?? null,
+      completedAt: run?.completedAt?.toISOString() ?? analysis?.completedAt ?? null,
+      environment: run?.analysis.environmentName ?? null,
+      inputs,
+    });
+  }
+  return entries;
 }
 
 /** Page filter values from a query string: `f.<filterId>=value`, repeatable. */
@@ -671,7 +788,7 @@ export async function readPlotlyBundle(): Promise<string | null> {
 
 /** Render one report to HTML with its live data. */
 export async function renderReportHtml(reportId: string, options: ExportOptions): Promise<{ html: string; title: string }> {
-  const report = await getReportView(reportId);
+  const report = await getReportView(reportId, options.view);
   // Only tables of the report's own scope are ever loaded: a block that names
   // a table elsewhere (a stale id, or one typed into a saved page) renders as
   // missing, exactly as it does in the app.
@@ -711,6 +828,7 @@ export async function renderReportHtml(reportId: string, options: ExportOptions)
   const html = renderReportDocument({
     report,
     scopeLabel: await scopeLabelFor(report.targetKey),
+    provenance: await collectProvenance(report),
     tables,
     artifacts,
     lists,
@@ -739,12 +857,22 @@ h1{margin:6px 0 4px;font-size:28px;line-height:1.2;letter-spacing:-.01em}
 .toc li{padding:2px 0;break-inside:avoid}
 .toc a{color:var(--accent);text-decoration:none}
 .toc a:hover{text-decoration:underline}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding-top:20px;padding-bottom:40px}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;padding-top:20px;padding-bottom:40px}
+.block{grid-column:span var(--cols,12)}
 .block{min-width:0;border:1px solid var(--line);border-radius:8px;padding:16px;background:var(--paper)}
-.span-2{grid-column:1/-1}
-@media (max-width:820px){.grid{grid-template-columns:1fr}.span-1{grid-column:1/-1}}
+@media (max-width:820px){.grid{grid-template-columns:1fr}.block{grid-column:auto}}
 .block h3{margin:0 0 10px;font-size:14px}
 .block h4{margin:12px 0 4px;font-size:13px}
+.withheld{margin:0;padding:12px 14px;border:1px dashed var(--line);border-radius:6px;background:var(--soft);color:var(--muted)}
+.finding{margin:0}
+pre.finding{white-space:pre-wrap;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+.provenance{max-width:1120px;margin:0 auto;padding:0 20px 40px}
+.provenance h2{margin:0 0 4px;font-size:18px}
+.provenance table{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}
+.provenance th,.provenance td{text-align:left;vertical-align:top;padding:8px 10px;border-top:1px solid var(--line)}
+.provenance th{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-top:0}
+.provenance code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--soft);padding:1px 4px;border-radius:4px}
+.muted{color:var(--muted)}
 .prose{border:0;padding:8px 16px}
 .prose h2{margin:0 0 8px;font-size:20px}
 .prose h3{margin:12px 0 4px;font-size:16px}

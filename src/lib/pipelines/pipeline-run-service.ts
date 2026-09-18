@@ -418,11 +418,16 @@ export async function listPipelineRunsForOperator(args: {
   publishedOnly?: boolean;
   limit?: number;
   offset?: number;
+  targetFilter?: { studyIds: string[]; orderIds: string[] };
 }): Promise<PipelineServiceResponse> {
   const limit = Number.isFinite(args.limit) ? Number(args.limit) : 50;
   const offset = Number.isFinite(args.offset) ? Number(args.offset) : 0;
   const where: Record<string, unknown> = {};
   const andFilters: Record<string, unknown>[] = [];
+  if (args.targetFilter) andFilters.push({ OR: [
+    { studyId: { in: args.targetFilter.studyIds } },
+    { orderId: { in: args.targetFilter.orderIds } },
+  ] });
 
   if (args.readScope === 'own' || args.readScope === 'department') {
     andFilters.push({

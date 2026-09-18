@@ -6,6 +6,7 @@ import type { ReportView } from "./reports";
 /** One block of every type with every optional field set. */
 const blocks: ReportBlock[] = [
   { id: "t1", type: "text", markdown: "## Hi\n\n`r step.n`", span: 2 },
+  { id: "n1", type: "finding", analysisId: "a1", name: "summary", caption: "What the step found", span: 2 },
   { id: "f1", type: "figure", analysisId: "a1", figureName: "plot", caption: "A plot", span: 1 },
   { id: "tb", type: "table", datasetId: "d1", caption: "Rows", rows: 20, columns: ["a", "b"], sort: { column: "a", direction: "desc" }, filter: 'a > 1 & b == "x"', search: true, sortable: true, download: true, span: 2 },
   { id: "c1", type: "chart", datasetId: "d1", chart: "box", x: "a", y: "b", color: "c", caption: "Box", span: 1 },
@@ -37,7 +38,7 @@ const blocks: ReportBlock[] = [
 describe("the editor's draft of a saved page", () => {
   it("keeps every field an author can set, for every block type", () => {
     for (const block of blocks) expect(ReportBlockSchema.safeParse(block).success, `${block.type} fixture is valid`).toBe(true);
-    const view = { title: "Report", filters: [], blocks: blocks.map((block) => ({ ...block, table: null, figure: null, analysis: null, available: true })) } as unknown as ReportView;
-    expect(toInput(view)).toEqual({ title: "Report", filters: [], blocks });
+    const view = { title: "Report", filters: [], sharing: { inputRows: true }, blocks: blocks.map((block) => ({ ...block, table: null, figure: null, analysis: null, finding: null, available: true })) } as unknown as ReportView;
+    expect(toInput(view)).toEqual({ title: "Report", filters: [], sharing: { inputRows: true }, blocks });
   });
 });

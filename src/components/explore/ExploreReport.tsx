@@ -682,7 +682,7 @@ interface ReportBlockCardProps {
   variables: ReportVariables;
 }
 
-const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Dashboard numbers" };
+const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", finding: "Finding", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Dashboard numbers" };
 
 const ReportBlockCard = memo(function ReportBlockCard({ block, resolved, figure, tableInfo, editing, dragHandle, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope, variables }: ReportBlockCardProps) {
   const span = reportBlockSpan(block);

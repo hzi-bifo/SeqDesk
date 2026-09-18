@@ -20,7 +20,7 @@ const fetchMock = vi.fn();
 const scope = "study:study-1";
 const reportsKey = `/api/explore/reports?targetKey=${encodeURIComponent(scope)}`;
 const report: ReportSummary = {
-  id: "report-1", targetKey: scope, title: "Cohort report", analysisCount: 2,
+  id: "report-1", targetKey: scope, title: "Cohort report", analysisCount: 2, layout: [], shared: false,
   blockCount: 0, hasSuccessfulRun: true,
   createdAt: "2026-09-10T10:00:00Z", updatedAt: "2026-09-10T10:00:00Z",
 };

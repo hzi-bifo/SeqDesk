@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     order: { findUnique: vi.fn(), findMany: vi.fn() },
     workbenchWorkspace: { findUnique: vi.fn() },
     exploreProject: { findUnique: vi.fn(), findMany: vi.fn() },
+    integrationExploreScope: { findFirst: vi.fn() },
   },
 }));
 
@@ -44,6 +45,22 @@ describe("explore authorization", () => {
     expect((await resolveTargetAccess(researcher, "order:o1")).level).toBe("none");
     expect((await resolveTargetAccess(researcher, "workspace:w1")).level).toBe("write");
     expect((await resolveTargetAccess(researcher, "bogus")).level).toBe("none");
+  });
+
+  it("opens a workspace's shared Flow project to integration sessions only", async () => {
+    mocks.db.exploreProject.findUnique.mockResolvedValue({ ownerId: "someone-else" });
+    mocks.db.integrationExploreScope.findFirst.mockResolvedValue({ id: "link" });
+    // A browser session never reaches the link table.
+    expect((await resolveTargetAccess(researcher, "project:shared")).level).toBe("none");
+    expect(mocks.db.integrationExploreScope.findFirst).not.toHaveBeenCalled();
+    const integration = { ...(researcher as object), integration: { authority: "https://collab.example", workspaceId: "team", memberId: "m", projectId: "" } } as never;
+    expect((await resolveTargetAccess(integration, "project:shared")).level).toBe("write");
+    expect(mocks.db.integrationExploreScope.findFirst).toHaveBeenCalledWith({
+      where: { authority: "https://collab.example", workspaceId: "team", targetKey: "project:shared" }, select: { id: true },
+    });
+    // Another workspace's session gets nothing, and a missing link stays private.
+    mocks.db.integrationExploreScope.findFirst.mockResolvedValue(null);
+    expect((await resolveTargetAccess(integration, "project:shared")).level).toBe("none");
   });
 
   it("preserves scientific access for legacy facility operators", async () => {

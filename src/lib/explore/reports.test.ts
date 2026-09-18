@@ -127,6 +127,16 @@ describe("report validation", () => {
     expect(parseStoredBlocks(null)).toEqual([]);
   });
 
+  it("keeps uploaded rows out of shared copies unless the stored settings say otherwise", async () => {
+    const { parseStoredSharing } = await import("./reports");
+    expect(parseStoredSharing(null)).toEqual({ inputRows: false });
+    expect(parseStoredSharing({ filters: [] })).toEqual({ inputRows: false });
+    expect(parseStoredSharing({ sharing: { inputRows: true } })).toEqual({ inputRows: true });
+    expect(parseStoredSharing({ sharing: { inputRows: "yes" } })).toEqual({ inputRows: false });
+    expect(ReportInputSchema.safeParse({ title: "R", blocks: [{ id: "n", type: "finding", analysisId: "a1" }], sharing: { inputRows: true } }).success).toBe(true);
+    expect(ReportInputSchema.safeParse({ title: "R", blocks: [{ id: "n", type: "finding", analysisId: "" }] }).success).toBe(false);
+  });
+
   it("reads page filters from the stored settings and drops broken ones", async () => {
     const { parseStoredFilters } = await import("./reports");
     expect(parseStoredFilters({ filters: [{ id: "a", datasetId: "d", column: "site" }, { id: "b" }] })).toEqual([{ id: "a", datasetId: "d", column: "site" }]);

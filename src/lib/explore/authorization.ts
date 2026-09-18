@@ -19,6 +19,16 @@ export class ExploreAuthorizationError extends Error {
 
 export type SessionLike = Pick<Session, "user"> | null | undefined;
 
+/**
+ * The collaboration context of an integration session (see
+ * lib/integration/identity.ts). Browser sessions never carry it.
+ */
+function integrationContext(session: SessionLike): { authority: string; workspaceId: string } | null {
+  const context = (session as { integration?: { authority?: unknown; workspaceId?: unknown } } | null | undefined)?.integration;
+  if (!context || typeof context.authority !== "string" || typeof context.workspaceId !== "string" || !context.authority || !context.workspaceId) return null;
+  return { authority: context.authority, workspaceId: context.workspaceId };
+}
+
 export function requireExplorePrincipal(session: SessionLike) {
   const decision = decideServerCapability(session, "analysis.read_own");
   if (!decision.allowed || !decision.principal) {
@@ -53,7 +63,10 @@ export function exploreBuildContext(session: SessionLike, target: ExploreTargetK
  *
  * Study/order access follows the same scientific-data grants as pipelines.
  * System configuration rights do not grant scientific-data access. Private
- * projects and workspaces remain owner-only, including in shared labs.
+ * projects and workspaces remain owner-only, including in shared labs. The
+ * one exception is a project that a collaboration workspace uses as its
+ * shared Flow scope: an integration session of that workspace opens it with
+ * the level its own SeqDesk account has.
  * Unknown targets resolve to "none" so a caller can answer 404 without
  * revealing whether the id exists.
  */
@@ -91,7 +104,16 @@ export async function resolveTargetAccess(
   if (target.type === "project") {
     const project = await db.exploreProject.findUnique({ where: { id: target.id }, select: { ownerId: true } });
     if (!project) return { level: "none", target };
-    return { level: project.ownerId === userId ? level : "none", target };
+    if (project.ownerId === userId) return { level, target };
+    const integration = integrationContext(session);
+    if (integration) {
+      const shared = await db.integrationExploreScope.findFirst({
+        where: { authority: integration.authority, workspaceId: integration.workspaceId, targetKey },
+        select: { id: true },
+      });
+      if (shared) return { level, target };
+    }
+    return { level: "none", target };
   }
 
   const workspace = await db.workbenchWorkspace.findUnique({

@@ -9,6 +9,7 @@ datasource db {
 }
 
 model User {
+  integrationAccounts IntegrationAccount[]
   id             String          @id @default(cuid())
   email          String          @unique
   password       String
@@ -59,6 +60,46 @@ model User {
 
   @@index([systemRole])
   @@index([systemRole, isActive])
+}
+
+model IntegrationAccount {
+  id          String @id
+  authority   String
+  workspaceId String
+  memberId    String
+  userId      String
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([authority, workspaceId, memberId])
+}
+
+model IntegrationProjectLink {
+  id          String @id
+  authority   String
+  workspaceId String
+  projectId   String
+  targetKind  String
+  targetId    String
+  createdBy   String
+
+  @@unique([authority, workspaceId, projectId, targetKind, targetId], map: "IntegrationProjectLink_context_target_key")
+}
+
+/// An Explore scope (a "study" in Flow) that a collaboration workspace shares.
+/// `projectId` is the workspace's project the study belongs to, empty for
+/// team-wide studies. Every active member of the workspace may open the
+/// scope; see resolveTargetAccess.
+model IntegrationExploreScope {
+  id          String   @id
+  authority   String
+  workspaceId String
+  projectId   String   @default("")
+  targetKey   String
+  createdBy   String
+  createdAt   DateTime @default(now())
+
+  @@unique([authority, workspaceId, targetKey], map: "IntegrationExploreScope_scope_key")
+  @@index([authority, workspaceId, projectId])
 }
 
 model InAppNotification {
@@ -904,6 +945,11 @@ model ManagedFile {
   checksumSha256 String
   createdById    String
   createdAt      DateTime @default(now())
+  description    String?
+  tags           String[]  @default([])
+  sensitivity    String    @default("standard")
+  removedAt      DateTime?
+  removedById    String?
 
   datasets ExploreDataset[]
   reports  ExploreReportFile[]
@@ -1024,6 +1070,7 @@ model ExploreReport {
   createdById String
   publishedAt DateTime? // reserved for sharing: set when a share link is issued
   shareToken  String?   @unique
+  shareMode   String    @default("link") // link: anyone with the link | named: invited people who sign in through the collaboration server
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -1063,13 +1110,31 @@ model ExploreEnvironment {
   updatedAt  DateTime  @updatedAt
 }
 
+// A flow: one canvas of analysis steps over a scope's tables, exploring one
+// question. Reports cite the outputs of any flow in their scope.
+model ExploreFlow {
+  id          String   @id @default(cuid())
+  targetKey   String
+  name        String
+  description String?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  analyses ExploreAnalysis[] // the analysis steps on this flow's canvas
+
+  @@index([targetKey])
+}
+
 model ExploreAnalysis {
   id                String   @id @default(cuid())
   targetKey         String
   name              String
   description       String?
+  descriptionRevisionId String? // the code revision an assistant-written description was made from; null when a person wrote it
   kitId             String?  // template it was created from
-  reportId          String?  // the report this analysis is a step of
+  reportId          String?  // the report this analysis is a step of (SeqDesk's own report canvases)
+  flowId            String?  // the flow this analysis is a step of (Flow canvases)
   slug              String?  // how the report cites this step (cohort_overview); fixed once given, survives renames
   language          String   // python | r
   environmentName   String
@@ -1080,11 +1145,13 @@ model ExploreAnalysis {
 
   createdBy User                      @relation("ExploreAnalysisCreator", fields: [createdById], references: [id])
   report    ExploreReport?            @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  flow      ExploreFlow?              @relation(fields: [flowId], references: [id], onDelete: Cascade)
   revisions ExploreAnalysisRevision[]
   runs      ExploreAnalysisRun[]
 
   @@index([targetKey])
   @@index([reportId])
+  @@index([flowId])
   @@index([createdById])
 }
 

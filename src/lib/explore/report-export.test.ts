@@ -27,6 +27,7 @@ function report(): ReportView {
     title: "Cohort <report>",
     share: null,
     filters: [{ id: "f-site", datasetId: "d-in", column: "site", label: "Site" }],
+    sharing: { inputRows: false },
     draft: false,
     updatedAt: "2026-09-05T10:00:00.000Z",
     blocks: [
@@ -96,6 +97,51 @@ describe("renderReportDocument", () => {
   it("inlines the Plotly source when asked", () => {
     const html = renderReportDocument(input({ plotly: { inline: "window.Plotly={};</script><script>alert(2)" } }));
     expect(html).toContain("<script>window.Plotly={};<\\/script><script>alert(2)</script>");
+  });
+});
+
+describe("shared copies of Flow pages", () => {
+  const inputTable = { datasetId: "d-in", name: "Samples", kind: "table", output: false, rowCount: 3, columnCount: 3, version: 1, latestWrite: null, columns, views: [], roles: {} };
+  it("withholds the rows of uploaded tables unless the author allowed them", () => {
+    const view = report();
+    view.outputs = { figures: [], tables: [inputTable], analyses: [] };
+    const html = renderReportDocument(input({ report: view }));
+    expect(html).toContain("The rows are not part of this shared copy.");
+    expect(html).toContain("3 rows × 3 columns");
+    expect(html).not.toContain("<td>S1</td>");
+    expect(html).toContain("1,500"); // aggregates of the same table stay: the numbers block
+    view.sharing = { inputRows: true };
+    expect(renderReportDocument(input({ report: view }))).toContain("<td>S1</td>");
+  });
+  it("shows what a step produced: output tables keep their rows", () => {
+    const view = report();
+    view.outputs = { figures: [], tables: [{ ...inputTable, output: true, producer: "a1" }], analyses: [] };
+    expect(renderReportDocument(input({ report: view }))).toContain("<td>S1</td>");
+  });
+  it("renders findings as Markdown, other formats as text, and names the run", () => {
+    const view = report();
+    const analysis = { analysisId: "a1", name: "Alpha diversity", flowName: "Diversity", runNumber: "EXP-9", metrics: {} };
+    view.blocks = [
+      { id: "n", type: "finding", analysisId: "a1", analysis, finding: { name: null, format: "md", content: "Shannon **differs** between groups.\n\n<script>x()</script>", runNumber: "EXP-9" } },
+      { id: "h", type: "finding", analysisId: "a1", name: "summary", caption: "Summary", analysis, finding: { name: "summary", format: "html", content: "<b>bold</b>", runNumber: "EXP-9" } },
+      { id: "gone", type: "finding", analysisId: "a1", name: "old", analysis, finding: null },
+    ] as ReportView["blocks"];
+    const html = renderReportDocument(input({ report: view }));
+    expect(html).toContain("Shannon <strong>differs</strong> between groups.");
+    expect(html).not.toContain("<script>x()</script>");
+    expect(html).toContain("&lt;b&gt;bold&lt;/b&gt;");
+    expect(html).toContain("Diversity · Alpha diversity · EXP-9");
+    expect(html).toContain("The step no longer saves this text.");
+  });
+  it("appends the provenance of every cited step", () => {
+    const html = renderReportDocument(input({ provenance: [
+      { analysisId: "a1", flow: "Diversity", step: "Alpha diversity", kit: "alpha-diversity", revision: 3, codeHash: "abc123def456", runNumber: "EXP-9", completedAt: "2026-09-05T10:00:00.000Z", environment: "seqdesk-explore-python", inputs: [{ alias: "table", name: "Samples", version: 2, hash: "0123456789ab", pinned: false }] },
+    ] }));
+    expect(html).toContain('<section class="provenance"');
+    expect(html).toContain("<code>abc123def456</code>");
+    expect(html).toContain("Samples v2 <code>0123456789ab</code> (current at run time)");
+    expect(html).toContain("kit alpha-diversity");
+    expect(renderReportDocument(input())).not.toContain('class="provenance"');
   });
 });
 

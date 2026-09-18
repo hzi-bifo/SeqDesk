@@ -70,14 +70,22 @@ function runMetrics(results: string | null | undefined): Record<string, string |
   return flat;
 }
 
+/** The notes a run recorded, in order. */
+function runNotes(results: string | null | undefined): string[] {
+  const parsed = parseJsonObject(results);
+  return Array.isArray(parsed?.notes) ? parsed.notes.filter((note): note is string => typeof note === "string").slice(0, 50) : [];
+}
+
 /** Assemble the graph of one scope from the database. */
 /**
  * The graph of one report's canvas: the scope's tables, the report's analysis
  * steps and their outputs. Without a report id the whole scope is drawn.
  */
-export async function loadCanvasGraph(targetKey: string, reportId: string | null = null): Promise<CanvasGraph> {
-  const analysisWhere = reportId ? { targetKey, reportId } : { targetKey };
-  const [allDatasets, analyses, runs] = await Promise.all([
+export async function loadCanvasGraph(targetKey: string, reportId: string | null = null, flowId: string | null = null): Promise<CanvasGraph> {
+  // A flow draws its own steps; a report (SeqDesk's own canvases) its steps; otherwise the whole scope.
+  const analysisWhere = flowId ? { targetKey, flowId } : reportId ? { targetKey, reportId } : { targetKey };
+  const scoped = Boolean(flowId || reportId);
+  const [allDatasets, analyses, runs, flows] = await Promise.all([
     db.exploreDataset.findMany({
       where: { targetKey },
       include: { versions: { orderBy: { number: "desc" }, take: 1 } },
@@ -93,7 +101,9 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
       orderBy: { createdAt: "desc" },
       include: { artifacts: true, revision: { select: { number: true } } },
     }),
+    db.exploreFlow.findMany({ where: { targetKey }, select: { id: true, name: true } }),
   ]);
+  const flowNames = new Map(flows.map((flow) => [flow.id, flow.name] as const));
 
   // What the report page shows: the saved blocks, or (as a draft) every output.
   // An empty page is a draft too, so it shows every output like no page at all.
@@ -114,7 +124,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
   // Inside a report, tables written by other reports' analyses stay out of the
   // picture unless one of this report's analyses reads them.
   const inputDatasetIds = new Set(analyses.flatMap((analysis) => parseInputBindings(analysis.revisions[0]?.inputs).map((binding) => binding.datasetId)));
-  const datasets = reportId
+  const datasets = scoped
     ? allDatasets.filter((dataset) => {
         if (dataset.kind !== "derived" || inputDatasetIds.has(dataset.id)) return true;
         const producer = producerOf(dataset);
@@ -211,6 +221,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         kind: "dataset",
         datasetId: dataset.id,
         name: dataset.name,
+        producer: producingAnalysis,
         datasetKind: dataset.kind,
         tableKind: dataset.tableKind,
         sensitivity: dataset.sensitivity,
@@ -275,6 +286,11 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         kind: "analysis",
         analysisId: analysis.id,
         name: analysis.name,
+        flowId: analysis.flowId,
+        flowName: analysis.flowId ? flowNames.get(analysis.flowId) ?? null : null,
+        description: analysis.description,
+        descriptionFromCode: !!analysis.description && !!analysis.descriptionRevisionId,
+        descriptionOutdated: !!analysis.description && !!analysis.descriptionRevisionId && analysis.descriptionRevisionId !== analysis.currentRevisionId,
         slug: analysis.slug,
         kitId: analysis.kitId,
         language: analysis.language,
@@ -289,6 +305,10 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         metricsRunNumber: completedByAnalysis.get(analysis.id)?.[0]?.runNumber,
         metricsRunId: completedByAnalysis.get(analysis.id)?.[0]?.id,
         metricsCompletedAt: completedByAnalysis.get(analysis.id)?.[0]?.completedAt?.toISOString() ?? null,
+        notes: runNotes(completedByAnalysis.get(analysis.id)?.[0]?.results),
+        findings: (completedByAnalysis.get(analysis.id)?.[0]?.artifacts ?? [])
+          .filter((artifact) => artifact.kind === "report")
+          .map((artifact) => ({ name: artifact.name, format: artifact.format, url: `/api/explore/runs/${artifact.runId}/artifacts/${artifact.id}` })),
         // The newest runs first in the source; oldest first here, for trends.
         metricHistory: (completedByAnalysis.get(analysis.id) ?? [])
           .slice(0, METRIC_HISTORY_RUNS)
