@@ -5,6 +5,7 @@ import { inferPipelineExitCode } from "../src/lib/pipelines/run-completion";
 import { queueSnapshotToRunStatus, readIdentityCheckedQueueSnapshot } from "../src/lib/pipelines/queue-probe";
 import { finalizeExploreRun } from "../src/lib/explore/run-finalize";
 import { advanceActiveFlowRuns } from "../src/lib/explore/flow-runs";
+import { failStaleCapsules } from "../src/lib/explore/capsules";
 import { deliverOutbox } from "../src/lib/integration/events";
 
 const DEFAULT_EVENTS_INTERVAL_MS = 3000;
@@ -152,6 +153,7 @@ async function runOnce(): Promise<void> {
   } catch (error) {
     console.error("[explore-monitor] failed to advance flow runs", error);
   }
+  await failStaleCapsules().catch((error) => console.error("[explore-monitor] failed to check capsule builds", error));
 }
 
 async function main(): Promise<void> {

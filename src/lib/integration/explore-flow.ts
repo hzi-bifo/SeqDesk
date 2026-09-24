@@ -11,6 +11,11 @@ import { addStep, applyRecipeOps, listRecipeRevisions, parseRecipeOps, stepOptio
 import { getRecipeView } from "@/lib/explore/recipe-view";
 import { acceptProposal, createProposals, discardProposal, listProposals, patchProposal, pendingProposals } from "@/lib/explore/proposals";
 import { flowValues, resolveValues } from "@/lib/explore/values";
+import { outputLineage, plotSource, requestCapsule, serializeCapsule } from "@/lib/explore/capsules";
+import { NextResponse } from "next/server";
+import { createReadStream } from "fs";
+import fs from "fs/promises";
+import { Readable } from "stream";
 import { enqueueFlowRecord } from "./events";
 import { acceptGloss, deleteGloss, glossRecord, listGlosses, patchGloss, putGlosses } from "@/lib/explore/glosses";
 import { createFlowFromTemplate, listTemplates, serializeTemplate } from "@/lib/explore/templates";
@@ -338,8 +343,56 @@ export async function flowChanged(flowId: string): Promise<void> {
   await enqueueFlowRecord(flowId).catch((error) => console.error("[flow] could not queue the flow record", flowId, error));
 }
 
+async function artifactFor(session: IntegrationSession, id: string, level: "read" | "write") {
+  const artifact = await db.exploreArtifact.findUnique({ where: { id }, select: { id: true, run: { select: { analysis: { select: { targetKey: true } } } } } });
+  if (!artifact) throw flowError("not_found", "Output not found");
+  await requireTargetAccess(session, artifact.run.analysis.targetKey, level);
+  return artifact;
+}
+
+/** Lineage, capsules and plot source (`explore.capsules`). */
+async function handleCapsules({ request, session, segments, json }: FlowRouteContext): Promise<Response | null> {
+  const method = request.method;
+  const query = request.nextUrl.searchParams;
+  const [head, id, sub] = segments;
+  if (head === "flows" && sub === "lineage" && segments.length === 3 && method === "GET") {
+    await flowFor(session, id, "read");
+    const artifactId = query.get("artifact");
+    if (!artifactId) throw flowError("invalid_request", "Name the output with artifact=.");
+    await artifactFor(session, artifactId, "read");
+    return json(await outputLineage(id, artifactId, query.get("run")));
+  }
+  if (head === "artifacts" && segments.length === 3 && sub === "capsule" && method === "POST") {
+    await artifactFor(session, id, "read");
+    const body = await readBody(request);
+    const result = await requestCapsule(id, session.user.id, optionalText(body.flowRunId, 80));
+    return json({ capsule: result.capsule }, result.created ? 202 : 200);
+  }
+  if (head === "artifacts" && segments.length === 3 && sub === "plot-source" && method === "GET") {
+    await artifactFor(session, id, "read");
+    return json(await plotSource(id));
+  }
+  if (head === "capsules" && (segments.length === 2 || (segments.length === 3 && sub === "download")) && method === "GET") {
+    const capsule = await db.exploreCapsule.findUnique({ where: { id } });
+    if (!capsule) throw flowError("not_found", "Capsule not found");
+    const run = await db.exploreFlowRun.findUnique({ where: { id: capsule.flowRunId }, select: { flowId: true } });
+    if (!run) throw flowError("not_found", "Capsule not found");
+    await flowFor(session, run.flowId, "read");
+    if (segments.length === 2) return json({ capsule: serializeCapsule(capsule) });
+    if (capsule.status !== "ready" || !capsule.path) throw flowError("not_found", "The capsule is not ready.");
+    const stat = await fs.stat(capsule.path).catch(() => null);
+    if (!stat?.isFile()) throw flowError("not_found", "The capsule file is gone. Request it again.");
+    const headers = new Headers({ "Cache-Control": "no-store", Vary: "Origin", "Content-Type": "application/zip", "Content-Length": String(stat.size), "X-Content-Type-Options": "nosniff",
+      "Content-Disposition": `attachment; filename="capsule-${capsule.id}.zip"` });
+    const origin = request.headers.get("origin");
+    if (origin) headers.set("Access-Control-Allow-Origin", origin);
+    return new NextResponse(Readable.toWeb(createReadStream(capsule.path)) as ReadableStream, { headers });
+  }
+  return null;
+}
+
 type Handler = (context: FlowRouteContext) => Promise<Response | null>;
-const handlers: Handler[] = [handleRecipe, handleRuns, handleProposals, handleGlosses, handleValues];
+const handlers: Handler[] = [handleRecipe, handleRuns, handleProposals, handleGlosses, handleValues, handleCapsules];
 
 /** The Flow routes; null when the path is not one of them. */
 export async function handleFlowRequest(context: FlowRouteContext): Promise<Response | null> {

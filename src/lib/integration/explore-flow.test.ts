@@ -3,11 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   flowFind: vi.fn(), flowRunFind: vi.fn(), requireAccess: vi.fn(), moduleEnabled: vi.fn(),
   createProposals: vi.fn(), discardProposal: vi.fn(), acceptProposal: vi.fn(), proposalFind: vi.fn(), analysisFind: vi.fn(), glossRecord: vi.fn(), listGlosses: vi.fn(), putGlosses: vi.fn(), deleteGloss: vi.fn(),
-  flowValues: vi.fn(), resolveValues: vi.fn(),
+  flowValues: vi.fn(), resolveValues: vi.fn(), outputLineage: vi.fn(), requestCapsule: vi.fn(), artifactFind: vi.fn(), capsuleFind: vi.fn(),
   getRecipeView: vi.fn(), applyRecipeOps: vi.fn(), addStep: vi.fn(), stepOptions: vi.fn(), listRecipeRevisions: vi.fn(), resolveAccess: vi.fn(), scopeFind: vi.fn(),
   startFlowRun: vi.fn(), listFlowRuns: vi.fn(), getFlowRunDetail: vi.fn(), cancelFlowRun: vi.fn(), makeRunCurrent: vi.fn(), compareFlowRuns: vi.fn(), flowRunOutputs: vi.fn(),
 }));
-vi.mock("@/lib/db", () => ({ db: { exploreFlow: { findUnique: mocks.flowFind }, exploreFlowRun: { findUnique: mocks.flowRunFind }, integrationExploreScope: { findFirst: mocks.scopeFind }, exploreStepProposal: { findUnique: mocks.proposalFind }, exploreAnalysis: { findUnique: mocks.analysisFind } } }));
+vi.mock("@/lib/db", () => ({ db: { exploreFlow: { findUnique: mocks.flowFind }, exploreFlowRun: { findUnique: mocks.flowRunFind }, integrationExploreScope: { findFirst: mocks.scopeFind }, exploreStepProposal: { findUnique: mocks.proposalFind }, exploreAnalysis: { findUnique: mocks.analysisFind }, exploreArtifact: { findUnique: mocks.artifactFind }, exploreCapsule: { findUnique: mocks.capsuleFind } } }));
 vi.mock("@/lib/explore/module", () => ({ isExploreModuleEnabled: mocks.moduleEnabled }));
 vi.mock("@/lib/explore/authorization", async () => {
   const actual = await vi.importActual<typeof import("@/lib/explore/authorization")>("@/lib/explore/authorization");
@@ -17,6 +17,7 @@ vi.mock("@/lib/explore/recipe-view", async () => ({ ...(await vi.importActual<ob
 vi.mock("@/lib/explore/recipe-edit", async () => ({ ...(await vi.importActual<object>("@/lib/explore/recipe-edit")), applyRecipeOps: mocks.applyRecipeOps, addStep: mocks.addStep, stepOptions: mocks.stepOptions, listRecipeRevisions: mocks.listRecipeRevisions }));
 vi.mock("@/lib/explore/proposals", () => ({ pendingProposals: vi.fn().mockResolvedValue([]), createProposals: mocks.createProposals, listProposals: vi.fn(), patchProposal: vi.fn(), discardProposal: mocks.discardProposal, acceptProposal: mocks.acceptProposal }));
 vi.mock("@/lib/explore/glosses", () => ({ glossRecord: mocks.glossRecord, listGlosses: mocks.listGlosses, putGlosses: mocks.putGlosses, patchGloss: vi.fn(), acceptGloss: vi.fn(), deleteGloss: mocks.deleteGloss }));
+vi.mock("@/lib/explore/capsules", () => ({ outputLineage: mocks.outputLineage, plotSource: vi.fn(), requestCapsule: mocks.requestCapsule, serializeCapsule: (capsule: unknown) => capsule }));
 vi.mock("@/lib/explore/values", () => ({ flowValues: mocks.flowValues, resolveValues: mocks.resolveValues }));
 vi.mock("@/lib/explore/flow-runs", () => ({
   startFlowRun: mocks.startFlowRun, listFlowRuns: mocks.listFlowRuns, getFlowRunDetail: mocks.getFlowRunDetail, cancelFlowRun: mocks.cancelFlowRun,
@@ -183,5 +184,28 @@ describe("Flow value routes", () => {
     expect(resolved.body).toEqual({ values: [], unknown: ["labdesk://value/r1/s1/n", "labdesk://value/r1/s1/m"], readable: false });
     expect(mocks.resolveValues.mock.calls[0][2]).toEqual({ verify: true });
     expect((await call("GET", "values/resolve")).body.code).toBe("invalid_request");
+  });
+});
+
+describe("Flow capsule routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.moduleEnabled.mockResolvedValue(true);
+    mocks.flowFind.mockResolvedValue({ id: "f1", targetKey: "project:p1", name: "DE" });
+    mocks.flowRunFind.mockResolvedValue({ id: "r1", flowId: "f1" });
+    mocks.requireAccess.mockResolvedValue({ type: "project", id: "p1" });
+    mocks.artifactFind.mockResolvedValue({ id: "a1", run: { analysis: { targetKey: "project:p1" } } });
+  });
+
+  it("answers lineage, starts a capsule once and hides capsules that are not ready", async () => {
+    mocks.outputLineage.mockResolvedValue({ steps: [] });
+    expect((await call("GET", "flows/f1/lineage?artifact=a1")).body).toEqual({ steps: [] });
+    expect((await call("GET", "flows/f1/lineage")).body.code).toBe("invalid_request");
+    mocks.requestCapsule.mockResolvedValueOnce({ capsule: { id: "c1", status: "building" }, created: true }).mockResolvedValueOnce({ capsule: { id: "c1", status: "building" }, created: false });
+    expect((await call("POST", "artifacts/a1/capsule", {})).status).toBe(202);
+    expect((await call("POST", "artifacts/a1/capsule", {})).status).toBe(200);
+    mocks.capsuleFind.mockResolvedValue({ id: "c1", flowRunId: "r1", status: "building", path: null });
+    expect((await call("GET", "capsules/c1")).body.capsule.status).toBe("building");
+    expect((await call("GET", "capsules/c1/download")).body).toEqual({ error: "The capsule is not ready.", code: "not_found" });
   });
 });
