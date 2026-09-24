@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getKit, type LoadedKit } from "./kits/loader";
@@ -18,6 +19,8 @@ export interface AnalysisInputBinding {
 export interface RevisionSummary {
   id: string;
   number: number;
+  /** sha256 hex of the code. */
+  codeHash: string;
   /** Present on analysis detail payloads only. */
   code?: string;
   author: string;
@@ -86,6 +89,11 @@ const BLANK_R = `# Blank analysis (R). The seqdeskExplore helper is not shipped 
 inputs <- jsonlite::fromJSON("inputs.json")
 `;
 
+/** The hash recipes and runs pin a step's code by. */
+export function codeHashOf(code: string): string {
+  return createHash("sha256").update(code, "utf8").digest("hex");
+}
+
 function parseJsonObject(raw: string | null | undefined): Record<string, unknown> {
   if (!raw) return {};
   try {
@@ -122,6 +130,7 @@ function serializeRevision(revision: RevisionRecord): RevisionSummary {
   return {
     id: revision.id,
     number: revision.number,
+    codeHash: revision.codeHash || codeHashOf(revision.code),
     author: revision.author,
     authorUserId: revision.authorUserId,
     message: revision.message,
@@ -297,6 +306,7 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
       analysisId: analysis.id,
       number: 1,
       code,
+      codeHash: codeHashOf(code),
       params: JSON.stringify(params),
       inputs: serializeInputs(input.inputs, kit?.manifest.inputs ?? null, generation?.snapshot),
       fileInputs: JSON.stringify(input.fileInputs ?? []),
@@ -370,6 +380,7 @@ export async function createRevision(input: CreateRevisionInput): Promise<Revisi
       analysisId: analysis.id,
       number: (latest?.number ?? 0) + 1,
       code: input.code ?? current?.code ?? "",
+      codeHash: codeHashOf(input.code ?? current?.code ?? ""),
       params: JSON.stringify(input.params ?? parseJsonObject(current?.params)),
       inputs: serializeInputs(input.inputs ?? parseInputBindings(current?.inputs), inputContractSnapshot(current?.inputs), generationSnapshot(current?.inputs)),
       fileInputs: JSON.stringify(input.fileInputs ?? parseStoredFileBindings(current?.fileInputs)),

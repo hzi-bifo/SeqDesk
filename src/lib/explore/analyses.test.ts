@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/db", () => ({ db: mocks.db }));
 vi.mock("./kits/loader", () => ({ getKit: mocks.getKit }));
 
-import { allocateRunNumber, createAnalysis, createRevision, parseInputBindings } from "./analyses";
+import { allocateRunNumber, codeHashOf, createAnalysis, createRevision, parseInputBindings } from "./analyses";
 
 describe("explore analyses", () => {
   beforeEach(() => {
@@ -99,5 +99,12 @@ describe("explore analyses", () => {
     expect(parseInputBindings('[{"alias":"a","datasetId":"d"},{"alias":"","datasetId":"x"},5]')).toEqual([{ alias: "a", datasetId: "d", versionId: null }]);
     expect(parseInputBindings("not json")).toEqual([]);
     expect(parseInputBindings('{"version":1,"bindings":[{"alias":"table","datasetId":"d1","versionId":"pinned"}],"contract":[]}')).toEqual([{ alias: "table", datasetId: "d1", versionId: "pinned" }]);
+  });
+
+  it("hashes the code of every new revision", async () => {
+    mocks.getKit.mockResolvedValue({ manifest: { id: "table-summary", name: "Table summary", description: "d", language: "python", environment: "seqdesk-explore-python" }, code: "print('kit')" });
+    await createAnalysis({ targetKey: "study:s1", kitId: "table-summary", inputs: [], createdById: "u1" });
+    expect(mocks.db.exploreAnalysisRevision.create.mock.calls[0][0].data.codeHash).toBe(codeHashOf("print('kit')"));
+    expect(codeHashOf("")).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
   });
 });

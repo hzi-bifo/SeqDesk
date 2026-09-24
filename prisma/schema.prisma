@@ -97,6 +97,9 @@ model IntegrationExploreScope {
   targetKey   String
   createdBy   String
   createdAt   DateTime @default(now())
+  /// lab: every active member of the workspace; private: only ownerMemberId (My space).
+  visibility    String @default("lab")
+  ownerMemberId String @default("")
 
   @@unique([authority, workspaceId, targetKey], map: "IntegrationExploreScope_scope_key")
   @@index([authority, workspaceId, projectId])
@@ -950,6 +953,7 @@ model ManagedFile {
   sensitivity    String    @default("standard")
   removedAt      DateTime?
   removedById    String?
+  createdByMemberId String? // the collaboration member who uploaded it through the integration API
 
   datasets ExploreDataset[]
   reports  ExploreReportFile[]
@@ -1106,6 +1110,10 @@ model ExploreEnvironment {
   prefixPath String?
   builtAt    DateTime?
   lastError  String?
+  // The explicit lock (conda list --explicit --md5) digest, cached per specHash.
+  lockDigest      String?
+  lockSpecHash    String?
+  languageVersion String?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 }
@@ -1120,10 +1128,214 @@ model ExploreFlow {
   createdById String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  // The recipe: a revision counter bumped on every structural change, numbered
+  // runs of the whole recipe, the run whose results are shown, the Expert
+  // layout and the one value the flow is known by.
+  recipeRevision    Int     @default(0)
+  runCounter        Int     @default(0)
+  trialCounter      Int     @default(0)
+  currentRunId      String?
+  layout            Json?   // {nodes:{<id>:{x,y}}, groups:[{id,name,stepIds,collapsed}], snap}
+  headlineValue     String? // <stepId>.<metricKey>
+  createdByMemberId String?
 
-  analyses ExploreAnalysis[] // the analysis steps on this flow's canvas
+  analyses  ExploreAnalysis[] // the analysis steps on this flow's canvas
+  revisions ExploreFlowRevision[]
+  runs      ExploreFlowRun[]
+  proposals ExploreStepProposal[]
 
   @@index([targetKey])
+}
+
+// A snapshot of a flow's recipe, written with every structural change.
+model ExploreFlowRevision {
+  id                String   @id @default(cuid())
+  flowId            String
+  number            Int
+  steps             Json     // [{analysisId, revisionId, position, laneKind, laneOf}]
+  message           String?
+  createdById       String
+  createdByMemberId String?
+  createdAt         DateTime @default(now())
+
+  flow ExploreFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@unique([flowId, number])
+}
+
+// One numbered run of a flow's whole recipe (or of its out-of-date or chosen
+// steps). Immutable once finished: it pins the recipe revision, the input
+// versions and the environment it ran with.
+model ExploreFlowRun {
+  id                String    @id @default(cuid())
+  flowId            String
+  number            Int?      // #1, #2, ... per flow; null for trials
+  trialNumber       Int?      // Trial 1, 2, ... per flow
+  kind              String    // full | outOfDate | steps | trial
+  flowRevisionId    String?
+  recipeRevision    Int       @default(0)
+  status            String    @default("queued") // queued | running | completed | failed | cancelled
+  queuedAt          DateTime  @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+  startedById       String
+  startedByMemberId String?
+  startedByName     String?
+  notifyOnFinish    Boolean   @default(false)
+  stepCount         Int       @default(0)
+  doneCount         Int       @default(0)
+  currentAnalysisId String?
+  failedAnalysisId  String?
+  failedStepLabel   String?
+  failureWords      String?
+  failureDetail     String?
+  plan              Json      // [{analysisId, label, name, revisionId, execute, dependsOn, reusedFrom}]
+  inputs            Json      @default("[]") // [{alias, stepId, datasetId, versionId, versionNumber, contentHash, name}]
+  environment       Json?     // {name, specHash, lockDigest, label, language, languageVersion, host}
+  summary           Json?     // {headline, values}
+  verification      Json?
+  trialSample       Json?
+  requestId         String?   @unique
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  flow      ExploreFlow          @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  stepRuns  ExploreAnalysisRun[]
+  findings  ExploreRunFinding[]
+  capsules  ExploreCapsule[]
+
+  @@unique([flowId, number])
+  @@unique([flowId, trialNumber])
+  @@index([flowId, createdAt])
+  @@index([status])
+}
+
+// What the assistant proposed in the web client, in pencil until a person
+// accepts or discards it. SeqDesk never calls a model; it only keeps these.
+model ExploreStepProposal {
+  id                  String   @id @default(cuid())
+  flowId              String
+  kind                String   // step | finding | gloss-rewrite | methods
+  state               String   @default("pending") // pending | accepted | discarded
+  afterAnalysisId     String?
+  laneOf              String?
+  position            String   @default("")
+  canvas              Json?
+  purpose             String   @default("")
+  why                 String   @default("")
+  assumes             Json     @default("[]")
+  notChecked          Json     @default("[]")
+  refusals            Json     @default("[]")
+  inputs              Json     @default("[]")
+  outputs             Json     @default("[]")
+  code                String?
+  language            String   @default("python")
+  kitId               String?
+  params              Json?
+  values              Json?
+  text                String?
+  analysisId          String?  // methods: the step; gloss-rewrite: the gloss's step
+  glossId             String?
+  flowRunId           String?  // findings
+  goal                String?
+  origin              Json?
+  requestedById       String
+  requestedByMemberId String?
+  activityId          String?
+  acceptedById        String?
+  acceptedAnalysisId  String?
+  acceptedFindingId   String?
+  discardReason       String?
+  trialRunId          String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  flow ExploreFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@index([flowId, state])
+}
+
+// A note on one region of a step's code ("does", "because", "assumes",
+// "chooses"). The region hash ties it to the code it explains.
+model ExploreGloss {
+  id           String    @id @default(cuid())
+  analysisId   String
+  revisionId   String
+  lineStart    Int
+  lineEnd      Int
+  regionHash   String
+  type         String    // does | because | assumes | chooses
+  text         String
+  author       String    // assistant | person
+  state        String    @default("pencil") // pencil | accepted
+  acceptedById String?
+  acceptedAt   DateTime?
+  checkStatus  String    @default("unchecked") // unchecked | passed | failed
+  checkNotes   Json?
+  createdById  String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  analysis ExploreAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@index([analysisId, regionHash])
+  @@index([analysisId, revisionId])
+}
+
+// A finding a person accepted for a run: text whose numbers are live values.
+model ExploreRunFinding {
+  id           String   @id @default(cuid())
+  flowRunId    String
+  analysisId   String?
+  text         String
+  values       Json     @default("[]")
+  caveats      Json     @default("[]")
+  acceptedById String
+  acceptedAt   DateTime @default(now())
+
+  flowRun ExploreFlowRun @relation(fields: [flowRunId], references: [id], onDelete: Cascade)
+
+  @@index([flowRunId])
+}
+
+// A reproducible package of one output: code, input hashes, lock, README.
+model ExploreCapsule {
+  id           String    @id @default(cuid())
+  flowRunId    String
+  artifactId   String
+  status       String    @default("building") // building | ready | failed
+  path         String?
+  size         BigInt?
+  sha256       String?
+  contents     Json      @default("[]")
+  error        String?
+  verifiedAt   DateTime?
+  verification Json?
+  createdById  String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  flowRun ExploreFlowRun @relation(fields: [flowRunId], references: [id], onDelete: Cascade)
+
+  @@index([flowRunId, artifactId])
+}
+
+// Events and records waiting to be pushed to the collaboration server.
+model ExploreEventOutbox {
+  id            String    @id // idempotent: "<flowRunId>:finished", "<ref>@<updatedAt>"
+  kind          String    // notebook-event | record
+  target        String    // notebook | records
+  authority     String
+  workspaceId   String
+  payload       Json
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  deliveredAt   DateTime?
+  failedAt      DateTime?
+  lastError     String?
+  createdAt     DateTime  @default(now())
+
+  @@index([deliveredAt, failedAt, nextAttemptAt])
 }
 
 model ExploreAnalysis {
@@ -1142,11 +1354,21 @@ model ExploreAnalysis {
   createdById       String
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  // Recipe placement (Flow): a fractional order key, lanes and groups.
+  position          String   @default("")
+  laneKind          String?  // alternative | forEach
+  laneOf            String?
+  laneLabel         String?
+  groupId           String?
+  purpose           String?  // one line, <= 200
+  paramMeta         Json?    // {<key>: {label, unit, min, max, usual, options, meaning, consequence, phrase}}
+  methodsSentence   Json?    // {text, tokens, revisionId, author, acceptedById, acceptedAt}
 
   createdBy User                      @relation("ExploreAnalysisCreator", fields: [createdById], references: [id])
   report    ExploreReport?            @relation(fields: [reportId], references: [id], onDelete: Cascade)
   flow      ExploreFlow?              @relation(fields: [flowId], references: [id], onDelete: Cascade)
   conversations ExploreStepConversation[]
+  glosses   ExploreGloss[]
   revisions ExploreAnalysisRevision[]
   runs      ExploreAnalysisRun[]
 
@@ -1168,6 +1390,7 @@ model ExploreAnalysisRevision {
   authorUserId String?
   prompt       String?
   message      String?
+  codeHash     String   @default("") // sha256 hex of the code
   createdAt    DateTime @default(now())
 
   analysis ExploreAnalysis      @relation(fields: [analysisId], references: [id], onDelete: Cascade)
@@ -1195,7 +1418,16 @@ model ExploreAnalysisRun {
   createdById   String
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  // A step of a numbered run of the whole recipe.
+  flowRunId         String?
+  stepLabel         String?
+  trial             Boolean  @default(false)
+  inputPins         Json?    // [{alias, datasetId, versionId, versionNumber, contentHash, name}]
+  environmentDigest String?
+  reusedFromRunId   String?
+  durationMs        Int?
 
+  flowRun   ExploreFlowRun?         @relation(fields: [flowRunId], references: [id], onDelete: SetNull)
   analysis  ExploreAnalysis         @relation(fields: [analysisId], references: [id], onDelete: Cascade)
   revision  ExploreAnalysisRevision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
   createdBy User                    @relation("ExploreRunCreator", fields: [createdById], references: [id])
@@ -1203,6 +1435,7 @@ model ExploreAnalysisRun {
 
   @@index([analysisId, createdAt])
   @@index([status])
+  @@index([flowRunId])
 }
 
 model ExploreArtifact {
