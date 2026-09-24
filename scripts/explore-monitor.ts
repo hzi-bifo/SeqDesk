@@ -4,6 +4,7 @@ import { readTail } from "../src/lib/pipelines/nextflow";
 import { inferPipelineExitCode } from "../src/lib/pipelines/run-completion";
 import { queueSnapshotToRunStatus, readIdentityCheckedQueueSnapshot } from "../src/lib/pipelines/queue-probe";
 import { finalizeExploreRun } from "../src/lib/explore/run-finalize";
+import { advanceActiveFlowRuns } from "../src/lib/explore/flow-runs";
 
 const DEFAULT_INTERVAL_MS = 10000;
 const ACTIVE = ["pending", "queued", "running"];
@@ -131,6 +132,12 @@ async function runOnce(): Promise<void> {
     } catch (error) {
       console.error("[explore-monitor] failed to sync run", run.id, error);
     }
+  }
+  // Numbered runs of a recipe: start the steps whose inputs are now ready, or finish the run.
+  try {
+    await advanceActiveFlowRuns();
+  } catch (error) {
+    console.error("[explore-monitor] failed to advance flow runs", error);
   }
 }
 

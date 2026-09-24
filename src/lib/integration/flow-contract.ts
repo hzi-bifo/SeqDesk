@@ -22,7 +22,7 @@ export const FLOW_CAPABILITIES = [
 export type FlowCapability = (typeof FLOW_CAPABILITIES)[number];
 
 /** The Flow capabilities this build implements; `explore.events` is added at runtime when pushing is configured. */
-export const FLOW_CAPABILITIES_BUILT: readonly FlowCapability[] = [];
+export const FLOW_CAPABILITIES_BUILT: readonly FlowCapability[] = ["explore.ledger", "explore.flow-runs"];
 
 export const FLOW_ERROR_CODES = [
   "invalid_request",

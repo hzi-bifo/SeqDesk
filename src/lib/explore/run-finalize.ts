@@ -130,6 +130,8 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
       const roles = entry.table?.roles && typeof entry.table.roles === "object" ? (entry.table.roles as Record<string, unknown>) : {};
       const scanned = await scanTable(absolute, { delimiter: format === "csv" ? "," : "\t", sampleColumn: typeof roles.sample === "string" ? roles.sample : null }).catch(() => null);
       ledgerOutputs.push({ name, dims: scanned?.dims ?? null, samples: scanned?.samples ?? null });
+      // Trial runs (a sample of the data) never write tables: they feed nothing (FLOW-GAPS D13).
+      if (run.trial) continue;
       if (exitCode !== 0) {
         // The file stays downloadable from the run page, but a failed run must
         // not move a dataset's current version forward with a partial table.

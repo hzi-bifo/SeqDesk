@@ -36,7 +36,8 @@ import type { ExploreScope } from "@/lib/explore/types";
 import { FileLibraryError, getLibraryFile, listLibraryFiles, readLibraryFile, removeLibraryFile, storeLibraryFile, updateLibraryFile, validateFileBindings } from "@/lib/files/library";
 import { MAX_FILE_DESCRIPTION_LENGTH, MAX_LIBRARY_FILE_BYTES, normalizeFileTags } from "@/lib/files/library-types";
 import { IntegrationAccessError, type IntegrationSession } from "./identity";
-import { FLOW_CAPABILITIES_BUILT } from "./flow-contract";
+import { codeForStatus, FLOW_CAPABILITIES_BUILT } from "./flow-contract";
+import { handleFlowRequest, isFlowPath } from "./explore-flow";
 
 /** Capabilities advertised by /info while the Explore module is on. */
 export const EXPLORE_INTEGRATION_CAPABILITIES = ["explore.files", "explore.datasets", "explore.reports", "explore.flows"] as const;
@@ -230,6 +231,10 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
   const [head, id, sub, subId] = segments;
   try {
     if (!(await isExploreModuleEnabled())) throw new ExploreRouteError(404, "Not found");
+
+    // The Flow redesign's routes (recipe, numbered runs, proposals, glosses, values, capsules).
+    const flowResponse = await handleFlowRequest({ request, session, segments, json });
+    if (flowResponse) return flowResponse;
 
     if (head === "scopes") {
       if (segments.length === 1 && method === "GET") return json({ scopes: await listFlowStudies(session) });
@@ -520,6 +525,7 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
           reportId: optionalString(body.reportId, 80), flowId: optionalString(body.flowId, 80), language: body.language === "r" ? "r" : "python", environmentName: optionalString(body.environmentName, 120),
           inputs: await parseBindings(body.inputs, targetKey), fileInputs: await validateFileBindings(body.fileInputs, targetKey),
           params: body.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : undefined, createdById: session.user.id,
+          createdByMemberId: session.integration.memberId || null,
         });
         return json({ analysis }, 201);
       }
@@ -544,7 +550,7 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
       }
       if (segments.length === 2 && method === "DELETE") {
         await loadAnalysis(session, id, "write");
-        await deleteAnalysis(id);
+        await deleteAnalysis(id, { userId: session.user.id, memberId: session.integration.memberId || null });
         return json({ ok: true });
       }
       if (segments.length === 3 && sub === "conversation" && (method === "GET" || method === "PUT")) {
@@ -583,7 +589,7 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
           inputs: body.inputs === undefined ? undefined : await parseBindings(body.inputs, analysis.targetKey),
           fileInputs: body.fileInputs === undefined ? undefined : await validateFileBindings(body.fileInputs, analysis.targetKey),
           // A client marks code the assistant drafted for the user as agent-written and keeps the request it came from.
-          author: body.author === "agent" ? "agent" : "user", authorUserId: session.user.id, message: optionalString(body.message, 500), prompt: body.author === "agent" ? optionalString(body.prompt, 4000) ?? null : null,
+          author: body.author === "agent" ? "agent" : "user", authorUserId: session.user.id, authorMemberId: session.integration.memberId || null, message: optionalString(body.message, 500), prompt: body.author === "agent" ? optionalString(body.prompt, 4000) ?? null : null,
         });
         return json({ revision }, 201);
       }
@@ -689,6 +695,7 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
     const known = statusOf(error);
     // Flow routes send a machine-readable code (SERVER-API "Flow (analysis service)"); older routes keep {error}.
     if (known && error instanceof ExploreRouteError && error.code) return json({ ...(error.extra ?? {}), error: known.message, code: error.code }, known.status);
+    if (known && isFlowPath(segments)) return json({ error: known.message, code: codeForStatus(known.status) }, known.status);
     if (known) return json({ error: known.message }, known.status);
     console.error("[Analysis integration] Flow request failed", error);
     return json({ error: "The Analysis service is unavailable." }, 503);

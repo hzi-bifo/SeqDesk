@@ -6,6 +6,8 @@ import { stepSlug } from "./variables";
 import { inputContractSnapshot, serializeInputs } from "./input-validation";
 import { generationSnapshot, type GenerationSnapshot } from "./report-generation";
 import { parseStoredFileBindings, type AnalysisFileBinding } from "@/lib/files/library-types";
+import { bumpRecipeRevision } from "./recipe-revision";
+import { keyBetween } from "./recipe-order";
 
 export type AnalysisLanguage = "python" | "r";
 
@@ -247,6 +249,14 @@ export interface CreateAnalysisInput {
   fileInputs?: AnalysisFileBinding[];
   params?: Record<string, unknown>;
   createdById: string;
+  /** The collaboration member who added the step (recipe revision author). */
+  createdByMemberId?: string | null;
+  /** Recipe placement when the step joins a flow; defaults to the end of the main lane. */
+  position?: string | null;
+  laneKind?: string | null;
+  laneOf?: string | null;
+  laneLabel?: string | null;
+  purpose?: string | null;
 }
 
 /**
@@ -289,6 +299,12 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
   // The stable guided-request id and its first revision commit together. A retry
   // can never observe an analysis that has lost its input/manifest snapshot.
   const write = async (client: Prisma.TransactionClient) => {
+  // A step joining a flow goes to the end of its recipe unless placed.
+  let position = input.position ?? "";
+  if (flowId && !position) {
+    const last = await client.exploreAnalysis.findFirst({ where: { flowId, position: { not: "" } }, orderBy: { position: "desc" }, select: { position: true } });
+    position = keyBetween(last?.position ?? "", null);
+  }
   const analysis = await client.exploreAnalysis.create({
     data: {
       ...(generation ? { id: generation.id } : {}),
@@ -302,6 +318,11 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
       language,
       environmentName,
       createdById: input.createdById,
+      position,
+      laneKind: input.laneKind ?? null,
+      laneOf: input.laneOf ?? null,
+      laneLabel: input.laneLabel ?? null,
+      purpose: input.purpose ?? null,
     },
   });
   const revision = await client.exploreAnalysisRevision.create({
@@ -319,6 +340,7 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
     },
   });
   await client.exploreAnalysis.update({ where: { id: analysis.id }, data: { currentRevisionId: revision.id } });
+  if (flowId) await bumpRecipeRevision(client, flowId, { userId: input.createdById, memberId: input.createdByMemberId }, `Added step ${name}`);
   const record = await client.exploreAnalysis.findUnique({ where: { id: analysis.id }, include: analysisInclude });
   if (!record) throw new Error("Analysis vanished after creation");
   return serializeAnalysis(record);
@@ -349,6 +371,7 @@ export interface CreateRevisionInput {
   fileInputs?: AnalysisFileBinding[];
   author: "user" | "agent";
   authorUserId: string;
+  authorMemberId?: string | null;
   message?: string | null;
   prompt?: string | null;
 }
@@ -394,6 +417,8 @@ export async function createRevision(input: CreateRevisionInput): Promise<Revisi
     },
   });
   await tx.exploreAnalysis.update({ where: { id: analysis.id }, data: { currentRevisionId: revision.id } });
+  // A new code or params revision of a step is a new recipe revision (D6).
+  if (analysis.flowId) await bumpRecipeRevision(tx, analysis.flowId, { userId: input.authorUserId, memberId: input.authorMemberId }, `${analysis.name}: revision ${revision.number}${input.message ? ` · ${input.message}` : ""}`);
   return serializeRevision(revision);
   });
 }
@@ -407,8 +432,16 @@ export async function updateAnalysis(id: string, data: { name?: string; descript
   return db.exploreAnalysis.update({ where: { id }, data });
 }
 
-export async function deleteAnalysis(id: string) {
-  await db.exploreAnalysis.delete({ where: { id } });
+export async function deleteAnalysis(id: string, actor?: { userId: string; memberId?: string | null }) {
+  await db.$transaction(async (tx) => {
+    const analysis = await tx.exploreAnalysis.findUnique({ where: { id }, select: { flowId: true, name: true, createdById: true } });
+    await tx.exploreAnalysis.delete({ where: { id } });
+    // Removing a step from a flow is a new recipe revision; lanes that hung off it move to the main lane.
+    if (analysis?.flowId) {
+      await tx.exploreAnalysis.updateMany({ where: { flowId: analysis.flowId, laneOf: id }, data: { laneOf: null, laneKind: null } });
+      await bumpRecipeRevision(tx, analysis.flowId, { userId: actor?.userId ?? analysis.createdById, memberId: actor?.memberId }, `Removed step ${analysis.name}`);
+    }
+  });
 }
 
 /** EXP-YYYYMMDD-NNN, unique per day. */

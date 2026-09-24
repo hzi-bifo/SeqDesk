@@ -31,6 +31,37 @@ export interface StartRunInput {
   /** Stable identity for guided and integration requests; validated at the boundary. */
   runId?: string;
   inputTokens?: Record<string, string>;
+  /** The numbered flow run this step run belongs to, with the step's label in it. */
+  flowRun?: {
+    id: string;
+    stepLabel: string;
+    trial: boolean;
+    /** Trial runs: keep the first N samples (by the sample role) of tables no step of the run wrote. */
+    sample?: number;
+    /** Trial runs: inputs read from an upstream trial step's output file instead of the database. */
+    fileInputs?: Record<string, { path: string; artifactId: string; name: string }>;
+    environmentDigest?: string | null;
+  };
+}
+
+/** Rows a trial keeps when a table has no sample role. */
+export const TRIAL_ROW_LIMIT = 2000;
+
+/** The rows a trial run sees: the first `samples` samples, or the first rows when there is no sample role. */
+export function trialRows<T extends { data: Record<string, ExploreCell> }>(rows: T[], sampleColumn: string | null, samples: number): T[] {
+  if (!sampleColumn) return rows.slice(0, TRIAL_ROW_LIMIT);
+  const kept = new Set<string>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const value = row.data[sampleColumn];
+    const key = value === null || value === undefined ? "" : String(value);
+    if (!kept.has(key)) {
+      if (kept.size >= samples) continue;
+      kept.add(key);
+    }
+    out.push(row);
+  }
+  return out;
 }
 
 export class ExploreRunError extends Error {
@@ -51,7 +82,7 @@ function tsvEscape(value: ExploreCell): string {
  * Stage one dataset version into the run folder as TSV plus schema. Curation
  * edits are applied so analyses see the curated data; excluded rows are gone.
  */
-async function stageInput(runFolder: string, alias: string, datasetId: string, versionId: string | null, expectedToken?: string) {
+async function stageInput(runFolder: string, alias: string, datasetId: string, versionId: string | null, expectedToken?: string, trialSamples?: number) {
   const dataset = await getDatasetRecord(datasetId);
   if (!dataset) throw new ExploreRunError(400, `Dataset ${datasetId} for input ${alias} no longer exists`);
   const version = versionId
@@ -64,7 +95,9 @@ async function stageInput(runFolder: string, alias: string, datasetId: string, v
   const schema = parseSchema(version.schema);
   const edits = await listActiveEdits(datasetId);
   if (expectedToken && inputToken(version.id, edits) !== expectedToken) throw new ExploreRunError(409, "The input data changed. Review it before running again.");
-  const rows = applyEditsToRows(await fetchAllDatasetRows(version.id), edits);
+  const roles = dataset.roles ? (JSON.parse(dataset.roles) as Record<string, string>) : {};
+  const allRows = applyEditsToRows(await fetchAllDatasetRows(version.id), edits);
+  const rows = trialSamples ? trialRows(allRows, roles.sample ?? null, trialSamples) : allRows;
   const columns = schema.columns.map((column) => column.key);
   const lines = [columns.join("\t")];
   for (const row of rows) lines.push(columns.map((key) => tsvEscape(row.data[key] ?? null)).join("\t"));
@@ -80,7 +113,6 @@ async function stageInput(runFolder: string, alias: string, datasetId: string, v
     "utf8"
   );
 
-  const roles = dataset.roles ? (JSON.parse(dataset.roles) as Record<string, string>) : {};
   return {
     path: relativePath,
     schemaPath: relativeSchemaPath,
@@ -89,9 +121,34 @@ async function stageInput(runFolder: string, alias: string, datasetId: string, v
     datasetId: dataset.id,
     versionId: version.id,
     versionNumber: version.number,
+    contentHash: version.contentHash,
     rowCount: rows.length,
     name: dataset.name,
     sensitivity: dataset.sensitivity,
+  };
+}
+
+/** Stage an upstream trial step's output file as an input: trials never write tables to the database. */
+async function stageTrialFileInput(runFolder: string, alias: string, source: { path: string; artifactId: string; name: string }, datasetId: string) {
+  const inputsDir = path.join(runFolder, "inputs");
+  await fs.mkdir(inputsDir, { recursive: true });
+  const text = await fs.readFile(source.path, "utf8");
+  const relativePath = path.posix.join("inputs", `${alias}.tsv`);
+  const relativeSchemaPath = path.posix.join("inputs", `${alias}.schema.json`);
+  await fs.writeFile(path.join(runFolder, relativePath), text, "utf8");
+  const dataset = await getDatasetRecord(datasetId);
+  const version = dataset?.currentVersionId ? await db.exploreDatasetVersion.findUnique({ where: { id: dataset.currentVersionId } }) : null;
+  const header = (text.split("\n", 1)[0] ?? "").split("\t").filter(Boolean);
+  // The table's known schema when it has one, else every column as text.
+  const known = version ? parseSchema(version.schema) : null;
+  const schema = known && header.every((key) => known.columns.some((column) => column.key === key))
+    ? known
+    : { columns: header.map((key) => ({ key, label: key, type: "string" })) };
+  await fs.writeFile(path.join(runFolder, relativeSchemaPath), JSON.stringify({ schema, provenance: { builder: "trial", sources: [{ type: "artifact", id: source.artifactId, label: source.name }] }, contentHash: null, editCount: 0 }, null, 2), "utf8");
+  const roles = dataset?.roles ? (JSON.parse(dataset.roles) as Record<string, string>) : {};
+  return {
+    path: relativePath, schemaPath: relativeSchemaPath, tableKind: dataset?.tableKind ?? null, roles, datasetId, versionId: null as string | null, versionNumber: null as number | null,
+    contentHash: null as string | null, rowCount: Math.max(0, text.split("\n").filter(Boolean).length - 1), name: source.name, sensitivity: dataset?.sensitivity ?? "standard",
   };
 }
 
@@ -142,10 +199,14 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     : analysis.revisions.find((entry) => entry.id === analysis.currentRevisionId) ?? analysis.revisions[0];
   if (!revision) throw new ExploreRunError(400, "The analysis has no revision to run");
 
-  let bindings;
+  let bindings: Awaited<ReturnType<typeof validateAnalysisInputs>>;
+  const trialFiles = input.flowRun?.fileInputs ?? {};
   try {
     const contract = inputContractSnapshot(revision.inputs) ?? (analysis.kitId ? (await getKit(analysis.kitId))?.manifest.inputs ?? null : null);
-    bindings = await validateAnalysisInputs(analysis.targetKey, parseInputBindings(revision.inputs), contract);
+    const declared = parseInputBindings(revision.inputs);
+    // Trial inputs that come from an upstream trial step are staged from its file; the rest are validated as usual.
+    const validated = await validateAnalysisInputs(analysis.targetKey, declared.filter((binding) => !trialFiles[binding.alias]), trialFiles && Object.keys(trialFiles).length ? null : contract);
+    bindings = declared.map((binding) => validated.find((entry) => entry.alias === binding.alias) ?? binding);
   } catch (error) {
     throw new ExploreRunError(400, error instanceof Error ? error.message : "Input validation failed.");
   }
@@ -176,6 +237,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
       status: "pending",
       executionMode: mode,
       createdById: input.createdById,
+      ...(input.flowRun ? { flowRunId: input.flowRun.id, stepLabel: input.flowRun.stepLabel, trial: input.flowRun.trial, environmentDigest: input.flowRun.environmentDigest ?? null } : {}),
     },
   });
   let run;
@@ -195,17 +257,23 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     const runFolder = await preparePipelineRunDirectory(storage.runsRoot, runNumber, run.id);
     await fs.mkdir(path.join(runFolder, "outputs"), { recursive: true });
 
-    const staged: Record<string, Awaited<ReturnType<typeof stageInput>>> = {};
+    const staged: Record<string, Awaited<ReturnType<typeof stageInput>> | Awaited<ReturnType<typeof stageTrialFileInput>>> = {};
     for (const binding of bindings) {
-      staged[binding.alias] = await stageInput(runFolder, binding.alias, binding.datasetId, binding.versionId, input.inputTokens?.[binding.datasetId]);
+      const trialFile = trialFiles[binding.alias];
+      staged[binding.alias] = trialFile
+        ? await stageTrialFileInput(runFolder, binding.alias, trialFile, binding.datasetId)
+        : await stageInput(runFolder, binding.alias, binding.datasetId, binding.versionId, input.inputTokens?.[binding.datasetId], input.flowRun?.trial ? input.flowRun.sample ?? 2 : undefined);
     }
+    // What the step read, pinned on the step run (and so on its flow run).
+    const inputPins = Object.entries(staged).map(([alias, entry]) => ({ alias, datasetId: entry.datasetId, versionId: entry.versionId, versionNumber: entry.versionNumber, contentHash: entry.contentHash, name: entry.name, rowCount: entry.rowCount }));
+    await db.exploreAnalysisRun.update({ where: { id: run.id }, data: { inputPins } });
     const params = JSON.parse(revision.params || "{}") as Record<string, unknown>;
     const inputsJson = {
       inputs: staged,
       files: await stageLibraryFileInputs(runFolder, analysis.targetKey, parseStoredFileBindings(revision.fileInputs)),
       params,
       outputDir: "outputs",
-      run: { id: run.id, runNumber, analysisId: analysis.id, analysisName: analysis.name, revision: revision.number },
+      run: { id: run.id, runNumber, analysisId: analysis.id, analysisName: analysis.name, revision: revision.number, ...(input.flowRun ? { flowRunId: input.flowRun.id, stepLabel: input.flowRun.stepLabel, trial: input.flowRun.trial } : {}) },
       curation: await curationForTarget(analysis.targetKey),
     };
     await fs.writeFile(path.join(runFolder, "inputs.json"), JSON.stringify(inputsJson, null, 2), "utf8");
