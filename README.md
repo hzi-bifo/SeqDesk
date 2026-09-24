@@ -760,9 +760,21 @@ citation after the SeqDesk paper is published.
 
 ## Generative AI disclosure
 
-Parts of the SeqDesk source code and documentation were generated with assistance
-from generative AI tools, including GPT (OpenAI) and Claude (Anthropic). The
-maintainers remain responsible for the software and its documentation.
+SeqDesk was developed with the assistance of generative AI tools. Parts of the
+source code, tests, and user and developer documentation (including
+[seqdesk.org/docs](https://seqdesk.org/docs)) were generated with LLM-based coding
+agents, primarily [Claude Code](https://claude.com/claude-code) (Anthropic,
+Claude models) and [Codex](https://openai.com/codex) (OpenAI, GPT models).
+
+The maintainers designed the software architecture, specified the functionality,
+and reviewed all AI-generated code and documentation before inclusion. The
+software is validated through automated unit, integration, and end-to-end tests
+run in continuous integration (see [CONTRIBUTING.md](./CONTRIBUTING.md) and
+[Installation compatibility](./INSTALLATION_COMPATIBILITY.md)), and through manual
+testing on the supported deployment environments. The maintainers take full
+responsibility for the software and its documentation; AI tools are not credited
+as authors. This follows the
+[ISCB policy on acceptable use of large language models](https://www.iscb.org/iscb-policy-statements/iscb-policy-for-acceptable-use-of-large-language-models).
 
 ## License
 
