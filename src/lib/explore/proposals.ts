@@ -22,7 +22,8 @@ export function serializeProposal(proposal: ProposalRecord) {
     values: proposal.values, text: proposal.text, analysisId: proposal.analysisId, glossId: proposal.glossId, flowRunId: proposal.flowRunId,
     goal: proposal.goal, origin: proposal.origin, requestedBy: { userId: proposal.requestedById, memberId: proposal.requestedByMemberId },
     activityId: proposal.activityId, acceptedById: proposal.acceptedById, acceptedAnalysisId: proposal.acceptedAnalysisId, acceptedFindingId: proposal.acceptedFindingId,
-    discardReason: proposal.discardReason, createdAt: proposal.createdAt.toISOString(), updatedAt: proposal.updatedAt.toISOString(),
+    discardReason: proposal.discardReason, proposedByTurnId: proposal.proposedByTurnId, revision: proposal.revision, revisedByTurnId: proposal.revisedByTurnId,
+    history: proposal.history, createdAt: proposal.createdAt.toISOString(), updatedAt: proposal.updatedAt.toISOString(),
   };
 }
 
@@ -95,6 +96,8 @@ export interface CreateProposalsInput {
   origin?: unknown;
   activityId?: unknown;
   items: unknown;
+  /** The conversation turn that proposed these (a `proposal` turn of this flow). */
+  proposedByTurnId?: unknown;
   actor: RecipeActor;
 }
 
@@ -107,6 +110,11 @@ export async function createProposals(flowId: string, input: CreateProposalsInpu
   const stepIds = new Set(model.steps.map((step) => step.id));
   const origin = input.origin === undefined || input.origin === null ? null : input.origin as { kind?: unknown; ref?: unknown };
   if (origin && (!["goal", "placeholder", "output"].includes(String(origin.kind)) || typeof origin.ref !== "string" || origin.ref.length > 500)) throw flowError("invalid_request", 'origin must be {kind:"goal"|"placeholder"|"output", ref}.');
+  const proposedByTurnId = short(input.proposedByTurnId, 80);
+  if (proposedByTurnId) {
+    const turn = await db.exploreFlowTurn.findUnique({ where: { id: proposedByTurnId }, select: { flowId: true } });
+    if (!turn || turn.flowId !== flowId) throw flowError("invalid_request", "proposedByTurnId must be a turn of this flow's conversation.");
+  }
   const ordered = sortSteps(model.steps);
   let previousKey: string | null = null;
   const rows: Prisma.ExploreStepProposalUncheckedCreateInput[] = [];
@@ -144,7 +152,7 @@ export async function createProposals(flowId: string, input: CreateProposalsInpu
       flowId, kind, state: "pending", afterAnalysisId: after, laneOf, position,
       analysisId: kind === "methods" ? analysisId : kind === "gloss-rewrite" ? (await db.exploreGloss.findUnique({ where: { id: glossId! }, select: { analysisId: true } }))!.analysisId : analysisId,
       glossId, flowRunId, goal: short(input.goal, 2000), origin: origin ? (origin as Prisma.InputJsonValue) : undefined,
-      requestedById: input.actor.userId, requestedByMemberId: input.actor.memberId ?? null, activityId: short(input.activityId, 128),
+      requestedById: input.actor.userId, requestedByMemberId: input.actor.memberId ?? null, activityId: short(input.activityId, 128), proposedByTurnId,
     });
   }
   const created = await db.$transaction(rows.map((data) => db.exploreStepProposal.create({ data })));
@@ -166,6 +174,16 @@ async function pendingOrThrow(id: string) {
 export async function patchProposal(id: string, body: Record<string, unknown>): Promise<Proposal> {
   const proposal = await pendingOrThrow(id);
   const data = proposalFields(body, true);
+  // A revision after an answer in the conversation: number it, link the turn, keep what it said before.
+  const revisedByTurnId = short(body.revisedByTurnId, 80);
+  if (revisedByTurnId) {
+    const turn = await db.exploreFlowTurn.findUnique({ where: { id: revisedByTurnId }, select: { flowId: true } });
+    if (!turn || turn.flowId !== proposal.flowId) throw flowError("invalid_request", "revisedByTurnId must be a turn of this flow's conversation.");
+    const history = Array.isArray(proposal.history) ? proposal.history : [];
+    data.history = [...history, { revision: proposal.revision, assumes: proposal.assumes, why: proposal.why, purpose: proposal.purpose, revisedByTurnId: proposal.revisedByTurnId, at: proposal.updatedAt.toISOString() }].slice(-50) as Prisma.InputJsonValue;
+    data.revision = proposal.revision + 1;
+    data.revisedByTurnId = revisedByTurnId;
+  }
   if ("afterStepId" in body) {
     const after = short(body.afterStepId, 80);
     const model = await loadRecipe(proposal.flowId);
@@ -226,6 +244,8 @@ export async function acceptProposal(id: string, edits: Record<string, unknown> 
         inputs: await stepInputsOf(current.inputs), params: (current.params as Record<string, unknown> | null) ?? undefined, actor,
       });
       await db.exploreStepProposal.update({ where: { id }, data: { acceptedAnalysisId: stepId } });
+      // "Why this step": the step keeps the turn that proposed it.
+      if (current.proposedByTurnId) await db.exploreAnalysis.update({ where: { id: stepId }, data: { proposedByTurnId: current.proposedByTurnId } });
       return { proposal: serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!), stepId };
     }
     if (current.kind === "finding") {

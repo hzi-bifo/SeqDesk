@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   flowFind: vi.fn(), flowRunFind: vi.fn(), requireAccess: vi.fn(), moduleEnabled: vi.fn(),
   createProposals: vi.fn(), discardProposal: vi.fn(), acceptProposal: vi.fn(), proposalFind: vi.fn(), analysisFind: vi.fn(), glossRecord: vi.fn(), listGlosses: vi.fn(), putGlosses: vi.fn(), deleteGloss: vi.fn(),
   addHold: vi.fn(), listHolds: vi.fn(), removeHold: vi.fn(),
+  readConversation: vi.fn(), postTurn: vi.fn(), updateAssistantTurn: vi.fn(), answerQuestion: vi.fn(), waitForTurns: vi.fn(),
   flowValues: vi.fn(), resolveValues: vi.fn(), outputLineage: vi.fn(), requestCapsule: vi.fn(), artifactFind: vi.fn(), capsuleFind: vi.fn(),
   getRecipeView: vi.fn(), applyRecipeOps: vi.fn(), addStep: vi.fn(), stepOptions: vi.fn(), listRecipeRevisions: vi.fn(), resolveAccess: vi.fn(), scopeFind: vi.fn(),
   startFlowRun: vi.fn(), listFlowRuns: vi.fn(), getFlowRunDetail: vi.fn(), cancelFlowRun: vi.fn(), makeRunCurrent: vi.fn(), compareFlowRuns: vi.fn(), flowRunOutputs: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock("@/lib/explore/recipe-edit", async () => ({ ...(await vi.importActual<ob
 vi.mock("@/lib/explore/proposals", () => ({ pendingProposals: vi.fn().mockResolvedValue([]), createProposals: mocks.createProposals, listProposals: vi.fn(), patchProposal: vi.fn(), discardProposal: mocks.discardProposal, acceptProposal: mocks.acceptProposal }));
 vi.mock("@/lib/explore/glosses", () => ({ glossRecord: mocks.glossRecord, listGlosses: mocks.listGlosses, putGlosses: mocks.putGlosses, patchGloss: vi.fn(), acceptGloss: vi.fn(), deleteGloss: mocks.deleteGloss }));
 vi.mock("@/lib/explore/capsules", () => ({ outputLineage: mocks.outputLineage, plotSource: vi.fn(), requestCapsule: mocks.requestCapsule, serializeCapsule: (capsule: unknown) => capsule }));
+vi.mock("@/lib/explore/conversation", () => ({ readConversation: mocks.readConversation, postTurn: mocks.postTurn, updateAssistantTurn: mocks.updateAssistantTurn, answerQuestion: mocks.answerQuestion, waitForTurns: mocks.waitForTurns }));
 vi.mock("@/lib/explore/values", () => ({ flowValues: mocks.flowValues, resolveValues: mocks.resolveValues }));
 vi.mock("@/lib/explore/flow-runs", () => ({
   startFlowRun: mocks.startFlowRun, listFlowRuns: mocks.listFlowRuns, getFlowRunDetail: mocks.getFlowRunDetail, cancelFlowRun: mocks.cancelFlowRun,
@@ -215,5 +217,31 @@ describe("Flow capsule routes", () => {
     mocks.capsuleFind.mockResolvedValue({ id: "c1", flowRunId: "r1", status: "building", path: null });
     expect((await call("GET", "capsules/c1")).body.capsule.status).toBe("building");
     expect((await call("GET", "capsules/c1/download")).body).toEqual({ error: "The capsule is not ready.", code: "not_found" });
+  });
+});
+
+describe("Flow conversation routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.moduleEnabled.mockResolvedValue(true);
+    mocks.flowFind.mockResolvedValue({ id: "f1", targetKey: "project:p1", name: "DE" });
+    mocks.requireAccess.mockResolvedValue({ type: "project", id: "p1" });
+  });
+
+  it("reads pages, long-polls, posts, closes turns and answers questions with the flow's access", async () => {
+    mocks.readConversation.mockResolvedValue({ version: 9, turns: [], total: 2, hasMore: false, nextBefore: null });
+    expect((await call("GET", "flows/f1/conversation?stepId=s3&before=40&limit=20")).body.total).toBe(2);
+    expect(mocks.readConversation).toHaveBeenCalledWith("f1", { before: 40, after: null, limit: 20, stepId: "s3" });
+    await call("GET", "flows/f1/conversation?after=9&wait=5");
+    expect(mocks.waitForTurns).toHaveBeenCalledWith("f1", 9, 5000, expect.anything());
+    mocks.postTurn.mockResolvedValue({ turn: { id: "t1" }, version: 10 });
+    expect((await call("POST", "flows/f1/conversation/turns", { kind: "goal", text: "x" })).status).toBe(201);
+    expect(mocks.postTurn).toHaveBeenCalledWith("f1", { kind: "goal", text: "x" }, expect.objectContaining({ userId: "u1", memberId: "m1", admin: expect.any(Boolean) }));
+    mocks.updateAssistantTurn.mockResolvedValue({ id: "t1", status: "stopped" });
+    expect((await call("PATCH", "flows/f1/conversation/turns/t1", { status: "stopped" })).body.turn.status).toBe("stopped");
+    mocks.answerQuestion.mockRejectedValue(flowError("question_answered", "Someone answered this question first.", { answer: { optionId: "yes" } }));
+    expect(await call("POST", "flows/f1/conversation/questions/q1/answer", { optionId: "no" })).toEqual({ status: 409, body: { error: "Someone answered this question first.", code: "question_answered", answer: { optionId: "yes" } } });
+    mocks.requireAccess.mockRejectedValue(new ExploreAuthorizationError(404, "Not found"));
+    expect((await call("GET", "flows/f1/conversation")).body.code).toBe("not_found");
   });
 });

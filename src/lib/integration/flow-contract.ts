@@ -18,11 +18,12 @@ export const FLOW_CAPABILITIES = [
   "explore.events",
   "explore.projects",
   "explore.private",
+  "explore.flow-conversation",
 ] as const;
 export type FlowCapability = (typeof FLOW_CAPABILITIES)[number];
 
 /** The Flow capabilities this build implements; `explore.events` is added at runtime when pushing is configured. */
-export const FLOW_CAPABILITIES_BUILT: readonly FlowCapability[] = ["explore.recipe", "explore.ledger", "explore.flow-runs", "explore.proposals", "explore.glosses", "explore.values", "explore.events", "explore.capsules", "explore.projects", "explore.private"];
+export const FLOW_CAPABILITIES_BUILT: readonly FlowCapability[] = ["explore.recipe", "explore.ledger", "explore.flow-runs", "explore.proposals", "explore.glosses", "explore.values", "explore.events", "explore.capsules", "explore.projects", "explore.private", "explore.flow-conversation"];
 
 export const FLOW_ERROR_CODES = [
   "invalid_request",
@@ -38,6 +39,9 @@ export const FLOW_ERROR_CODES = [
   "incompatible",
   "output_not_ready",
   "region_mismatch",
+  "conversation_conflict",
+  "question_answered",
+  "turn_closed",
 ] as const;
 export type FlowErrorCode = (typeof FLOW_ERROR_CODES)[number];
 
@@ -55,6 +59,9 @@ const DEFAULT_STATUS: Record<FlowErrorCode, number> = {
   incompatible: 422,
   output_not_ready: 422,
   region_mismatch: 422,
+  conversation_conflict: 409,
+  question_answered: 409,
+  turn_closed: 409,
 };
 
 /** A Flow API error: `{error, code, ...extra}` with the code's HTTP status. */

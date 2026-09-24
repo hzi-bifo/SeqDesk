@@ -1138,13 +1138,64 @@ model ExploreFlow {
   layout            Json?   // {nodes:{<id>:{x,y}}, groups:[{id,name,stepIds,collapsed}], snap}
   headlineValue     String? // <stepId>.<metricKey>
   createdByMemberId String?
+  conversationVersion Int   @default(0) // the seq of the newest conversation turn
 
   analyses  ExploreAnalysis[] // the analysis steps on this flow's canvas
   revisions ExploreFlowRevision[]
   runs      ExploreFlowRun[]
   proposals ExploreStepProposal[]
+  turns     ExploreFlowTurn[]
+  questions ExploreFlowQuestion[]
 
   @@index([targetKey])
+}
+
+// One turn of a flow's shared conversation (sheet 46), seen by everyone who
+// can open the flow. Assistant turns are written by the web client, which runs
+// the model through the collaboration server; SeqDesk never calls a model.
+model ExploreFlowTurn {
+  id                  String   @id @default(cuid())
+  flowId              String
+  seq                 Int      // 1, 2, ... per flow; the conversation version after this turn
+  kind                String   // goal | proposal | question | answer | revision | message | check
+  authorKind          String   // person | assistant
+  authorUserId        String
+  authorMemberId      String?
+  authorName          String?
+  requestedByMemberId String?  // assistant turns: the member whose request it answers
+  stepIds             String[] @default([])
+  text                String?
+  data                Json?    // kind-specific: proposalIds, question, answer, revision, check
+  model               String?
+  inputsLabel         String?
+  status              String?  // assistant turns: working | done | stopped | failed
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  flow ExploreFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@unique([flowId, seq])
+}
+
+// A question the assistant asked in the conversation; one answer closes it.
+model ExploreFlowQuestion {
+  id                 String    @id @default(cuid())
+  flowId             String
+  turnId             String    @unique
+  stepId             String?
+  text               String
+  options            Json      @default("[]") // [{id, label}]
+  answeredByUserId   String?
+  answeredByMemberId String?
+  answeredAt         DateTime?
+  answerTurnId       String?
+  answerOptionId     String?
+  answerText         String?
+  createdAt          DateTime  @default(now())
+
+  flow ExploreFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@index([flowId])
 }
 
 // A snapshot of a flow's recipe, written with every structural change.
@@ -1248,6 +1299,11 @@ model ExploreStepProposal {
   acceptedFindingId   String?
   discardReason       String?
   trialRunId          String?
+  // Conversation provenance: the turn that proposed it, and its revisions after answers.
+  proposedByTurnId    String?
+  revision            Int      @default(1)
+  revisedByTurnId     String?
+  history             Json     @default("[]") // [{revision, assumes, why, purpose, revisedByTurnId, at}]
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -1382,6 +1438,7 @@ model ExploreAnalysis {
   purpose           String?  // one line, <= 200
   paramMeta         Json?    // {<key>: {label, unit, min, max, usual, options, meaning, consequence, phrase}}
   methodsSentence   Json?    // {text, tokens, revisionId, author, acceptedById, acceptedAt}
+  proposedByTurnId  String?  // the conversation turn whose proposal became this step
 
   createdBy User                      @relation("ExploreAnalysisCreator", fields: [createdById], references: [id])
   report    ExploreReport?            @relation(fields: [reportId], references: [id], onDelete: Cascade)

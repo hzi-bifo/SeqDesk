@@ -6,7 +6,8 @@
  */
 import type { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { requireTargetAccess, resolveTargetAccess } from "@/lib/explore/authorization";
+import { canManageExplore, requireTargetAccess, resolveTargetAccess } from "@/lib/explore/authorization";
+import { answerQuestion, postTurn, readConversation, updateAssistantTurn, waitForTurns, type ConversationActor } from "@/lib/explore/conversation";
 import { addStep, applyRecipeOps, listRecipeRevisions, parseRecipeOps, stepOptions, type AddStepInput } from "@/lib/explore/recipe-edit";
 import { getRecipeView } from "@/lib/explore/recipe-view";
 import { acceptProposal, createProposals, discardProposal, listProposals, patchProposal, pendingProposals } from "@/lib/explore/proposals";
@@ -148,7 +149,7 @@ async function handleRuns({ request, session, segments, json }: FlowRouteContext
 
 const FLOW_HEADS = new Set(["flow-runs", "proposals", "glosses", "values", "capsules", "templates"]);
 const FLOW_SUBS: Record<string, Set<string>> = {
-  flows: new Set(["recipe", "runs", "revisions", "step-options", "steps", "proposals", "values", "lineage", "from-template"]),
+  flows: new Set(["recipe", "runs", "revisions", "step-options", "steps", "proposals", "values", "lineage", "from-template", "conversation"]),
   analyses: new Set(["glosses"]),
   artifacts: new Set(["capsule", "plot-source"]),
 };
@@ -267,7 +268,7 @@ async function handleProposals({ request, session, segments, json }: FlowRouteCo
     if (method === "POST") {
       await flowFor(session, id, "write");
       const body = await readBody(request);
-      return json({ proposals: await createProposals(id, { kind: body.kind, goal: body.goal, origin: body.origin, activityId: body.activityId, items: body.items, actor: actorOf(session) }) }, 201);
+      return json({ proposals: await createProposals(id, { kind: body.kind, goal: body.goal, origin: body.origin, activityId: body.activityId, items: body.items, proposedByTurnId: body.proposedByTurnId, actor: actorOf(session) }) }, 201);
     }
   }
   if (head !== "proposals") return null;
@@ -407,8 +408,43 @@ async function handleCapsules({ request, session, segments, json }: FlowRouteCon
   return null;
 }
 
+function conversationActor(session: IntegrationSession): ConversationActor {
+  return { ...actorOf(session), admin: canManageExplore(session) };
+}
+
+const whole = (value: string | null): number | null => (value !== null && /^\d{1,9}$/.test(value) ? Number(value) : null);
+
+/** The flow's shared conversation (`explore.flow-conversation`); access follows the flow. */
+async function handleConversation({ request, session, segments, json }: FlowRouteContext): Promise<Response | null> {
+  const [head, id, sub, part, partId, action] = segments;
+  if (head !== "flows" || sub !== "conversation") return null;
+  const method = request.method;
+  const query = request.nextUrl.searchParams;
+  if (segments.length === 3 && method === "GET") {
+    await flowFor(session, id, "read");
+    const after = whole(query.get("after"));
+    const wait = whole(query.get("wait"));
+    // Long-poll: with after= and wait=<seconds>, answer as soon as a newer turn exists.
+    if (after !== null && wait) await waitForTurns(id, after, wait * 1000, request.signal);
+    return json(await readConversation(id, { before: whole(query.get("before")), after, limit: whole(query.get("limit")) ?? undefined, stepId: query.get("stepId") }));
+  }
+  if ((segments.length === 3 || (segments.length === 4 && part === "turns")) && method === "POST") {
+    await flowFor(session, id, "read");
+    return json(await postTurn(id, await readBody(request), conversationActor(session)), 201);
+  }
+  if (segments.length === 5 && part === "turns" && method === "PATCH") {
+    await flowFor(session, id, "read");
+    return json({ turn: await updateAssistantTurn(id, partId, await readBody(request), conversationActor(session)) });
+  }
+  if (segments.length === 6 && part === "questions" && action === "answer" && method === "POST") {
+    await flowFor(session, id, "read");
+    return json(await answerQuestion(id, partId, await readBody(request), conversationActor(session)), 201);
+  }
+  return null;
+}
+
 type Handler = (context: FlowRouteContext) => Promise<Response | null>;
-const handlers: Handler[] = [handleRecipe, handleRuns, handleProposals, handleGlosses, handleValues, handleCapsules];
+const handlers: Handler[] = [handleConversation, handleRecipe, handleRuns, handleProposals, handleGlosses, handleValues, handleCapsules];
 
 /** The Flow routes; null when the path is not one of them. */
 export async function handleFlowRequest(context: FlowRouteContext): Promise<Response | null> {

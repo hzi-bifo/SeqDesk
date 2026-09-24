@@ -256,6 +256,7 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
       } : null,
       glossSummary: { count: own.length, pencil: own.filter((gloss) => gloss.state === "pencil").length, stale: own.filter((gloss) => !regions.has(gloss.regionHash)).length },
       methodsSentence: step.methodsSentence ?? null,
+      proposedByTurnId: step.proposedByTurnId,
     };
   });
 

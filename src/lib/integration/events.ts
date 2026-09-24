@@ -118,14 +118,16 @@ export function boundedPayload(payload: Record<string, unknown>): Record<string,
 // ---------------------------------------------------------------------------
 
 export async function flowRecord(flowId: string, updatedAt = stamp()): Promise<Omit<ComputeRecord, "projectId" | "visibleTo"> | null> {
-  const flow = await db.exploreFlow.findUnique({ where: { id: flowId }, select: { id: true, name: true, recipeRevision: true, currentRunId: true, createdAt: true, _count: { select: { analyses: true } } } });
+  const flow = await db.exploreFlow.findUnique({ where: { id: flowId }, select: { id: true, name: true, recipeRevision: true, currentRunId: true, conversationVersion: true, createdAt: true, _count: { select: { analyses: true } } } });
   if (!flow || !SEGMENT.test(flow.id)) return null;
   const steps = flow._count.analyses;
+  const last = flow.conversationVersion ? await db.exploreFlowTurn.findFirst({ where: { flowId }, orderBy: { seq: "desc" }, select: { id: true, kind: true, createdAt: true, updatedAt: true } }) : null;
+  const conversation = { version: flow.conversationVersion, lastTurn: last ? { id: last.id, kind: last.kind, at: last.createdAt.getTime(), updatedAt: last.updatedAt.getTime() } : null };
   return {
     ref: `labdesk://flow/${flow.id}`, kind: "flow", title: clip(flow.name || "Flow", 200),
     subtitle: clip(`Recipe rev ${flow.recipeRevision} · ${steps} step${steps === 1 ? "" : "s"}`, 280), state: flow.currentRunId ? "current" : "",
     progress: { done: 0, total: 0, current: "" }, flowRef: "", at: flow.createdAt.getTime(), updatedAt,
-    payload: { recipeRevision: flow.recipeRevision, stepCount: steps, currentRunId: flow.currentRunId },
+    payload: { recipeRevision: flow.recipeRevision, stepCount: steps, currentRunId: flow.currentRunId, conversation },
   };
 }
 
@@ -157,6 +159,15 @@ export async function prepareFlowRemoval(flowId: string, targetKey: string): Pro
 async function enqueueFlowRemoval(flowId: string, audiences: Audience[], runIds: string[]): Promise<void> {
   const refs = [`labdesk://flow/${flowId}`, ...runIds.map((id) => `labdesk://run/${id}`)].filter((ref) => SEGMENT.test(ref.split("/").pop() ?? ""));
   await enqueue(audiences.flatMap((audience) => refs.map((ref) => ({ id: `del:${audience.workspaceId}:${ref}@${stamp()}`, kind: "record" as const, target: "records" as const, audience, payload: { removed: ref } }))));
+}
+
+/**
+ * The `turn` event: a new or changed conversation turn refreshes the flow's
+ * record, whose payload carries the conversation version, so viewers that
+ * follow records learn of it; clients of this service long-poll instead.
+ */
+export async function enqueueConversationTurn(flowId: string): Promise<void> {
+  await enqueueFlowRecord(flowId);
 }
 
 function runTitle(number: number | null, flowName: string): string {

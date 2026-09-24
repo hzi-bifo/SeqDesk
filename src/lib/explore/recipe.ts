@@ -39,6 +39,7 @@ export interface RecipeStep {
   groupId: string | null;
   paramMeta: unknown;
   methodsSentence: unknown;
+  proposedByTurnId: string | null;
   createdAt: Date;
   currentRevisionId: string | null;
   revision: RecipeRevisionRecord | null;
@@ -127,7 +128,7 @@ export async function loadRecipe(flowId: string, client: Client = db): Promise<R
     return {
       id: analysis.id, name: analysis.name, description: analysis.description, purpose: analysis.purpose, kitId: analysis.kitId, language: analysis.language,
       environmentName: analysis.environmentName, position: analysis.position, laneKind: analysis.laneKind, laneOf: analysis.laneOf, laneLabel: analysis.laneLabel,
-      groupId: analysis.groupId, paramMeta: analysis.paramMeta, methodsSentence: analysis.methodsSentence, createdAt: analysis.createdAt,
+      groupId: analysis.groupId, paramMeta: analysis.paramMeta, methodsSentence: analysis.methodsSentence, proposedByTurnId: analysis.proposedByTurnId, createdAt: analysis.createdAt,
       currentRevisionId: analysis.currentRevisionId,
       revision: revision ? { ...revision, codeHash: revision.codeHash || codeHashOf(revision.code) } : null,
       bindings: parseInputBindings(revision?.inputs),

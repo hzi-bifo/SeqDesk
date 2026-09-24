@@ -588,7 +588,19 @@ export async function addHold(flowRunId: string, kind: unknown, key: unknown, ac
   if (!run) throw flowError("not_found", "Run not found");
   if (run.kind === "trial") throw flowError("invalid_request", "Trial runs cannot be marked or cited.");
   if (kind === "writer" && !key.startsWith(`labdesk://value/${flowRunId}/`) && !key.startsWith(`labdesk://output/${flowRunId}/`)) throw flowError("invalid_request", "A Writer hold names a value or output of this run.");
-  await db.exploreRunHold.upsert({ where: { flowRunId_kind_key: { flowRunId, kind, key } }, update: {}, create: { flowRunId, kind, key, memberId: actor.memberId ?? null, createdById: actor.userId } });
+  const existing = await db.exploreRunHold.findUnique({ where: { flowRunId_kind_key: { flowRunId, kind, key } }, select: { id: true } });
+  if (!existing) {
+    try {
+      await db.exploreRunHold.create({ data: { flowRunId, kind, key, memberId: actor.memberId ?? null, createdById: actor.userId } });
+      // A person's mark shows in the flow's conversation as a check turn.
+      if (kind === "check") {
+        const { appendCheckTurn } = await import("./conversation");
+        await appendCheckTurn(flowRunId, key, actor);
+      }
+    } catch (error) {
+      if (!(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002")) throw error;
+    }
+  }
   return listHolds(flowRunId);
 }
 
