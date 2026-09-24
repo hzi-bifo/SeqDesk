@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   flowFind: vi.fn(), flowRunFind: vi.fn(), requireAccess: vi.fn(), moduleEnabled: vi.fn(),
+  createProposals: vi.fn(), discardProposal: vi.fn(), acceptProposal: vi.fn(), proposalFind: vi.fn(), analysisFind: vi.fn(), glossRecord: vi.fn(), listGlosses: vi.fn(), putGlosses: vi.fn(), deleteGloss: vi.fn(),
   getRecipeView: vi.fn(), applyRecipeOps: vi.fn(), addStep: vi.fn(), stepOptions: vi.fn(), listRecipeRevisions: vi.fn(), resolveAccess: vi.fn(), scopeFind: vi.fn(),
   startFlowRun: vi.fn(), listFlowRuns: vi.fn(), getFlowRunDetail: vi.fn(), cancelFlowRun: vi.fn(), makeRunCurrent: vi.fn(), compareFlowRuns: vi.fn(), flowRunOutputs: vi.fn(),
 }));
-vi.mock("@/lib/db", () => ({ db: { exploreFlow: { findUnique: mocks.flowFind }, exploreFlowRun: { findUnique: mocks.flowRunFind }, integrationExploreScope: { findFirst: mocks.scopeFind } } }));
+vi.mock("@/lib/db", () => ({ db: { exploreFlow: { findUnique: mocks.flowFind }, exploreFlowRun: { findUnique: mocks.flowRunFind }, integrationExploreScope: { findFirst: mocks.scopeFind }, exploreStepProposal: { findUnique: mocks.proposalFind }, exploreAnalysis: { findUnique: mocks.analysisFind } } }));
 vi.mock("@/lib/explore/module", () => ({ isExploreModuleEnabled: mocks.moduleEnabled }));
 vi.mock("@/lib/explore/authorization", async () => {
   const actual = await vi.importActual<typeof import("@/lib/explore/authorization")>("@/lib/explore/authorization");
@@ -13,7 +14,8 @@ vi.mock("@/lib/explore/authorization", async () => {
 });
 vi.mock("@/lib/explore/recipe-view", async () => ({ ...(await vi.importActual<object>("@/lib/explore/recipe-view")), getRecipeView: mocks.getRecipeView }));
 vi.mock("@/lib/explore/recipe-edit", async () => ({ ...(await vi.importActual<object>("@/lib/explore/recipe-edit")), applyRecipeOps: mocks.applyRecipeOps, addStep: mocks.addStep, stepOptions: mocks.stepOptions, listRecipeRevisions: mocks.listRecipeRevisions }));
-vi.mock("@/lib/explore/proposals", () => ({ pendingProposals: vi.fn().mockResolvedValue([]) }));
+vi.mock("@/lib/explore/proposals", () => ({ pendingProposals: vi.fn().mockResolvedValue([]), createProposals: mocks.createProposals, listProposals: vi.fn(), patchProposal: vi.fn(), discardProposal: mocks.discardProposal, acceptProposal: mocks.acceptProposal }));
+vi.mock("@/lib/explore/glosses", () => ({ glossRecord: mocks.glossRecord, listGlosses: mocks.listGlosses, putGlosses: mocks.putGlosses, patchGloss: vi.fn(), acceptGloss: vi.fn(), deleteGloss: mocks.deleteGloss }));
 vi.mock("@/lib/explore/flow-runs", () => ({
   startFlowRun: mocks.startFlowRun, listFlowRuns: mocks.listFlowRuns, getFlowRunDetail: mocks.getFlowRunDetail, cancelFlowRun: mocks.cancelFlowRun,
   makeRunCurrent: mocks.makeRunCurrent, compareFlowRuns: mocks.compareFlowRuns, flowRunOutputs: mocks.flowRunOutputs,
@@ -119,5 +121,44 @@ describe("Flow recipe routes", () => {
     const response = await call("GET", "templates");
     expect(response.body.templates.map((template: { id: string }) => template.id)).toEqual(["rnaseq-de", "survey-likert"]);
     expect(response.body.templates[0].slots[0]).toMatchObject({ key: "gene", kind: "column" });
+  });
+});
+
+describe("Flow proposal and gloss routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.moduleEnabled.mockResolvedValue(true);
+    mocks.flowFind.mockResolvedValue({ id: "f1", targetKey: "project:p1", name: "DE" });
+    mocks.requireAccess.mockResolvedValue({ type: "project", id: "p1" });
+    mocks.resolveAccess.mockResolvedValue({ level: "write", target: { type: "project", id: "p1" } });
+    mocks.scopeFind.mockResolvedValue(null);
+    mocks.getRecipeView.mockResolvedValue({ steps: [{ id: "s5" }] });
+  });
+
+  it("stores proposals for the caller and accepts them into steps", async () => {
+    mocks.createProposals.mockResolvedValue([{ id: "p1" }]);
+    const created = await call("POST", "flows/f1/proposals", { kind: "step", goal: "Which genes change?", items: [{ purpose: "Test", code: "x" }] });
+    expect(created).toEqual({ status: 201, body: { proposals: [{ id: "p1" }] } });
+    expect(mocks.createProposals.mock.calls[0][1]).toMatchObject({ kind: "step", goal: "Which genes change?", actor: { userId: "u1", memberId: "m1" } });
+    mocks.proposalFind.mockResolvedValue({ id: "p1", flowId: "f1" });
+    mocks.acceptProposal.mockResolvedValue({ proposal: { id: "p1", kind: "step" }, stepId: "s5" });
+    expect((await call("POST", "proposals/p1/accept", { edits: { name: "Test genes" }, expectedRevision: 3 })).body).toEqual({ proposal: { id: "p1", kind: "step" }, step: { id: "s5" }, recipe: { steps: [{ id: "s5" }] } });
+    expect(mocks.acceptProposal).toHaveBeenCalledWith("p1", { name: "Test genes" }, 3, expect.objectContaining({ userId: "u1" }));
+    mocks.discardProposal.mockResolvedValue({ id: "p1", state: "discarded" });
+    expect((await call("POST", "proposals/p1/discard", { reason: "no" })).body.proposal.state).toBe("discarded");
+    mocks.proposalFind.mockResolvedValue(null);
+    expect((await call("POST", "proposals/p9/discard")).body.code).toBe("not_found");
+  });
+
+  it("reads and replaces a step's glosses with the step's access", async () => {
+    mocks.analysisFind.mockResolvedValue({ targetKey: "project:p1" });
+    mocks.listGlosses.mockResolvedValue({ revisionId: "r1", regions: [], glosses: [] });
+    expect((await call("GET", "analyses/a1/glosses?revision=r1")).body.revisionId).toBe("r1");
+    expect(mocks.listGlosses).toHaveBeenCalledWith("a1", "r1");
+    mocks.putGlosses.mockResolvedValue({ revisionId: "r1", regions: [], glosses: [{ id: "g1" }] });
+    expect((await call("PUT", "analyses/a1/glosses", { revisionId: "r1", glosses: [] })).body.glosses).toEqual([{ id: "g1" }]);
+    expect(mocks.requireAccess).toHaveBeenLastCalledWith(session, "project:p1", "write");
+    mocks.glossRecord.mockResolvedValue({ id: "g1", analysis: { targetKey: "project:p1" } });
+    expect((await call("DELETE", "glosses/g1")).body).toEqual({ deleted: true });
   });
 });

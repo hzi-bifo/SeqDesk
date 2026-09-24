@@ -4,7 +4,12 @@
  * only keeps the proposals.
  */
 import type { Prisma } from "@prisma/client";
+import { Prisma as PrismaRuntime } from "@prisma/client";
 import { db } from "@/lib/db";
+import { flowError } from "@/lib/integration/flow-contract";
+import { addStep, type AddStepInput } from "./recipe-edit";
+import { loadRecipe, type RecipeActor } from "./recipe";
+import { keyBetween, sortSteps } from "./recipe-order";
 
 type ProposalRecord = Prisma.ExploreStepProposalGetPayload<object>;
 
@@ -26,4 +31,218 @@ export type Proposal = ReturnType<typeof serializeProposal>;
 export async function pendingProposals(flowId: string): Promise<Proposal[]> {
   const proposals = await db.exploreStepProposal.findMany({ where: { flowId, state: "pending" }, orderBy: [{ position: "asc" }, { createdAt: "asc" }], take: 200 });
   return proposals.map(serializeProposal);
+}
+
+// ---------------------------------------------------------------------------
+// Storing, editing, accepting and discarding proposals
+// ---------------------------------------------------------------------------
+
+
+export const PROPOSAL_KINDS = ["step", "finding", "gloss-rewrite", "methods"] as const;
+export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
+
+const MAX_JSON = 20000;
+const MAX_CODE = 512 * 1024;
+
+function jsonField(value: unknown, field: string, fallback: unknown): Prisma.InputJsonValue {
+  const chosen = value === undefined ? fallback : value;
+  const text = JSON.stringify(chosen ?? null);
+  if (text.length > MAX_JSON) throw flowError("invalid_request", `${field} is too large.`);
+  return chosen as Prisma.InputJsonValue;
+}
+
+function listField(value: unknown, field: string): Prisma.InputJsonValue {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 50) throw flowError("invalid_request", `${field} must be a list.`);
+  return jsonField(value, field, []);
+}
+
+const short = (value: unknown, max: number): string | null => (typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null);
+
+/** The fields of a proposal item, validated; shared by create and patch. */
+function proposalFields(item: Record<string, unknown>, partial: boolean): Prisma.ExploreStepProposalUncheckedUpdateInput {
+  const data: Prisma.ExploreStepProposalUncheckedUpdateInput = {};
+  const has = (key: string) => !partial || key in item;
+  if (has("purpose")) data.purpose = short(item.purpose, 200) ?? "";
+  if (has("why")) data.why = short(item.why, 1000) ?? "";
+  if (has("assumes")) data.assumes = listField(item.assumes, "assumes");
+  if (has("notChecked")) data.notChecked = listField(item.notChecked, "notChecked");
+  if (has("refusals")) data.refusals = listField(item.refusals, "refusals");
+  if (has("inputs")) data.inputs = listField(item.inputs, "inputs");
+  if (has("outputs")) data.outputs = listField(item.outputs, "outputs");
+  if (has("code")) {
+    if (item.code !== undefined && item.code !== null && typeof item.code !== "string") throw flowError("invalid_request", "code must be text.");
+    if (typeof item.code === "string" && Buffer.byteLength(item.code, "utf8") > MAX_CODE) throw flowError("invalid_request", "The code is larger than 512 KB");
+    data.code = (item.code as string | null | undefined) ?? null;
+  }
+  if (has("language") && item.language !== undefined) data.language = item.language === "r" ? "r" : "python";
+  if (has("kitId")) data.kitId = short(item.kitId, 80);
+  if (has("params")) data.params = item.params === undefined || item.params === null ? PrismaRuntime.DbNull : jsonField(item.params, "params", {});
+  if (has("values")) data.values = item.values === undefined || item.values === null ? PrismaRuntime.DbNull : jsonField(item.values, "values", []);
+  if (has("text")) data.text = short(item.text, 4000);
+  if (has("canvas")) {
+    const canvas = item.canvas as { x?: unknown; y?: unknown } | null | undefined;
+    if (canvas && (typeof canvas.x !== "number" || typeof canvas.y !== "number")) throw flowError("invalid_request", "canvas needs numbers x and y.");
+    data.canvas = canvas ? { x: canvas.x as number, y: canvas.y as number } : PrismaRuntime.DbNull;
+  }
+  if (has("laneOf")) data.laneOf = short(item.laneOf, 80);
+  return data;
+}
+
+export interface CreateProposalsInput {
+  kind: unknown;
+  goal?: unknown;
+  origin?: unknown;
+  activityId?: unknown;
+  items: unknown;
+  actor: RecipeActor;
+}
+
+export async function createProposals(flowId: string, input: CreateProposalsInput): Promise<Proposal[]> {
+  if (!PROPOSAL_KINDS.includes(input.kind as ProposalKind)) throw flowError("invalid_request", 'kind must be "step", "finding", "gloss-rewrite" or "methods".');
+  const kind = input.kind as ProposalKind;
+  if (!Array.isArray(input.items) || !input.items.length || input.items.length > 20) throw flowError("invalid_request", "items must list 1 to 20 proposals.");
+  const model = await loadRecipe(flowId);
+  if (!model) throw flowError("not_found", "Flow not found");
+  const stepIds = new Set(model.steps.map((step) => step.id));
+  const origin = input.origin === undefined || input.origin === null ? null : input.origin as { kind?: unknown; ref?: unknown };
+  if (origin && (!["goal", "placeholder", "output"].includes(String(origin.kind)) || typeof origin.ref !== "string" || origin.ref.length > 500)) throw flowError("invalid_request", 'origin must be {kind:"goal"|"placeholder"|"output", ref}.');
+  const ordered = sortSteps(model.steps);
+  let previousKey: string | null = null;
+  const rows: Prisma.ExploreStepProposalUncheckedCreateInput[] = [];
+  for (const raw of input.items as unknown[]) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw flowError("invalid_request", "Each item must be an object.");
+    const item = raw as Record<string, unknown>;
+    const after = short(item.afterStepId, 80);
+    if (after && !stepIds.has(after)) throw flowError("invalid_request", "afterStepId must name a step of this flow.");
+    const laneOf = short(item.laneOf, 80);
+    if (laneOf && !stepIds.has(laneOf)) throw flowError("invalid_request", "laneOf must name a step of this flow.");
+    const analysisId = short(item.analysisId, 80);
+    const glossId = short(item.glossId, 80);
+    const flowRunId = short(item.flowRunId, 80);
+    if (kind === "methods" && (!analysisId || !stepIds.has(analysisId))) throw flowError("invalid_request", "A methods proposal needs analysisId, a step of this flow.");
+    if (kind === "gloss-rewrite") {
+      const gloss = glossId ? await db.exploreGloss.findUnique({ where: { id: glossId }, select: { analysisId: true } }) : null;
+      if (!gloss || !stepIds.has(gloss.analysisId)) throw flowError("invalid_request", "A gloss rewrite needs glossId, a gloss of a step of this flow.");
+    }
+    if (kind === "finding") {
+      const run = flowRunId ? await db.exploreFlowRun.findUnique({ where: { id: flowRunId }, select: { flowId: true } }) : null;
+      if (!run || run.flowId !== flowId) throw flowError("invalid_request", "A finding needs flowRunId, a run of this flow.");
+    }
+    if (kind === "step" && !item.code && !item.kitId) throw flowError("invalid_request", "A step proposal needs code or a kitId.");
+    // Pencil steps sit where they were proposed: after a step, or after the previous item of the same goal.
+    let position = "";
+    if (kind === "step") {
+      const anchor = after ? ordered.findIndex((step) => step.id === after) : ordered.length - 1;
+      const low = previousKey ?? (anchor >= 0 ? ordered[anchor].position : "");
+      const next = previousKey ? null : ordered[anchor + 1]?.position ?? null;
+      position = keyBetween(low, next && next > low ? next : null);
+      previousKey = position;
+    }
+    rows.push({
+      ...(proposalFields(item, false) as Omit<Prisma.ExploreStepProposalUncheckedCreateInput, "flowId" | "kind" | "requestedById">),
+      flowId, kind, state: "pending", afterAnalysisId: after, laneOf, position,
+      analysisId: kind === "methods" ? analysisId : kind === "gloss-rewrite" ? (await db.exploreGloss.findUnique({ where: { id: glossId! }, select: { analysisId: true } }))!.analysisId : analysisId,
+      glossId, flowRunId, goal: short(input.goal, 2000), origin: origin ? (origin as Prisma.InputJsonValue) : undefined,
+      requestedById: input.actor.userId, requestedByMemberId: input.actor.memberId ?? null, activityId: short(input.activityId, 128),
+    });
+  }
+  const created = await db.$transaction(rows.map((data) => db.exploreStepProposal.create({ data })));
+  return created.map(serializeProposal);
+}
+
+export async function listProposals(flowId: string, state: "pending" | "all"): Promise<Proposal[]> {
+  const proposals = await db.exploreStepProposal.findMany({ where: { flowId, ...(state === "pending" ? { state: "pending" } : {}) }, orderBy: [{ createdAt: "desc" }], take: 500 });
+  return proposals.map(serializeProposal);
+}
+
+async function pendingOrThrow(id: string) {
+  const proposal = await db.exploreStepProposal.findUnique({ where: { id } });
+  if (!proposal) throw flowError("not_found", "Proposal not found");
+  if (proposal.state !== "pending") throw flowError("proposal_settled", `This proposal was already ${proposal.state}.`, { state: proposal.state });
+  return proposal;
+}
+
+export async function patchProposal(id: string, body: Record<string, unknown>): Promise<Proposal> {
+  const proposal = await pendingOrThrow(id);
+  const data = proposalFields(body, true);
+  if ("afterStepId" in body) {
+    const after = short(body.afterStepId, 80);
+    const model = await loadRecipe(proposal.flowId);
+    const ordered = sortSteps(model?.steps ?? []);
+    const index = after ? ordered.findIndex((step) => step.id === after) : -1;
+    if (after && index < 0) throw flowError("invalid_request", "afterStepId must name a step of this flow.");
+    data.afterAnalysisId = after;
+    data.position = keyBetween(index >= 0 ? ordered[index].position : "", ordered[index + 1]?.position ?? null);
+  }
+  if (!Object.keys(data).length) return serializeProposal(proposal);
+  const updated = await db.exploreStepProposal.updateMany({ where: { id, state: "pending" }, data: data as Prisma.ExploreStepProposalUncheckedUpdateManyInput });
+  if (!updated.count) throw flowError("proposal_settled", "This proposal was settled meanwhile.", { state: "unknown" });
+  return serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!);
+}
+
+export async function discardProposal(id: string, reason: string | null): Promise<Proposal> {
+  await pendingOrThrow(id);
+  const updated = await db.exploreStepProposal.updateMany({ where: { id, state: "pending" }, data: { state: "discarded", discardReason: reason?.slice(0, 500) ?? null } });
+  if (!updated.count) throw flowError("proposal_settled", "This proposal was settled meanwhile.", { state: "unknown" });
+  return serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!);
+}
+
+type ProposalInputRef = { alias?: unknown; datasetId?: unknown; from?: { stepId?: unknown; output?: unknown }; fromProposal?: { proposalId?: unknown; output?: unknown } };
+
+/** Proposal inputs as step inputs; a pencil step reading another one needs that one accepted first. */
+async function stepInputsOf(raw: Prisma.JsonValue): Promise<AddStepInput["inputs"]> {
+  const inputs: AddStepInput["inputs"] = [];
+  for (const entry of (Array.isArray(raw) ? raw : []) as ProposalInputRef[]) {
+    if (!entry || typeof entry.alias !== "string") throw flowError("invalid_request", "Each proposed input needs an alias.");
+    if (typeof entry.datasetId === "string") inputs.push({ alias: entry.alias, datasetId: entry.datasetId });
+    else if (entry.from && typeof entry.from.stepId === "string" && typeof entry.from.output === "string") inputs.push({ alias: entry.alias, from: { stepId: entry.from.stepId, output: entry.from.output } });
+    else if (entry.fromProposal && typeof entry.fromProposal.proposalId === "string" && typeof entry.fromProposal.output === "string") {
+      const upstream = await db.exploreStepProposal.findUnique({ where: { id: entry.fromProposal.proposalId }, select: { state: true, acceptedAnalysisId: true, purpose: true } });
+      if (!upstream?.acceptedAnalysisId) throw flowError("output_not_ready", `Accept "${upstream?.purpose || "the step it reads from"}" first.`, { stepId: null, output: entry.fromProposal.output, proposalId: entry.fromProposal.proposalId });
+      inputs.push({ alias: entry.alias, from: { stepId: upstream.acceptedAnalysisId, output: entry.fromProposal.output } });
+    } else throw flowError("invalid_request", `Input ${entry.alias} needs a datasetId, from or fromProposal.`);
+  }
+  return inputs;
+}
+
+export async function acceptProposal(id: string, edits: Record<string, unknown> | null, expectedRevision: number | undefined, actor: RecipeActor) {
+  const proposal = await pendingOrThrow(id);
+  if (edits && Object.keys(edits).length) await patchProposal(id, edits);
+  const current = (await db.exploreStepProposal.findUnique({ where: { id } }))!;
+  if (expectedRevision !== undefined) {
+    const flow = await db.exploreFlow.findUnique({ where: { id: proposal.flowId }, select: { recipeRevision: true } });
+    if (flow && flow.recipeRevision !== expectedRevision) throw flowError("revision_conflict", "The recipe changed since the proposal was shown.", { current: { recipeRevision: flow.recipeRevision } });
+  }
+  // Claim it first, so two people accepting at once cannot both succeed.
+  const claimed = await db.exploreStepProposal.updateMany({ where: { id, state: "pending" }, data: { state: "accepted", acceptedById: actor.userId } });
+  if (!claimed.count) throw flowError("proposal_settled", "This proposal was settled meanwhile.", { state: "unknown" });
+  try {
+    if (current.kind === "step") {
+      const stepId = await addStep(current.flowId, {
+        after: current.laneOf ? null : current.afterAnalysisId, laneOf: current.laneOf, laneKind: current.laneOf ? "alternative" : null,
+        name: short(edits?.name, 200) ?? (current.purpose || "Proposed step"), purpose: current.purpose || null,
+        kitId: current.kitId, code: current.code, language: current.language === "r" ? "r" : "python",
+        inputs: await stepInputsOf(current.inputs), params: (current.params as Record<string, unknown> | null) ?? undefined, actor,
+      });
+      await db.exploreStepProposal.update({ where: { id }, data: { acceptedAnalysisId: stepId } });
+      return { proposal: serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!), stepId };
+    }
+    if (current.kind === "finding") {
+      const finding = await db.exploreRunFinding.create({ data: { flowRunId: current.flowRunId!, analysisId: current.analysisId, text: current.text ?? current.purpose, values: current.values ?? [], caveats: current.notChecked ?? [], acceptedById: actor.userId } });
+      await db.exploreStepProposal.update({ where: { id }, data: { acceptedFindingId: finding.id } });
+      return { proposal: serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!), finding: { id: finding.id, analysisId: finding.analysisId, text: finding.text, values: finding.values, caveats: finding.caveats, acceptedById: finding.acceptedById, acceptedAt: finding.acceptedAt.toISOString() } };
+    }
+    if (current.kind === "methods") {
+      const analysis = await db.exploreAnalysis.findUnique({ where: { id: current.analysisId! }, select: { currentRevisionId: true } });
+      await db.exploreAnalysis.update({ where: { id: current.analysisId! }, data: { methodsSentence: { text: current.text ?? "", tokens: current.values ?? [], revisionId: analysis?.currentRevisionId ?? null, author: "assistant", acceptedById: actor.userId, acceptedAt: new Date().toISOString() } } });
+      return { proposal: serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!), stepId: current.analysisId };
+    }
+    // gloss-rewrite: the new words replace the gloss's, accepted by this person.
+    await db.exploreGloss.update({ where: { id: current.glossId! }, data: { text: current.text ?? "", state: "accepted", acceptedById: actor.userId, acceptedAt: new Date(), checkStatus: "unchecked", checkNotes: PrismaRuntime.DbNull } });
+    return { proposal: serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!), glossId: current.glossId };
+  } catch (error) {
+    await db.exploreStepProposal.updateMany({ where: { id, state: "accepted", acceptedAnalysisId: null, acceptedFindingId: null }, data: { state: "pending", acceptedById: null } });
+    throw error;
+  }
 }

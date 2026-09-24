@@ -9,7 +9,8 @@ import { db } from "@/lib/db";
 import { requireTargetAccess, resolveTargetAccess } from "@/lib/explore/authorization";
 import { addStep, applyRecipeOps, listRecipeRevisions, parseRecipeOps, stepOptions, type AddStepInput } from "@/lib/explore/recipe-edit";
 import { getRecipeView } from "@/lib/explore/recipe-view";
-import { pendingProposals } from "@/lib/explore/proposals";
+import { acceptProposal, createProposals, discardProposal, listProposals, patchProposal, pendingProposals } from "@/lib/explore/proposals";
+import { acceptGloss, deleteGloss, glossRecord, listGlosses, patchGloss, putGlosses } from "@/lib/explore/glosses";
 import { createFlowFromTemplate, listTemplates, serializeTemplate } from "@/lib/explore/templates";
 import { cancelFlowRun, compareFlowRuns, flowRunOutputs, getFlowRunDetail, listFlowRuns, makeRunCurrent, startFlowRun, type FlowActor, type StartFlowRunInput } from "@/lib/explore/flow-runs";
 import { flowError, requestIdOf } from "./flow-contract";
@@ -221,8 +222,95 @@ async function handleRecipe({ request, session, segments, json }: FlowRouteConte
   return null;
 }
 
+async function proposalFor(session: IntegrationSession, id: string, level: "read" | "write") {
+  const proposal = await db.exploreStepProposal.findUnique({ where: { id }, select: { id: true, flowId: true } });
+  if (!proposal) throw flowError("not_found", "Proposal not found");
+  const flow = await flowFor(session, proposal.flowId, level);
+  return { proposal, flow };
+}
+
+/** Proposals (`explore.proposals`): stored only, SeqDesk never calls a model. */
+async function handleProposals({ request, session, segments, json }: FlowRouteContext): Promise<Response | null> {
+  const method = request.method;
+  const [head, id, sub] = segments;
+  if (head === "flows" && sub === "proposals" && segments.length === 3) {
+    if (method === "GET") {
+      await flowFor(session, id, "read");
+      return json({ proposals: await listProposals(id, request.nextUrl.searchParams.get("state") === "all" ? "all" : "pending") });
+    }
+    if (method === "POST") {
+      await flowFor(session, id, "write");
+      const body = await readBody(request);
+      return json({ proposals: await createProposals(id, { kind: body.kind, goal: body.goal, origin: body.origin, activityId: body.activityId, items: body.items, actor: actorOf(session) }) }, 201);
+    }
+  }
+  if (head !== "proposals") return null;
+  if (segments.length === 2 && method === "PATCH") {
+    await proposalFor(session, id, "write");
+    return json({ proposal: await patchProposal(id, await readBody(request)) });
+  }
+  if (segments.length === 3 && sub === "accept" && method === "POST") {
+    const { flow } = await proposalFor(session, id, "write");
+    const body = await readBody(request);
+    const expected = body.expectedRevision === undefined ? undefined : Number(body.expectedRevision);
+    const edits = body.edits && typeof body.edits === "object" && !Array.isArray(body.edits) ? (body.edits as Record<string, unknown>) : null;
+    const result = await acceptProposal(id, edits, Number.isInteger(expected) ? expected : undefined, actorOf(session));
+    if (result.proposal.kind === "step") {
+      const recipe = await recipeFor(session, flow);
+      return json({ proposal: result.proposal, step: recipe.steps.find((step) => step.id === result.stepId) ?? null, recipe });
+    }
+    return json(result);
+  }
+  if (segments.length === 3 && sub === "discard" && method === "POST") {
+    await proposalFor(session, id, "write");
+    const body = await readBody(request);
+    return json({ proposal: await discardProposal(id, optionalText(body.reason, 500)) });
+  }
+  return null;
+}
+
+async function glossAccess(session: IntegrationSession, id: string, level: "read" | "write") {
+  const gloss = await glossRecord(id);
+  await requireTargetAccess(session, gloss.analysis.targetKey, level);
+  return gloss;
+}
+
+/** Glosses, the notes on code regions (`explore.glosses`). */
+async function handleGlosses({ request, session, segments, json }: FlowRouteContext): Promise<Response | null> {
+  const method = request.method;
+  const [head, id, sub] = segments;
+  if (head === "analyses" && sub === "glosses" && segments.length === 3) {
+    const analysis = await db.exploreAnalysis.findUnique({ where: { id }, select: { targetKey: true } });
+    if (!analysis) throw flowError("not_found", "Step not found");
+    if (method === "GET") {
+      await requireTargetAccess(session, analysis.targetKey, "read");
+      return json(await listGlosses(id, request.nextUrl.searchParams.get("revision")));
+    }
+    if (method === "PUT") {
+      await requireTargetAccess(session, analysis.targetKey, "write");
+      const body = await readBody(request);
+      return json(await putGlosses(id, body.revisionId, body.glosses, actorOf(session)));
+    }
+  }
+  if (head !== "glosses") return null;
+  if (segments.length === 2 && method === "PATCH") {
+    await glossAccess(session, id, "write");
+    return json({ gloss: await patchGloss(id, await readBody(request)) });
+  }
+  if (segments.length === 2 && method === "DELETE") {
+    await glossAccess(session, id, "write");
+    await deleteGloss(id);
+    return json({ deleted: true });
+  }
+  if (segments.length === 3 && sub === "accept" && method === "POST") {
+    await glossAccess(session, id, "write");
+    return json({ gloss: await acceptGloss(id, actorOf(session)) });
+  }
+  return null;
+}
+
 type Handler = (context: FlowRouteContext) => Promise<Response | null>;
-const handlers: Handler[] = [handleRecipe, handleRuns];
+const handlers: Handler[] = [handleRecipe, handleRuns, handleProposals, handleGlosses];
 
 /** The Flow routes; null when the path is not one of them. */
 export async function handleFlowRequest(context: FlowRouteContext): Promise<Response | null> {
