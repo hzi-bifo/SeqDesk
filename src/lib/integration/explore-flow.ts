@@ -10,6 +10,8 @@ import { requireTargetAccess, resolveTargetAccess } from "@/lib/explore/authoriz
 import { addStep, applyRecipeOps, listRecipeRevisions, parseRecipeOps, stepOptions, type AddStepInput } from "@/lib/explore/recipe-edit";
 import { getRecipeView } from "@/lib/explore/recipe-view";
 import { acceptProposal, createProposals, discardProposal, listProposals, patchProposal, pendingProposals } from "@/lib/explore/proposals";
+import { flowValues, resolveValues } from "@/lib/explore/values";
+import { enqueueFlowRecord } from "./events";
 import { acceptGloss, deleteGloss, glossRecord, listGlosses, patchGloss, putGlosses } from "@/lib/explore/glosses";
 import { createFlowFromTemplate, listTemplates, serializeTemplate } from "@/lib/explore/templates";
 import { cancelFlowRun, compareFlowRuns, flowRunOutputs, getFlowRunDetail, listFlowRuns, makeRunCurrent, startFlowRun, type FlowActor, type StartFlowRunInput } from "@/lib/explore/flow-runs";
@@ -179,6 +181,7 @@ async function handleRecipe({ request, session, segments, json }: FlowRouteConte
     if (!targetKey || typeof body.templateId !== "string" || typeof body.datasetId !== "string") throw flowError("invalid_request", "targetKey, templateId and datasetId are required.");
     await requireTargetAccess(session, targetKey, "write");
     const flowId = await createFlowFromTemplate({ targetKey, templateId: body.templateId, name: optionalText(body.name, 200), datasetId: body.datasetId, slots: body.slots, actor: actorOf(session) });
+    await flowChanged(flowId);
     const { getFlow } = await import("@/lib/explore/flows");
     return json({ flow: await getFlow(flowId), recipe: await recipeFor(session, { id: flowId, targetKey }) }, 201);
   }
@@ -193,6 +196,7 @@ async function handleRecipe({ request, session, segments, json }: FlowRouteConte
     const expected = body.expectedRevision === undefined ? undefined : Number(body.expectedRevision);
     if (expected !== undefined && !Number.isInteger(expected)) throw flowError("invalid_request", "expectedRevision must be a whole number.");
     await applyRecipeOps(flow.id, parseRecipeOps(body.ops), expected, actorOf(session));
+    await flowChanged(flow.id);
     return json({ recipe: await recipeFor(session, flow) });
   }
   if (sub === "revisions" && method === "GET") {
@@ -216,6 +220,7 @@ async function handleRecipe({ request, session, segments, json }: FlowRouteConte
       params: body.params && typeof body.params === "object" && !Array.isArray(body.params) ? (body.params as Record<string, unknown>) : undefined,
       requestId: requestIdOf(body.requestId), actor: actorOf(session),
     });
+    await flowChanged(flow.id);
     const recipe = await recipeFor(session, flow);
     return json({ step: recipe.steps.find((step) => step.id === stepId) ?? null, recipe }, 201);
   }
@@ -256,6 +261,7 @@ async function handleProposals({ request, session, segments, json }: FlowRouteCo
     const edits = body.edits && typeof body.edits === "object" && !Array.isArray(body.edits) ? (body.edits as Record<string, unknown>) : null;
     const result = await acceptProposal(id, edits, Number.isInteger(expected) ? expected : undefined, actorOf(session));
     if (result.proposal.kind === "step") {
+      await flowChanged(flow.id);
       const recipe = await recipeFor(session, flow);
       return json({ proposal: result.proposal, step: recipe.steps.find((step) => step.id === result.stepId) ?? null, recipe });
     }
@@ -309,8 +315,31 @@ async function handleGlosses({ request, session, segments, json }: FlowRouteCont
   return null;
 }
 
+/** Named values of runs (`explore.values`): the feed for Writer placeholders and peeks. */
+async function handleValues({ request, session, segments, json }: FlowRouteContext): Promise<Response | null> {
+  const method = request.method;
+  const query = request.nextUrl.searchParams;
+  const [head, id, sub] = segments;
+  if (head === "flows" && sub === "values" && segments.length === 3 && method === "GET") {
+    await flowFor(session, id, "read");
+    return json(await flowValues(id, { run: query.get("run"), planned: query.get("planned") === "1" }));
+  }
+  if (head === "values" && id === "resolve" && segments.length === 2 && method === "GET") {
+    const refs = query.getAll("refs").flatMap((value) => value.split(",")).map((ref) => ref.trim()).filter(Boolean);
+    if (!refs.length || refs.length > 100) throw flowError("invalid_request", "Pass 1 to 100 value references in refs.");
+    const canRead = async (flow: { targetKey: string }) => (await resolveTargetAccess(session, flow.targetKey)).level !== "none";
+    return json(await resolveValues(refs, canRead, { verify: query.get("verify") === "1" }));
+  }
+  return null;
+}
+
+/** Tell the collaboration server about a changed flow; best effort. */
+export async function flowChanged(flowId: string): Promise<void> {
+  await enqueueFlowRecord(flowId).catch((error) => console.error("[flow] could not queue the flow record", flowId, error));
+}
+
 type Handler = (context: FlowRouteContext) => Promise<Response | null>;
-const handlers: Handler[] = [handleRecipe, handleRuns, handleProposals, handleGlosses];
+const handlers: Handler[] = [handleRecipe, handleRuns, handleProposals, handleGlosses, handleValues];
 
 /** The Flow routes; null when the path is not one of them. */
 export async function handleFlowRequest(context: FlowRouteContext): Promise<Response | null> {

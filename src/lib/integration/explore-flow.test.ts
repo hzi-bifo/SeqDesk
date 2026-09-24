@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   flowFind: vi.fn(), flowRunFind: vi.fn(), requireAccess: vi.fn(), moduleEnabled: vi.fn(),
   createProposals: vi.fn(), discardProposal: vi.fn(), acceptProposal: vi.fn(), proposalFind: vi.fn(), analysisFind: vi.fn(), glossRecord: vi.fn(), listGlosses: vi.fn(), putGlosses: vi.fn(), deleteGloss: vi.fn(),
+  flowValues: vi.fn(), resolveValues: vi.fn(),
   getRecipeView: vi.fn(), applyRecipeOps: vi.fn(), addStep: vi.fn(), stepOptions: vi.fn(), listRecipeRevisions: vi.fn(), resolveAccess: vi.fn(), scopeFind: vi.fn(),
   startFlowRun: vi.fn(), listFlowRuns: vi.fn(), getFlowRunDetail: vi.fn(), cancelFlowRun: vi.fn(), makeRunCurrent: vi.fn(), compareFlowRuns: vi.fn(), flowRunOutputs: vi.fn(),
 }));
@@ -16,6 +17,7 @@ vi.mock("@/lib/explore/recipe-view", async () => ({ ...(await vi.importActual<ob
 vi.mock("@/lib/explore/recipe-edit", async () => ({ ...(await vi.importActual<object>("@/lib/explore/recipe-edit")), applyRecipeOps: mocks.applyRecipeOps, addStep: mocks.addStep, stepOptions: mocks.stepOptions, listRecipeRevisions: mocks.listRecipeRevisions }));
 vi.mock("@/lib/explore/proposals", () => ({ pendingProposals: vi.fn().mockResolvedValue([]), createProposals: mocks.createProposals, listProposals: vi.fn(), patchProposal: vi.fn(), discardProposal: mocks.discardProposal, acceptProposal: mocks.acceptProposal }));
 vi.mock("@/lib/explore/glosses", () => ({ glossRecord: mocks.glossRecord, listGlosses: mocks.listGlosses, putGlosses: mocks.putGlosses, patchGloss: vi.fn(), acceptGloss: vi.fn(), deleteGloss: mocks.deleteGloss }));
+vi.mock("@/lib/explore/values", () => ({ flowValues: mocks.flowValues, resolveValues: mocks.resolveValues }));
 vi.mock("@/lib/explore/flow-runs", () => ({
   startFlowRun: mocks.startFlowRun, listFlowRuns: mocks.listFlowRuns, getFlowRunDetail: mocks.getFlowRunDetail, cancelFlowRun: mocks.cancelFlowRun,
   makeRunCurrent: mocks.makeRunCurrent, compareFlowRuns: mocks.compareFlowRuns, flowRunOutputs: mocks.flowRunOutputs,
@@ -160,5 +162,26 @@ describe("Flow proposal and gloss routes", () => {
     expect(mocks.requireAccess).toHaveBeenLastCalledWith(session, "project:p1", "write");
     mocks.glossRecord.mockResolvedValue({ id: "g1", analysis: { targetKey: "project:p1" } });
     expect((await call("DELETE", "glosses/g1")).body).toEqual({ deleted: true });
+  });
+});
+
+describe("Flow value routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.moduleEnabled.mockResolvedValue(true);
+    mocks.flowFind.mockResolvedValue({ id: "f1", targetKey: "project:p1", name: "DE" });
+    mocks.requireAccess.mockResolvedValue({ type: "project", id: "p1" });
+  });
+
+  it("feeds a flow's values and resolves references with the caller's access", async () => {
+    mocks.flowValues.mockResolvedValue({ run: { id: "r1", number: 1 }, values: [], planned: [] });
+    expect((await call("GET", "flows/f1/values?run=current&planned=1")).body.run.number).toBe(1);
+    expect(mocks.flowValues).toHaveBeenCalledWith("f1", { run: "current", planned: true });
+    mocks.resolveValues.mockImplementation(async (refs: string[], canRead: (flow: { targetKey: string }) => Promise<boolean>) => ({ values: [], unknown: refs, readable: await canRead({ targetKey: "project:p1" }) }));
+    mocks.resolveAccess.mockResolvedValue({ level: "none", target: null });
+    const resolved = await call("GET", "values/resolve?refs=labdesk://value/r1/s1/n,labdesk://value/r1/s1/m&verify=1");
+    expect(resolved.body).toEqual({ values: [], unknown: ["labdesk://value/r1/s1/n", "labdesk://value/r1/s1/m"], readable: false });
+    expect(mocks.resolveValues.mock.calls[0][2]).toEqual({ verify: true });
+    expect((await call("GET", "values/resolve")).body.code).toBe("invalid_request");
   });
 });

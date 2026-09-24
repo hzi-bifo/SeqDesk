@@ -42,6 +42,7 @@ import { db } from "@/lib/db";
 import { createAnalysis, createRevision } from "./analyses";
 import { advanceFlowRun, cancelFlowRun, compareFlowRuns, getFlowRunDetail, listFlowRuns, makeRunCurrent, runRecords, revisionsUsedBy, startFlowRun } from "./flow-runs";
 import { computeStepStates, loadRecipe } from "./recipe";
+import { flowValues, resolveValues } from "./values";
 
 const suffix = randomUUID().slice(0, 8);
 const targetKey = `project:flowtest-${suffix}`;
@@ -158,6 +159,18 @@ describe.skipIf(!url)("flow runs (PostgreSQL)", () => {
     expect(comparison.steps[0].lines[0]).toEqual({ label: "DE genes", from: 1146, to: 1152 });
     expect(comparison.words).toBe("Step 2's code changed; step 2: DE genes 1,146 → 1,152.");
     await expect(startFlowRun(flowId, { scope: "outOfDate", actor: actor() })).rejects.toMatchObject({ code: "invalid_request" });
+
+    // The values feed: the current run's values, and references resolved with the caller's access.
+    const feed = await flowValues(flowId, { run: "current", planned: true });
+    const called = feed.values.find((value) => value.metric === "n_called")!;
+    expect(called).toMatchObject({ key: `${steps.test}.n_called`, label: "DE genes", value: 1152, stepLabel: "2", runNumber: 2, verified: true });
+    expect(feed.planned).toEqual([]);
+    const resolved = await resolveValues([called.ref, "labdesk://value/nope/x/y", "not a ref"], async () => true);
+    expect(resolved.values[0]).toMatchObject({ value: 1152, current: true, flowName: "Differential expression, 0–24 h" });
+    expect(resolved.unknown).toEqual(["labdesk://value/nope/x/y", "not a ref"]);
+    expect((await resolveValues([called.ref], async () => false)).unknown).toEqual([called.ref]);
+    // Nothing on disk to check the checksums against here, so verification says no.
+    expect((await resolveValues([called.ref], async () => true, { verify: true })).values[0].verified).toBe(false);
 
     await makeRunCurrent(first);
     expect((await db.exploreFlow.findUnique({ where: { id: flowId } }))!.currentRunId).toBe(first);

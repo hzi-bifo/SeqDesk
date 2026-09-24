@@ -39,7 +39,8 @@ import { IntegrationAccessError, type IntegrationSession } from "./identity";
 import { codeForStatus, flowError, FLOW_CAPABILITIES_BUILT } from "./flow-contract";
 import { parseParamMeta } from "@/lib/explore/recipe-view";
 import { Prisma } from "@prisma/client";
-import { handleFlowRequest, isFlowPath } from "./explore-flow";
+import { flowChanged, handleFlowRequest, isFlowPath } from "./explore-flow";
+import { prepareFlowRemoval } from "./events";
 
 /** Capabilities advertised by /info while the Explore module is on. */
 export const EXPLORE_INTEGRATION_CAPABILITIES = ["explore.files", "explore.datasets", "explore.reports", "explore.flows"] as const;
@@ -499,7 +500,9 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         const body = await readJson(request);
         const targetKey = requireString(body.targetKey, "targetKey");
         await requireTargetAccess(session, targetKey, "write");
-        return json({ flow: await createFlow(targetKey, session.user.id, optionalString(body.name, 200), optionalString(body.description)) }, 201);
+        const flow = await createFlow(targetKey, session.user.id, optionalString(body.name, 200), optionalString(body.description), session.integration.memberId || null);
+        await flowChanged(flow.id);
+        return json({ flow }, 201);
       }
       if (segments.length === 2) {
         if (method === "GET") {
@@ -512,11 +515,15 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
           const changes: { name?: string; description?: string | null } = {};
           if (body.name !== undefined) changes.name = requireString(body.name, "name", 200);
           if (body.description !== undefined) changes.description = optionalString(body.description);
-          return json({ flow: await updateFlow(record.id, changes) });
+          const flow = await updateFlow(record.id, changes);
+          await flowChanged(record.id);
+          return json({ flow });
         }
         if (method === "DELETE") {
           const record = await loadFlow(session, id, "write");
+          const removal = await prepareFlowRemoval(record.id, record.targetKey).catch(() => null);
           await deleteFlow(record.id);
+          await removal?.().catch((error) => console.error("[flow] could not queue the removal", record.id, error));
           return json({ deleted: true });
         }
       }

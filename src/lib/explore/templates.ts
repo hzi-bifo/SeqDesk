@@ -125,8 +125,7 @@ export async function createFlowFromTemplate(input: { targetKey: string; templat
     if (!file.startsWith(`${template.dir}${path.sep}`)) throw flowError("invalid_request", "Template code must live in the template's folder.");
     code.set(step.key, await fs.readFile(file, "utf8"));
   }
-  const flow = await createFlow(input.targetKey, input.actor.userId, input.name?.trim() || template.name, template.description);
-  await db.exploreFlow.update({ where: { id: flow.id }, data: { createdByMemberId: input.actor.memberId ?? null } });
+  const flow = await createFlow(input.targetKey, input.actor.userId, input.name?.trim() || template.name, template.description, input.actor.memberId ?? null);
   const stepIds = new Map<string, string>();
   for (const step of template.steps) {
     const model = await loadRecipe(flow.id);

@@ -5,6 +5,19 @@ import { inferPipelineExitCode } from "../src/lib/pipelines/run-completion";
 import { queueSnapshotToRunStatus, readIdentityCheckedQueueSnapshot } from "../src/lib/pipelines/queue-probe";
 import { finalizeExploreRun } from "../src/lib/explore/run-finalize";
 import { advanceActiveFlowRuns } from "../src/lib/explore/flow-runs";
+import { deliverOutbox } from "../src/lib/integration/events";
+
+const DEFAULT_EVENTS_INTERVAL_MS = 3000;
+
+/** Push queued Flow events and records to the collaboration server. */
+async function deliverOnce(): Promise<void> {
+  try {
+    const result = await deliverOutbox();
+    if (result.failed) console.error(`[explore-monitor] ${result.failed} Flow events could not be delivered and were given up`);
+  } catch (error) {
+    console.error("[explore-monitor] failed to deliver Flow events", error);
+  }
+}
 
 const DEFAULT_INTERVAL_MS = 10000;
 const ACTIVE = ["pending", "queued", "running"];
@@ -146,11 +159,19 @@ async function main(): Promise<void> {
   const interval = Number(process.env.EXPLORE_MONITOR_INTERVAL_MS || DEFAULT_INTERVAL_MS);
   if (args.has("--once")) {
     await runOnce();
+    await deliverOnce();
     return;
   }
   console.log(`[explore-monitor] running every ${interval}ms`);
   await runOnce();
   setInterval(runOnce, interval);
+  // Events are delivered on their own, shorter beat so the notebook and the Inbox hear of runs quickly.
+  let delivering = false;
+  setInterval(async () => {
+    if (delivering) return;
+    delivering = true;
+    try { await deliverOnce(); } finally { delivering = false; }
+  }, Number(process.env.EXPLORE_EVENTS_INTERVAL_MS || DEFAULT_EVENTS_INTERVAL_MS));
 }
 
 if (!process.env.VITEST) {

@@ -29,5 +29,6 @@ describe("Flow contract", () => {
       expect(FLOW_CAPABILITIES).toContain(capability);
     }
     expect(advertised).not.toContain("explore.events");
+    expect(exploreIntegrationCapabilities({ eventsConfigured: true })).toContain("explore.events");
   });
 });

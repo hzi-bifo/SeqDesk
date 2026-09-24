@@ -86,7 +86,7 @@ describe('Flow requests', () => {
     mocks.createFlow.mockResolvedValue({ id: 'f2', name: 'Flow 2' });
     const created = await handleExploreRequest(request('POST', '/x/explore/flows', { targetKey: 'project:p1', name: 'Flow 2', description: '' }), session, ['flows'], new Headers());
     expect(created.status).toBe(201);
-    expect(mocks.createFlow).toHaveBeenCalledWith('project:p1', 'local', 'Flow 2', null);
+    expect(mocks.createFlow).toHaveBeenCalledWith('project:p1', 'local', 'Flow 2', null, 'member');
     mocks.getFlowRecord.mockResolvedValue({ id: 'f2', targetKey: 'project:p1', name: 'Flow 2' });
     mocks.updateFlow.mockResolvedValue({ id: 'f2', name: 'Alpha diversity' });
     expect(await (await handleExploreRequest(request('PATCH', '/x/explore/flows/f2', { name: 'Alpha diversity' }), session, ['flows', 'f2'], new Headers())).json()).toEqual({ flow: { id: 'f2', name: 'Alpha diversity' } });

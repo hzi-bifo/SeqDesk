@@ -1,25 +1,17 @@
 /**
  * The hook the flow runner calls on every change of a flow run (queued,
- * started, step progress, finished, failed, cancelled, made current). The
- * collaboration server push (integration/events.ts) plugs in here; without it
- * the hook does nothing.
+ * started, step progress, finished, failed, cancelled, made current). It
+ * queues what the collaboration server should learn (integration/events.ts);
+ * pushing is best effort and never fails a run.
  */
 export type FlowRunChange = "queued" | "started" | "progress" | "finished" | "failed" | "cancelled" | "current";
 
-type Listener = (flowRunId: string, change: FlowRunChange) => Promise<void>;
-const listeners: Listener[] = [];
-
-export function onFlowRunChange(listener: Listener): void {
-  if (!listeners.includes(listener)) listeners.push(listener);
-}
-
-/** Never throws: pushing is best effort and must not fail a run. */
 export async function flowRunChanged(flowRunId: string, change: FlowRunChange): Promise<void> {
-  for (const listener of listeners) {
-    try {
-      await listener(flowRunId, change);
-    } catch (error) {
-      console.error("[flow] run change listener failed", flowRunId, change, error);
-    }
+  try {
+    // Loaded lazily: the push module reads runs through flow-runs, which calls this.
+    const { enqueueFlowRunChange } = await import("@/lib/integration/events");
+    await enqueueFlowRunChange(flowRunId, change);
+  } catch (error) {
+    console.error("[flow] could not queue the run change", flowRunId, change, error);
   }
 }
