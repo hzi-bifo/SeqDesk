@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
+  analysisFind: vi.fn(), conversationFind: vi.fn(), conversationCreate: vi.fn(), conversationUpdate: vi.fn(),
   scopeFindMany: vi.fn(), scopeCreate: vi.fn(), projectCreate: vi.fn(), projectFindMany: vi.fn(), projectUpdate: vi.fn(),
   resolve: vi.fn(), moduleEnabled: vi.fn(), listReports: vi.fn(), capability: vi.fn(),
   getReportRecord: vi.fn(), getReportView: vi.fn(), renderReportHtml: vi.fn(),
@@ -7,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   loadCanvasGraph: vi.fn(), listAnalyses: vi.fn(),
 }));
 vi.mock('@/lib/db', () => ({ db: {
+  exploreAnalysis: { findUnique: mocks.analysisFind },
+  exploreStepConversation: { findUnique: mocks.conversationFind, create: mocks.conversationCreate, updateMany: mocks.conversationUpdate },
   integrationExploreScope: { findMany: mocks.scopeFindMany, create: mocks.scopeCreate },
   exploreProject: { create: mocks.projectCreate, findMany: mocks.projectFindMany, update: mocks.projectUpdate },
 } }));
@@ -117,5 +120,31 @@ describe('Flow requests', () => {
     mocks.resolve.mockResolvedValue({ level: 'none', target: { type: 'project', id: 'p1' } });
     expect((await handleExploreRequest(request('GET', '/x/explore/reports?targetKey=project:p1'), session, ['reports'], new Headers())).status).toBe(404);
     expect((await handleExploreRequest(request('GET', '/x/explore/nothing'), session, ['nothing'], new Headers())).status).toBe(404);
+  });
+});
+
+
+describe('step conversation persistence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); mocks.moduleEnabled.mockResolvedValue(true);
+    mocks.analysisFind.mockResolvedValue({ id: 'a1', targetKey: 'project:p1' });
+  });
+  const call = (method: string, body?: unknown) => handleExploreRequest(request(method, '/x/explore/analyses/a1/conversation', body), session, ['analyses', 'a1', 'conversation'], new Headers());
+  it('scopes saved conversations to the authenticated user and step', async () => {
+    mocks.conversationFind.mockResolvedValue({ version: 4, state: '{"turns":[],"draft":"hello"}' });
+    expect(await (await call('GET')).json()).toEqual({ version: 4, state: { turns: [], draft: 'hello' } });
+    expect(mocks.conversationFind).toHaveBeenCalledWith({ where: { analysisId_userId: { analysisId: 'a1', userId: 'local' } } });
+  });
+  it('rejects stale tab updates and simultaneous first saves', async () => {
+    mocks.conversationUpdate.mockResolvedValue({ count: 0 });
+    expect((await call('PUT', { version: 2, state: { turns: [], draft: '' } })).status).toBe(409);
+    mocks.conversationCreate.mockRejectedValue({ code: 'P2002' });
+    expect((await call('PUT', { version: 0, state: { turns: [], draft: '' } })).status).toBe(409);
+  });
+  it('increments the exact prior conversation version and bounds storage', async () => {
+    mocks.conversationUpdate.mockResolvedValue({ count: 1 });
+    expect(await (await call('PUT', { version: 2, state: { turns: [], draft: 'test' } })).json()).toEqual({ version: 3 });
+    expect(mocks.conversationUpdate.mock.calls[0][0].where).toEqual({ analysisId: 'a1', userId: 'local', version: 2 });
+    expect((await call('PUT', { version: 2, state: { draft: 'x'.repeat(800001) } })).status).toBe(400);
   });
 });

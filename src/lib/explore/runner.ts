@@ -1,3 +1,4 @@
+import { inputToken } from "./input-token";
 import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
@@ -27,8 +28,9 @@ export interface StartRunInput {
   revisionId?: string | null;
   executionMode?: ExecutionModeRequest;
   createdById: string;
-  /** Internal idempotency identity for guided requests; never accepted by the general run API. */
+  /** Stable identity for guided and integration requests; validated at the boundary. */
   runId?: string;
+  inputTokens?: Record<string, string>;
 }
 
 export class ExploreRunError extends Error {
@@ -49,7 +51,7 @@ function tsvEscape(value: ExploreCell): string {
  * Stage one dataset version into the run folder as TSV plus schema. Curation
  * edits are applied so analyses see the curated data; excluded rows are gone.
  */
-async function stageInput(runFolder: string, alias: string, datasetId: string, versionId: string | null) {
+async function stageInput(runFolder: string, alias: string, datasetId: string, versionId: string | null, expectedToken?: string) {
   const dataset = await getDatasetRecord(datasetId);
   if (!dataset) throw new ExploreRunError(400, `Dataset ${datasetId} for input ${alias} no longer exists`);
   const version = versionId
@@ -61,6 +63,7 @@ async function stageInput(runFolder: string, alias: string, datasetId: string, v
 
   const schema = parseSchema(version.schema);
   const edits = await listActiveEdits(datasetId);
+  if (expectedToken && inputToken(version.id, edits) !== expectedToken) throw new ExploreRunError(409, "The input data changed. Review it before running again.");
   const rows = applyEditsToRows(await fetchAllDatasetRows(version.id), edits);
   const columns = schema.columns.map((column) => column.key);
   const lines = [columns.join("\t")];
@@ -124,7 +127,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     if (!input.runId) return null;
     const existing = await db.exploreAnalysisRun.findUnique({ where: { id: input.runId }, include: { revision: { select: { number: true } }, _count: { select: { artifacts: true } } } });
     if (!existing) return null;
-    if (existing.analysisId !== input.analysisId || existing.createdById !== input.createdById) throw new ExploreRunError(409, "This generation request belongs to another analysis.");
+    if (existing.analysisId !== input.analysisId || existing.createdById !== input.createdById || (input.revisionId && existing.revisionId !== input.revisionId)) throw new ExploreRunError(409, "This generation request belongs to another analysis.");
     return serializeRun(existing);
   };
   const previous = await existingRequest();
@@ -194,7 +197,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
 
     const staged: Record<string, Awaited<ReturnType<typeof stageInput>>> = {};
     for (const binding of bindings) {
-      staged[binding.alias] = await stageInput(runFolder, binding.alias, binding.datasetId, binding.versionId);
+      staged[binding.alias] = await stageInput(runFolder, binding.alias, binding.datasetId, binding.versionId, input.inputTokens?.[binding.datasetId]);
     }
     const params = JSON.parse(revision.params || "{}") as Record<string, unknown>;
     const inputsJson = {

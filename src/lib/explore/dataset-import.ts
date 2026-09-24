@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { DelimitedParseError } from "./parsers/delimited";
 import { db } from "@/lib/db";
 import { requireTargetAccess, type SessionLike } from "@/lib/explore/authorization";
 import { getTableKind, suggestRoles } from "@/lib/explore/dataset-kinds";
@@ -36,7 +37,7 @@ function parseRoles(raw: string | null): ExploreRoleMap {
 
 /** Parser and size problems that a caller should report as a bad request. */
 export function isImportInputError(error: unknown): boolean {
-  return error instanceof Error && !(error instanceof ExploreRouteError) && /limit|Unsupported file type/i.test(error.message);
+  return error instanceof DelimitedParseError || error instanceof Error && !(error instanceof ExploreRouteError) && /limit|Unsupported file type/i.test(error.message);
 }
 
 /**

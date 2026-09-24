@@ -1,7 +1,7 @@
 import path from "path";
 import { getTableKind, suggestRoles } from "../dataset-kinds";
-import { parseDelimited } from "../parsers/delimited";
-import { coerceCell, inferSchema, normalizeColumnKey } from "../schema";
+import { parseDelimited, uniqueColumnKeys } from "../parsers/delimited";
+import { coerceCell, inferSchema } from "../schema";
 import type { ExploreProvenance, ExploreRole, ExploreRoleMap, ExploreRowData, ExploreSchema, ExploreSensitivity } from "../types";
 import { applyIndivoGrammar, INDIVO_DERIVED_COLUMNS } from "./indivo-id";
 
@@ -48,13 +48,7 @@ async function parseXlsx(buffer: Buffer, sheetName: string | null | undefined): 
   headerRow.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
     headers[columnNumber - 1] = cell.value === null || cell.value === undefined ? "" : String(cellText(cell.value)).trim();
   });
-  const seen = new Map<string, number>();
-  const columns = headers.map((header, index) => {
-    const base = normalizeColumnKey(header || `column_${index + 1}`);
-    const count = seen.get(base) ?? 0;
-    seen.set(base, count + 1);
-    return count === 0 ? base : `${base}_${count + 1}`;
-  });
+  const columns = uniqueColumnKeys(headers);
 
   const rows: ExploreRowData[] = [];
   let truncated = false;

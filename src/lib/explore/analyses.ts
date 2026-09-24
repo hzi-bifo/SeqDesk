@@ -324,7 +324,11 @@ export function defaultParams(kit: LoadedKit | null): Record<string, unknown> {
   return out;
 }
 
+export class RevisionConflict extends Error { readonly status = 409; }
+
 export interface CreateRevisionInput {
+  expectedRevisionId?: string;
+  revisionId?: string;
   analysisId: string;
   code?: string;
   params?: Record<string, unknown>;
@@ -338,17 +342,31 @@ export interface CreateRevisionInput {
 
 /** A new revision copies whatever the caller did not change from the current one. */
 export async function createRevision(input: CreateRevisionInput): Promise<RevisionSummary> {
-  const analysis = await db.exploreAnalysis.findUnique({
+  return db.$transaction(async (tx) => {
+  // The stable operation ID lets a disconnected caller recover a committed save.
+  if (input.revisionId) {
+    const saved = await tx.exploreAnalysisRevision.findUnique({ where: { id: input.revisionId } });
+    if (saved) {
+      if (saved.analysisId !== input.analysisId || saved.authorUserId !== input.authorUserId || (input.code !== undefined && saved.code !== input.code)) throw new RevisionConflict("This save request no longer matches the step.");
+      return serializeRevision(saved);
+    }
+  }
+  const analysis = await tx.exploreAnalysis.findUnique({
     where: { id: input.analysisId },
     include: { revisions: { orderBy: { number: "desc" }, take: 1 } },
   });
   if (!analysis) throw new Error("Analysis not found");
+  if (input.expectedRevisionId !== undefined && input.expectedRevisionId !== analysis.currentRevisionId) throw new RevisionConflict("This step changed in another session. Reopen it before saving your changes.");
+  // Compare and lock before allocating a revision; all writers use this path.
+  const claimed = await tx.exploreAnalysis.updateMany({ where: { id: analysis.id, currentRevisionId: analysis.currentRevisionId }, data: { currentRevisionId: analysis.currentRevisionId } });
+  if (claimed.count !== 1) throw new RevisionConflict("This step changed in another session. Reopen it before saving your changes.");
   const latest = analysis.revisions[0] ?? null;
   const current = analysis.currentRevisionId
-    ? await db.exploreAnalysisRevision.findUnique({ where: { id: analysis.currentRevisionId } })
+    ? await tx.exploreAnalysisRevision.findUnique({ where: { id: analysis.currentRevisionId } })
     : latest;
-  const revision = await db.exploreAnalysisRevision.create({
+  const revision = await tx.exploreAnalysisRevision.create({
     data: {
+      ...(input.revisionId ? { id: input.revisionId } : {}),
       analysisId: analysis.id,
       number: (latest?.number ?? 0) + 1,
       code: input.code ?? current?.code ?? "",
@@ -361,11 +379,17 @@ export async function createRevision(input: CreateRevisionInput): Promise<Revisi
       prompt: input.prompt ?? null,
     },
   });
-  await db.exploreAnalysis.update({ where: { id: analysis.id }, data: { currentRevisionId: revision.id } });
+  await tx.exploreAnalysis.update({ where: { id: analysis.id }, data: { currentRevisionId: revision.id } });
   return serializeRevision(revision);
+  });
 }
 
 export async function updateAnalysis(id: string, data: { name?: string; description?: string | null; descriptionRevisionId?: string | null; environmentName?: string }) {
+  if (data.descriptionRevisionId) {
+    const result = await db.exploreAnalysis.updateMany({ where: { id, currentRevisionId: data.descriptionRevisionId }, data });
+    if (result.count !== 1) throw new RevisionConflict("The code changed before its explanation could be saved.");
+    return result;
+  }
   return db.exploreAnalysis.update({ where: { id }, data });
 }
 

@@ -1,11 +1,13 @@
 import fs from "fs/promises";
+import { inputToken } from "@/lib/explore/input-token";
+import { editTable } from "@/lib/explore/table-edit";
 import { createReadStream } from "fs";
 import path from "path";
 import { Readable } from "stream";
 import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { createAnalysis, createRevision, deleteAnalysis, getAnalysisDetail, listAnalyses, listRuns, serializeRun, updateAnalysis, type AnalysisInputBinding } from "@/lib/explore/analyses";
+import { RevisionConflict, createAnalysis, createRevision, deleteAnalysis, getAnalysisDetail, listAnalyses, listRuns, serializeRun, updateAnalysis, type AnalysisInputBinding } from "@/lib/explore/analyses";
 import { listEnvironments } from "@/lib/explore/environments";
 import { loadKits, serializeKit } from "@/lib/explore/kits/loader";
 import { cascadeFromRun } from "@/lib/explore/run-cascade";
@@ -104,6 +106,7 @@ export async function updateFlowStudy(session: IntegrationSession, id: string, c
 }
 
 function statusOf(error: unknown): { status: number; message: string } | null {
+  if (error instanceof RevisionConflict) return { status: error.status, message: error.message };
   if (error instanceof ExploreBuildInputError) return { status: 422, message: error.message };
   if (error instanceof Error && !(error instanceof ExploreRouteError) && /Unknown kit/.test(error.message)) return { status: 400, message: error.message };
   if (error instanceof ExploreRouteError || error instanceof ExploreAuthorizationError || error instanceof FileLibraryError || error instanceof ExploreReportError || error instanceof ExploreRunError) {
@@ -111,6 +114,12 @@ function statusOf(error: unknown): { status: number; message: string } | null {
   }
   if (isImportInputError(error)) return { status: 400, message: (error as Error).message };
   return null;
+}
+
+function operationId(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !/^flow_[a-zA-Z0-9_-]{16,80}$/.test(value)) throw new ExploreRouteError(400, "Invalid operation ID.");
+  return value;
 }
 
 function readJson(request: Request): Promise<Record<string, unknown>> {
@@ -408,16 +417,27 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         await updateDatasetRoles(id, parseRoles(body.roles));
         return json({ dataset: await getDatasetDetail(id) });
       }
+      if (segments.length === 3 && ((sub === "table" && method === "PATCH") || (sub === "copy" && method === "POST"))) {
+        await loadDataset(session, id, "write");
+        return json(await editTable(id, session.user.id, await readJson(request), sub === "copy"));
+      }
       if (segments.length === 3 && sub === "table" && method === "GET") {
         const dataset = await loadDataset(session, id, "read");
-        const current = dataset.versions.find((version) => version.id === dataset.currentVersionId) ?? dataset.versions[0] ?? null;
+        const artifactId = query.get("artifactId");
+        const original = artifactId ? await db.exploreArtifact.findFirst({ where: { id: artifactId, derivedDatasetId: id }, select: { derivedVersionId: true } }) : null;
+        const current = artifactId
+          ? await db.exploreDatasetVersion.findFirst({ where: { datasetId: id, ...(original?.derivedVersionId ? { id: original.derivedVersionId } : { provenance: { contains: artifactId } }) }, orderBy: { number: "asc" } })
+          : query.get("versionId") ? await db.exploreDatasetVersion.findFirst({ where: { datasetId: id, id: query.get("versionId")! } }) : dataset.versions.find((version) => version.id === dataset.currentVersionId) ?? dataset.versions[0] ?? null;
+        if (query.get("versionId") && !current) throw new ExploreRouteError(404, "Input version not found.");
+        if (artifactId && (!current || (!original?.derivedVersionId && !JSON.stringify(JSON.parse(current.provenance)).includes(JSON.stringify(artifactId))))) throw new ExploreRouteError(404, "The original result table is unavailable.");
         const schema = parseSchema(current?.schema);
         const requested = query.get("columns");
         const wanted = requested ? new Set(requested.split(",").map((key) => key.trim()).filter(Boolean)) : null;
         const columns = schema.columns.filter((column) => !column.key.endsWith("_db_id") && (!wanted || wanted.has(column.key)));
         const limitParam = Number.parseInt(query.get("limit") ?? "", 10);
         const limit = Math.min(250_000, Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 100_000);
-        const records = current ? applyEditsToRows(await fetchAllDatasetRows(current.id), await listActiveEdits(dataset.id)) : [];
+        const activeEdits = artifactId ? [] : await listActiveEdits(dataset.id);
+        const records = current ? applyEditsToRows(await fetchAllDatasetRows(current.id), activeEdits) : [];
         const keys = columns.map((column) => column.key);
         const rows = records.slice(0, limit).map((record) => {
           if (!wanted) return record.data;
@@ -425,7 +445,7 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
           for (const key of keys) picked[key] = record.data[key];
           return picked;
         });
-        return json({ datasetId: dataset.id, version: current?.number ?? null, rowEntity: schema.rowEntity, columns, rows, total: records.length, truncated: records.length > limit });
+        return json({ datasetId: dataset.id, inputToken: current ? inputToken(current.id, activeEdits) : null, version: current?.number ?? null, versionId: current?.id ?? null, editable: !artifactId && dataset.kind === "external" && activeEdits.length === 0, rowEntity: schema.rowEntity, columns, rows, total: records.length, truncated: records.length > limit });
       }
       if (segments.length === 3 && sub === "rows" && method === "GET") {
         const dataset = await loadDataset(session, id, "read");
@@ -519,6 +539,26 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         await deleteAnalysis(id);
         return json({ ok: true });
       }
+      if (segments.length === 3 && sub === "conversation" && (method === "GET" || method === "PUT")) {
+        await loadAnalysis(session, id, method === "GET" ? "read" : "write");
+        const where = { analysisId_userId: { analysisId: id, userId: session.user.id } };
+        if (method === "GET") {
+          const saved = await db.exploreStepConversation.findUnique({ where });
+          return json({ version: saved?.version ?? 0, state: saved ? JSON.parse(saved.state) : null });
+        }
+        const body = await readJson(request);
+        const state = JSON.stringify(body.state);
+        if (!Number.isSafeInteger(body.version) || Number(body.version) < 0 || !state || state.length > 800000 || !body.state || typeof body.state !== "object" || Array.isArray(body.state)) throw new ExploreRouteError(400, "Invalid conversation.");
+        // A stale tab cannot replace another tab's messages or checkpoint.
+        if (body.version === 0) {
+          try { await db.exploreStepConversation.create({ data: { analysisId: id, userId: session.user.id, version: 1, state } }); }
+          catch (error) { if ((error as { code?: string }).code === "P2002") throw new ExploreRouteError(409, "This conversation changed in another tab. Reopen the step to continue."); throw error; }
+        } else {
+          const saved = await db.exploreStepConversation.updateMany({ where: { analysisId: id, userId: session.user.id, version: Number(body.version) }, data: { state, version: { increment: 1 } } });
+          if (saved.count !== 1) throw new ExploreRouteError(409, "This conversation changed in another tab. Reopen the step to continue.");
+        }
+        return json({ version: Number(body.version) + 1 });
+      }
       if (segments.length === 3 && sub === "revisions" && method === "GET") {
         await loadAnalysis(session, id, "read");
         const analysis = await getAnalysisDetail(id);
@@ -531,7 +571,7 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         const code = typeof body.code === "string" ? body.code : undefined;
         if (code !== undefined && Buffer.byteLength(code, "utf8") > MAX_CODE_BYTES) throw new ExploreRouteError(400, "The code is larger than 512 KB");
         const revision = await createRevision({
-          analysisId: id, code, params: body.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : undefined,
+          analysisId: id, expectedRevisionId: optionalString(body.expectedRevisionId, 80) ?? undefined, revisionId: operationId(body.revisionId), code, params: body.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : undefined,
           inputs: body.inputs === undefined ? undefined : await parseBindings(body.inputs, analysis.targetKey),
           fileInputs: body.fileInputs === undefined ? undefined : await validateFileBindings(body.fileInputs, analysis.targetKey),
           // A client marks code the assistant drafted for the user as agent-written and keeps the request it came from.
@@ -546,7 +586,8 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
       if (segments.length === 3 && sub === "runs" && method === "POST") {
         await loadAnalysis(session, id, "write");
         const body = await readJson(request);
-        const run = await createAndStartRun({ analysisId: id, revisionId: optionalString(body.revisionId, 80),
+        if (body.inputTokens !== undefined && (!body.inputTokens || typeof body.inputTokens !== "object" || Array.isArray(body.inputTokens) || Object.entries(body.inputTokens).some(([key, value]) => key.length > 100 || typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)))) throw new ExploreRouteError(400, "Invalid input snapshot.");
+        const run = await createAndStartRun({ analysisId: id, inputTokens: body.inputTokens as Record<string, string> | undefined, runId: operationId(body.runId), revisionId: optionalString(body.revisionId, 80),
           executionMode: body.executionMode === "local" || body.executionMode === "slurm" ? body.executionMode : "default", createdById: session.user.id });
         return json({ run }, 201);
       }
@@ -600,7 +641,7 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
           id: artifact.id, kind: artifact.kind, format: artifact.format, name: artifact.name,
           fileName: artifact.path.split("/").pop(),
           size: artifact.size === null ? null : Number(artifact.size),
-          derivedDatasetId: artifact.derivedDatasetId,
+          derivedDatasetId: artifact.derivedDatasetId, checksum: artifact.checksum,
           // Relative to the integration base; the client adds the bearer.
           url: `explore/runs/${run.id}/artifacts/${artifact.id}`,
         })),

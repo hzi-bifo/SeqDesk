@@ -1146,6 +1146,7 @@ model ExploreAnalysis {
   createdBy User                      @relation("ExploreAnalysisCreator", fields: [createdById], references: [id])
   report    ExploreReport?            @relation(fields: [reportId], references: [id], onDelete: Cascade)
   flow      ExploreFlow?              @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  conversations ExploreStepConversation[]
   revisions ExploreAnalysisRevision[]
   runs      ExploreAnalysisRun[]
 
@@ -1214,9 +1215,21 @@ model ExploreArtifact {
   size             BigInt?
   checksum         String?
   derivedDatasetId String?
+  derivedVersionId String?
   createdAt        DateTime @default(now())
 
   run ExploreAnalysisRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@unique([runId, path])
+}
+
+// Private per-user step conversation and recoverable assistant checkpoint.
+model ExploreStepConversation {
+  analysisId String
+  userId String
+  version Int @default(0)
+  state String @default("{}")
+  updatedAt DateTime @updatedAt
+  analysis ExploreAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  @@id([analysisId, userId])
 }

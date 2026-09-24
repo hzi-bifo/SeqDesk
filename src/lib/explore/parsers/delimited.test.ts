@@ -51,3 +51,32 @@ describe("parseDelimited", () => {
     expect(parseDelimited("\n\n").rows).toEqual([]);
   });
 });
+
+
+describe("delimited import edge cases", () => {
+  it("preserves quoted newlines and escaped quotes as one cell", () => {
+    const parsed = parseDelimited('sample,note\r\nA,"first\r\nsecond ""quoted"" line"\r\nB,ok\r\n');
+    expect(parsed.rows).toEqual([{ sample: "A", note: 'first\nsecond "quoted" line' }, { sample: "B", note: "ok" }]);
+  });
+  it("rejects an unclosed quote rather than importing damaged data", () => {
+    expect(() => parseDelimited('sample,value\n"unterminated,1\n')).toThrow("Unclosed quoted field");
+  });
+  it("rejects extra fields rather than silently dropping values", () => {
+    expect(() => parseDelimited('sample,value\nA,1,2\n')).toThrow("more fields than the header");
+  });
+  it("rejects text after a closing quote", () => {
+    expect(() => parseDelimited('sample,value\n"A"oops,1\n')).toThrow("Unexpected text");
+  });
+  it("keeps columns whose original names collide with generated suffixes", () => {
+    const result = parseDelimited('value,value,value_2\n1,2,3\n');
+    expect(new Set(result.columns).size).toBe(3);
+    expect(Object.values(result.rows[0])).toEqual(["1", "2", "3"]);
+  });
+});
+
+
+it("detects delimiters outside quoted header fields", () => {
+  const parsed = parseDelimited('sample\t"note,with,many,commas"\nS1\tok\n');
+  expect(parsed.delimiter).toBe("\t");
+  expect(parsed.columns).toHaveLength(2);
+});

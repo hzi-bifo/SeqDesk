@@ -158,6 +158,7 @@ export interface WriteVersionInput {
   rows: ExploreRowData[];
   provenance: ExploreProvenance;
   buildSource: "auto" | "manual" | "import" | "analysis-run";
+  storageSuffix?: string;
   createdById?: string | null;
   /** Column keys whose value identifies the sample / subject / secondary key of a row. */
   keys?: { sample?: string; subject?: string; key?: string };
@@ -189,8 +190,8 @@ function tsvEscape(value: ExploreCell): string {
  * current pointer moved forward. When the content hash equals the current
  * version nothing is written and the current version is returned.
  */
-export async function writeDatasetVersion(input: WriteVersionInput): Promise<WriteVersionResult> {
-  const dataset = await db.exploreDataset.findUnique({
+export async function writeDatasetVersion(input: WriteVersionInput, client: Prisma.TransactionClient = db): Promise<WriteVersionResult> {
+  const dataset = await client.exploreDataset.findUnique({
     where: { id: input.datasetId },
     include: { versions: { orderBy: { number: "desc" }, take: 1 } },
   });
@@ -210,7 +211,7 @@ export async function writeDatasetVersion(input: WriteVersionInput): Promise<Wri
 
   const number = (latest?.number ?? 0) + 1;
   const storage = await resolveExploreStorage();
-  const versionDir = path.join(storage.datasetsRoot, sanitizeSegment(dataset.id), `v${number}`);
+  const versionDir = path.join(storage.datasetsRoot, sanitizeSegment(dataset.id), `v${number}${input.storageSuffix ? `-${sanitizeSegment(input.storageSuffix)}` : ""}`);
   await fs.mkdir(versionDir, { recursive: true });
 
   const columns = input.schema.columns.map((column) => column.key);
@@ -225,7 +226,7 @@ export async function writeDatasetVersion(input: WriteVersionInput): Promise<Wri
     "utf8"
   );
 
-  const version = await db.exploreDatasetVersion.create({
+  const version = await client.exploreDatasetVersion.create({
     data: {
       datasetId: dataset.id,
       number,
@@ -251,10 +252,10 @@ export async function writeDatasetVersion(input: WriteVersionInput): Promise<Wri
       key: secondaryKey ? cellToKey(row[secondaryKey]) : null,
       data: row as Prisma.InputJsonValue,
     }));
-    await db.exploreDatasetRow.createMany({ data: batch });
+    await client.exploreDatasetRow.createMany({ data: batch });
   }
 
-  await db.exploreDataset.update({
+  await client.exploreDataset.update({
     where: { id: dataset.id },
     data: { currentVersionId: version.id },
   });

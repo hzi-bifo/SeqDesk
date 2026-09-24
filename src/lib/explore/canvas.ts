@@ -5,6 +5,7 @@ import { parseInputBindings } from "./analyses";
 import { generationSnapshot } from "./report-generation";
 import { getKit } from "./kits/loader";
 import { viewRoleHints } from "./dataset-kinds";
+import { schemaFromCode } from "./param-calls";
 import { parseStoredBlocks } from "./report-blocks";
 import { parseJsonObject, parseRoles, parseSchema } from "./schema";
 import type { ExploreProvenance, ExploreRoleMap } from "./types";
@@ -155,6 +156,15 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
   }
   const datasetNodeIds = new Set(datasets.map((dataset) => `dataset:${dataset.id}`));
   const analysisNames = new Map(analyses.map((analysis) => [analysis.id, analysis.name] as const));
+  // A table re-imported after a step last started leaves that step's outputs behind; the card says which input moved.
+  const versionCreatedAt = new Map(allDatasets.map((dataset) => [dataset.id, dataset.versions[0]?.createdAt ?? null] as const));
+  const staleInputsOf = (analysisId: string, bindings: { alias: string; datasetId: string }[]): string[] => {
+    const latest = latestRunByAnalysis.get(analysisId);
+    if (!latest || latest.status !== "completed") return [];
+    const since = latest.startedAt ?? latest.completedAt;
+    if (!since) return [];
+    return bindings.filter((binding) => { const created = versionCreatedAt.get(binding.datasetId); return created ? created > since : false; }).map((binding) => binding.alias);
+  };
   const latestRunByAnalysis = new Map<string, (typeof runs)[number]>();
   for (const run of runs) if (!latestRunByAnalysis.has(run.analysisId)) latestRunByAnalysis.set(run.analysisId, run);
   // Finished runs per analysis, newest first: the first one owns the outputs shown, the second tells whether they changed.
@@ -298,7 +308,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         codePreview: codePreviewOf(revision?.code ?? "", 80),
         codeLines: revision?.code ? revision.code.split("\n").length : 0,
         latestRun: latest
-          ? { id: latest.id, runNumber: latest.runNumber, status: latest.status, errorTail: latest.errorTail, completedAt: latest.completedAt?.toISOString() ?? null }
+          ? { id: latest.id, runNumber: latest.runNumber, status: latest.status, errorTail: latest.errorTail, startedAt: latest.startedAt?.toISOString() ?? null, completedAt: latest.completedAt?.toISOString() ?? null, revisionNumber: latest.revision?.number ?? null }
           : null,
         active: latest ? ACTIVE_RUN.has(latest.status) : false,
         metrics: runMetrics(completedByAnalysis.get(analysis.id)?.[0]?.results),
@@ -315,8 +325,10 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
           .map((run) => ({ runNumber: run.runNumber, completedAt: run.completedAt?.toISOString() ?? null, metrics: runMetrics(run.results) ?? {} }))
           .reverse(),
         params: parseJsonObject(revision?.params) ?? {},
-        paramsSchema: ((analysis.kitId ? kits.get(analysis.kitId)?.manifest.params : null) ?? null) as CanvasParamsSchema | null,
+        // A kit brings its manifest; a plain script declares parameters through its sx.param calls.
+        paramsSchema: ((analysis.kitId ? kits.get(analysis.kitId)?.manifest.params : schemaFromCode(revision?.code ?? "")) ?? null) as CanvasParamsSchema | null,
         inputs: parseInputBindings(revision?.inputs).map((binding) => ({ alias: binding.alias, datasetId: binding.datasetId })),
+        staleInputs: staleInputsOf(analysis.id, parseInputBindings(revision?.inputs)),
       },
     });
     const active = latest ? ACTIVE_RUN.has(latest.status) : false;
@@ -333,6 +345,13 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
       const pendingId = `pending:${analysis.id}`;
       nodes.push({ id: pendingId, data: { kind: "pending", analysisId: analysis.id, runId: latest.id, runNumber: latest.runNumber, status: latest.status } });
       edges.push({ id: `pending:${analysis.id}`, source: nodeId, target: pendingId, label: latest.runNumber });
+    }
+    if (!active && latest?.status === "failed") {
+      // The latest run produced nothing: a failure card stands where its outputs
+      // would be, so the step reads as broken even when older outputs remain.
+      const failureId = `failure:${analysis.id}`;
+      nodes.push({ id: failureId, data: { kind: "failure", analysisId: analysis.id, runId: latest.id, runNumber: latest.runNumber, errorTail: latest.errorTail ?? null, completedAt: latest.completedAt?.toISOString() ?? null } });
+      edges.push({ id: `failure:${analysis.id}`, source: nodeId, target: failureId, label: latest.runNumber });
     }
     if (!completed) continue;
     // One card per figure name, owned by the analysis rather than the run, so a
@@ -363,6 +382,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         url: artifactUrl(main),
         thumbnailUrl: entry.image ? artifactUrl(entry.image) : null,
         unchanged: Boolean(before && main.checksum && before.checksum === main.checksum),
+        stale: revision ? (completed.revision?.number ?? revision.number) < revision.number : false,
         inReport: figureInReport(analysis.id, name),
         autoInclude: !guidedAnalyses.has(analysis.id),
         ...(active ? { refreshing: true } : {}),

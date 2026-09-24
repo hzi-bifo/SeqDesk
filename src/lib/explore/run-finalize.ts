@@ -117,7 +117,7 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
       }
       try {
         const contract = TableContractSchema.parse({ columns: entry.table?.columns, schemaId: entry.table?.schemaId, schemaVersion: entry.table?.schemaVersion, rowEntity: entry.table?.rowEntity });
-        const derivedId = await promoteTable(run, artifact.id, absolute, {
+        const derived = await promoteTable(run, artifact.id, absolute, {
           artifactName: name,
           name: typeof entry.title === "string" && entry.title.trim() ? entry.title.trim() : name,
           format: format as "tsv" | "csv",
@@ -126,7 +126,7 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
           sensitivity,
           contract,
         });
-        await db.exploreArtifact.update({ where: { id: artifact.id }, data: { derivedDatasetId: derivedId } });
+        await db.exploreArtifact.update({ where: { id: artifact.id }, data: { derivedDatasetId: derived.datasetId, derivedVersionId: derived.versionId } });
       } catch (error) {
         warnings.push(`Table ${name} could not be promoted to a dataset: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -171,7 +171,7 @@ async function promoteTable(
   artifactId: string,
   filePath: string,
   options: { artifactName: string; name: string; format: "tsv" | "csv"; tableKind: string | null; roles: Record<string, string>; sensitivity: ExploreSensitivity; contract: TableContract }
-): Promise<string> {
+): Promise<{ datasetId: string; versionId: string }> {
   const text = await fs.readFile(filePath, "utf8");
   const parsed = parseDelimited(text, { delimiter: options.format === "csv" ? "," : "\t" });
   if (parsed.columns.length === 0) throw new Error("empty table");
@@ -217,7 +217,7 @@ async function promoteTable(
         sourceConfig,
         createdById: run.analysis.createdById,
       });
-  await writeDatasetVersion({
+  const version = await writeDatasetVersion({
     datasetId: dataset.id,
     schema,
     rows: parsed.rows,
@@ -233,5 +233,5 @@ async function promoteTable(
     createdById: run.analysis.createdById,
     keys: { sample: roles.sample, subject: roles.subject, key: roles.taxon_id ?? roles.taxon },
   });
-  return dataset.id;
+  return { datasetId: dataset.id, versionId: version.versionId };
 }

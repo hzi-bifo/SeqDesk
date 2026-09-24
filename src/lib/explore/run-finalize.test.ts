@@ -94,7 +94,7 @@ describe("finalizeExploreRun", () => {
     );
     expect(mocks.writeDatasetVersion).toHaveBeenCalledWith(expect.objectContaining({ datasetId: "derived1", buildSource: "analysis-run" }));
     expect(mocks.writeDatasetVersion.mock.calls[0][0].rows).toEqual([{ sample: "S1", mean: "1.5" }, { sample: "S2", mean: "2" }]);
-    expect(mocks.db.exploreArtifact.update).toHaveBeenCalledWith({ where: { id: "art-summary.tsv" }, data: { derivedDatasetId: "derived1" } });
+    expect(mocks.db.exploreArtifact.update).toHaveBeenCalledWith({ where: { id: "art-summary.tsv" }, data: { derivedDatasetId: "derived1", derivedVersionId: "dv1" } });
 
     const update = mocks.db.exploreAnalysisRun.updateMany.mock.calls[0][0];
     expect(update.data.status).toBe("completed");

@@ -88,6 +88,7 @@ import {
   type CanvasGraph,
   type CanvasNodeKind,
   type CanvasParamsSchema,
+  type CanvasFailureData,
   type CanvasPendingData,
   type CanvasSourceData,
   type CanvasViewData,
@@ -162,7 +163,8 @@ type ViewNodeType = Node<CanvasViewData & Wired & { hue: number; scopeQuery: str
 type SourceNodeType = Node<CanvasSourceData, "source">;
 type FigureNodeType = Node<CanvasFigureData & Wired & { hue: number; scopeQuery: string; justUpdated?: boolean; onToggleReport: (target: ReportTarget) => Promise<void> }, "figure">;
 type PendingNodeType = Node<CanvasPendingData & Wired & { hue: number; scopeQuery: string }, "pending">;
-type CanvasFlowNode = DatasetNodeType | AnalysisNodeType | SourceNodeType | FigureNodeType | PendingNodeType | ViewNodeType;
+type FailureNodeType = Node<CanvasFailureData & Wired & { hue: number; scopeQuery: string }, "failure">;
+type CanvasFlowNode = DatasetNodeType | AnalysisNodeType | SourceNodeType | FigureNodeType | PendingNodeType | FailureNodeType | ViewNodeType;
 
 const MAX_FETCHED_ROWS = 200;
 const COLUMN_WIDTH = CANVAS_COLUMN_WIDTH;
@@ -692,9 +694,7 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
   const [starting, setStarting] = useState(false);
   const [showParams, setShowParams] = useState(false);
   const hasParams = Boolean(data.paramsSchema?.properties && Object.keys(data.paramsSchema.properties).length > 0);
-  const failed = status === "failed" && Boolean(data.latestRun?.errorTail);
-  const errorLines = failed ? (data.latestRun?.errorTail ?? "").trim().split("\n").filter(Boolean).slice(-3) : [];
-  const reserved = 104 + (failed ? 16 * errorLines.length + 24 : 0) + (showParams && hasParams ? 30 * Object.keys(data.paramsSchema?.properties ?? {}).length + 34 : 0);
+  const reserved = 104 + (showParams && hasParams ? 30 * Object.keys(data.paramsSchema?.properties ?? {}).length + 34 : 0);
   const visibleLines = Math.max(1, Math.floor(((height ?? CANVAS_SIZES.analysis.height) - reserved) / CODE_LINE_HEIGHT));
   const lines = data.codePreview ? data.codePreview.split("\n") : [];
   const shown = lines.slice(0, visibleLines);
@@ -798,16 +798,6 @@ function AnalysisNode({ data, height }: NodeProps<AnalysisNodeType>) {
       )}
       {showParams && hasParams && data.paramsSchema && (
         <ParamsMini schema={data.paramsSchema} values={data.params ?? {}} onApply={(values) => data.onSaveParams(data.analysisId, values)} />
-      )}
-      {failed && data.latestRun && (
-        <div className="nodrag nowheel border-t bg-red-50 px-3 py-1.5 text-[10px] text-red-800 dark:bg-red-950/40 dark:text-red-200">
-          <div className="flex items-center gap-1 font-medium">
-            <AlertTriangle className="h-3 w-3" /> {data.latestRun.runNumber} failed
-            <span className="flex-1" />
-            <Link href={`/explore/runs/${data.latestRun.id}${data.scopeQuery}`} className="hover:underline">Logs</Link>
-          </div>
-          <pre className="mt-0.5 max-h-12 overflow-hidden whitespace-pre-wrap break-all font-mono leading-4">{errorLines.join("\n")}</pre>
-        </div>
       )}
       <div className="flex items-center gap-2 rounded-b-[7px] border-t px-3 py-1.5 text-[11px]" style={{ background: colours.header }}>
         <button
@@ -983,7 +973,30 @@ function PendingNode({ data }: NodeProps<PendingNodeType>) {
   );
 }
 
-const nodeTypes = { source: SourceNode, dataset: DatasetNode, analysis: AnalysisNode, figure: FigureNode, pending: PendingNode, view: ViewNode };
+/** Where the outputs of the latest run would have appeared, had it not failed. */
+function FailureNode({ data }: NodeProps<FailureNodeType>) {
+  const colours = tint(data.hue);
+  const lines = (data.errorTail ?? "").trim().split("\n").filter(Boolean).slice(-4);
+  return (
+    <div className="flex h-full w-full flex-col overflow-hidden rounded-lg border border-dashed border-red-300 bg-card shadow-sm dark:border-red-900">
+      <Resizer kind="failure" />
+      <Handle type="target" position={Position.Left} className={cn(handleClass, data.hasInput && "!opacity-0")} />
+      <div className="flex items-center gap-1 border-b bg-red-50 px-3 py-1.5 text-[11px] font-medium text-red-800 dark:bg-red-950/40 dark:text-red-200">
+        <AlertTriangle className="h-3 w-3" /> {data.runNumber} failed
+        <span className="flex-1" />
+        <span className="font-normal text-muted-foreground">no outputs</span>
+      </div>
+      <pre className="nodrag nowheel min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-all p-3 font-mono text-[10px] leading-4 text-red-900 dark:text-red-200">{lines.length > 0 ? lines.join("\n") : "The run ended without a message. Open the run for its logs."}</pre>
+      <div className="flex items-center gap-2 border-t px-3 py-1.5 text-[11px] text-muted-foreground" style={{ background: colours.header }}>
+        <span className="truncate">Outputs of the previous run stay until a run succeeds</span>
+        <span className="flex-1" />
+        <Link href={`/explore/runs/${data.runId}${data.scopeQuery}`} className="nodrag inline-flex items-center gap-1 hover:underline">Logs <ExternalLink className="h-3 w-3" /></Link>
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { source: SourceNode, dataset: DatasetNode, analysis: AnalysisNode, figure: FigureNode, pending: PendingNode, failure: FailureNode, view: ViewNode };
 
 /** Per-card position and size; Arrange drops the positions and keeps the sizes. */
 type StoredLayout = Record<string, { x?: number; y?: number; width?: number; height?: number }>;
@@ -1005,7 +1018,7 @@ function readExpanded(layoutKey: string, focusNodeId: string | null): { expanded
     }
   }
   // A link to an output card opens the step that made it.
-  const focusedAnalysis = focusNodeId?.match(/^(?:figure|pending):([^:]+)/)?.[1];
+  const focusedAnalysis = focusNodeId?.match(/^(?:figure|pending|failure):([^:]+)/)?.[1];
   const expanded = focusedAnalysis ? { ...(stored ?? {}), [focusedAnalysis]: true } : (stored ?? {});
   return { expanded, seen: stored !== null };
 }
@@ -1389,7 +1402,7 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
       if (node.data.kind !== "analysis" || !outputsHidden(node.data.analysisId)) continue;
       for (const edge of graph.edges) {
         if (edge.source !== node.id) continue;
-        if (edge.target.startsWith("figure:") || edge.target.startsWith("pending:")) hidden.add(edge.target);
+        if (edge.target.startsWith("figure:") || edge.target.startsWith("pending:") || edge.target.startsWith("failure:")) hidden.add(edge.target);
         else if (edge.target.startsWith("dataset:") && !readByAnalysis.has(edge.target)) hidden.add(edge.target);
       }
     }
@@ -1434,7 +1447,7 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
     const outputCounts = new Map<string, number>();
     for (const edge of graph.edges) {
       if (!edge.source.startsWith("analysis:")) continue;
-      if (edge.target.startsWith("figure:") || edge.target.startsWith("dataset:") || edge.target.startsWith("pending:")) {
+      if (edge.target.startsWith("figure:") || edge.target.startsWith("dataset:") || edge.target.startsWith("pending:") || edge.target.startsWith("failure:")) {
         outputCounts.set(edge.source, (outputCounts.get(edge.source) ?? 0) + 1);
       }
     }
@@ -1515,6 +1528,7 @@ export function ExploreCanvas({ scope, reportId, className, fillViewport = false
       }
       if (node.data.kind === "figure") return { ...base, type: "figure", data: { ...node.data, hue, scopeQuery, justUpdated, hasInput, onToggleReport: toggleReport } } as FigureNodeType;
       if (node.data.kind === "pending") return { ...base, type: "pending", data: { ...node.data, hue, scopeQuery, hasInput } } as PendingNodeType;
+      if (node.data.kind === "failure") return { ...base, type: "failure", data: { ...node.data, hue, scopeQuery, hasInput } } as FailureNodeType;
       if (node.data.kind === "view") return { ...base, type: "view", data: { ...node.data, hue, scopeQuery, hasInput, onToggleReport: toggleReport } } as ViewNodeType;
       return { ...base, type: "source", data: node.data } as SourceNodeType;
     });

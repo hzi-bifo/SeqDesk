@@ -18,7 +18,7 @@ export interface CanvasRoleHint {
   missing: ExploreRole[];
 }
 
-export type CanvasNodeKind = "source" | "dataset" | "analysis" | "figure" | "pending" | "view";
+export type CanvasNodeKind = "source" | "dataset" | "analysis" | "figure" | "pending" | "failure" | "view";
 
 /** The views SeqDesk draws from a table without an analysis. */
 export type BuiltInView = "subject-timeline" | "heatmap";
@@ -88,7 +88,9 @@ export type CanvasAnalysisData = {
   /** First lines of the current revision, so the card reads as a function. */
   codePreview: string;
   codeLines: number;
-  latestRun: { id: string; runNumber: string; status: string; errorTail?: string | null; completedAt?: string | null } | null;
+  latestRun: { id: string; runNumber: string; status: string; errorTail?: string | null; startedAt?: string | null; completedAt?: string | null; revisionNumber?: number | null } | null;
+  /** Input aliases whose table got a new version after the latest run started: the outputs no longer reflect them. */
+  staleInputs?: string[];
   /** True while the latest run is pending, queued or running. */
   active: boolean;
   /** What the latest finished run wrote about its result: notes and saved report texts. */
@@ -114,6 +116,8 @@ export type CanvasFigureData = {
   kind: "figure";
   artifactId: string;
   runId: string;
+  /** True when the step has a newer version than the run that drew this figure. */
+  stale?: boolean;
   name: string;
   format: string;
   url: string;
@@ -152,7 +156,18 @@ export type CanvasPendingData = {
   status: string;
 }
 
-export type CanvasNodeData = CanvasSourceData | CanvasDatasetData | CanvasAnalysisData | CanvasFigureData | CanvasPendingData | CanvasViewData;
+/** Stands where the outputs of the latest run would have appeared, when that run failed. */
+export type CanvasFailureData = {
+  kind: "failure";
+  analysisId: string;
+  runId: string;
+  runNumber: string;
+  /** The last lines the failed run wrote to stderr, as the run record kept them. */
+  errorTail: string | null;
+  completedAt: string | null;
+};
+
+export type CanvasNodeData = CanvasSourceData | CanvasDatasetData | CanvasAnalysisData | CanvasFigureData | CanvasPendingData | CanvasFailureData | CanvasViewData;
 
 export interface CanvasNode {
   id: string;
@@ -225,6 +240,7 @@ export const CANVAS_SIZES: Record<CanvasNodeKind, { width: number; height: numbe
   analysis: { width: 300, height: 190 },
   figure: { width: 280, height: 210 },
   pending: { width: 280, height: 210 },
+  failure: { width: 280, height: 150 },
   view: { width: 300, height: 230 },
 };
 export const CANVAS_EXPANDED_DATASET = { width: 680, height: 480 };
@@ -234,6 +250,7 @@ export const CANVAS_MIN_SIZES: Record<CanvasNodeKind, { width: number; height: n
   analysis: { width: 240, height: 130 },
   figure: { width: 180, height: 140 },
   pending: { width: 180, height: 140 },
+  failure: { width: 180, height: 110 },
   view: { width: 220, height: 150 },
 };
 
@@ -245,7 +262,7 @@ export function nodeSize(node: CanvasNode, options: Pick<LayoutOptions, "expande
   return CANVAS_SIZES[node.data.kind];
 }
 
-const BASE_RANK: Record<CanvasNodeKind, number> = { source: 0, dataset: 1, analysis: 2, figure: 3, pending: 3, view: 2 };
+const BASE_RANK: Record<CanvasNodeKind, number> = { source: 0, dataset: 1, analysis: 2, figure: 3, pending: 3, failure: 3, view: 2 };
 
 /**
  * Rank every node by the longest path from a root, never below the base rank
@@ -379,7 +396,7 @@ export function assignCanvasHues(graph: CanvasGraph): Record<string, number | nu
       value = null;
     } else if (node.data.kind === "analysis") {
       value = COMPUTE_HUE;
-    } else if (node.data.kind === "figure" || node.data.kind === "pending") {
+    } else if (node.data.kind === "figure" || node.data.kind === "pending" || node.data.kind === "failure") {
       value = outputHue(id);
     } else if (node.data.kind === "view") {
       // Drawn from the table directly: the table's hue turned like any output.

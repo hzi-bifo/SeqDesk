@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   db: {
     $transaction: vi.fn(),
-    exploreAnalysis: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
+    exploreAnalysis: { updateMany: vi.fn().mockResolvedValue({ count: 1 }), create: vi.fn(), update: vi.fn(), findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     exploreAnalysisRevision: { create: vi.fn(), findUnique: vi.fn() },
     exploreAnalysisRun: { findFirst: vi.fn() },
   },
@@ -70,6 +70,21 @@ describe("explore analyses", () => {
     expect(data.author).toBe("agent");
     expect(revision.prompt).toBe("make it faster");
     expect(mocks.db.exploreAnalysis.update).toHaveBeenCalledWith({ where: { id: "a1" }, data: { currentRevisionId: "r1" } });
+  });
+
+  it("rejects stale code, parameter and input edits before creating a revision", async () => {
+    await expect(createRevision({ analysisId: "a1", expectedRevisionId: "old", params: { top: 1 }, author: "user", authorUserId: "u1" })).rejects.toMatchObject({ status: 409 });
+    expect(mocks.db.exploreAnalysisRevision.create).not.toHaveBeenCalled();
+    mocks.db.exploreAnalysis.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(createRevision({ analysisId: "a1", expectedRevisionId: "r1", inputs: [], author: "user", authorUserId: "u1" })).rejects.toMatchObject({ status: 409 });
+    expect(mocks.db.exploreAnalysisRevision.create).not.toHaveBeenCalled();
+  });
+
+  it("recovers an already committed revision with the same operation ID", async () => {
+    mocks.db.exploreAnalysisRevision.findUnique.mockResolvedValueOnce({ id: "saved", analysisId: "a1", authorUserId: "u1", code: "print(1)", createdAt: new Date(), params: "{}", inputs: "[]" });
+    const saved = await createRevision({ analysisId: "a1", revisionId: "saved", code: "print(1)", author: "agent", authorUserId: "u1" });
+    expect(saved.id).toBe("saved");
+    expect(mocks.db.exploreAnalysisRevision.create).not.toHaveBeenCalled();
   });
 
   it("allocates daily run numbers", async () => {

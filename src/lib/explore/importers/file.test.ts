@@ -54,3 +54,15 @@ describe("explore file import", () => {
     await expect(parseImportFile(big, { fileName: "big.tsv" })).rejects.toThrow(/limit/);
   });
 });
+
+
+it("keeps XLSX values when generated column names collide", async () => {
+  const ExcelJS = await import("exceljs");
+  const book = new ExcelJS.Workbook();
+  const sheet = book.addWorksheet("Data");
+  sheet.addRow(["value", "value", "value_2"]);
+  sheet.addRow([1, 2, 3]);
+  const result = await parseImportFile(Buffer.from(await book.xlsx.writeBuffer()), { fileName: "collision.xlsx" });
+  expect(new Set(result.columns).size).toBe(3);
+  expect(Object.values(result.rows[0])).toEqual([1, 2, 3]);
+});
