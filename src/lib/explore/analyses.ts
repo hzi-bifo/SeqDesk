@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getKit, type LoadedKit } from "./kits/loader";
 import { stepSlug } from "./variables";
@@ -257,6 +257,12 @@ export interface CreateAnalysisInput {
   laneOf?: string | null;
   laneLabel?: string | null;
   purpose?: string | null;
+  /** Meaning of the settings (label, unit, meaning, consequence...), when the creator knows it. */
+  paramMeta?: Record<string, unknown> | null;
+  /** Code for a step that is not made from a kit (a template step, a proposal). */
+  code?: string;
+  /** A stable id the client chose (request idempotency). */
+  id?: string;
 }
 
 /**
@@ -275,7 +281,7 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
   const fileOnlyCode = input.fileInputs?.length && input.inputs.length === 0
     ? `from seqdesk_explore import file_path, note, finish\n\nsource = file_path(${JSON.stringify(input.fileInputs[0].alias)})\n# Read source with the library for your file format, then save figures or tables.\nnote(f"Input file: {source.name} ({source.stat().st_size} bytes)")\nfinish()\n`
     : BLANK_PYTHON;
-  const code = kit?.code ?? (language === "r" ? BLANK_R : fileOnlyCode);
+  const code = input.code ?? kit?.code ?? (language === "r" ? BLANK_R : fileOnlyCode);
   const params = { ...defaultParams(kit), ...(input.params ?? {}) };
   let reportId: string | null = null;
   if (input.reportId) {
@@ -307,7 +313,7 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
   }
   const analysis = await client.exploreAnalysis.create({
     data: {
-      ...(generation ? { id: generation.id } : {}),
+      ...(generation ? { id: generation.id } : input.id ? { id: input.id } : {}),
       targetKey: input.targetKey,
       name,
       slug,
@@ -323,6 +329,7 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
       laneOf: input.laneOf ?? null,
       laneLabel: input.laneLabel ?? null,
       purpose: input.purpose ?? null,
+      ...(input.paramMeta ? { paramMeta: input.paramMeta as Prisma.InputJsonValue } : {}),
     },
   });
   const revision = await client.exploreAnalysisRevision.create({
@@ -423,7 +430,7 @@ export async function createRevision(input: CreateRevisionInput): Promise<Revisi
   });
 }
 
-export async function updateAnalysis(id: string, data: { name?: string; description?: string | null; descriptionRevisionId?: string | null; environmentName?: string }) {
+export async function updateAnalysis(id: string, data: { name?: string; description?: string | null; descriptionRevisionId?: string | null; environmentName?: string; purpose?: string | null; paramMeta?: Prisma.InputJsonValue | typeof Prisma.DbNull; methodsSentence?: Prisma.InputJsonValue | typeof Prisma.DbNull }) {
   if (data.descriptionRevisionId) {
     const result = await db.exploreAnalysis.updateMany({ where: { id, currentRevisionId: data.descriptionRevisionId }, data });
     if (result.count !== 1) throw new RevisionConflict("The code changed before its explanation could be saved.");

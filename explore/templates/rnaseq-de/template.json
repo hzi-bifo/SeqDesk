@@ -1,0 +1,60 @@
+{
+  "id": "rnaseq-de",
+  "name": "RNA-seq differential expression",
+  "description": "Compare gene counts between two groups of samples: drop genes with too few reads, normalise to log counts per million, test every gene and draw a volcano plot.",
+  "slots": [
+    { "key": "gene", "question": "Which column names the genes?", "role": "taxon_id", "kind": "column" },
+    { "key": "control", "question": "Which columns are the control samples?", "kind": "columns" },
+    { "key": "treated", "question": "Which columns are the treated samples?", "kind": "columns" }
+  ],
+  "steps": [
+    {
+      "key": "filter",
+      "name": "Filter low counts",
+      "purpose": "Keep genes with enough reads to test.",
+      "language": "python",
+      "codeFile": "steps/filter.py",
+      "params": { "gene": "{{gene}}", "samples": "{{control+treated}}", "min_count": 10, "min_samples": 2 },
+      "paramMeta": {
+        "min_count": { "label": "Minimum reads", "meaning": "Reads a gene needs in a sample to count as expressed there.", "consequence": "Higher removes more genes.", "usual": 10, "min": 0 },
+        "min_samples": { "label": "In at least", "unit": "samples", "meaning": "Samples in which a gene must reach the minimum.", "consequence": "Higher keeps only broadly expressed genes.", "usual": 2, "min": 1 }
+      },
+      "inputs": [{ "alias": "counts", "source": "dataset" }],
+      "outputs": [{ "name": "filtered", "kind": "table" }]
+    },
+    {
+      "key": "normalise",
+      "name": "Normalise to log CPM",
+      "purpose": "Make samples with different sequencing depth comparable.",
+      "language": "python",
+      "codeFile": "steps/normalise.py",
+      "params": { "gene": "{{gene}}", "samples": "{{control+treated}}", "prior": 1 },
+      "inputs": [{ "alias": "filtered", "from": { "step": "filter", "output": "filtered" } }],
+      "outputs": [{ "name": "normalised", "kind": "table" }]
+    },
+    {
+      "key": "test",
+      "name": "Test genes",
+      "purpose": "Find genes whose expression differs between the groups.",
+      "language": "python",
+      "codeFile": "steps/test.py",
+      "params": { "gene": "{{gene}}", "control": "{{control}}", "treated": "{{treated}}", "fdr": 0.05, "min_lfc": 1 },
+      "paramMeta": {
+        "fdr": { "label": "False discovery rate", "meaning": "Share of called genes that may be false positives.", "consequence": "Lower calls fewer genes.", "usual": 0.05, "min": 0, "max": 1 },
+        "min_lfc": { "label": "Minimum fold change", "unit": "log2", "meaning": "How far apart the group means must be.", "consequence": "Higher calls fewer, larger changes.", "usual": 1, "min": 0 }
+      },
+      "inputs": [{ "alias": "normalised", "from": { "step": "normalise", "output": "normalised" } }],
+      "outputs": [{ "name": "results", "kind": "table" }, { "name": "n_called", "kind": "value" }]
+    },
+    {
+      "key": "volcano",
+      "name": "Volcano plot",
+      "purpose": "Show fold change against significance for every gene.",
+      "language": "python",
+      "codeFile": "steps/volcano.py",
+      "params": { "gene": "{{gene}}" },
+      "inputs": [{ "alias": "results", "from": { "step": "test", "output": "results" } }],
+      "outputs": [{ "name": "volcano", "kind": "figure" }]
+    }
+  ]
+}

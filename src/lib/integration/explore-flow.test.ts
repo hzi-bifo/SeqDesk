@@ -2,14 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   flowFind: vi.fn(), flowRunFind: vi.fn(), requireAccess: vi.fn(), moduleEnabled: vi.fn(),
+  getRecipeView: vi.fn(), applyRecipeOps: vi.fn(), addStep: vi.fn(), stepOptions: vi.fn(), listRecipeRevisions: vi.fn(), resolveAccess: vi.fn(), scopeFind: vi.fn(),
   startFlowRun: vi.fn(), listFlowRuns: vi.fn(), getFlowRunDetail: vi.fn(), cancelFlowRun: vi.fn(), makeRunCurrent: vi.fn(), compareFlowRuns: vi.fn(), flowRunOutputs: vi.fn(),
 }));
-vi.mock("@/lib/db", () => ({ db: { exploreFlow: { findUnique: mocks.flowFind }, exploreFlowRun: { findUnique: mocks.flowRunFind } } }));
+vi.mock("@/lib/db", () => ({ db: { exploreFlow: { findUnique: mocks.flowFind }, exploreFlowRun: { findUnique: mocks.flowRunFind }, integrationExploreScope: { findFirst: mocks.scopeFind } } }));
 vi.mock("@/lib/explore/module", () => ({ isExploreModuleEnabled: mocks.moduleEnabled }));
 vi.mock("@/lib/explore/authorization", async () => {
   const actual = await vi.importActual<typeof import("@/lib/explore/authorization")>("@/lib/explore/authorization");
-  return { ...actual, requireTargetAccess: mocks.requireAccess };
+  return { ...actual, requireTargetAccess: mocks.requireAccess, resolveTargetAccess: mocks.resolveAccess };
 });
+vi.mock("@/lib/explore/recipe-view", async () => ({ ...(await vi.importActual<object>("@/lib/explore/recipe-view")), getRecipeView: mocks.getRecipeView }));
+vi.mock("@/lib/explore/recipe-edit", async () => ({ ...(await vi.importActual<object>("@/lib/explore/recipe-edit")), applyRecipeOps: mocks.applyRecipeOps, addStep: mocks.addStep, stepOptions: mocks.stepOptions, listRecipeRevisions: mocks.listRecipeRevisions }));
+vi.mock("@/lib/explore/proposals", () => ({ pendingProposals: vi.fn().mockResolvedValue([]) }));
 vi.mock("@/lib/explore/flow-runs", () => ({
   startFlowRun: mocks.startFlowRun, listFlowRuns: mocks.listFlowRuns, getFlowRunDetail: mocks.getFlowRunDetail, cancelFlowRun: mocks.cancelFlowRun,
   makeRunCurrent: mocks.makeRunCurrent, compareFlowRuns: mocks.compareFlowRuns, flowRunOutputs: mocks.flowRunOutputs,
@@ -35,6 +39,9 @@ describe("Flow run routes", () => {
     mocks.flowFind.mockResolvedValue({ id: "f1", targetKey: "project:p1", name: "DE" });
     mocks.flowRunFind.mockResolvedValue({ id: "r1", flowId: "f1" });
     mocks.requireAccess.mockResolvedValue({ type: "project", id: "p1" });
+    mocks.resolveAccess.mockResolvedValue({ level: "write", target: { type: "project", id: "p1" } });
+    mocks.scopeFind.mockResolvedValue({ projectId: "proj1", visibility: "lab", ownerMemberId: "" });
+    mocks.getRecipeView.mockImplementation(async (id: string, options: unknown) => ({ id, options, steps: [{ id: "s9" }] }));
   });
 
   it("starts a run with the caller as starter and the scope it asked for", async () => {
@@ -71,5 +78,46 @@ describe("Flow run routes", () => {
     expect((await call("GET", "flow-runs/compare?a=r1")).body.code).toBe("invalid_request");
     mocks.flowRunOutputs.mockResolvedValue({ outputs: [], values: [] });
     expect((await call("GET", "flow-runs/r1/outputs")).body).toEqual({ outputs: [], values: [] });
+  });
+});
+
+describe("Flow recipe routes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.moduleEnabled.mockResolvedValue(true);
+    mocks.flowFind.mockResolvedValue({ id: "f1", targetKey: "project:p1", name: "DE" });
+    mocks.requireAccess.mockResolvedValue({ type: "project", id: "p1" });
+    mocks.resolveAccess.mockResolvedValue({ level: "read", target: { type: "project", id: "p1" } });
+    mocks.scopeFind.mockResolvedValue({ projectId: "proj1", visibility: "lab", ownerMemberId: "" });
+    mocks.getRecipeView.mockImplementation(async (id: string, options: unknown) => ({ id, options, steps: [{ id: "s9" }] }));
+  });
+
+  it("reads the recipe of the viewed run with the caller's rights and the scope's project", async () => {
+    const response = await call("GET", "flows/f1/recipe?run=r7");
+    expect(response.status).toBe(200);
+    expect(mocks.getRecipeView).toHaveBeenCalledWith("f1", { runId: "r7", canEdit: false, scope: { projectId: "proj1", visibility: "lab", ownerMemberId: "" }, proposals: [] });
+  });
+
+  it("validates recipe changes before applying them", async () => {
+    expect((await call("PATCH", "flows/f1/recipe", { ops: [{ op: "spin" }] })).body).toEqual({ error: "Unknown recipe change: spin", code: "invalid_request" });
+    await call("PATCH", "flows/f1/recipe", { expectedRevision: 7, ops: [{ op: "move", stepId: "s2", after: null }] });
+    expect(mocks.applyRecipeOps).toHaveBeenCalledWith("f1", [{ op: "move", stepId: "s2", after: null }], 7, { userId: "u1", memberId: "m1", name: "Amara Okafor" });
+    mocks.applyRecipeOps.mockRejectedValue(flowError("binding_lost", "Test reads Filter.", { stepId: "s2", words: "Test reads Filter.", fix: { stepId: "s2", after: "s1" } }));
+    expect(await call("PATCH", "flows/f1/recipe", { expectedRevision: 7, ops: [{ op: "move", stepId: "s2", after: null }] })).toEqual({ status: 422, body: { error: "Test reads Filter.", code: "binding_lost", stepId: "s2", words: "Test reads Filter.", fix: { stepId: "s2", after: "s1" } } });
+  });
+
+  it("adds a step and answers with it and the recipe", async () => {
+    mocks.addStep.mockResolvedValue("s9");
+    const response = await call("POST", "flows/f1/steps", { after: "s2", kitId: "table-summary", inputs: [{ alias: "table", from: { stepId: "s2", output: "normalised" } }] });
+    expect(response.status).toBe(201);
+    expect(response.body.step).toEqual({ id: "s9" });
+    expect(mocks.addStep.mock.calls[0][1]).toMatchObject({ after: "s2", kitId: "table-summary", inputs: [{ alias: "table", from: { stepId: "s2", output: "normalised" } }] });
+    expect((await call("POST", "flows/f1/steps", { inputs: [{ alias: "x" }] })).body.code).toBe("invalid_request");
+  });
+
+  it("lists templates", async () => {
+    const response = await call("GET", "templates");
+    expect(response.body.templates.map((template: { id: string }) => template.id)).toEqual(["rnaseq-de", "survey-likert"]);
+    expect(response.body.templates[0].slots[0]).toMatchObject({ key: "gene", kind: "column" });
   });
 });

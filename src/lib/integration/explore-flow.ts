@@ -6,7 +6,11 @@
  */
 import type { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { requireTargetAccess } from "@/lib/explore/authorization";
+import { requireTargetAccess, resolveTargetAccess } from "@/lib/explore/authorization";
+import { addStep, applyRecipeOps, listRecipeRevisions, parseRecipeOps, stepOptions, type AddStepInput } from "@/lib/explore/recipe-edit";
+import { getRecipeView } from "@/lib/explore/recipe-view";
+import { pendingProposals } from "@/lib/explore/proposals";
+import { createFlowFromTemplate, listTemplates, serializeTemplate } from "@/lib/explore/templates";
 import { cancelFlowRun, compareFlowRuns, flowRunOutputs, getFlowRunDetail, listFlowRuns, makeRunCurrent, startFlowRun, type FlowActor, type StartFlowRunInput } from "@/lib/explore/flow-runs";
 import { flowError, requestIdOf } from "./flow-contract";
 import type { IntegrationSession } from "./identity";
@@ -133,8 +137,92 @@ export function isFlowPath(segments: string[]): boolean {
   return Boolean(sub && FLOW_SUBS[head]?.has(sub));
 }
 
+/** The integration scope row of a study, for project, visibility and owner. */
+export async function scopeInfo(session: IntegrationSession, targetKey: string) {
+  const scope = await db.integrationExploreScope.findFirst({ where: { authority: session.integration.authority, workspaceId: session.integration.workspaceId, targetKey }, select: { projectId: true, visibility: true, ownerMemberId: true } });
+  return scope ?? null;
+}
+
+/** The recipe as the caller may see it. */
+export async function recipeFor(session: IntegrationSession, flow: { id: string; targetKey: string }, runId?: string | null) {
+  const access = await resolveTargetAccess(session, flow.targetKey);
+  return getRecipeView(flow.id, { runId, canEdit: access.level === "write", scope: await scopeInfo(session, flow.targetKey), proposals: await pendingProposals(flow.id) });
+}
+
+function parseStepInputs(raw: unknown): AddStepInput["inputs"] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw) || raw.length > 20) throw flowError("invalid_request", "inputs must be a list.");
+  return raw.map((entry) => {
+    const input = entry as Record<string, unknown>;
+    if (!input || typeof input.alias !== "string") throw flowError("invalid_request", "Each input needs an alias.");
+    if (typeof input.datasetId === "string") return { alias: input.alias, datasetId: input.datasetId };
+    const from = input.from as Record<string, unknown> | undefined;
+    if (from && typeof from.stepId === "string" && typeof from.output === "string") return { alias: input.alias, from: { stepId: from.stepId, output: from.output } };
+    throw flowError("invalid_request", "Each input needs a datasetId or from:{stepId,output}.");
+  });
+}
+
+const optionalText = (value: unknown, max: number): string | null => (typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null);
+
+/** The recipe (`explore.recipe`). */
+async function handleRecipe({ request, session, segments, json }: FlowRouteContext): Promise<Response | null> {
+  const method = request.method;
+  const query = request.nextUrl.searchParams;
+  const [head, id, sub] = segments;
+  if (head === "templates" && segments.length === 1 && method === "GET") {
+    return json({ templates: (await listTemplates()).map(serializeTemplate) });
+  }
+  if (head === "flows" && id === "from-template" && segments.length === 2 && method === "POST") {
+    const body = await readBody(request);
+    const targetKey = optionalText(body.targetKey, 200);
+    if (!targetKey || typeof body.templateId !== "string" || typeof body.datasetId !== "string") throw flowError("invalid_request", "targetKey, templateId and datasetId are required.");
+    await requireTargetAccess(session, targetKey, "write");
+    const flowId = await createFlowFromTemplate({ targetKey, templateId: body.templateId, name: optionalText(body.name, 200), datasetId: body.datasetId, slots: body.slots, actor: actorOf(session) });
+    const { getFlow } = await import("@/lib/explore/flows");
+    return json({ flow: await getFlow(flowId), recipe: await recipeFor(session, { id: flowId, targetKey }) }, 201);
+  }
+  if (head !== "flows" || segments.length !== 3) return null;
+  if (sub === "recipe" && method === "GET") {
+    const flow = await flowFor(session, id, "read");
+    return json({ recipe: await recipeFor(session, flow, query.get("run")) });
+  }
+  if (sub === "recipe" && method === "PATCH") {
+    const flow = await flowFor(session, id, "write");
+    const body = await readBody(request);
+    const expected = body.expectedRevision === undefined ? undefined : Number(body.expectedRevision);
+    if (expected !== undefined && !Number.isInteger(expected)) throw flowError("invalid_request", "expectedRevision must be a whole number.");
+    await applyRecipeOps(flow.id, parseRecipeOps(body.ops), expected, actorOf(session));
+    return json({ recipe: await recipeFor(session, flow) });
+  }
+  if (sub === "revisions" && method === "GET") {
+    await flowFor(session, id, "read");
+    return json({ revisions: await listRecipeRevisions(id) });
+  }
+  if (sub === "step-options" && method === "GET") {
+    await flowFor(session, id, "read");
+    return json(await stepOptions(id, { after: query.get("after"), output: query.get("output") }));
+  }
+  if (sub === "steps" && method === "POST") {
+    const flow = await flowFor(session, id, "write");
+    const body = await readBody(request);
+    const laneKind = body.laneKind === "forEach" ? "forEach" : body.laneKind === "alternative" ? "alternative" : null;
+    const code = typeof body.code === "string" ? body.code : null;
+    if (code && Buffer.byteLength(code, "utf8") > 512 * 1024) throw flowError("invalid_request", "The code is larger than 512 KB");
+    const stepId = await addStep(flow.id, {
+      after: optionalText(body.after, 80), laneOf: optionalText(body.laneOf, 80), laneKind, laneLabel: optionalText(body.laneLabel, 80),
+      name: optionalText(body.name, 200), purpose: optionalText(body.purpose, 200), kitId: optionalText(body.kitId, 80), code,
+      language: body.language === "r" ? "r" : "python", inputs: parseStepInputs(body.inputs),
+      params: body.params && typeof body.params === "object" && !Array.isArray(body.params) ? (body.params as Record<string, unknown>) : undefined,
+      requestId: requestIdOf(body.requestId), actor: actorOf(session),
+    });
+    const recipe = await recipeFor(session, flow);
+    return json({ step: recipe.steps.find((step) => step.id === stepId) ?? null, recipe }, 201);
+  }
+  return null;
+}
+
 type Handler = (context: FlowRouteContext) => Promise<Response | null>;
-const handlers: Handler[] = [handleRuns];
+const handlers: Handler[] = [handleRecipe, handleRuns];
 
 /** The Flow routes; null when the path is not one of them. */
 export async function handleFlowRequest(context: FlowRouteContext): Promise<Response | null> {

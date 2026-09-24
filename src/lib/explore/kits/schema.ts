@@ -32,6 +32,8 @@ export const KitOutputSchema = z
     label: z.string().min(1).max(120).optional(),
     description: z.string().max(500).optional(),
     optional: z.boolean().optional(),
+    /** For table outputs: the table kind it writes, so the next step's fit can be checked before it runs. */
+    tableKind: z.string().min(1).max(80).optional(),
     /** Declarative page hints; no custom renderers or executable UI code. */
     report: z.object({ include: z.boolean().optional(), span: z.union([z.literal(1), z.literal(2)]).optional() }).strict().optional(),
   })
@@ -61,6 +63,10 @@ export const KitSchema = z
     outputs: z.array(KitOutputSchema).default([]),
     report: KitReportSchema.optional(),
     citation: z.string().max(4000).optional(),
+    /** Things a person should know before adding the step (shown as warnings in the step picker). */
+    warnings: z.array(z.string().min(1).max(280)).max(8).optional(),
+    /** What the step needs beyond its tables (a reference genome, a database), in words. */
+    resources: z.array(z.object({ kind: z.string().min(1).max(40), name: z.string().min(1).max(120), words: z.string().max(280).optional() }).strict()).max(8).optional(),
     tags: z.array(z.string().min(1).max(40)).default([]),
     provider: z.string().max(120).optional(),
     version: z.string().max(40).optional(),

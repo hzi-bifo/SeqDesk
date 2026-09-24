@@ -1,0 +1,43 @@
+{
+  "id": "survey-likert",
+  "name": "Survey: Likert summary and group comparison",
+  "description": "Summarise agreement items answered on a 1 to 5 scale, compare them between groups of respondents and chart the answers.",
+  "slots": [
+    { "key": "items", "question": "Which columns are the questions answered on a 1 to 5 scale?", "kind": "columns" },
+    { "key": "group", "question": "Which column says which group a respondent is in?", "role": "group", "kind": "column" }
+  ],
+  "steps": [
+    {
+      "key": "summary",
+      "name": "Summarise items",
+      "purpose": "How many answered each question and how many agree.",
+      "language": "python",
+      "codeFile": "steps/summary.py",
+      "params": { "items": "{{items}}", "agree_from": 4 },
+      "paramMeta": { "agree_from": { "label": "Agree from", "meaning": "The lowest answer counted as agreement.", "consequence": "Lower counts more answers as agreement.", "usual": 4, "min": 1, "max": 5 } },
+      "inputs": [{ "alias": "responses", "source": "dataset" }],
+      "outputs": [{ "name": "item_summary", "kind": "table" }, { "name": "n_respondents", "kind": "value" }]
+    },
+    {
+      "key": "compare",
+      "name": "Compare groups",
+      "purpose": "Which questions were answered differently by the groups.",
+      "language": "python",
+      "codeFile": "steps/compare.py",
+      "params": { "items": "{{items}}", "group": "{{group}}", "fdr": 0.05 },
+      "paramMeta": { "fdr": { "label": "False discovery rate", "meaning": "Share of flagged questions that may differ by chance.", "consequence": "Lower flags fewer questions.", "usual": 0.05, "min": 0, "max": 1 } },
+      "inputs": [{ "alias": "responses", "source": "dataset" }],
+      "outputs": [{ "name": "group_comparison", "kind": "table" }, { "name": "n_different", "kind": "value" }]
+    },
+    {
+      "key": "chart",
+      "name": "Chart the answers",
+      "purpose": "Show the spread of answers for every question.",
+      "language": "python",
+      "codeFile": "steps/chart.py",
+      "params": { "items": "{{items}}" },
+      "inputs": [{ "alias": "responses", "source": "dataset" }],
+      "outputs": [{ "name": "answers", "kind": "figure" }]
+    }
+  ]
+}

@@ -36,7 +36,9 @@ import type { ExploreScope } from "@/lib/explore/types";
 import { FileLibraryError, getLibraryFile, listLibraryFiles, readLibraryFile, removeLibraryFile, storeLibraryFile, updateLibraryFile, validateFileBindings } from "@/lib/files/library";
 import { MAX_FILE_DESCRIPTION_LENGTH, MAX_LIBRARY_FILE_BYTES, normalizeFileTags } from "@/lib/files/library-types";
 import { IntegrationAccessError, type IntegrationSession } from "./identity";
-import { codeForStatus, FLOW_CAPABILITIES_BUILT } from "./flow-contract";
+import { codeForStatus, flowError, FLOW_CAPABILITIES_BUILT } from "./flow-contract";
+import { parseParamMeta } from "@/lib/explore/recipe-view";
+import { Prisma } from "@prisma/client";
 import { handleFlowRequest, isFlowPath } from "./explore-flow";
 
 /** Capabilities advertised by /info while the Explore module is on. */
@@ -215,6 +217,16 @@ async function loadRun(session: IntegrationSession, id: string, level: "read" | 
   if (!run) throw new ExploreRouteError(404, "Not found");
   await requireTargetAccess(session, run.analysis.targetKey, level);
   return run;
+}
+
+/** A methods sentence a person accepted: kept with the code revision it describes (D32). */
+async function methodsSentenceOf(analysisId: string, raw: unknown, userId: string): Promise<Prisma.InputJsonValue | typeof Prisma.DbNull> {
+  if (raw === null) return Prisma.DbNull;
+  const value = raw as { text?: unknown; tokens?: unknown; author?: unknown };
+  if (!value || typeof value !== "object" || typeof value.text !== "string" || !value.text.trim()) throw flowError("invalid_request", "methodsSentence needs text.");
+  if (value.text.length > 1000 || (value.tokens !== undefined && (!Array.isArray(value.tokens) || JSON.stringify(value.tokens).length > 20000))) throw flowError("invalid_request", "The methods sentence is too long.");
+  const analysis = await db.exploreAnalysis.findUnique({ where: { id: analysisId }, select: { currentRevisionId: true } });
+  return { text: value.text.trim(), tokens: (value.tokens as Prisma.InputJsonValue[] | undefined) ?? [], revisionId: analysis?.currentRevisionId ?? null, author: value.author === "assistant" ? "assistant" : "person", acceptedById: userId, acceptedAt: new Date().toISOString() };
 }
 
 /**
@@ -545,7 +557,12 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         if ("description" in body) { data.description = optionalString(body.description); data.descriptionRevisionId = optionalString(body.descriptionRevisionId, 64) ?? null; }
         const environmentName = optionalString(body.environmentName, 120);
         if (environmentName) data.environmentName = environmentName;
-        await updateAnalysis(id, data);
+        // Flow recipe fields (explore.recipe): purpose, the meaning of settings, the accepted methods sentence.
+        const flowFields: Parameters<typeof updateAnalysis>[1] = {};
+        if ("purpose" in body) flowFields.purpose = optionalString(body.purpose, 200);
+        if ("paramMeta" in body) { const meta = parseParamMeta(body.paramMeta); flowFields.paramMeta = meta === null ? Prisma.DbNull : meta as Prisma.InputJsonValue; }
+        if ("methodsSentence" in body) flowFields.methodsSentence = await methodsSentenceOf(id, body.methodsSentence, session.user.id);
+        await updateAnalysis(id, { ...data, ...flowFields });
         return json({ analysis: await getAnalysisDetail(id) });
       }
       if (segments.length === 2 && method === "DELETE") {
