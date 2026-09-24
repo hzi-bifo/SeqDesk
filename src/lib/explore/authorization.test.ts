@@ -56,8 +56,16 @@ describe("explore authorization", () => {
     const integration = { ...(researcher as object), integration: { authority: "https://collab.example", workspaceId: "team", memberId: "m", projectId: "" } } as never;
     expect((await resolveTargetAccess(integration, "project:shared")).level).toBe("write");
     expect(mocks.db.integrationExploreScope.findFirst).toHaveBeenCalledWith({
-      where: { authority: "https://collab.example", workspaceId: "team", targetKey: "project:shared" }, select: { id: true },
+      where: { authority: "https://collab.example", workspaceId: "team", targetKey: "project:shared" }, select: { id: true, visibility: true, ownerMemberId: true },
     });
+    // A private study opens for its member only, even to the SeqDesk account that owns the project.
+    mocks.db.integrationExploreScope.findFirst.mockResolvedValue({ id: "link", visibility: "private", ownerMemberId: "someone" });
+    expect((await resolveTargetAccess(integration, "project:shared")).level).toBe("none");
+    mocks.db.exploreProject.findUnique.mockResolvedValue({ ownerId: (researcher as { user: { id: string } }).user.id });
+    expect((await resolveTargetAccess(integration, "project:shared")).level).toBe("none");
+    mocks.db.integrationExploreScope.findFirst.mockResolvedValue({ id: "link", visibility: "private", ownerMemberId: "m" });
+    expect((await resolveTargetAccess(integration, "project:shared")).level).toBe("write");
+    mocks.db.exploreProject.findUnique.mockResolvedValue({ ownerId: "someone-else" });
     // Another workspace's session gets nothing, and a missing link stays private.
     mocks.db.integrationExploreScope.findFirst.mockResolvedValue(null);
     expect((await resolveTargetAccess(integration, "project:shared")).level).toBe("none");

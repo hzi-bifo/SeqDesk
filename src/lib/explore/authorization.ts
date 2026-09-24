@@ -23,10 +23,10 @@ export type SessionLike = Pick<Session, "user"> | null | undefined;
  * The collaboration context of an integration session (see
  * lib/integration/identity.ts). Browser sessions never carry it.
  */
-function integrationContext(session: SessionLike): { authority: string; workspaceId: string } | null {
-  const context = (session as { integration?: { authority?: unknown; workspaceId?: unknown } } | null | undefined)?.integration;
+function integrationContext(session: SessionLike): { authority: string; workspaceId: string; memberId: string } | null {
+  const context = (session as { integration?: { authority?: unknown; workspaceId?: unknown; memberId?: unknown } } | null | undefined)?.integration;
   if (!context || typeof context.authority !== "string" || typeof context.workspaceId !== "string" || !context.authority || !context.workspaceId) return null;
-  return { authority: context.authority, workspaceId: context.workspaceId };
+  return { authority: context.authority, workspaceId: context.workspaceId, memberId: typeof context.memberId === "string" ? context.memberId : "" };
 }
 
 export function requireExplorePrincipal(session: SessionLike) {
@@ -104,15 +104,18 @@ export async function resolveTargetAccess(
   if (target.type === "project") {
     const project = await db.exploreProject.findUnique({ where: { id: target.id }, select: { ownerId: true } });
     if (!project) return { level: "none", target };
-    if (project.ownerId === userId) return { level, target };
     const integration = integrationContext(session);
-    if (integration) {
-      const shared = await db.integrationExploreScope.findFirst({
-        where: { authority: integration.authority, workspaceId: integration.workspaceId, targetKey },
-        select: { id: true },
-      });
-      if (shared) return { level, target };
-    }
+    const shared = integration
+      ? await db.integrationExploreScope.findFirst({
+          where: { authority: integration.authority, workspaceId: integration.workspaceId, targetKey },
+          select: { id: true, visibility: true, ownerMemberId: true },
+        })
+      : null;
+    // A study a member keeps private (My space) opens for that member only, even when
+    // several members share one SeqDesk account.
+    if (integration && shared?.visibility === "private" && shared.ownerMemberId !== integration.memberId) return { level: "none", target };
+    if (project.ownerId === userId) return { level, target };
+    if (shared) return { level, target };
     return { level: "none", target };
   }
 

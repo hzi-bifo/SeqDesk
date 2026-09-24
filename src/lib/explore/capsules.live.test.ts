@@ -9,6 +9,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import unzipper from "unzipper";
+
+/** The entry reader unzipper has at run time (its bundled types predate it). */
+const bufferOf = (file: unknown) => (file as { buffer(): Promise<Buffer> }).buffer();
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 const url = process.env.SEQDESK_FLOW_DATABASE_URL;
@@ -115,7 +118,7 @@ describe.skipIf(!url)("lineage and capsules (PostgreSQL)", () => {
     expect(names).toEqual(expect.arrayContaining(["README.md", "reproduce", "ro-crate-metadata.json", "inputs.sha256", "steps/1-filter/analysis.py", "steps/2-volcano_plot/analysis.py",
       "steps/2-volcano_plot/inputs/kept.tsv", "steps/1-filter/inputs/counts.tsv.sha256", "steps/2-volcano_plot/expected-checksums.txt", `environment/capsule-env-${suffix}.yml`, "helpers/python/seqdesk_explore/__init__.py", "helpers/r/profile.R"]));
     expect(names).not.toContain("steps/1-filter/inputs/counts.tsv");
-    const read = async (name: string) => (await archive.files.find((file) => file.path === name)!.buffer()).toString();
+    const read = async (name: string) => (await bufferOf(archive.files.find((file) => file.path === name))).toString();
     const readme = await read("README.md");
     expect(readme).toContain("Not verified yet");
     expect(readme).toContain("2. Volcano plot — A volcano plot shows fold change against significance.");

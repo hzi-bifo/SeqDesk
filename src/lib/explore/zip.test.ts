@@ -2,6 +2,9 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import unzipper from "unzipper";
+
+/** The entry reader unzipper has at run time (its bundled types predate it). */
+const bufferOf = (file: unknown) => (file as { buffer(): Promise<Buffer> }).buffer();
 import { describe, expect, it } from "vitest";
 import { ZipWriter } from "./zip";
 
@@ -19,8 +22,8 @@ describe("zip writer", () => {
     await zip.close();
     const archive = await unzipper.Open.file(target);
     expect(archive.files.map((file) => file.path)).toEqual(["README.md", "reproduce", "steps/1-filter/inputs/counts.tsv"]);
-    expect((await archive.files[0].buffer()).toString()).toBe("# Capsule\n");
-    expect((await archive.files[2].buffer()).length).toBe(8000);
+    expect((await bufferOf(archive.files[0])).toString()).toBe("# Capsule\n");
+    expect((await bufferOf(archive.files[2])).length).toBe(8000);
     expect((archive.files[1].externalFileAttributes >>> 16) & 0o777).toBe(0o755);
     await fs.rm(dir, { recursive: true, force: true });
   });

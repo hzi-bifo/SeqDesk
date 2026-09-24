@@ -72,10 +72,26 @@ const STUDY_NAME_MAX = 200;
 const STUDY_DESCRIPTION_MAX = 2000;
 
 /** A Flow study as the client sees it: an Explore project scope plus its link. */
-export type FlowStudy = ExploreScope & { id: string; description: string | null; createdAt: string };
+export type FlowStudy = ExploreScope & { id: string; description: string | null; createdAt: string; projectId: string; visibility: "lab" | "private"; ownerMemberId: string };
 
-function studyOf(project: { id: string; name: string; description: string | null; createdAt: Date }, access: "read" | "write"): FlowStudy {
-  return { id: project.id, targetKey: `project:${project.id}`, type: "project", label: project.name, description: project.description, createdAt: project.createdAt.toISOString(), access };
+type ScopeLink = { projectId: string; visibility: string; ownerMemberId: string };
+
+function studyOf(project: { id: string; name: string; description: string | null; createdAt: Date }, access: "read" | "write", link?: ScopeLink | null): FlowStudy {
+  return { id: project.id, targetKey: `project:${project.id}`, type: "project", label: project.name, description: project.description, createdAt: project.createdAt.toISOString(), access,
+    projectId: link?.projectId || "", visibility: link?.visibility === "private" ? "private" : "lab", ownerMemberId: link?.ownerMemberId || "" };
+}
+
+const PROJECT_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * The collaboration project a new or moved study belongs to. A handle minted
+ * for one project may only use that project; "" is team-wide.
+ */
+function checkedProjectId(session: IntegrationSession, raw: unknown): string {
+  if (raw === undefined || raw === null || raw === "") return session.integration.projectId || "";
+  if (typeof raw !== "string" || !PROJECT_ID.test(raw)) throw new ExploreRouteError(400, "projectId must be a project id.", "invalid_request");
+  if (session.integration.projectId && session.integration.projectId !== raw) throw new ExploreRouteError(403, "This access is for another project.", "forbidden");
+  return raw;
 }
 
 function studyAccess(session: IntegrationSession): "read" | "write" {
@@ -87,34 +103,53 @@ function studyAccess(session: IntegrationSession): "read" | "write" {
  * to it, newest first. Only a session whose account may read Explore data
  * sees them; the link table, not project ownership, carries the access.
  */
-export async function listFlowStudies(session: IntegrationSession): Promise<FlowStudy[]> {
+export async function listFlowStudies(session: IntegrationSession, filter: { projectId?: string | null } = {}): Promise<FlowStudy[]> {
   requireExplorePrincipal(session);
-  const { authority, workspaceId } = session.integration;
-  const links = await db.integrationExploreScope.findMany({ where: { authority, workspaceId, projectId: "" }, select: { targetKey: true } });
+  const { authority, workspaceId, memberId } = session.integration;
+  // A project handle sees its project's studies; otherwise every study, or one project's when asked ("" = team-wide).
+  const projectId = session.integration.projectId || (filter.projectId ?? null);
+  const links = await db.integrationExploreScope.findMany({
+    where: { authority, workspaceId, ...(projectId !== null ? { projectId } : {}), OR: [{ visibility: "lab" }, ...(memberId ? [{ visibility: "private", ownerMemberId: memberId }] : [])] },
+    select: { targetKey: true, projectId: true, visibility: true, ownerMemberId: true },
+  });
+  const linkOf = new Map(links.map((link) => [link.targetKey, link] as const));
   const ids = links.map((link) => parseTargetKey(link.targetKey)).filter((target): target is ExploreTargetKey => !!target && target.type === "project").map((target) => target.id);
   if (!ids.length) return [];
   const projects = await db.exploreProject.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, description: true, createdAt: true }, orderBy: { createdAt: "desc" } });
   const access = studyAccess(session);
-  return projects.map((project) => studyOf(project, access));
+  return projects.map((project) => studyOf(project, access, linkOf.get(`project:${project.id}`)));
 }
 
 /** A new study: an Explore project owned by the caller's account, linked to the workspace. */
-export async function createFlowStudy(session: IntegrationSession, name: string, description: string | null): Promise<FlowStudy> {
+export async function createFlowStudy(session: IntegrationSession, name: string, description: string | null, options: { projectId?: unknown; visibility?: unknown } = {}): Promise<FlowStudy> {
   if (studyAccess(session) !== "write") throw new IntegrationAccessError(403, "Your SeqDesk account may not create studies.");
-  const { authority, workspaceId } = session.integration;
+  const { authority, workspaceId, memberId } = session.integration;
+  const projectId = checkedProjectId(session, options.projectId);
+  if (options.visibility !== undefined && options.visibility !== "lab" && options.visibility !== "private") throw new ExploreRouteError(400, 'visibility must be "lab" or "private".', "invalid_request");
+  const visibility = options.visibility === "private" ? "private" : "lab";
+  if (visibility === "private" && !memberId) throw new ExploreRouteError(400, "A private study needs a member.", "invalid_request");
   const project = await db.exploreProject.create({
     data: { name, description, ownerId: session.user.id },
     select: { id: true, name: true, description: true, createdAt: true },
   });
-  await db.integrationExploreScope.create({ data: { id: randomUUID(), authority, workspaceId, projectId: "", targetKey: `project:${project.id}`, createdBy: session.user.id } });
-  return studyOf(project, "write");
+  const link = { projectId, visibility, ownerMemberId: visibility === "private" ? memberId : memberId || "" };
+  await db.integrationExploreScope.create({ data: { id: randomUUID(), authority, workspaceId, targetKey: `project:${project.id}`, createdBy: session.user.id, ...link } });
+  return studyOf(project, "write", link);
 }
 
-export async function updateFlowStudy(session: IntegrationSession, id: string, changes: { name?: string; description?: string | null }): Promise<FlowStudy> {
+export async function updateFlowStudy(session: IntegrationSession, id: string, changes: { name?: string; description?: string | null }, move: { projectId?: unknown } = {}): Promise<FlowStudy> {
   const targetKey = `project:${id}`;
   await requireTargetAccess(session, targetKey, "write");
-  const project = await db.exploreProject.update({ where: { id }, data: changes, select: { id: true, name: true, description: true, createdAt: true } });
-  return studyOf(project, "write");
+  const { authority, workspaceId } = session.integration;
+  if (move.projectId !== undefined) {
+    const projectId = move.projectId === "" ? "" : checkedProjectId(session, move.projectId);
+    await db.integrationExploreScope.updateMany({ where: { authority, workspaceId, targetKey }, data: { projectId } });
+  }
+  const project = Object.keys(changes).length
+    ? await db.exploreProject.update({ where: { id }, data: changes, select: { id: true, name: true, description: true, createdAt: true } })
+    : await db.exploreProject.findUniqueOrThrow({ where: { id }, select: { id: true, name: true, description: true, createdAt: true } });
+  const link = await db.integrationExploreScope.findFirst({ where: { authority, workspaceId, targetKey }, select: { projectId: true, visibility: true, ownerMemberId: true } });
+  return studyOf(project, "write", link);
 }
 
 function statusOf(error: unknown): { status: number; message: string } | null {
@@ -250,19 +285,19 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
     if (flowResponse) return flowResponse;
 
     if (head === "scopes") {
-      if (segments.length === 1 && method === "GET") return json({ scopes: await listFlowStudies(session) });
+      if (segments.length === 1 && method === "GET") return json({ scopes: await listFlowStudies(session, { projectId: query.has("projectId") ? query.get("projectId") ?? "" : null }) });
       if (segments.length === 1 && method === "POST") {
         const body = await readJson(request);
         const name = requireString(body.name, "name", STUDY_NAME_MAX);
         const description = typeof body.description === "string" && body.description.trim() ? body.description.trim().slice(0, STUDY_DESCRIPTION_MAX) : null;
-        return json({ scope: await createFlowStudy(session, name, description) }, 201);
+        return json({ scope: await createFlowStudy(session, name, description, { projectId: body.projectId, visibility: body.visibility }) }, 201);
       }
       if (segments.length === 2 && method === "PATCH") {
         const body = await readJson(request);
         const changes: { name?: string; description?: string | null } = {};
         if (body.name !== undefined) changes.name = requireString(body.name, "name", STUDY_NAME_MAX);
         if (body.description !== undefined) changes.description = typeof body.description === "string" && body.description.trim() ? body.description.trim().slice(0, STUDY_DESCRIPTION_MAX) : null;
-        return json({ scope: await updateFlowStudy(session, id, changes) });
+        return json({ scope: await updateFlowStudy(session, id, changes, { projectId: body.projectId }) });
       }
     }
 
@@ -490,11 +525,18 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
     }
 
     if (head === "flows") {
+      if (segments.length === 1 && method === "GET" && query.has("projectId") && !query.get("targetKey")) {
+        // Every flow of the studies that belong to one project (explore.projects).
+        const studies = await listFlowStudies(session, { projectId: query.get("projectId") ?? "" });
+        const flows = (await Promise.all(studies.map(async (study) => (await listFlows(study.targetKey)).map((flow) => ({ ...flow, projectId: study.projectId, visibility: study.visibility }))))).flat();
+        return json({ flows, canEdit: studyAccess(session) === "write" });
+      }
       if (segments.length === 1 && method === "GET") {
         const targetKey = query.get("targetKey") ?? "";
         const access = await resolveTargetAccess(session, targetKey);
         if (!access.target || access.level === "none") throw new ExploreAuthorizationError(404, "Not found");
-        return json({ flows: await listFlows(targetKey), canEdit: access.level === "write" });
+        const link = await db.integrationExploreScope.findFirst({ where: { authority: session.integration.authority, workspaceId: session.integration.workspaceId, targetKey }, select: { projectId: true, visibility: true } });
+        return json({ flows: (await listFlows(targetKey)).map((flow) => ({ ...flow, projectId: link?.projectId ?? "", visibility: link?.visibility === "private" ? "private" : "lab" })), canEdit: access.level === "write" });
       }
       if (segments.length === 1 && method === "POST") {
         const body = await readJson(request);

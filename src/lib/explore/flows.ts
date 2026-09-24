@@ -12,6 +12,11 @@ export interface FlowSummary {
   latestRun: { runNumber: string; status: string; completedAt: string | null } | null;
   /** Counts of the outputs the steps' latest finished runs produced. */
   outputs: { figures: number; tables: number; findings: number; metrics: number };
+  /** The recipe (Flow redesign): its revision, the run shown as current, the newest numbered run and the headline value. */
+  recipeRevision: number;
+  currentRunId: string | null;
+  latestFlowRun: { id: string; number: number | null; status: string; completedAt: string | null } | null;
+  headlineValue: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -39,8 +44,11 @@ const flowInclude = {
       runs: { orderBy: { createdAt: "desc" as const }, take: 6, select: { runNumber: true, status: true, completedAt: true, createdAt: true, results: true } },
     },
   },
+  runs: { where: { kind: { not: "trial" } }, orderBy: { createdAt: "desc" as const }, take: 1, select: { id: true, number: true, status: true, completedAt: true } },
 };
-type FlowRecord = { id: string; targetKey: string; name: string; description: string | null; createdAt: Date; updatedAt: Date; analyses: { id: string; runs: { runNumber: string; status: string; completedAt: Date | null; createdAt: Date; results: string | null }[] }[] };
+type FlowRecord = { id: string; targetKey: string; name: string; description: string | null; createdAt: Date; updatedAt: Date;
+  recipeRevision?: number; currentRunId?: string | null; headlineValue?: string | null;
+  runs?: { id: string; number: number | null; status: string; completedAt: Date | null }[]; analyses: { id: string; runs: { runNumber: string; status: string; completedAt: Date | null; createdAt: Date; results: string | null }[] }[] };
 
 function summarize(flow: FlowRecord): FlowSummary {
   // The status line shows a running step if there is one, otherwise the newest run.
@@ -64,6 +72,10 @@ function summarize(flow: FlowRecord): FlowSummary {
     stepCount: flow.analyses.length,
     latestRun: latest ? { runNumber: latest.runNumber, status: latest.status, completedAt: latest.completedAt?.toISOString() ?? null } : null,
     outputs,
+    recipeRevision: flow.recipeRevision ?? 0,
+    currentRunId: flow.currentRunId ?? null,
+    latestFlowRun: flow.runs?.[0] ? { id: flow.runs[0].id, number: flow.runs[0].number, status: flow.runs[0].status, completedAt: flow.runs[0].completedAt?.toISOString() ?? null } : null,
+    headlineValue: flow.headlineValue ?? null,
     createdAt: flow.createdAt.toISOString(),
     updatedAt: flow.updatedAt.toISOString(),
   };

@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/db', () => ({ db: {
   exploreAnalysis: { findUnique: mocks.analysisFind },
   exploreStepConversation: { findUnique: mocks.conversationFind, create: mocks.conversationCreate, updateMany: mocks.conversationUpdate },
-  integrationExploreScope: { findMany: mocks.scopeFindMany, create: mocks.scopeCreate },
+  integrationExploreScope: { findMany: mocks.scopeFindMany, create: mocks.scopeCreate, findFirst: vi.fn().mockResolvedValue(null) },
   exploreProject: { create: mocks.projectCreate, findMany: mocks.projectFindMany, update: mocks.projectUpdate },
 } }));
 vi.mock('@/lib/authorization/api', () => ({ decideServerCapability: mocks.capability }));
@@ -46,8 +46,13 @@ describe('Flow studies', () => {
   it('lists the projects linked to the workspace, never other projects', async () => {
     mocks.scopeFindMany.mockResolvedValue([{ targetKey: 'project:p1' }, { targetKey: 'study:s1' }]);
     mocks.projectFindMany.mockResolvedValue([{ id: 'p1', name: 'Microbiome', description: null, createdAt: new Date('2026-09-17T09:00:00Z') }]);
-    expect(await listFlowStudies(session)).toEqual([{ id: 'p1', targetKey: 'project:p1', type: 'project', label: 'Microbiome', description: null, createdAt: '2026-09-17T09:00:00.000Z', access: 'write' }]);
-    expect(mocks.scopeFindMany.mock.calls[0][0].where).toEqual({ authority: 'https://collab.example', workspaceId: 'team', projectId: '' });
+    expect(await listFlowStudies(session)).toEqual([{ id: 'p1', targetKey: 'project:p1', type: 'project', label: 'Microbiome', description: null, createdAt: '2026-09-17T09:00:00.000Z', access: 'write', projectId: '', visibility: 'lab', ownerMemberId: '' }]);
+    // Every lab study of the workspace and the caller's own private ones; one project's when asked.
+    expect(mocks.scopeFindMany.mock.calls[0][0].where).toEqual({ authority: 'https://collab.example', workspaceId: 'team', OR: [{ visibility: 'lab' }, { visibility: 'private', ownerMemberId: 'member' }] });
+    await listFlowStudies(session, { projectId: 'proj1' });
+    expect(mocks.scopeFindMany.mock.calls[1][0].where.projectId).toBe('proj1');
+    await listFlowStudies({ ...session, integration: { ...session.integration, projectId: 'only' } } as IntegrationSession, { projectId: 'other' });
+    expect(mocks.scopeFindMany.mock.calls[2][0].where.projectId).toBe('only');
     expect(mocks.projectFindMany.mock.calls[0][0].where).toEqual({ id: { in: ['p1'] } });
   });
   it('creates a study as a project owned by the caller and links it to the workspace', async () => {
@@ -56,6 +61,18 @@ describe('Flow studies', () => {
     expect((await createFlowStudy(session, 'Assay', 'First run')).targetKey).toBe('project:p2');
     expect(mocks.projectCreate.mock.calls[0][0].data).toEqual({ name: 'Assay', description: 'First run', ownerId: 'local' });
     expect(mocks.scopeCreate.mock.calls[0][0].data).toMatchObject({ authority: 'https://collab.example', workspaceId: 'team', projectId: '', targetKey: 'project:p2', createdBy: 'local' });
+  });
+  it('creates project and private studies within what the handle allows', async () => {
+    mocks.projectCreate.mockResolvedValue({ id: 'p3', name: 'Mine', description: null, createdAt: new Date('2026-09-24T09:00:00Z') });
+    mocks.scopeCreate.mockResolvedValue({});
+    const study = await createFlowStudy(session, 'Mine', null, { projectId: 'proj-1', visibility: 'private' });
+    expect(study).toMatchObject({ projectId: 'proj-1', visibility: 'private', ownerMemberId: 'member' });
+    expect(mocks.scopeCreate.mock.calls[0][0].data).toMatchObject({ projectId: 'proj-1', visibility: 'private', ownerMemberId: 'member' });
+    const scoped = { ...session, integration: { ...session.integration, projectId: 'proj-2' } } as IntegrationSession;
+    await expect(createFlowStudy(scoped, 'Other', null, { projectId: 'proj-1' })).rejects.toMatchObject({ status: 403, code: 'forbidden' });
+    expect((await createFlowStudy(scoped, 'Default', null)).projectId).toBe('proj-2');
+    await expect(createFlowStudy(session, 'Bad', null, { visibility: 'everyone' })).rejects.toMatchObject({ status: 400 });
+    await expect(createFlowStudy(session, 'Bad', null, { projectId: 'has space' })).rejects.toMatchObject({ status: 400 });
   });
   it('refuses read-only accounts', async () => {
     mocks.capability.mockImplementation((_session, capability) => capability === 'analysis.run' ? { allowed: false } : { allowed: true, principal: { id: 'local' } });
@@ -79,10 +96,19 @@ describe('Flow requests', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://web.test');
     expect(await response.json()).toEqual({ reports: [{ id: 'r1' }], canEdit: false });
   });
+  it('lists the flows of every study of a project', async () => {
+    mocks.scopeFindMany.mockResolvedValue([{ targetKey: 'project:p1', projectId: 'proj-1', visibility: 'lab', ownerMemberId: '' }]);
+    mocks.projectFindMany.mockResolvedValue([{ id: 'p1', name: 'Microbiome', description: null, createdAt: new Date('2026-09-17T09:00:00Z') }]);
+    mocks.listFlows.mockResolvedValue([{ id: 'f1', name: 'Diversity', targetKey: 'project:p1' }]);
+    mocks.capability.mockReturnValue({ allowed: true, principal: { id: 'local' }, grant: { scope: 'own' } });
+    const body = await (await handleExploreRequest(request('GET', '/x/explore/flows?projectId=proj-1'), session, ['flows'], new Headers())).json();
+    expect(body).toEqual({ flows: [{ id: 'f1', name: 'Diversity', targetKey: 'project:p1', projectId: 'proj-1', visibility: 'lab' }], canEdit: true });
+    expect(mocks.scopeFindMany.mock.calls[0][0].where.projectId).toBe('proj-1');
+  });
   it('lists, creates, renames and deletes the flows of a study', async () => {
     mocks.resolve.mockResolvedValue({ level: 'write', target: { type: 'project', id: 'p1' } });
     mocks.listFlows.mockResolvedValue([{ id: 'f1', name: 'Diversity' }]);
-    expect(await (await handleExploreRequest(request('GET', '/x/explore/flows?targetKey=project:p1'), session, ['flows'], new Headers())).json()).toEqual({ flows: [{ id: 'f1', name: 'Diversity' }], canEdit: true });
+    expect(await (await handleExploreRequest(request('GET', '/x/explore/flows?targetKey=project:p1'), session, ['flows'], new Headers())).json()).toEqual({ flows: [{ id: 'f1', name: 'Diversity', projectId: '', visibility: 'lab' }], canEdit: true });
     mocks.createFlow.mockResolvedValue({ id: 'f2', name: 'Flow 2' });
     const created = await handleExploreRequest(request('POST', '/x/explore/flows', { targetKey: 'project:p1', name: 'Flow 2', description: '' }), session, ['flows'], new Headers());
     expect(created.status).toBe(201);
