@@ -11,7 +11,7 @@ import { getPipelineRunDetailsForOperator, cancelPipelineRunForOperator } from '
 import { assertPipelineRunReadAccess, assertPipelineRunCancelAccess } from '@/lib/pipelines/run-visibility';
 import { servePipelineRunFile } from '@/lib/pipelines/run-file-service';
 import { projectTargetIDs, assertProjectRun, assertProjectTarget, changeProjectLink } from '@/lib/integration/projects';
-import { EXPLORE_INTEGRATION_CAPABILITIES, handleExploreRequest } from '@/lib/integration/explore';
+import { exploreIntegrationCapabilities, handleExploreRequest } from '@/lib/integration/explore';
 import { isExploreModuleEnabled } from '@/lib/explore/module';
 import packageInfo from '../../../../../../package.json';
 
@@ -37,7 +37,7 @@ async function handle(request: NextRequest, context: Context): Promise<Response>
     if (path.join('/') === 'info' && request.method === 'GET') {
       return json({ apiVersion: 1, installationId: config.installationId, name: config.name, version: packageInfo.version,
         capabilities: ['studies.read', 'runs.read', 'runs.create', 'runs.start',
-          ...((await isExploreModuleEnabled().catch(() => false)) ? EXPLORE_INTEGRATION_CAPABILITIES : [])] });
+          ...((await isExploreModuleEnabled().catch(() => false)) ? exploreIntegrationCapabilities({ eventsConfigured: true }) : [])] });
     }
     const session = await integrationSession(request, config);
     if (path[0] === 'explore') return handleExploreRequest(request, session, path.slice(1), headers);

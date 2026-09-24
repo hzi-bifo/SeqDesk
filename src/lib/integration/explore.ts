@@ -36,9 +36,17 @@ import type { ExploreScope } from "@/lib/explore/types";
 import { FileLibraryError, getLibraryFile, listLibraryFiles, readLibraryFile, removeLibraryFile, storeLibraryFile, updateLibraryFile, validateFileBindings } from "@/lib/files/library";
 import { MAX_FILE_DESCRIPTION_LENGTH, MAX_LIBRARY_FILE_BYTES, normalizeFileTags } from "@/lib/files/library-types";
 import { IntegrationAccessError, type IntegrationSession } from "./identity";
+import { FLOW_CAPABILITIES_BUILT } from "./flow-contract";
 
 /** Capabilities advertised by /info while the Explore module is on. */
 export const EXPLORE_INTEGRATION_CAPABILITIES = ["explore.files", "explore.datasets", "explore.reports", "explore.flows"] as const;
+
+/** Everything /info advertises while the Explore module is on: the base surface plus the Flow features built so far. */
+export function exploreIntegrationCapabilities(options: { eventsConfigured?: boolean } = {}): string[] {
+  // explore.events means "this installation pushes to its collaboration server", so it needs that to be configured.
+  const flow = FLOW_CAPABILITIES_BUILT.filter((capability) => capability !== "explore.events" || options.eventsConfigured);
+  return [...EXPLORE_INTEGRATION_CAPABILITIES, ...flow];
+}
 
 /** Flow pages read every flow of their study and start empty; the author composes them. */
 const FLOW_REPORT_VIEW: ReportViewOptions = { outputs: "scope", suggest: false };
@@ -679,6 +687,8 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
   } catch (error) {
     if (error instanceof IntegrationAccessError) return json({ error: error.message }, error.status);
     const known = statusOf(error);
+    // Flow routes send a machine-readable code (SERVER-API "Flow (analysis service)"); older routes keep {error}.
+    if (known && error instanceof ExploreRouteError && error.code) return json({ ...(error.extra ?? {}), error: known.message, code: error.code }, known.status);
     if (known) return json({ error: known.message }, known.status);
     console.error("[Analysis integration] Flow request failed", error);
     return json({ error: "The Analysis service is unavailable." }, 503);
