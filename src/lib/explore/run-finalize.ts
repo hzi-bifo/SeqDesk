@@ -8,6 +8,7 @@ import { parseDelimited } from "./parsers/delimited";
 import { readRunIsolation, sandboxFromLog } from "./sandbox/prepare";
 import { applyTableContract, inferSchema } from "./schema";
 import { TableContractSchema, type TableContract } from "./table-contract";
+import { buildLedger, scanTable, type LedgerInput, type LedgerOutput } from "./ledger";
 import type { ExploreRole, ExploreRoleMap, ExploreSensitivity } from "./types";
 import { SENSITIVITY_RANK } from "./types";
 
@@ -28,6 +29,22 @@ interface OutputManifest {
   artifacts?: ManifestArtifact[];
   notes?: unknown;
   metrics?: unknown;
+  metricMeta?: unknown;
+  drops?: unknown;
+}
+
+/** Labels and units the step gave its values (`metric(key, value, label=, unit=)`). */
+function parseMetricMeta(raw: unknown): Record<string, { label?: string; unit?: string }> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const meta: Record<string, { label?: string; unit?: string }> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>).slice(0, 200)) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as { label?: unknown; unit?: unknown };
+    const label = typeof entry.label === "string" && entry.label.trim() ? entry.label.trim().slice(0, 80) : undefined;
+    const unit = typeof entry.unit === "string" && entry.unit.trim() ? entry.unit.trim().slice(0, 80) : undefined;
+    if (label || unit) meta[key] = { ...(label ? { label } : {}), ...(unit ? { unit } : {}) };
+  }
+  return meta;
 }
 
 function isInside(base: string, target: string): boolean {
@@ -63,7 +80,7 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
 
   const inputsInfo = await fs
     .readFile(path.join(runFolder, "inputs.json"), "utf8")
-    .then((text) => JSON.parse(text) as { inputs?: Record<string, { datasetId?: string; versionId?: string; sensitivity?: string }> })
+    .then((text) => JSON.parse(text) as { inputs?: Record<string, { datasetId?: string; versionId?: string; sensitivity?: string; path?: string; roles?: Record<string, string> }> })
     .catch(() => null);
   let sensitivity: ExploreSensitivity = "standard";
   for (const input of Object.values(inputsInfo?.inputs ?? {})) {
@@ -74,6 +91,7 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
   let figures = 0;
   let tables = 0;
   let reports = 0;
+  const ledgerOutputs: LedgerOutput[] = [];
   const artifacts = Array.isArray(manifest?.artifacts) ? manifest!.artifacts : [];
   for (const entry of artifacts) {
     const relative = typeof entry.path === "string" ? entry.path : "";
@@ -109,6 +127,9 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
     else if (kind === "table") {
       tables += 1;
       if (format !== "tsv" && format !== "csv") continue;
+      const roles = entry.table?.roles && typeof entry.table.roles === "object" ? (entry.table.roles as Record<string, unknown>) : {};
+      const scanned = await scanTable(absolute, { delimiter: format === "csv" ? "," : "\t", sampleColumn: typeof roles.sample === "string" ? roles.sample : null }).catch(() => null);
+      ledgerOutputs.push({ name, dims: scanned?.dims ?? null, samples: scanned?.samples ?? null });
       if (exitCode !== 0) {
         // The file stays downloadable from the run page, but a failed run must
         // not move a dataset's current version forward with a partial table.
@@ -143,6 +164,15 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
   if (isolation && isolation.tool !== "none" && reported && reported.used === "none") {
     warnings.push(`The run was not sandboxed: ${reported.detail || "the sandbox tool was missing where the run executed"}.`);
   }
+  // What the step did to its tables, from what was staged, what it wrote and its drop() calls.
+  const ledgerInputs: LedgerInput[] = [];
+  for (const [alias, input] of Object.entries(inputsInfo?.inputs ?? {})) {
+    const relative = typeof input.path === "string" ? input.path : "";
+    const absolute = relative ? path.resolve(runFolder, relative) : "";
+    const scanned = absolute && isInside(runFolder, absolute) ? await scanTable(absolute, { sampleColumn: typeof input.roles?.sample === "string" ? input.roles.sample : null }).catch(() => null) : null;
+    ledgerInputs.push({ alias, dims: scanned?.dims ?? null, samples: scanned?.samples ?? null });
+  }
+  const ledger = buildLedger(ledgerInputs, ledgerOutputs, manifest?.drops);
   const results = {
     exitCode,
     sandbox: reported ? { used: reported.used, detail: reported.detail, planHash: isolation?.planHash ?? null, network: isolation?.network ?? null } : null,
@@ -151,14 +181,18 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
     reports,
     notes: Array.isArray(manifest?.notes) ? manifest!.notes.filter((note): note is string => typeof note === "string").slice(0, 50) : [],
     metrics: manifest?.metrics && typeof manifest.metrics === "object" ? manifest.metrics : {},
+    metricMeta: parseMetricMeta(manifest?.metricMeta),
+    ledger,
     warnings,
   };
+  const completedAt = new Date();
   await db.exploreAnalysisRun.updateMany({
     where: { id: run.id, status: { in: ["pending", "queued", "running"] } },
     data: {
       status: exitCode === 0 ? "completed" : "failed",
       exitCode,
-      completedAt: new Date(),
+      completedAt,
+      durationMs: run.startedAt ? Math.max(0, completedAt.getTime() - run.startedAt.getTime()) : null,
       outputTail: outputTail ?? undefined,
       errorTail: errorTail ?? undefined,
       results: JSON.stringify(results),

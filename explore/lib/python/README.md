@@ -19,6 +19,21 @@ sx.metric("n_samples", df[sample].nunique())
 sx.finish()                                  # writes outputs/manifest.json
 ```
 
+Flow recipes use the short names and record what a step left out of the data:
+
+```python
+counts = sx.input("counts")                  # = load_dataset
+low = counts[counts["reads"] < sx.param("min_count", 10)]
+sx.drop(low, "fewer than 10 reads")          # appears in the step's data ledger
+sx.output("filtered", counts.drop(low.index))  # = save_table, name first
+sx.figure("volcano", fig)                    # = save_figure, name first
+sx.metric("n_called", 1146, label="DE genes")
+```
+
+The R helper in `../r/seqdesk.explore` offers the same calls as `sx$input`,
+`sx$output`, `sx$figure`, `sx$drop`, `sx$metric`, `sx$note` and writes the
+same manifest (tests: `Rscript -e 'testthat::test_dir("explore/lib/r/tests")'`).
+
 ## Run folder contract
 
 | Path | Written by | Content |
@@ -26,7 +41,7 @@ sx.finish()                                  # writes outputs/manifest.json
 | `inputs.json` | app | attached inputs (`path`, `schemaPath`, `tableKind`, `roles`, ...), `params`, `outputDir`, `run`, `curation.lists` |
 | `inputs/<alias>.tsv` | app | header row of column keys, tab separated, empty cell = null, no quoting |
 | `inputs/<alias>.schema.json` | app | `{"schema": {"columns": [{key, label, type, role?, group?}]}, "provenance": ..., "contentHash": ...}` |
-| `outputs/manifest.json` | helper | `{"manifestVersion": 1, "artifacts": [...], "notes": [...], "metrics": {...}}` |
+| `outputs/manifest.json` | helper | `{"manifestVersion": 1, "artifacts": [...], "notes": [...], "metrics": {...}, "metricMeta": {...}, "drops": [...]}` |
 
 The run directory comes from `--run-dir`, else `SEQDESK_EXPLORE_RUN_DIR`, else
 the working directory when it contains `inputs.json`.

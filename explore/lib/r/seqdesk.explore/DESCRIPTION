@@ -1,0 +1,12 @@
+Package: seqdesk.explore
+Type: Package
+Title: Helpers for SeqDesk Flow Steps Written in R
+Version: 0.2.0
+Description: Reads the inputs a SeqDesk Flow step was given and writes its
+    tables, figures, values, notes and data ledger to the run folder's
+    outputs/manifest.json, with the same contract as the Python helper
+    seqdesk_explore.
+License: Apache License (== 2.0)
+Encoding: UTF-8
+Imports: jsonlite
+Suggests: ggplot2, svglite, testthat

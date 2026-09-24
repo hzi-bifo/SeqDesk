@@ -102,6 +102,25 @@ describe("finalizeExploreRun", () => {
     expect(results).toMatchObject({ exitCode: 0, figures: 1, tables: 1, metrics: { n_rows: 2 } });
     expect(results.warnings).toEqual([expect.stringMatching(/outside the run folder/), expect.stringMatching(/file not found/)]);
     expect(results.notes).toEqual(["kaleido missing, no PNG"]);
+    // The input's file was not staged in this folder, so the line has the output's counts only.
+    expect(results.ledger).toEqual([{ label: "table → summary", alias: "table", output: "summary", in: null, out: { rows: 2, cols: 2 }, samples: { in: null, out: 2 }, reasons: [] }]);
+  });
+
+  it("writes the data ledger from staged inputs, written tables and drop() calls", async () => {
+    await fs.mkdir(path.join(runFolder, "inputs"), { recursive: true });
+    await fs.writeFile(path.join(runFolder, "inputs", "table.tsv"), "sample\tgene\tcount\nS1\tg1\t1\nS1\tg2\t50\nS2\tg3\t60\n");
+    await fs.writeFile(path.join(runFolder, "inputs.json"), JSON.stringify({ inputs: { table: { datasetId: "d1", versionId: "v1", path: "inputs/table.tsv", roles: { sample: "sample" } } } }));
+    await fs.writeFile(path.join(runFolder, "outputs", "kept.tsv"), "sample\tgene\tcount\nS1\tg2\t50\nS2\tg3\t60\n");
+    await fs.writeFile(path.join(runFolder, "outputs", "manifest.json"), JSON.stringify({
+      artifacts: [{ name: "kept", kind: "table", format: "tsv", path: "outputs/kept.tsv", table: { roles: { sample: "sample" } } }],
+      metrics: { n_kept: 2 }, metricMeta: { n_kept: { label: "Genes kept", unit: "" }, junk: 3 },
+      drops: [{ input: "table", count: 1, reason: "fewer than 10 reads", axis: "rows", keys: ["g1"] }],
+    }));
+    await finalizeExploreRun("run1", 0);
+    const results = JSON.parse(mocks.db.exploreAnalysisRun.updateMany.mock.calls[0][0].data.results);
+    expect(results.metricMeta).toEqual({ n_kept: { label: "Genes kept" } });
+    expect(results.ledger).toEqual([{ label: "table → kept", alias: "table", output: "kept", in: { rows: 3, cols: 3 }, out: { rows: 2, cols: 3 }, samples: { in: 2, out: 2 },
+      reasons: [{ count: 1, reason: "fewer than 10 reads", axis: "rows", keys: ["g1"] }] }]);
   });
 
   it("fails the run with a warning when the manifest is missing after a successful exit", async () => {

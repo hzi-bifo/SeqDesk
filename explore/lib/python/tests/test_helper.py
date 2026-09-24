@@ -239,7 +239,7 @@ def test_save_table_and_finish(tmp_path):
     )
     artifact = sx.save_table(df, "summary", title="Summary", description="Per sample", table_kind="sample-summary", roles={"sample": "sample_id", "count": "reads"})
     assert artifact["path"] == "outputs/summary.tsv"
-    assert artifact["table"] == {"tableKind": "sample-summary", "roles": {"sample": "sample_id", "count": "reads"}, "rowCount": 3}
+    assert artifact["table"] == {"tableKind": "sample-summary", "roles": {"sample": "sample_id", "count": "reads"}, "rowCount": 3, "colCount": 4}
     lines = (run / "outputs" / "summary.tsv").read_text(encoding="utf-8").splitlines()
     assert lines[0] == "sample_id\treads\tscore\tpassed"
     assert lines[1] == "S1\t10\t1.5\ttrue"
@@ -435,3 +435,52 @@ def test_finish_after_error_before_helper_use_writes_nothing(tmp_path):
     )
     assert process.returncode == 3
     assert not (run / "outputs").exists()
+
+
+# --------------------------------------------------------------------------- #
+#  Flow aliases and the data ledger
+# --------------------------------------------------------------------------- #
+def test_flow_aliases(tmp_path):
+    pd = pytest.importorskip("pandas")
+    run = write_run(tmp_path, alias="counts")
+    sx.set_run_dir(run)
+    df = sx.input("counts")
+    assert df.attrs["alias"] == "counts"
+    artifact = sx.output("kept", df.head(2), title="Kept")
+    assert artifact["path"] == "outputs/kept.tsv" and artifact["table"]["rowCount"] == 2
+    assert sx.param("missing", 7) == 7
+    with pytest.raises(TypeError):
+        sx.figure("nope", object())
+
+
+def test_drop_records_counts_reasons_and_keys(tmp_path):
+    pd = pytest.importorskip("pandas")
+    run = write_run(tmp_path, alias="counts")
+    sx.set_run_dir(run)
+    df = sx.input("counts")
+    low = df[df["reads"].fillna(0) < 20]
+    entry = sx.drop(low, "fewer than 20 reads")
+    # The slice keeps the input's attrs, so the alias and the sample role are found.
+    assert entry == {"input": "counts", "count": 2, "reason": "fewer than 20 reads", "axis": "rows", "keys": ["S1", "S2"]}
+    assert sx.drop(["passed"], "not needed", input="counts", axis="columns")["count"] == 1
+    mask = pd.Series([True, False, True], index=["a", "b", "c"])
+    assert sx.drop(mask, "masked", input="counts")["keys"] == ["a", "c"]
+    assert sx.drop(5, "counted")["count"] == 5
+    with pytest.raises(ValueError):
+        sx.drop(1, "   ")
+    with pytest.raises(TypeError):
+        sx.drop(True, "bool")
+    manifest = json.loads(sx.finish().read_text(encoding="utf-8"))
+    assert [entry["reason"] for entry in manifest["drops"]] == ["fewer than 20 reads", "not needed", "masked", "counted"]
+    assert manifest["drops"][1]["axis"] == "columns"
+
+
+def test_metric_label_and_unit(tmp_path):
+    run = write_run(tmp_path)
+    sx.set_run_dir(run)
+    sx.metric("n_called", 1146, label="DE genes")
+    sx.metric("fdr", 0.05, unit="")
+    sx.metric("time", 3, label="Duration", unit="min")
+    manifest = json.loads(sx.finish().read_text(encoding="utf-8"))
+    assert manifest["metrics"] == {"n_called": 1146, "fdr": 0.05, "time": 3}
+    assert manifest["metricMeta"] == {"n_called": {"label": "DE genes"}, "time": {"label": "Duration", "unit": "min"}}

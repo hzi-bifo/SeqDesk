@@ -22,6 +22,14 @@ the analysis::
     sx.metric("n_samples", df[sample].nunique())
     sx.finish()
 
+Flow recipes use the short aliases ``sx.input``, ``sx.output`` and
+``sx.figure`` and record what a step did to the rows with ``sx.drop``::
+
+    counts = sx.input("counts")
+    keep = counts[sx.param("min_count", 10) <= counts["reads"]]
+    sx.drop(counts[~counts.index.isin(keep.index)], "fewer than 10 reads")
+    sx.output("filtered", keep)
+
 The manifest is also written from an ``atexit`` hook, so a script that forgets
 ``finish()`` still leaves a manifest behind.  An uncaught exception keeps its
 non-zero exit code; the app treats that as a failed run.
@@ -46,7 +54,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import pandas as pd
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 MANIFEST_VERSION = 1
 
@@ -100,6 +108,11 @@ __all__ = [
     "note",
     "metric",
     "metrics",
+    "input",
+    "output",
+    "figure",
+    "drop",
+    "drops",
     "artifacts",
     "log",
     "finish",
@@ -120,6 +133,8 @@ class _State:
         self.artifacts: list[dict[str, Any]] = []
         self.notes: list[str] = []
         self.metrics: dict[str, Any] = {}
+        self.metric_meta: dict[str, dict[str, str]] = {}
+        self.drops: list[dict[str, Any]] = []
         self.finished = False
         self.dirty = False
         self.png_warning_given = False
@@ -658,7 +673,7 @@ def save_table(
         path,
         title,
         description,
-        {"table": {"tableKind": table_kind, "roles": role_map, "rowCount": int(len(out)),
+        {"table": {"tableKind": table_kind, "roles": role_map, "rowCount": int(len(out)), "colCount": int(len(out.columns)),
                    **({"columns": dict(columns)} if columns is not None else {}),
                    **({"schemaId": schema_id} if schema_id is not None else {}),
                    **({"schemaVersion": schema_version} if schema_version is not None else {}),
@@ -719,17 +734,114 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
-def metric(key: str, value: Any) -> None:
-    """Record a headline number (or short value) for the run."""
+def metric(key: str, value: Any, label: str | None = None, unit: str | None = None) -> None:
+    """Record a headline number (or short value) for the run.
+
+    ``label`` names it for people ("DE genes"), ``unit`` is shown after it.
+    """
     if not isinstance(key, str) or not key.strip():
         raise ValueError("metric key must be a non-empty string")
-    _state.metrics[key.strip()] = _json_safe(value)
+    key = key.strip()
+    _state.metrics[key] = _json_safe(value)
+    meta = {name: str(text).strip()[:80] for name, text in (("label", label), ("unit", unit)) if text is not None and str(text).strip()}
+    if meta:
+        _state.metric_meta[key] = meta
     _state.dirty = True
 
 
 def metrics() -> dict[str, Any]:
     """The metrics recorded so far."""
     return dict(_state.metrics)
+
+
+# --------------------------------------------------------------------------- #
+#  Flow aliases and the data ledger
+# --------------------------------------------------------------------------- #
+def input(alias: str, **kwargs: Any) -> "pd.DataFrame":  # noqa: A001 - the Flow name for load_dataset
+    """The Flow name of :func:`load_dataset`: ``sx.input("counts")``."""
+    return load_dataset(alias, **kwargs)
+
+
+def output(name: str, df: "pd.DataFrame", **kwargs: Any) -> dict[str, Any]:
+    """The Flow name of :func:`save_table`, name first: ``sx.output("filtered", df)``."""
+    return save_table(df, name, **kwargs)
+
+
+def figure(name: str, fig: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    """The Flow name of :func:`save_figure`, name first: ``sx.figure("volcano", fig)``."""
+    return save_figure(fig, name, **kwargs)
+
+
+_KEY_ROLES = ("taxon_id", "taxon", "sample", "subject")
+MAX_DROP_KEYS = 20
+MAX_DROPS = 200
+
+
+def _drop_keys(rows: Any, axis: str) -> tuple[int, list[str], str | None]:
+    """Count what ``rows`` names and pick up to 20 readable keys from it."""
+    alias = None
+    if hasattr(rows, "attrs") and isinstance(getattr(rows, "attrs"), dict):
+        value = rows.attrs.get("alias")
+        alias = str(value) if value else None
+    if hasattr(rows, "columns") and hasattr(rows, "index"):  # a DataFrame
+        if axis == "columns":
+            names = [str(column) for column in rows.columns]
+            return len(names), names[:MAX_DROP_KEYS], alias
+        role_map = rows.attrs.get("roles") if isinstance(rows.attrs.get("roles"), dict) else {}
+        key_column = next((role_map[role] for role in _KEY_ROLES if role_map.get(role) in rows.columns), None)
+        if key_column is not None:
+            keys = rows[key_column].head(MAX_DROP_KEYS).tolist()
+        elif type(rows.index).__name__ != "RangeIndex":
+            keys = list(rows.index[:MAX_DROP_KEYS])
+        elif len(rows.columns):
+            keys = rows.iloc[:MAX_DROP_KEYS, 0].tolist()
+        else:
+            keys = []
+        return int(len(rows)), [str(key) for key in keys], alias
+    if hasattr(rows, "dtype") and str(getattr(rows, "dtype")) in ("bool", "boolean"):  # a boolean mask of what goes
+        count = int(rows.sum())
+        index = getattr(rows, "index", None)
+        keys = [str(key) for key in list(index[rows.fillna(False).astype(bool)])[:MAX_DROP_KEYS]] if index is not None and type(index).__name__ != "RangeIndex" else []
+        return count, keys, alias
+    if isinstance(rows, bool):
+        raise TypeError("drop() expects the dropped rows, their keys or a count, not a bool")
+    if isinstance(rows, int):
+        return max(0, rows), [], alias
+    if isinstance(rows, (str, bytes)):
+        return 1, [str(rows)], alias
+    try:
+        items = list(rows)
+    except TypeError as error:
+        raise TypeError(f"drop() expects rows, keys or a count, got {type(rows).__name__}") from error
+    return len(items), [str(item) for item in items[:MAX_DROP_KEYS]], alias
+
+
+def drop(rows: Any, reason: str, *, input: str | None = None, axis: str = "rows") -> dict[str, Any]:  # noqa: A002
+    """Record that the step left ``rows`` out of the data, and why.
+
+    ``rows`` is what was removed: a DataFrame slice, a boolean mask of the
+    removed rows, a list of keys or a plain count.  ``input`` names the input
+    alias they came from (taken from the DataFrame when it was loaded with
+    :func:`input`).  ``axis="columns"`` records removed columns (samples in a
+    wide table).  The app shows these as the step's data ledger; a step that
+    never calls ``drop`` shows counts without reasons.
+    """
+    text = str(reason).strip()
+    if not text:
+        raise ValueError("drop() needs a reason")
+    if axis not in ("rows", "columns"):
+        raise ValueError('axis must be "rows" or "columns"')
+    count, keys, detected = _drop_keys(rows, axis)
+    entry = {"input": input or detected, "count": count, "reason": text[:280], "axis": axis, "keys": keys}
+    if len(_state.drops) < MAX_DROPS:
+        _state.drops.append(entry)
+    _state.dirty = True
+    return dict(entry)
+
+
+def drops() -> list[dict[str, Any]]:
+    """The drops recorded so far."""
+    return [dict(entry) for entry in _state.drops]
 
 
 def artifacts() -> list[dict[str, Any]]:
@@ -749,6 +861,8 @@ def _manifest_document() -> dict[str, Any]:
         "artifacts": [dict(entry) for entry in _state.artifacts],
         "notes": list(_state.notes),
         "metrics": dict(_state.metrics),
+        "metricMeta": {key: dict(value) for key, value in _state.metric_meta.items()},
+        "drops": [dict(entry) for entry in _state.drops],
     }
 
 
@@ -779,7 +893,7 @@ def _write_manifest_at_exit() -> None:
     if _state.finished and not _state.dirty:
         return
     error = _uncaught_exception()
-    has_content = bool(_state.artifacts or _state.notes or _state.metrics)
+    has_content = bool(_state.artifacts or _state.notes or _state.metrics or _state.drops)
     if _state.run_dir is None and not has_content and error is None:
         return  # the helper was never used: nothing to report
     try:

@@ -25,7 +25,8 @@ export function getHelperLibDir(): string {
 }
 
 /**
- * Copy the seqdesk_explore helper package into `<runFolder>/lib/python`.
+ * Copy the seqdesk_explore helper package into `<runFolder>/lib/python`
+ * and the R helper into `<runFolder>/lib/r`.
  * Compute nodes share the run directory but not the app checkout, so the
  * wrapper must import the helper from inside the run folder; the copy also
  * freezes the helper version a run used. Returns the staged lib directory.
@@ -38,6 +39,13 @@ export async function stageHelperLibrary(runFolder: string): Promise<string> {
   await fs.cp(source, target, {
     recursive: true,
     filter: (entry) => path.basename(entry) !== "__pycache__" && !entry.endsWith(".pyc"),
+  });
+  // The R helper (sourced through lib/r/profile.R, see run-script.ts) travels the same way.
+  const rSource = path.join(getHelperLibDir(), "r");
+  const rTarget = path.join(libDir, "r");
+  await fs.rm(rTarget, { recursive: true, force: true });
+  await fs.cp(rSource, rTarget, { recursive: true, filter: (entry) => path.basename(entry) !== "tests" }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
   });
   return libDir;
 }

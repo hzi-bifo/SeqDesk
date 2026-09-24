@@ -85,8 +85,11 @@ save_table(df.describe(include="all").reset_index(), "describe", title="Descript
 finish()
 `;
 
-const BLANK_R = `# Blank analysis (R). The seqdeskExplore helper is not shipped yet; read inputs.json directly.
-inputs <- jsonlite::fromJSON("inputs.json")
+const BLANK_R = `# Blank analysis (R). \`sx\` reads the inputs and records what the step writes.
+table <- sx$input("table")
+sx$output("summary", data.frame(column = names(table), missing = vapply(table, function(x) sum(is.na(x)), numeric(1))), title = "Missing values per column")
+sx$metric("n_rows", nrow(table), label = "Rows")
+sx$finish()
 `;
 
 /** The hash recipes and runs pin a step's code by. */
