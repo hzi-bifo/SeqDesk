@@ -199,10 +199,16 @@ export async function enqueueFlowRunChange(flowRunId: string, change: FlowRunCha
   }];
 
   // A run that finished or became current: its values and outputs are the current ones; earlier runs' are superseded.
+  const flowNow = change === "finished" || change === "current" ? await db.exploreFlow.findUnique({ where: { id: run.flowId }, select: { currentRunId: true } }) : null;
+  const newerNotCurrent = change === "finished" && flowNow?.currentRunId !== run.id;
   if (change === "finished" || change === "current") {
-    const flowNow = await db.exploreFlow.findUnique({ where: { id: run.flowId }, select: { currentRunId: true } });
     const isCurrent = flowNow?.currentRunId === run.id;
-    records.push(...(await valueAndOutputRecords(run.id, isCurrent ? "current" : "superseded", now)));
+    // A newer run that did not become current keeps its values without a state until someone makes it current.
+    records.push(...(await valueAndOutputRecords(run.id, isCurrent ? "current" : "", now)));
+    if (newerNotCurrent) {
+      const flow = await flowRecord(run.flowId, now);
+      if (flow) records.push({ ...flow, payload: { ...(flow.payload ?? {}), newerRunId: run.id, newerRunNumber: run.number } });
+    }
     if (isCurrent) {
       const others = await db.exploreFlowRun.findMany({ where: { flowId: run.flowId, status: "completed", kind: { not: "trial" }, id: { not: run.id } }, orderBy: { completedAt: "desc" }, take: 5, select: { id: true } });
       for (const other of others) records.push(...(await valueAndOutputRecords(other.id, "superseded", now)));
@@ -217,7 +223,7 @@ export async function enqueueFlowRunChange(flowRunId: string, change: FlowRunCha
     const notify = kind === "run.failed" ? [run.startedByMemberId, run.flow.createdByMemberId] : kind === "run.finished" && run.notifyOnFinish ? [run.startedByMemberId] : [];
     const eventSummary =
       kind === "run.started" ? `Run #${run.number} started · ${executed} of ${plan.length} steps`
-      : kind === "run.finished" ? [`Run #${run.number}`, `${plan.length} of ${plan.length} steps`, headline].filter(Boolean).join(" · ")
+      : kind === "run.finished" ? [`Run #${run.number}`, `${plan.length} of ${plan.length} steps`, headline, newerNotCurrent ? "not current yet" : ""].filter(Boolean).join(" · ")
       : `Run #${run.number} failed at step ${run.failedStepLabel ?? "?"}${run.failureWords ? ` · ${run.failureWords}` : ""}`;
     for (const audience of audiences) {
       const event: NotebookEvent = {
@@ -232,7 +238,7 @@ export async function enqueueFlowRunChange(flowRunId: string, change: FlowRunCha
   await enqueue(rows);
 }
 
-async function valueAndOutputRecords(flowRunId: string, state: "current" | "superseded", updatedAt: number): Promise<Omit<ComputeRecord, "projectId" | "visibleTo">[]> {
+async function valueAndOutputRecords(flowRunId: string, state: "current" | "superseded" | "", updatedAt: number): Promise<Omit<ComputeRecord, "projectId" | "visibleTo">[]> {
   const run = await db.exploreFlowRun.findUnique({ where: { id: flowRunId }, include: { flow: { select: { name: true, headlineValue: true } } } });
   if (!run || run.status !== "completed") return [];
   const flowRef = `labdesk://flow/${run.flowId}`;

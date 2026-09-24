@@ -40,7 +40,8 @@ vi.mock("./runner", async () => {
 
 import { db } from "@/lib/db";
 import { createAnalysis, createRevision } from "./analyses";
-import { advanceFlowRun, cancelFlowRun, compareFlowRuns, getFlowRunDetail, listFlowRuns, makeRunCurrent, runRecords, revisionsUsedBy, startFlowRun } from "./flow-runs";
+import { addHold, advanceFlowRun, cancelFlowRun, compareFlowRuns, getFlowRunDetail, listFlowRuns, listHolds, makeRunCurrent, removeHold, runRecords, revisionsUsedBy, startFlowRun } from "./flow-runs";
+import { getRecipeView } from "./recipe-view";
 import { computeStepStates, loadRecipe } from "./recipe";
 import { flowValues, resolveValues } from "./values";
 
@@ -202,5 +203,33 @@ describe.skipIf(!url)("flow runs (PostgreSQL)", () => {
     const again = await startFlowRun(flowId, { scope: "all", actor: actor(), requestId: `flow_${suffix}abcdefghijkl` });
     expect(await startFlowRun(flowId, { scope: "all", actor: actor(), requestId: `flow_${suffix}abcdefghijkl` })).toMatchObject({ id: again.id });
     await cancelFlowRun(again.id);
+  });
+
+  it("keeps a marked or cited current run in place: a newer run completes as newer, not current, until someone makes it current", async () => {
+    const current = (await db.exploreFlow.findUnique({ where: { id: flowId } }))!.currentRunId!;
+    const citedRef = `labdesk://value/${current}/${steps.test}/n_called`;
+    await expect(addHold(current, "writer", "labdesk://value/other/x/y", actor())).rejects.toMatchObject({ code: "invalid_request" });
+    await addHold(current, "writer", citedRef, actor());
+    expect((await addHold(current, "check", `labdesk://run/${current}`, actor())).map((hold) => hold.kind)).toEqual(["writer", "check"]);
+
+    await createRevision({ analysisId: steps.test, code: "print('voom')", author: "user", authorUserId: userId });
+    const run = await startFlowRun(flowId, { scope: "outOfDate", actor: actor() });
+    await finishStep(run.id, steps.test, "completed", { metrics: { n_called: 1160 }, metricMeta: { n_called: { label: "DE genes" } } });
+    await advanceFlowRun(run.id);
+    expect((await db.exploreFlow.findUnique({ where: { id: flowId } }))!.currentRunId).toBe(current);
+    const detail = await getFlowRunDetail(run.id);
+    expect(detail).toMatchObject({ status: "completed", current: false, newer: true, superseded: false });
+    const recipe = await getRecipeView(flowId, { canEdit: true });
+    expect(recipe.flow.newerRun).toMatchObject({ id: run.id, number: run.number });
+    expect(recipe.flow.currentHolds).toEqual({ checks: 1, writer: 1 });
+    expect((await listFlowRuns(flowId)).runs.find((entry) => entry.id === current)?.holds).toEqual({ checks: 1, writer: 1 });
+    expect((await resolveValues([citedRef], async () => true)).values[0]).toMatchObject({ value: 1152, current: true, changed: false, currentValue: null });
+
+    const made = await makeRunCurrent(run.id);
+    expect(made.flow).toEqual({ id: flowId, currentRunId: run.id, previousRunId: current });
+    expect(made.affected).toEqual([{ ref: citedRef, stepId: steps.test, metric: "n_called", label: "DE genes", from: 1152, to: 1160, changed: true, currentRef: `labdesk://value/${run.id}/${steps.test}/n_called` }]);
+    expect((await resolveValues([citedRef], async () => true)).values[0]).toMatchObject({ value: 1152, current: false, changed: true, currentValue: { value: 1160, runId: run.id } });
+    expect(await removeHold(current, "check", `labdesk://run/${current}`)).toHaveLength(1);
+    expect(await listHolds(current)).toHaveLength(1);
   });
 });

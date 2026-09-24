@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   flowFind: vi.fn(), flowRunFind: vi.fn(), requireAccess: vi.fn(), moduleEnabled: vi.fn(),
   createProposals: vi.fn(), discardProposal: vi.fn(), acceptProposal: vi.fn(), proposalFind: vi.fn(), analysisFind: vi.fn(), glossRecord: vi.fn(), listGlosses: vi.fn(), putGlosses: vi.fn(), deleteGloss: vi.fn(),
+  addHold: vi.fn(), listHolds: vi.fn(), removeHold: vi.fn(),
   flowValues: vi.fn(), resolveValues: vi.fn(), outputLineage: vi.fn(), requestCapsule: vi.fn(), artifactFind: vi.fn(), capsuleFind: vi.fn(),
   getRecipeView: vi.fn(), applyRecipeOps: vi.fn(), addStep: vi.fn(), stepOptions: vi.fn(), listRecipeRevisions: vi.fn(), resolveAccess: vi.fn(), scopeFind: vi.fn(),
   startFlowRun: vi.fn(), listFlowRuns: vi.fn(), getFlowRunDetail: vi.fn(), cancelFlowRun: vi.fn(), makeRunCurrent: vi.fn(), compareFlowRuns: vi.fn(), flowRunOutputs: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("@/lib/explore/values", () => ({ flowValues: mocks.flowValues, resolveVa
 vi.mock("@/lib/explore/flow-runs", () => ({
   startFlowRun: mocks.startFlowRun, listFlowRuns: mocks.listFlowRuns, getFlowRunDetail: mocks.getFlowRunDetail, cancelFlowRun: mocks.cancelFlowRun,
   makeRunCurrent: mocks.makeRunCurrent, compareFlowRuns: mocks.compareFlowRuns, flowRunOutputs: mocks.flowRunOutputs,
+  addHold: mocks.addHold, listHolds: mocks.listHolds, removeHold: mocks.removeHold,
 }));
 
 import { NextRequest } from "next/server";
@@ -81,6 +83,12 @@ describe("Flow run routes", () => {
     expect((await call("GET", "flow-runs/compare?a=r1&b=r2&step=s4")).body.words).toBe("same");
     expect(mocks.compareFlowRuns).toHaveBeenCalledWith("r1", "r2", "s4");
     expect((await call("GET", "flow-runs/compare?a=r1")).body.code).toBe("invalid_request");
+    mocks.addHold.mockResolvedValue([{ kind: "writer", key: "labdesk://value/r1/s4/n" }]);
+    expect((await call("POST", "flow-runs/r1/holds", { kind: "writer", key: "labdesk://value/r1/s4/n" })).body.holds).toHaveLength(1);
+    expect(mocks.addHold).toHaveBeenCalledWith("r1", "writer", "labdesk://value/r1/s4/n", expect.objectContaining({ memberId: "m1" }));
+    mocks.removeHold.mockResolvedValue([]);
+    expect((await call("DELETE", "flow-runs/r1/holds?kind=writer&key=labdesk://value/r1/s4/n")).body).toEqual({ holds: [] });
+    expect(mocks.removeHold).toHaveBeenCalledWith("r1", "writer", "labdesk://value/r1/s4/n");
     mocks.flowRunOutputs.mockResolvedValue({ outputs: [], values: [] });
     expect((await call("GET", "flow-runs/r1/outputs")).body).toEqual({ outputs: [], values: [] });
   });

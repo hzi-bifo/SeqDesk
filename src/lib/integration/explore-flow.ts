@@ -19,7 +19,7 @@ import { Readable } from "stream";
 import { enqueueFlowRecord } from "./events";
 import { acceptGloss, deleteGloss, glossRecord, listGlosses, patchGloss, putGlosses } from "@/lib/explore/glosses";
 import { createFlowFromTemplate, listTemplates, serializeTemplate } from "@/lib/explore/templates";
-import { cancelFlowRun, compareFlowRuns, flowRunOutputs, getFlowRunDetail, listFlowRuns, makeRunCurrent, startFlowRun, type FlowActor, type StartFlowRunInput } from "@/lib/explore/flow-runs";
+import { addHold, listHolds, removeHold, cancelFlowRun, compareFlowRuns, flowRunOutputs, getFlowRunDetail, listFlowRuns, makeRunCurrent, startFlowRun, type FlowActor, type StartFlowRunInput } from "@/lib/explore/flow-runs";
 import { flowError, requestIdOf } from "./flow-contract";
 import type { IntegrationSession } from "./identity";
 
@@ -121,6 +121,22 @@ async function handleRuns({ request, session, segments, json }: FlowRouteContext
     if (segments.length === 3 && sub === "current" && method === "POST") {
       await flowRunFor(session, id, "write");
       return json(await makeRunCurrent(id));
+    }
+    if (segments.length === 3 && sub === "holds") {
+      if (method === "GET") {
+        await flowRunFor(session, id, "read");
+        return json({ holds: await listHolds(id) });
+      }
+      // Reported by the web client: a person marked the run or its values, or a document cites them.
+      if (method === "POST") {
+        await flowRunFor(session, id, "read");
+        const body = await readBody(request);
+        return json({ holds: await addHold(id, body.kind, body.key, actorOf(session)) });
+      }
+      if (method === "DELETE") {
+        await flowRunFor(session, id, "read");
+        return json({ holds: await removeHold(id, query.get("kind"), query.get("key")) });
+      }
     }
     if (segments.length === 3 && sub === "outputs" && method === "GET") {
       await flowRunFor(session, id, "read");

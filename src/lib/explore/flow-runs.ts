@@ -94,6 +94,10 @@ export interface FlowRunSummary {
   progress: { done: number; total: number; current: { stepId: string; label: string; name: string } | null };
   stepCount: number;
   reusedCount: number;
+  /** Completed after the current run but not made current, because the current run is held. */
+  newer: boolean;
+  /** People's marks and Writer references that keep this run in place. */
+  holds: { checks: number; writer: number };
   ref: string;
 }
 
@@ -469,8 +473,14 @@ async function completeFlowRun(run: FlowRunRecord, plan: PlanEntry[], latest: Ma
     },
   });
   if (!updated.count) return;
-  // A completed run of the recipe becomes the current one; trials never do (D13).
-  if (run.kind !== "trial") await db.exploreFlow.update({ where: { id: run.flowId }, data: { currentRunId: run.id } });
+  // A completed run of the recipe becomes the current one, unless people have marked the
+  // current run or the Writer cites its values: then it completes as newer, not current.
+  // Trials never become current (D13).
+  if (run.kind !== "trial") {
+    const flow = await db.exploreFlow.findUnique({ where: { id: run.flowId }, select: { currentRunId: true } });
+    const held = flow?.currentRunId && flow.currentRunId !== run.id ? await db.exploreRunHold.count({ where: { flowRunId: flow.currentRunId } }) : 0;
+    if (!held) await db.exploreFlow.updateMany({ where: { id: run.flowId, currentRunId: flow?.currentRunId ?? null }, data: { currentRunId: run.id } });
+  }
   await flowRunChanged(run.id, "finished");
 }
 
@@ -506,13 +516,86 @@ export async function cancelFlowRun(flowRunId: string): Promise<FlowRunSummary> 
   return serializeFlowRunById(run.id);
 }
 
-export async function makeRunCurrent(flowRunId: string): Promise<{ run: FlowRunSummary; flow: { id: string; currentRunId: string } }> {
+export interface AffectedValue {
+  ref: string;
+  stepId: string;
+  metric: string;
+  label: string;
+  from: unknown;
+  to: unknown;
+  changed: boolean;
+  /** The same value in the new current run, or null when that run has no such value. */
+  currentRef: string | null;
+}
+
+/** The value a reference names in another run of the same flow (same step and key). */
+async function valueIn(runId: string, stepId: string, key: string) {
+  const loaded = await runRecords(runId);
+  const record = loaded?.records.get(stepId);
+  const stepRun = record ? loaded!.stepRuns.get(record.stepRunId) : undefined;
+  return stepValues(stepRun?.results).find((value) => value.key === key) ?? null;
+}
+
+/**
+ * Writer references to a run's values, compared with another run: what a
+ * document shows now and what it would show from `toRunId`.
+ */
+export async function compareWriterValues(fromRunId: string, toRunId: string): Promise<AffectedValue[]> {
+  const holds = await db.exploreRunHold.findMany({ where: { flowRunId: fromRunId, kind: "writer" }, orderBy: { createdAt: "asc" } });
+  const affected: AffectedValue[] = [];
+  for (const hold of holds) {
+    const match = /^labdesk:\/\/value\/([^/]+)\/([^/]+)\/(.+)$/.exec(hold.key);
+    if (!match || match[1] !== fromRunId) continue;
+    const key = decodeURIComponent(match[3]);
+    const [before, after] = await Promise.all([valueIn(fromRunId, match[2], key), valueIn(toRunId, match[2], key)]);
+    affected.push({ ref: hold.key, stepId: match[2], metric: key, label: after?.label ?? before?.label ?? key, from: before?.value ?? null, to: after?.value ?? null,
+      changed: JSON.stringify(before?.value ?? null) !== JSON.stringify(after?.value ?? null), currentRef: after ? `labdesk://value/${toRunId}/${match[2]}/${encodeURIComponent(key)}` : null });
+  }
+  return affected;
+}
+
+/**
+ * Make a completed run the current one (a person's choice, so marks and
+ * Writer references do not stop it). The answer lists the Writer values that
+ * pointed at the previous current run, with the values they would now show.
+ */
+export async function makeRunCurrent(flowRunId: string): Promise<{ run: FlowRunSummary; flow: { id: string; currentRunId: string; previousRunId: string | null }; affected: AffectedValue[] }> {
   const run = await db.exploreFlowRun.findUnique({ where: { id: flowRunId } });
   if (!run) throw flowError("not_found", "Run not found");
   if (run.status !== "completed" || run.kind === "trial") throw flowError("not_completed", "Only a completed run of the recipe can be the current one.");
+  const flow = await db.exploreFlow.findUnique({ where: { id: run.flowId }, select: { currentRunId: true } });
+  const previous = flow?.currentRunId && flow.currentRunId !== run.id ? flow.currentRunId : null;
   await db.exploreFlow.update({ where: { id: run.flowId }, data: { currentRunId: run.id } });
   await flowRunChanged(run.id, "current");
-  return { run: await serializeFlowRunById(run.id), flow: { id: run.flowId, currentRunId: run.id } };
+  return { run: await serializeFlowRunById(run.id), flow: { id: run.flowId, currentRunId: run.id, previousRunId: previous }, affected: previous ? await compareWriterValues(previous, run.id) : [] };
+}
+
+// ---------------------------------------------------------------------------
+// Holds: people's marks and Writer references that keep a run current
+// ---------------------------------------------------------------------------
+
+export type HoldKind = "check" | "writer";
+
+export async function listHolds(flowRunId: string) {
+  const holds = await db.exploreRunHold.findMany({ where: { flowRunId }, orderBy: { createdAt: "asc" } });
+  return holds.map((hold) => ({ id: hold.id, kind: hold.kind as HoldKind, key: hold.key, memberId: hold.memberId, createdAt: hold.createdAt.toISOString() }));
+}
+
+export async function addHold(flowRunId: string, kind: unknown, key: unknown, actor: FlowActor) {
+  if (kind !== "check" && kind !== "writer") throw flowError("invalid_request", 'kind must be "check" or "writer".');
+  if (typeof key !== "string" || !key.trim() || key.length > 2048) throw flowError("invalid_request", "key must be the check key or the value reference (at most 2,048 characters).");
+  const run = await db.exploreFlowRun.findUnique({ where: { id: flowRunId }, select: { status: true, kind: true } });
+  if (!run) throw flowError("not_found", "Run not found");
+  if (run.kind === "trial") throw flowError("invalid_request", "Trial runs cannot be marked or cited.");
+  if (kind === "writer" && !key.startsWith(`labdesk://value/${flowRunId}/`) && !key.startsWith(`labdesk://output/${flowRunId}/`)) throw flowError("invalid_request", "A Writer hold names a value or output of this run.");
+  await db.exploreRunHold.upsert({ where: { flowRunId_kind_key: { flowRunId, kind, key } }, update: {}, create: { flowRunId, kind, key, memberId: actor.memberId ?? null, createdById: actor.userId } });
+  return listHolds(flowRunId);
+}
+
+export async function removeHold(flowRunId: string, kind: unknown, key: unknown) {
+  if ((kind !== "check" && kind !== "writer") || typeof key !== "string") throw flowError("invalid_request", "Name the hold with kind and key.");
+  await db.exploreRunHold.deleteMany({ where: { flowRunId, kind, key } });
+  return listHolds(flowRunId);
 }
 
 // ---------------------------------------------------------------------------
@@ -540,6 +623,7 @@ export function inputsLabelOf(inputs: Array<Pin & { stepId?: string }>, produced
 interface SerializeContext {
   currentRunId: string | null;
   currentNumber: number | null;
+  holds?: Map<string, { checks: number; writer: number }>;
   headlineValue: string | null;
   produced: Set<string>;
   stepRuns?: StepRunLite[];
@@ -574,6 +658,8 @@ export function serializeFlowRun(run: FlowRunRecord, context: SerializeContext):
     progress: { done: run.doneCount, total: executed.length, current: currentEntry ? { stepId: currentEntry.analysisId, label: currentEntry.label, name: currentEntry.name } : null },
     stepCount: run.stepCount,
     reusedCount: plan.filter((entry) => !entry.execute && entry.reusedFrom).length,
+    newer: run.status === "completed" && run.kind !== "trial" && context.currentRunId !== run.id && context.currentNumber !== null && (run.number ?? 0) > context.currentNumber,
+    holds: context.holds?.get(run.id) ?? { checks: 0, writer: 0 },
     ref: `labdesk://run/${run.id}`,
   };
 }
@@ -594,7 +680,15 @@ async function producedDatasets(flowId: string, targetKey: string): Promise<Set<
 async function contextFor(flowId: string): Promise<SerializeContext & { targetKey: string }> {
   const flow = await db.exploreFlow.findUnique({ where: { id: flowId }, select: { currentRunId: true, headlineValue: true, targetKey: true } });
   const current = flow?.currentRunId ? await db.exploreFlowRun.findUnique({ where: { id: flow.currentRunId }, select: { number: true } }) : null;
-  return { currentRunId: flow?.currentRunId ?? null, currentNumber: current?.number ?? null, headlineValue: flow?.headlineValue ?? null, produced: await producedDatasets(flowId, flow?.targetKey ?? ""), targetKey: flow?.targetKey ?? "" };
+  const counted = await db.exploreRunHold.groupBy({ by: ["flowRunId", "kind"], where: { flowRun: { flowId } }, _count: { _all: true } });
+  const holds = new Map<string, { checks: number; writer: number }>();
+  for (const row of counted) {
+    const entry = holds.get(row.flowRunId) ?? { checks: 0, writer: 0 };
+    if (row.kind === "writer") entry.writer += row._count._all;
+    else entry.checks += row._count._all;
+    holds.set(row.flowRunId, entry);
+  }
+  return { currentRunId: flow?.currentRunId ?? null, currentNumber: current?.number ?? null, holds, headlineValue: flow?.headlineValue ?? null, produced: await producedDatasets(flowId, flow?.targetKey ?? ""), targetKey: flow?.targetKey ?? "" };
 }
 
 export async function serializeFlowRunById(flowRunId: string): Promise<FlowRunSummary> {

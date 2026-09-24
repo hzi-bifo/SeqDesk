@@ -1203,6 +1203,7 @@ model ExploreFlowRun {
   stepRuns  ExploreAnalysisRun[]
   findings  ExploreRunFinding[]
   capsules  ExploreCapsule[]
+  holds     ExploreRunHold[]
 
   @@unique([flowId, number])
   @@unique([flowId, trialNumber])
@@ -1296,6 +1297,24 @@ model ExploreRunFinding {
   flowRun ExploreFlowRun @relation(fields: [flowRunId], references: [id], onDelete: Cascade)
 
   @@index([flowRunId])
+}
+
+// Something that holds a run in place: a person's mark (a record check on the
+// run or its values) or a Writer value reference pinned to it. The web client
+// reports these, since they live on the collaboration server and in the Writer.
+// While the current run has any, a newer run completes as "newer, not current".
+model ExploreRunHold {
+  id        String   @id @default(cuid())
+  flowRunId String
+  kind      String   // check | writer
+  key       String   // the check key or the Writer value reference
+  memberId  String?
+  createdById String
+  createdAt DateTime @default(now())
+
+  flowRun ExploreFlowRun @relation(fields: [flowRunId], references: [id], onDelete: Cascade)
+
+  @@unique([flowRunId, kind, key])
 }
 
 // A reproducible package of one output: code, input hashes, lock, README.

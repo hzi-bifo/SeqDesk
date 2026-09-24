@@ -104,7 +104,9 @@ export async function artifactsIntact(stepRunId: string): Promise<boolean> {
  * reference the caller cannot read is reported as unknown, like a missing one.
  */
 export async function resolveValues(refs: string[], canRead: (flow: { id: string; targetKey: string }) => Promise<boolean>, options: { verify?: boolean } = {}) {
-  const values: Array<FeedValue & { flowId: string; flowName: string; current: boolean; at: string | null }> = [];
+  const values: Array<FeedValue & { flowId: string; flowName: string; current: boolean; at: string | null;
+    /** For a value of a run that is no longer current: the same value in the current run, and whether it differs. */
+    changed: boolean; currentValue: { ref: string; value: unknown; runId: string; runNumber: number | null } | null }> = [];
   const unknown: string[] = [];
   const runs = new Map<string, Awaited<ReturnType<typeof runRecords>>>();
   const flows = new Map<string, { id: string; name: string; targetKey: string; currentRunId: string | null; readable: boolean }>();
@@ -126,10 +128,20 @@ export async function resolveValues(refs: string[], canRead: (flow: { id: string
     if (!flow.readable || !entry || !record || !value) { unknown.push(ref); continue; }
     let verified = loaded.run.status === "completed" && record.status === "completed";
     if (verified && options.verify) verified = await artifactsIntact(record.stepRunId);
+    let currentValue: { ref: string; value: unknown; runId: string; runNumber: number | null } | null = null;
+    if (flow.currentRunId && flow.currentRunId !== loaded.run.id) {
+      if (!runs.has(flow.currentRunId)) runs.set(flow.currentRunId, await runRecords(flow.currentRunId));
+      const current = runs.get(flow.currentRunId);
+      const currentRecord = current?.records.get(parsed.analysisId);
+      const found = currentRecord ? stepValues(current!.stepRuns.get(currentRecord.stepRunId)?.results).find((candidate) => candidate.key === parsed.key) : undefined;
+      if (current && found) currentValue = { ref: `labdesk://value/${current.run.id}/${parsed.analysisId}/${encodeURIComponent(parsed.key)}`, value: found.value, runId: current.run.id, runNumber: current.run.number };
+    }
     values.push({
       key: `${parsed.analysisId}.${parsed.key}`, ref, stepId: parsed.analysisId, stepLabel: entry.label, metric: parsed.key, label: value.label, unit: value.unit, value: value.value,
       runId: loaded.run.id, runNumber: loaded.run.number, output: null, verified, flowId: flow.id, flowName: flow.name, current: flow.currentRunId === loaded.run.id,
       at: loaded.run.completedAt?.toISOString() ?? null,
+      changed: currentValue !== null && JSON.stringify(currentValue.value) !== JSON.stringify(value.value),
+      currentValue,
     });
   }
   return { values, unknown };

@@ -31,7 +31,7 @@ vi.mock("@/lib/explore/runner", async () => {
 
 import { db } from "@/lib/db";
 import { createAnalysis } from "@/lib/explore/analyses";
-import { advanceFlowRun, startFlowRun } from "@/lib/explore/flow-runs";
+import { addHold, advanceFlowRun, startFlowRun } from "@/lib/explore/flow-runs";
 import { deliverOutbox, enqueueFlowRecord, prepareFlowRemoval, retryDelayMs } from "./events";
 
 const suffix = randomUUID().slice(0, 8);
@@ -134,6 +134,20 @@ describe.skipIf(!url)("pushing Flow to the collaboration server (PostgreSQL)", (
     await deliverOutbox({ fetch: ok.fetcher, now: () => now + 2500 });
     const failed = ok.sent.find((request) => request.body.workspaceId === labWorkspace && request.body.events)!.body.events!.find((event) => event.kind === "run.failed")!;
     expect(failed).toMatchObject({ summary: "Run #2 failed at step 1 · Step 1 needs a column named sample, which the table does not have.", severity: "failed", notify: ["m-starter", "m-owner"] });
+
+    // The current run is cited in a document: the next run finishes as newer, not current.
+    const current = (await db.exploreFlow.findUnique({ where: { id: flowId } }))!.currentRunId!;
+    await addHold(current, "writer", `labdesk://value/${current}/${steps[1]}/n_called`, actor());
+    const newer = await startFlowRun(flowId, { scope: "all", actor: actor() });
+    for (const step of steps) await finish(newer.id, step, "completed", step === steps[1] ? { n_called: 1152 } : {});
+    await advanceFlowRun(newer.id);
+    const held = recorder();
+    await deliverOutbox({ fetch: held.fetcher, now: () => now + 60000 });
+    const labBodies = held.sent.filter((request) => request.body.workspaceId === labWorkspace);
+    expect(labBodies.flatMap((request) => request.body.events ?? []).find((event) => event.kind === "run.finished")?.summary).toBe("Run #3 · 2 of 2 steps · 1,152 DE genes · not current yet");
+    const pushed = labBodies.flatMap((request) => request.body.records ?? []);
+    expect(pushed.find((record) => record.ref === `labdesk://value/${newer.id}/${steps[1]}/n_called`)?.state).toBe("");
+    expect(pushed.find((record) => record.kind === "flow")?.payload).toMatchObject({ currentRunId: current, newerRunId: newer.id, newerRunNumber: 3 });
 
     const removal = await prepareFlowRemoval(flowId, targetKey);
     await removal!();

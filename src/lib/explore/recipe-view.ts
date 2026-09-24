@@ -270,12 +270,19 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
     else if (step.state === "running" || step.state === "queued") counts.running += 1;
   }
   const flowRecord = await db.exploreFlow.findUnique({ where: { id: flowId }, select: { recipeRevision: true, layout: true, headlineValue: true, createdByMemberId: true, updatedAt: true } });
+  // "Run #16 finished · Make current": a completed run newer than the current one that did not take its place.
+  const newer = currentRow?.number !== null && currentRow?.number !== undefined
+    ? await db.exploreFlowRun.findFirst({ where: { flowId, status: "completed", kind: { not: "trial" }, number: { gt: currentRow.number } }, orderBy: { number: "desc" }, select: { id: true, number: true, completedAt: true } })
+    : null;
+  const currentHolds = currentRunId ? await db.exploreRunHold.groupBy({ by: ["kind"], where: { flowRunId: currentRunId }, _count: { _all: true } }) : [];
   return {
     flow: {
       id: model.flow.id, name: model.flow.name, description: model.flow.description, targetKey: model.flow.targetKey,
       projectId: options.scope?.projectId ?? "", visibility: options.scope?.visibility ?? "lab", ownerMemberId: options.scope?.ownerMemberId || model.flow.createdByMemberId || "",
       headlineValue: flowRecord?.headlineValue ?? null, recipeRevision: flowRecord?.recipeRevision ?? model.flow.recipeRevision, currentRunId,
-      layout: flowRecord?.layout ?? null, createdAt: model.flow.createdAt.toISOString(), updatedAt: (flowRecord?.updatedAt ?? model.flow.updatedAt).toISOString(),
+      layout: flowRecord?.layout ?? null, createdAt: model.flow.createdAt.toISOString(),
+      newerRun: newer ? { id: newer.id, number: newer.number, completedAt: newer.completedAt?.toISOString() ?? null } : null,
+      currentHolds: { checks: currentHolds.filter((row) => row.kind === "check").reduce((sum, row) => sum + row._count._all, 0), writer: currentHolds.filter((row) => row.kind === "writer").reduce((sum, row) => sum + row._count._all, 0) }, updatedAt: (flowRecord?.updatedAt ?? model.flow.updatedAt).toISOString(),
     },
     viewedRun: viewed ? { id: viewed.run.id, number: viewed.run.number, status: viewed.run.status, completedAt: viewed.run.completedAt?.toISOString() ?? null } : null,
     activeRun,
