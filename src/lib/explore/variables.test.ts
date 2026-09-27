@@ -46,4 +46,12 @@ describe("variables", () => {
     expect(resolveVariablesInMarkdown(markdown, variables)).toBe("Of 874 samples, PERMANOVA p = 0.001; `code stays` and ?gone.x is marked.");
     expect(variableReference(variables.steps[0], "n_taxa")).toBe("`r cohort_overview.n_taxa`");
   });
+
+  it("keeps a pinned citation on the run it was read from", () => {
+    const variables = buildVariables([{ analysisId: "a", name: "DE", slug: "de", runNumber: "16", metrics: { genes: 1152 } } as never]);
+    expect(resolveVariable("r de.genes @14=1,146", variables)).toMatchObject({ found: true, text: "1,146", newer: { run: "16", text: "1,152" }, ref: { pin: { run: "14", text: "1,146" } } });
+    expect(resolveVariable("r de.genes @16=1,152", variables)).toMatchObject({ text: "1,152" });
+    expect(resolveVariable("r de.genes @16=1,152", variables)?.newer).toBeUndefined();
+    expect(resolveVariablesInMarkdown("We found `r de.genes @14=1,146` genes.", variables)).toBe("We found 1,146 genes.");
+  });
 });

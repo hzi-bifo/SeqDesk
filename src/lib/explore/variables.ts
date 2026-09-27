@@ -3,7 +3,10 @@
  * its run (`sx.metric("n_samples", 874)`), addressed as `step.metric` where
  * the step part is the step's name as a slug. Text blocks cite them R-style,
  * `` `r cohort_overview.n_samples` ``, with an optional number of decimals,
- * `` `r beta_diversity.permanova_group_p | 3` ``.
+ * `` `r beta_diversity.permanova_group_p | 3` ``. A citation made in the web
+ * report editor is pinned to the run it was read from, `` `r de.genes @14=1,146` ``:
+ * it keeps showing that run's value until a person updates it, so a newer run
+ * never changes a shared page silently (identity sheet 48 F1).
  */
 import type { ReportAnalysis } from "./reports";
 
@@ -22,6 +25,8 @@ export interface VariableRef {
   step: string;
   metric: string;
   digits: number | null;
+  /** The run the value was cited from and the value shown then, when the citation is pinned. */
+  pin?: { run: string; text: string };
 }
 
 export interface ResolvedVariable {
@@ -31,6 +36,8 @@ export interface ResolvedVariable {
   value: VariableValue | undefined;
   /** What the page shows: the formatted value, or the reference marked as unknown. */
   text: string;
+  /** Pinned to an older run while the step has a newer one: the newer run and its value. */
+  newer?: { run: string; text: string };
 }
 
 /** "Cohort overview" -> "cohort_overview": readable in Markdown, stable across spaces and case. */
@@ -63,13 +70,15 @@ export function buildVariables(analyses: ReportAnalysis[]): ReportVariables {
   return { steps, bySlug };
 }
 
-const REF_PATTERN = /^r\s+([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\s*(?:\|\s*(\d))?\s*$/;
+const REF_PATTERN = /^r\s+([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)\s*(?:\|\s*(\d))?\s*(?:@([^=\s`]+)=([^`]*))?$/;
 
 /** The inside of an inline code span, such as "r cohort_overview.n_samples | 2"; null when it is ordinary code. */
 export function parseVariableRef(text: string): VariableRef | null {
   const match = text.trim().match(REF_PATTERN);
   if (!match) return null;
-  return { step: match[1].toLowerCase(), metric: match[2], digits: match[3] === undefined ? null : Number(match[3]) };
+  const ref: VariableRef = { step: match[1].toLowerCase(), metric: match[2], digits: match[3] === undefined ? null : Number(match[3]) };
+  if (match[4] !== undefined) ref.pin = { run: match[4], text: (match[5] ?? "").trim() };
+  return ref;
 }
 
 export function formatVariableValue(value: VariableValue | undefined, digits: number | null = null): string {
@@ -98,7 +107,12 @@ export function resolveVariable(text: string, variables: ReportVariables): Resol
   const key = step ? (Object.prototype.hasOwnProperty.call(step.metrics, ref.metric) ? ref.metric : Object.keys(step.metrics).find((name) => name.toLowerCase() === ref.metric.toLowerCase())) : undefined;
   const found = Boolean(step && key !== undefined);
   const value = found && step && key !== undefined ? step.metrics[key] : undefined;
-  return { ref, step, found, value, text: found ? formatVariableValue(value, ref.digits) : `?${ref.step}.${ref.metric}` };
+  const latest = found ? formatVariableValue(value, ref.digits) : `?${ref.step}.${ref.metric}`;
+  // A pinned citation shows the value of the run it was read from; a newer run is reported, never swapped in.
+  if (ref.pin && (!found || (step?.runNumber && step.runNumber !== ref.pin.run))) {
+    return { ref, step, found, value, text: ref.pin.text || latest, ...(found && step?.runNumber ? { newer: { run: step.runNumber, text: latest } } : {}) };
+  }
+  return { ref, step, found, value, text: latest };
 }
 
 /** The Markdown to write for a variable: `` `r step.metric` ``. */
