@@ -136,7 +136,11 @@ export async function handleImportersRequest(request: Request, session: Integrat
       const preflight = await provider.preflight();
       if (!preflight.ok && !preflight.previewOnly) return json({ error: preflight.message, details: preflight.details }, 400);
       const input = provider.inputSchema.parse(await request.json());
-      const preview = await provider.preview(input);
+      let preview: Awaited<ReturnType<typeof provider.preview>>;
+      // A preview's own failure is a plain sentence about the source or the link (not found, refused address,
+      // web page instead of a file); answer 422 so the web app shows it instead of a generic server error.
+      try { preview = await provider.preview(input); }
+      catch (error) { if (error instanceof ZodError) throw error; return json({ error: error instanceof Error ? error.message : 'The preview failed.' }, 422); }
       return json({ preview: { ...preview, fingerprint: importPreviewFingerprint(provider.id, input, preview) } });
     }
     if (path[0] === 'imports' && path.length === 1 && method === 'GET') {

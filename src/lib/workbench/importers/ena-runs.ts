@@ -37,13 +37,20 @@ export function narrowEnaFiles(files: WorkbenchFilePreviewItem[], options: { run
     if (missing.length) throw new Error(`ENA has no public FASTQ for ${missing.slice(0, 3).join(", ")} under this accession. Preview it again.`);
   }
   const picked = options.runs?.length ? new Set(options.runs) : null;
-  return files.filter(file => (!picked || picked.has(file.runAccession)) && runMatches(file.sourceRecord ?? {}, filters));
+  // ENA's file report comes back in a different order on every call; the preview is signed and recomputed at start,
+  // so runs are put in accession order (the files of a run keep their _1/_2 order).
+  return sortEnaFiles(files).filter(file => (!picked || picked.has(file.runAccession)) && runMatches(file.sourceRecord ?? {}, filters));
+}
+
+export function sortEnaFiles<T extends Pick<WorkbenchFilePreviewItem, "runAccession" | "filename">>(files: T[]): T[] {
+  const key = (run: string) => run.replace(/\d+$/, digits => digits.padStart(14, "0"));
+  return [...files].sort((a, b) => key(a.runAccession).localeCompare(key(b.runAccession)) || a.filename.localeCompare(b.filename));
 }
 
 /** One row per run (not per file), with the attribute columns that have any value in this study. */
 export function enaRunTable(files: WorkbenchFilePreviewItem[], options: { filters?: RunFilters; selected: WorkbenchFilePreviewItem[] }): NonNullable<WorkbenchImportPreview["runs"]> {
   const byRun = new Map<string, WorkbenchFilePreviewItem[]>();
-  for (const file of files) byRun.set(file.runAccession, [...(byRun.get(file.runAccession) ?? []), file]);
+  for (const file of sortEnaFiles(files)) byRun.set(file.runAccession, [...(byRun.get(file.runAccession) ?? []), file]);
   const chosen = new Set(options.selected.map(file => file.runAccession));
   const fields = [...ALWAYS, ...RUN_ATTRIBUTE_FIELDS];
   const columns = fields.filter(field => files.some(file => (file.sourceRecord?.[field] ?? "").trim()));

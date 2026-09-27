@@ -23,7 +23,7 @@ describe("ENA study-level run choice", () => {
   });
 
   it("filters by instrument, layout, strategy and sample attributes, case-insensitively", () => {
-    expect(narrowEnaFiles(files, { filters: { library_layout: "paired" } }).map(file => file.runAccession)).toEqual(["ERR10016297", "ERR10016297", "ERR10016137", "ERR10016137"]);
+    expect(narrowEnaFiles(files, { filters: { library_layout: "paired" } }).map(file => file.runAccession)).toEqual(["ERR10016137", "ERR10016137", "ERR10016297", "ERR10016297"]);
     expect(narrowEnaFiles(files, { filters: { instrument_model: "Illumina NovaSeq 6000", country: "Cambodia" } }).map(file => file.runAccession)).toEqual(["ERR10016400"]);
     expect(narrowEnaFiles(files, { filters: { library_strategy: "RNA-Seq" } })).toEqual([]);
     expect(() => narrowEnaFiles(files, { filters: { fastq_ftp: "x" } })).toThrow("cannot be filtered by fastq_ftp");
@@ -36,10 +36,11 @@ describe("ENA study-level run choice", () => {
 
   it("shows one row per run with the columns this study fills, and marks matches and the selection", () => {
     const selected = selectCompleteEnaRuns(narrowEnaFiles(files, { filters: { library_layout: "PAIRED" } }), 2);
+    expect(enaRunTable([...files].reverse(), { selected })).toEqual(enaRunTable(files, { selected }));
     const table = enaRunTable(files, { filters: { library_layout: "PAIRED" }, selected });
     expect(table.columns).toEqual(["sample_accession", "scientific_name", "sample_title", "library_strategy", "instrument_model", "library_layout", "country", "collection_date"]);
     expect(table.rows.map(row => [row.run, row.files, row.bytes, row.matches, row.selected])).toEqual([
-      ["ERR10016297", 2, 48748, true, true], ["ERR10016137", 2, 111545, true, false], ["ERR10016400", 1, 1000, false, false],
+      ["ERR10016137", 2, 111545, true, true], ["ERR10016297", 2, 48748, true, false], ["ERR10016400", 1, 1000, false, false],
     ]);
     expect(table.truncated).toBe(false);
   });
@@ -48,7 +49,7 @@ describe("ENA study-level run choice", () => {
     const tsv = enaSamplesTsv(narrowEnaFiles(files, { runs: ["ERR10016297", "ERR10016137"] })).trim().split("\n");
     expect(tsv).toHaveLength(3);
     expect(tsv[0].split("\t").slice(0, 4)).toEqual(["run_accession", "sample_accession", "study_accession", "scientific_name"]);
-    expect(tsv[1]).toContain("ERR10016297\tSAMEA110405680\tPRJEB53465\thuman gut metagenome");
+    expect(tsv[2]).toContain("ERR10016297\tSAMEA110405680\tPRJEB53465\thuman gut metagenome");
     expect(tsv[0]).toContain("country");
   });
 });
