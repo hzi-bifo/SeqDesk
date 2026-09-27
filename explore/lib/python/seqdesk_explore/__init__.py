@@ -564,6 +564,69 @@ def _kaleido_available() -> bool:
         return False
 
 
+def _figure_hook() -> bool:
+    """Whether figure records are on (CONTINUALFIG=record|on); loads continualfig from the staged helper once."""
+    if os.environ.get("CONTINUALFIG", "off") not in ("record", "on"):
+        return False
+    if "continualfig" in sys.modules:
+        return True
+    home = os.environ.get("CONTINUALFIG_HOME", "")
+    try:
+        if home and os.path.join(home, "python") not in sys.path:
+            sys.path.insert(0, os.path.join(home, "python"))
+        import continualfig  # type: ignore[import-not-found]
+
+        continualfig.install()
+        return True
+    except Exception as error:  # a missing hook never stops an analysis
+        print(f"figure record hook not available ({error})", file=sys.stderr)
+        return False
+
+
+def _figure_data_summary(fig: Any) -> dict[str, Any]:
+    """What a matplotlib figure plots, as counts and sums, so two drawings of the same data can be compared."""
+    axes = []
+    for ax in fig.axes:
+        if ax.get_label() == "<colorbar>":
+            continue
+        points = 0
+        total = 0.0
+        for collection in ax.collections:
+            offsets = collection.get_offsets()
+            try:
+                values = [float(v) for row in offsets for v in row if math.isfinite(float(v))]
+            except Exception:
+                continue
+            points += len(offsets)
+            total += sum(values)
+        cells = 0
+        cell_sum = 0.0
+        for image in ax.get_images():
+            data = image.get_array()
+            if data is None:
+                continue
+            cells += int(data.size)
+            try:
+                cell_sum += float(data.sum())
+            except Exception:
+                pass
+        axes.append({"points": points, "point_sum": round(total, 6), "image_cells": cells, "image_sum": round(cell_sum, 6)})
+    return {"axes": axes}
+
+
+def _write_figure_record(name: str, fig: Any, svg_path: Path) -> None:
+    """outputs/<name>.figure.json: continualfig's record of the SVG plus a data summary. Never fails the run."""
+    try:
+        records = os.environ.get("CONTINUALFIG_RECORDS", "")
+        source = Path(records) / (svg_path.stem + ".json") if records else None
+        record: dict[str, Any] = json.loads(source.read_text(encoding="utf-8")) if source and source.exists() else {"file": svg_path.name, "tool": "matplotlib"}
+        record["figure"] = name
+        record["data_summary"] = _figure_data_summary(fig)
+        _target_path(name, ".figure.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
+    except Exception as error:
+        print(f"figure record not written for {name} ({error})", file=sys.stderr)
+
+
 def save_figure(
     fig: Any,
     name: str,
@@ -604,12 +667,15 @@ def save_figure(
                         png_path.unlink()
         return registered
     if _is_matplotlib_figure(fig):
+        hook = _figure_hook()
         png_path = _target_path(name, ".png")
         fig.savefig(str(png_path), format="png", dpi=150, bbox_inches="tight")
         registered.append(_artifact(name, "figure", "png", png_path, title, description))
         svg_path = _target_path(name, ".svg")
         fig.savefig(str(svg_path), format="svg", bbox_inches="tight")
         registered.append(_artifact(name, "figure", "svg", svg_path, title, description))
+        if hook:
+            _write_figure_record(name, fig, svg_path)
         return registered
     raise TypeError(f"save_figure() expects a plotly or matplotlib figure, got {type(fig).__name__}")
 

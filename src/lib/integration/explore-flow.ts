@@ -25,6 +25,7 @@ import { checkTemplateInputs, createFlowFromTemplate, listTemplates, serializeTe
 import { attachFlowInput, listFlowInputs } from "@/lib/explore/flow-inputs";
 import { addHold, listHolds, removeHold, cancelFlowRun, compareFlowRuns, flowRunOutputs, getFlowRunDetail, listFlowRuns, makeRunCurrent, startFlowRun, type FlowActor, type StartFlowRunInput } from "@/lib/explore/flow-runs";
 import { flowError, requestIdOf } from "./flow-contract";
+import { acceptFigureTrial, figureTrialResult, startFigureTrial } from "@/lib/explore/figure-trial";
 import type { IntegrationSession } from "./identity";
 
 export type Json = (body: unknown, status?: number) => Response;
@@ -145,6 +146,24 @@ async function handleRuns({ request, session, segments, json }: FlowRouteContext
     if (segments.length === 3 && sub === "outputs" && method === "GET") {
       await flowRunFor(session, id, "read");
       return json(await flowRunOutputs(id));
+    }
+    // Figure trials (figure-trial.ts): one step again on the run's own inputs, with its code or a proposed revision.
+    if (segments.length === 3 && sub === "figure-trial" && method === "POST") {
+      await flowRunFor(session, id, "write");
+      const body = await readBody(request);
+      if (typeof body.stepId !== "string") throw flowError("invalid_request", "Name the step with stepId.");
+      const run = await startFigureTrial(id, { stepId: body.stepId, code: typeof body.code === "string" ? body.code : null, mode: body.mode === "style" ? "style" : "record", requestId: requestIdOf(body.requestId), actor: actorOf(session) });
+      return json({ run }, 201);
+    }
+    if (segments.length === 3 && sub === "figure" && method === "GET") {
+      await flowRunFor(session, id, "read");
+      return json(await figureTrialResult(id));
+    }
+    if (segments.length === 4 && sub === "figure" && segments[3] === "accept" && method === "POST") {
+      const { flow } = await flowRunFor(session, id, "write");
+      const accepted = await acceptFigureTrial(id, actorOf(session));
+      await flowChanged(flow.id);
+      return json(accepted);
     }
   }
   return null;

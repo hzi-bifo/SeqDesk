@@ -37,6 +37,25 @@ export interface RunScriptOptions {
   sandbox?: RunSandbox | null;
   /** Wall-clock limit for local runs in hours; 0 or undefined means none. */
   timeLimitHours?: number;
+  /** The figure hook (lib/figure/continualfig): record = write a figure record per figure, style = also apply the style. */
+  continualfig?: ContinualfigMode;
+}
+
+export type ContinualfigMode = "record" | "style" | "off";
+
+/** Inner-script lines that enable the figure hook; the helpers (sx.figure, sx$figure) do the rest. */
+export function continualfigLines(mode: ContinualfigMode | undefined): string[] {
+  if (mode !== "record" && mode !== "style") return ['export CONTINUALFIG="off"'];
+  const lines = [
+    'export CONTINUALFIG_HOME="$HELPER_LIB/figure/continualfig"',
+    // continualfig calls its styled mode "on".
+    `export CONTINUALFIG=${mode === "style" ? "on" : "record"}`,
+    'export CONTINUALFIG_RECORDS="$RUN_DIR/tmp/figure-records"',
+    'mkdir -p "$CONTINUALFIG_RECORDS"',
+  ];
+  // Style: Python applies it at start-up through the hook's sitecustomize; R sources the hook in profile.R.
+  if (mode === "style") lines.push('export PYTHONPATH="$CONTINUALFIG_HOME/python/pyhook:$PYTHONPATH"', 'export CONTINUALFIG_HOOK_R="$CONTINUALFIG_HOME/r/continualfig.R"');
+  return lines;
 }
 
 /** The inner script runs the analysis; it is what the sandbox executes. */
@@ -110,6 +129,7 @@ export function generateInnerScript(options: RunScriptOptions): string {
     "export MPLBACKEND=Agg",
     "export PYTHONUNBUFFERED=1",
     "export PYTHONDONTWRITEBYTECODE=1",
+    ...continualfigLines(options.continualfig),
     `if ! command -v ${interpreter} >/dev/null 2>&1; then`,
     `  echo "ERROR: ${interpreter} not found in $ENV_PREFIX/bin" >&2`,
     "  exit 1",

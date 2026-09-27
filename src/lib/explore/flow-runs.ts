@@ -27,6 +27,7 @@ import { computeStepStates, ensureRecipeRevision, loadRecipe, paramDiff, type Re
 import { downstreamOf, executionOrder, upstreamOf } from "./recipe-order";
 import { parseStoredBlocks } from "./report-blocks";
 import { cancelRun, createAndStartRun, ExploreRunError } from "./runner";
+import { figureTrialInputs } from "./figure-trial-inputs";
 import { readRunIsolation, summarizeIsolation } from "./sandbox/prepare";
 import { parseJsonObject, parseSchema } from "./schema";
 
@@ -48,6 +49,8 @@ export interface PlanEntry {
   execute: boolean;
   dependsOn: string[];
   reusedFrom: { flowRunId: string; number: number | null; stepRunId: string } | null;
+  /** Figure trials (figure-trial.ts): the step reads the exact input files this step run read, and runs this code. */
+  figureTrial?: { inputsFrom: string; codeOverride: string | null; continualfig: "record" | "style" };
 }
 
 export interface FlowActor {
@@ -444,7 +447,8 @@ async function advanceOnce(flowRunId: string): Promise<void> {
           stepLabel: entry.label,
           trial: run.kind === "trial",
           sample: (run.trialSample as { samples?: number } | null)?.samples ?? 2,
-          fileInputs: run.kind === "trial" ? await trialFileInputs(entry, plan, latest, model ?? null) : undefined,
+          fileInputs: entry.figureTrial ? await figureTrialInputs(entry.figureTrial.inputsFrom) : run.kind === "trial" ? await trialFileInputs(entry, plan, latest, model ?? null) : undefined,
+          ...(entry.figureTrial ? { codeOverride: entry.figureTrial.codeOverride ?? undefined, continualfig: entry.figureTrial.continualfig } : {}),
           environmentDigest: (run.environment as { lockDigest?: string | null } | null)?.lockDigest ?? null,
           ...(entry.packages ? { environmentName: entry.environmentName } : {}),
         },

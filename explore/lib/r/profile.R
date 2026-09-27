@@ -9,3 +9,15 @@ local({
     sys.source(helper, envir = env)
   }
 })
+
+# Runs with CONTINUALFIG=on (the "style" run setting) get the Continual figure style before the script starts;
+# a problem with the hook never stops the analysis.
+local({
+  hook <- Sys.getenv("CONTINUALFIG_HOOK_R")
+  if (nzchar(hook) && file.exists(hook)) {
+    tryCatch({
+      env <- attach(NULL, name = "continualfig")
+      sys.source(hook, envir = env)
+    }, error = function(e) message("continualfig: not applied (", conditionMessage(e), ")"))
+  }
+})

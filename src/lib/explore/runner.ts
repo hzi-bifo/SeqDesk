@@ -15,7 +15,7 @@ import { getKit, stageHelperLibrary } from "./kits/loader";
 import { inputContractSnapshot, validateAnalysisInputs } from "./input-validation";
 import { parseSchema } from "./schema";
 import { resolveExploreStorage } from "./storage";
-import { generateInnerScript, generateLocalRunScript, generateSlurmRunScript, INNER_SCRIPT } from "./run-script";
+import { generateInnerScript, generateLocalRunScript, generateSlurmRunScript, INNER_SCRIPT, type ContinualfigMode } from "./run-script";
 import { prepareRunSandbox, SandboxRefusedError } from "./sandbox/prepare";
 import { getSandboxSettings } from "./sandbox/settings";
 import type { ExploreCell } from "./types";
@@ -44,6 +44,10 @@ export interface StartRunInput {
     environmentDigest?: string | null;
     /** The step's effective environment, fixed when the flow run started (a base, or `<base>+<key>`). */
     environmentName?: string;
+    /** Figure trials: the proposed code, run instead of the revision's (the revision and recipe stay as they are). */
+    codeOverride?: string;
+    /** The figure hook for this run; flow steps record figure records by default. */
+    continualfig?: ContinualfigMode;
   };
 }
 
@@ -294,7 +298,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     // Which environment the step ran in: the base, or the base plus the step's packages.
     await fs.writeFile(path.join(runFolder, "environment.json"), JSON.stringify({ name: environmentName, base: stepEnvironment.baseName, specHash: environment.specHash, packages: stepEnvironment.packages, lockDigest: stepEnvironment.lockDigest }, null, 2), "utf8");
     const entrypoint = analysis.language === "r" ? "analysis.R" : analysis.language === "shell" ? "step.sh" : "analysis.py";
-    await fs.writeFile(path.join(runFolder, entrypoint), revision.code, "utf8");
+    await fs.writeFile(path.join(runFolder, entrypoint), input.flowRun?.codeOverride ?? revision.code, "utf8");
     // The helper library travels with the run: SLURM nodes only share the run
     // directory, and the copy records which helper version the run used.
     const helperLibDir = await stageHelperLibrary(runFolder);
@@ -322,6 +326,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
       slurm: settings,
       sandbox,
       timeLimitHours: sandboxSettings.localTimeLimitHours,
+      continualfig: (input.flowRun ? input.flowRun.continualfig ?? "record" : "off") as ContinualfigMode,
     };
     const innerPath = path.join(runFolder, INNER_SCRIPT);
     await fs.mkdir(path.dirname(innerPath), { recursive: true });

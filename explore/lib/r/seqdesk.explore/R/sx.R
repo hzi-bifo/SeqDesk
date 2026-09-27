@@ -252,11 +252,60 @@ seqdesk_explore <- function() {
         rowCount = nrow(out), colCount = ncol(out))))
   }
 
+  # The figure hook (lib/figure/continualfig): CONTINUALFIG=record writes a figure record next to each figure,
+  # CONTINUALFIG=on (the "style" run setting) also applies the style. The hook is loaded once, when needed.
+  figure_hook <- function() {
+    if (!Sys.getenv("CONTINUALFIG", "off") %in% c("record", "on")) return(NULL)
+    if (!is.null(state$continualfig)) return(if (isFALSE(state$continualfig)) NULL else state$continualfig)
+    state$continualfig <- FALSE
+    found <- tryCatch({
+      if ("continualfig" %in% search()) get("cf", envir = as.environment("continualfig")) else {
+        file <- file.path(Sys.getenv("CONTINUALFIG_HOME"), "r", "continualfig.R")
+        env <- new.env(parent = globalenv())
+        sys.source(file, envir = env)
+        env$cf
+      }
+    }, error = function(e) { message("figure record hook not available (", conditionMessage(e), ")"); NULL })
+    if (!is.null(found)) state$continualfig <- found
+    found
+  }
+
+  data_summary <- function(df) {
+    if (!is.data.frame(df)) return(NULL)
+    numeric <- Filter(is.numeric, df)
+    list(rows = nrow(df), columns = lapply(numeric, function(v) {
+      v <- v[is.finite(v)]
+      list(n = length(v), sum = signif(sum(v), 10), min = if (length(v)) signif(min(v), 10) else NULL, max = if (length(v)) signif(max(v), 10) else NULL)
+    }))
+  }
+
+  write_figure_record <- function(name, plot, file, width, height) {
+    tryCatch({
+      cf <- figure_hook()
+      record <- NULL
+      if (inherits(plot, "ggplot") && !is.null(cf)) {
+        original <- list(x = cf$aes_name(plot, "x"), y = cf$aes_name(plot, "y"), colour = cf$aes_name(plot, "colour"), fill = cf$aes_name(plot, "fill"))
+        cf$record(plot, file, round(width * 25.4), round(height * 25.4), character(), "analysis.R", original)
+        written <- file.path(cf$records, sub("\\.[a-z]+$", ".json", basename(file)))
+        if (file.exists(written)) record <- jsonlite::fromJSON(written, simplifyVector = FALSE)
+      }
+      if (is.null(record)) record <- list(file = basename(file), tool = if (inherits(plot, "ggplot")) "ggplot2" else "grDevices", width_mm = round(width * 25.4), height_mm = round(height * 25.4), changes = list())
+      record$figure <- name
+      record$data_summary <- if (inherits(plot, "ggplot")) data_summary(plot$data) else NULL
+      jsonlite::write_json(record, target_path(name, ".figure.json"), auto_unbox = TRUE, pretty = TRUE, digits = NA, null = "null")
+    }, error = function(e) message("figure record not written for ", name, " (", conditionMessage(e), ")"))
+    invisible(NULL)
+  }
+
   figure <- function(name, plot, title = NULL, description = NULL, width = 7, height = 5, dpi = 150) {
     name <- check_name(name)
     registered <- list()
     png_path <- target_path(name, ".png")
     svg_path <- target_path(name, ".svg")
+    on.exit(if (!is.null(figure_hook())) write_figure_record(name, plot, svg_path, width, height), add = TRUE)
+    if (inherits(plot, "ggplot") && identical(Sys.getenv("CONTINUALFIG"), "on") && !is.null(cf <- figure_hook())) {
+      plot <- tryCatch(cf$improve(plot)$plot, error = function(e) plot)
+    }
     if (inherits(plot, "ggplot")) {
       ggplot2::ggsave(png_path, plot, width = width, height = height, dpi = dpi, device = "png")
       registered[[length(registered) + 1]] <- register(name, "figure", "png", png_path, title, description)
