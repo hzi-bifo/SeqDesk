@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MAX_FLOW_MAP_SVG, ReportBlockSchema, ReportInputSchema, parseStoredBlocks } from "./report-blocks";
 import { renderReportDocument, type RenderInput } from "./report-export";
 import { resolveReportBlocks, type ReportView } from "./reports";
+import { isReferenceImport } from "./recipe";
 
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="200pt" height="80pt" viewBox="0 0 200 80"><rect width="200" height="80" fill="#ffffff"/><text x="4" y="12">1 Filter</text></svg>';
 const block = { id: "fm1", type: "flow-map" as const, flowId: "flow-1", revision: 7, runId: "run-3", runNumber: 3, options: { values: true, inputs: true, outputs: false, caption: true, widthMm: 183 as const }, svg, span: 2 as const };
@@ -16,6 +17,15 @@ describe("the analysis map block", () => {
     expect(ReportBlockSchema.safeParse({ ...block, svg: "<div>not a map</div>" }).success).toBe(false);
     expect(ReportBlockSchema.safeParse({ ...block, svg: `<svg>${"x".repeat(MAX_FLOW_MAP_SVG)}</svg>` }).success).toBe(false);
     expect(ReportBlockSchema.safeParse({ ...block, options: { ...block.options, widthMm: 120 } }).success).toBe(false);
+    expect(ReportBlockSchema.safeParse({ ...block, options: { ...block.options, layout: "simple" } }).success).toBe(true);
+    expect(ReportBlockSchema.safeParse({ ...block, options: { ...block.options, layout: "full" } }).success).toBe(true);
+    expect(ReportBlockSchema.safeParse({ ...block, options: { ...block.options, layout: "fancy" } }).success).toBe(false);
+  });
+
+  it("marks a dataset from a reference-resource import", () => {
+    expect(isReferenceImport(JSON.stringify({ origin: { kind: "reference", source: "Reference" } }))).toBe(true);
+    expect(isReferenceImport(JSON.stringify({ origin: { source: "Zenodo" } }))).toBe(false);
+    expect(isReferenceImport(null)).toBe(false);
   });
 
   it("resolves without reading tables", async () => {

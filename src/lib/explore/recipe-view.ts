@@ -203,6 +203,7 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
       ? { versionId: dataset.current.id, version: dataset.current.number, contentHash: dataset.current.contentHash, at: dataset.current.createdAt.toISOString() }
       : null;
     return [{ datasetId: id, name: dataset.name, versionId: shown.id, version: shown.number, contentHash: shown.contentHash, ...dims, sensitivity: dataset.sensitivity,
+      ...(dataset.reference ? { reference: true } : {}),
       usedBy: model.steps.filter((step) => step.bindings.some((binding) => binding.datasetId === id)).map((step) => step.id), newer }];
   });
 

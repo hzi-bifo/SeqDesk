@@ -57,6 +57,8 @@ export interface DatasetInfo {
   currentVersionId: string | null;
   producer: string | null;
   artifactName: string | null;
+  /** Installed by a reference-resource import (sourceConfig.origin.kind "reference"). */
+  reference?: boolean;
   current: { id: string; number: number; contentHash: string; rowCount: number; schema: string; createdAt: Date } | null;
 }
 
@@ -93,6 +95,12 @@ export function producerOfDataset(sourceConfig: string | null, runToAnalysis?: M
   return { analysisId, artifactName: typeof config.artifactName === "string" ? config.artifactName : null };
 }
 
+/** A dataset installed by a reference-resource import: its sourceConfig.origin says kind "reference". */
+export function isReferenceImport(sourceConfig: string | null): boolean {
+  const origin = parseJsonObject(sourceConfig)?.origin;
+  return !!origin && typeof origin === "object" && (origin as Record<string, unknown>).kind === "reference";
+}
+
 /** Load a flow's recipe. Positions are backfilled from lineage the first time (C.16). */
 export async function loadRecipe(flowId: string, client: Client = db): Promise<RecipeModel | null> {
   const flow = await client.exploreFlow.findUnique({ where: { id: flowId } });
@@ -112,6 +120,7 @@ export async function loadRecipe(flowId: string, client: Client = db): Promise<R
     datasetInfo.set(dataset.id, {
       id: dataset.id, name: dataset.name, kind: dataset.kind, tableKind: dataset.tableKind, roles: dataset.roles, sensitivity: dataset.sensitivity,
       currentVersionId: dataset.currentVersionId, producer: analysisId, artifactName, current: dataset.versions[0] ?? null,
+      ...(isReferenceImport(dataset.sourceConfig) ? { reference: true } : {}),
     });
   }
   // The newest version is not always the current one (a person can pin an older one); read the current explicitly.

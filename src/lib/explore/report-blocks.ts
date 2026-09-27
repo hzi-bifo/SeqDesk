@@ -244,6 +244,7 @@ const FlowMapBlockSchema = z
         outputs: z.boolean(),
         caption: z.boolean(),
         widthMm: z.union([z.literal(89), z.literal(183)]).optional(),
+        layout: z.enum(["simple", "full"]).optional(),
       })
       .strict(),
     svg: z.string().max(MAX_FLOW_MAP_SVG).regex(/^<svg[\s>]/, "The map must be an SVG drawing"),
