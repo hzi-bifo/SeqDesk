@@ -66,7 +66,7 @@ async function successfulImport(userId: string, jobId: string) {
   });
   const text = (key: string) => typeof meta[key] === "string" ? meta[key] as string : undefined;
   const provenance: ImportProvenance = {
-    source: text("source") ?? job.providerId, record: text("record"), title: text("title"), detail: text("detail"),
+    source: text("source") ?? (job.providerId === "ena-fastq-accession" ? "ENA" : job.providerId), record: text("record") ?? text("accession"), title: text("title"), detail: text("detail"),
     sourcePage: text("sourcePage"), retrievedAt: text("retrievedAt"), checksumSha256: job.resultDataset.checksumSha256,
     ...(text("kind") ? { kind: text("kind") } : {}), ...(text("version") ? { version: text("version") } : {}),
     ...(text("licence") ? { licence: text("licence"), licenceUrl: text("licenceUrl"), citation: text("citation") } : {}),
@@ -93,12 +93,40 @@ export async function listImportFiles(userId: string, jobId: string) {
       return [{ filename, datasetId: dataset.id, name: dataset.name, targetKey: dataset.targetKey, profile: profile ? { verdict: profile.verdict, sentence: profile.sentence, why: profile.why } : null }];
     } catch { return []; }
   }))).flat();
-  return { files: files.map((file) => ({ ...file, tables: tables.filter((t) => t.filename === file.filename).map(({ filename: _f, ...t }) => t) })), provenance };
+  // The same verified bytes already added to a study as a file (for a step's file input, e.g. FASTQ for a shell step).
+  const added = hashes.length ? await db.managedFile.findMany({ where: { checksumSha256: { in: hashes }, removedAt: null }, select: { id: true, targetKey: true, checksumSha256: true } }) : [];
+  return { files: files.map((file) => ({ ...file, tables: tables.filter((t) => t.filename === file.filename).map(({ filename: _f, ...t }) => t),
+    studyFiles: added.filter((entry) => entry.checksumSha256 === file.sha256).map((entry) => ({ fileId: entry.id, targetKey: entry.targetKey })) })), provenance };
 }
 
 /** One line a person can read: "Zenodo 15152686 · 10.5281/zenodo.15152686 · v1 · cc-by-4.0 · 2025". */
 export function provenanceLine(p: ImportProvenance): string {
   return [p.record ? `${p.source} ${p.record}` : p.source, p.detail].filter(Boolean).join(" · ");
+}
+
+/**
+ * A finished import's file (FASTQ, BAM, ...) added to a study's files as it is, so a step can read it as a file input.
+ * Same checks as a table: re-hashed against the download-time SHA-256, and the file's description names the source.
+ */
+export async function importFileToStudy(session: SessionLike & { user: { id: string } }, jobId: string, input: { targetKey: string; storedFilename: string }) {
+  await requireTargetAccess(session, input.targetKey, "write");
+  const { storagePath, files, provenance } = await successfulImport(session.user.id, jobId);
+  const file = files.find((entry) => entry.storedFilename === input.storedFilename);
+  if (!file) throw new ExploreRouteError(404, "That file is not part of this import.");
+  if (file.bytes > MAX_LIBRARY_FILE_BYTES) throw new ExploreRouteError(400, `${file.filename} is larger than 100 MB; a study file holds at most 100 MB.`);
+  const root = path.basename(storagePath) === "files" ? path.dirname(storagePath) : storagePath;
+  const absolute = path.resolve(root, file.storedFilename);
+  assertPathInsideBase(absolute, storagePath, "Imported file");
+  const bytes = await fs.readFile(absolute);
+  const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+  if (file.sha256 && file.sha256 !== sha256) throw new ExploreRouteError(409, `${file.filename} changed since it was downloaded (SHA-256 mismatch). Import it again.`);
+  const origin = { importJobId: jobId, ...provenance, file: { filename: file.filename, bytes: file.bytes, md5: file.md5, sha256, sourceUrl: file.sourceUrl } };
+  const existing = await db.managedFile.findFirst({ where: { targetKey: input.targetKey, checksumSha256: sha256, removedAt: null }, orderBy: { createdAt: "asc" } });
+  if (existing) return { status: 200, body: { file: { id: existing.id, name: existing.originalName, sizeBytes: Number(existing.sizeBytes), checksumSha256: sha256 }, origin, existing: true } };
+  const stored = await storeLibraryFile({ targetKey: input.targetKey, file: new File([bytes], file.filename), createdById: session.user.id });
+  const description = `From ${provenanceLine(provenance)} · ${file.filename}${file.md5 ? ` · md5 ${file.md5}` : ""} · sha256 ${sha256.slice(0, 12)}…${provenance.retrievedAt ? ` · retrieved ${provenance.retrievedAt.slice(0, 10)}` : ""}`.slice(0, 1000);
+  await db.managedFile.update({ where: { id: stored.id }, data: { description } });
+  return { status: 201, body: { file: { id: stored.id, name: file.filename, sizeBytes: bytes.length, checksumSha256: sha256 }, origin } };
 }
 
 export async function importFileAsTable(session: SessionLike & { user: { id: string } }, jobId: string, input: { targetKey: string; storedFilename: string; name?: string; roles?: Record<string, string> }) {

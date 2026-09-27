@@ -29,7 +29,7 @@ import { getOrCreateDefaultWorkbenchWorkspace, listWorkbenchImportJobs, serializ
 import { importCollectionSchema } from '@/lib/workbench/import-collection';
 import { ImportSelectionConflict } from '@/lib/workbench/import-conflict';
 import { scientificRecordId } from '@/lib/workbench/scientific-publication';
-import { importFileAsTable, listImportFiles } from '@/lib/workbench/import-tables';
+import { importFileAsTable, importFileToStudy, listImportFiles } from '@/lib/workbench/import-tables';
 import { ExploreRouteError } from '@/lib/explore/route-error';
 import { camiFilesQuerySchema, camiSampleQuerySchema } from '@/lib/workbench/cami-sample-types';
 import { getCamiSampleStatuses } from '@/lib/workbench/cami-sample-status.server';
@@ -192,6 +192,14 @@ export async function handleImportersRequest(request: Request, session: Integrat
       if (!targetKey || !storedFilename) return json({ error: 'Choose a study and a file.' }, 400);
       const roles = body?.roles && typeof body.roles === 'object' ? Object.fromEntries(Object.entries(body.roles as Record<string, unknown>).filter(([, v]) => typeof v === 'string')) as Record<string, string> : undefined;
       const result = await importFileAsTable(session as never, path[1], { targetKey, storedFilename, ...(typeof body?.name === 'string' && body.name.trim() ? { name: body.name.trim().slice(0, 200) } : {}), ...(roles ? { roles } : {}) });
+      return json(result.body, result.status);
+    }
+    if (path[0] === 'imports' && path.length === 3 && path[2] === 'study-files' && method === 'POST') {
+      const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+      const targetKey = typeof body?.targetKey === 'string' ? body.targetKey : '';
+      const storedFilename = typeof body?.storedFilename === 'string' ? body.storedFilename : '';
+      if (!targetKey || !storedFilename) return json({ error: 'Choose a study and a file.' }, 400);
+      const result = await importFileToStudy(session as never, path[1], { targetKey, storedFilename });
       return json(result.body, result.status);
     }
     return json({ error: 'Unknown connector route.' }, 404);

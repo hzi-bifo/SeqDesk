@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMountPlan, DARWIN_SYSTEM_READ, describeMountPlan, mountPlanHash, renderBwrapArgs, renderSeatbeltProfile, traverseDirs, validateMountPlan, type MountPlanInput } from "./mount-plan";
+import { buildMountPlan, DARWIN_DESCRIPTOR_PATHS, DARWIN_SYSTEM_READ, describeMountPlan, mountPlanHash, renderBwrapArgs, renderSeatbeltProfile, traverseDirs, validateMountPlan, type MountPlanInput } from "./mount-plan";
 
 const base: MountPlanInput = {
   platform: "linux",
@@ -98,6 +98,7 @@ describe("mount plans", () => {
       expect(profile).not.toMatch(/\(subpath "\/"\)/);
       expect(subpaths.sort()).toEqual([
         ...DARWIN_SYSTEM_READ.subpaths,
+        ...DARWIN_DESCRIPTOR_PATHS,
         "/opt/homebrew/Caskroom/miniconda/base/pkgs",
         "/Users/lab/seqdesk/explore/environments/seqdesk-explore-r",
         run,
@@ -132,7 +133,8 @@ describe("mount plans", () => {
     it("keeps writes to the run folder, the wrapper's files read-only and the network off", () => {
       expect(profile).toContain("(deny network*)");
       expect(profile).toContain("(deny appleevent-send)");
-      expect(profile).toContain(`(allow file-write* (literal "/dev/null") (subpath "${run}"))`);
+      // A shell's own descriptors (process substitution, /dev/stderr) and the run folder; nothing else.
+      expect(profile).toContain(`(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (subpath "/dev/fd") (subpath "${run}"))`);
       expect(profile).toContain(`(deny file-write* (subpath "${run}/control") (subpath "${run}/logs"))`);
       expect(profile).toContain(`(deny file-read* (subpath "${run}/control"))`);
       expect(lines.at(-1)).toBe(`(allow file-read* (literal "${run}/control/analysis.sh"))`);

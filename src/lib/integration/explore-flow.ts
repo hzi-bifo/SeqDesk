@@ -13,6 +13,7 @@ import { getRecipeView } from "@/lib/explore/recipe-view";
 import { parseMethodsDraft, saveMethodsDraft } from "@/lib/explore/methods-draft";
 import { acceptProposal, createProposals, discardProposal, listProposals, patchProposal, pendingProposals } from "@/lib/explore/proposals";
 import { flowValues, resolveValues } from "@/lib/explore/values";
+import { analysisLanguageOf } from "@/lib/explore/analyses";
 import { outputLineage, plotSource, requestCapsule, serializeCapsule } from "@/lib/explore/capsules";
 import { NextResponse } from "next/server";
 import { createReadStream } from "fs";
@@ -263,7 +264,7 @@ async function handleRecipe({ request, session, segments, json }: FlowRouteConte
     const stepId = await addStep(flow.id, {
       after: optionalText(body.after, 80), laneOf: optionalText(body.laneOf, 80), laneKind, laneLabel: optionalText(body.laneLabel, 80),
       name: optionalText(body.name, 200), purpose: optionalText(body.purpose, 200), kitId: optionalText(body.kitId, 80), code,
-      language: body.language === "r" ? "r" : "python", inputs: parseStepInputs(body.inputs),
+      language: analysisLanguageOf(body.language), inputs: parseStepInputs(body.inputs),
       params: body.params && typeof body.params === "object" && !Array.isArray(body.params) ? (body.params as Record<string, unknown>) : undefined,
       requestId: requestIdOf(body.requestId), actor: actorOf(session),
     });

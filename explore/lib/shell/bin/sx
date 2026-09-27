@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+"""sx: the shell helper for SeqDesk Flow steps.
+
+A shell step runs as `bash -euo pipefail step.sh` inside the run folder. Before
+it starts, the runner exports what the step reads (see `sx _env`):
+
+    $INPUT_<alias>   absolute path of an attached table (TSV) or file input
+    $PARAM_<key>     each scalar parameter (other characters than A-Z, a-z, 0-9, _ become _)
+    $OUT             the outputs folder; everything the step makes goes here
+    $RUN_DIR         the run folder
+
+The step records values and notes with this helper; they land in
+$OUT/manifest.json, the same manifest the Python and R helpers write:
+
+    sx metric n_reads 12345 --label "Reads in" [--unit reads] [--definition-json '{"what": "..."}']
+    sx note "fastp trimmed adapters with default settings"
+    sx table qc "$OUT/qc.tsv" --title "Read QC"      # optional: tables are found anyway
+    sx figure lengths "$OUT/lengths.png"             # optional: figures are found anyway
+    sx param min_len 50                              # prints a parameter (or the default)
+    sx input reads                                   # prints an input's path
+
+After the step, the runner calls `sx _finalize`: every .tsv/.csv table,
+.png/.svg figure and .md report under $OUT that the step did not declare is
+registered under its file name, so reads/makes, lineage and the manifest work
+without any sx call. Standard library only.
+"""
+import json
+import os
+import re
+import shlex
+import sys
+
+VERSION = "0.1.0"
+MANIFEST_VERSION = 1
+KINDS = {".tsv": ("table", "tsv"), ".csv": ("table", "csv"), ".png": ("figure", "png"), ".svg": ("figure", "svg"), ".md": ("report", "md")}
+# Commands that need the network; the sandbox has none (kept in step with the web hint).
+NETWORK_COMMANDS = ["curl", "wget", "ftp", "sftp", "scp", "rsync", "aws", "gsutil", "gcloud", "azcopy", "fasterq-dump", "fastq-dump", "prefetch", "esearch", "efetch", "datasets", "git", "pip", "conda", "mamba"]
+
+
+def fail(message):
+    sys.stderr.write(f"sx: {message}\n")
+    sys.exit(2)
+
+
+def run_dir():
+    value = os.environ.get("SEQDESK_EXPLORE_RUN_DIR") or os.environ.get("RUN_DIR")
+    if not value and os.path.exists("inputs.json"):
+        value = os.getcwd()
+    if not value or not os.path.isdir(value):
+        fail("no run folder: set SEQDESK_EXPLORE_RUN_DIR or run inside a folder with inputs.json")
+    return os.path.realpath(value)
+
+
+def load_inputs():
+    path = os.path.join(run_dir(), "inputs.json")
+    if not os.path.exists(path):
+        fail(f"inputs.json not found in {run_dir()}")
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+    return data if isinstance(data, dict) else {}
+
+
+def output_dir():
+    base = run_dir()
+    configured = str(load_inputs().get("outputDir") or "outputs").strip() or "outputs"
+    target = os.path.realpath(os.path.join(base, configured))
+    if target == base or not target.startswith(base + os.sep):
+        fail(f'outputDir "{configured}" must be a folder inside the run folder')
+    os.makedirs(target, exist_ok=True)
+    return target
+
+
+def env_name(key):
+    return re.sub(r"[^A-Za-z0-9_]", "_", str(key))
+
+
+def inside_run(relative):
+    base = run_dir()
+    full = os.path.realpath(os.path.join(base, str(relative)))
+    if not full.startswith(base + os.sep):
+        fail(f"{relative} points outside the run folder")
+    return full
+
+
+def input_paths():
+    data = load_inputs()
+    out = {}
+    for alias, entry in (data.get("inputs") or {}).items():
+        if isinstance(entry, dict) and entry.get("path"):
+            out[alias] = inside_run(entry["path"])
+    for alias, entry in (data.get("files") or {}).items():
+        if isinstance(entry, dict) and entry.get("path"):
+            out[alias] = inside_run(entry["path"])
+    return out
+
+
+def scalar_params():
+    params = load_inputs().get("params") or {}
+    out = {}
+    for key, value in params.items() if isinstance(params, dict) else []:
+        if isinstance(value, bool):
+            out[key] = "true" if value else "false"
+        elif isinstance(value, (int, float, str)):
+            out[key] = str(value)
+    return out
+
+
+def manifest_path():
+    return os.path.join(output_dir(), "manifest.json")
+
+
+def read_manifest():
+    path = manifest_path()
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                data.setdefault("artifacts", [])
+                data.setdefault("notes", [])
+                data.setdefault("metrics", {})
+                data.setdefault("metricMeta", {})
+                data.setdefault("drops", [])
+                return data
+        except (OSError, ValueError):
+            pass
+    return {"manifestVersion": MANIFEST_VERSION, "helperVersion": VERSION, "language": "shell", "artifacts": [], "notes": [], "metrics": {}, "metricMeta": {}, "drops": []}
+
+
+def write_manifest(data):
+    data["manifestVersion"] = MANIFEST_VERSION
+    data["helperVersion"] = VERSION
+    data["language"] = "shell"
+    path = manifest_path()
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
+    os.replace(tmp, path)
+
+
+def parse_value(text):
+    raw = text.strip()
+    if re.fullmatch(r"[+-]?\d+", raw):
+        return int(raw)
+    try:
+        number = float(raw)
+        if number == number and number not in (float("inf"), float("-inf")):
+            return number
+    except ValueError:
+        pass
+    if raw.lower() in ("true", "false"):
+        return raw.lower() == "true"
+    if raw.lower() in ("", "na", "nan", "null"):
+        return None
+    return raw
+
+
+def options(args, names, flags=()):
+    """Split args into positionals and --name value options."""
+    positional, found = [], {}
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg.startswith("--") and "=" in arg and arg[2:].split("=", 1)[0] in names:
+            key, value = arg[2:].split("=", 1)
+            found[key] = value
+        elif arg.startswith("--") and arg[2:] in names:
+            if index + 1 >= len(args):
+                fail(f"{arg} needs a value")
+            found[arg[2:]] = args[index + 1]
+            index += 1
+        elif arg.startswith("--") and arg[2:] in flags:
+            found[arg[2:]] = True
+        elif arg.startswith("--") and len(arg) > 2:
+            fail(f"unknown option {arg}")
+        else:
+            positional.append(arg)
+        index += 1
+    return positional, found
+
+
+def humanize(name):
+    text = re.sub(r"[_-]+", " ", name).strip()
+    return text[:1].upper() + text[1:] if text else name
+
+
+def definition_of(text):
+    try:
+        value = json.loads(text)
+    except ValueError as error:
+        fail(f"--definition-json is not JSON: {error}")
+    if not isinstance(value, dict):
+        fail("--definition-json must be a JSON object")
+    out = {}
+    for key in ("label", "unit", "what", "contrast", "test", "method"):
+        if isinstance(value.get(key), (str, int, float)) and str(value[key]).strip():
+            out[key] = str(value[key]).strip()[:160]
+    filters = []
+    for entry in value.get("filters") or []:
+        if not isinstance(entry, dict) or not entry.get("param") or not entry.get("op") or "value" not in entry:
+            fail("each metric filter needs param, op and value")
+        item = {"param": str(entry["param"])[:80], "op": str(entry["op"])[:8], "value": entry["value"] if isinstance(entry["value"], (int, float)) else str(entry["value"])[:80]}
+        if entry.get("column"):
+            item["column"] = str(entry["column"])[:80]
+        filters.append(item)
+    out["filters"] = filters
+    return out
+
+
+def cmd_metric(args):
+    positional, found = options(args, {"label", "unit", "definition-json"})
+    if len(positional) != 2:
+        fail('usage: sx metric <key> <value> [--label "..."] [--unit ...] [--definition-json \'{...}\']')
+    key = positional[0].strip()
+    if not key:
+        fail("metric key must not be empty")
+    data = read_manifest()
+    data["metrics"][key] = parse_value(positional[1])
+    meta = {}
+    if found.get("label", "").strip():
+        meta["label"] = found["label"].strip()[:80]
+    if found.get("unit", "").strip():
+        meta["unit"] = found["unit"].strip()[:80]
+    if "definition-json" in found:
+        meta["definition"] = definition_of(found["definition-json"])
+    if meta:
+        data["metricMeta"][key] = meta
+    else:
+        data["metricMeta"].pop(key, None)
+    write_manifest(data)
+    if "label" not in meta:
+        sys.stderr.write(f'[sx] value "{key}" has no label; pass --label so readers know what it counts\n')
+
+
+def cmd_note(args):
+    text = " ".join(args).strip()
+    if not text:
+        fail('usage: sx note "text"')
+    data = read_manifest()
+    data["notes"].append(text[:2000])
+    write_manifest(data)
+
+
+def table_shape(path, delimiter):
+    rows, cols = 0, 0
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        header = handle.readline()
+        if header:
+            cols = len(header.rstrip("\r\n").split(delimiter))
+        for line in handle:
+            if line.strip():
+                rows += 1
+    return rows, cols
+
+
+def register(data, name, path, title=None, description=None, kind=None):
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in KINDS:
+        fail(f"{os.path.basename(path)}: only .tsv, .csv, .png, .svg and .md outputs are recorded")
+    found_kind, fmt = KINDS[ext]
+    kind = kind or found_kind
+    out = output_dir()
+    full = os.path.realpath(path if os.path.isabs(path) else os.path.join(os.getcwd(), path))
+    if not full.startswith(out + os.sep):
+        fail(f"{path} is not inside $OUT ({out}); write outputs under $OUT")
+    if not os.path.isfile(full):
+        fail(f"{path} does not exist")
+    artifact = {"name": name, "kind": kind, "format": fmt, "path": os.path.relpath(full, run_dir()), "title": title or humanize(name)}
+    if description:
+        artifact["description"] = description
+    if kind == "table":
+        rows, cols = table_shape(full, "," if fmt == "csv" else "\t")
+        artifact["table"] = {"tableKind": None, "roles": {}, "rowCount": rows, "colCount": cols}
+    data["artifacts"] = [a for a in data["artifacts"] if not (a.get("path") == artifact["path"] or (a.get("name") == name and a.get("kind") == kind and a.get("format") == fmt))]
+    data["artifacts"].append(artifact)
+    return artifact
+
+
+def cmd_artifact(kind):
+    def run(args):
+        positional, found = options(args, {"title", "description", "roles-json"})
+        if len(positional) != 2:
+            fail(f'usage: sx {kind} <name> <path> [--title "..."] [--description "..."]')
+        data = read_manifest()
+        artifact = register(data, positional[0].strip(), positional[1], found.get("title"), found.get("description"), kind)
+        if kind == "table" and "roles-json" in found:
+            roles = json.loads(found["roles-json"])
+            if not isinstance(roles, dict):
+                fail("--roles-json must be a JSON object")
+            artifact["table"]["roles"] = {str(k): str(v) for k, v in roles.items()}
+        write_manifest(data)
+    return run
+
+
+def cmd_param(args):
+    if not args:
+        fail("usage: sx param <key> [default]")
+    value = scalar_params().get(args[0])
+    if value is None:
+        if len(args) < 2:
+            fail(f'no parameter "{args[0]}" and no default')
+        value = args[1]
+    print(value)
+
+
+def cmd_input(args):
+    if len(args) != 1:
+        fail("usage: sx input <alias>")
+    paths = input_paths()
+    if args[0] not in paths:
+        fail(f'input "{args[0]}" is not attached (attached: {", ".join(sorted(paths)) or "none"})')
+    print(paths[args[0]])
+
+
+def cmd_env(_args):
+    """Shell exports for the step: $INPUT_<alias>, $PARAM_<key>, $OUT, $RUN_DIR."""
+    lines = [f"export RUN_DIR={shlex.quote(run_dir())}", f"export OUT={shlex.quote(output_dir())}"]
+    for alias, path in sorted(input_paths().items()):
+        lines.append(f"export INPUT_{env_name(alias)}={shlex.quote(path)}")
+    for key, value in sorted(scalar_params().items()):
+        lines.append(f"export PARAM_{env_name(key)}={shlex.quote(value)}")
+    print("\n".join(lines))
+
+
+def network_commands(code):
+    """Network commands a script calls (first word of each pipeline segment)."""
+    found = []
+    for command in commands_in(code):
+        base = os.path.basename(command)
+        if base in NETWORK_COMMANDS and base not in found:
+            found.append(base)
+    return found
+
+
+def commands_in(code):
+    out = []
+    for line in code.splitlines():
+        line = re.sub(r"(^|\s)#.*$", "", line)
+        line = re.sub(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"", "''", line)
+        for segment in re.split(r"\|\|?|&&|;|\$\(|`|\(|\)|\{|\}|\bthen\b|\bdo\b|\belse\b", line):
+            words = segment.strip().split()
+            while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0]):
+                words = words[1:]
+            while words and words[0] in ("exec", "time", "nohup", "command", "builtin", "env", "sudo", "!"):
+                words = words[1:]
+            if words and re.match(r"^[A-Za-z0-9_./+-]+$", words[0]):
+                out.append(words[0])
+    return out
+
+
+def cmd_finalize(args):
+    """Register undeclared outputs; explain a failure that looks like a network call."""
+    status = int(args[0]) if args and re.fullmatch(r"-?\d+", args[0]) else 0
+    script = args[1] if len(args) > 1 else None
+    data = read_manifest()
+    out = output_dir()
+    known = {a.get("path") for a in data["artifacts"]}
+    for folder, dirs, files in os.walk(out):
+        dirs.sort()
+        for name in sorted(files):
+            full = os.path.join(folder, name)
+            rel = os.path.relpath(full, run_dir())
+            ext = os.path.splitext(name)[1].lower()
+            if name.startswith("manifest.json") or ext not in KINDS or rel in known:
+                continue
+            stem = os.path.splitext(os.path.relpath(full, out))[0]
+            register(data, re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._-") or "output", full)
+    if status != 0 and script and os.path.exists(script):
+        with open(script, encoding="utf-8", errors="replace") as handle:
+            used = network_commands(handle.read())
+        if used:
+            message = f"The step calls {', '.join(used)}, which needs the network, but analysis runs have no network access (sandbox). Import the data through Data instead and read it as an input."
+            data["notes"].append(message)
+            sys.stderr.write(f"ERROR: {message}\n")
+    write_manifest(data)
+
+
+COMMANDS = {"metric": cmd_metric, "note": cmd_note, "table": cmd_artifact("table"), "figure": cmd_artifact("figure"), "report": cmd_artifact("report"),
+            "param": cmd_param, "input": cmd_input, "_env": cmd_env, "_finalize": cmd_finalize}
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+    command = COMMANDS.get(argv[0])
+    if not command:
+        fail(f'unknown command "{argv[0]}" (metric, note, table, figure, report, param, input)')
+    command(argv[1:])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

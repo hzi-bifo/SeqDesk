@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireTargetAccess } from "@/lib/explore/authorization";
-import { createAnalysis, listAnalyses } from "@/lib/explore/analyses";
+import { analysisLanguageOf, createAnalysis, listAnalyses } from "@/lib/explore/analyses";
 import { validateFileBindings } from "@/lib/files/library";
 import { ExploreRouteError, exploreErrorResponse, optionalString, parseBindings, readJsonBody, requireExploreSession, requireString } from "../_shared";
 
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
     const body = await readJsonBody(request);
     const targetKey = requireString(body.targetKey, "targetKey");
     await requireTargetAccess(session, targetKey, "write");
-    const language = body.language === "r" ? "r" : "python";
+    const language = analysisLanguageOf(body.language);
     const analysis = await createAnalysis({
       targetKey,
       name: optionalString(body.name, 200),

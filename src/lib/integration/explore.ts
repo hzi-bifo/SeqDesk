@@ -8,7 +8,7 @@ import { Readable } from "stream";
 import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { RevisionConflict, createAnalysis, createRevision, deleteAnalysis, getAnalysisDetail, listAnalyses, listRuns, serializeRun, updateAnalysis, type AnalysisInputBinding } from "@/lib/explore/analyses";
+import { RevisionConflict, analysisLanguageOf, createAnalysis, createRevision, deleteAnalysis, getAnalysisDetail, listAnalyses, listRuns, serializeRun, updateAnalysis, type AnalysisInputBinding } from "@/lib/explore/analyses";
 import { listEnvironments } from "@/lib/explore/environments";
 import { listBaseEnvironments, normalizeStepPackages, PackageSpecError, prepareStepEnvironment, resolveStepEnvironment, stepPackagesOf, type StepEnvironmentState } from "@/lib/explore/step-environments";
 import { loadKits, serializeKit } from "@/lib/explore/kits/loader";
@@ -601,7 +601,7 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         await requireTargetAccess(session, targetKey, "write");
         const analysis = await createAnalysis({
           targetKey, name: optionalString(body.name, 200), description: optionalString(body.description), kitId: optionalString(body.kitId, 80),
-          reportId: optionalString(body.reportId, 80), flowId: optionalString(body.flowId, 80), language: body.language === "r" ? "r" : "python", environmentName: optionalString(body.environmentName, 120),
+          reportId: optionalString(body.reportId, 80), flowId: optionalString(body.flowId, 80), language: analysisLanguageOf(body.language), environmentName: optionalString(body.environmentName, 120),
           inputs: await parseBindings(body.inputs, targetKey), fileInputs: await validateFileBindings(body.fileInputs, targetKey),
           params: body.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : undefined, createdById: session.user.id,
           createdByMemberId: session.integration.memberId || null,

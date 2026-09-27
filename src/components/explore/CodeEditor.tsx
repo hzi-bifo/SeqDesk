@@ -6,10 +6,11 @@ import { EditorView } from "@codemirror/view";
 import { StreamLanguage } from "@codemirror/language";
 import { python } from "@codemirror/lang-python";
 import { r } from "@codemirror/legacy-modes/mode/r";
+import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { basicSetup } from "codemirror";
 import { cn } from "@/lib/utils";
 
-export type CodeLanguage = "python" | "r";
+export type CodeLanguage = "python" | "r" | "shell";
 
 export interface CodeEditorProps {
   value: string;
@@ -31,10 +32,11 @@ export interface CodeEditorProps {
 const externalChange = Annotation.define<boolean>();
 
 const rLanguage = StreamLanguage.define(r);
+const shellLanguage = StreamLanguage.define(shell);
 
 /** Language support extension for the given analysis language. */
 export function languageExtension(language: CodeLanguage): Extension {
-  return language === "r" ? rLanguage : python();
+  return language === "r" ? rLanguage : language === "shell" ? shellLanguage : python();
 }
 
 /** Read-only state plus a non-editable content element. */

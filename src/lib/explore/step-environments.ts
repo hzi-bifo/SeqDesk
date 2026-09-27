@@ -201,7 +201,7 @@ export async function listBaseEnvironments() {
     const languageDep = parsed.dependencies.find((dependency) => /^(r-base|python)[=<>]/.test(dependency)) ?? null;
     return {
       name,
-      language: name.endsWith("-r") || parsed.dependencies.some((dependency) => dependencyName(dependency) === "r-base") ? "r" : "python",
+      language: name.endsWith("-shell") ? "shell" : name.endsWith("-r") || parsed.dependencies.some((dependency) => dependencyName(dependency) === "r-base") ? "r" : "python",
       languageVersion: record?.languageVersion ?? (languageDep ? languageDep.replace(/^[^=<>]+[=<>]+/, "").replace(/\.\*$/, "") : null),
       specHash,
       status: !record ? "missing" : record.status === "ready" && record.specHash !== specHash ? "stale" : record.status,

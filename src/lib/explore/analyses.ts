@@ -10,7 +10,17 @@ import { parseStoredFileBindings, type AnalysisFileBinding } from "@/lib/files/l
 import { bumpRecipeRevision } from "./recipe-revision";
 import { keyBetween } from "./recipe-order";
 
-export type AnalysisLanguage = "python" | "r";
+export type AnalysisLanguage = "python" | "r" | "shell";
+
+/** A language from a request: "r", "shell", or Python for anything else. */
+export function analysisLanguageOf(value: unknown): AnalysisLanguage {
+  return value === "r" ? "r" : value === "shell" ? "shell" : "python";
+}
+
+/** The base environment a new step of each language starts from. */
+export function baseEnvironmentFor(language: AnalysisLanguage): string {
+  return language === "r" ? "seqdesk-explore-r" : language === "shell" ? "seqdesk-explore-shell" : "seqdesk-explore-python";
+}
 
 export interface AnalysisInputBinding {
   alias: string;
@@ -97,6 +107,15 @@ table <- sx$input("table")
 sx$output("summary", data.frame(column = names(table), missing = vapply(table, function(x) sum(is.na(x)), numeric(1))), title = "Missing values per column")
 sx$metric("n_rows", nrow(table), label = "Rows")
 sx$finish()
+`;
+
+const BLANK_SHELL = `# Blank shell step (bash, run with -euo pipefail). Inputs are $INPUT_<alias>, parameters $PARAM_<key>;
+# write everything the step makes under $OUT (tables as .tsv/.csv, figures as .png/.svg).
+# Tools come from the step's environment: add packages such as fastp or samtools below.
+for input in $(compgen -v INPUT_); do
+  printf '%s\\t%s\\n' "\${input#INPUT_}" "$(wc -l < "\${!input}")"
+done | { printf 'input\\tlines\\n'; cat; } > "$OUT/line_counts.tsv"
+sx metric n_inputs "$(($(wc -l < "$OUT/line_counts.tsv") - 1))" --label "Inputs read"
 `;
 
 /** The hash recipes and runs pin a step's code by. */
@@ -285,11 +304,11 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
     if (!kit) throw new Error(`Unknown kit: ${input.kitId}`);
   }
   const language: AnalysisLanguage = kit?.manifest.language ?? input.language ?? "python";
-  const environmentName = kit?.manifest.environment ?? input.environmentName ?? (language === "r" ? "seqdesk-explore-r" : "seqdesk-explore-python");
+  const environmentName = kit?.manifest.environment ?? input.environmentName ?? baseEnvironmentFor(language);
   const fileOnlyCode = input.fileInputs?.length && input.inputs.length === 0
     ? `from seqdesk_explore import file_path, note, finish\n\nsource = file_path(${JSON.stringify(input.fileInputs[0].alias)})\n# Read source with the library for your file format, then save figures or tables.\nnote(f"Input file: {source.name} ({source.stat().st_size} bytes)")\nfinish()\n`
     : BLANK_PYTHON;
-  const code = input.code ?? kit?.code ?? (language === "r" ? BLANK_R : fileOnlyCode);
+  const code = input.code ?? kit?.code ?? (language === "r" ? BLANK_R : language === "shell" ? BLANK_SHELL : fileOnlyCode);
   const params = { ...defaultParams(kit), ...(input.params ?? {}) };
   let reportId: string | null = null;
   if (input.reportId) {

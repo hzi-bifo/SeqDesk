@@ -36,7 +36,7 @@ const TemplateStepSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
   name: z.string().min(1).max(200),
   purpose: z.string().max(200).optional(),
-  language: z.enum(["python", "r"]).default("python"),
+  language: z.enum(["python", "r", "shell"]).default("python"),
   codeFile: z.string().min(1).max(200).optional(),
   kitId: z.string().min(1).max(80).optional(),
   params: z.record(z.string(), z.unknown()).default({}),

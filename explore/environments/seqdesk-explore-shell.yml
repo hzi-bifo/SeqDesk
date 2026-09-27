@@ -1,0 +1,24 @@
+# Conda environment for shell (bash) steps.
+# A shell step runs `bash -euo pipefail step.sh` with this prefix first on PATH.
+# It is deliberately small: a step adds the tools it needs (fastp, samtools,
+# bwa, ...) as step packages, which builds `seqdesk-explore-shell+<key>` once.
+#
+# - python: runs the `sx` helper (values, notes, the manifest); nothing else
+#   of the Python analysis stack is here.
+# - coreutils, gawk, sed, grep: GNU tools, so sort/awk/sed behave the same on
+#   macOS and Linux instead of depending on the host's BSD tools.
+# - pigz, seqkit: gzip in parallel and FASTA/FASTQ statistics, used by most
+#   sequencing QC steps.
+name: seqdesk-explore-shell
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.11.*
+  - coreutils
+  - gawk
+  - sed
+  - grep
+  - pigz
+  - seqkit

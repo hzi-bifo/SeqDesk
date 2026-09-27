@@ -293,7 +293,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     await fs.writeFile(path.join(runFolder, "params.json"), JSON.stringify(params, null, 2), "utf8");
     // Which environment the step ran in: the base, or the base plus the step's packages.
     await fs.writeFile(path.join(runFolder, "environment.json"), JSON.stringify({ name: environmentName, base: stepEnvironment.baseName, specHash: environment.specHash, packages: stepEnvironment.packages, lockDigest: stepEnvironment.lockDigest }, null, 2), "utf8");
-    const entrypoint = analysis.language === "r" ? "analysis.R" : "analysis.py";
+    const entrypoint = analysis.language === "r" ? "analysis.R" : analysis.language === "shell" ? "step.sh" : "analysis.py";
     await fs.writeFile(path.join(runFolder, entrypoint), revision.code, "utf8");
     // The helper library travels with the run: SLURM nodes only share the run
     // directory, and the copy records which helper version the run used.
@@ -314,7 +314,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     const scriptOptions = {
       runId: run.id,
       runFolder,
-      language: analysis.language as "python" | "r",
+      language: analysis.language as "python" | "r" | "shell",
       entrypoint,
       environmentPrefix: environment.prefixPath,
       condaPath: settings.condaPath,

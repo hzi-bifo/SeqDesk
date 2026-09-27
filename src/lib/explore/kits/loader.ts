@@ -47,6 +47,12 @@ export async function stageHelperLibrary(runFolder: string): Promise<string> {
   await fs.cp(rSource, rTarget, { recursive: true, filter: (entry) => path.basename(entry) !== "tests" }).catch((error: NodeJS.ErrnoException) => {
     if (error.code !== "ENOENT") throw error;
   });
+  // The shell helper (`sx` on PATH for shell steps, see run-script.ts).
+  const shellTarget = path.join(libDir, "shell");
+  await fs.rm(shellTarget, { recursive: true, force: true });
+  await fs.cp(path.join(getHelperLibDir(), "shell"), shellTarget, { recursive: true, filter: (entry) => path.basename(entry) !== "tests" && path.basename(entry) !== "__pycache__" }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
   return libDir;
 }
 

@@ -219,6 +219,10 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
     return [...byName.values()];
   };
 
+  // File inputs (FASTQ and other files from the study's Data) with their names, for the step's reads chips.
+  const fileBindings = new Map(model.steps.map((step) => [step.id, (() => { try { const parsed = JSON.parse(step.revision?.fileInputs ?? "[]"); return Array.isArray(parsed) ? parsed as Array<{ alias?: string; fileId?: string }> : []; } catch { return []; } })()] as const));
+  const fileIds = [...new Set([...fileBindings.values()].flat().map((binding) => binding.fileId).filter((id): id is string => typeof id === "string"))];
+  const fileNames = new Map(fileIds.length ? (await db.managedFile.findMany({ where: { id: { in: fileIds } }, select: { id: true, originalName: true } })).map((file) => [file.id, file.originalName] as const) : []);
   const steps = model.steps.map((step) => {
     const kit = step.kitId ? kits.get(step.kitId) ?? null : null;
     const state = states.get(step.id) ?? { state: "notRun", reason: null, paramDiff: [] };
@@ -269,7 +273,7 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
           check: inputCheck(model, step, kit, binding.alias, binding.datasetId),
         };
       }),
-      fileInputs: (() => { try { return JSON.parse(step.revision?.fileInputs ?? "[]"); } catch { return []; } })(),
+      fileInputs: (fileBindings.get(step.id) ?? []).map((binding) => ({ ...binding, name: (binding.fileId && fileNames.get(binding.fileId)) || binding.alias })),
       outputs: [...declared.values()],
       params: [...new Set([...Object.keys(params), ...Object.keys(meta)])].map((key) => ({ key, value: params[key] ?? null, label: meta[key]?.label ?? key, unit: meta[key]?.unit ?? null, min: meta[key]?.min ?? null, max: meta[key]?.max ?? null,
         usual: meta[key]?.usual ?? null, options: meta[key]?.options ?? null, meaning: meta[key]?.meaning ?? null, consequence: meta[key]?.consequence ?? null, phrase: meta[key]?.phrase ?? null })),

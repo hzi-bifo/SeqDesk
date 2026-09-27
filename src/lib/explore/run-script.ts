@@ -27,7 +27,7 @@ export type RunSandbox =
 export interface RunScriptOptions {
   runId: string;
   runFolder: string;
-  language: "python" | "r";
+  language: "python" | "r" | "shell";
   entrypoint: string;
   environmentPrefix: string;
   condaPath?: string | null;
@@ -86,6 +86,7 @@ function sanitizeOptions(value: string | undefined): string {
  */
 export function generateInnerScript(options: RunScriptOptions): string {
   assertSafeRunFolder(options.runFolder);
+  if (options.language === "shell") return generateShellInnerScript(options);
   const interpreter = options.language === "r" ? "Rscript" : "python";
   return [
     "#!/bin/bash",
@@ -115,6 +116,43 @@ export function generateInnerScript(options: RunScriptOptions): string {
     "fi",
     `echo "Using ${interpreter}: $(command -v ${interpreter})"`,
     `exec ${interpreter} ${shellQuote(options.entrypoint)} --run-dir "$RUN_DIR"`,
+    "",
+  ].join("\n");
+}
+
+/**
+ * A shell step: the same environment and sandbox as R and Python, with the
+ * `sx` helper on PATH. `sx _env` exports $INPUT_<alias>, $PARAM_<key>, $OUT and
+ * $RUN_DIR from inputs.json; the step runs under `bash -euo pipefail`; then
+ * `sx _finalize` records outputs the step did not declare and explains a
+ * failure caused by a network command. The step's exit code is kept.
+ */
+function generateShellInnerScript(options: RunScriptOptions): string {
+  return [
+    "#!/bin/bash",
+    "set -euo pipefail",
+    `RUN_DIR=${shellQuote(options.runFolder)}`,
+    `ENV_PREFIX=${shellQuote(options.environmentPrefix)}`,
+    `HELPER_LIB=${shellQuote(options.helperLibDir)}`,
+    'cd "$RUN_DIR"',
+    "# The environment's tools first, then the helper, then the minimal system paths.",
+    'export PATH="$ENV_PREFIX/bin:$HELPER_LIB/shell/bin:${PATH:-/usr/bin:/bin}"',
+    'export SEQDESK_EXPLORE_RUN_DIR="$RUN_DIR"',
+    'export HOME="$RUN_DIR/home"',
+    'export TMPDIR="$RUN_DIR/tmp"',
+    'mkdir -p "$HOME" "$TMPDIR"',
+    'if ! command -v python3 >/dev/null 2>&1; then',
+    '  echo "ERROR: python3 (for the sx helper) not found in $ENV_PREFIX/bin" >&2',
+    "  exit 1",
+    "fi",
+    'SX="$HELPER_LIB/shell/bin/sx"',
+    'SX_ENV="$(python3 "$SX" _env)"',
+    'eval "$SX_ENV"',
+    'echo "Using bash: $(command -v bash) ($BASH_VERSION)"',
+    "STATUS=0",
+    `bash -euo pipefail ${shellQuote(options.entrypoint)} || STATUS=$?`,
+    `python3 "$SX" _finalize "$STATUS" ${shellQuote(options.entrypoint)} || { [ "$STATUS" -ne 0 ] || STATUS=1; }`,
+    'exit "$STATUS"',
     "",
   ].join("\n");
 }

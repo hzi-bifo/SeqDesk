@@ -38,6 +38,8 @@ export function parseLanguageVersion(output: string | null): string | null {
 }
 
 export function environmentLabel(language: string, languageVersion: string | null, lockDigest: string | null): string {
+  // Shell steps run bash with the environment's tools; its Python only runs the sx helper.
+  if (language === "shell") return ["Shell", languageVersion ? `(Python ${languageVersion})` : null].filter(Boolean).join(" ") + (lockDigest ? ` · lock ${lockDigest.slice(0, 6)}` : "");
   const name = language === "r" ? "R" : "Python";
   return [languageVersion ? `${name} ${languageVersion}` : name, lockDigest ? `lock ${lockDigest.slice(0, 6)}` : null].filter(Boolean).join(" · ");
 }

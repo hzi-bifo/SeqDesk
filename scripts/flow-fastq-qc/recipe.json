@@ -1,0 +1,92 @@
+{
+  "study": "Sequencing QC: E. coli reads (ENA ERR10419931)",
+  "flow": "FASTQ QC: fastp, seqkit and a summary",
+  "question": "How good are the reads of ENA run ERR10419931 (E. coli, HiSeq X Ten, paired): how many survive fastp, what share of bases reaches Q30, what is their GC content and how long are they?",
+  "source": {
+    "connector": "ena-fastq-accession",
+    "accession": "ERR10419931",
+    "note": "Public ENA run; 2 files, 1,100,027 + 1,188,830 bytes (about 2.2 MiB) from ftp.sra.ebi.ac.uk, MD5-checked by the importer."
+  },
+  "files": {
+    "reads_1": {
+      "file": "ERR10419931_1.fastq.gz",
+      "md5": "50a029694a026515ecdd5cb6f70cf258"
+    },
+    "reads_2": {
+      "file": "ERR10419931_2.fastq.gz",
+      "md5": "9ab4df6e35a235f354748908ad3fb970"
+    }
+  },
+  "steps": [
+    {
+      "key": "fastp",
+      "name": "Read QC (fastp)",
+      "file": "steps/01-fastp.sh",
+      "language": "shell",
+      "purpose": "Trim and filter the paired reads with fastp's defaults; reads in and out, % Q30, GC and mean quality.",
+      "files": [
+        "reads_1",
+        "reads_2"
+      ],
+      "inputs": {},
+      "params": {
+        "threads": 2
+      },
+      "packages": [
+        "fastp",
+        "jq"
+      ]
+    },
+    {
+      "key": "lengths",
+      "name": "Read lengths (seqkit)",
+      "file": "steps/02-read-lengths.sh",
+      "language": "shell",
+      "purpose": "seqkit statistics per mate and the read-length histogram.",
+      "files": [
+        "reads_1",
+        "reads_2"
+      ],
+      "inputs": {},
+      "params": {},
+      "packages": []
+    },
+    {
+      "key": "summary",
+      "name": "QC summary",
+      "file": "steps/03-summary.py",
+      "language": "python",
+      "purpose": "Share of reads kept and the length distribution, from the two shell steps' tables.",
+      "files": [],
+      "inputs": {
+        "read_qc": {
+          "step": "fastp",
+          "output": "read_qc"
+        },
+        "length_histogram": {
+          "step": "lengths",
+          "output": "length_histogram"
+        }
+      },
+      "params": {},
+      "packages": []
+    }
+  ],
+  "negative": [
+    {
+      "name": "Sandbox check: download",
+      "code": "curl -sS --max-time 20 https://example.org -o \"$OUT/page.html\"\n",
+      "expect": "no network access (sandbox)"
+    },
+    {
+      "name": "Sandbox check: read ~/.ssh",
+      "code": "ls -la \"$HOST_HOME/.ssh\" > \"$OUT/ssh.txt\"\n",
+      "expect": "Operation not permitted"
+    },
+    {
+      "name": "Sandbox check: write outside $OUT",
+      "code": "echo leaked > \"$HOST_HOME/seqdesk-shell-escape.txt\"\n",
+      "expect": "Operation not permitted"
+    }
+  ]
+}

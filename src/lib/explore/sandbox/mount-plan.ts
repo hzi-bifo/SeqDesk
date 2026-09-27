@@ -86,8 +86,20 @@ export const DARWIN_SYSTEM_READ = {
     "/dev/zero",
     "/dev/random",
     "/dev/urandom",
+    // bash names its standard streams and process substitutions <(...) >(...)
+    // through these; they only reach descriptors the process already holds
+    "/dev/stdin",
+    "/dev/stdout",
+    "/dev/stderr",
   ],
 };
+
+/**
+ * macOS: descriptor paths a shell step reads and writes (process
+ * substitution, `tee /dev/stderr`). /dev/fd/N is a descriptor the process
+ * already has open, so allowing it opens nothing new.
+ */
+export const DARWIN_DESCRIPTOR_PATHS = ["/dev/fd"];
 
 export interface SystemEntry {
   exists?: boolean;
@@ -342,14 +354,14 @@ export function renderSeatbeltProfile(plan: MountPlan): string {
   else lines.push('(deny network-outbound (remote ip "localhost:*"))');
   lines.push("(deny file-read*)");
   const systemRead = [...plan.darwinSystemRead.literals.map(literal), ...plan.darwinSystemRead.subpaths.map(subpath)];
-  if (systemRead.length > 0) lines.push(`(allow file-read* ${systemRead.join(" ")})`);
+  if (systemRead.length > 0) lines.push(`(allow file-read* ${[...systemRead, ...DARWIN_DESCRIPTOR_PATHS.map(subpath)].join(" ")})`);
   // The directories above the run and the environment: stat and getcwd work,
   // listing them (and so learning the names of other runs) does not.
   if (plan.darwinTraverse.length > 0) lines.push(`(allow file-read-metadata ${plan.darwinTraverse.map(literal).join(" ")})`);
   const readAllow = plan.binds.map((bind) => subpath(bind.src));
   if (readAllow.length > 0) lines.push(`(allow file-read* ${readAllow.join(" ")})`);
   lines.push("(deny file-write*)");
-  const writeAllow = ['(literal "/dev/null")', ...plan.darwinWriteRoots.map(subpath), ...plan.binds.filter((bind) => bind.mode === "rw").map((bind) => subpath(bind.src))];
+  const writeAllow = ['(literal "/dev/null")', '(literal "/dev/stdout")', '(literal "/dev/stderr")', ...DARWIN_DESCRIPTOR_PATHS.map(subpath), ...plan.darwinWriteRoots.map(subpath), ...plan.binds.filter((bind) => bind.mode === "rw").map((bind) => subpath(bind.src))];
   lines.push(`(allow file-write* ${writeAllow.join(" ")})`);
   // The wrapper's files inside the writable run folder stay read-only, and
   // the plan files stay hidden apart from the inner script bash has to read.

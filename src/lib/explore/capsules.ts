@@ -197,7 +197,7 @@ export async function buildCapsule(capsuleId: string): Promise<void> {
       if (!stepRun?.runFolder) throw new Error(`Step ${entry.label} has no run folder to pack.`);
       const analysis = analyses.find((candidate) => candidate.id === entry.analysisId);
       const language = analysis?.language ?? entry.language;
-      const entrypoint = language === "r" ? "analysis.R" : "analysis.py";
+      const entrypoint = language === "r" ? "analysis.R" : language === "shell" ? "step.sh" : "analysis.py";
       const dirName = `steps/${entry.label}-${stepSlug(entry.name)}`;
       const code = await fs.readFile(path.join(stepRun.runFolder, entrypoint));
       await add(`${dirName}/${entrypoint}`, code);
@@ -252,6 +252,7 @@ export async function buildCapsule(capsuleId: string): Promise<void> {
     }
     await addTree(zip, contents, path.join(getHelperLibDir(), "python"), "helpers/python");
     await addTree(zip, contents, path.join(getHelperLibDir(), "r"), "helpers/r");
+    await addTree(zip, contents, path.join(getHelperLibDir(), "shell"), "helpers/shell");
     await add("inputs.sha256", `${inputHashes.join("\n")}\n`);
 
     const envPin = run.environment as { label?: string; lockDigest?: string | null } | null;
@@ -303,7 +304,9 @@ export async function buildCapsule(capsuleId: string): Promise<void> {
       ...stepDirs.map(({ entry, dir, language, entrypoint }) => [
         `echo 'Step ${entry.label}: ${entry.name.replace(/'/g, "")}'`,
         `rm -rf "${dir}/outputs"`,
-        `".env-${entry.environmentName}/bin/${language === "r" ? "Rscript" : "python"}" "${dir}/${entrypoint}" --run-dir "$PWD/${dir}"`,
+        language === "shell"
+          ? `(ROOT="$PWD"; export PATH="$ROOT/.env-${entry.environmentName}/bin:$ROOT/helpers/shell/bin:$PATH" SEQDESK_EXPLORE_RUN_DIR="$ROOT/${dir}"; cd "${dir}" && SX_ENV="$(python3 "$ROOT/helpers/shell/bin/sx" _env)" && eval "$SX_ENV" && bash -euo pipefail ${entrypoint} && python3 "$ROOT/helpers/shell/bin/sx" _finalize 0)`
+          : `".env-${entry.environmentName}/bin/${language === "r" ? "Rscript" : "python"}" "${dir}/${entrypoint}" --run-dir "$PWD/${dir}"`,
         `(cd "${dir}" && hash_check expected-checksums.txt && hash_list outputs/* | sed "s#  #  ${dir}/#") >> checksums.txt`,
       ].join("\n")),
       "echo 'All outputs match the recorded checksums. Written to checksums.txt.'",

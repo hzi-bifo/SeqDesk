@@ -10,6 +10,7 @@ import { flowError } from "@/lib/integration/flow-contract";
 import { addStep, type AddStepInput } from "./recipe-edit";
 import { loadRecipe, type RecipeActor } from "./recipe";
 import { keyBetween, sortSteps } from "./recipe-order";
+import { analysisLanguageOf } from "./analyses";
 import { acceptedMethodsSentence } from "./methods-draft";
 
 type ProposalRecord = Prisma.ExploreStepProposalGetPayload<object>;
@@ -77,7 +78,7 @@ function proposalFields(item: Record<string, unknown>, partial: boolean): Prisma
     if (typeof item.code === "string" && Buffer.byteLength(item.code, "utf8") > MAX_CODE) throw flowError("invalid_request", "The code is larger than 512 KB");
     data.code = (item.code as string | null | undefined) ?? null;
   }
-  if (has("language") && item.language !== undefined) data.language = item.language === "r" ? "r" : "python";
+  if (has("language") && item.language !== undefined) data.language = analysisLanguageOf(item.language);
   if (has("kitId")) data.kitId = short(item.kitId, 80);
   if (has("params")) data.params = item.params === undefined || item.params === null ? PrismaRuntime.DbNull : jsonField(item.params, "params", {});
   if (has("values")) data.values = item.values === undefined || item.values === null ? PrismaRuntime.DbNull : jsonField(item.values, "values", []);
@@ -241,7 +242,7 @@ export async function acceptProposal(id: string, edits: Record<string, unknown> 
       const stepId = await addStep(current.flowId, {
         after: current.laneOf ? null : current.afterAnalysisId, laneOf: current.laneOf, laneKind: current.laneOf ? "alternative" : null,
         name: short(edits?.name, 200) ?? (current.purpose || "Proposed step"), purpose: current.purpose || null,
-        kitId: current.kitId, code: current.code, language: current.language === "r" ? "r" : "python",
+        kitId: current.kitId, code: current.code, language: analysisLanguageOf(current.language),
         inputs: await stepInputsOf(current.inputs), params: (current.params as Record<string, unknown> | null) ?? undefined, actor,
       });
       await db.exploreStepProposal.update({ where: { id }, data: { acceptedAnalysisId: stepId } });
