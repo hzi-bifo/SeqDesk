@@ -14,6 +14,8 @@
  *                          Bioconductor PACKAGES index). GO data CC BY 4.0; packages Artistic-2.0.
  *   msigdb-hallmark-human  MSigDB Hallmark gene sets 2026.1.Hs, gene symbols, from the Broad release folder.
  *                          MSigDB terms: CC BY 4.0 (Hallmark is not among the KEGG-derived exceptions).
+ *   ensembl-symbol-human   Ensembl gene id -> HGNC symbol and name (gene_symbols.tsv: gene_id symbol name entrez),
+ *                          from org.Hs.eg.db 3.22.0 (Bioconductor 3.22), so figures can label genes by symbol.
  */
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
@@ -36,7 +38,7 @@ interface ResourceFile { url: string; filename: string; md5?: string; bytes?: nu
 export interface ReferenceResource {
   id: string;
   title: string;
-  category: "Gene sets" | "Ontologies";
+  category: "Gene sets" | "Ontologies" | "Gene annotation";
   version: string;
   organism: string;
   identifiers: string;
@@ -47,8 +49,14 @@ export interface ReferenceResource {
   files: ResourceFile[];
   /** Hosts a download may be redirected to (Bioconductor serves from a mirror bucket). */
   mirrors?: RegExp[];
-  build(paths: Record<string, string>, workDir: string): Promise<GeneSet[]>;
+  /** A gene-set resource builds its sets (written as gene_sets.tsv)... */
+  build?(paths: Record<string, string>, workDir: string): Promise<GeneSet[]>;
+  /** ...any other resource builds its own table. */
+  buildTable?(paths: Record<string, string>, workDir: string): Promise<ResourceTable>;
 }
+
+/** The table a resource installs next to its source files. */
+export interface ResourceTable { file: string; suffix: string; tsv: string; rows: number; description: string; metadata: Record<string, number> }
 
 const BIOC = "https://bioconductor.org/packages/3.22/data/annotation/src/contrib";
 
@@ -90,6 +98,36 @@ export async function buildGoBp(orgDb: string, goDb: string): Promise<GeneSet[]>
     org.close();
     go.close();
   }
+}
+
+export interface GeneSymbol { gene_id: string; symbol: string; name: string; entrez: string }
+
+/** Ensembl gene id -> symbol from org.Hs.eg.db's ensembl and gene_info tables. An Ensembl id that maps to several
+ *  Entrez genes keeps the symbol of the lowest Entrez id, so every id has exactly one label. */
+export async function buildEnsemblSymbols(orgDb: string): Promise<GeneSymbol[]> {
+  const org = await sqlite(orgDb);
+  try {
+    const rows = org.prepare("SELECT e.ensembl_id AS gene_id, i.symbol AS symbol, i.gene_name AS name, g.gene_id AS entrez FROM ensembl e JOIN gene_info i ON i._id = e._id JOIN genes g ON g._id = e._id").all() as GeneSymbol[];
+    return symbolTable(rows);
+  } finally {
+    org.close();
+  }
+}
+
+/** One row per Ensembl id (lowest Entrez id wins), sorted by id. Pure. */
+export function symbolTable(rows: GeneSymbol[]): GeneSymbol[] {
+  const best = new Map<string, GeneSymbol>();
+  for (const row of rows) {
+    if (!row.gene_id || !row.symbol) continue;
+    const had = best.get(row.gene_id);
+    if (!had || Number(row.entrez) < Number(had.entrez)) best.set(row.gene_id, { gene_id: row.gene_id, symbol: row.symbol, name: row.name ?? "", entrez: String(row.entrez ?? "") });
+  }
+  return [...best.values()].sort((a, b) => a.gene_id.localeCompare(b.gene_id));
+}
+
+export function geneSymbolTsv(rows: GeneSymbol[]): string {
+  const clean = (value: string) => value.replace(/[\t\r\n]+/g, " ");
+  return ["gene_id\tsymbol\tname\tentrez", ...rows.map(row => [row.gene_id, row.symbol, row.name, row.entrez].map(clean).join("\t"))].join("\n") + "\n";
 }
 
 /** A GMT file (name, description/url, genes…) as gene sets; names read "TGF beta signaling". */
@@ -145,7 +183,32 @@ export const REFERENCE_RESOURCES: ReferenceResource[] = [
       return parseGmt(await fs.readFile(paths["h.all.v2026.1.Hs.symbols.gmt"], "utf8"));
     },
   },
+  {
+    id: "ensembl-symbol-human",
+    title: "Ensembl → symbol, human (Bioconductor 3.22)",
+    category: "Gene annotation",
+    version: "Bioconductor 3.22: org.Hs.eg.db 3.22.0 (Entrez Gene 2025-09-24, Ensembl via NCBI gene2ensembl)",
+    organism: "Homo sapiens",
+    identifiers: "Ensembl gene ids → HGNC gene symbols",
+    sourcePage: "https://bioconductor.org/packages/3.22/data/annotation/html/org.Hs.eg.db.html",
+    licence: "Artistic-2.0 (org.Hs.eg.db); NCBI Gene data in the public domain",
+    licenceUrl: "https://bioconductor.org/packages/3.22/data/annotation/html/org.Hs.eg.db.html",
+    citation: "Carlson M. org.Hs.eg.db: Genome wide annotation for Human. R package 3.22.0.",
+    files: [{ url: `${BIOC}/org.Hs.eg.db_3.22.0.tar.gz`, filename: "org.Hs.eg.db_3.22.0.tar.gz", md5: "e80cac6ec018a95aea4f7530350e80a2" }],
+    mirrors: [/^https:\/\/mghp\.osn\.xsede\.org\/bir190004-bucket01\/archive\.bioconductor\.org\/packages\/3\.22\/data\/annotation\/src\/contrib\/[A-Za-z0-9._]+\.tar\.gz$/],
+    async buildTable(paths, workDir) {
+      const org = await untarMember(paths["org.Hs.eg.db_3.22.0.tar.gz"], "org.Hs.eg.db/inst/extdata/org.Hs.eg.sqlite", workDir);
+      const rows = await buildEnsemblSymbols(org);
+      return { file: "gene_symbols.tsv", suffix: "gene_symbols.tsv", tsv: geneSymbolTsv(rows), rows: rows.length, description: `${rows.length} Ensembl genes with their symbol`, metadata: { genes: rows.length } };
+    },
+  },
 ];
+
+/** The gene-set table of a gene-set resource. Pure. */
+export function geneSetTable(sets: GeneSet[]): ResourceTable {
+  const pairs = sets.reduce((sum, set) => sum + set.genes.length, 0);
+  return { file: "gene_sets.tsv", suffix: "gene_sets.tsv", tsv: geneSetTsv(sets), rows: sets.length, description: `${sets.length} sets (${pairs} gene-set pairs)`, metadata: { sets: sets.length, pairs } };
+}
 
 export const referenceResourceInputSchema = z.object({
   collection: importCollectionSchema.optional(),
@@ -172,7 +235,7 @@ const allowed = (resource: ReferenceResource) => (url: string) => resource.files
 export const referenceResourceImporter: WorkbenchImporterProvider<ReferenceResourceInput> = {
   id: "reference-resource",
   label: "Reference resources",
-  description: "Install a versioned reference table (GO Biological Process, MSigDB Hallmark) from its official source, with licence, citation and checksums.",
+  description: "Install a versioned reference table (GO Biological Process, MSigDB Hallmark, Ensembl → symbol) from its official source, with licence, citation and checksums.",
   category: "reference",
   inputSchema: referenceResourceInputSchema,
   async preflight() {
@@ -211,21 +274,21 @@ export const referenceResourceImporter: WorkbenchImporterProvider<ReferenceResou
       storedFilename: asset => asset.filename.replace(/[^A-Za-z0-9._-]+/g, "_"),
       md5: asset => /^md5:([0-9a-f]{32})$/.exec(asset.etag)?.[1],
     });
-    await context.update({ phase: "Building the gene-set table", progress: 96 });
+    await context.update({ phase: resource.buildTable ? "Building the table" : "Building the gene-set table", progress: 96 });
     const workDir = path.join(context.storage.cacheDir, "work");
-    const sets = await resource.build(Object.fromEntries(result.files.map(file => [file.filename, path.join(result.directory, file.storedFilename)])), workDir);
+    const paths = Object.fromEntries(result.files.map(file => [file.filename, path.join(result.directory, file.storedFilename)]));
+    const table = resource.buildTable ? await resource.buildTable(paths, workDir) : geneSetTable(await resource.build!(paths, workDir));
     await fs.rm(workDir, { recursive: true, force: true });
-    if (!sets.length) throw new Error(`${resource.title}: the source files held no gene sets.`);
-    const tsv = geneSetTsv(sets);
-    const tableFile = "gene_sets.tsv";
+    if (!table.rows) throw new Error(`${resource.title}: the source files held no ${resource.buildTable ? "rows" : "gene sets"}.`);
+    const { tsv } = table;
+    const tableFile = table.file;
     await fs.writeFile(path.join(result.directory, tableFile), tsv, { mode: 0o600 });
     const bytes = Buffer.byteLength(tsv);
     const sha256 = crypto.createHash("sha256").update(tsv).digest("hex");
     const md5 = crypto.createHash("md5").update(tsv).digest("hex");
-    const pairs = sets.reduce((sum, set) => sum + set.genes.length, 0);
-    await context.log(`Built ${tableFile}: ${sets.length} sets, ${pairs} gene-set pairs, sha256 ${sha256}.`);
+    await context.log(`Built ${tableFile}: ${table.description}, sha256 ${sha256}.`);
     const files = [
-      { role: "table", filename: `${resource.id}.gene_sets.tsv`, storedFilename: `files/${tableFile}`, sourceUrl: resource.sourcePage, sourceVersion: resource.version, bytes, md5, sha256,
+      { role: "table", filename: `${resource.id}.${table.suffix}`, storedFilename: `files/${tableFile}`, sourceUrl: resource.sourcePage, sourceVersion: resource.version, bytes, md5, sha256,
         derivedFrom: result.files.map(file => file.filename) },
       ...result.files.map(manifestEntry),
     ];
@@ -233,7 +296,7 @@ export const referenceResourceImporter: WorkbenchImporterProvider<ReferenceResou
     return {
       cacheKey: context.cacheKey,
       name: `${resource.title} · ${resource.version}`,
-      description: `${sets.length} sets (${pairs} gene-set pairs) from ${resource.files.map(file => file.filename).join(" and ")}.`,
+      description: `${table.description} from ${resource.files.map(file => file.filename).join(" and ")}.`,
       sourceType: "reference-resource",
       sourceMetadata: {
         source: "Reference",
@@ -250,8 +313,7 @@ export const referenceResourceImporter: WorkbenchImporterProvider<ReferenceResou
         licence: resource.licence,
         licenceUrl: resource.licenceUrl,
         citation: resource.citation,
-        sets: sets.length,
-        pairs,
+        ...table.metadata,
         retrievedAt: new Date().toISOString(),
         checksumRepresentation: "sha256-of-canonical-asset-manifest",
         files,
