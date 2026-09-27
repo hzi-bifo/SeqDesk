@@ -10,6 +10,7 @@ import { canManageExplore, requireTargetAccess, resolveTargetAccess } from "@/li
 import { answerQuestion, postTurn, readConversation, updateAssistantTurn, waitForTurns, type ConversationActor } from "@/lib/explore/conversation";
 import { addStep, applyRecipeOps, listRecipeRevisions, parseRecipeOps, stepOptions, type AddStepInput } from "@/lib/explore/recipe-edit";
 import { getRecipeView } from "@/lib/explore/recipe-view";
+import { parseMethodsDraft, saveMethodsDraft } from "@/lib/explore/methods-draft";
 import { acceptProposal, createProposals, discardProposal, listProposals, patchProposal, pendingProposals } from "@/lib/explore/proposals";
 import { flowValues, resolveValues } from "@/lib/explore/values";
 import { outputLineage, plotSource, requestCapsule, serializeCapsule } from "@/lib/explore/capsules";
@@ -151,7 +152,7 @@ async function handleRuns({ request, session, segments, json }: FlowRouteContext
 const FLOW_HEADS = new Set(["flow-runs", "proposals", "glosses", "values", "capsules", "templates"]);
 const FLOW_SUBS: Record<string, Set<string>> = {
   flows: new Set(["recipe", "runs", "revisions", "step-options", "steps", "proposals", "values", "lineage", "from-template", "conversation", "inputs"]),
-  analyses: new Set(["glosses"]),
+  analyses: new Set(["glosses", "methods-draft"]),
   artifacts: new Set(["capsule", "plot-source"]),
 };
 
@@ -294,6 +295,13 @@ async function handleProposals({ request, session, segments, json }: FlowRouteCo
       const body = await readBody(request);
       return json({ proposals: await createProposals(id, { kind: body.kind, goal: body.goal, origin: body.origin, activityId: body.activityId, items: body.items, proposedByTurnId: body.proposedByTurnId, actor: actorOf(session) }) }, 201);
     }
+  }
+  // A methods sentence the assistant drafted for a step, kept in pencil (accepted through proposals/:id/accept).
+  if (head === "analyses" && sub === "methods-draft" && segments.length === 3 && method === "POST") {
+    const analysis = await db.exploreAnalysis.findUnique({ where: { id }, select: { flowId: true } });
+    if (!analysis?.flowId) throw flowError("not_found", "Step not found");
+    await flowFor(session, analysis.flowId, "write");
+    return json({ proposal: await saveMethodsDraft(id, parseMethodsDraft(await readBody(request)), actorOf(session)) }, 201);
   }
   if (head !== "proposals") return null;
   if (segments.length === 2 && method === "PATCH") {

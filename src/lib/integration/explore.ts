@@ -274,7 +274,13 @@ async function methodsSentenceOf(analysisId: string, raw: unknown, userId: strin
   if (!value || typeof value !== "object" || typeof value.text !== "string" || !value.text.trim()) throw flowError("invalid_request", "methodsSentence needs text.");
   if (value.text.length > 1000 || (value.tokens !== undefined && (!Array.isArray(value.tokens) || JSON.stringify(value.tokens).length > 20000))) throw flowError("invalid_request", "The methods sentence is too long.");
   const analysis = await db.exploreAnalysis.findUnique({ where: { id: analysisId }, select: { currentRevisionId: true } });
-  return { text: value.text.trim(), tokens: (value.tokens as Prisma.InputJsonValue[] | undefined) ?? [], revisionId: analysis?.currentRevisionId ?? null, author: value.author === "assistant" ? "assistant" : "person", acceptedById: userId, acceptedAt: new Date().toISOString() };
+  // The code it describes (a settings change keeps the code hash; the tokens say which settings it names).
+  const revision = analysis?.currentRevisionId ? await db.exploreAnalysisRevision.findUnique({ where: { id: analysis.currentRevisionId }, select: { codeHash: true } }) : null;
+  const extra = raw as { prompt?: unknown; notVerified?: unknown };
+  return { text: value.text.trim(), tokens: (value.tokens as Prisma.InputJsonValue[] | undefined) ?? [], revisionId: analysis?.currentRevisionId ?? null, ...(revision?.codeHash ? { codeHash: revision.codeHash } : {}),
+    ...(typeof extra.prompt === "string" && extra.prompt ? { prompt: extra.prompt.slice(0, 12000) } : {}),
+    ...(Array.isArray(extra.notVerified) && extra.notVerified.length ? { notVerified: extra.notVerified.slice(0, 10).map((note) => String(note).slice(0, 300)) } : {}),
+    author: value.author === "assistant" ? "assistant" : "person", acceptedById: userId, acceptedAt: new Date().toISOString() };
 }
 
 /**

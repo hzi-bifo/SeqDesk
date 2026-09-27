@@ -10,6 +10,7 @@ import { flowError } from "@/lib/integration/flow-contract";
 import { addStep, type AddStepInput } from "./recipe-edit";
 import { loadRecipe, type RecipeActor } from "./recipe";
 import { keyBetween, sortSteps } from "./recipe-order";
+import { acceptedMethodsSentence } from "./methods-draft";
 
 type ProposalRecord = Prisma.ExploreStepProposalGetPayload<object>;
 
@@ -255,7 +256,7 @@ export async function acceptProposal(id: string, edits: Record<string, unknown> 
     }
     if (current.kind === "methods") {
       const analysis = await db.exploreAnalysis.findUnique({ where: { id: current.analysisId! }, select: { currentRevisionId: true } });
-      await db.exploreAnalysis.update({ where: { id: current.analysisId! }, data: { methodsSentence: { text: current.text ?? "", tokens: current.values ?? [], revisionId: analysis?.currentRevisionId ?? null, author: "assistant", acceptedById: actor.userId, acceptedAt: new Date().toISOString() } } });
+      await db.exploreAnalysis.update({ where: { id: current.analysisId! }, data: { methodsSentence: acceptedMethodsSentence(current.values, current.text ?? "", analysis?.currentRevisionId ?? null, actor.userId) as Prisma.InputJsonValue } });
       return { proposal: serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!), stepId: current.analysisId };
     }
     // gloss-rewrite: the new words replace the gloss's, accepted by this person.

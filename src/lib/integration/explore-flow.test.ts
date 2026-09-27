@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   flowFind: vi.fn(), flowRunFind: vi.fn(), requireAccess: vi.fn(), moduleEnabled: vi.fn(),
   createProposals: vi.fn(), discardProposal: vi.fn(), acceptProposal: vi.fn(), proposalFind: vi.fn(), analysisFind: vi.fn(), glossRecord: vi.fn(), listGlosses: vi.fn(), putGlosses: vi.fn(), deleteGloss: vi.fn(),
-  addHold: vi.fn(), listHolds: vi.fn(), removeHold: vi.fn(),
+  addHold: vi.fn(), listHolds: vi.fn(), removeHold: vi.fn(), saveMethodsDraft: vi.fn(),
   readConversation: vi.fn(), postTurn: vi.fn(), updateAssistantTurn: vi.fn(), answerQuestion: vi.fn(), waitForTurns: vi.fn(),
   flowValues: vi.fn(), resolveValues: vi.fn(), outputLineage: vi.fn(), requestCapsule: vi.fn(), artifactFind: vi.fn(), capsuleFind: vi.fn(),
   getRecipeView: vi.fn(), applyRecipeOps: vi.fn(), addStep: vi.fn(), stepOptions: vi.fn(), listRecipeRevisions: vi.fn(), resolveAccess: vi.fn(), scopeFind: vi.fn(),
@@ -18,6 +18,7 @@ vi.mock("@/lib/explore/authorization", async () => {
 vi.mock("@/lib/explore/recipe-view", async () => ({ ...(await vi.importActual<object>("@/lib/explore/recipe-view")), getRecipeView: mocks.getRecipeView }));
 vi.mock("@/lib/explore/recipe-edit", async () => ({ ...(await vi.importActual<object>("@/lib/explore/recipe-edit")), applyRecipeOps: mocks.applyRecipeOps, addStep: mocks.addStep, stepOptions: mocks.stepOptions, listRecipeRevisions: mocks.listRecipeRevisions }));
 vi.mock("@/lib/explore/proposals", () => ({ pendingProposals: vi.fn().mockResolvedValue([]), createProposals: mocks.createProposals, listProposals: vi.fn(), patchProposal: vi.fn(), discardProposal: mocks.discardProposal, acceptProposal: mocks.acceptProposal }));
+vi.mock("@/lib/explore/methods-draft", async () => ({ ...(await vi.importActual<object>("@/lib/explore/methods-draft")), saveMethodsDraft: mocks.saveMethodsDraft }));
 vi.mock("@/lib/explore/glosses", () => ({ glossRecord: mocks.glossRecord, listGlosses: mocks.listGlosses, putGlosses: mocks.putGlosses, patchGloss: vi.fn(), acceptGloss: vi.fn(), deleteGloss: mocks.deleteGloss }));
 vi.mock("@/lib/explore/capsules", () => ({ outputLineage: mocks.outputLineage, plotSource: vi.fn(), requestCapsule: mocks.requestCapsule, serializeCapsule: (capsule: unknown) => capsule }));
 vi.mock("@/lib/explore/conversation", () => ({ readConversation: mocks.readConversation, postTurn: mocks.postTurn, updateAssistantTurn: mocks.updateAssistantTurn, answerQuestion: mocks.answerQuestion, waitForTurns: mocks.waitForTurns }));
@@ -162,6 +163,18 @@ describe("Flow proposal and gloss routes", () => {
     expect((await call("POST", "proposals/p1/discard", { reason: "no" })).body.proposal.state).toBe("discarded");
     mocks.proposalFind.mockResolvedValue(null);
     expect((await call("POST", "proposals/p9/discard")).body.code).toBe("not_found");
+  });
+
+  it("keeps an assistant methods draft in pencil on a step of a flow the caller may edit", async () => {
+    mocks.analysisFind.mockResolvedValue({ flowId: "f1" });
+    mocks.saveMethodsDraft.mockResolvedValue({ id: "pm1", kind: "methods", state: "pending" });
+    const draft = { text: "Genes with a log2 fold change of at least {lfc_cutoff} were kept.", tokens: [{ key: "lfc_cutoff", value: 1 }], prompt: "One sentence…", model: "gpt", notVerified: [] };
+    expect(await call("POST", "analyses/a1/methods-draft", draft)).toEqual({ status: 201, body: { proposal: { id: "pm1", kind: "methods", state: "pending" } } });
+    expect(mocks.requireAccess).toHaveBeenLastCalledWith(session, "project:p1", "write");
+    expect(mocks.saveMethodsDraft).toHaveBeenCalledWith("a1", { ...draft, tokens: [{ key: "lfc_cutoff", value: 1 }] }, expect.objectContaining({ userId: "u1", memberId: "m1" }));
+    expect((await call("POST", "analyses/a1/methods-draft", { text: " " })).body.code).toBe("invalid_request");
+    mocks.analysisFind.mockResolvedValue({ flowId: null });
+    expect((await call("POST", "analyses/a2/methods-draft", draft)).body.code).toBe("not_found");
   });
 
   it("reads and replaces a step's glosses with the step's access", async () => {
