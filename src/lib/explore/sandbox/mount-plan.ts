@@ -12,12 +12,15 @@ import { createHash } from "crypto";
  *
  * The model is an allowlist: nothing exists inside the sandbox unless the
  * plan says so. Other runs, the tables storage, the app checkout and the
- * real home directory are absent rather than masked.
+ * real home directory are absent rather than masked. On macOS the same holds
+ * for reads: the Seatbelt profile denies every read and allows back only the
+ * run folder (inputs are staged into it), the environment, the conda package
+ * cache and a small, tested set of system paths.
  *
  * The plan format follows the one used by the agent runner (CAMI-agent,
  * automation/server/lib/mountPlan.js) so the two can share it later.
  */
-export const MOUNT_PLAN_SCHEMA_VERSION = 1;
+export const MOUNT_PLAN_SCHEMA_VERSION = 2;
 
 export type SandboxPlatform = "linux" | "darwin";
 export type SandboxNetwork = "none" | "host";
@@ -32,7 +35,59 @@ export const LOGS_SUBDIR = "logs";
 export const INNER_SCRIPT_NAME = "analysis.sh";
 const READ_WRITE_PURPOSES = new Set<BindPurpose>(["run"]);
 
-const SYSTEM_DIRS = ["/usr", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64"];
+const SYSTEM_DIRS = ["/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64"];
+
+/**
+ * Linux: the few files of /etc a conda R or Python needs (the dynamic
+ * linker cache, the time zone, name lookup of the own user, Debian's
+ * alternatives links, fontconfig). The rest of /etc is absent.
+ */
+export const LINUX_ETC_ENTRIES = [
+  "/etc/ld.so.cache",
+  "/etc/ld.so.conf",
+  "/etc/ld.so.conf.d",
+  "/etc/localtime",
+  "/etc/timezone",
+  "/etc/nsswitch.conf",
+  "/etc/passwd",
+  "/etc/group",
+  "/etc/alternatives",
+  "/etc/fonts",
+];
+
+/**
+ * macOS: what dyld, bash, Rscript and the tools R shells out to (uname,
+ * sh) need to read, found by running the seeded flows under a deny-all
+ * profile and adding back one path per failure. Everything else, including
+ * the whole home directory and /Users, /Volumes, /tmp and /private/etc, is
+ * unreadable.
+ */
+export const DARWIN_SYSTEM_READ = {
+  subpaths: [
+    // frameworks, CoreServices/SystemVersion.plist (R reads it at startup)
+    "/System/Library",
+    "/bin",
+    "/usr/bin",
+    // without it R falls back to the C locale
+    "/usr/share/locale",
+    // the zone files /etc/localtime points into
+    "/private/var/db/timezone",
+  ],
+  literals: [
+    // dyld opens the root itself; a metadata-only rule aborts every process
+    "/",
+    // the /etc and /var symlinks, and the time zone link behind /etc/localtime
+    "/etc",
+    "/var",
+    "/private/etc/localtime",
+    // /bin/sh is a trampoline that reads the selected shell
+    "/private/var/select/sh",
+    "/dev/null",
+    "/dev/zero",
+    "/dev/random",
+    "/dev/urandom",
+  ],
+};
 
 export interface SystemEntry {
   exists?: boolean;
@@ -64,11 +119,13 @@ export interface MountPlan {
   /** tmpfs mounted inside a bind, after it, to hide part of it (Linux). */
   overlayTmpfs: string[];
   binds: MountBind[];
-  /** Seatbelt only: the roots whose contents are private; carve-outs are computed by the host. */
-  denyRoots: string[];
-  denyRead: string[];
-  /** Seatbelt only: directories on the way to an allowed bind whose listing is denied (names of siblings stay hidden). */
-  denyListing: string[];
+  /** Seatbelt only: system paths readable besides the binds (everything else is denied). */
+  darwinSystemRead: { subpaths: string[]; literals: string[] };
+  /**
+   * Seatbelt only: the directories above each bind. Only their own metadata
+   * is readable (stat, getcwd); their listings and other entries are not.
+   */
+  darwinTraverse: string[];
   darwinWriteRoots: string[];
 }
 
@@ -125,6 +182,12 @@ export function buildMountPlan(input: MountPlanInput): MountPlan {
     }
     system.push({ type: "proc", dst: "/proc" });
     system.push({ type: "dev", dst: "/dev" });
+    for (const entry of LINUX_ETC_ENTRIES) {
+      const found = input.host.system?.[entry];
+      if (!found) continue;
+      if (found.symlink) system.push({ type: "symlink", target: found.symlink, dst: entry });
+      else if (found.exists) system.push({ type: "ro-bind", src: entry, dst: entry });
+    }
     tmpfs.push("/tmp", "/var/tmp", "/run", "/var", "/home", "/root", "/opt");
     if (input.host.sss) binds.push({ src: "/var/lib/sss", dst: "/var/lib/sss", mode: "ro", purpose: "system" });
   }
@@ -167,12 +230,8 @@ export function buildMountPlan(input: MountPlanInput): MountPlan {
     tmpfs,
     overlayTmpfs,
     binds: sortBinds(binds),
-    denyRoots:
-      platform === "darwin"
-        ? uniqueStrings([roots.runsRoot, roots.datasetsRoot, roots.exploreBase, roots.appDir, roots.hostHome].filter((value): value is string => Boolean(value)).map(srcOf))
-        : [],
-    denyRead: [],
-    denyListing: [],
+    darwinSystemRead: platform === "darwin" ? { subpaths: [...DARWIN_SYSTEM_READ.subpaths], literals: [...DARWIN_SYSTEM_READ.literals] } : { subpaths: [], literals: [] },
+    darwinTraverse: platform === "darwin" ? traverseDirs(binds.map((bind) => bind.src)) : [],
     // No shared temp on macOS either: TMPDIR points into the run folder, and
     // a shared /tmp would be a channel between runs of the same user.
     darwinWriteRoots: [],
@@ -182,6 +241,8 @@ export function buildMountPlan(input: MountPlanInput): MountPlan {
     runsRoot: roots.runsRoot ? srcOf(roots.runsRoot) : null,
     datasetsRoot: roots.datasetsRoot ? srcOf(roots.datasetsRoot) : null,
     appDir: roots.appDir ? srcOf(roots.appDir) : null,
+    hostHome: roots.hostHome ? srcOf(roots.hostHome) : null,
+    exploreBase: roots.exploreBase ? srcOf(roots.exploreBase) : null,
   });
   return plan;
 }
@@ -191,6 +252,8 @@ export interface PlanContext {
   runsRoot?: string | null;
   datasetsRoot?: string | null;
   appDir?: string | null;
+  hostHome?: string | null;
+  exploreBase?: string | null;
 }
 
 /** The invariants every plan must hold; throws with every violation listed. */
@@ -215,6 +278,14 @@ export function validateMountPlan(plan: MountPlan, context: PlanContext): true {
     if (context.datasetsRoot && isWithin(bind.src, context.datasetsRoot)) errors.push(`bind exposes the tables storage: ${bind.src}`);
     // In development the storage lives under the checkout; the run folder itself is fine there.
     if (context.appDir && isWithin(bind.src, context.appDir) && !isWithin(bind.src, context.runFolder)) errors.push(`bind exposes the application directory: ${bind.src}`);
+  }
+  // Reads beyond the binds: system paths only, never the home directory or
+  // the explore storage (the binds above are the run's own part of it).
+  for (const entry of [...(plan.darwinSystemRead?.subpaths ?? []), ...(plan.darwinSystemRead?.literals ?? []).filter((value) => value !== "/")]) {
+    if (!path.isAbsolute(entry)) errors.push(`system read path must be absolute: ${entry}`);
+    for (const [name, root] of [["home directory", context.hostHome], ["explore storage", context.exploreBase], ["runs root", context.runsRoot], ["tables storage", context.datasetsRoot], ["application directory", context.appDir]] as const) {
+      if (root && (isWithin(entry, root) || isWithin(root, entry))) errors.push(`system read path ${entry} overlaps the ${name}`);
+    }
   }
   if (plan.network !== "none" && plan.network !== "host") errors.push(`unknown network mode: ${String(plan.network)}`);
   if (errors.length > 0) throw new Error(`Invalid mount plan:\n- ${errors.join("\n- ")}`);
@@ -256,9 +327,10 @@ export function renderBwrapArgs(plan: MountPlan): string[] {
 }
 
 /**
- * Seatbelt is a deny-list mechanism, so the macOS rendering hides the roots
- * that hold private material (denyRead, carved out by the host) and allows
- * reads of the plan's binds. Later rules win.
+ * The macOS rendering. Seatbelt evaluates the last matching rule, so the
+ * profile denies every read first and then allows back the plan's system
+ * paths and binds; writes are denied everywhere but the run folder. Later
+ * rules win.
  */
 export function renderSeatbeltProfile(plan: MountPlan): string {
   if (plan.platform !== "darwin") throw new Error("Seatbelt profiles can only be rendered for macOS plans");
@@ -268,20 +340,19 @@ export function renderSeatbeltProfile(plan: MountPlan): string {
   lines.push("(deny appleevent-send)");
   if (plan.network === "none") lines.push("(deny network*)");
   else lines.push('(deny network-outbound (remote ip "localhost:*"))');
-  const denyRead = [...plan.denyRead].sort().map(subpath);
-  if (denyRead.length > 0) lines.push(`(deny file-read* ${denyRead.join(" ")})`);
-  // The directories leading to a bind stay traversable but not listable, so
-  // the names of what sits next to the run are not visible either.
-  const denyListing = [...plan.denyListing].sort().map(literal);
-  if (denyListing.length > 0) lines.push(`(deny file-read-data ${denyListing.join(" ")})`);
+  lines.push("(deny file-read*)");
+  const systemRead = [...plan.darwinSystemRead.literals.map(literal), ...plan.darwinSystemRead.subpaths.map(subpath)];
+  if (systemRead.length > 0) lines.push(`(allow file-read* ${systemRead.join(" ")})`);
+  // The directories above the run and the environment: stat and getcwd work,
+  // listing them (and so learning the names of other runs) does not.
+  if (plan.darwinTraverse.length > 0) lines.push(`(allow file-read-metadata ${plan.darwinTraverse.map(literal).join(" ")})`);
   const readAllow = plan.binds.map((bind) => subpath(bind.src));
   if (readAllow.length > 0) lines.push(`(allow file-read* ${readAllow.join(" ")})`);
   lines.push("(deny file-write*)");
   const writeAllow = ['(literal "/dev/null")', ...plan.darwinWriteRoots.map(subpath), ...plan.binds.filter((bind) => bind.mode === "rw").map((bind) => subpath(bind.src))];
   lines.push(`(allow file-write* ${writeAllow.join(" ")})`);
-  // Later rules win: the wrapper's files inside the writable run folder stay
-  // read-only, and the plan files (which list carved-out names) stay hidden
-  // apart from the inner script bash has to read.
+  // The wrapper's files inside the writable run folder stay read-only, and
+  // the plan files stay hidden apart from the inner script bash has to read.
   const guarded = plan.binds.filter((bind) => bind.purpose === "control" || bind.purpose === "logs");
   if (guarded.length > 0) lines.push(`(deny file-write* ${guarded.map((bind) => subpath(bind.src)).join(" ")})`);
   const control = plan.binds.find((bind) => bind.purpose === "control");
@@ -292,59 +363,19 @@ export function renderSeatbeltProfile(plan: MountPlan): string {
   return `${lines.join("\n")}\n`;
 }
 
-/**
- * Deny list for a root that contains allowed paths: every entry of every
- * directory on the way from the root to an allowed path is denied unless it
- * is itself (an ancestor of) an allowed path. listChildren(dir) returns the
- * entry names of a directory, or null when it cannot be listed, in which
- * case the whole directory is denied. Pure; the caller supplies the listings.
- */
-export function carveOutDenies(root: string, allowedPaths: string[], listChildren: (dir: string) => string[] | null): string[] {
-  const allowed = uniqueStrings(allowedPaths).filter((candidate) => isWithin(candidate, root));
-  if (allowed.length === 0) return [root];
-  const denies: string[] = [];
-  const visit = (dir: string) => {
-    if (allowed.includes(dir)) return;
-    const children = listChildren(dir);
-    if (!Array.isArray(children)) {
-      denies.push(dir);
-      return;
-    }
-    for (const name of children) {
-      const child = path.join(dir, name);
-      if (allowed.includes(child)) continue;
-      if (allowed.some((candidate) => isWithin(candidate, child))) visit(child);
-      else denies.push(child);
-    }
-  };
-  visit(root);
-  return denies;
-}
-
-/**
- * The directories walked from a root to each allowed path under it, the root
- * included, minus the ancestors of `keepListable` paths: getcwd on macOS
- * reads every parent directory of the working directory, so the run folder's
- * ancestors must stay listable. Directories inside an allowed path are the
- * run's own and are not returned either. Pure.
- */
-export function carveOutListingDirs(root: string, allowedPaths: string[], keepListable: string[] = []): string[] {
-  const allowed = uniqueStrings(allowedPaths);
+/** Every proper ancestor of the given paths, the root included, that is not itself inside one of them. Pure. */
+export function traverseDirs(paths: string[]): string[] {
+  const own = uniqueStrings(paths);
   const dirs = new Set<string>();
-  for (const candidate of allowed.filter((entry) => isWithin(entry, root) && entry !== root)) {
-    let dir = root;
-    const walk = [dir];
-    for (const segment of path.relative(root, candidate).split(path.sep).filter(Boolean).slice(0, -1)) {
-      dir = path.join(dir, segment);
-      walk.push(dir);
-    }
-    for (const entry of walk) {
-      if (allowed.some((own) => isWithin(entry, own))) continue;
-      if (keepListable.some((keep) => isWithin(keep, entry))) continue;
-      dirs.add(entry);
+  for (const entry of own) {
+    let dir = path.dirname(entry);
+    while (true) {
+      if (!own.some((candidate) => isWithin(dir, candidate))) dirs.add(dir);
+      if (dir === "/" || dir === path.dirname(dir)) break;
+      dir = path.dirname(dir);
     }
   }
-  return [...dirs];
+  return [...dirs].sort();
 }
 
 export function mountPlanHash(plan: MountPlan): string {
@@ -356,6 +387,7 @@ export function describeMountPlan(plan: MountPlan): { readable: string[]; writab
   return {
     readable: [
       ...plan.system.filter((entry) => entry.type === "ro-bind").map((entry) => (entry as { dst: string }).dst),
+      ...(plan.darwinSystemRead?.subpaths ?? []),
       ...plan.binds.filter((bind) => bind.mode === "ro").map((bind) => bind.dst),
     ],
     writable: plan.binds.filter((bind) => bind.mode === "rw").map((bind) => bind.dst),

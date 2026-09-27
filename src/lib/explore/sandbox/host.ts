@@ -3,10 +3,10 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { promisify } from "util";
-import { carveOutDenies, carveOutListingDirs, type MountPlan, type SandboxPlatform, type SystemEntry } from "./mount-plan";
+import { LINUX_ETC_ENTRIES, type SandboxPlatform, type SystemEntry } from "./mount-plan";
 
 const execFileAsync = promisify(execFile);
-const SYSTEM_DIRS = ["/usr", "/etc", "/bin", "/sbin", "/lib", "/lib32", "/lib64"];
+const SYSTEM_DIRS = ["/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64"];
 
 export interface HostFacts {
   platform: SandboxPlatform | null;
@@ -52,11 +52,11 @@ export async function collectHostFacts(options: { platform?: NodeJS.Platform; fr
   const platform: SandboxPlatform | null = nodePlatform === "linux" ? "linux" : nodePlatform === "darwin" ? "darwin" : null;
   const system: Record<string, SystemEntry> = {};
   if (platform === "linux") {
-    for (const dir of SYSTEM_DIRS) {
+    for (const dir of [...SYSTEM_DIRS, ...LINUX_ETC_ENTRIES]) {
       try {
         const stat = await fs.lstat(dir);
         if (stat.isSymbolicLink()) system[dir] = { symlink: await fs.readlink(dir) };
-        else if (stat.isDirectory()) system[dir] = { exists: true };
+        else if (stat.isDirectory() || stat.isFile()) system[dir] = { exists: true };
       } catch {
         // absent on this host
       }
@@ -106,39 +106,4 @@ export async function realPathMap(paths: Array<string | null | undefined>): Prom
     }
   }
   return map;
-}
-
-/**
- * Seatbelt cannot re-allow a descendant of a denied root, so the private
- * roots are not denied as a whole: every sibling on the way to an allowed
- * bind is denied instead. Lists the directories once and fills plan.denyRead.
- */
-export async function applyDarwinDenies(plan: MountPlan): Promise<MountPlan> {
-  if (plan.platform !== "darwin") return plan;
-  const allowed = plan.binds.map((bind) => bind.src);
-  const listings = new Map<string, string[] | null>();
-  for (const root of plan.denyRoots) {
-    for (const candidate of allowed.filter((entry) => entry === root || entry.startsWith(`${root}/`))) {
-      let dir = root;
-      for (const segment of path.relative(root, candidate).split(path.sep).filter(Boolean)) {
-        if (!listings.has(dir)) {
-          try {
-            listings.set(dir, await fs.readdir(dir));
-          } catch {
-            listings.set(dir, null);
-          }
-        }
-        dir = path.join(dir, segment);
-      }
-    }
-  }
-  const denies = new Set<string>();
-  const listing = new Set<string>();
-  for (const root of plan.denyRoots) {
-    for (const deny of carveOutDenies(root, allowed, (dir) => listings.get(dir) ?? null)) denies.add(deny);
-    for (const dir of carveOutListingDirs(root, allowed, [plan.chdir])) listing.add(dir);
-  }
-  plan.denyRead = [...denies].sort();
-  plan.denyListing = [...listing].sort();
-  return plan;
 }

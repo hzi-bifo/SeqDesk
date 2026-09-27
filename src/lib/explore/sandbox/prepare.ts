@@ -3,7 +3,7 @@ import path from "path";
 import { getExecutionSettings } from "@/lib/pipelines/execution-settings";
 import type { RunSandbox } from "../run-script";
 import { resolveExploreStorage } from "../storage";
-import { applyDarwinDenies, collectHostFacts, realPathMap, type HostFacts } from "./host";
+import { collectHostFacts, realPathMap, type HostFacts } from "./host";
 import { buildMountPlan, describeMountPlan, mountPlanHash, renderBwrapArgs, renderSeatbeltProfile, type MountPlan } from "./mount-plan";
 import { getSandboxSettings, type ExploreSandboxSettings } from "./settings";
 
@@ -18,6 +18,12 @@ export interface RunIsolation {
   planHash: string | null;
   readable: string[];
   writable: string[];
+  /**
+   * What the analysis can read: "run" = its own run folder (inputs are staged
+   * into it), the environment and system files only; "host" = anything the
+   * app's user can read. Absent on runs prepared before reads were limited.
+   */
+  reads?: "run" | "host";
   /** Why no sandbox is planned, when tool is "none". */
   reason: string | null;
 }
@@ -35,7 +41,7 @@ export async function prepareRunSandbox(input: { runFolder: string; environmentP
   await fs.mkdir(controlDir, { recursive: true });
 
   if (settings.mode === "off") {
-    const isolation: RunIsolation = { tool: "none", mode: "off", network: "host", planHash: null, readable: [], writable: [], reason: "sandboxing is switched off in the settings" };
+    const isolation: RunIsolation = { tool: "none", mode: "off", network: "host", planHash: null, readable: [], writable: [], reads: "host", reason: "sandboxing is switched off in the settings" };
     await writeIsolation(controlDir, isolation);
     return { sandbox: { kind: "none", mode: "off", reason: isolation.reason ?? "" }, isolation, plan: null };
   }
@@ -46,7 +52,7 @@ export async function prepareRunSandbox(input: { runFolder: string; environmentP
   };
   if (!facts.platform) {
     refuse(`this platform (${process.platform}) has no supported sandbox`);
-    const isolation: RunIsolation = { tool: "none", mode: settings.mode, network: "host", planHash: null, readable: [], writable: [], reason: `no sandbox for ${process.platform}` };
+    const isolation: RunIsolation = { tool: "none", mode: settings.mode, network: "host", planHash: null, readable: [], writable: [], reads: "host", reason: `no sandbox for ${process.platform}` };
     await writeIsolation(controlDir, isolation);
     return { sandbox: { kind: "none", mode: settings.mode, reason: isolation.reason ?? "" }, isolation, plan: null };
   }
@@ -69,7 +75,6 @@ export async function prepareRunSandbox(input: { runFolder: string; environmentP
     host: { system: facts.system, sss: facts.sss },
     realPaths,
   });
-  await applyDarwinDenies(plan);
   const planHash = mountPlanHash(plan);
   await fs.writeFile(path.join(controlDir, "mount-plan.json"), JSON.stringify({ ...plan, hash: planHash }, null, 2), "utf8");
   const summary = describeMountPlan(plan);
@@ -91,7 +96,7 @@ export async function prepareRunSandbox(input: { runFolder: string; environmentP
     if (!facts.tool) reason = "sandbox-exec is not available";
   }
   if (!facts.tool) refuse(reason ?? "the sandbox tool is missing");
-  const isolation: RunIsolation = { tool, mode: settings.mode, network: plan.network, planHash, readable: summary.readable, writable: summary.writable, reason };
+  const isolation: RunIsolation = { tool, mode: settings.mode, network: plan.network, planHash, readable: summary.readable, writable: summary.writable, reads: facts.tool ? "run" : "host", reason };
   await writeIsolation(controlDir, isolation);
   return { sandbox, isolation, plan };
 }
@@ -117,4 +122,15 @@ export function sandboxFromLog(log: string | null | undefined): { used: "bubblew
   const match = log.match(/^Sandbox: (bubblewrap|seatbelt|none|refused)(?: \((.*)\))?$/m);
   if (!match) return null;
   return { used: match[1] as "bubblewrap" | "seatbelt" | "none" | "refused", detail: match[2] ?? "" };
+}
+
+/** The short form the run and flow pages show: "Sandboxed · no network · reads its inputs only". */
+export function summarizeIsolation(isolation: RunIsolation | null): { tool: RunIsolation["tool"]; network: RunIsolation["network"]; reads: "run" | "host" | "unknown"; label: string } | null {
+  if (!isolation) return null;
+  const reads = isolation.tool === "none" ? "host" : isolation.reads ?? "unknown";
+  const parts = [isolation.tool === "none" ? "Not sandboxed" : "Sandboxed"];
+  parts.push(isolation.network === "none" ? "no network" : "network allowed");
+  if (reads === "run") parts.push("reads its inputs only");
+  else if (reads === "host") parts.push("reads any file of the app's user");
+  return { tool: isolation.tool, network: isolation.network, reads, label: parts.join(" · ") };
 }

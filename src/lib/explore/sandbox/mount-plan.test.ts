@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMountPlan, carveOutDenies, carveOutListingDirs, describeMountPlan, mountPlanHash, renderBwrapArgs, renderSeatbeltProfile, validateMountPlan, type MountPlanInput } from "./mount-plan";
+import { buildMountPlan, DARWIN_SYSTEM_READ, describeMountPlan, mountPlanHash, renderBwrapArgs, renderSeatbeltProfile, traverseDirs, validateMountPlan, type MountPlanInput } from "./mount-plan";
 
 const base: MountPlanInput = {
   platform: "linux",
@@ -7,7 +7,7 @@ const base: MountPlanInput = {
   environmentPrefix: "/data/explore/environments/seqdesk-explore-python",
   condaPackageDirs: ["/opt/conda/pkgs"],
   roots: { runsRoot: "/data/explore/runs", datasetsRoot: "/data/explore/datasets", exploreBase: "/data/explore", appDir: "/srv/seqdesk", hostHome: "/home/seqdesk", tmpRoot: "/tmp" },
-  host: { system: { "/usr": { exists: true }, "/etc": { exists: true }, "/bin": { symlink: "usr/bin" }, "/lib": { symlink: "usr/lib" }, "/lib64": { symlink: "usr/lib64" } }, sss: true },
+  host: { system: { "/usr": { exists: true }, "/etc/ld.so.cache": { exists: true }, "/etc/localtime": { symlink: "/usr/share/zoneinfo/Europe/Berlin" }, "/etc/passwd": { exists: true }, "/bin": { symlink: "usr/bin" }, "/lib": { symlink: "usr/lib" }, "/lib64": { symlink: "usr/lib64" } }, sss: true },
 };
 
 describe("mount plans", () => {
@@ -15,7 +15,7 @@ describe("mount plans", () => {
     const plan = buildMountPlan(base);
     const summary = describeMountPlan(plan);
     expect(summary.writable).toEqual(["/data/explore/runs/EXP-1--id-run1"]);
-    expect(summary.readable).toEqual(expect.arrayContaining(["/usr", "/etc", "/data/explore/environments/seqdesk-explore-python", "/opt/conda/pkgs", "/var/lib/sss"]));
+    expect(summary.readable).toEqual(expect.arrayContaining(["/usr", "/etc/ld.so.cache", "/etc/passwd", "/data/explore/environments/seqdesk-explore-python", "/opt/conda/pkgs", "/var/lib/sss"]));
     expect(summary.readable).not.toContain("/data/explore/datasets");
     expect(plan.tmpfs).toEqual(expect.arrayContaining(["/home", "/root", "/tmp", "/opt"]));
     expect(plan.network).toBe("none");
@@ -64,36 +64,85 @@ describe("mount plans", () => {
     expect(buildMountPlan({ ...base, runFolder: "/srv/seqdesk/work/explore/runs/EXP-1--id-run1", roots: { ...base.roots, runsRoot: "/srv/seqdesk/work/explore/runs" } }).binds.some((bind) => bind.mode === "rw")).toBe(true);
   });
 
-  it("renders a Seatbelt profile that denies the carved-out roots and every write outside the run", () => {
-    const plan = buildMountPlan({ ...base, platform: "darwin", realPaths: { "/tmp": "/private/tmp" } });
-    expect(plan.denyRoots).toEqual(["/data/explore/runs", "/data/explore/datasets", "/data/explore", "/srv/seqdesk", "/home/seqdesk"]);
-    plan.denyRead = carveOutDenies("/data/explore", ["/data/explore/runs/EXP-1--id-run1", "/data/explore/environments/seqdesk-explore-python"], (dir) => {
-      if (dir === "/data/explore") return ["runs", "datasets", "environments", "imports"];
-      if (dir === "/data/explore/runs") return ["EXP-1--id-run1", "EXP-2--id-run2"];
-      if (dir === "/data/explore/environments") return ["seqdesk-explore-python", "seqdesk-explore-r"];
-      return null;
-    });
-    expect([...plan.denyRead].sort()).toEqual(["/data/explore/datasets", "/data/explore/environments/seqdesk-explore-r", "/data/explore/imports", "/data/explore/runs/EXP-2--id-run2"]);
-    const allowed = ["/data/explore/runs/EXP-1--id-run1", "/data/explore/runs/EXP-1--id-run1/control", "/data/explore/environments/seqdesk-explore-python"];
-    expect(carveOutListingDirs("/data/explore", allowed).sort()).toEqual(["/data/explore", "/data/explore/environments", "/data/explore/runs"]);
-    plan.denyListing = carveOutListingDirs("/data/explore", allowed, [plan.chdir]);
-    expect(plan.denyListing.sort()).toEqual(["/data/explore/environments"]);
-    const profile = renderSeatbeltProfile(plan);
-    expect(profile).toContain('(deny file-read-data (literal "/data/explore/environments"))');
-    expect(profile).toContain("(deny network*)");
-    expect(profile).toContain("(deny appleevent-send)");
-    expect(profile).toContain('(deny file-read* (subpath "/data/explore/datasets")');
-    expect(profile).toMatch(/\(allow file-read\*[^\n]*\(subpath "\/data\/explore\/runs\/EXP-1--id-run1"\)/);
-    expect(profile).toContain("(deny file-write*)");
-    expect(profile).toContain('(allow file-write* (literal "/dev/null") (subpath "/data/explore/runs/EXP-1--id-run1"))');
-    expect(profile).toContain('(deny file-write* (subpath "/data/explore/runs/EXP-1--id-run1/control") (subpath "/data/explore/runs/EXP-1--id-run1/logs"))');
-    expect(profile).toContain('(deny file-read* (subpath "/data/explore/runs/EXP-1--id-run1/control"))');
-    expect(profile).toContain('(allow file-read* (literal "/data/explore/runs/EXP-1--id-run1/control/analysis.sh"))');
+  it("binds only the needed parts of the system on Linux, never / or all of /etc", () => {
+    const args = renderBwrapArgs(buildMountPlan(base));
+    const roBinds = args.flatMap((arg, index) => (arg === "--ro-bind" ? [args[index + 1]] : []));
+    expect(roBinds).not.toContain("/");
+    expect(roBinds).not.toContain("/etc");
+    expect(roBinds).toEqual(expect.arrayContaining(["/usr", "/etc/ld.so.cache", "/etc/passwd"]));
+    expect(args.join(" ")).toContain("--symlink /usr/share/zoneinfo/Europe/Berlin /etc/localtime");
+    expect(roBinds.some((src) => src.startsWith("/home"))).toBe(false);
   });
 
-  it("denies a whole root when nothing under it is allowed and directories that cannot be listed", () => {
-    expect(carveOutDenies("/private", ["/elsewhere"], () => null)).toEqual(["/private"]);
-    expect(carveOutDenies("/a", ["/a/b/c"], (dir) => (dir === "/a" ? ["b", "x"] : null)).sort()).toEqual(["/a/b", "/a/x"]);
+  describe("Seatbelt profile", () => {
+    const run = "/Users/lab/seqdesk/explore/runs/EXP-1--id-run1";
+    const darwin: MountPlanInput = {
+      platform: "darwin",
+      runFolder: run,
+      environmentPrefix: "/Users/lab/seqdesk/explore/environments/seqdesk-explore-r",
+      condaPackageDirs: ["/opt/homebrew/Caskroom/miniconda/base/pkgs"],
+      roots: { runsRoot: "/Users/lab/seqdesk/explore/runs", datasetsRoot: "/Users/lab/seqdesk/explore/datasets", exploreBase: "/Users/lab/seqdesk/explore", appDir: "/Users/lab/code/seqdesk", hostHome: "/Users/lab", tmpRoot: "/var/folders/x/T" },
+      host: {},
+      realPaths: { "/var/folders/x/T": "/private/var/folders/x/T" },
+    };
+    const profile = renderSeatbeltProfile(buildMountPlan(darwin));
+    const lines = profile.trim().split("\n");
+    const allowReads = lines.filter((line) => line.startsWith("(allow file-read* ")).join(" ");
+    const subpaths = [...allowReads.matchAll(/\(subpath "([^"]+)"\)/g)].map((match) => match[1]);
+    const literals = [...allowReads.matchAll(/\(literal "([^"]+)"\)/g)].map((match) => match[1]);
+
+    it("denies every read by default and allows back an explicit list", () => {
+      const denyAll = lines.indexOf("(deny file-read*)");
+      expect(denyAll).toBeGreaterThan(-1);
+      expect(lines.findIndex((line) => line.startsWith("(allow file-read"))).toBeGreaterThan(denyAll);
+      expect(profile).not.toMatch(/\(subpath "\/"\)/);
+      expect(subpaths.sort()).toEqual([
+        ...DARWIN_SYSTEM_READ.subpaths,
+        "/opt/homebrew/Caskroom/miniconda/base/pkgs",
+        "/Users/lab/seqdesk/explore/environments/seqdesk-explore-r",
+        run,
+        `${run}/control`,
+        `${run}/logs`,
+      ].sort());
+      expect(literals.sort()).toEqual([...DARWIN_SYSTEM_READ.literals, `${run}/control/analysis.sh`].sort());
+    });
+
+    it("never allows reading the home directory or the explore storage beyond this run", () => {
+      for (const entry of [...subpaths, ...literals]) {
+        const inHome = entry === "/Users/lab" || entry.startsWith("/Users/lab/");
+        if (!inHome) continue;
+        expect(entry === run || entry.startsWith(`${run}/`) || entry === darwin.environmentPrefix).toBe(true);
+      }
+      expect(profile).not.toContain('"/Users/lab/seqdesk/explore/datasets');
+      expect(profile).not.toContain('"/Users/lab/seqdesk/explore/runs/EXP-2');
+      expect(profile).not.toContain("/private/tmp");
+      expect(profile).not.toContain("/private/var/folders");
+    });
+
+    it("lets the directories above the run be stat'ed but not listed", () => {
+      const traverse = lines.find((line) => line.startsWith("(allow file-read-metadata "));
+      expect(traverse).toBeDefined();
+      expect(traverse).not.toMatch(/subpath/);
+      expect(traverse).toContain('(literal "/Users/lab")');
+      expect(traverse).toContain('(literal "/Users/lab/seqdesk/explore/runs")');
+      expect(traverse).not.toContain(`(literal "${run}")`);
+      expect(traverseDirs(["/a/b/c", "/a/b/c/d", "/a/x"])).toEqual(["/", "/a", "/a/b"]);
+    });
+
+    it("keeps writes to the run folder, the wrapper's files read-only and the network off", () => {
+      expect(profile).toContain("(deny network*)");
+      expect(profile).toContain("(deny appleevent-send)");
+      expect(profile).toContain(`(allow file-write* (literal "/dev/null") (subpath "${run}"))`);
+      expect(profile).toContain(`(deny file-write* (subpath "${run}/control") (subpath "${run}/logs"))`);
+      expect(profile).toContain(`(deny file-read* (subpath "${run}/control"))`);
+      expect(lines.at(-1)).toBe(`(allow file-read* (literal "${run}/control/analysis.sh"))`);
+    });
+
+    it("refuses system read paths that overlap the home directory or the storage", () => {
+      const plan = buildMountPlan(darwin);
+      expect(() => validateMountPlan({ ...plan, darwinSystemRead: { subpaths: ["/Users/lab/.ssh"], literals: [] } }, { runFolder: run, hostHome: "/Users/lab" })).toThrow(/home directory/);
+      expect(() => validateMountPlan({ ...plan, darwinSystemRead: { subpaths: ["/Users"], literals: [] } }, { runFolder: run, hostHome: "/Users/lab" })).toThrow(/home directory/);
+    });
   });
 
   it("hashes deterministically", () => {
