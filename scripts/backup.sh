@@ -61,12 +61,11 @@ DEST="$OUT/seqdesk-$STAMP"
 mkdir -p "$DEST.partial"
 trap 'rm -rf "$DEST.partial"' ERR
 
-echo "[backup] database → db.dump"
-pg_dump --format=custom --no-owner --no-privileges --file="$DEST.partial/db.dump" "$DB_URL"
-
-echo "[backup] row counts → counts.tsv"
-psql "$DB_URL" -At -F $'\t' -c "
-  SELECT 'ExploreFlow', COUNT(*) FROM \"ExploreFlow\" UNION ALL
+# One snapshot for the dump and the row counts: a psql session exports a repeatable-read
+# snapshot, counts in it, and pg_dump reads the same snapshot while the session holds it.
+echo "[backup] database → db.dump, counts.tsv (one snapshot)"
+COUNT_SQL="SELECT t, n FROM (
+  SELECT 'ExploreFlow' AS t, COUNT(*) AS n FROM \"ExploreFlow\" UNION ALL
   SELECT 'ExploreFlowRun', COUNT(*) FROM \"ExploreFlowRun\" UNION ALL
   SELECT 'ExploreAnalysis', COUNT(*) FROM \"ExploreAnalysis\" UNION ALL
   SELECT 'ExploreAnalysisRun', COUNT(*) FROM \"ExploreAnalysisRun\" UNION ALL
@@ -76,7 +75,24 @@ psql "$DB_URL" -At -F $'\t' -c "
   SELECT 'ExploreDatasetRow', COUNT(*) FROM \"ExploreDatasetRow\" UNION ALL
   SELECT 'ExploreReport', COUNT(*) FROM \"ExploreReport\" UNION ALL
   SELECT 'ExploreCapsule', COUNT(*) FROM \"ExploreCapsule\" UNION ALL
-  SELECT 'ExploreRunHold', COUNT(*) FROM \"ExploreRunHold\"" > "$DEST.partial/counts.tsv"
+  SELECT 'ExploreRunHold', COUNT(*) FROM \"ExploreRunHold\") c;"
+# (FIFOs rather than coproc: macOS ships bash 3.2.)
+FIFO_DIR=$(mktemp -d)
+mkfifo "$FIFO_DIR/in" "$FIFO_DIR/out"
+psql "$DB_URL" -At -F $'\t' -q < "$FIFO_DIR/in" > "$FIFO_DIR/out" &
+SNAP_PID=$!
+exec 3>"$FIFO_DIR/in" 4<"$FIFO_DIR/out"
+echo "BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT pg_export_snapshot();" >&3
+read -r SNAPSHOT <&4
+[[ -n $SNAPSHOT ]] || { echo "[backup] could not export a snapshot" >&2; exit 1; }
+echo "$COUNT_SQL SELECT '--end--', 0;" >&3
+: > "$DEST.partial/counts.tsv"
+while IFS= read -r line <&4; do [[ $line == --end--* ]] && break; printf '%s\n' "$line" >> "$DEST.partial/counts.tsv"; done
+pg_dump --format=custom --no-owner --no-privileges --snapshot="$SNAPSHOT" --file="$DEST.partial/db.dump" "$DB_URL"
+echo "COMMIT;" >&3
+exec 3>&- 4<&-
+wait "$SNAP_PID" 2>/dev/null || true
+rm -rf "$FIFO_DIR"
 
 echo "[backup] Explore storage → explore.tar.gz"
 (

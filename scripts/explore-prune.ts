@@ -4,6 +4,7 @@
  *   npx tsx scripts/explore-prune.ts                 # dry run: list what would go
  *   npx tsx scripts/explore-prune.ts --apply         # prune and remove the files now
  *   npx tsx scripts/explore-prune.ts --days 60 --target project:p1
+ *   npx tsx scripts/explore-prune.ts --as-of 2026-12-01   # judge ages as of another day (checks, restores)
  *
  * Kept: current runs, runs a report or Writer cites, held (pinned) runs, runs a
  * kept run reuses or reads, and runs younger than --days (default
@@ -18,7 +19,9 @@ async function main(): Promise<void> {
   const value = (flag: string) => { const at = args.indexOf(flag); return at >= 0 ? args[at + 1] : undefined; };
   const apply = args.includes("--apply");
   const days = value("--days") ? Number(value("--days")) : undefined;
-  const result = await pruneRuns({ dryRun: !apply, olderThanDays: days, targetKey: value("--target") ?? null });
+  const asOf = value("--as-of") ? new Date(value("--as-of")!) : undefined;
+  if (asOf && Number.isNaN(asOf.getTime())) throw new Error("--as-of needs a date");
+  const result = await pruneRuns({ dryRun: !apply, olderThanDays: days, targetKey: value("--target") ?? null, now: asOf });
   console.log(`${apply ? "Pruned" : "Would prune"} ${result.runs.length} runs finished before ${result.cutoff.slice(0, 10)} (older than ${result.olderThanDays} days).`);
   console.log(`Kept: ${Object.entries(result.kept).map(([reason, n]) => `${n} ${reason}`).join(", ")}; already pruned: ${result.alreadyPruned}.`);
   for (const run of result.runs) {
