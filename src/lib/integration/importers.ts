@@ -134,7 +134,7 @@ export async function handleImportersRequest(request: Request, session: Integrat
       const provider = getWorkbenchImporter(path[1]);
       if (!provider || !(await enabled(provider.id))) return json({ error: 'This connector is not available on this server.' }, 404);
       const preflight = await provider.preflight();
-      if (!preflight.ok) return json({ error: preflight.message, details: preflight.details }, 400);
+      if (!preflight.ok && !preflight.previewOnly) return json({ error: preflight.message, details: preflight.details }, 400);
       const input = provider.inputSchema.parse(await request.json());
       const preview = await provider.preview(input);
       return json({ preview: { ...preview, fingerprint: importPreviewFingerprint(provider.id, input, preview) } });
@@ -215,9 +215,13 @@ export async function handleImportersRequest(request: Request, session: Integrat
         record: 'Use a Zenodo record number, a zenodo.org/records/… link or a 10.5281/zenodo.… DOI.',
         ids: 'Use 1 to 20 four-character PDB IDs such as 1LM8.',
         accessions: 'Use UniProt accessions such as P69905 (up to 20 for AlphaFold, 50 for UniProt).',
+        article: 'Use a figshare article number, a figshare.com/articles/… link or a 10.6084/m9.figshare.… DOI.',
+        dataset: 'Use a Dryad DOI (10.5061/dryad.…) or a datadryad.org dataset link.',
         maxFiles: 'Choose between 1 and 100 files.',
       };
-      return json({ error: words[field] ?? 'Invalid connector input.', issues: error.issues }, 400);
+      // A connector's own sentence (custom issues) names its identifiers best; the field words cover the rest.
+      const own = error.issues[0]?.code === 'custom' ? error.issues[0].message : '';
+      return json({ error: own || words[field] || 'Invalid connector input.', issues: error.issues }, 400);
     }
     return json({ error: error instanceof Error ? error.message : 'The connector request failed.' }, 500);
   }

@@ -27,7 +27,7 @@ export async function POST(
   }
 
   const preflight = await provider.preflight();
-  if (!preflight.ok) {
+  if (!preflight.ok && !preflight.previewOnly) {
     return NextResponse.json({ error: preflight.message, details: preflight.details }, { status: 400 });
   }
 

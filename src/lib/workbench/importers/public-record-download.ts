@@ -182,6 +182,10 @@ export async function downloadRecordAssets<TInput>(context: WorkbenchImportStart
   allowUrl: (url: string) => boolean;
   storedFilename: (asset: RecordAsset, index: number) => string;
   md5?: (asset: RecordAsset) => string | undefined;
+  /** The SHA-256 the source published for a file (Dryad), checked like the MD5. */
+  sha256?: (asset: RecordAsset) => string | undefined;
+  /** Extra request headers for the downloads (an access token some sources require). */
+  headers?: () => Promise<Record<string, string>>;
   check?: (asset: RecordAsset, filePath: string) => Promise<void>;
   /** Follow HTTPS redirects (mirrors) when the final address passes this check; otherwise redirects fail. */
   allowRedirectTo?: (url: string) => boolean;
@@ -221,9 +225,10 @@ export async function downloadRecordAssets<TInput>(context: WorkbenchImportStart
     });
 
     signal.throwIfAborted();
+    const extraHeaders = options.headers ? await options.headers() : {};
     let response: Response;
     try {
-      response = await fetch(asset.url, { redirect: options.allowRedirectTo ? "follow" : "error", cache: "no-store", headers: { "accept-encoding": "identity", "user-agent": SOURCE_USER_AGENT }, signal });
+      response = await fetch(asset.url, { redirect: options.allowRedirectTo ? "follow" : "error", cache: "no-store", headers: { ...extraHeaders, "accept-encoding": "identity", "user-agent": SOURCE_USER_AGENT }, signal });
     } catch (error) {
       if (context.signal?.aborted) throw error;
       throw unreachable(source, error);
@@ -258,10 +263,13 @@ export async function downloadRecordAssets<TInput>(context: WorkbenchImportStart
       const md5Hex = md5.digest("hex");
       const expectedMd5 = options.md5?.(asset);
       if (expectedMd5 && expectedMd5 !== md5Hex) throw new Error(`${asset.filename} did not match the checksum ${source} published. Try the import again.`);
+      const sha256Hex = sha256.digest("hex");
+      const expectedSha256 = options.sha256?.(asset);
+      if (expectedSha256 && expectedSha256 !== sha256Hex) throw new Error(`${asset.filename} did not match the checksum ${source} published. Try the import again.`);
       await options.check?.(asset, temporary);
       await fs.rename(temporary, destination);
       downloaded += bytes;
-      files.push({ ...asset, bytes, storedFilename, md5: md5Hex, sha256: sha256.digest("hex") });
+      files.push({ ...asset, bytes, storedFilename, md5: md5Hex, sha256: sha256Hex });
     } catch (error) {
       await fs.rm(temporary, { force: true }).catch(() => {});
       throw error;

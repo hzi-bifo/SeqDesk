@@ -6,6 +6,9 @@ import { pdbEntryImporter } from "./pdb-entry";
 import { alphafoldModelImporter } from "./alphafold-model";
 import { uniprotEntryImporter } from "./uniprot-entry";
 import { referenceResourceImporter } from "./reference-resource";
+import { figshareArticleImporter } from "./figshare-article";
+import { dryadDatasetImporter } from "./dryad-dataset";
+import { mgnifyDownloadsImporter } from "./mgnify-downloads";
 import type { WorkbenchImporterProvider } from "./types";
 
 const providers = [
@@ -17,6 +20,9 @@ const providers = [
   alphafoldModelImporter,
   uniprotEntryImporter,
   referenceResourceImporter,
+  figshareArticleImporter,
+  dryadDatasetImporter,
+  mgnifyDownloadsImporter,
 ] as const satisfies readonly WorkbenchImporterProvider[];
 
 export function listWorkbenchImporters(): WorkbenchImporterProvider[] {

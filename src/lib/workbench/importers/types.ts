@@ -8,6 +8,8 @@ export interface WorkbenchImporterPreflight {
   ok: boolean;
   message?: string;
   details?: string;
+  /** Not ready to download, but previews work (Dryad lists files without an API account; downloads need one). */
+  previewOnly?: boolean;
 }
 
 export interface WorkbenchGenomePreviewItem {

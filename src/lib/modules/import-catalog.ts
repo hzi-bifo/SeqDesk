@@ -31,6 +31,12 @@ export const connectorModuleCatalog = [
     summary: "Download protein sequences (FASTA) and their UniProtKB entries." },
   { id: "import-reference", providerId: "reference-resource", name: "Reference resources", category: "Reference data",
     summary: "Install versioned reference tables (GO BP, MSigDB Hallmark) from their official sources, with licence and citation." },
+  { id: "import-figshare", providerId: "figshare-article", name: "figshare articles", category: "Public repositories",
+    summary: "Download the files of a public figshare article, pinned to a version and verified against figshare's checksums." },
+  { id: "import-dryad", providerId: "dryad-dataset", name: "Dryad datasets", category: "Public repositories",
+    summary: "Preview Dryad datasets by DOI; downloads use a Dryad API account set up on this server." },
+  { id: "import-mgnify", providerId: "mgnify-downloads", name: "MGnify results", category: "Public repositories",
+    summary: "Download taxonomic and functional result tables of MGnify studies and analyses." },
 ] as const;
 
 // Facility requests are creation actions, separate from file import modules.

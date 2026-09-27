@@ -69,6 +69,9 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
   { id: "import-pdb", name: "PDB structures", description: "Download mmCIF structure files for PDB entries from RCSB.", category: "data-sources", featureLocation: "Data > Connectors" },
   { id: "import-alphafold", name: "AlphaFold models", description: "Download predicted structure models from the AlphaFold Protein Structure Database.", category: "data-sources", featureLocation: "Data > Connectors" },
   { id: "import-uniprot", name: "UniProt entries", description: "Download protein sequences (FASTA) and UniProtKB entries.", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-figshare", name: "figshare articles", description: "Download the files of a public figshare article, pinned to a version and verified against figshare's checksums.", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-dryad", name: "Dryad datasets", description: "Preview Dryad datasets by DOI and download their files with a Dryad API account (SEQDESK_DRYAD_CLIENT_ID/SECRET).", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-mgnify", name: "MGnify results", description: "Download taxonomic and functional result tables of MGnify studies and analyses.", category: "data-sources", featureLocation: "Data > Connectors" },
   { id: "import-reference", name: "Reference resources", description: "Install versioned reference tables (GO Biological Process, MSigDB Hallmark gene sets) from their official sources, with licence and citation.", category: "data-sources", featureLocation: "Data > Resources" },
   // Form Extensions
   {
@@ -162,6 +165,9 @@ export const DEFAULT_MODULE_STATES: Record<string, boolean> = {
   "import-alphafold": true,
   "import-uniprot": true,
   "import-reference": true,
+  "import-figshare": true,
+  "import-dryad": true,
+  "import-mgnify": true,
   "ai-validation": true,
   "mixs-metadata": true,
   "account-validation": false,

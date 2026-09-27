@@ -27,7 +27,18 @@ export interface ImportedFile {
   md5?: string;
   sha256?: string;
   sourceUrl?: string;
+  /**
+   * What the download was checked against: the MD5 or SHA-256 the source published, UniProt's sequence digest, or
+   * nothing but size ("none": SeqDesk's own SHA-256 is recorded, not compared with anything the source published).
+   */
+  checked: "md5" | "sha256" | "sequence" | "none";
   asTable: boolean;
+}
+
+function checkedAgainst(providerId: string, sourceVersion: unknown): ImportedFile["checked"] {
+  if (providerId === "ena-fastq-accession") return "md5";
+  const version = typeof sourceVersion === "string" ? sourceVersion : "";
+  return version.startsWith("md5:") ? "md5" : version.startsWith("sha256:") ? "sha256" : version.startsWith("sequence-md5:") ? "sequence" : "none";
 }
 
 export interface ImportProvenance {
@@ -61,6 +72,7 @@ async function successfulImport(userId: string, jobId: string) {
       filename: file.filename, storedFilename: file.storedFilename, bytes: Number(file.bytes) || 0,
       ...(typeof file.md5 === "string" ? { md5: file.md5 } : {}), ...(typeof file.sha256 === "string" ? { sha256: file.sha256 } : {}),
       ...(typeof file.sourceUrl === "string" ? { sourceUrl: file.sourceUrl } : {}),
+      checked: checkedAgainst(job.providerId, file.sourceVersion),
       asTable: canImportFileAsTable(file.filename) && (Number(file.bytes) || 0) <= MAX_LIBRARY_FILE_BYTES,
     }];
   });
