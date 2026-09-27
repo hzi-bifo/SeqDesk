@@ -27,6 +27,7 @@ export function toInput(report: ReportView): ReportInput {
       if (block.type === "subject") return { id: block.id, type: "subject", datasetId: block.datasetId, subject: block.subject, measure: block.measure, caption: block.caption, span: block.span, size: block.size };
       if (block.type === "curated") return { id: block.id, type: "curated", datasetId: block.datasetId, role: block.role, lists: block.lists, limit: block.limit, caption: block.caption, span: block.span, size: block.size };
       if (block.type === "run-metric") return { id: block.id, type: "run-metric", analysisId: block.analysisId, metrics: block.metrics, figures: block.figures, order: block.order, labels: block.labels, digits: block.digits, units: block.units, targets: block.targets, columns: block.columns, trend: block.trend, trends: block.trends, timeline: block.timeline, label: block.label, span: block.span, size: block.size };
+      if (block.type === "flow-map") return { id: block.id, type: "flow-map", flowId: block.flowId, revision: block.revision, runId: block.runId, runNumber: block.runNumber, options: block.options, svg: block.svg, caption: block.caption, span: block.span, size: block.size };
       return { id: block.id, type: "table", datasetId: block.datasetId, caption: block.caption, rows: block.rows, columns: block.columns, sort: block.sort, filter: block.filter, search: block.search, sortable: block.sortable, download: block.download, span: block.span, size: block.size };
     }),
   };

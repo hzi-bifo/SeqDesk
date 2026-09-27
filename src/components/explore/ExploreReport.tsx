@@ -682,7 +682,7 @@ interface ReportBlockCardProps {
   variables: ReportVariables;
 }
 
-const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", finding: "Finding", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Dashboard numbers" };
+const BLOCK_LABELS: Record<ReportBlock["type"], string> = { text: "Text", finding: "Finding", figure: "Figure", table: "Table", chart: "Chart", metric: "Numbers", view: "View", "taxon-explorer": "Taxon explorer", subject: "Subject", curated: "Organisms of interest", "run-metric": "Dashboard numbers", "flow-map": "Analysis map" };
 
 const ReportBlockCard = memo(function ReportBlockCard({ block, resolved, figure, tableInfo, editing, dragHandle, first, last, onPatch, onMove, onRemove, scopeQuery, reportId, tables, analyses, analysis, filters, active, scope, variables }: ReportBlockCardProps) {
   const span = reportBlockSpan(block);
@@ -812,6 +812,16 @@ const ReportBlockCard = memo(function ReportBlockCard({ block, resolved, figure,
             ) : (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">Choose a table of this scope.</div>
             )}
+          </>
+        )}
+
+        {block.type === "flow-map" && (
+          <>
+            <Caption editing={editing} value={block.caption ?? ""} fallback="Analysis map" onChange={(caption) => onPatch({ caption })} />
+            {/* The map drawn in the web app, shown as an image so its markup stays inert. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img className="w-full bg-white" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(block.svg)}`} alt={block.caption || "Analysis map"} />
+            {typeof block.runNumber === "number" && <p className="mt-1 text-xs text-muted-foreground">Run #{block.runNumber} · recipe rev {block.revision}</p>}
           </>
         )}
 

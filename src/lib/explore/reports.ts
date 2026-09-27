@@ -153,7 +153,8 @@ export type ResolvedReportBlock =
   | (Extract<ReportBlock, { type: "taxon-explorer" }> & { table: ReportTableMeta | null })
   | (Extract<ReportBlock, { type: "subject" }> & { table: ReportTableMeta | null })
   | (Extract<ReportBlock, { type: "curated" }> & { table: ReportTableMeta | null })
-  | (Extract<ReportBlock, { type: "run-metric" }> & { analysis: ReportAnalysis | null });
+  | (Extract<ReportBlock, { type: "run-metric" }> & { analysis: ReportAnalysis | null })
+  | Extract<ReportBlock, { type: "flow-map" }>;
 
 /** A live share link: with mode "link" anyone with the token reads the page; with "named" only invited people who signed in through the collaboration server, or members of a lab the server serves. */
 export type ReportShareMode = "link" | "named";
@@ -339,7 +340,7 @@ export async function resolveReportBlocks(blocks: ReportBlock[], outputs: Report
   };
   return Promise.all(
     blocks.map(async (block): Promise<ResolvedReportBlock> => {
-      if (block.type === "text") return block;
+      if (block.type === "text" || block.type === "flow-map") return block;
       if (block.type === "finding") {
         const analysis = outputs.analyses.find((entry) => entry.analysisId === block.analysisId) ?? null;
         return { ...block, analysis, finding: analysis ? await resolveFinding(analysis, block.name, loadFinding) : null };

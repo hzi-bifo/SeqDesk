@@ -15,6 +15,7 @@ const blocks: ReportBlock[] = [
   { id: "x1", type: "taxon-explorer", datasetId: "d1", taxon: "E. coli", caption: "Taxon", span: 2 },
   { id: "s1", type: "subject", datasetId: "d1", subject: "A0001", measure: "ra", caption: "Subject", span: 2 },
   { id: "u1", type: "curated", datasetId: "d1", role: "pathogen", lists: ["l1"], limit: 10, caption: "Curated", span: 2 },
+  { id: "fm", type: "flow-map", flowId: "flow-1", revision: 4, runId: "run-2", runNumber: 2, options: { values: true, inputs: false, outputs: true, caption: false, widthMm: 89 }, svg: "<svg></svg>", caption: "Map", span: 2 },
   {
     id: "r1",
     type: "run-metric",

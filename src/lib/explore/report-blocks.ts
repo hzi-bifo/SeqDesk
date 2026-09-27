@@ -220,6 +220,34 @@ const FindingBlockSchema = z
   })
   .strict();
 
+/**
+ * The recipe's Map as a figure: live-linked to a flow and the recipe revision it was drawn from (and the run whose
+ * values it shows). The SVG is the drawing as of then; the export shows it as an image, so it can never run script.
+ */
+export const MAX_FLOW_MAP_SVG = 200_000;
+const FlowMapBlockSchema = z
+  .object({
+    id: BlockId,
+    type: z.literal("flow-map"),
+    flowId: z.string().min(1).max(80),
+    revision: z.number().int().min(0),
+    runId: z.string().min(1).max(80).optional(),
+    runNumber: z.number().int().min(0).optional(),
+    options: z
+      .object({
+        values: z.boolean(),
+        inputs: z.boolean(),
+        outputs: z.boolean(),
+        caption: z.boolean(),
+        widthMm: z.union([z.literal(89), z.literal(183)]).optional(),
+      })
+      .strict(),
+    svg: z.string().max(MAX_FLOW_MAP_SVG).regex(/^<svg[\s>]/, "The map must be an SVG drawing"),
+    caption: z.string().max(500).optional(),
+    span: Span, size: Size,
+  })
+  .strict();
+
 export const ReportBlockSchema = z.discriminatedUnion("type", [
   TextBlockSchema,
   FindingBlockSchema,
@@ -232,6 +260,7 @@ export const ReportBlockSchema = z.discriminatedUnion("type", [
   SubjectBlockSchema,
   CuratedBlockSchema,
   RunMetricBlockSchema,
+  FlowMapBlockSchema,
 ]);
 
 /** A page-level filter: a column of a table; every block reading a table with that column honours it. */

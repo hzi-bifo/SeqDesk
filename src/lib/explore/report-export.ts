@@ -425,6 +425,12 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
       if (block.view === "heatmap") return renderHeatmap(block, table, adapted.rows, context);
       return renderSubjectTimeline(block, table, adapted.rows, context);
     }
+    case "flow-map": {
+      // The analysis map as drawn in the web app; an <img> keeps any markup in the stored SVG inert.
+      const title = block.caption?.trim() || "Analysis map";
+      const footer = typeof block.runNumber === "number" ? `Analysis map, Run #${block.runNumber}` : "Analysis map";
+      return section(block, title, `<img class="flow-map" src="data:image/svg+xml;base64,${Buffer.from(block.svg, "utf8").toString("base64")}" alt="${escapeHtml(title)}">`, footer);
+    }
     case "taxon-explorer":
       return renderTaxonExplorer(block, context);
     case "subject":
