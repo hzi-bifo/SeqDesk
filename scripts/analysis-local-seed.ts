@@ -6,7 +6,7 @@ import { db } from '../src/lib/db';
 
 async function main() {
   const url = new URL(process.env.DATABASE_URL || '');
-  if (url.hostname !== '127.0.0.1' || url.pathname !== '/seqdesk_analysis_integration_local') throw new Error('Only the dedicated local Analysis database is allowed.');
+  if (url.hostname !== '127.0.0.1' || !url.pathname.startsWith('/seqdesk_analysis_integration_local')) throw new Error('Only the dedicated local Analysis database is allowed.');
   const dir = process.env.SEQDESK_LOCAL_ANALYSIS_DIR;
   if (!dir) throw new Error('Use the local Analysis launcher.');
   const collaboration = JSON.parse(await readFile(join(dir,'collaboration.json'),'utf8'));
@@ -22,7 +22,7 @@ async function main() {
   await db.read.upsert({where:{id:'local-analysis-read'},update:{file1:file},create:{id:'local-analysis-read',sampleId:sample.id,file1:file,dataClass:'raw'}});
   await db.pipelineConfig.upsert({where:{pipelineId:'fastq-checksum'},update:{enabled:true},create:{pipelineId:'fastq-checksum',enabled:true}});
   await writeFile(join(dir,'compute.json'),JSON.stringify({installationId:connection.installationId,name:connection.name,collaborationOrigin:collaboration.url,
-    secret:connection.secret,webOrigins:['http://127.0.0.1:5195'],accounts:[{workspaceId:collaboration.workspaceId,memberId:collaboration.memberId,userId:user.id}],provisionAccounts:false}),{mode:0o600});
+    secret:connection.secret,webOrigins:[`http://127.0.0.1:${process.env.SEQDESK_LOCAL_ANALYSIS_WEB_PORT||'5195'}`],accounts:[{workspaceId:collaboration.workspaceId,memberId:collaboration.memberId,userId:user.id}],provisionAccounts:false}),{mode:0o600});
   console.log('Local study, order, reads and explicit test-operator mapping ready. Existing runs retained.');
 }
 main().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>db.$disconnect());

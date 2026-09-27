@@ -1,0 +1,177 @@
+{
+  "study": "RNA-seq: TGF-b1 dose x time in lung fibroblasts (Zenodo 15152686)",
+  "flow": "TGF-b1: time-dependent dose response",
+  "question": "Which genes change their response to TGF-b1 dose over 24, 48 and 72 h in MRC-5 lung fibroblasts, in which temporal patterns, and what biology do those patterns carry?",
+  "source": {
+    "connector": "zenodo-record",
+    "record": "15152686",
+    "doi": "10.5281/zenodo.15152686",
+    "license": "cc-by-4.0",
+    "title": "RNA sequencing data of MRC-5 lung fibroblast exposed to Bleomycin, TGFB-1 and Trimellitic Anhydride"
+  },
+  "tables": {
+    "normalized_counts_TGFB1": {
+      "file": "normalized_counts_TGFB1.txt",
+      "md5": "92302b398e043b155fc52337879b1f78",
+      "roles": {}
+    },
+    "Phenodata_TGFB1": {
+      "file": "Phenodata_TGFB1.xlsx",
+      "md5": "21ba0479b070597bfd5ee00c6cecdab2",
+      "roles": {
+        "sample": "sample_ID"
+      }
+    }
+  },
+  "steps": [
+    {
+      "key": "qc",
+      "name": "Samples and gene filter",
+      "file": "steps/01-qc-filter.R",
+      "purpose": "Match the sample sheet to the matrix, drop low-RIN samples and genes too low to test.",
+      "inputs": {
+        "counts": {
+          "table": "normalized_counts_TGFB1"
+        },
+        "samples": {
+          "table": "Phenodata_TGFB1"
+        }
+      },
+      "params": {
+        "sample_column": "sample_ID",
+        "min_rin": 7,
+        "min_count": 10,
+        "min_total_count": 15
+      },
+      "packages": []
+    },
+    {
+      "key": "pca",
+      "name": "VST and PCA",
+      "file": "steps/02-vst-pca.R",
+      "purpose": "Do samples order by dose, by time, or both?",
+      "inputs": {
+        "counts_filtered": {
+          "step": "qc",
+          "output": "counts_filtered"
+        },
+        "samples_qc": {
+          "step": "qc",
+          "output": "samples_qc"
+        }
+      },
+      "params": {
+        "n_top_genes": 500
+      },
+      "packages": []
+    },
+    {
+      "key": "lrt",
+      "name": "DESeq2 LRT dose x time",
+      "file": "steps/03-deseq2-lrt.R",
+      "purpose": "Genes whose TGF-b1 dose response changes over time (interaction LRT).",
+      "inputs": {
+        "counts_filtered": {
+          "step": "qc",
+          "output": "counts_filtered"
+        },
+        "samples_qc": {
+          "step": "qc",
+          "output": "samples_qc"
+        }
+      },
+      "params": {
+        "full": "~ dose_f + time_f + dose_f:time_f",
+        "reduced": "~ dose_f + time_f",
+        "padj_cutoff": 0.01,
+        "fixed_size_factors": true
+      },
+      "packages": []
+    },
+    {
+      "key": "patterns",
+      "name": "Temporal patterns",
+      "file": "steps/04-patterns.R",
+      "purpose": "Group the significant genes by how they move over dose and time.",
+      "inputs": {
+        "lrt_results": {
+          "step": "lrt",
+          "output": "lrt_results"
+        },
+        "vst": {
+          "step": "pca",
+          "output": "vst"
+        },
+        "samples_qc": {
+          "step": "qc",
+          "output": "samples_qc"
+        }
+      },
+      "params": {
+        "max_genes": 2000,
+        "n_patterns": 6,
+        "method": "ward.D2",
+        "seed": 1
+      },
+      "packages": []
+    },
+    {
+      "key": "go",
+      "name": "GO enrichment per pattern",
+      "file": "steps/05-go-enrichment.R",
+      "purpose": "Which biological processes each pattern carries.",
+      "inputs": {
+        "gene_patterns": {
+          "step": "patterns",
+          "output": "gene_patterns"
+        },
+        "lrt_results": {
+          "step": "lrt",
+          "output": "lrt_results"
+        },
+        "go_sets": {
+          "resource": "go-bp-human.gene_sets"
+        }
+      },
+      "params": {
+        "min_size": 15,
+        "max_size": 500,
+        "padj_cutoff": 0.05,
+        "n_show": 4
+      },
+      "packages": []
+    },
+    {
+      "key": "heatmap",
+      "name": "Pattern heatmap",
+      "file": "steps/06-heatmap.R",
+      "purpose": "The pattern genes over dose and time, one row each.",
+      "inputs": {
+        "gene_patterns": {
+          "step": "patterns",
+          "output": "gene_patterns"
+        },
+        "vst": {
+          "step": "pca",
+          "output": "vst"
+        },
+        "samples_qc": {
+          "step": "qc",
+          "output": "samples_qc"
+        }
+      },
+      "params": {
+        "per_pattern": 60
+      },
+      "packages": []
+    }
+  ],
+  "resources": {
+    "go-bp-human.gene_sets": {
+      "resource": "go-bp-human",
+      "file": "go-bp-human.gene_sets.tsv",
+      "version": "Bioconductor 3.22: org.Hs.eg.db 3.22.0, GO.db 3.22.0 (GO 2025-07-22, Entrez Gene 2025-09-24)",
+      "license": "GO annotations CC BY 4.0; packages Artistic-2.0"
+    }
+  }
+}

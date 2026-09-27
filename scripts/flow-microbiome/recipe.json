@@ -1,0 +1,40 @@
+{
+  "study": "16S: Moving Pictures, gut vs tongue (QIIME 2)",
+  "flow": "Moving Pictures: gut vs tongue",
+  "question": "Do gut and tongue communities differ in diversity and composition (QIIME 2 Moving Pictures, 16S V4, two subjects)?",
+  "tables": {
+    "mp-counts": { "file": "moving_pictures_counts.csv", "sha256": "5b660b2abe454b97949819ec74de95a1d5e710cde925a501818ebf3deec08a28", "roles": {} },
+    "mp-samples": { "file": "moving_pictures_samples.csv", "sha256": "fc249c41e6044286698f6adcd22168d15d22a0888f61d8adcbda730b958afee8", "roles": { "sample": "sample", "group": "body_site", "subject": "subject" } },
+    "mp-taxonomy": { "file": "moving_pictures_taxonomy.csv", "sha256": "a74097b5741c6638bd02be0c8b1280edd2131d8504bf0af354d3a65f857a2837", "roles": {} }
+  },
+  "steps": [
+    {
+      "key": "qc", "name": "Read-depth QC and rarefaction", "file": "steps/01-qc-rarefy.py",
+      "purpose": "Keep gut and tongue samples with enough reads, rarefy to an even depth.",
+      "inputs": { "counts": { "table": "mp-counts" }, "samples": { "table": "mp-samples" } },
+      "params": { "group_column": "body_site", "group_levels": ["gut", "tongue"], "min_depth": 1103, "normalise": "rarefy", "seed": 42 },
+      "packages": []
+    },
+    {
+      "key": "alpha", "name": "Alpha diversity", "file": "steps/02-alpha.py",
+      "purpose": "Is one site richer or more even than the other?",
+      "inputs": { "counts_qc": { "step": "qc", "output": "counts_qc" }, "samples_qc": { "step": "qc", "output": "samples_qc" } },
+      "params": { "group_column": "body_site", "log_base": 2 },
+      "packages": []
+    },
+    {
+      "key": "beta", "name": "Bray-Curtis PCoA and PERMANOVA", "file": "steps/03-beta.py",
+      "purpose": "Do the two sites differ in composition?",
+      "inputs": { "counts_qc": { "step": "qc", "output": "counts_qc" }, "samples_qc": { "step": "qc", "output": "samples_qc" } },
+      "params": { "group_column": "body_site", "metric": "braycurtis", "permutations": 999, "seed": 42 },
+      "packages": []
+    },
+    {
+      "key": "taxa", "name": "Top differing taxa", "file": "steps/04-top-taxa.py",
+      "purpose": "Which taxa separate gut from tongue?",
+      "inputs": { "counts_qc": { "step": "qc", "output": "counts_qc" }, "samples_qc": { "step": "qc", "output": "samples_qc" }, "taxonomy": { "table": "mp-taxonomy" } },
+      "params": { "group_column": "body_site", "min_prevalence": 0.1, "fdr": 0.05, "n_top": 15 },
+      "packages": []
+    }
+  ]
+}
