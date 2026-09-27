@@ -1286,6 +1286,7 @@ model ExploreFlowRun {
   verification      Json?
   trialSample       Json?
   requestId         String?   @unique
+  outputsPrunedAt   DateTime? // outputs removed by housekeeping; the record, manifest and checksums stay
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
@@ -1432,6 +1433,23 @@ model ExploreCapsule {
   flowRun ExploreFlowRun @relation(fields: [flowRunId], references: [id], onDelete: Cascade)
 
   @@index([flowRunId, artifactId])
+}
+
+// Files to remove in the background after a flow is deleted or old run outputs are pruned.
+// entries: [{path, mode: "remove" | "run-outputs"}]; every path must lie inside Explore storage.
+model ExploreCleanupJob {
+  id        String    @id @default(cuid())
+  kind      String    // flow-delete | prune | prune-pass (a marker: when the daily prune last ran)
+  reason    String?
+  entries   Json      @default("[]")
+  status    String    @default("queued") // queued | done | failed
+  attempts  Int       @default(0)
+  error     String?
+  createdAt DateTime  @default(now())
+  doneAt    DateTime?
+
+  @@index([status, createdAt])
+  @@index([kind, createdAt])
 }
 
 // Events and records waiting to be pushed to the collaboration server.

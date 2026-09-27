@@ -8,6 +8,7 @@ import { queueSnapshotToRunStatus, readIdentityCheckedQueueSnapshot } from "../s
 import { finalizeExploreRun } from "../src/lib/explore/run-finalize";
 import { advanceActiveFlowRuns } from "../src/lib/explore/flow-runs";
 import { failStaleCapsules } from "../src/lib/explore/capsules";
+import { processCleanupJobs, runDailyPrune } from "../src/lib/explore/housekeeping";
 import { deliverOutbox } from "../src/lib/integration/events";
 import { loadedRuntimeFingerprint, runtimeIsStale, STALE_RUNTIME_EXIT_CODE } from "../src/lib/explore/runtime-fingerprint";
 
@@ -157,6 +158,13 @@ async function runOnce(): Promise<void> {
     console.error("[explore-monitor] failed to advance flow runs", error);
   }
   await failStaleCapsules().catch((error) => console.error("[explore-monitor] failed to check capsule builds", error));
+  // Housekeeping: the daily prune of old run outputs (SEQDESK_EXPLORE_PRUNE=off turns it off), then queued file removals.
+  if (process.env.SEQDESK_EXPLORE_PRUNE !== "off") {
+    await runDailyPrune()
+      .then((result) => { if (result?.runs.length) console.log(`[explore-monitor] pruned the outputs of ${result.runs.length} runs older than ${result.olderThanDays} days`); })
+      .catch((error) => console.error("[explore-monitor] daily prune failed", error));
+  }
+  await processCleanupJobs().catch((error) => console.error("[explore-monitor] file cleanup failed", error));
 }
 
 /**

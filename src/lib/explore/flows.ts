@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { deleteFlowWithOutputs } from "./housekeeping";
 import { ExploreReportError } from "./reports";
 
 /** A flow as its list shows it: what is on the canvas and what it produced last. */
@@ -125,5 +126,6 @@ export async function updateFlow(id: string, changes: { name?: string; descripti
 export async function deleteFlow(id: string): Promise<void> {
   const existing = await db.exploreFlow.findUnique({ where: { id }, select: { id: true } });
   if (!existing) throw new ExploreReportError(404, "Flow not found");
-  await db.exploreFlow.delete({ where: { id } });
+  // Inputs, steps, runs, output tables and their files go too (housekeeping.ts); refused while cited.
+  await deleteFlowWithOutputs(id);
 }

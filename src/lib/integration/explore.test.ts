@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   scopeFindMany: vi.fn(), scopeCreate: vi.fn(), projectCreate: vi.fn(), projectFindMany: vi.fn(), projectUpdate: vi.fn(),
   resolve: vi.fn(), moduleEnabled: vi.fn(), listReports: vi.fn(), capability: vi.fn(),
   getReportRecord: vi.fn(), getReportView: vi.fn(), renderReportHtml: vi.fn(),
-  listFlows: vi.fn(), createFlow: vi.fn(), getFlow: vi.fn(), getFlowRecord: vi.fn(), updateFlow: vi.fn(), deleteFlow: vi.fn(),
+  listFlows: vi.fn(), createFlow: vi.fn(), getFlow: vi.fn(), getFlowRecord: vi.fn(), updateFlow: vi.fn(), deleteFlow: vi.fn(), processCleanupJobs: vi.fn(async () => ({ done: 0, failed: 0 })), pruneRuns: vi.fn(),
   loadCanvasGraph: vi.fn(), listAnalyses: vi.fn(),
 }));
 vi.mock('@/lib/db', () => ({ db: {
@@ -25,6 +25,7 @@ vi.mock('@/lib/explore/reports', async () => {
 });
 vi.mock('@/lib/explore/report-export', () => ({ renderReportHtml: mocks.renderReportHtml }));
 vi.mock('@/lib/explore/flows', () => ({ listFlows: mocks.listFlows, createFlow: mocks.createFlow, getFlow: mocks.getFlow, getFlowRecord: mocks.getFlowRecord, updateFlow: mocks.updateFlow, deleteFlow: mocks.deleteFlow }));
+vi.mock('@/lib/explore/housekeeping', () => ({ processCleanupJobs: mocks.processCleanupJobs, flowCitations: vi.fn(), housekeepingCounts: vi.fn(), pruneRuns: mocks.pruneRuns }));
 vi.mock('@/lib/explore/canvas', () => ({ loadCanvasGraph: mocks.loadCanvasGraph }));
 vi.mock('@/lib/explore/analyses', async () => {
   const actual = await vi.importActual<typeof import('@/lib/explore/analyses')>('@/lib/explore/analyses');
@@ -118,8 +119,23 @@ describe('Flow requests', () => {
     expect(await (await handleExploreRequest(request('PATCH', '/x/explore/flows/f2', { name: 'Alpha diversity' }), session, ['flows', 'f2'], new Headers())).json()).toEqual({ flow: { id: 'f2', name: 'Alpha diversity' } });
     expect(mocks.updateFlow).toHaveBeenCalledWith('f2', { name: 'Alpha diversity' });
     expect(await (await handleExploreRequest(request('DELETE', '/x/explore/flows/f2'), session, ['flows', 'f2'], new Headers())).json()).toEqual({ deleted: true });
+    expect(mocks.processCleanupJobs).toHaveBeenCalled();
+    const { ExploreRouteError } = await import('@/lib/explore/route-error');
+    mocks.deleteFlow.mockRejectedValueOnce(new ExploreRouteError(409, 'This analysis is cited by report “Airway”.', 'cited', { citations: { reports: [{ id: 'r1', title: 'Airway' }], holds: [] } }));
+    const refused = await handleExploreRequest(request('DELETE', '/x/explore/flows/f2'), session, ['flows', 'f2'], new Headers());
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: 'cited', citations: { reports: [{ id: 'r1', title: 'Airway' }] } });
     mocks.getFlowRecord.mockResolvedValue(null);
     expect((await handleExploreRequest(request('GET', '/x/explore/flows/nope'), session, ['flows', 'nope'], new Headers())).status).toBe(404);
+  });
+  it('prunes old run outputs only for admins; anyone who can read the study may ask for a dry run', async () => {
+    mocks.resolve.mockResolvedValue({ level: 'read', target: { type: 'project', id: 'p1' } });
+    mocks.pruneRuns.mockResolvedValue({ dryRun: true, runs: [] });
+    const dry = await handleExploreRequest(request('POST', '/x/explore/housekeeping/prune', { targetKey: 'project:p1' }), session, ['housekeeping', 'prune'], new Headers());
+    expect(dry.status).toBe(200);
+    expect(mocks.pruneRuns).toHaveBeenCalledWith({ targetKey: 'project:p1', dryRun: true, olderThanDays: undefined });
+    const real = await handleExploreRequest(request('POST', '/x/explore/housekeeping/prune', { dryRun: false }), session, ['housekeeping', 'prune'], new Headers());
+    expect(real.status).toBe(403);
   });
   it('draws a canvas per flow and lists the steps of one flow', async () => {
     mocks.resolve.mockResolvedValue({ level: 'read', target: { type: 'project', id: 'p1' } });

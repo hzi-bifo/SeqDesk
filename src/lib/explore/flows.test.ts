@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), count: vi.fn(), update: vi.fn(), delete: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db: { exploreFlow: { findMany: mocks.findMany, findUnique: mocks.findUnique, create: mocks.create, count: mocks.count, update: mocks.update, delete: mocks.delete } } }));
+vi.mock("./housekeeping", () => ({ deleteFlowWithOutputs: vi.fn() }));
 import { createFlow, deleteFlow, listFlows, updateFlow } from "./flows";
 
 const at = (iso: string) => new Date(iso);

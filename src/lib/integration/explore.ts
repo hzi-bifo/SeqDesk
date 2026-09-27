@@ -27,6 +27,7 @@ import { importDatasetFromForm, isImportInputError } from "@/lib/explore/dataset
 import { computeDatasetCacheToken, deleteDataset, fetchAllDatasetRows, fetchDatasetRows, getDatasetDetail, getDatasetRecord, listDatasets, updateDatasetRoles } from "@/lib/explore/datasets";
 import { applyEditsToRows, listActiveEdits } from "@/lib/explore/edits";
 import { createFlow, deleteFlow, getFlow, getFlowRecord, listFlows, updateFlow } from "@/lib/explore/flows";
+import { flowCitations, housekeepingCounts, processCleanupJobs, pruneRuns } from "@/lib/explore/housekeeping";
 import { isExploreModuleEnabled } from "@/lib/explore/module";
 import { renderReportHtml } from "@/lib/explore/report-export";
 import { changeReportChecks, getReportReview, reviewSummaries, importReportReview, recordReportVersion, ReportReviewError } from "@/lib/explore/report-review";
@@ -260,7 +261,7 @@ async function loadRun(session: IntegrationSession, id: string, level: "read" | 
       artifacts: { orderBy: { createdAt: "asc" } },
       analysis: { select: { id: true, name: true, targetKey: true, language: true } },
       _count: { select: { artifacts: true } },
-      flowRun: { select: { number: true } },
+      flowRun: { select: { number: true, outputsPrunedAt: true } },
     },
   });
   if (!run) throw new ExploreRouteError(404, "Not found");
@@ -610,8 +611,39 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
           const removal = await prepareFlowRemoval(record.id, record.targetKey).catch(() => null);
           await deleteFlow(record.id);
           await removal?.().catch((error) => console.error("[flow] could not queue the removal", record.id, error));
+          // The files go in the background; the monitor retries what this pass leaves.
+          void processCleanupJobs().catch((error) => console.error("[flow] file cleanup failed", record.id, error));
           return json({ deleted: true });
         }
+      }
+    }
+
+    if (head === "flows" && segments.length === 3 && sub === "citations" && method === "GET") {
+      await loadFlow(session, id, "read");
+      const { reports, holds } = await flowCitations(id);
+      return json({ reports, holds, deletable: !reports.length && !holds.length });
+    }
+
+    if (head === "housekeeping") {
+      // Counts for Data › a project: earlier runs, how many of them may be pruned, how many were.
+      if (segments.length === 1 && method === "GET") {
+        const targetKey = query.get("targetKey") ?? "";
+        await requireTargetAccess(session, targetKey, "read");
+        return json(await housekeepingCounts(targetKey));
+      }
+      // Prune now: a dry run lists what would go (anyone who can read the study); pruning is for admins.
+      if (segments.length === 2 && id === "prune" && method === "POST") {
+        const body = (await request.json().catch(() => ({}))) as { targetKey?: unknown; dryRun?: unknown; olderThanDays?: unknown };
+        const targetKey = typeof body.targetKey === "string" && body.targetKey ? body.targetKey : null;
+        const dryRun = body.dryRun !== false;
+        if (targetKey) await requireTargetAccess(session, targetKey, dryRun ? "read" : "write");
+        if (!dryRun || !targetKey) {
+          if ((session.user as { role?: string }).role !== "FACILITY_ADMIN") throw new ExploreRouteError(403, "Pruning run outputs is for facility admins.");
+        }
+        const olderThanDays = typeof body.olderThanDays === "number" ? body.olderThanDays : undefined;
+        const result = await pruneRuns({ targetKey, dryRun, olderThanDays });
+        if (!dryRun) void processCleanupJobs().catch((error) => console.error("[housekeeping] file cleanup failed", error));
+        return json(result);
       }
     }
 
@@ -800,6 +832,8 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         outputTail: run.outputTail,
         errorTail: run.errorTail,
         code: run.revision.code,
+        // Housekeeping removed the files; the list, names and checksums stay for provenance.
+        outputsPrunedAt: run.flowRun?.outputsPrunedAt?.toISOString() ?? null,
         artifacts: run.artifacts.map((artifact) => ({
           id: artifact.id, kind: artifact.kind, format: artifact.format, name: artifact.name,
           fileName: artifact.path.split("/").pop(),
@@ -818,6 +852,7 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
       const filePath = await resolveContainedPath(run.runFolder, artifact.path).catch(() => null);
       if (!filePath) throw new ExploreRouteError(404, "Not found");
       const stat = await fs.stat(filePath).catch(() => null);
+      if (!stat?.isFile() && run.flowRun?.outputsPrunedAt) throw new ExploreRouteError(410, `Outputs pruned on ${run.flowRun.outputsPrunedAt.toISOString().slice(0, 10)}; the checksum stays on record.`);
       if (!stat?.isFile()) throw new ExploreRouteError(404, "Not found");
       const combined = new Headers(headers);
       combined.set("Content-Type", ARTIFACT_CONTENT_TYPES[artifact.format] ?? "application/octet-stream");
