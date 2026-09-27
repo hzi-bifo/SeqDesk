@@ -37,6 +37,12 @@ export const connectorModuleCatalog = [
     summary: "Preview Dryad datasets by DOI; downloads use a Dryad API account set up on this server." },
   { id: "import-mgnify", providerId: "mgnify-downloads", name: "MGnify results", category: "Public repositories",
     summary: "Download taxonomic and functional result tables of MGnify studies and analyses." },
+  { id: "import-geo", providerId: "geo-series", name: "GEO series", category: "Public repositories",
+    summary: "Download a GEO series' matrix and supplementary files; sample characteristics become a Samples table." },
+  { id: "import-link", providerId: "link-download", name: "Any DOI or link", category: "Public repositories",
+    summary: "Resolve a DOI to its connector, or download a public https file with a size preview and safe-address checks." },
+  { id: "import-ncbi-genomes", providerId: "ncbi-genomes-taxon", name: "NCBI genomes by taxon", category: "Reference data",
+    summary: "Download genome FASTA for a taxon through the NCBI Datasets API, verified against NCBI's MD5 list." },
 ] as const;
 
 // Facility requests are creation actions, separate from file import modules.

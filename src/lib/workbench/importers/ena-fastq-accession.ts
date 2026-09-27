@@ -14,6 +14,7 @@ import type {
 } from "./types";
 
 import { loadEnaMetadata } from "./ena-metadata";
+import { enaRunTable, enaSamplesTsv, narrowEnaFiles, RUN_ATTRIBUTE_FIELDS } from "./ena-runs";
 import { importCollectionSchema } from "../import-collection";
 import type { SourceProcessing } from "../import-processing";
 
@@ -27,6 +28,11 @@ export const enaFastqAccessionInputSchema = z.object({
   collection: importCollectionSchema.optional(), // Legacy queued jobs may not have a named destination.
   accession: z.string().trim().toUpperCase().regex(ACCESSION_PATTERN),
   maxFiles: z.coerce.number().int().min(1).max(100).default(20),
+  /** Study level: the ticked runs (absent: every run that passes the filters, up to maxFiles files). */
+  runs: z.array(z.string().trim().toUpperCase().regex(/^[EDS]RR\d{1,12}$/)).min(1).max(500)
+    .transform(runs => [...new Set(runs)].sort()).optional(),
+  /** Exact-match filters on run attributes (instrument_model, library_layout, library_strategy, sample attributes). */
+  filters: z.record(z.string().regex(/^[a-z_]{2,40}$/), z.string().trim().min(1).max(200)).optional(),
 });
 
 type EnaFastqAccessionInput = z.infer<typeof enaFastqAccessionInputSchema>;
@@ -137,7 +143,7 @@ async function previewEnaFastq(input: EnaFastqAccessionInput) {
   url.searchParams.set(
     "fields",
     [
-      "study_title", "sample_title", "sample_description", "experiment_accession", "library_strategy", "library_source", "library_selection",
+      ...new Set(["study_title", "sample_title", "sample_description", "experiment_accession", ...RUN_ATTRIBUTE_FIELDS]),
       "run_accession",
       "sample_accession",
       "study_accession",
@@ -177,14 +183,16 @@ async function previewEnaFastq(input: EnaFastqAccessionInput) {
   const rows = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
   if (!Array.isArray(rows)) throw new Error("ENA returned an invalid file report");
   const allFiles = parseEnaFileRows(rows as EnaFileReportRow[]);
-  const files = selectCompleteEnaRuns(allFiles, input.maxFiles);
+  const narrowed = narrowEnaFiles(allFiles, input);
+  const files = selectCompleteEnaRuns(narrowed, input.maxFiles);
   const knownBytes = files.reduce((sum, file) => sum + (file.bytes || 0), 0);
   const warnings: string[] = [];
-  if (allFiles.length > files.length) {
+  if (narrowed.length > files.length) {
     warnings.push(
-      `This accession has ${allFiles.length} FASTQ files; ${files.length} fit as complete runs. Increase maxFiles to include more runs; files from a run are never split by the cap.`
+      `${narrowed.length === allFiles.length ? "This accession has" : "The chosen runs have"} ${narrowed.length} FASTQ files; ${files.length} fit as complete runs. Increase maxFiles to include more runs; files from a run are never split by the cap.`
     );
   }
+  if (input.filters && Object.keys(input.filters).length && !narrowed.length) warnings.push("No run passes these filters.");
   if (knownBytes > maxDownloadBytes()) {
     warnings.push("The selected FASTQ files exceed this server's configured ENA download limit.");
   }
@@ -202,6 +210,7 @@ async function previewEnaFastq(input: EnaFastqAccessionInput) {
     },
     genomes: [],
     files,
+    runs: enaRunTable(allFiles, { filters: input.filters, selected: files }),
     warnings,
   };
 }
@@ -362,6 +371,12 @@ export const enaFastqAccessionImporter: WorkbenchImporterProvider<EnaFastqAccess
       .digest("hex");
     await context.update({ phase: "verifying", progress: 95 });
     await context.log(`Verified ${downloaded.length} ENA FASTQ file(s).`);
+    // The chosen runs with their sample attributes, offered as a Samples table next to the reads.
+    const samplesName = `${context.input.accession}_runs.tsv`;
+    const samplesBody = Buffer.from(enaSamplesTsv(downloaded), "utf8");
+    const samplesPath = path.join(context.storage.cacheDir, samplesName);
+    assertPathInsideBase(samplesPath, context.storage.cacheDir, "ENA samples table");
+    await fs.writeFile(samplesPath, samplesBody, { mode: 0o600 });
 
     return {
       scientificImports,
@@ -375,7 +390,7 @@ export const enaFastqAccessionImporter: WorkbenchImporterProvider<EnaFastqAccess
         checksumRepresentation: "sha256-of-canonical-asset-manifest",
         validation: "four-line-fastq; ordered-pair-identifiers-validated",
         metadataRecords,
-        files: downloaded.map((file) => ({
+        files: [...downloaded.map((file) => ({
           runAccession: file.runAccession,
           sampleAccession: file.sampleAccession,
           studyAccession: file.studyAccession,
@@ -391,7 +406,8 @@ export const enaFastqAccessionImporter: WorkbenchImporterProvider<EnaFastqAccess
           md5: file.md5,
           verifiedMd5: file.verifiedMd5,
           bytes: file.bytes,
-        })),
+        })), { role: "samples", filename: samplesName, storedFilename: samplesName, sourceVersion: "derived:ena-run-attributes", sha256: crypto.createHash("sha256").update(samplesBody).digest("hex"),
+          md5: crypto.createHash("md5").update(samplesBody).digest("hex"), bytes: samplesBody.length }],
       },
       storagePath: context.storage.cacheDir,
       sizeBytes: totalBytes,

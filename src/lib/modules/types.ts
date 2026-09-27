@@ -72,6 +72,9 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
   { id: "import-figshare", name: "figshare articles", description: "Download the files of a public figshare article, pinned to a version and verified against figshare's checksums.", category: "data-sources", featureLocation: "Data > Connectors" },
   { id: "import-dryad", name: "Dryad datasets", description: "Preview Dryad datasets by DOI and download their files with a Dryad API account (SEQDESK_DRYAD_CLIENT_ID/SECRET).", category: "data-sources", featureLocation: "Data > Connectors" },
   { id: "import-mgnify", name: "MGnify results", description: "Download taxonomic and functional result tables of MGnify studies and analyses.", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-geo", name: "GEO series", description: "Download a GEO series' matrix and supplementary files; sample characteristics become a Samples table.", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-link", name: "Any DOI or link", description: "Resolve DOIs to their connector or download public https files, refusing private addresses (SEQDESK_URL_IMPORT_MAX_BYTES, SEQDESK_URL_IMPORT_ALLOW_HOSTS / DENY_HOSTS).", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-ncbi-genomes", name: "NCBI genomes by taxon", description: "Download genome FASTA for a taxon through the NCBI Datasets REST API (no command-line tool needed).", category: "data-sources", featureLocation: "Data > Connectors" },
   { id: "import-reference", name: "Reference resources", description: "Install versioned reference tables (GO Biological Process, MSigDB Hallmark gene sets) from their official sources, with licence and citation.", category: "data-sources", featureLocation: "Data > Resources" },
   // Form Extensions
   {
@@ -168,6 +171,9 @@ export const DEFAULT_MODULE_STATES: Record<string, boolean> = {
   "import-figshare": true,
   "import-dryad": true,
   "import-mgnify": true,
+  "import-geo": true,
+  "import-link": true,
+  "import-ncbi-genomes": true,
   "ai-validation": true,
   "mixs-metadata": true,
   "account-validation": false,

@@ -9,6 +9,8 @@ import { referenceResourceImporter } from "./reference-resource";
 import { figshareArticleImporter } from "./figshare-article";
 import { dryadDatasetImporter } from "./dryad-dataset";
 import { mgnifyDownloadsImporter } from "./mgnify-downloads";
+import { geoSeriesImporter } from "./geo-series";
+import { linkDownloadImporter } from "./link-download";
 import type { WorkbenchImporterProvider } from "./types";
 
 const providers = [
@@ -23,6 +25,8 @@ const providers = [
   figshareArticleImporter,
   dryadDatasetImporter,
   mgnifyDownloadsImporter,
+  geoSeriesImporter,
+  linkDownloadImporter,
 ] as const satisfies readonly WorkbenchImporterProvider[];
 
 export function listWorkbenchImporters(): WorkbenchImporterProvider[] {

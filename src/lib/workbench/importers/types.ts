@@ -64,6 +64,13 @@ export interface WorkbenchImportPreview {
    */
   choices?: { filename: string; bytes: number; selected: boolean; table: boolean }[];
   warnings?: string[];
+  /** "Any DOI or link": the reference belongs to a dedicated connector; open that one with `value` instead. */
+  handoff?: { providerId: string; value: string; what: string };
+  /**
+   * ENA study level: every run of the accession with its attributes (instrument, layout, strategy, sample
+   * attributes), whether it passes the filters and whether it is in this selection.
+   */
+  runs?: { columns: string[]; rows: { run: string; values: Record<string, string>; bytes: number; files: number; matches: boolean; selected: boolean }[]; truncated: boolean };
 }
 
 export interface WorkbenchImportResult {

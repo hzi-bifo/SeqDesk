@@ -36,8 +36,10 @@ export interface ImportedFile {
 }
 
 function checkedAgainst(providerId: string, sourceVersion: unknown): ImportedFile["checked"] {
-  if (providerId === "ena-fastq-accession") return "md5";
   const version = typeof sourceVersion === "string" ? sourceVersion : "";
+  // Tables SeqDesk derived itself (a GEO or ENA Samples table) were never published by the source.
+  if (version.startsWith("derived:")) return "none";
+  if (providerId === "ena-fastq-accession") return "md5";
   return version.startsWith("md5:") ? "md5" : version.startsWith("sha256:") ? "sha256" : version.startsWith("sequence-md5:") ? "sequence" : "none";
 }
 

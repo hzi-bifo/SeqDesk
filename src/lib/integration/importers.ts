@@ -217,6 +217,9 @@ export async function handleImportersRequest(request: Request, session: Integrat
         accessions: 'Use UniProt accessions such as P69905 (up to 20 for AlphaFold, 50 for UniProt).',
         article: 'Use a figshare article number, a figshare.com/articles/… link or a 10.6084/m9.figshare.… DOI.',
         dataset: 'Use a Dryad DOI (10.5061/dryad.…) or a datadryad.org dataset link.',
+        series: 'Use a GEO series accession such as GSE52778, or a GEO series link.',
+        link: 'Paste a DOI (10.…) or an https:// link to a file.',
+        runs: 'Pick runs by their accessions (ERR…, SRR…, DRR…).',
         maxFiles: 'Choose between 1 and 100 files.',
       };
       // A connector's own sentence (custom issues) names its identifiers best; the field words cover the rest.

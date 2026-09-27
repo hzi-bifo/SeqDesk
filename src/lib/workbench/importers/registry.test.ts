@@ -10,9 +10,7 @@ describe("workbench importer registry", () => {
     const importers = listWorkbenchImporters();
 
     expect(importers.map((importer) => importer.id)).toContain("ncbi-genomes-taxon");
-    expect(getWorkbenchImporter("ncbi-genomes-taxon")?.label).toBe(
-      "NCBI Genomes by Taxon"
-    );
+    expect(getWorkbenchImporter("ncbi-genomes-taxon")?.label).toBe("NCBI genomes by taxon");
   });
 
   it("exposes the public-record connectors with their fixed ids", () => {
@@ -21,6 +19,8 @@ describe("workbench importer registry", () => {
       ["pdb-entry", "PDB structures", "structures"],
       ["alphafold-model", "AlphaFold models", "structures"],
       ["uniprot-entry", "UniProt entries", "proteins"],
+      ["geo-series", "GEO series", "dataset"],
+      ["link-download", "Any DOI or link", "dataset"],
     ]));
   });
 
@@ -40,8 +40,8 @@ describe("workbench importer registry", () => {
       })
     ).toEqual({
       id: "ncbi-genomes-taxon",
-      label: "NCBI Genomes by Taxon",
-      description: "Preview and import capped NCBI genome FASTA packages for a taxon.",
+      label: "NCBI genomes by taxon",
+      description: "Preview and import capped NCBI genome FASTA packages for a taxon through the NCBI Datasets API, verified against NCBI's MD5 list.",
       category: "Reference genomes",
       preflight: {
         ok: false,

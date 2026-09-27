@@ -18,7 +18,7 @@ describe.runIf(runLive)("NCBI genomes by taxon live smoke", () => {
       expect(
         preflight.ok,
         [
-          "NCBI Datasets CLI live smoke cannot run.",
+          "NCBI Datasets API live smoke cannot run.",
           preflight.message,
           preflight.details,
         ]

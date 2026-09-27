@@ -1,37 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  execFile: vi.fn(),
-  spawn: vi.fn(),
-  resolveWorkbenchStoreCommand: vi.fn(),
-}));
-
-vi.mock("child_process", () => ({
-  execFile: mocks.execFile,
-  spawn: mocks.spawn,
-}));
-
-vi.mock("@/lib/workbench/store", () => ({
-  resolveWorkbenchStoreCommand: mocks.resolveWorkbenchStoreCommand,
-}));
-
 import {
+  buildDatasetReportUrl,
   ncbiGenomesTaxonIntegrationTestSpec,
   ncbiGenomesTaxonImporter,
+  parseMd5List,
   parseNcbiGenomeSummaryLines,
 } from "./ncbi-genomes-taxon";
 
-function mockExecFileSuccess(stdout = "") {
-  mocks.execFile.mockImplementation((_command, _args, _options, callback) => {
-    callback(null, { stdout, stderr: "" });
-  });
-}
+const fetchMock = vi.fn();
+const reportResponse = (reports: unknown[], total = reports.length) => new Response(JSON.stringify({ reports, total_count: total }), { status: 200, headers: { "content-type": "application/json" } });
 
 describe("NCBI genomes by taxon importer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.resolveWorkbenchStoreCommand.mockImplementation(async (command: string) => command);
-    mockExecFileSuccess("datasets version 16\n");
+    vi.stubGlobal("fetch", fetchMock);
   });
 
   it("validates capped taxon import input", () => {
@@ -64,20 +47,11 @@ describe("NCBI genomes by taxon importer", () => {
     });
   });
 
-  it("reports missing NCBI Datasets CLI during preflight", async () => {
-    mocks.execFile.mockImplementation((command, _args, _options, callback) => {
-      callback(command === "datasets" ? new Error("missing") : null, {
-        stdout: "",
-        stderr: "",
-      });
-    });
-
-    await expect(ncbiGenomesTaxonImporter.preflight()).resolves.toEqual({
-      ok: false,
-      message: "NCBI Datasets CLI is not installed",
-      details:
-        "Open Workbench Store and install Reference genomes, or install the `datasets` command on the SeqDesk server PATH.",
-    });
+  // The connector moved from the `datasets` CLI (never installed on most servers, so it was unreachable) to the
+  // NCBI Datasets REST API: preflight has nothing to install.
+  it("needs no command-line tool", async () => {
+    await expect(ncbiGenomesTaxonImporter.preflight()).resolves.toMatchObject({ ok: true });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("parses NCBI JSON-lines genome metadata from direct and report payloads", () => {
@@ -130,73 +104,45 @@ describe("NCBI genomes by taxon importer", () => {
     ]);
   });
 
-  it("previews capped metadata and passes bounded NCBI summary arguments", async () => {
-    mockExecFileSuccess(
-      [
-        JSON.stringify({ accession: "GCF_1.1", organism: { organism_name: "A" } }),
-        JSON.stringify({ accession: "GCF_2.1", organism: { organism_name: "B" } }),
-        JSON.stringify({ accession: "GCF_3.1", organism: { organism_name: "C" } }),
-      ].join("\n")
-    );
-
-    const preview = await ncbiGenomesTaxonImporter.preview({
-      taxon: "Escherichia coli",
-      cap: 2,
-      assemblySource: "refseq",
-      mag: "exclude",
-      excludeAtypical: true,
-      referenceOnly: false,
-      assemblyLevels: ["complete"],
-    });
-
-    expect(mocks.execFile).toHaveBeenCalledWith(
-      "datasets",
-      expect.arrayContaining([
-        "summary",
-        "genome",
-        "taxon",
-        "Escherichia coli",
-        "--limit",
-        "3",
-        "--assembly-source",
-        "RefSeq",
-      ]),
-      expect.objectContaining({ timeout: 90_000 }),
-      expect.any(Function)
-    );
-    expect(preview.summary).toMatchObject({
-      selectedCount: 2,
-      capped: true,
-      cap: 2,
-      hardMax: 500,
-    });
-    expect(preview.genomes.map((genome) => genome.accession)).toEqual(["GCF_1.1", "GCF_2.1"]);
+  it("maps the CLI filters onto dataset_report parameters", () => {
+    const url = new URL(buildDatasetReportUrl(ncbiGenomesTaxonImporter.inputSchema.parse({ taxon: "Escherichia phage T4", cap: 2, assemblyLevels: ["complete", "chromosome"], referenceOnly: true }), 3));
+    expect(url.origin + url.pathname).toBe("https://api.ncbi.nlm.nih.gov/datasets/v2/genome/taxon/Escherichia%20phage%20T4/dataset_report");
+    expect(url.searchParams.get("page_size")).toBe("3");
+    expect(url.searchParams.get("filters.assembly_source")).toBe("refseq");
+    expect(url.searchParams.getAll("filters.assembly_level")).toEqual(["complete_genome", "chromosome"]);
+    expect(url.searchParams.get("filters.is_metagenome_derived")).toBe("METAGENOME_DERIVED_EXCLUDE");
+    expect(url.searchParams.get("filters.exclude_atypical")).toBe("true");
+    expect(url.searchParams.get("filters.reference_only")).toBe("true");
+    const all = new URL(buildDatasetReportUrl(ncbiGenomesTaxonImporter.inputSchema.parse({ taxon: "562", assemblySource: "all", excludeAtypical: false }), 1));
+    expect(all.searchParams.has("filters.assembly_source")).toBe(false);
+    expect(all.searchParams.has("filters.exclude_atypical")).toBe(false);
   });
 
-  it("uses Store-managed command paths when previewing", async () => {
-    mocks.resolveWorkbenchStoreCommand.mockResolvedValue("/managed/ncbi-datasets-cli/bin/datasets");
-    mockExecFileSuccess(JSON.stringify({ accession: "GCF_1.1" }));
+  it("previews capped metadata from the REST dataset report, string lengths included", async () => {
+    fetchMock.mockResolvedValue(reportResponse([
+      { accession: "GCF_1.1", organism: { organism_name: "A", tax_id: 1 }, assembly_stats: { total_sequence_length: "168903" } },
+      { accession: "GCF_2.1", organism: { organism_name: "B" } },
+      { accession: "GCF_3.1", organism: { organism_name: "C" } },
+    ], 40));
+    const preview = await ncbiGenomesTaxonImporter.preview(ncbiGenomesTaxonImporter.inputSchema.parse({ taxon: "Escherichia coli", cap: 2, assemblyLevels: ["complete"] }));
+    expect(String(fetchMock.mock.calls[0][0])).toContain("page_size=3");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: "error" });
+    expect(preview.summary).toMatchObject({ selectedCount: 2, totalFound: 40, capped: true, cap: 2, hardMax: 500 });
+    expect(preview.genomes.map((genome) => genome.accession)).toEqual(["GCF_1.1", "GCF_2.1"]);
+    expect(preview.genomes[0].totalSequenceLength).toBe(168903);
+    expect(preview.sampleMetadata?.licence).toMatch(/NCBI/);
+  });
 
-    await ncbiGenomesTaxonImporter.preview({
-      taxon: "Escherichia coli",
-      cap: 1,
-      assemblySource: "refseq",
-      mag: "exclude",
-      excludeAtypical: true,
-      referenceOnly: false,
-      assemblyLevels: ["complete"],
-    });
+  it("says plainly when NCBI does not know the taxon or refuses", async () => {
+    fetchMock.mockResolvedValue(new Response("{}", { status: 400 }));
+    await expect(ncbiGenomesTaxonImporter.preview(ncbiGenomesTaxonImporter.inputSchema.parse({ taxon: "Not a taxon" }))).rejects.toThrow("does not know the taxon");
+    fetchMock.mockResolvedValue(new Response("", { status: 429 }));
+    await expect(ncbiGenomesTaxonImporter.preview(ncbiGenomesTaxonImporter.inputSchema.parse({ taxon: "562" }))).rejects.toThrow("limiting requests");
+  });
 
-    expect(mocks.resolveWorkbenchStoreCommand).toHaveBeenCalledWith(
-      "datasets",
-      "ncbi-datasets-cli"
-    );
-    expect(mocks.execFile).toHaveBeenCalledWith(
-      "/managed/ncbi-datasets-cli/bin/datasets",
-      expect.any(Array),
-      expect.objectContaining({ timeout: 90_000 }),
-      expect.any(Function)
-    );
+  it("reads NCBI's md5sum.txt", () => {
+    const list = parseMd5List("0123456789abcdef0123456789abcdef  README.md\nfedcba9876543210fedcba9876543210  ncbi_dataset/data/GCF_000836945.1/GCF_000836945.1_ViralProj14044_genomic.fna\nnot a line\n");
+    expect([...list.keys()]).toEqual(["README.md", "ncbi_dataset/data/GCF_000836945.1/GCF_000836945.1_ViralProj14044_genomic.fna"]);
   });
 
   it("builds stable cache keys from normalized input and selected accessions", () => {

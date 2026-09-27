@@ -19,9 +19,15 @@ describe("coexisting raw input modules", () => {
     mocks.settings.mockResolvedValue({ modulesConfig: JSON.stringify({ globalDisabled: true }) });
     await expect(requireRawReadImporter("ena-fastq-accession")).rejects.toThrow("disabled");
   });
-  it("rejects reference genomes and arbitrary providers", async () => {
-    await expect(requireRawReadImporter("ncbi-genomes-taxon")).rejects.toThrow("unsupported");
+  it("rejects arbitrary providers", async () => {
     await expect(requireRawReadImporter("anything")).rejects.toThrow("unsupported");
+  });
+  // NCBI genomes by taxon used to be rejected here: it needed the `datasets` CLI and no module mapped it, so it was
+  // unreachable. It now uses the NCBI Datasets REST API and is gated by its own connector module like the others.
+  it("gates NCBI genomes by taxon behind its own connector module", async () => {
+    await expect(requireRawReadImporter("ncbi-genomes-taxon")).resolves.toBeUndefined();
+    mocks.settings.mockResolvedValue({ modulesConfig: JSON.stringify({ modules: { "import-ncbi-genomes": false } }) });
+    await expect(requireRawReadImporter("ncbi-genomes-taxon")).rejects.toThrow("disabled");
   });
   it("does not treat the facility storefront card as a raw-read download provider", async () => {
     await expect(requireRawReadImporter("facility")).rejects.toThrow("unsupported");
