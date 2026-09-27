@@ -15,6 +15,15 @@ describe("workbench importer registry", () => {
     );
   });
 
+  it("exposes the public-record connectors with their fixed ids", () => {
+    expect(listWorkbenchImporters().map((importer) => [importer.id, importer.label, importer.category])).toEqual(expect.arrayContaining([
+      ["zenodo-record", "Zenodo record", "dataset"],
+      ["pdb-entry", "PDB structures", "structures"],
+      ["alphafold-model", "AlphaFold models", "structures"],
+      ["uniprot-entry", "UniProt entries", "proteins"],
+    ]));
+  });
+
   it("returns null for unknown providers", () => {
     expect(getWorkbenchImporter("not-real")).toBeNull();
   });

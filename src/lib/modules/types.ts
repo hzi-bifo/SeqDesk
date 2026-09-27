@@ -65,6 +65,11 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
   { id: "sequencing-management", name: "Facility sequencing", description: "Accept sample submissions, manage sequencing orders and record instrument runs alongside imported data.", category: "data-sources", featureLocation: "Sequencing data > Facility processing" },
   { id: "import-cami", name: "CAMI raw reads", description: "Import CAMI short or long raw reads and source metadata into shared records.", category: "data-sources", featureLocation: "Sequencing data > Data source" },
   { id: "import-sra", name: "SRA / ENA raw reads", description: "Import public raw reads and archive metadata using ENA/SRA accessions.", category: "data-sources", featureLocation: "Sequencing data > Data source" },
+  { id: "import-zenodo", name: "Zenodo records", description: "Download the open files of a Zenodo record, verified against Zenodo's checksums.", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-pdb", name: "PDB structures", description: "Download mmCIF structure files for PDB entries from RCSB.", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-alphafold", name: "AlphaFold models", description: "Download predicted structure models from the AlphaFold Protein Structure Database.", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-uniprot", name: "UniProt entries", description: "Download protein sequences (FASTA) and UniProtKB entries.", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-reference", name: "Reference resources", description: "Install versioned reference tables (GO Biological Process, MSigDB Hallmark gene sets) from their official sources, with licence and citation.", category: "data-sources", featureLocation: "Data > Resources" },
   // Form Extensions
   {
     id: "mixs-metadata",
@@ -152,6 +157,11 @@ export const DEFAULT_MODULE_STATES: Record<string, boolean> = {
   "sequencing-management": true,
   "import-cami": true,
   "import-sra": true,
+  "import-zenodo": true,
+  "import-pdb": true,
+  "import-alphafold": true,
+  "import-uniprot": true,
+  "import-reference": true,
   "ai-validation": true,
   "mixs-metadata": true,
   "account-validation": false,

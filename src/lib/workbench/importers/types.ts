@@ -53,6 +53,14 @@ export interface WorkbenchImportPreview {
   genomes: WorkbenchGenomePreviewItem[];
   assets?: { url: string; filename: string; bytes: number; etag: string; role: string }[];
   files?: WorkbenchFilePreviewItem[];
+  /** One line per source record (public-record connectors): what the selection is, before its files. */
+  records?: { id: string; title: string; detail: string }[];
+  /**
+   * Every file of a multi-file record (Zenodo), with its size and whether it is in this selection, so a
+   * person can tick which ones to download. The selection itself is the `files` input; `assets` is what
+   * downloads.
+   */
+  choices?: { filename: string; bytes: number; selected: boolean; table: boolean }[];
   warnings?: string[];
 }
 

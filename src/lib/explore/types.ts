@@ -116,6 +116,8 @@ export interface ExploreProvenance {
   builder: string;
   sources: ExploreProvenanceSource[];
   notes?: string[];
+  /** Numeric-matrix provenance check (raw counts vs normalised vs log), see table-profile.ts. */
+  profile?: import("./table-profile").TableProfile;
 }
 
 export type ExploreEditKind = "cell" | "row-flag" | "row-exclude" | "column-add" | "column-hide";
@@ -142,6 +144,8 @@ export interface ExploreDatasetSummary {
     rowCount: number;
     contentHash: string;
     createdAt: string;
+    /** Numeric-matrix check of this version ("normalised, not raw counts"), when the table is a matrix. */
+    profile?: { verdict: string; sentence: string; why: string } | null;
   } | null;
   createdAt: string;
   updatedAt: string;

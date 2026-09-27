@@ -17,6 +17,22 @@ export const importModuleCatalog = [
   },
 ] as const;
 
+// Public-record connectors (Workbench datasets, not reads). Kept apart from the
+// raw-read catalog above so the sequencing-data source pickers do not list them;
+// the server gates them per module exactly like the raw-read importers.
+export const connectorModuleCatalog = [
+  { id: "import-zenodo", providerId: "zenodo-record", name: "Zenodo records", category: "Public repositories",
+    summary: "Download the open files of a Zenodo record, verified against Zenodo's checksums." },
+  { id: "import-pdb", providerId: "pdb-entry", name: "PDB structures", category: "Structures",
+    summary: "Download mmCIF structure files for PDB entries from RCSB." },
+  { id: "import-alphafold", providerId: "alphafold-model", name: "AlphaFold models", category: "Structures",
+    summary: "Download predicted structure models from the AlphaFold Protein Structure Database." },
+  { id: "import-uniprot", providerId: "uniprot-entry", name: "UniProt entries", category: "Proteins",
+    summary: "Download protein sequences (FASTA) and their UniProtKB entries." },
+  { id: "import-reference", providerId: "reference-resource", name: "Reference resources", category: "Reference data",
+    summary: "Install versioned reference tables (GO BP, MSigDB Hallmark) from their official sources, with licence and citation." },
+] as const;
+
 // Facility requests are creation actions, separate from file import modules.
 export const dataSourceModuleCatalog = importModuleCatalog;
 

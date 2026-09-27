@@ -126,7 +126,20 @@ export function parseDelimited(text: string, options: DelimitedParseOptions = {}
   };
   const headerRecord = recordAt(headerIndex, header);
   headerIndex = headerRecord.end;
-  const columns = uniqueColumnKeys(headerRecord.cells.map((header) => header.trim()));
+  let columns = uniqueColumnKeys(headerRecord.cells.map((header) => header.trim()));
+  // R's write.table(row.names = TRUE) leaves the row-name column out of the header, so every data line has one
+  // field more than the header. When the first data lines (at least two) all do, name that leading column row_name
+  // instead of rejecting the file; a lone line with an extra field is still an error below.
+  const widths: number[] = [];
+  for (let index = headerIndex + 1; index < lines.length && widths.length < 3; index += 1) {
+    if (lines[index].trim() === "" || (skipPrefix && lines[index].startsWith(skipPrefix))) continue;
+    const record = recordAt(index);
+    widths.push(record.cells.length);
+    index = record.end;
+  }
+  if (widths.length >= 2 && widths.every((width) => width === columns.length + 1)) {
+    columns = uniqueColumnKeys(["row_name", ...headerRecord.cells.map((header) => header.trim())]);
+  }
   const rows: ExploreRowData[] = [];
   let truncated = false;
   const maxRows = options.maxRows ?? Number.POSITIVE_INFINITY;

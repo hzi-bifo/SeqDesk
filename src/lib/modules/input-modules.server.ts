@@ -1,9 +1,9 @@
 import { db } from "@/lib/db";
 import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 import { parseModulesConfig } from "./form-integration";
-import { importModuleCatalog } from "./import-catalog";
+import { connectorModuleCatalog, importModuleCatalog } from "./import-catalog";
 
-export const RAW_READ_MODULES = Object.fromEntries(importModuleCatalog.map(module => [module.providerId, module.id]));
+export const RAW_READ_MODULES = Object.fromEntries([...importModuleCatalog, ...connectorModuleCatalog].map(module => [module.providerId, module.id]));
 export async function isFacilityDataContainer(orderId: string) {
   const order = await db.order.findUnique({ where: { id: orderId }, select: { dataOrigin: true } });
   return Boolean(order && order.dataOrigin === "facility");

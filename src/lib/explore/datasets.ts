@@ -1,3 +1,4 @@
+import { PROFILE_VERSION, profileNumericMatrix, readProfile } from "@/lib/explore/table-profile";
 import fs from "fs/promises";
 import path from "path";
 import type { Prisma } from "@prisma/client";
@@ -39,6 +40,11 @@ function currentVersionOf(dataset: DatasetWithVersion) {
   return current;
 }
 
+function profileSummary(provenance: unknown) {
+  const profile = readProfile(provenance);
+  return profile ? { verdict: profile.verdict, sentence: profile.sentence, why: profile.why } : null;
+}
+
 export function serializeDatasetSummary(dataset: DatasetWithVersion): ExploreDatasetSummary {
   const current = currentVersionOf(dataset);
   return {
@@ -58,6 +64,7 @@ export function serializeDatasetSummary(dataset: DatasetWithVersion): ExploreDat
           rowCount: current.rowCount,
           contentHash: current.contentHash,
           createdAt: toIso(current.createdAt),
+          profile: profileSummary(current.provenance),
         }
       : null,
     createdAt: toIso(dataset.createdAt),
@@ -71,7 +78,44 @@ export async function listDatasets(targetKey: string): Promise<ExploreDatasetSum
     include: { versions: { orderBy: { number: "desc" }, take: 1 } },
     orderBy: { updatedAt: "desc" },
   });
+  // Tables made before the provenance check existed get it once, a few per listing.
+  let budget = 5;
+  for (const dataset of datasets) {
+    const current = dataset.versions[0];
+    if (!current || budget <= 0 || profileChecked(current.provenance)) continue;
+    budget -= 1;
+    current.provenance = await ensureVersionProfile(current.id) ?? current.provenance;
+  }
   return datasets.map(serializeDatasetSummary);
+}
+
+function profileChecked(provenance: string | null): boolean {
+  const parsed = parseJsonObject(provenance);
+  // Made with the current rules: a finding of this version, or "not a matrix" under this version.
+  return Boolean(parsed && (readProfile(parsed) || parsed.profileChecked === PROFILE_VERSION));
+}
+
+const PROFILE_MAX_ROWS = 200_000;
+
+/**
+ * Profile a version's number columns if that has not been done yet and keep the finding in its provenance
+ * (additive: the JSON gains `profile` or `profileChecked`). Returns the updated provenance JSON, or null.
+ */
+export async function ensureVersionProfile(versionId: string): Promise<string | null> {
+  const version = await db.exploreDatasetVersion.findUnique({ where: { id: versionId }, select: { schema: true, provenance: true, rowCount: true } });
+  if (!version) return null;
+  if (profileChecked(version.provenance)) return version.provenance;
+  const provenance = parseJsonObject(version.provenance) ?? {};
+  const columns = parseSchema(version.schema).columns;
+  let profile = null;
+  if (columns.filter((column) => column.type === "number").length >= 2 && version.rowCount <= PROFILE_MAX_ROWS) {
+    const rows = await db.exploreDatasetRow.findMany({ where: { versionId }, select: { data: true } });
+    profile = profileNumericMatrix(columns, rows.map((row) => (row.data ?? {}) as Record<string, unknown>));
+  }
+  const { profile: _old, profileChecked: _checked, ...rest } = provenance;
+  const next = JSON.stringify(profile ? { ...rest, profile } : { ...rest, profileChecked: PROFILE_VERSION });
+  await db.exploreDatasetVersion.update({ where: { id: versionId }, data: { provenance: next } });
+  return next;
 }
 
 export async function getDatasetRecord(id: string) {

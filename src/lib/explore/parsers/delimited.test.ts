@@ -28,6 +28,17 @@ describe("parseDelimited", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("names the unlabelled row-name column of an R write.table matrix", () => {
+    const result = parseDelimited("S1\tS2\nENSG1\t1.5\t2\nENSG2\t0\t3\n");
+    expect(result.columns).toEqual(["row_name", "S1", "S2"]);
+    expect(result.rows[0]).toMatchObject({ row_name: "ENSG1" });
+    expect(Object.keys(result.rows[1])).toEqual(["row_name", "S1", "S2"]);
+  });
+
+  it("still rejects a line with two fields more than the header", () => {
+    expect(() => parseDelimited("a\tb\n1\t2\t3\t4\n")).toThrow(/more fields/);
+  });
+
   it("makes duplicate headers unique", () => {
     const result = parseDelimited("cfu\tCFU\tcfu\n1\t2\t3\n");
     expect(result.columns).toEqual(["cfu", "CFU", "cfu_2"]);

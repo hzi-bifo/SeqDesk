@@ -1,3 +1,4 @@
+import { profileNumericMatrix } from "@/lib/explore/table-profile";
 import path from "path";
 import { getTableKind, suggestRoles } from "../dataset-kinds";
 import { parseDelimited, uniqueColumnKeys } from "../parsers/delimited";
@@ -154,6 +155,7 @@ export function prepareImport(
   const groups: Record<string, string> = {};
   for (const derived of INDIVO_DERIVED_COLUMNS) groups[derived] = "derived";
   const schema = inferSchema(parsed.rows, { roles, groups });
+  const profile = profileNumericMatrix(schema.columns, parsed.rows as Array<Record<string, unknown>>);
   return {
     schema,
     rows: parsed.rows,
@@ -164,6 +166,7 @@ export function prepareImport(
       builder: "import@1",
       sources: [{ type: "file", id: options.fileName, label: options.fileName, checksum: options.checksum }],
       notes: [`${parsed.rows.length} rows${parsed.sheet ? ` from sheet ${parsed.sheet}` : ""}`],
+      ...(profile ? { profile } : {}),
     },
     keys: { sample: roles.sample, subject: roles.subject, key: roles.taxon_id ?? roles.taxon },
     warnings,

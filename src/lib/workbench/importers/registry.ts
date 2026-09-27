@@ -1,12 +1,22 @@
 import { ncbiGenomesTaxonImporter } from "./ncbi-genomes-taxon";
 import { enaFastqAccessionImporter } from "./ena-fastq-accession";
 import { camiBenchmarkImporter } from "./cami-benchmark";
+import { zenodoRecordImporter } from "./zenodo-record";
+import { pdbEntryImporter } from "./pdb-entry";
+import { alphafoldModelImporter } from "./alphafold-model";
+import { uniprotEntryImporter } from "./uniprot-entry";
+import { referenceResourceImporter } from "./reference-resource";
 import type { WorkbenchImporterProvider } from "./types";
 
 const providers = [
   camiBenchmarkImporter,
   enaFastqAccessionImporter,
   ncbiGenomesTaxonImporter,
+  zenodoRecordImporter,
+  pdbEntryImporter,
+  alphafoldModelImporter,
+  uniprotEntryImporter,
+  referenceResourceImporter,
 ] as const satisfies readonly WorkbenchImporterProvider[];
 
 export function listWorkbenchImporters(): WorkbenchImporterProvider[] {
