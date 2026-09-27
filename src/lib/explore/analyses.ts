@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { stepPackagesOf } from "./step-environments";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getKit, type LoadedKit } from "./kits/loader";
@@ -38,6 +39,8 @@ export interface RevisionSummary {
 export interface RunSummary {
   id: string;
   runNumber: string;
+  /** The numbered recipe run ("Run #8") this step run belongs to; null for a step run outside one. */
+  flowRunNumber?: number | null;
   status: string;
   executionMode: string | null;
   revisionNumber: number;
@@ -63,6 +66,8 @@ export interface AnalysisSummary {
   flowId: string | null;
   language: AnalysisLanguage;
   environmentName: string;
+  /** Extra conda packages on top of the base environment (explore.packages). */
+  packages: { packages: string[]; channels: string[] };
   currentRevision: RevisionSummary | null;
   latestRun: RunSummary | null;
   createdAt: string;
@@ -147,10 +152,12 @@ function serializeRevision(revision: RevisionRecord): RevisionSummary {
   };
 }
 
-export function serializeRun(run: RunRecord): RunSummary {
+export function serializeRun(run: RunRecord & { flowRun?: { number: number | null } | null }): RunSummary {
   return {
     id: run.id,
     runNumber: run.runNumber,
+    // The numbered recipe run this step run belongs to ("Run #8"), when it was loaded.
+    ...(run.flowRun !== undefined ? { flowRunNumber: run.flowRun?.number ?? null } : {}),
     status: run.status,
     executionMode: run.executionMode,
     revisionNumber: run.revision.number,
@@ -168,7 +175,7 @@ const analysisInclude = {
   runs: {
     orderBy: { createdAt: "desc" as const },
     take: 1,
-    include: { revision: { select: { number: true } }, _count: { select: { artifacts: true } } },
+    include: { revision: { select: { number: true } }, _count: { select: { artifacts: true } }, flowRun: { select: { number: true } } },
   },
 };
 
@@ -187,6 +194,7 @@ function serializeAnalysis(analysis: AnalysisRecord): AnalysisSummary {
     flowId: analysis.flowId,
     language: analysis.language as AnalysisLanguage,
     environmentName: analysis.environmentName,
+    packages: stepPackagesOf(analysis.packages),
     currentRevision: current ? serializeRevision(current) : null,
     latestRun: analysis.runs[0] ? serializeRun(analysis.runs[0]) : null,
     createdAt: analysis.createdAt.toISOString(),
@@ -215,7 +223,7 @@ export async function getAnalysisDetail(id: string): Promise<AnalysisDetail | nu
       runs: {
         orderBy: { createdAt: "desc" },
         take: 50,
-        include: { revision: { select: { number: true } }, _count: { select: { artifacts: true } } },
+        include: { revision: { select: { number: true } }, _count: { select: { artifacts: true } }, flowRun: { select: { number: true } } },
       },
     },
   });

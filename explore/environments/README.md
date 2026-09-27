@@ -29,6 +29,29 @@ Consequences:
 * Keep one shared environment per language rather than one per kit. Kits that
   need something unusual should get their own specification file and name it.
 
+## Step packages
+
+A Flow step can add conda packages to its base (`bioconductor-deseq2=1.42`,
+optionally with extra channels). The step then runs in a derived environment
+named `<base>+<key>`: the base spec with the step's packages merged in (a
+package replaces a base dependency of the same name), where the key hashes the
+base spec hash and the sorted, deduplicated packages. Steps with the same
+packages share one derived environment; it is built once in the background
+with the same `conda env create` as a base and reused. A step waits
+("Preparing environment · installing N packages") while it builds and fails
+with the conda error if it cannot be built; runs never install packages.
+
+Package specs are restricted to conda match-spec characters: an optional
+`channel::`, a name, and version constraints (`=`, `==`, `>=`, `<=`, `<`, `>`,
+`!=`, `~=`, `,`). See `src/lib/explore/step-environments.ts`.
+
+Cleanup: `pruneStepEnvironments()` removes the prefix of every derived
+environment not used for 30 days and of the least recently used beyond 20. The
+record and spec stay (capsules and runs keep naming them); the next use
+rebuilds it. Nothing schedules it: run it from an admin action or a script,
+for example
+`node --import tsx -e 'import("./src/lib/explore/step-environments.ts").then(m => m.pruneStepEnvironments()).then(console.log)'`.
+
 ## Helper library
 
 The Python helper in `explore/lib/python` is not part of any environment. The

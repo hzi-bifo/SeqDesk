@@ -10,6 +10,7 @@ import { allocateRunNumber, parseInputBindings, serializeRun, type RunSummary } 
 import { fetchAllDatasetRows, getDatasetRecord } from "./datasets";
 import { applyEditsToRows, listActiveEdits } from "./edits";
 import { resolveReadyEnvironment } from "./environments";
+import { condaErrorExcerpt, prepareStepEnvironment, preparingWords, resolveStepEnvironment, stepEnvironmentByName, prepareEnvironmentByName } from "./step-environments";
 import { getKit, stageHelperLibrary } from "./kits/loader";
 import { inputContractSnapshot, validateAnalysisInputs } from "./input-validation";
 import { parseSchema } from "./schema";
@@ -41,6 +42,8 @@ export interface StartRunInput {
     /** Trial runs: inputs read from an upstream trial step's output file instead of the database. */
     fileInputs?: Record<string, { path: string; artifactId: string; name: string }>;
     environmentDigest?: string | null;
+    /** The step's effective environment, fixed when the flow run started (a base, or `<base>+<key>`). */
+    environmentName?: string;
   };
 }
 
@@ -211,9 +214,19 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     throw new ExploreRunError(400, error instanceof Error ? error.message : "Input validation failed.");
   }
 
-  const environment = await resolveReadyEnvironment(analysis.environmentName);
+  // The step's effective environment: its base, or the base plus the step's packages (built once, then reused).
+  // A flow run fixes it when the run starts, so an edit to the packages mid-run does not change a queued step.
+  const stepEnvironment = (input.flowRun?.environmentName ? await stepEnvironmentByName(input.flowRun.environmentName) : null) ?? await resolveStepEnvironment(analysis);
+  if (stepEnvironment.derived && stepEnvironment.status !== "ready") {
+    // Runs never install packages: start (or keep) the build and ask the caller to come back when it is ready.
+    const prepared = stepEnvironment.status === "failed" ? stepEnvironment : input.flowRun?.environmentName ? (await prepareEnvironmentByName(stepEnvironment.name)) ?? stepEnvironment : await prepareStepEnvironment(analysis);
+    if (prepared.status === "failed") throw new ExploreRunError(409, `Could not build the environment for this step (${prepared.name}).\n${condaErrorExcerpt(prepared.error ?? prepared.log ?? "")}`.trim());
+    if (prepared.status !== "ready") throw new ExploreRunError(409, `${preparingWords(prepared)}. The run can start when the environment is ready.`);
+  }
+  const environmentName = stepEnvironment.name;
+  const environment = await resolveReadyEnvironment(environmentName);
   if (!environment) {
-    throw new ExploreRunError(409, `Environment ${analysis.environmentName} is not built yet. A facility admin can build it under Explore environments.`);
+    throw new ExploreRunError(409, `Environment ${environmentName} is not built yet. A facility admin can build it under Explore environments.`);
   }
 
   // One run of an analysis at a time: two would write the same output tables.
@@ -278,6 +291,8 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     };
     await fs.writeFile(path.join(runFolder, "inputs.json"), JSON.stringify(inputsJson, null, 2), "utf8");
     await fs.writeFile(path.join(runFolder, "params.json"), JSON.stringify(params, null, 2), "utf8");
+    // Which environment the step ran in: the base, or the base plus the step's packages.
+    await fs.writeFile(path.join(runFolder, "environment.json"), JSON.stringify({ name: environmentName, base: stepEnvironment.baseName, specHash: environment.specHash, packages: stepEnvironment.packages, lockDigest: stepEnvironment.lockDigest }, null, 2), "utf8");
     const entrypoint = analysis.language === "r" ? "analysis.R" : "analysis.py";
     await fs.writeFile(path.join(runFolder, entrypoint), revision.code, "utf8");
     // The helper library travels with the run: SLURM nodes only share the run

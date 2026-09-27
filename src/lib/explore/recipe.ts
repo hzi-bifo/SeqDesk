@@ -32,6 +32,7 @@ export interface RecipeStep {
   kitId: string | null;
   language: string;
   environmentName: string;
+  packages: unknown;
   position: string;
   laneKind: string | null;
   laneOf: string | null;
@@ -127,7 +128,7 @@ export async function loadRecipe(flowId: string, client: Client = db): Promise<R
     const revision = analysis.currentRevisionId ? revisionById.get(analysis.currentRevisionId) ?? null : null;
     return {
       id: analysis.id, name: analysis.name, description: analysis.description, purpose: analysis.purpose, kitId: analysis.kitId, language: analysis.language,
-      environmentName: analysis.environmentName, position: analysis.position, laneKind: analysis.laneKind, laneOf: analysis.laneOf, laneLabel: analysis.laneLabel,
+      environmentName: analysis.environmentName, packages: analysis.packages, position: analysis.position, laneKind: analysis.laneKind, laneOf: analysis.laneOf, laneLabel: analysis.laneLabel,
       groupId: analysis.groupId, paramMeta: analysis.paramMeta, methodsSentence: analysis.methodsSentence, proposedByTurnId: analysis.proposedByTurnId, createdAt: analysis.createdAt,
       currentRevisionId: analysis.currentRevisionId,
       revision: revision ? { ...revision, codeHash: revision.codeHash || codeHashOf(revision.code) } : null,

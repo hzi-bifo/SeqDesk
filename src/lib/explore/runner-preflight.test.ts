@@ -3,6 +3,7 @@ const mocks = vi.hoisted(() => ({ analysis: vi.fn(), dataset: vi.fn(), version: 
 vi.mock("@/lib/db", () => ({ db: { exploreAnalysis: { findUnique: mocks.analysis }, exploreDataset: { findFirst: mocks.dataset }, exploreDatasetVersion: { findFirst: mocks.version }, exploreAnalysisRun: { create: mocks.createRun, findUnique: mocks.existingRun, findFirst: mocks.findRun } } }));
 vi.mock("@/lib/pipelines/execution-settings", () => ({ getExecutionSettings: async () => ({ useSlurm: false }) }));
 vi.mock("./environments", () => ({ resolveReadyEnvironment: mocks.environment }));
+vi.mock("./step-environments", () => ({ resolveStepEnvironment: async (analysis: { environmentName?: string }) => ({ name: analysis.environmentName ?? "seqdesk-explore-python", baseName: analysis.environmentName ?? "seqdesk-explore-python", derived: false, status: "ready", packages: { packages: [], channels: [] }, lockDigest: null }), stepEnvironmentByName: vi.fn(), prepareStepEnvironment: vi.fn(), prepareEnvironmentByName: vi.fn(), preparingWords: vi.fn(), condaErrorExcerpt: (text: string) => text }));
 vi.mock("./kits/loader", () => ({ getKit: vi.fn(), stageHelperLibrary: vi.fn() }));
 import { createAndStartRun } from "./runner";
 import { serializeInputs } from "./input-validation";

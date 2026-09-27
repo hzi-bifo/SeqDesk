@@ -10,6 +10,7 @@
 name: seqdesk-explore-python
 channels:
   - conda-forge
+  - bioconda
   - nodefaults
 dependencies:
   - python=3.11.*
@@ -31,3 +32,10 @@ dependencies:
   - matplotlib-base>=3.8
   - openpyxl>=3.1
   - pytest>=7
+  # Common single-cell, compositional and count-model basics, so most steps need
+  # no extra packages (solved on linux-64 and osx-arm64, Sep 2026).
+  - scanpy>=1.10
+  - anndata>=0.10
+  - seaborn-base>=0.13
+  - scikit-bio>=0.6
+  - pydeseq2>=0.4

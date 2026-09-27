@@ -11,16 +11,24 @@ channels:
   - bioconda
   - nodefaults
 dependencies:
-  - r-base=4.3.*
+  # R 4.5: the Bioconductor 3.22 builds below exist for linux-64 and osx-arm64
+  # only at 4.5 (checked with `conda env create --dry-run` on both, Sep 2026).
+  # The 4.3 base with MaAsLin 2 1.18 did not solve on osx-arm64 (r-pscl and
+  # edgeR 4.0 have no osx-arm64 builds).
+  - r-base=4.5.*
   - r-tidyverse
   - r-vegan
   - r-ggplot2
   - r-plotly
   - r-jsonlite
-  # MaAsLin 3 exists on bioconda (bioconductor-maaslin3 1.2.0) but only as an
-  # R 4.5 build (r45hdfd78af_0), which cannot be installed next to r-base 4.3.
-  # Either move this file to r-base=4.5.* and add "bioconductor-maaslin3", or
-  # install it from GitHub inside the environment:
-  #   remotes::install_github("biobakery/maaslin3")
-  # MaAsLin 2 has R 4.3 builds and is included as the supported alternative.
-  - bioconductor-maaslin2=1.18.*
+  - r-pheatmap
+  # Common RNA-seq and microbiome analysis, so most steps need no extra packages.
+  - bioconductor-deseq2
+  - bioconductor-edger
+  - bioconductor-limma
+  - bioconductor-fgsea
+  - bioconductor-apeglm
+  - bioconductor-phyloseq
+  # MaAsLin 3 replaces MaAsLin 2 (whose last build is R 4.3 only). A step that
+  # needs MaAsLin 2 can add it as a step package on an R 4.3 environment.
+  - bioconductor-maaslin3

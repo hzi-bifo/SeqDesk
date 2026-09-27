@@ -158,7 +158,9 @@ async function environmentsRoot(): Promise<string> {
  */
 export async function buildEnvironment(name: string, options: { wait?: boolean } = {}): Promise<{ started: boolean; message: string; exitCode?: number | null }> {
   const specs = await readEnvironmentSpecs();
-  const spec = specs.get(name);
+  // A shipped base reads its file; a step environment (a base plus packages) keeps its derived spec on its record.
+  const derived = specs.has(name) ? null : await db.exploreEnvironment.findUnique({ where: { name } });
+  const spec = specs.get(name) ?? (derived?.baseName ? derived.spec : undefined);
   if (!spec) return { started: false, message: `No specification file for environment ${name}` };
   const specHash = hashSpec(spec);
   const record = await db.exploreEnvironment.upsert({
@@ -170,10 +172,12 @@ export async function buildEnvironment(name: string, options: { wait?: boolean }
 
   const root = await environmentsRoot();
   await fs.mkdir(root, { recursive: true });
-  const prefix = path.join(root, `${name}-${specHash}`);
-  const specPath = path.join(root, `${name}-${specHash}.yml`);
+  // Step environments are named <base>+<hash>; keep the prefix to characters conda accepts everywhere.
+  const stem = `${name.replace(/[^A-Za-z0-9._-]/g, "-")}-${specHash}`;
+  const prefix = path.join(root, stem);
+  const specPath = path.join(root, `${stem}.yml`);
   await fs.writeFile(specPath, spec, "utf8");
-  const logPath = path.join(root, `${name}-${specHash}.log`);
+  const logPath = path.join(root, `${stem}.log`);
   const conda = await resolveCondaExecutable();
 
   await db.exploreEnvironment.update({
@@ -265,4 +269,11 @@ export async function registerExistingEnvironment(name: string, prefixPath: stri
   });
 }
 
-export { hashSpec as hashEnvironmentSpec };
+/** The last lines of an environment's build log (the prefix path plus ".log"), for progress and failures. */
+export async function readBuildLogTail(prefixPath: string | null, lines = 30): Promise<string | null> {
+  if (!prefixPath) return null;
+  const text = await fs.readFile(`${prefixPath}.log`, "utf8").catch(() => null);
+  return text === null ? null : text.split("\n").slice(-lines).join("\n").trim();
+}
+
+export { hashSpec as hashEnvironmentSpec, reconcileBuildingRecord as reconcileEnvironmentRecord, environmentsRoot as exploreEnvironmentsRoot };

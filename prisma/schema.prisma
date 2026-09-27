@@ -1114,6 +1114,11 @@ model ExploreEnvironment {
   lockDigest      String?
   lockSpecHash    String?
   languageVersion String?
+  // Step environments: a shipped base plus a step's extra conda packages. Null on shipped bases.
+  baseName     String?   // seqdesk-explore-r
+  baseSpecHash String?   // the base spec hash this was derived from
+  packages     Json?     // {packages: ["bioconductor-deseq2=1.42"], channels: ["bioconda"]} (normalised)
+  lastUsedAt   DateTime? // runs and prepares touch it; unused derived environments are pruned
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 }
@@ -1243,6 +1248,7 @@ model ExploreFlowRun {
   plan              Json      // [{analysisId, label, name, revisionId, execute, dependsOn, reusedFrom}]
   inputs            Json      @default("[]") // [{alias, stepId, datasetId, versionId, versionNumber, contentHash, name}]
   environment       Json?     // {name, specHash, lockDigest, label, language, languageVersion, host}
+  preparing         Json?     // while a step waits for its environment: {analysisId, label, environment, packages, since}
   summary           Json?     // {headline, values}
   verification      Json?
   trialSample       Json?
@@ -1439,6 +1445,7 @@ model ExploreAnalysis {
   paramMeta         Json?    // {<key>: {label, unit, min, max, usual, options, meaning, consequence, phrase}}
   methodsSentence   Json?    // {text, tokens, revisionId, author, acceptedById, acceptedAt}
   proposedByTurnId  String?  // the conversation turn whose proposal became this step
+  packages          Json?    // extra conda packages on top of the base environment: {packages: string[], channels: string[]}
 
   createdBy User                      @relation("ExploreAnalysisCreator", fields: [createdById], references: [id])
   report    ExploreReport?            @relation(fields: [reportId], references: [id], onDelete: Cascade)

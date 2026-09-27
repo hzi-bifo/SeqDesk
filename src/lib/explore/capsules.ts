@@ -236,9 +236,13 @@ export async function buildCapsule(capsuleId: string): Promise<void> {
     }
 
     // The environment: the spec it was built from and, when conda can list it, the explicit lock.
+    // A step with extra packages ran in its derived environment (<base>+<key>): its spec is the base plus those packages.
     const environmentNames = [...new Set(ordered.map((entry) => entry.environmentName))];
+    const stepPackageLines: string[] = [];
     for (const name of environmentNames) {
       const environment = await db.exploreEnvironment.findUnique({ where: { name } });
+      const extra = environment?.baseName ? (environment.packages as { packages?: string[] } | null)?.packages ?? [] : [];
+      if (extra.length) stepPackageLines.push(`- ${name}: ${environment!.baseName} plus ${extra.join(", ")}`);
       if (environment?.spec) await add(`environment/${name}.yml`, environment.spec);
       if (environment?.prefixPath) {
         const conda = await resolveCondaExecutable().catch(() => "conda");
@@ -267,6 +271,7 @@ export async function buildCapsule(capsuleId: string): Promise<void> {
         return `${entry.label}. ${entry.name}${sentence ? ` — ${sentence}` : ""}`;
       }),
       "",
+      ...(stepPackageLines.length ? ["## Step environments", "", "Some steps added conda packages to their base environment; `environment/<name>.yml` holds the full spec.", "", ...stepPackageLines, ""] : []),
       ...(assumptions.length ? ["## Assumptions", "", ...assumptions.map((gloss) => `- Step ${ordered.find((entry) => entry.analysisId === gloss.analysisId)?.label ?? "?"}: ${gloss.text}`), ""] : []),
       "## Reproduce",
       "",

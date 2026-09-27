@@ -9,20 +9,25 @@
  * explore monitor advances runs: after a step finishes it starts the steps
  * that were waiting for it, or fails the run with the error in words.
  */
+import { flowInputsProblem } from "./flow-inputs";
 import path from "path";
+import { parseMetricDefinition, type MetricDefinition } from "./metric-definition";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { readTail } from "@/lib/pipelines/nextflow";
 import { flowError } from "@/lib/integration/flow-contract";
 import { codeHashOf, parseInputBindings } from "./analyses";
 import { pinEnvironment, type EnvironmentPin } from "./environment-lock";
+import { Prisma as PrismaValues } from "@prisma/client";
 import { resolveReadyEnvironment } from "./environments";
+import { condaErrorExcerpt, prepareEnvironmentByName, preparingWords, resolveStepEnvironment } from "./step-environments";
 import { failureWords } from "./failure-words";
 import { flowRunChanged } from "./flow-events";
 import { computeStepStates, ensureRecipeRevision, loadRecipe, paramDiff, type RecipeModel, type StepRecord } from "./recipe";
 import { downstreamOf, executionOrder, upstreamOf } from "./recipe-order";
 import { parseStoredBlocks } from "./report-blocks";
 import { cancelRun, createAndStartRun, ExploreRunError } from "./runner";
+import { readRunIsolation, summarizeIsolation } from "./sandbox/prepare";
 import { parseJsonObject, parseSchema } from "./schema";
 
 export type FlowRunKind = "full" | "outOfDate" | "steps" | "trial";
@@ -37,6 +42,8 @@ export interface PlanEntry {
   revisionId: string;
   codeHash: string;
   environmentName: string;
+  /** Extra conda packages of the step: environmentName is then its derived `<base>+<key>` environment. */
+  packages?: number;
   language: string;
   execute: boolean;
   dependsOn: string[];
@@ -63,6 +70,8 @@ export interface StepValue {
   label: string;
   unit: string | null;
   value: unknown;
+  /** What the value counts, with the filters it used (metricMeta.<key>.definition); null when the step gave none. */
+  definition: MetricDefinition | null;
 }
 
 export interface FlowRunValue extends StepValue {
@@ -83,6 +92,8 @@ export interface FlowRunSummary {
   startedAt: string | null;
   completedAt: string | null;
   recipeRevision: number;
+  /** A step waiting for its environment to build: "Preparing environment · installing 3 packages". */
+  preparing?: { analysisId: string; label: string; environment: string; packages: string[]; words: string; log: string | null; since: string } | null;
   codeLabel: string;
   inputsLabel: string | null;
   environment: (EnvironmentPin & Record<string, unknown>) | null;
@@ -114,7 +125,7 @@ function pinsOf(raw: Prisma.JsonValue | null | undefined): Pin[] {
   return Array.isArray(raw) ? (raw as unknown as Pin[]).filter((pin) => pin && typeof pin.alias === "string" && typeof pin.datasetId === "string") : [];
 }
 
-function resultsOf(raw: string | null | undefined): { metrics?: Record<string, unknown>; metricMeta?: Record<string, { label?: string; unit?: string }>; ledger?: unknown[]; notes?: string[] } {
+function resultsOf(raw: string | null | undefined): { metrics?: Record<string, unknown>; metricMeta?: Record<string, { label?: string; unit?: string; definition?: unknown }>; ledger?: unknown[]; notes?: string[] } {
   return (parseJsonObject(raw) ?? {}) as ReturnType<typeof resultsOf>;
 }
 
@@ -128,7 +139,7 @@ export function stepValues(results: string | null | undefined): StepValue[] {
   const parsed = resultsOf(results);
   const metrics = parsed.metrics && typeof parsed.metrics === "object" ? parsed.metrics : {};
   const meta = parsed.metricMeta ?? {};
-  return Object.entries(metrics).slice(0, 100).map(([key, value]) => ({ key, label: meta[key]?.label ?? humanize(key), unit: meta[key]?.unit ?? null, value }));
+  return Object.entries(metrics).slice(0, 100).map(([key, value]) => ({ key, label: meta[key]?.label ?? humanize(key), unit: meta[key]?.unit ?? null, value, definition: parseMetricDefinition(meta[key]?.definition) }));
 }
 
 export function stepLedger(results: string | null | undefined): unknown[] {
@@ -242,6 +253,8 @@ export async function startFlowRun(flowId: string, input: StartFlowRunInput): Pr
   const model = await loadRecipe(flowId);
   if (!model) throw flowError("not_found", "Flow not found");
   if (!model.steps.length) throw flowError("invalid_request", "This flow has no steps yet.");
+  const inputsProblem = await flowInputsProblem(flowId, model.flow.targetKey);
+  if (inputsProblem) throw flowError("invalid_request", inputsProblem);
   const missingRevision = model.steps.find((step) => !step.revision);
   if (missingRevision) throw flowError("invalid_request", `Step ${model.labels.get(missingRevision.id)} has no code yet.`);
   const recipe = await ensureRecipeRevision(flowId, { userId: input.actor.userId, memberId: input.actor.memberId });
@@ -253,7 +266,18 @@ export async function startFlowRun(flowId: string, input: StartFlowRunInput): Pr
   const executed = plan.filter((entry) => entry.execute);
   if (!executed.length) throw flowError("invalid_request", "Every step is current. Choose the steps to run again.");
 
-  for (const name of new Set(executed.map((entry) => entry.environmentName))) {
+  // Each step's effective environment is fixed now. A step with extra packages uses its derived environment:
+  // its build starts here and the step waits for it; a shipped base must already be built.
+  const stepPackages = new Map((await db.exploreAnalysis.findMany({ where: { id: { in: executed.map((entry) => entry.analysisId) } }, select: { id: true, packages: true } })).map((row) => [row.id, row.packages] as const));
+  for (const entry of executed) {
+    const state = await resolveStepEnvironment({ environmentName: entry.environmentName, packages: stepPackages.get(entry.analysisId) });
+    if (!state.derived) continue;
+    if (state.status === "failed") throw flowError("environment_missing", `Could not build the environment for step ${entry.label}. Change its packages or prepare it again.\n${condaErrorExcerpt(state.error ?? state.log ?? "")}`.trim(), { environment: state.name, step: entry.analysisId });
+    entry.environmentName = state.name;
+    entry.packages = state.packages.packages.length;
+    if (state.status !== "ready") await prepareEnvironmentByName(state.name);
+  }
+  for (const name of new Set(executed.filter((entry) => !entry.packages).map((entry) => entry.environmentName))) {
     if (!(await resolveReadyEnvironment(name))) throw flowError("environment_missing", `Environment ${name} is not built yet. A facility admin can build it under Explore environments.`, { environment: name });
   }
   const primary = executed[0];
@@ -370,6 +394,27 @@ async function advanceOnce(flowRunId: string): Promise<void> {
       return !upstream || !upstream.execute || latest.get(dep)?.status === "completed";
     });
     if (!ready) continue;
+    if (entry.packages) {
+      // Runs never install packages: the step waits while its environment builds, and fails with the conda error.
+      const environment = await prepareEnvironmentByName(entry.environmentName);
+      if (environment?.status === "failed") {
+        await failFlowRun(run, entry, `Could not build the environment for step ${entry.label}.`, condaErrorExcerpt(environment.error ?? environment.log ?? ""));
+        return;
+      }
+      if (environment && environment.status !== "ready") {
+        const preparing = { analysisId: entry.analysisId, label: entry.label, environment: entry.environmentName, packages: environment.packages.packages, words: preparingWords(environment), log: environment.log?.split("\n").slice(-6).join("\n") ?? null, since: (run.preparing as { since?: string } | null)?.since ?? new Date().toISOString() };
+        if (JSON.stringify(run.preparing) !== JSON.stringify(preparing)) {
+          await db.exploreFlowRun.updateMany({ where: { id: run.id, status: { in: ACTIVE_FLOW } }, data: { preparing } });
+          await flowRunChanged(run.id, "progress");
+        }
+        continue;
+      }
+      if (run.preparing) await db.exploreFlowRun.updateMany({ where: { id: run.id }, data: { preparing: PrismaValues.DbNull } });
+      if (!run.environment && entry === executed[0]) {
+        const pin = await pinEnvironment(entry.environmentName, entry.language).catch(() => null);
+        if (pin) await db.exploreFlowRun.updateMany({ where: { id: run.id }, data: { environment: pin as unknown as Prisma.InputJsonValue } });
+      }
+    }
     if (run.kind === "trial" && model === undefined) model = await loadRecipe(run.flowId);
     try {
       const stepRun = await createAndStartRun({
@@ -385,6 +430,7 @@ async function advanceOnce(flowRunId: string): Promise<void> {
           sample: (run.trialSample as { samples?: number } | null)?.samples ?? 2,
           fileInputs: run.kind === "trial" ? await trialFileInputs(entry, plan, latest, model ?? null) : undefined,
           environmentDigest: (run.environment as { lockDigest?: string | null } | null)?.lockDigest ?? null,
+          ...(entry.packages ? { environmentName: entry.environmentName } : {}),
         },
       });
       latest.set(entry.analysisId, { ...stepRun, analysisId: entry.analysisId, revisionId: entry.revisionId, inputPins: null, results: null, errorTail: null, exitCode: null, startedAt: null, completedAt: null, durationMs: null, createdAt: new Date(), runFolder: null, runNumber: stepRun.runNumber });
@@ -662,6 +708,7 @@ export function serializeFlowRun(run: FlowRunRecord, context: SerializeContext):
     codeLabel: codeLabelOf(run),
     inputsLabel: inputsLabelOf(inputs, context.produced),
     environment: (run.environment as FlowRunSummary["environment"]) ?? null,
+    preparing: ACTIVE_FLOW.includes(run.status) ? (run.preparing as FlowRunSummary["preparing"]) ?? null : null,
     headline: summary.headline ?? null,
     failed: run.status === "failed" && run.failedAnalysisId ? { stepId: run.failedAnalysisId, stepLabel: run.failedStepLabel ?? "?", words: run.failureWords ?? "" } : null,
     startedBy: { userId: run.startedById, memberId: run.startedByMemberId, name: run.startedByName },
@@ -762,6 +809,8 @@ export async function getFlowRunDetail(flowRunId: string) {
   for (const stepRun of own.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())) latest.set(stepRun.analysisId, stepRun);
   const artifactRunIds = [...records.values()].map((record) => record.stepRunId);
   const artifacts: ArtifactLite[] = artifactRunIds.length ? await db.exploreArtifact.findMany({ where: { runId: { in: artifactRunIds } }, select: { id: true, runId: true, kind: true, format: true, name: true, derivedDatasetId: true, derivedVersionId: true, checksum: true, path: true }, orderBy: { createdAt: "asc" } }) : [];
+  const isolations = new Map<string, ReturnType<typeof summarizeIsolation>>();
+  await Promise.all([...stepRuns.values()].map(async (stepRun) => { if (stepRun.runFolder) isolations.set(stepRun.id, summarizeIsolation(await readRunIsolation(stepRun.runFolder))); }));
   const steps = plan.map((entry) => {
     const record = records.get(entry.analysisId);
     const stepRun = record ? stepRuns.get(record.stepRunId) : undefined;
@@ -781,6 +830,8 @@ export async function getFlowRunDetail(flowRunId: string) {
       ledger: stepLedger(stepRun?.results),
       values: stepValues(stepRun?.results),
       outputs: artifacts.filter((artifact) => artifact.runId === stepRun?.id).map((artifact) => ({ artifactId: artifact.id, name: artifact.name, kind: artifact.kind, format: artifact.format })),
+      // How the step ran: "Sandboxed · no network · reads its inputs only".
+      isolation: stepRun ? isolations.get(stepRun.id) ?? null : null,
     };
   });
   const runningEntry = plan.find((entry) => entry.execute && ACTIVE_STEP.has(latest.get(entry.analysisId)?.status ?? ""));
