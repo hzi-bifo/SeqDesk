@@ -12,7 +12,7 @@ import { buildLedger, scanTable, type LedgerInput, type LedgerOutput } from "./l
 import type { ExploreRole, ExploreRoleMap, ExploreSensitivity } from "./types";
 import { SENSITIVITY_RANK } from "./types";
 import { parseMetricDefinition, type MetricDefinition } from "./metric-definition";
-import { loadedRuntimeFingerprint, runRuntimeInfo } from "./runtime-fingerprint";
+import { loadedResultsRuntimeFingerprint, runRuntimeInfo } from "./runtime-fingerprint";
 
 const ARTIFACT_FORMATS = new Set(["plotly-json", "png", "svg", "html", "tsv", "md", "txt", "json", "csv", "pdf"]);
 const ARTIFACT_KINDS = new Set(["figure", "table", "report", "log"]);
@@ -193,7 +193,7 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
     warnings,
     // Which helper wrote the manifest and which finalizer read it, so results
     // finished by an older monitor can be told apart.
-    runtime: runRuntimeInfo(loadedRuntimeFingerprint(), manifest),
+    runtime: runRuntimeInfo(loadedResultsRuntimeFingerprint(), manifest),
   };
   const completedAt = new Date();
   await db.exploreAnalysisRun.updateMany({

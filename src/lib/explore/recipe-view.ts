@@ -284,7 +284,7 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
         flowRunId: record.flowRunId, number: record.flowRunNumber, stepRunId: record.stepRunId, runNumber: stepRun?.runNumber ?? null, status: record.status,
         reusedFrom: record.reusedFrom, durationMs: stepRun?.durationMs ?? null, ledger: stepLedger(stepRun?.results), values, verified: record.status === "completed",
         // The helper that wrote the values and the finalizer that read them (null before this was recorded).
-        runtime: runtimeOfResults(stepRun?.results),
+        runtime: runtimeOfResults(stepRun?.results, currentRuntimeFingerprint()),
       } : null,
       glossSummary: { count: own.length, pencil: own.filter((gloss) => gloss.state === "pencil").length, stale: own.filter((gloss) => !regions.has(gloss.regionHash)).length },
       methodsSentence: step.methodsSentence ?? null,

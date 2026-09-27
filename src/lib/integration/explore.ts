@@ -1,4 +1,4 @@
-import { currentRuntimeFingerprint } from "@/lib/explore/runtime-fingerprint";
+import { currentRuntimeFingerprint, runtimeOfResults } from "@/lib/explore/runtime-fingerprint";
 import fs from "fs/promises";
 import { inputToken } from "@/lib/explore/input-token";
 import { editTable } from "@/lib/explore/table-edit";
@@ -784,13 +784,18 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
       const run = await loadRun(session, id);
       let results: unknown = null;
       try { results = run.results ? JSON.parse(run.results) : null; } catch { results = null; }
+      const currentRuntime = currentRuntimeFingerprint();
+      // Runs finalized before the results runtime was versioned read as current when their helper matches.
+      if (results && typeof results === "object" && (results as { runtime?: unknown }).runtime) {
+        results = { ...(results as Record<string, unknown>), runtime: runtimeOfResults(run.results, currentRuntime) };
+      }
       const isolation = await readRunIsolation(run.runFolder);
       return json({ run: {
         ...serializeRun(run),
         analysis: run.analysis,
         results,
         // The finalizer code on disk now: results.runtime.finalizer differing from it means an older monitor finished the run.
-        currentRuntime: currentRuntimeFingerprint(),
+        currentRuntime,
         isolation: isolation ? { ...isolation, summary: summarizeIsolation(isolation) } : null,
         outputTail: run.outputTail,
         errorTail: run.errorTail,

@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { computeRuntimeFingerprint, listRuntimeFiles, runRuntimeInfo, runtimeIsStale, RUNTIME_VERSION_FILE } from "./runtime-fingerprint";
+import { computeResultsRuntimeFingerprint, computeRuntimeFingerprint, listRuntimeFiles, runRuntimeInfo, runtimeIsStale, runtimeOfResults, RUNTIME_VERSION, RUNTIME_VERSION_FILE } from "./runtime-fingerprint";
 
 let root: string;
 
@@ -48,7 +48,36 @@ describe("runtime fingerprint", () => {
   });
 
   it("records the helper that wrote the manifest", () => {
-    expect(runRuntimeInfo("abc", { helperVersion: "0.2.0", language: "r" })).toEqual({ finalizer: "abc", helper: { language: "r", version: "0.2.0" } });
-    expect(runRuntimeInfo("abc", null)).toEqual({ finalizer: "abc", helper: null });
+    expect(runRuntimeInfo("abc", { helperVersion: "0.2.0", language: "r" })).toEqual({ finalizer: "abc", version: RUNTIME_VERSION, helper: { language: "r", version: "0.2.0" } });
+    expect(runRuntimeInfo("abc", null)).toEqual({ finalizer: "abc", version: RUNTIME_VERSION, helper: null });
+  });
+
+  it("results runtime ignores unrelated Explore code and follows the helpers", () => {
+    mkdirSync(path.join(root, "explore/lib/r/seqdesk.explore/R"), { recursive: true });
+    mkdirSync(path.join(root, "explore/lib/r/tests"), { recursive: true });
+    mkdirSync(path.join(root, "explore/lib/shell/bin"), { recursive: true });
+    writeFileSync(path.join(root, "explore/lib/r/seqdesk.explore/R/sx.R"), 'version <- "0.2.0"\n');
+    writeFileSync(path.join(root, "explore/lib/r/tests/test-sx.R"), "test");
+    writeFileSync(path.join(root, "explore/lib/shell/bin/sx"), 'VERSION = "0.1.0"\n');
+    const before = computeResultsRuntimeFingerprint(root);
+    writeFileSync(path.join(root, "src/lib/explore/reports.ts"), "unrelated view code");
+    writeFileSync(path.join(root, "explore/lib/r/tests/test-sx.R"), "changed test");
+    expect(computeResultsRuntimeFingerprint(root)).toBe(before);
+    writeFileSync(path.join(root, "src/lib/explore/run-finalize.ts"), "finalize v2");
+    const afterFinalizer = computeResultsRuntimeFingerprint(root);
+    expect(afterFinalizer).not.toBe(before);
+    writeFileSync(path.join(root, "explore/lib/shell/bin/sx"), 'VERSION = "0.1.1"\n');
+    expect(computeResultsRuntimeFingerprint(root)).not.toBe(afterFinalizer);
+  });
+
+  it("reads runs finalized before versioning as current when their helper matches", () => {
+    mkdirSync(path.join(root, "explore/lib/r/seqdesk.explore/R"), { recursive: true });
+    writeFileSync(path.join(root, "explore/lib/r/seqdesk.explore/R/sx.R"), '  version <- "0.2.0"\n');
+    const legacy = JSON.stringify({ runtime: { finalizer: "oldwholehash", helper: { language: "r", version: "0.2.0" } } });
+    expect(runtimeOfResults(legacy, "cur123", root)?.finalizer).toBe("cur123");
+    const olderHelper = JSON.stringify({ runtime: { finalizer: "oldwholehash", helper: { language: "r", version: "0.1.0" } } });
+    expect(runtimeOfResults(olderHelper, "cur123", root)?.finalizer).toBe("oldwholehash");
+    const versioned = JSON.stringify({ runtime: { finalizer: "other", version: "1", helper: { language: "r", version: "0.2.0" } } });
+    expect(runtimeOfResults(versioned, "cur123", root)?.finalizer).toBe("other");
   });
 });
