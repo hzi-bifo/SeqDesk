@@ -108,7 +108,11 @@ async function seed(recipe: Recipe) {
     console.log(`Resource ${name}: ${found.origin.record} ${found.origin.version} (${found.origin.licence}), sha256 ${found.origin.file?.sha256?.slice(0, 16)}…`);
   }
   if (missing.length) {
-    console.log(`Study ready; tables missing: ${missing.join(', ')}. Import ${recipe.source.doi} in Data > Find data, then Imports > Use in Analysis > "${recipe.study}" > Make table for ${missing.map(name => recipe.tables[name]!.file).join(' and ')}. Run this script again after.`);
+    const imports = missing.filter(name => recipe.tables[name]), resources = missing.filter(name => !recipe.tables[name]);
+    console.log(`Study ready; tables missing: ${missing.join(', ')}.` +
+      (imports.length ? ` Import ${recipe.source.doi} in Data > Find data, then Imports > Use in Analysis > "${recipe.study}" > Make table for ${imports.map(name => recipe.tables[name]!.file).join(' and ')}.` : '') +
+      (resources.length ? ` Install ${resources.map(name => recipe.resources![name]!.resource).join(' and ')} in Data > Resources and make ${resources.length === 1 ? 'it a study table' : 'them study tables'}.` : '') +
+      ' Run this script again after.');
     return;
   }
 
