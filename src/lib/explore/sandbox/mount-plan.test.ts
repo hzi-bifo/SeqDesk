@@ -48,6 +48,22 @@ describe("mount plans", () => {
     expect(args).not.toContain("/data/explore/datasets");
   });
 
+  it("makes the root and every tmpfs read-only after the last mount, leaving the run folder writable", () => {
+    const plan = buildMountPlan(base);
+    const args = renderBwrapArgs(plan);
+    const remounted = args.flatMap((arg, index) => (arg === "--remount-ro" ? [args[index + 1]] : []));
+    expect(remounted).toEqual(["/", ...plan.tmpfs, ...plan.overlayTmpfs]);
+    // A tmpfs mounted after its parent tmpfs is hidden by it, and remounting it then fails.
+    expect(plan.tmpfs.indexOf("/var")).toBeLessThan(plan.tmpfs.indexOf("/var/tmp"));
+    for (const [index, dst] of plan.tmpfs.entries()) expect(plan.tmpfs.slice(index + 1).some((later) => dst.startsWith(`${later}/`))).toBe(false);
+    expect(remounted).not.toContain("/dev");
+    expect(remounted).not.toContain(base.runFolder);
+    // Every mount point has to exist before its parent turns read-only.
+    const lastMount = Math.max(...["--bind", "--ro-bind", "--tmpfs", "--symlink"].map((flag) => args.lastIndexOf(flag)));
+    expect(args.indexOf("--remount-ro")).toBeGreaterThan(lastMount);
+    expect(args.slice(-2)).toEqual(["--chdir", base.runFolder]);
+  });
+
   it("keeps the network when asked and drops the net namespace", () => {
     const plan = buildMountPlan({ ...base, network: "host" });
     expect(plan.namespaces).not.toContain("net");

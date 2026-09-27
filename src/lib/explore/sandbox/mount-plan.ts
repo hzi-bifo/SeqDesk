@@ -200,7 +200,8 @@ export function buildMountPlan(input: MountPlanInput): MountPlan {
       if (found.symlink) system.push({ type: "symlink", target: found.symlink, dst: entry });
       else if (found.exists) system.push({ type: "ro-bind", src: entry, dst: entry });
     }
-    tmpfs.push("/tmp", "/var/tmp", "/run", "/var", "/home", "/root", "/opt");
+    // Parents before children: bubblewrap mounts in order, so a later /var would hide /var/tmp.
+    tmpfs.push("/tmp", "/run", "/var", "/var/tmp", "/home", "/root", "/opt");
     if (input.host.sss) binds.push({ src: "/var/lib/sss", dst: "/var/lib/sss", mode: "ro", purpose: "system" });
   }
 
@@ -334,6 +335,13 @@ export function renderBwrapArgs(plan: MountPlan): string[] {
     args.push(bind.mode === "rw" ? "--bind" : "--ro-bind", bind.src, bind.dst);
   }
   for (const overlay of pending) args.push("--tmpfs", overlay);
+  // bubblewrap's own root and every tmpfs are writable by default, so a write
+  // outside the run folder (to $HOST_HOME, /tmp, /data...) would "succeed"
+  // into memory and be lost, where macOS refuses it. Once every mount point
+  // exists they become read-only; a remount does not reach the binds below
+  // them, so the run folder stays writable. /dev stays writable (/dev/shm).
+  args.push("--remount-ro", "/");
+  for (const dst of [...plan.tmpfs, ...plan.overlayTmpfs]) args.push("--remount-ro", dst);
   args.push("--chdir", plan.chdir);
   return args;
 }

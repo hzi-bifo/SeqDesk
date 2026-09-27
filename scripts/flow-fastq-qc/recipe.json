@@ -81,12 +81,12 @@
     {
       "name": "Sandbox check: read ~/.ssh",
       "code": "ls -la \"$HOST_HOME/.ssh\" > \"$OUT/ssh.txt\"\n",
-      "expect": "Operation not permitted"
+      "expect": ["Operation not permitted", "ls: cannot access"]
     },
     {
       "name": "Sandbox check: write outside $OUT",
       "code": "echo leaked > \"$HOST_HOME/seqdesk-shell-escape.txt\"\n",
-      "expect": "Operation not permitted"
+      "expect": ["Operation not permitted", "Read-only file system", "No such file or directory"]
     }
   ]
 }

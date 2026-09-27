@@ -44,7 +44,8 @@ interface Recipe {
   source: { connector: string; accession: string; note: string };
   files: Record<string, { file: string }>;
   steps: RecipeStep[];
-  negative: { name: string; code: string; expect: string }[];
+  // macOS (Seatbelt) denies with EPERM; under bubblewrap the home directory is absent and the rest read-only.
+  negative: { name: string; code: string; expect: string | string[] }[];
 }
 
 async function context() {
@@ -203,9 +204,11 @@ async function negative(recipe: Recipe) {
     const out = state?.runFolder && existsSync(join(state.runFolder, 'logs', 'pipeline.out')) ? await readFile(join(state.runFolder, 'logs', 'pipeline.out'), 'utf8') : '';
     const sandboxed = /Sandbox: seatbelt|Sandbox: bubblewrap/.test(out);
     const failed = state?.status === 'failed';
-    const said = err.includes(check.expect) || (state?.errorTail ?? '').includes(check.expect);
+    const said = [check.expect].flat().some(expect => err.includes(expect) || (state?.errorTail ?? '').includes(expect));
     const escaped = check.name.includes('outside') && existsSync(join(homedir(), 'seqdesk-shell-escape.txt'));
-    const pass = failed && said && sandboxed && !escaped;
+    // The step itself must have been refused, not the sandbox tool failing to set up.
+    const setupFailed = /^bwrap: /m.test(err);
+    const pass = failed && said && sandboxed && !escaped && !setupFailed;
     ok &&= pass;
     console.log(`${pass ? 'ok      ' : 'MISMATCH'} ${check.name}: run #${state?.runNumber} ${state?.status}, ${sandboxed ? 'sandboxed' : 'NOT sandboxed'}; stderr: ${err.trim().split('\n').filter(Boolean).slice(-2).join(' | ')}`);
   }
