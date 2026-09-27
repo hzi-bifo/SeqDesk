@@ -11,6 +11,12 @@ export interface DelimitedParseOptions {
   headerLinePrefix?: string;
   /** Maximum number of data rows to read; the rest is reported as truncated. */
   maxRows?: number;
+  /**
+   * QIIME/biom style "#" lines: a "#" line before the header with fewer fields than the next line is a preamble
+   * ("# Constructed from biom file") and skipped, a "#" header ("#OTU ID", "#SampleID") is kept (the key loses the
+   * "#"), and "#" lines after the header ("#q2:types" directives, comments) are left out of the rows.
+   */
+  hashComments?: boolean;
 }
 
 export interface DelimitedParseResult {
@@ -110,7 +116,17 @@ export function parseDelimited(text: string, options: DelimitedParseOptions = {}
   if (headerIndex >= lines.length) {
     return { columns: [], rows: [], truncated: false, delimiter: "\t" };
   }
+  if (options.hashComments && !options.headerLinePrefix) {
+    const fields = (line: string) => line.split(detectDelimiter(line)).length;
+    while (lines[headerIndex]?.startsWith("#")) {
+      let next = headerIndex + 1;
+      while (next < lines.length && lines[next].trim() === "") next += 1;
+      if (next >= lines.length || fields(lines[headerIndex]) >= fields(lines[next])) break;
+      headerIndex = next;
+    }
+  }
   const header = lines[headerIndex].slice(options.headerLinePrefix?.length ?? 0);
+  const skipped = (line: string) => line.trim() === "" || Boolean(skipPrefix && line.startsWith(skipPrefix)) || Boolean(options.hashComments && line.startsWith("#"));
   const delimiter =
     !options.delimiter || options.delimiter === "auto" ? detectDelimiter(header) : options.delimiter;
   const recordAt = (start: number, initial = lines[start]) => {
@@ -132,7 +148,7 @@ export function parseDelimited(text: string, options: DelimitedParseOptions = {}
   // instead of rejecting the file; a lone line with an extra field is still an error below.
   const widths: number[] = [];
   for (let index = headerIndex + 1; index < lines.length && widths.length < 3; index += 1) {
-    if (lines[index].trim() === "" || (skipPrefix && lines[index].startsWith(skipPrefix))) continue;
+    if (skipped(lines[index])) continue;
     const record = recordAt(index);
     widths.push(record.cells.length);
     index = record.end;
@@ -145,8 +161,7 @@ export function parseDelimited(text: string, options: DelimitedParseOptions = {}
   const maxRows = options.maxRows ?? Number.POSITIVE_INFINITY;
   for (let index = headerIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
-    if (line.trim() === "") continue;
-    if (skipPrefix && line.startsWith(skipPrefix)) continue;
+    if (skipped(line)) continue;
     if (rows.length >= maxRows) {
       truncated = true;
       break;

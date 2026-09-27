@@ -24,6 +24,9 @@ export const ColumnRoleSchema = z.object({
   hint: z.string().max(200).optional(),
   /** For sample: the counts input whose number columns are the sample ids. */
   countsInput: Key.optional(),
+  /** For group and block: false when no step puts the column into a model formula (a Python step reads any name,
+   *  "body-site" included); otherwise the name must be formula-safe. */
+  formula: z.boolean().optional(),
   /** For group: the levels the steps compare (numerator and reference, or the two sites). */
   levels: z.array(z.object({ key: Key, label: z.string().min(1).max(60), default: z.string().max(120).optional(), reference: z.boolean().default(false) }).strict()).max(4).default([]),
 }).strict();
@@ -191,7 +194,7 @@ function checkRole(role: ColumnRole, fact: ColumnFact | null, column: string | n
       }
     }
   }
-  if (role.kind === "group" || role.kind === "block") {
+  if ((role.kind === "group" || role.kind === "block") && role.formula !== false) {
     if (!/^[A-Za-z][A-Za-z0-9._]*$/.test(column)) out.push(`${column} cannot go into the model formula; rename it in Data to letters, digits, dots or underscores.`);
   }
   if (role.kind === "group") {

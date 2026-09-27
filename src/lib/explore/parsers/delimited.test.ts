@@ -91,3 +91,26 @@ it("detects delimiters outside quoted header fields", () => {
   expect(parsed.delimiter).toBe("\t");
   expect(parsed.columns).toHaveLength(2);
 });
+
+describe("parseDelimited with hashComments (QIIME exports)", () => {
+  it("skips the biom preamble and keeps the #OTU ID header", async () => {
+    const { MP_FEATURE_TABLE, MP_SAMPLES } = await import("../__fixtures__/moving-pictures");
+    const parsed = parseDelimited(MP_FEATURE_TABLE, { delimiter: "auto", hashComments: true });
+    expect(parsed.columns).toEqual(["OTU_ID", ...MP_SAMPLES]);
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.rows[0]).toMatchObject({ OTU_ID: "4b5eeb300368260019c1fbc7a3c718fc", L1S8: "2595.0" });
+  });
+
+  it("leaves the #q2:types directive out of the sample metadata rows", async () => {
+    const { MP_SAMPLE_METADATA } = await import("../__fixtures__/moving-pictures");
+    const parsed = parseDelimited(MP_SAMPLE_METADATA, { delimiter: "auto", hashComments: true });
+    expect(parsed.columns.slice(0, 3)).toEqual(["sample-id", "barcode-sequence", "body-site"]);
+    expect(parsed.rows.map((row) => row["sample-id"])).not.toContain("#q2:types");
+    expect(parsed.rows).toHaveLength(6);
+  });
+
+  it("keeps a lone #SampleID header and leaves plain files alone", () => {
+    expect(parseDelimited("#SampleID\tsite\nA\tgut\n", { hashComments: true }).columns).toEqual(["SampleID", "site"]);
+    expect(() => parseDelimited("# Constructed from biom file\n#OTU ID\tS1\tS2\nf\t1\t2\n")).toThrow();
+  });
+});

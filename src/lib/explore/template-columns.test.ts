@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import fs from "fs";
 import path from "path";
 import { ColumnRoleSchema, fillColumnParams, resolveColumns, roleColumns, rolesLine, type TableFacts } from "./template-columns";
+import { parseDelimited } from "./parsers/delimited";
+import { inferSchema } from "./schema";
+import { checkColumns } from "./flow-inputs";
+import { MP_COUNTS_CSV, MP_FEATURE_TABLE, MP_SAMPLE_METADATA, MP_SAMPLES_CSV, MP_TAXONOMY, MP_TAXONOMY_CSV } from "./__fixtures__/moving-pictures";
 
 const template = (id: string) => JSON.parse(fs.readFileSync(path.join(process.cwd(), "explore", "templates", id, "template.json"), "utf8"));
 const rnaseq = template("rnaseq-deseq2");
@@ -71,5 +75,42 @@ describe("template column roles", () => {
     });
     expect(problems).toEqual([]);
     expect(values).toMatchObject({ feature_id: "asv", sample_id: "SampleID", group: "site", "group.a": "gut", "group.b": "tongue", subject: "host", taxonomy_id: "asv", taxon: "lineage" });
+  });
+});
+
+describe("microbiome-diversity on the real Moving Pictures tables", () => {
+  const micro = template("microbiome-diversity").columns.map((role: unknown) => ColumnRoleSchema.parse(role));
+  const inputs = template("microbiome-diversity").inputs as Array<{ key: string; check: { kind: "counts" | "samples" | "table" } }>;
+  const load = (text: string, csv = false) => {
+    const parsed = parseDelimited(text, { delimiter: csv ? "," : "auto", hashComments: true });
+    const schema = inferSchema(parsed.rows);
+    return { columns: schema.columns.map((column) => ({ key: column.key, type: column.type })), rows: parsed.rows as Array<Record<string, unknown>> };
+  };
+  const expectFits = (tables: Record<string, TableFacts>) => {
+    // Counts are read without rows, as templates.ts does.
+    const resolution = resolveColumns(micro, { ...tables, counts: { ...tables.counts, rows: [] } });
+    expect(resolution.problems).toEqual([]);
+    for (const input of inputs) {
+      const table = tables[input.key];
+      const result = checkColumns({ kind: input.check.kind, columns: roleColumns(resolution.roles, input.key) }, table.columns, table.rows.length, table.rows);
+      expect(result, input.key).toMatchObject({ ok: true });
+    }
+    return resolution.values;
+  };
+
+  it("matches the derived CSVs by the example's names", () => {
+    const values = expectFits({ counts: load(MP_COUNTS_CSV, true), samples: load(MP_SAMPLES_CSV, true), taxonomy: load(MP_TAXONOMY_CSV, true) });
+    expect(values).toMatchObject({ feature_id: "feature_id", sample_id: "sample", group: "body_site", "group.a": "gut", "group.b": "tongue", subject: "subject", taxonomy_id: "feature_id", taxon: "taxon" });
+  });
+
+  it("matches the QIIME exports: biom TSV, sample metadata with #q2:types, Feature ID / Taxon", () => {
+    const values = expectFits({ counts: load(MP_FEATURE_TABLE), samples: load(MP_SAMPLE_METADATA), taxonomy: load(MP_TAXONOMY) });
+    expect(values).toMatchObject({ feature_id: "OTU_ID", sample_id: "sample-id", group: "body-site", "group.a": "gut", "group.b": "tongue", subject: "subject", taxonomy_id: "Feature_ID", taxon: "Taxon" });
+  });
+
+  it("still asks for a formula-safe group name where a step puts it into a model", () => {
+    const samples = load(MP_SAMPLE_METADATA);
+    const inFormula = micro.map((role: ReturnType<typeof ColumnRoleSchema.parse>) => (role.key === "group" ? { ...role, formula: undefined } : role));
+    expect(resolveColumns(inFormula, { counts: { ...load(MP_FEATURE_TABLE), rows: [] }, samples, taxonomy: load(MP_TAXONOMY) }).problems.join(" ")).toMatch(/body-site cannot go into the model formula/);
   });
 });

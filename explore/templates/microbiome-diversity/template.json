@@ -63,6 +63,7 @@
       "label": "Group",
       "kind": "group",
       "default": "body_site",
+      "formula": false,
       "hint": "The two groups compared; other values are left out.",
       "levels": [
         {
