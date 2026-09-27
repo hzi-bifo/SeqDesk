@@ -961,6 +961,17 @@ model ManagedFile {
   @@index([targetKey, createdAt])
 }
 
+// People's section checks and the saved versions of a report page, kept apart
+// from the page so a check never bumps the page's updatedAt (the save guard).
+model ExploreReportReview {
+  reportId  String   @id
+  checks    Json     @default("{}")
+  versions  Json     @default("[]")
+  updatedAt DateTime @default(now()) @updatedAt
+
+  report ExploreReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+}
+
 model ExploreReportFile {
   reportId String
   fileId   String
@@ -1080,6 +1091,7 @@ model ExploreReport {
 
   analyses ExploreAnalysis[] // the analysis steps that belong to this report
   files    ExploreReportFile[]
+  review   ExploreReportReview?
 
   @@index([targetKey])
 }

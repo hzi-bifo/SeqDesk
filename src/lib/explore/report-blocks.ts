@@ -18,6 +18,8 @@ const FigureBlockSchema = z
     analysisId: z.string().min(1).max(80),
     figureName: z.string().min(1).max(120),
     caption: z.string().max(500).optional(),
+    /** The step run the figure was placed from: a newer run marks it ◇ until a person updates it (sheet 48 F1). */
+    pin: z.object({ run: z.string().min(1).max(80) }).strict().optional(),
     span: Span, size: Size,
   })
   .strict();
@@ -198,6 +200,8 @@ const RunMetricBlockSchema = z
     /** What a figure counts along the timeline (distinct:<column>, sum:<column>, count); missing means suggested from its name. */
     timeline: z.record(MetricKey, z.string().max(160)).optional(),
     label: z.string().max(200).optional(),
+    /** The step run the numbers were placed from, with the values then: shown until a person updates them. */
+    pin: z.object({ run: z.string().min(1).max(80), values: z.record(MetricKey, z.union([z.string().max(200), z.number(), z.boolean(), z.null()])) }).strict().optional(),
     span: Span, size: Size,
   })
   .strict()

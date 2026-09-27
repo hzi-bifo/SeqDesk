@@ -13,6 +13,7 @@ import { fetchAllDatasetRows, getDatasetRecord } from "./datasets";
 import { applyEditsToRows, listActiveEdits } from "./edits";
 import { applyFilters, cellText, groupBy, relativeAbundance, toNumber, type ActiveFilters } from "./frame";
 import { renderMarkdownHtml } from "./markdown-html";
+import { getReportReview } from "./report-review";
 import { applyRowFilter } from "./row-filter";
 import { METRIC_STAT_LABELS, type ReportFilter } from "./report-blocks";
 import { buildChart, computeStats, formatStat, WIDGET_ROW_LIMIT } from "./report-widgets";
@@ -23,7 +24,7 @@ import { ROLE_LABELS } from "./client";
 import { getReportView, type ReportAnalysis, type ReportView, type ReportViewOptions, type ResolvedReportBlock } from "./reports";
 import { parseRoles, parseSchema } from "./schema";
 import { parseTargetKey } from "./target-key";
-import { buildVariables, resolveVariablesInMarkdown, type ReportVariables } from "./variables";
+import { buildVariables, formatVariableValue, resolveVariablesForCopy, type ReportVariables } from "./variables";
 import { resolveContainedPath } from "./storage";
 import type { ExploreColumn, ExploreRoleMap, ExploreRowData, ExploreRowRecord } from "./types";
 import { computeHeatmap } from "./views/heatmap/compute";
@@ -82,6 +83,8 @@ export interface RenderInput {
   /** The Plotly library: its source inlined, or a script URL. */
   plotly: { inline: string } | { src: string };
   generatedAt: Date;
+  /** People's section checks (ExploreReportReview): the page says whether it was released. */
+  checks?: Record<string, { by: string; at: string }>;
 }
 
 interface Plot {
@@ -183,7 +186,8 @@ export function renderReportDocument(input: RenderInput): string {
   const inputTables = new Set(report.outputs.tables.filter((table) => !table.output).map((table) => table.datasetId));
   const inputRows = report.sharing?.inputRows === true;
 
-  const sections = report.blocks.map((block) => renderBlock(block, { input, filters, active, addPlot, tableOf, variables, inputTables, inputRows }));
+  const counts = { stale: 0, missing: 0 };
+  const sections = report.blocks.map((block) => renderBlock(block, { input, filters, active, addPlot, tableOf, variables, inputTables, inputRows, counts }));
   const provenance = renderProvenance(input.provenance ?? []);
   const headings = report.blocks.flatMap((block) =>
     block.type === "text"
@@ -194,6 +198,18 @@ export function renderReportDocument(input: RenderInput): string {
           .map((line) => ({ id: `block-${block.id}`, title: line.replace(/^##\s+/, "").trim() }))
       : []
   );
+  // Release: every section (a text block led by a ## heading) checked by a person.
+  const sectionIds = report.blocks.flatMap((block) => (block.type === "text" && block.markdown.split("\n").some((line) => /^##\s+.+/.test(line.trim())) ? [block.id] : []));
+  const checks = input.checks ?? {};
+  const checked = sectionIds.filter((id) => checks[id]).length;
+  const released = sectionIds.length > 0 && checked === sectionIds.length;
+  const releaseLine = !input.checks ? "" : released
+    ? `<p class="release released">Released · all ${sectionIds.length} ${sectionIds.length === 1 ? "section" : "sections"} checked by a person</p>`
+    : `<p class="release">Draft · ${sectionIds.length - checked} of ${sectionIds.length} ${sectionIds.length === 1 ? "section" : "sections"} not checked yet</p>`;
+  const warnings = [
+    counts.stale ? `◇ ${counts.stale} ${counts.stale === 1 ? "value is" : "values are"} from an older run than the current one; this copy shows the run each was placed from.` : "",
+    counts.missing ? `△ ${counts.missing} ${counts.missing === 1 ? "citation's source is" : "citations' sources are"} missing.` : "",
+  ].filter(Boolean);
   const activeFilters = filters.flatMap((filter) => {
     const values = active[filter.id] ?? [];
     return values.length ? [`${filter.label ?? columnLabel(tableOf(filter.datasetId)?.columns ?? [], filter.column)}: ${values.join(", ")}`] : [];
@@ -215,7 +231,8 @@ export function renderReportDocument(input: RenderInput): string {
 <header>
   <p class="eyebrow">${escapeHtml(input.scopeLabel)}</p>
   <h1>${escapeHtml(report.title)}</h1>
-  <p class="meta">Exported from SeqDesk on ${escapeHtml(input.generatedAt.toISOString().slice(0, 16).replace("T", " "))} UTC${report.updatedAt ? `; page last changed ${escapeHtml(report.updatedAt.slice(0, 10))}` : ""}. Figures and tables show the latest run of their analysis at export time.</p>
+  <p class="meta">Exported from SeqDesk on ${escapeHtml(input.generatedAt.toISOString().slice(0, 16).replace("T", " "))} UTC${report.updatedAt ? `; page last changed ${escapeHtml(report.updatedAt.slice(0, 10))}` : ""}. Cited values, key figures and figures show the run they were placed from; tables show the latest run.</p>
+  ${releaseLine}${warnings.length ? `<p class="stale-warning" role="note">${escapeHtml(warnings.join(" "))}</p>` : ""}
   ${activeFilters.length ? `<p class="filters">Filtered: ${escapeHtml(activeFilters.join("; "))}</p>` : ""}
   ${headings.length > 1 ? `<nav class="toc"><p class="toc-title">Contents</p><ol>${headings.map((heading) => `<li><a href="#${escapeHtml(heading.id)}">${escapeHtml(heading.title)}</a></li>`).join("")}</ol></nav>` : ""}
 </header>
@@ -243,6 +260,8 @@ interface BlockContext {
   inputTables: Set<string>;
   /** Whether input tables may show their rows in this copy. */
   inputRows: boolean;
+  /** Values shown from an older run (◇) and citations whose source is gone (△), for the warning line. */
+  counts: { stale: number; missing: number };
 }
 
 /** The appendix that makes a shared page checkable: one row per cited step with its code, run, environment and data. */
@@ -282,7 +301,7 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
   const { input, filters, active, addPlot, tableOf } = context;
   switch (block.type) {
     case "text": {
-      const html = renderMarkdownHtml(resolveVariablesInMarkdown(block.markdown, context.variables)).replace(/<h2>/, `<h2 id="block-${escapeHtml(block.id)}">`);
+      const html = renderMarkdownHtml(resolveVariablesForCopy(block.markdown, context.variables, context.counts)).replace(/<h2>/, `<h2 id="block-${escapeHtml(block.id)}">`);
       return `<section class="block span-${columnsOf(block) === 12 ? 2 : 1} prose" style="--cols:${columnsOf(block)}">${html}</section>`;
     }
     case "finding": {
@@ -298,7 +317,9 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
       const figure = block.figure;
       if (!figure) return section(block, (block.caption?.trim() || undefined) ?? block.figureName, empty("This figure is not produced by the analysis any more."));
       const artifact = input.artifacts.get(`${block.analysisId}:${block.figureName}`) ?? null;
-      const footer = `${figure.analysisName}, ${figure.runNumber}`;
+      const stale = Boolean(block.newer && block.pin && block.newer.runNumber !== block.pin.run);
+      if (stale) context.counts.stale += 1;
+      const footer = `${figure.analysisName}, ${typeof figure.flowRunNumber === "number" ? `Run #${figure.flowRunNumber}` : figure.runNumber}${stale ? ` ◇ a newer run (${typeof block.newer!.flowRunNumber === "number" ? `Run #${block.newer!.flowRunNumber}` : block.newer!.runNumber}) redrew it` : ""}`;
       if (!artifact) return section(block, (block.caption?.trim() || undefined) ?? block.figureName, empty("The figure file could not be read."), footer);
       if (artifact.format === "plotly-json") {
         try {
@@ -370,6 +391,7 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
       const source = analysisTimeline(analysis, [...input.tables.values()]);
       const keys = figureKeys(block);
       type Entry = { label: string; value: string; note?: string | null; extra?: string };
+      const staleKeys = new Set<string>();
       const entries = keys.flatMap((key): Entry[] => {
         const figure = (block.figures ?? []).find((entry) => tableFigureKey(entry) === key) ?? null;
         const table = figure ? input.tables.get(figure.datasetId) ?? null : null;
@@ -385,13 +407,17 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
           timeline = axis ? { datasetId: table.datasetId, tableName: table.name, axis, roles: table.roles } : null;
         } else {
           if (!analysis) return [];
-          value = analysis.metrics[key];
+          // A key figure pinned to a run keeps that run's number; a newer run with another number is marked ◇.
+          const pinned = block.pin && Object.prototype.hasOwnProperty.call(block.pin.values, key);
+          value = pinned ? block.pin!.values[key] : analysis.metrics[key];
+          if (pinned && analysis.runNumber && analysis.runNumber !== block.pin!.run && String(analysis.metrics[key] ?? null) !== String(value ?? null)) { context.counts.stale += 1; staleKeys.add(key); }
           defaultLabel = metricLabel(key);
           history = analysis.history ?? null;
           timeline = source;
         }
         const digits = block.digits?.[key];
-        const format = (amount: number) => formatWithDigits(amount, digits, formatStat);
+        // Run figures read like the report's text (one formatter, variables.ts); table statistics keep formatStat.
+        const format = (amount: number) => (figure ? formatWithDigits(amount, digits, formatStat) : formatVariableValue(amount, digits ?? null));
         const text = withUnit(typeof value === "number" ? format(value) : formatValue(value) || "n/a", block.units?.[key]);
         const mode = block.trends?.[key] ?? block.trend ?? "none";
         const label = block.labels?.[key]?.trim() || defaultLabel;
@@ -412,6 +438,7 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
           const note = trendNote(movement, mode, format);
           if (note) notes.push(note);
         }
+        if (staleKeys.has(key) && analysis?.runNumber) notes.unshift(`◇ ${analysis.runNumber} has ${formatVariableValue(analysis.metrics[key], digits ?? null)}`);
         return [{ label, value: text, note: notes.join("; ") || null, extra }];
       });
       const footer = [analysis && block.metrics.length > 0 ? `${analysis.name}${analysis.runNumber ? `, ${analysis.runNumber}` : ""}` : null, ...new Set((block.figures ?? []).map((figure) => input.tables.get(figure.datasetId)?.name ?? "a table"))].filter(Boolean).join("; ");
@@ -842,6 +869,7 @@ export async function renderReportHtml(reportId: string, options: ExportOptions)
     active: options.active ?? {},
     plotly,
     generatedAt: new Date(),
+    checks: (await getReportReview(reportId).catch(() => null))?.checks,
   });
   return { html, title: report.title };
 }
@@ -856,6 +884,8 @@ header{padding-top:36px}
 h1{margin:6px 0 4px;font-size:28px;line-height:1.2;letter-spacing:-.01em}
 .meta,.filters{margin:4px 0;color:var(--muted);font-size:13px}
 .filters{color:var(--accent)}
+.release{margin:4px 0;font-size:13px;color:var(--muted)}.release.released{color:var(--accent)}
+.stale-warning{margin:8px 0 0;padding:8px 12px;border:1px solid #d9c38a;border-radius:6px;background:#fbf6e8;font-size:13px}
 .toc{margin:16px 0 0;padding:10px 16px;border:1px solid var(--line);border-radius:8px;background:var(--soft);font-size:13px}
 .toc-title{margin:0 0 4px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .toc ol{margin:0;padding-left:1.4em;columns:2;column-gap:32px}

@@ -145,7 +145,7 @@ export const MAX_FINDING_BYTES = 200_000;
 export type ResolvedReportBlock =
   | Extract<ReportBlock, { type: "text" }>
   | (Extract<ReportBlock, { type: "finding" }> & { analysis: ReportAnalysis | null; finding: ReportFinding | null })
-  | (Extract<ReportBlock, { type: "figure" }> & { figure: ReportFigure | null })
+  | (Extract<ReportBlock, { type: "figure" }> & { figure: ReportFigure | null; newer?: { runNumber: string; flowRunNumber: number | null } })
   | (Extract<ReportBlock, { type: "table" }> & { table: ReportTableContent | null })
   | (Extract<ReportBlock, { type: "chart" }> & { table: ReportTableMeta | null })
   | (Extract<ReportBlock, { type: "metric" }> & { table: ReportTableMeta | null })
@@ -331,7 +331,18 @@ export async function loadFindingContent(url: string): Promise<string | null> {
   return content.subarray(0, MAX_FINDING_BYTES).toString("utf8") + (content.length > MAX_FINDING_BYTES ? "\n\n… (shortened)" : "");
 }
 
-export async function resolveReportBlocks(blocks: ReportBlock[], outputs: ReportOutputs, loadTable: ReportTableLoader, loadFinding: ReportFindingLoader = loadFindingContent): Promise<ResolvedReportBlock[]> {
+/** The figure a step drew in one of its earlier runs, for a figure pinned to that run. */
+export type PinnedFigureLoader = (figure: ReportFigure, run: string) => Promise<ReportFigure | null>;
+async function loadPinnedFigure(figure: ReportFigure, run: string): Promise<ReportFigure | null> {
+  const found = await db.exploreAnalysisRun.findUnique({ where: { runNumber: run }, select: { id: true, analysisId: true, runNumber: true, flowRun: { select: { number: true } }, artifacts: { where: { kind: "figure", name: figure.figureName }, select: { id: true, format: true } } } }).catch(() => null);
+  if (!found || found.analysisId !== figure.analysisId || !found.artifacts.length) return null;
+  const main = found.artifacts.find((artifact) => artifact.format === figure.format) ?? found.artifacts.find((artifact) => ["plotly-json", "html"].includes(artifact.format)) ?? found.artifacts[0];
+  const image = found.artifacts.find((artifact) => artifact.format === "png" || artifact.format === "svg");
+  const url = (id: string) => `/api/explore/runs/${found.id}/artifacts/${id}`;
+  return { ...figure, runId: found.id, runNumber: found.runNumber, flowRunNumber: found.flowRun?.number ?? null, format: main.format, url: url(main.id), thumbnailUrl: image ? url(image.id) : null, unchanged: false };
+}
+
+export async function resolveReportBlocks(blocks: ReportBlock[], outputs: ReportOutputs, loadTable: ReportTableLoader, loadFinding: ReportFindingLoader = loadFindingContent, loadPinned: PinnedFigureLoader = loadPinnedFigure): Promise<ResolvedReportBlock[]> {
   const figureByKey = new Map(outputs.figures.map((figure) => [`${figure.analysisId}:${figure.figureName}`, figure] as const));
   const tableById = new Map(outputs.tables.map((table) => [table.datasetId, table] as const));
   const metaOf = (datasetId: string): ReportTableMeta | null => {
@@ -345,7 +356,13 @@ export async function resolveReportBlocks(blocks: ReportBlock[], outputs: Report
         const analysis = outputs.analyses.find((entry) => entry.analysisId === block.analysisId) ?? null;
         return { ...block, analysis, finding: analysis ? await resolveFinding(analysis, block.name, loadFinding) : null };
       }
-      if (block.type === "figure") return { ...block, figure: figureByKey.get(`${block.analysisId}:${block.figureName}`) ?? null };
+      if (block.type === "figure") {
+        const latest = figureByKey.get(`${block.analysisId}:${block.figureName}`) ?? null;
+        // A figure pinned to an earlier run keeps showing that run's drawing; the newer run is reported, never swapped in.
+        if (!block.pin || !latest || latest.runNumber === block.pin.run) return { ...block, figure: latest };
+        const pinned = await loadPinned(latest, block.pin.run);
+        return { ...block, figure: pinned ?? latest, newer: { runNumber: latest.runNumber, flowRunNumber: latest.flowRunNumber ?? null } };
+      }
       if (block.type === "chart" || block.type === "metric") return { ...block, table: metaOf(block.datasetId) };
       if (block.type === "view") return { ...block, table: metaOf(block.datasetId), available: Boolean(tableById.get(block.datasetId)?.views.includes(block.view)) };
       if (block.type === "taxon-explorer" || block.type === "subject" || block.type === "curated") return { ...block, table: metaOf(block.datasetId) };

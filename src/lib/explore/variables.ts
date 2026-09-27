@@ -77,12 +77,14 @@ export function formatVariableValue(value: VariableValue | undefined, digits: nu
   if (typeof value === "boolean") return value ? "yes" : "no";
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return "n/a";
+    // The same rules as the web client's formatNumber (Web lib/team/flow/number-format.ts): grouped whole numbers,
+    // three significant digits below one without trailing zeros, four up to a thousand, seven above, compact from a
+    // million for fractions; explicit decimals win.
     if (digits !== null) return value.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
-    if (Math.abs(value) >= 1_000_000) return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
     if (Number.isInteger(value)) return value.toLocaleString("en-US");
-    if (Math.abs(value) >= 1000) return Math.round(value).toLocaleString("en-US");
-    if (Math.abs(value) >= 1) return Number(value.toFixed(2)).toString();
-    return Number(value.toPrecision(3)).toString();
+    if (Math.abs(value) >= 1_000_000) return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+    if (Math.abs(value) < 1) return String(Number(value.toPrecision(3)));
+    return value.toLocaleString("en-US", { maximumSignificantDigits: Math.abs(value) < 1000 ? 4 : 7 });
   }
   return String(value);
 }
@@ -111,5 +113,25 @@ export function resolveVariablesInMarkdown(markdown: string, variables: ReportVa
   return markdown.replace(INLINE_CODE, (whole, inner: string) => {
     const resolved = resolveVariable(inner, variables);
     return resolved ? resolved.text : whole;
+  });
+}
+
+/**
+ * Citations resolved for a shared or exported page: a value pinned to an older
+ * run keeps that run's number and is marked ◇; a citation whose step or metric
+ * is gone reads "△ source missing" instead of passing for a healthy value. The
+ * counts feed the page's warning line.
+ */
+export function resolveVariablesForCopy(markdown: string, variables: ReportVariables, counts: { stale: number; missing: number }): string {
+  return markdown.replace(INLINE_CODE, (whole, inner: string) => {
+    const resolved = resolveVariable(inner, variables);
+    if (!resolved) return whole;
+    if (!resolved.found) {
+      counts.missing += 1;
+      const kept = resolved.ref.pin?.text ? `${resolved.ref.pin.text} ` : "";
+      return `${kept}△ source missing (${resolved.ref.step}.${resolved.ref.metric})`;
+    }
+    if (resolved.newer) { counts.stale += 1; return `${resolved.text} ◇`; }
+    return resolved.text;
   });
 }

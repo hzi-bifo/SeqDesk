@@ -199,4 +199,28 @@ describe("dashboard numbers on the shared page", () => {
     expect(html).toContain("table missing");
     expect(html).toContain("Profiles");
   });
+
+  it("shows release state, keeps pinned key figures and figures, and warns about stale or missing values (B2, B7)", () => {
+    const base = report();
+    const value: RenderInput = input({
+      checks: { t1: { by: "Amara", at: "2026-09-05T11:00:00Z" } },
+      report: {
+        ...base,
+        outputs: { ...base.outputs, analyses: [{ analysisId: "a1", name: "Beta diversity", slug: "beta", runNumber: "EXP-9", metrics: { n_samples: 874 } } as never] },
+        blocks: base.blocks.map((block) =>
+          block.type === "text" ? { ...block, markdown: "## Intro\n\n`r beta.n_samples @EXP-8=870` and `r gone.x`" }
+          : block.type === "run-metric" ? { ...block, pin: { run: "EXP-8", values: { n_samples: 870, permanova_group_R2: 0.0629 } } }
+          : block.id === "fig" ? { ...block, pin: { run: "EXP-8" }, newer: { runNumber: "EXP-9", flowRunNumber: 9 } }
+          : block) as ReportView["blocks"],
+      },
+    });
+    const html = renderReportDocument(value);
+    expect(html).toContain("Released · all 1 section checked by a person");
+    expect(html).toContain("870 ◇");
+    expect(html).toContain("△ source missing (gone.x)");
+    expect(html).toMatch(/◇ 3 values are from an older run/);
+    expect(html).toContain("◇ EXP-9 has 874");
+    expect(html).toContain("a newer run (Run #9) redrew it");
+    expect(renderReportDocument(input())).not.toContain("class=\"release");
+  });
 });

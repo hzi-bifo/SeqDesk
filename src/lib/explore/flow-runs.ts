@@ -206,6 +206,20 @@ async function runActiveError(flowId: string) {
     { run: active ? { id: active.id, number: active.number, trialNumber: active.trialNumber, kind: active.kind, status: active.status } : null });
 }
 
+/**
+ * The step a failed run newer than the current one stopped at, while that step still has the code and settings it
+ * failed with. Once someone changes or reverts the step, the failure no longer describes it: the step is judged
+ * against the current run again, so the recipe's status and "Re-run N steps" agree without a full run (B8).
+ */
+export async function failedStepAfter(flowId: string, currentRun: { createdAt: Date } | null, model: RecipeModel): Promise<string | null> {
+  const failed = await db.exploreFlowRun.findFirst({ where: { flowId, status: "failed", kind: { not: "trial" }, ...(currentRun ? { createdAt: { gt: currentRun.createdAt } } : {}) }, orderBy: { createdAt: "desc" }, select: { id: true, failedAnalysisId: true } });
+  if (!failed?.failedAnalysisId) return null;
+  const stepRun = await db.exploreAnalysisRun.findFirst({ where: { flowRunId: failed.id, analysisId: failed.failedAnalysisId }, orderBy: { createdAt: "desc" }, select: { revisionId: true } });
+  const step = model.steps.find((entry) => entry.id === failed.failedAnalysisId);
+  if (stepRun && step?.revision && stepRun.revisionId !== step.revision.id) return null;
+  return failed.failedAnalysisId;
+}
+
 /** Which steps a run executes and which it reuses (D5). */
 export function planRun(model: RecipeModel, scope: StartFlowRunInput["scope"], current: Map<string, StepRecord>, states: Map<string, { state: string }>): PlanEntry[] {
   const ids = new Set(model.steps.map((step) => step.id));
@@ -259,8 +273,10 @@ export async function startFlowRun(flowId: string, input: StartFlowRunInput): Pr
   if (missingRevision) throw flowError("invalid_request", `Step ${model.labels.get(missingRevision.id)} has no code yet.`);
   const recipe = await ensureRecipeRevision(flowId, { userId: input.actor.userId, memberId: input.actor.memberId });
 
-  const current = model.flow.currentRunId ? (await runRecords(model.flow.currentRunId))?.records ?? new Map<string, StepRecord>() : new Map<string, StepRecord>();
-  const states = computeStepStates({ model, records: current, revisionsUsed: await revisionsUsedBy(current) });
+  const currentRun = model.flow.currentRunId ? await runRecords(model.flow.currentRunId) : null;
+  const current = currentRun?.records ?? new Map<string, StepRecord>();
+  // The same states the recipe shows (recipe-view.ts), including a failure that still applies.
+  const states = computeStepStates({ model, records: current, revisionsUsed: await revisionsUsedBy(current), failedAt: await failedStepAfter(flowId, currentRun?.run ?? null, model) });
   const trial = Boolean(input.trial);
   const plan = planRun(model, input.scope, current, states);
   const executed = plan.filter((entry) => entry.execute);

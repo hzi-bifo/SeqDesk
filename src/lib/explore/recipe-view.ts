@@ -9,7 +9,7 @@ import { db } from "@/lib/db";
 import { flowError } from "@/lib/integration/flow-contract";
 import { codeRegions } from "./code-regions";
 import { datasetFitMessage, datasetFitsInput } from "./dataset-kinds";
-import { runRecords, revisionsUsedBy, serializeFlowRunById, stepLedger, stepValues, type FlowRunSummary } from "./flow-runs";
+import { failedStepAfter, runRecords, revisionsUsedBy, serializeFlowRunById, stepLedger, stepValues, type FlowRunSummary } from "./flow-runs";
 import { inputContractSnapshot } from "./input-validation";
 import { getKit, type LoadedKit } from "./kits/loader";
 import type { KitInput } from "./kits/schema";
@@ -170,8 +170,8 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
   }
   // A failed run newer than the current one marks the step it failed at.
   const currentRow = current?.run ?? null;
-  const failedRun = await db.exploreFlowRun.findFirst({ where: { flowId, status: "failed", kind: { not: "trial" }, ...(currentRow ? { createdAt: { gt: currentRow.createdAt } } : {}) }, orderBy: { createdAt: "desc" }, select: { failedAnalysisId: true } });
-  const states = computeStepStates({ model, records: currentRecords, revisionsUsed: await revisionsUsedBy(currentRecords), active, failedAt: failedRun?.failedAnalysisId ?? null });
+  const failedAt = await failedStepAfter(flowId, currentRow, model);
+  const states = computeStepStates({ model, records: currentRecords, revisionsUsed: await revisionsUsedBy(currentRecords), active, failedAt });
 
   // The run before the viewed one: values that changed show "was …" (a setting changed and the step ran again).
   const previousRow = viewed?.run.number !== null && viewed?.run.number !== undefined

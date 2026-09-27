@@ -29,6 +29,7 @@ import { applyEditsToRows, listActiveEdits } from "@/lib/explore/edits";
 import { createFlow, deleteFlow, getFlow, getFlowRecord, listFlows, updateFlow } from "@/lib/explore/flows";
 import { isExploreModuleEnabled } from "@/lib/explore/module";
 import { renderReportHtml } from "@/lib/explore/report-export";
+import { changeReportChecks, getReportReview, reviewSummaries, importReportReview, recordReportVersion, ReportReviewError } from "@/lib/explore/report-review";
 import { createReport, deleteReport, ExploreReportError, getReportRecord, getReportView, listReports, renameReport, resetReport, saveReport, setShareMode, shareModeOf, shareReport, unshareReport, type ReportViewOptions } from "@/lib/explore/reports";
 import { ExploreRouteError } from "@/lib/explore/route-error";
 import { readRunIsolation, summarizeIsolation } from "@/lib/explore/sandbox/prepare";
@@ -380,7 +381,9 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         const targetKey = query.get("targetKey") ?? "";
         const access = await resolveTargetAccess(session, targetKey);
         if (!access.target || access.level === "none") throw new ExploreAuthorizationError(404, "Not found");
-        return json({ reports: await listReports(targetKey), canEdit: access.level === "write" });
+        const reports = await listReports(targetKey);
+        const reviews = await reviewSummaries(reports.map((report) => report.id)).catch(() => new Map<string, { checks: Record<string, { by: string; at: string }>; version: number }>());
+        return json({ reports: reports.map((report) => { const review = reviews.get(report.id); return review ? { ...report, review } : report; }), canEdit: access.level === "write" });
       }
       if (segments.length === 1 && method === "POST") {
         const body = await readJson(request);
@@ -407,6 +410,29 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
           const record = await loadReport(session, id, "write");
           await deleteReport(record.id);
           return json({ deleted: true });
+        }
+      }
+      // The review of a page: section checks and versions, shared by every browser (report-review.ts).
+      if (segments.length >= 3 && sub === "review") {
+        const part = segments[3];
+        if (segments.length === 3 && method === "GET") {
+          const record = await loadReport(session, id, "read");
+          return json({ review: await getReportReview(record.id) });
+        }
+        if (segments.length === 4 && part === "checks" && method === "PATCH") {
+          const record = await loadReport(session, id, "write");
+          const body = await readJson(request);
+          if (!body.checks || typeof body.checks !== "object" || Array.isArray(body.checks)) throw new ExploreRouteError(400, "checks must be an object");
+          return json({ review: await changeReportChecks(record.id, body.checks as Record<string, unknown>) });
+        }
+        if (segments.length === 4 && part === "versions" && method === "POST") {
+          const record = await loadReport(session, id, "write");
+          try { return json(await recordReportVersion(record.id, await readJson(request)), 201); }
+          catch (error) { if (error instanceof ReportReviewError) throw new ExploreRouteError(error.status, error.message); throw error; }
+        }
+        if (segments.length === 4 && part === "import" && method === "POST") {
+          const record = await loadReport(session, id, "write");
+          return json({ review: await importReportReview(record.id, await readJson(request)) });
         }
       }
       if (segments.length === 3 && sub === "files") {
