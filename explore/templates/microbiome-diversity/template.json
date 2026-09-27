@@ -1,0 +1,251 @@
+{
+  "id": "microbiome-diversity",
+  "name": "Microbiome diversity (scikit-bio)",
+  "description": "Do two groups of samples differ in diversity and composition? Read-depth QC and rarefaction, alpha diversity (Shannon, observed features), Bray-Curtis PCoA with PERMANOVA, then the taxa that differ most. The real example is QIIME 2 Moving Pictures (16S V4): gut vs tongue.",
+  "inputs": [
+    {
+      "key": "counts",
+      "label": "Counts",
+      "expects": "A feature table: features × samples, whole numbers. A feature id column, then one column per sample named by its sample id.",
+      "check": {
+        "kind": "counts",
+        "columns": [
+          "feature_id"
+        ]
+      }
+    },
+    {
+      "key": "samples",
+      "label": "Samples",
+      "expects": "A sample sheet: one row per sample, a sample id column matching the count columns and the column with the two groups to compare (a subject column is optional).",
+      "check": {
+        "kind": "samples",
+        "columns": [
+          "sample",
+          "body_site"
+        ]
+      }
+    },
+    {
+      "key": "taxonomy",
+      "label": "Taxonomy",
+      "expects": "One row per feature: a feature id column and the taxon (a confidence column is optional).",
+      "check": {
+        "kind": "table",
+        "columns": [
+          "feature_id",
+          "taxon"
+        ]
+      }
+    }
+  ],
+  "columns": [
+    {
+      "key": "feature_id",
+      "input": "counts",
+      "label": "Feature id",
+      "kind": "feature",
+      "default": "feature_id",
+      "hint": "The column naming the features (ASVs, OTUs)."
+    },
+    {
+      "key": "sample_id",
+      "input": "samples",
+      "label": "Sample id",
+      "kind": "sample",
+      "default": "sample",
+      "countsInput": "counts",
+      "hint": "Holds the names of the count columns."
+    },
+    {
+      "key": "group",
+      "input": "samples",
+      "label": "Group",
+      "kind": "group",
+      "default": "body_site",
+      "hint": "The two groups compared; other values are left out.",
+      "levels": [
+        {
+          "key": "a",
+          "label": "First",
+          "default": "gut"
+        },
+        {
+          "key": "b",
+          "label": "Second",
+          "default": "tongue"
+        }
+      ]
+    },
+    {
+      "key": "subject",
+      "input": "samples",
+      "label": "Subject",
+      "kind": "subject",
+      "optional": true,
+      "default": "subject",
+      "hint": "Optional: who each sample came from; kept as the subject role of the sample tables."
+    },
+    {
+      "key": "taxonomy_id",
+      "input": "taxonomy",
+      "label": "Feature id",
+      "kind": "feature",
+      "default": "feature_id",
+      "hint": "Matches the feature ids of the counts."
+    },
+    {
+      "key": "taxon",
+      "input": "taxonomy",
+      "label": "Taxon",
+      "kind": "text",
+      "default": "taxon",
+      "hint": "The taxonomic name of each feature."
+    }
+  ],
+  "steps": [
+    {
+      "key": "qc",
+      "name": "Read-depth QC and rarefaction",
+      "purpose": "Keep gut and tongue samples with enough reads, rarefy to an even depth.",
+      "language": "python",
+      "codeFile": "steps/01-qc-rarefy.py",
+      "params": {
+        "sample_column": "{{sample_id}}",
+        "feature_column": "{{feature_id}}",
+        "subject_column": "{{subject}}",
+        "group_column": "{{group}}",
+        "group_levels": [
+          "{{group.a}}",
+          "{{group.b}}"
+        ],
+        "min_depth": 1103,
+        "normalise": "rarefy",
+        "seed": 42
+      },
+      "inputs": [
+        {
+          "alias": "counts",
+          "input": "counts"
+        },
+        {
+          "alias": "samples",
+          "input": "samples"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "counts_qc",
+          "kind": "table"
+        },
+        {
+          "name": "samples_qc",
+          "kind": "table"
+        }
+      ],
+      "packages": []
+    },
+    {
+      "key": "alpha",
+      "name": "Alpha diversity",
+      "purpose": "Is one site richer or more even than the other?",
+      "language": "python",
+      "codeFile": "steps/02-alpha.py",
+      "params": {
+        "group_column": "{{group}}",
+        "log_base": 2
+      },
+      "inputs": [
+        {
+          "alias": "counts_qc",
+          "from": {
+            "step": "qc",
+            "output": "counts_qc"
+          }
+        },
+        {
+          "alias": "samples_qc",
+          "from": {
+            "step": "qc",
+            "output": "samples_qc"
+          }
+        }
+      ],
+      "outputs": [],
+      "packages": []
+    },
+    {
+      "key": "beta",
+      "name": "Bray-Curtis PCoA and PERMANOVA",
+      "purpose": "Do the two sites differ in composition?",
+      "language": "python",
+      "codeFile": "steps/03-beta.py",
+      "params": {
+        "group_column": "{{group}}",
+        "metric": "braycurtis",
+        "permutations": 999,
+        "seed": 42
+      },
+      "inputs": [
+        {
+          "alias": "counts_qc",
+          "from": {
+            "step": "qc",
+            "output": "counts_qc"
+          }
+        },
+        {
+          "alias": "samples_qc",
+          "from": {
+            "step": "qc",
+            "output": "samples_qc"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "pseudo_f",
+          "kind": "value"
+        }
+      ],
+      "packages": []
+    },
+    {
+      "key": "taxa",
+      "name": "Top differing taxa",
+      "purpose": "Which taxa separate gut from tongue?",
+      "language": "python",
+      "codeFile": "steps/04-top-taxa.py",
+      "params": {
+        "group_column": "{{group}}",
+        "taxonomy_feature_column": "{{taxonomy_id}}",
+        "taxon_column": "{{taxon}}",
+        "min_prevalence": 0.1,
+        "fdr": 0.05,
+        "n_top": 15
+      },
+      "inputs": [
+        {
+          "alias": "counts_qc",
+          "from": {
+            "step": "qc",
+            "output": "counts_qc"
+          }
+        },
+        {
+          "alias": "samples_qc",
+          "from": {
+            "step": "qc",
+            "output": "samples_qc"
+          }
+        },
+        {
+          "alias": "taxonomy",
+          "input": "taxonomy"
+        }
+      ],
+      "outputs": [],
+      "packages": []
+    }
+  ]
+}

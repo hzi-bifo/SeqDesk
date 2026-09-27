@@ -1155,6 +1155,27 @@ model ExploreFlow {
   @@index([targetKey])
 }
 
+// A Data table an analysis reads, named by what it stands for (FLOW templates and
+// "Add data" in the recipe). datasetId null means the input still needs a table:
+// the flow cannot run until someone chooses one. `uses` lists the step bindings
+// ({stepId, alias}) it feeds. Accessed with raw SQL (flow-inputs.ts).
+model ExploreFlowInput {
+  id         String   @id
+  flowId     String
+  key        String
+  label      String
+  expects    String?
+  check      Json?
+  datasetId  String?
+  templateId String?
+  uses       Json?
+  position   Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now())
+
+  @@unique([flowId, key])
+}
+
 // One turn of a flow's shared conversation (sheet 46), seen by everyone who
 // can open the flow. Assistant turns are written by the web client, which runs
 // the model through the collaboration server; SeqDesk never calls a model.

@@ -19,7 +19,8 @@ import fs from "fs/promises";
 import { Readable } from "stream";
 import { enqueueFlowRecord } from "./events";
 import { acceptGloss, deleteGloss, glossRecord, listGlosses, patchGloss, putGlosses } from "@/lib/explore/glosses";
-import { createFlowFromTemplate, listTemplates, serializeTemplate } from "@/lib/explore/templates";
+import { checkTemplateInputs, createFlowFromTemplate, listTemplates, serializeTemplate } from "@/lib/explore/templates";
+import { attachFlowInput, listFlowInputs } from "@/lib/explore/flow-inputs";
 import { addHold, listHolds, removeHold, cancelFlowRun, compareFlowRuns, flowRunOutputs, getFlowRunDetail, listFlowRuns, makeRunCurrent, startFlowRun, type FlowActor, type StartFlowRunInput } from "@/lib/explore/flow-runs";
 import { flowError, requestIdOf } from "./flow-contract";
 import type { IntegrationSession } from "./identity";
@@ -149,7 +150,7 @@ async function handleRuns({ request, session, segments, json }: FlowRouteContext
 
 const FLOW_HEADS = new Set(["flow-runs", "proposals", "glosses", "values", "capsules", "templates"]);
 const FLOW_SUBS: Record<string, Set<string>> = {
-  flows: new Set(["recipe", "runs", "revisions", "step-options", "steps", "proposals", "values", "lineage", "from-template", "conversation"]),
+  flows: new Set(["recipe", "runs", "revisions", "step-options", "steps", "proposals", "values", "lineage", "from-template", "conversation", "inputs"]),
   analyses: new Set(["glosses"]),
   artifacts: new Set(["capsule", "plot-source"]),
 };
@@ -197,17 +198,40 @@ async function handleRecipe({ request, session, segments, json }: FlowRouteConte
   if (head === "templates" && segments.length === 1 && method === "GET") {
     return json({ templates: (await listTemplates()).map(serializeTemplate) });
   }
+  if (head === "templates" && id === "check" && segments.length === 2 && method === "POST") {
+    const body = await readBody(request);
+    const targetKey = optionalText(body.targetKey, 200);
+    if (!targetKey || typeof body.templateId !== "string") throw flowError("invalid_request", "targetKey and templateId are required.");
+    await requireTargetAccess(session, targetKey, "read");
+    const checked = await checkTemplateInputs({ targetKey, templateId: body.templateId, datasets: body.datasets, columns: body.columns });
+    return json({ inputs: checked.inputs, columns: checked.columns });
+  }
   if (head === "flows" && id === "from-template" && segments.length === 2 && method === "POST") {
     const body = await readBody(request);
     const targetKey = optionalText(body.targetKey, 200);
-    if (!targetKey || typeof body.templateId !== "string" || typeof body.datasetId !== "string") throw flowError("invalid_request", "targetKey, templateId and datasetId are required.");
+    if (!targetKey || typeof body.templateId !== "string" || (typeof body.datasetId !== "string" && (!body.datasets || typeof body.datasets !== "object"))) throw flowError("invalid_request", "targetKey, templateId and datasetId (or datasets) are required.");
     await requireTargetAccess(session, targetKey, "write");
-    const flowId = await createFlowFromTemplate({ targetKey, templateId: body.templateId, name: optionalText(body.name, 200), datasetId: body.datasetId, slots: body.slots, actor: actorOf(session) });
+    // "Start from a template with this table" fills the blank analysis the table was added to.
+    const into = typeof body.intoFlowId === "string" && body.intoFlowId ? await flowFor(session, body.intoFlowId, "write") : null;
+    if (into && into.targetKey !== targetKey) throw flowError("invalid_request", "Choose an analysis of this study.");
+    const flowId = await createFlowFromTemplate({ targetKey, templateId: body.templateId, name: optionalText(body.name, 200), datasetId: typeof body.datasetId === "string" ? body.datasetId : null, datasets: body.datasets, columns: body.columns, intoFlowId: into?.id ?? null, slots: body.slots, actor: actorOf(session) });
     await flowChanged(flowId);
     const { getFlow } = await import("@/lib/explore/flows");
     return json({ flow: await getFlow(flowId), recipe: await recipeFor(session, { id: flowId, targetKey }) }, 201);
   }
   if (head !== "flows" || segments.length !== 3) return null;
+  if (sub === "inputs" && method === "GET") {
+    const flow = await flowFor(session, id, "read");
+    return json({ inputs: await listFlowInputs(flow.id, flow.targetKey) });
+  }
+  if (sub === "inputs" && method === "POST") {
+    const flow = await flowFor(session, id, "write");
+    const body = await readBody(request);
+    if (typeof body.datasetId !== "string") throw flowError("invalid_request", "datasetId is required: a step reads only tables in Data.");
+    await attachFlowInput({ flowId: flow.id, targetKey: flow.targetKey, key: optionalText(body.key, 40), label: optionalText(body.label, 80), datasetId: body.datasetId, actor: actorOf(session) });
+    await flowChanged(flow.id);
+    return json({ inputs: await listFlowInputs(flow.id, flow.targetKey), recipe: await recipeFor(session, flow) });
+  }
   if (sub === "recipe" && method === "GET") {
     const flow = await flowFor(session, id, "read");
     return json({ recipe: await recipeFor(session, flow, query.get("run")) });
@@ -227,7 +251,7 @@ async function handleRecipe({ request, session, segments, json }: FlowRouteConte
   }
   if (sub === "step-options" && method === "GET") {
     await flowFor(session, id, "read");
-    return json(await stepOptions(id, { after: query.get("after"), output: query.get("output") }));
+    return json(await stepOptions(id, { after: query.get("after"), output: query.get("output"), dataset: query.get("dataset") }));
   }
   if (sub === "steps" && method === "POST") {
     const flow = await flowFor(session, id, "write");

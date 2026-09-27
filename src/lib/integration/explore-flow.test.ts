@@ -132,8 +132,9 @@ describe("Flow recipe routes", () => {
 
   it("lists templates", async () => {
     const response = await call("GET", "templates");
-    expect(response.body.templates.map((template: { id: string }) => template.id)).toEqual(["rnaseq-de", "survey-likert"]);
-    expect(response.body.templates[0].slots[0]).toMatchObject({ key: "gene", kind: "column" });
+    expect(response.body.templates.map((template: { id: string }) => template.id)).toEqual(["microbiome-diversity", "rnaseq-de", "rnaseq-deseq2", "survey-likert"]);
+    expect(response.body.templates[2].inputs[0]).toMatchObject({ key: "counts", kind: "counts" });
+    expect(response.body.templates[1].slots[0]).toMatchObject({ key: "gene", kind: "column" });
   });
 });
 

@@ -355,11 +355,15 @@ export async function addStep(flowId: string, input: AddStepInput): Promise<stri
 // The step picker
 // ---------------------------------------------------------------------------
 
-export async function stepOptions(flowId: string, query: { after?: string | null; output?: string | null }) {
+export async function stepOptions(flowId: string, query: { after?: string | null; output?: string | null; dataset?: string | null }) {
   const model = await loadRecipe(flowId);
   if (!model) throw flowError("not_found", "Flow not found");
   let sources: Array<{ stepId: string | null; output: string | null; datasetId: string }> = [];
-  if (query.output) {
+  if (query.dataset) {
+    // A first step reading a Data table of the study (a blank analysis's added table).
+    if (!model.datasets.has(query.dataset)) throw flowError("invalid_request", "Choose a table in this study’s Data.");
+    sources = [{ stepId: null, output: null, datasetId: query.dataset }];
+  } else if (query.output) {
     const [stepId, ...rest] = query.output.split(".");
     const output = rest.join(".");
     const dataset = [...model.datasets.values()].find((candidate) => candidate.producer === stepId && candidate.artifactName === output);

@@ -1,0 +1,229 @@
+{
+  "id": "rnaseq-deseq2",
+  "name": "RNA-seq differential expression (DESeq2)",
+  "description": "Which genes change between two conditions? Sample QC and an edgeR low-count filter, VST and PCA, DESeq2 with a paired design (~ cell + dex), then the top genes as a heatmap. The real example is Bioconductor airway (GSE52778): 8 samples, 4 cell lines, dexamethasone vs untreated.",
+  "inputs": [
+    {
+      "key": "counts",
+      "label": "Counts",
+      "expects": "A count matrix: genes × samples, whole numbers. A gene id column, then one column per sample named by its sample id.",
+      "check": {
+        "kind": "counts",
+        "columns": [
+          "gene_id"
+        ]
+      }
+    },
+    {
+      "key": "samples",
+      "label": "Samples",
+      "expects": "A sample sheet: one row per sample, a sample id column matching the count columns, the condition to compare and, optionally, a pairing or batch column.",
+      "check": {
+        "kind": "samples",
+        "columns": [
+          "sample",
+          "dex",
+          "cell"
+        ]
+      }
+    }
+  ],
+  "columns": [
+    {
+      "key": "gene_id",
+      "input": "counts",
+      "label": "Gene id",
+      "kind": "feature",
+      "default": "gene_id",
+      "hint": "The column naming the genes."
+    },
+    {
+      "key": "sample_id",
+      "input": "samples",
+      "label": "Sample id",
+      "kind": "sample",
+      "default": "sample",
+      "countsInput": "counts",
+      "hint": "Holds the names of the count columns."
+    },
+    {
+      "key": "group",
+      "input": "samples",
+      "label": "Condition",
+      "kind": "group",
+      "default": "dex",
+      "hint": "The groups DESeq2 compares.",
+      "levels": [
+        {
+          "key": "numerator",
+          "label": "Tested",
+          "default": "trt"
+        },
+        {
+          "key": "denominator",
+          "label": "Reference",
+          "default": "untrt",
+          "reference": true
+        }
+      ]
+    },
+    {
+      "key": "block",
+      "input": "samples",
+      "label": "Pairing or batch",
+      "kind": "block",
+      "optional": true,
+      "default": "cell",
+      "hint": "Optional: samples that belong together (cell line, donor, batch) go into the design."
+    }
+  ],
+  "steps": [
+    {
+      "key": "qc",
+      "name": "Sample QC and filter",
+      "purpose": "Drop small libraries and genes too lowly expressed to test.",
+      "language": "r",
+      "codeFile": "steps/01-qc-filter.R",
+      "params": {
+        "sample_column": "{{sample_id}}",
+        "gene_column": "{{gene_id}}",
+        "min_library_size": 5000000,
+        "group_column": "{{group}}",
+        "min_count": 10,
+        "min_total_count": 15
+      },
+      "inputs": [
+        {
+          "alias": "counts",
+          "input": "counts"
+        },
+        {
+          "alias": "samples",
+          "input": "samples"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "counts_filtered",
+          "kind": "table"
+        },
+        {
+          "name": "samples_qc",
+          "kind": "table"
+        }
+      ],
+      "packages": []
+    },
+    {
+      "key": "pca",
+      "name": "Normalise and PCA",
+      "purpose": "Do samples separate by treatment or by cell line?",
+      "language": "r",
+      "codeFile": "steps/02-normalise-pca.R",
+      "params": {
+        "colour_by": "{{group}}",
+        "shape_by": "{{block}}",
+        "n_top_genes": 500
+      },
+      "inputs": [
+        {
+          "alias": "counts_filtered",
+          "from": {
+            "step": "qc",
+            "output": "counts_filtered"
+          }
+        },
+        {
+          "alias": "samples_qc",
+          "from": {
+            "step": "qc",
+            "output": "samples_qc"
+          }
+        }
+      ],
+      "outputs": [],
+      "packages": []
+    },
+    {
+      "key": "de",
+      "name": "DESeq2 treated vs untreated",
+      "purpose": "Genes changed by dexamethasone, paired by cell line.",
+      "language": "r",
+      "codeFile": "steps/03-deseq2.R",
+      "params": {
+        "design": "~ {{block}} + {{group}}",
+        "factor": "{{group}}",
+        "numerator": "{{group.numerator}}",
+        "denominator": "{{group.denominator}}",
+        "padj_cutoff": 0.05,
+        "lfc_cutoff": 1
+      },
+      "inputs": [
+        {
+          "alias": "counts_filtered",
+          "from": {
+            "step": "qc",
+            "output": "counts_filtered"
+          }
+        },
+        {
+          "alias": "samples_qc",
+          "from": {
+            "step": "qc",
+            "output": "samples_qc"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "de_results",
+          "kind": "table"
+        },
+        {
+          "name": "n_de",
+          "kind": "value"
+        }
+      ],
+      "packages": []
+    },
+    {
+      "key": "top",
+      "name": "Top genes and heatmap",
+      "purpose": "The strongest responders, per sample.",
+      "language": "r",
+      "codeFile": "steps/04-top-genes.R",
+      "params": {
+        "n_top": 30,
+        "annotate_by": [
+          "{{group}}",
+          "{{block}}"
+        ]
+      },
+      "inputs": [
+        {
+          "alias": "de_results",
+          "from": {
+            "step": "de",
+            "output": "de_results"
+          }
+        },
+        {
+          "alias": "counts_filtered",
+          "from": {
+            "step": "qc",
+            "output": "counts_filtered"
+          }
+        },
+        {
+          "alias": "samples_qc",
+          "from": {
+            "step": "qc",
+            "output": "samples_qc"
+          }
+        }
+      ],
+      "outputs": [],
+      "packages": []
+    }
+  ]
+}
