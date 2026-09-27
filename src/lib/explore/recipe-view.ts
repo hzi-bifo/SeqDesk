@@ -3,6 +3,8 @@
  * tables it starts from, every step with its number, inputs, outputs,
  * settings with their meaning, state and the viewed run's ledger and values.
  */
+import { listFlowInputs } from "./flow-inputs";
+import { stepPackagesOf } from "./step-environments";
 import { db } from "@/lib/db";
 import { flowError } from "@/lib/integration/flow-contract";
 import { codeRegions } from "./code-regions";
@@ -13,6 +15,7 @@ import { getKit, type LoadedKit } from "./kits/loader";
 import type { KitInput } from "./kits/schema";
 import { computeStepStates, loadRecipe, type RecipeModel, type RecipeStep, type StepRecord } from "./recipe";
 import { parseJsonObject, parseRoles, parseSchema } from "./schema";
+import { currentRuntimeFingerprint, runtimeOfResults } from "./runtime-fingerprint";
 
 export interface ParamMetaEntry {
   label?: string;
@@ -170,6 +173,12 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
   const failedRun = await db.exploreFlowRun.findFirst({ where: { flowId, status: "failed", kind: { not: "trial" }, ...(currentRow ? { createdAt: { gt: currentRow.createdAt } } : {}) }, orderBy: { createdAt: "desc" }, select: { failedAnalysisId: true } });
   const states = computeStepStates({ model, records: currentRecords, revisionsUsed: await revisionsUsedBy(currentRecords), active, failedAt: failedRun?.failedAnalysisId ?? null });
 
+  // The run before the viewed one: values that changed show "was …" (a setting changed and the step ran again).
+  const previousRow = viewed?.run.number !== null && viewed?.run.number !== undefined
+    ? await db.exploreFlowRun.findFirst({ where: { flowId, status: "completed", kind: { not: "trial" }, number: { lt: viewed.run.number } }, orderBy: { number: "desc" }, select: { id: true } })
+    : null;
+  const previous = previousRow ? await runRecords(previousRow.id) : null;
+
   const kits = await kitsOf(model.steps);
   const stepIds = new Set(model.steps.map((step) => step.id));
   const viewedRecords = viewed?.records ?? new Map<string, StepRecord>();
@@ -201,6 +210,15 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
   const viewedStepRuns = viewed?.stepRuns ?? new Map();
   const derivedOf = (stepId: string) => [...model.datasets.values()].filter((dataset) => dataset.producer === stepId && dataset.artifactName);
 
+  // The viewed run's figures, one per name (raster first), so the recipe can show the real plot of each step.
+  const viewedStepRunIds = [...viewedRecords.values()].map((record) => record.stepRunId);
+  const figureRows = viewedStepRunIds.length ? await db.exploreArtifact.findMany({ where: { runId: { in: viewedStepRunIds }, kind: "figure" }, select: { id: true, runId: true, name: true, format: true }, orderBy: { createdAt: "asc" } }) : [];
+  const figuresOf = (stepRunId: string | undefined) => {
+    const byName = new Map<string, (typeof figureRows)[number]>();
+    for (const row of figureRows) if (row.runId === stepRunId && (!byName.has(row.name) || (["png", "jpeg", "jpg"].includes(row.format) && !["png", "jpeg", "jpg"].includes(byName.get(row.name)!.format)))) byName.set(row.name, row);
+    return [...byName.values()];
+  };
+
   const steps = model.steps.map((step) => {
     const kit = step.kitId ? kits.get(step.kitId) ?? null : null;
     const state = states.get(step.id) ?? { state: "notRun", reason: null, paramDiff: [] };
@@ -210,10 +228,17 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
     const meta = mergeParamMeta(kitParamMeta(kit), step.paramMeta);
     const regions = new Set(codeRegions(step.revision?.code ?? "").map((region) => region.regionHash));
     const own = glosses.filter((gloss) => gloss.analysisId === step.id);
-    const values = stepValues(stepRun?.results);
-    const declared = new Map<string, { name: string; kind: string; label: string }>();
+    const previousRecord = previous?.records.get(step.id);
+    const previousValues = previousRecord && previousRecord.stepRunId !== record?.stepRunId ? new Map(stepValues(previous!.stepRuns.get(previousRecord.stepRunId)?.results).map((value) => [value.key, value] as const)) : null;
+    const values = stepValues(stepRun?.results).map((value) => {
+      const before = previousValues?.get(value.key);
+      return before && JSON.stringify(before.value) !== JSON.stringify(value.value) ? { ...value, was: { value: before.value, runNumber: previous!.run.number } } : value;
+    });
+    const declared = new Map<string, { name: string; kind: string; label: string; url?: string }>();
     for (const output of kit?.manifest.outputs ?? []) declared.set(`${output.kind}:${output.name}`, { name: output.name, kind: output.kind, label: output.label ?? output.name });
     for (const dataset of derivedOf(step.id)) if (!declared.has(`table:${dataset.artifactName}`)) declared.set(`table:${dataset.artifactName}`, { name: dataset.artifactName!, kind: "table", label: dataset.artifactName! });
+    const figures = new Map(figuresOf(record?.stepRunId).map((row) => [row.name, row]));
+    for (const row of figures.values()) if (!declared.has(`figure:${row.name}`)) declared.set(`figure:${row.name}`, { name: row.name, kind: "figure", label: row.name, url: `explore/runs/${encodeURIComponent(row.runId)}/artifacts/${encodeURIComponent(row.id)}` });
     for (const value of values) declared.set(`value:${value.key}`, { name: value.key, kind: "value", label: value.label });
     for (const metric of kit?.manifest.report?.metrics ?? []) if (!declared.has(`value:${metric.key}`)) declared.set(`value:${metric.key}`, { name: metric.key, kind: "value", label: metric.label });
     const notes = (parseJsonObject(stepRun?.results) ?? {}).notes;
@@ -232,7 +257,8 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
       language: step.language,
       kitId: step.kitId,
       environmentName: step.environmentName,
-      revision: step.revision ? { id: step.revision.id, number: step.revision.number, codeHash: step.revision.codeHash, author: step.revision.author, authorUserId: step.revision.authorUserId, createdAt: step.revision.createdAt.toISOString() } : null,
+      packages: stepPackagesOf(step.packages).packages,
+      revision: step.revision ? { id: step.revision.id, number: step.revision.number, codeHash: step.revision.codeHash, code: step.revision.code, author: step.revision.author, authorUserId: step.revision.authorUserId, createdAt: step.revision.createdAt.toISOString() } : null,
       inputs: step.bindings.map((binding) => {
         const dataset = model.datasets.get(binding.datasetId);
         const producer = dataset?.producer && stepIds.has(dataset.producer) ? dataset.producer : null;
@@ -253,6 +279,8 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
       run: record ? {
         flowRunId: record.flowRunId, number: record.flowRunNumber, stepRunId: record.stepRunId, runNumber: stepRun?.runNumber ?? null, status: record.status,
         reusedFrom: record.reusedFrom, durationMs: stepRun?.durationMs ?? null, ledger: stepLedger(stepRun?.results), values, verified: record.status === "completed",
+        // The helper that wrote the values and the finalizer that read them (null before this was recorded).
+        runtime: runtimeOfResults(stepRun?.results),
       } : null,
       glossSummary: { count: own.length, pencil: own.filter((gloss) => gloss.state === "pencil").length, stale: own.filter((gloss) => !regions.has(gloss.regionHash)).length },
       methodsSentence: step.methodsSentence ?? null,
@@ -288,11 +316,15 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
     viewedRun: viewed ? { id: viewed.run.id, number: viewed.run.number, status: viewed.run.status, completedAt: viewed.run.completedAt?.toISOString() ?? null } : null,
     activeRun,
     inputs,
+    // Named Data inputs (templates, "Add data"): what each expects, the table chosen and its check.
+    flowInputs: await listFlowInputs(model.flow.id, model.flow.targetKey),
     steps,
     proposals: options.proposals ?? [],
     outOfDate: first ? { since: { stepId: first.id, reason: states.get(first.id)?.reason ?? null, paramDiff: states.get(first.id)?.paramDiff ?? [] }, steps: outOfDateSteps.map((step) => step.id) } : null,
     counts,
     canEdit: options.canEdit,
+    // The finalizer code on disk now; a step run finished by another one shows "Finished by an older runtime".
+    currentRuntime: currentRuntimeFingerprint(),
   };
 }
 

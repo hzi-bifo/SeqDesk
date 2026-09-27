@@ -7,6 +7,7 @@ import { getKit } from "./kits/loader";
 import { viewRoleHints } from "./dataset-kinds";
 import { schemaFromCode } from "./param-calls";
 import { parseStoredBlocks } from "./report-blocks";
+import { parseMetricDefinition, type MetricDefinition } from "./metric-definition";
 import { parseJsonObject, parseRoles, parseSchema } from "./schema";
 import type { ExploreProvenance, ExploreRoleMap } from "./types";
 import { BUILT_IN_VIEWS, pickPreviewColumns, PREVIEW_ROWS, usedColumnKeys, type CanvasEdge, type CanvasFigureData, type CanvasGraph, type CanvasNode, type CanvasParamsSchema } from "./canvas-layout";
@@ -71,6 +72,19 @@ function runMetrics(results: string | null | undefined): Record<string, string |
   return flat;
 }
 
+/** Per metric, the definition the run recorded with it (metricMeta.<key>.definition). */
+function runMetricDefinitions(results: string | null | undefined): Record<string, MetricDefinition> | undefined {
+  const parsed = parseJsonObject(results);
+  const meta = parsed && typeof parsed.metricMeta === "object" && parsed.metricMeta ? (parsed.metricMeta as Record<string, { definition?: unknown } | null>) : null;
+  if (!meta) return undefined;
+  const out: Record<string, MetricDefinition> = {};
+  for (const [key, value] of Object.entries(meta)) {
+    const definition = parseMetricDefinition(value?.definition);
+    if (definition) out[key] = definition;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** The notes a run recorded, in order. */
 function runNotes(results: string | null | undefined): string[] {
   const parsed = parseJsonObject(results);
@@ -100,7 +114,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
     db.exploreAnalysisRun.findMany({
       where: { analysis: analysisWhere },
       orderBy: { createdAt: "desc" },
-      include: { artifacts: true, revision: { select: { number: true } } },
+      include: { artifacts: true, revision: { select: { number: true } }, flowRun: { select: { number: true } } },
     }),
     db.exploreFlow.findMany({ where: { targetKey }, select: { id: true, name: true } }),
   ]);
@@ -308,11 +322,14 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         codePreview: codePreviewOf(revision?.code ?? "", 80),
         codeLines: revision?.code ? revision.code.split("\n").length : 0,
         latestRun: latest
-          ? { id: latest.id, runNumber: latest.runNumber, status: latest.status, errorTail: latest.errorTail, startedAt: latest.startedAt?.toISOString() ?? null, completedAt: latest.completedAt?.toISOString() ?? null, revisionNumber: latest.revision?.number ?? null }
+          ? { id: latest.id, runNumber: latest.runNumber, flowRunNumber: latest.flowRun?.number ?? null, status: latest.status, errorTail: latest.errorTail, startedAt: latest.startedAt?.toISOString() ?? null, completedAt: latest.completedAt?.toISOString() ?? null, revisionNumber: latest.revision?.number ?? null }
           : null,
         active: latest ? ACTIVE_RUN.has(latest.status) : false,
         metrics: runMetrics(completedByAnalysis.get(analysis.id)?.[0]?.results),
         metricsRunNumber: completedByAnalysis.get(analysis.id)?.[0]?.runNumber,
+        // The numbered run of the recipe the step run belonged to ("Run #8"); people see this, not the EXP id.
+        metricsFlowRunNumber: completedByAnalysis.get(analysis.id)?.[0]?.flowRun?.number ?? null,
+        metricDefinitions: runMetricDefinitions(completedByAnalysis.get(analysis.id)?.[0]?.results),
         metricsRunId: completedByAnalysis.get(analysis.id)?.[0]?.id,
         metricsCompletedAt: completedByAnalysis.get(analysis.id)?.[0]?.completedAt?.toISOString() ?? null,
         notes: runNotes(completedByAnalysis.get(analysis.id)?.[0]?.results),
@@ -322,7 +339,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         // The newest runs first in the source; oldest first here, for trends.
         metricHistory: (completedByAnalysis.get(analysis.id) ?? [])
           .slice(0, METRIC_HISTORY_RUNS)
-          .map((run) => ({ runNumber: run.runNumber, completedAt: run.completedAt?.toISOString() ?? null, metrics: runMetrics(run.results) ?? {} }))
+          .map((run) => ({ runNumber: run.runNumber, flowRunNumber: run.flowRun?.number ?? null, completedAt: run.completedAt?.toISOString() ?? null, metrics: runMetrics(run.results) ?? {} }))
           .reverse(),
         params: parseJsonObject(revision?.params) ?? {},
         // A kit brings its manifest; a plain script declares parameters through its sx.param calls.
@@ -377,6 +394,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         analysisId: analysis.id,
         runId: completed.id,
         runNumber: completed.runNumber,
+        flowRunNumber: completed.flowRun?.number ?? null,
         name,
         format: main.format,
         url: artifactUrl(main),

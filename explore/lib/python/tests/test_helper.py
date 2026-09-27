@@ -484,3 +484,36 @@ def test_metric_label_and_unit(tmp_path):
     manifest = json.loads(sx.finish().read_text(encoding="utf-8"))
     assert manifest["metrics"] == {"n_called": 1146, "fdr": 0.05, "time": 3}
     assert manifest["metricMeta"] == {"n_called": {"label": "DE genes"}, "time": {"label": "Duration", "unit": "min"}}
+
+
+def test_metric_definition(tmp_path):
+    sx.set_run_dir(write_run(tmp_path))
+    sx.metric("n_de", 925, label="DE genes", definition={
+        "what": "DE genes", "contrast": "trt vs untrt", "method": "DESeq2 1.50.2",
+        "filters": [{"param": "padj_cutoff", "op": "<", "value": 0.05, "column": "padj"},
+                    {"param": "lfc_cutoff", "op": "|x| >=", "value": 1, "column": "log2FC"}]})
+    sx.metric("one", 1, definition={"filters": {"param": "fdr", "op": "<", "value": 0.1}})
+    with pytest.raises(ValueError):
+        sx.metric("bad", 1, definition={"filters": [{"param": "x"}]})
+    manifest = json.loads(sx.finish().read_text(encoding="utf-8"))
+    definition = manifest["metricMeta"]["n_de"]["definition"]
+    assert definition["contrast"] == "trt vs untrt"
+    assert definition["filters"][1] == {"param": "lfc_cutoff", "op": "|x| >=", "value": 1, "column": "log2FC"}
+    assert manifest["metricMeta"]["one"]["definition"]["filters"] == [{"param": "fdr", "op": "<", "value": 0.1}]
+
+
+def test_metric_hints_warn_and_suggest(tmp_path, capsys):
+    sx.set_run_dir(write_run(tmp_path, params={"padj_cutoff": 0.05, "lfc_cutoff": 1, "title": "x"}))
+    sx.metric("n_padj", 925)
+    err = capsys.readouterr().err
+    assert 'value "n_padj" has no label' in err
+    assert "mentions padj_cutoff" in err and '"param": "padj_cutoff"' in err
+    sx.metric("n_de", 925, label="DE genes", definition={"what": "DE genes"})
+    assert capsys.readouterr().err == ""
+    hints = sx._metric_hints("n_kept", "Genes with lfc over cutoff", None, {"lfc_cutoff": 1, "min_depth": 10})
+    assert len(hints) == 1 and "lfc_cutoff" in hints[0] and "min_depth" not in hints[0]
+    assert sx._metric_hints("depth_ok", "Samples over min depth", None, {"min_depth": 10})[0].startswith('value "depth_ok" mentions min_depth')
+
+
+def test_metric_hints_skip_the_cutoff_itself():
+    assert sx._metric_hints("padj_cutoff", "padj cutoff used", None, {"padj_cutoff": 0.05}) == []

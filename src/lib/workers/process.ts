@@ -4,6 +4,7 @@ import path from "path";
 import os from "os";
 import { db } from "@/lib/db";
 import { getWorkerSpec, type WorkerSpec } from "./registry";
+import { STALE_RUNTIME_EXIT_CODE } from "@/lib/explore/runtime-fingerprint";
 
 const REPO_ROOT = path.resolve(process.cwd());
 const LOG_DIR = path.join(REPO_ROOT, "logs");
@@ -142,16 +143,18 @@ export async function startWorker(
   // child dies inside the same Next process — best-effort, since after a Next
   // restart we'd lose the listener. The polling liveness check covers that case.
   child.on("exit", (code, signal) => {
+    const staleRuntime = code === STALE_RUNTIME_EXIT_CODE;
     void db.backgroundWorkerProcess
       .update({
         where: { id: row.id },
         data: {
-          status: code === 0 ? "STOPPED" : "ERROR",
+          status: code === 0 || staleRuntime ? "STOPPED" : "ERROR",
           stoppedAt: new Date(),
           exitCode: code,
-          lastErrorMsg: signal ? `exited via signal ${signal}` : null,
+          lastErrorMsg: staleRuntime ? "restarted: its code changed on disk" : signal ? `exited via signal ${signal}` : null,
         },
       })
+      // A stale-runtime exit is a restart: the worker already started its replacement.
       .catch(() => undefined);
     logStream.end();
   });

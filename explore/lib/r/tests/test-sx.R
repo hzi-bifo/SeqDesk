@@ -116,3 +116,38 @@ test_that("the manifest is written when R exits without finish()", {
   expect_equal(manifest$metrics$n, 3)
   expect_equal(manifest$artifacts[[1]]$name, "t")
 })
+
+test_that("a metric can carry a structured definition", {
+  run <- new_run()
+  sx <- run$sx
+  sx$metric("n_de", 925, label = "DE genes", definition = list(what = "DE genes", contrast = "trt vs untrt", method = "DESeq2 1.50.2",
+    filters = list(list(param = "padj_cutoff", op = "<", value = 0.05, column = "padj"), list(param = "lfc_cutoff", op = "|x| >=", value = 1))))
+  sx$metric("one", 1, definition = list(filters = list(param = "fdr", op = "<", value = 0.1)))
+  expect_error(sx$metric("bad", 1, definition = list(filters = list(list(param = "x")))), "param, op and value")
+  sx$finish()
+  manifest <- jsonlite::fromJSON(file.path(run$dir, "outputs", "manifest.json"), simplifyVector = FALSE)
+  definition <- manifest$metricMeta$n_de$definition
+  expect_equal(definition$contrast, "trt vs untrt")
+  expect_equal(length(definition$filters), 2)
+  expect_equal(definition$filters[[2]]$op, "|x| >=")
+  expect_equal(definition$filters[[1]]$value, 0.05)
+  expect_equal(length(manifest$metricMeta$one$definition$filters), 1)
+  expect_equal(manifest$metricMeta$one$definition$filters[[1]]$param, "fdr")
+})
+
+test_that("metric warns about a missing label and suggests a definition for filter params", {
+  run <- new_run()
+  sx <- run$sx
+  expect_message(sx$metric("n_min_count", 3), 'has no label')
+  expect_message(sx$metric("n_kept", 3, label = "Genes over min count"), 'mentions min_count')
+  expect_silent(sx$metric("n_kept2", 3, label = "Genes kept", definition = list(what = "Genes")))
+  hints <- sx$metric_hints("n_de", "DE genes by padj", NULL, list(padj_cutoff = 0.05, lfc_cutoff = 1))
+  expect_length(hints, 1)
+  expect_match(hints, 'param = "padj_cutoff", op = "<", value = 0.05', fixed = TRUE)
+  expect_false(grepl("lfc_cutoff", hints))
+})
+
+test_that("a value that is the cutoff itself gets no definition hint", {
+  sx <- seqdesk_explore()
+  expect_length(sx$metric_hints("padj_cutoff", "padj cutoff used", NULL, list(padj_cutoff = 0.05)), 0)
+})

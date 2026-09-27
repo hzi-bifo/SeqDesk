@@ -11,6 +11,8 @@ import { TableContractSchema, type TableContract } from "./table-contract";
 import { buildLedger, scanTable, type LedgerInput, type LedgerOutput } from "./ledger";
 import type { ExploreRole, ExploreRoleMap, ExploreSensitivity } from "./types";
 import { SENSITIVITY_RANK } from "./types";
+import { parseMetricDefinition, type MetricDefinition } from "./metric-definition";
+import { loadedRuntimeFingerprint, runRuntimeInfo } from "./runtime-fingerprint";
 
 const ARTIFACT_FORMATS = new Set(["plotly-json", "png", "svg", "html", "tsv", "md", "txt", "json", "csv", "pdf"]);
 const ARTIFACT_KINDS = new Set(["figure", "table", "report", "log"]);
@@ -31,18 +33,21 @@ interface OutputManifest {
   metrics?: unknown;
   metricMeta?: unknown;
   drops?: unknown;
+  helperVersion?: unknown;
+  language?: unknown;
 }
 
 /** Labels and units the step gave its values (`metric(key, value, label=, unit=)`). */
-function parseMetricMeta(raw: unknown): Record<string, { label?: string; unit?: string }> {
+function parseMetricMeta(raw: unknown): Record<string, { label?: string; unit?: string; definition?: MetricDefinition }> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const meta: Record<string, { label?: string; unit?: string }> = {};
+  const meta: Record<string, { label?: string; unit?: string; definition?: MetricDefinition }> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>).slice(0, 200)) {
     if (!value || typeof value !== "object") continue;
-    const entry = value as { label?: unknown; unit?: unknown };
+    const entry = value as { label?: unknown; unit?: unknown; definition?: unknown };
     const label = typeof entry.label === "string" && entry.label.trim() ? entry.label.trim().slice(0, 80) : undefined;
     const unit = typeof entry.unit === "string" && entry.unit.trim() ? entry.unit.trim().slice(0, 80) : undefined;
-    if (label || unit) meta[key] = { ...(label ? { label } : {}), ...(unit ? { unit } : {}) };
+    const definition = parseMetricDefinition(entry.definition) ?? undefined;
+    if (label || unit || definition) meta[key] = { ...(label ? { label } : {}), ...(unit ? { unit } : {}), ...(definition ? { definition } : {}) };
   }
   return meta;
 }
@@ -186,6 +191,9 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
     metricMeta: parseMetricMeta(manifest?.metricMeta),
     ledger,
     warnings,
+    // Which helper wrote the manifest and which finalizer read it, so results
+    // finished by an older monitor can be told apart.
+    runtime: runRuntimeInfo(loadedRuntimeFingerprint(), manifest),
   };
   const completedAt = new Date();
   await db.exploreAnalysisRun.updateMany({

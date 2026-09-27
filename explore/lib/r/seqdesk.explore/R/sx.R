@@ -309,7 +309,37 @@ seqdesk_explore <- function() {
     as.character(value)
   }
 
-  metric <- function(key, value, label = NULL, unit = NULL) {
+  # A structured definition of what a metric counts: list(what =, contrast =, test =, method =, unit =, label =,
+  # filters = list(list(param = "padj_cutoff", op = "<", value = 0.05, column = "padj"), ...)).
+  metric_definition <- function(definition) {
+    if (is.null(definition)) return(NULL)
+    if (!is.list(definition)) fail("metric definition must be a list")
+    scalar_text <- function(x, max = 160) {
+      if (is.null(x) || length(x) != 1 || is.na(x)) return(NULL)
+      text <- trimws(as.character(x))
+      if (!nzchar(text)) NULL else substr(text, 1, max)
+    }
+    out <- list()
+    for (name in c("label", "unit", "what", "contrast", "test", "method")) {
+      text <- scalar_text(definition[[name]])
+      if (!is.null(text)) out[[name]] <- text
+    }
+    filters <- definition$filters
+    if (!is.null(filters) && !is.null(names(filters)) && !is.null(filters$param)) filters <- list(filters)
+    out$filters <- unname(lapply(Filter(Negate(is.null), filters %||% list()), function(filter) {
+      if (!is.list(filter) || is.null(scalar_text(filter$param)) || is.null(scalar_text(filter$op))) fail("each metric filter needs param, op and value")
+      value <- filter$value
+      if (is.null(value) || length(value) != 1) fail("each metric filter needs one value")
+      entry <- list(param = scalar_text(filter$param, 80), op = scalar_text(filter$op, 8), value = if (is.numeric(value)) unname(value) else scalar_text(value, 80))
+      if (!is.null(scalar_text(filter$column))) entry$column <- scalar_text(filter$column, 80)
+      entry
+    }))
+    out$filters <- I(out$filters)
+    out
+  }
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+
+  metric <- function(key, value, label = NULL, unit = NULL, definition = NULL) {
     if (!is.character(key) || length(key) != 1 || !nzchar(trimws(key))) fail("metric key must be a non-empty string")
     key <- trimws(key)
     state$metrics[[key]] <- json_value(value)
@@ -317,9 +347,44 @@ seqdesk_explore <- function() {
     meta <- list()
     if (!is.null(label) && nzchar(trimws(label))) meta$label <- substr(trimws(label), 1, 80)
     if (!is.null(unit) && nzchar(trimws(unit))) meta$unit <- substr(trimws(unit), 1, 80)
+    if (!is.null(definition)) meta$definition <- metric_definition(definition)
     if (length(meta)) state$metric_meta[[key]] <- meta
     state$dirty <- TRUE
+    for (hint in metric_hints(key, meta$label, meta$definition)) message("[seqdesk.explore] ", hint)
     invisible(NULL)
+  }
+
+  filter_param_pattern <- "(cutoff|threshold|thresh|^min_|^max_|_min$|_max$|fdr|padj|alpha|pvalue|p_value|qvalue|lfc|fold)"
+  param_stop_words <- c("cutoff", "threshold", "thresh", "min", "max", "value", "level")
+
+  # Numeric parameters of the run that look like filters (padj_cutoff, min_depth, fdr...).
+  numeric_filter_params <- function() {
+    chosen <- tryCatch(params(), error = function(e) list())
+    keep <- Filter(function(name) {
+      value <- chosen[[name]]
+      is.numeric(value) && length(value) == 1 && grepl(filter_param_pattern, name, ignore.case = TRUE)
+    }, names(chosen))
+    chosen[keep]
+  }
+
+  # Run-log hints for a value without a label, or one that mentions a filter but has no definition.
+  metric_hints <- function(key, label = NULL, definition = NULL, filter_params = NULL) {
+    hints <- character(0)
+    if (is.null(label) || !nzchar(label)) hints <- c(hints, sprintf('value "%s" has no label; pass label = so readers know what it counts', key))
+    if (!is.null(definition)) return(hints)
+    candidates <- if (is.null(filter_params)) numeric_filter_params() else filter_params
+    words <- setdiff(strsplit(tolower(paste(key, label %||% "")), "[^a-z0-9]+")[[1]], "")
+    mentioned <- Filter(function(name) {
+      if (identical(tolower(name), tolower(key))) return(FALSE)  # the value is the cutoff itself
+      tokens <- setdiff(strsplit(tolower(name), "[^a-z0-9]+")[[1]], c("", param_stop_words))
+      length(intersect(tokens, words)) > 0
+    }, names(candidates))
+    if (length(mentioned)) {
+      filters <- paste(vapply(mentioned, function(name) sprintf('list(param = "%s", op = "<", value = %s)', name, format(candidates[[name]])), ""), collapse = ", ")
+      hints <- c(hints, sprintf('value "%s" mentions %s but has no definition; suggested: definition = list(what = "%s", filters = list(%s))',
+        key, paste(mentioned, collapse = ", "), label %||% key, filters))
+    }
+    hints
   }
 
   drop_keys <- function(rows, axis) {
@@ -393,7 +458,7 @@ seqdesk_explore <- function() {
     version = version, reset = reset, set_run_dir = set_run_dir, run_dir = run_dir, load_inputs = load_inputs,
     input_info = input_info, params = params, param = param, file_path = file_path, input = input,
     role_column = role_column, output_dir = output_dir, output = output, figure = figure,
-    save_report_markdown = save_report_markdown, note = note, metric = metric,
+    save_report_markdown = save_report_markdown, note = note, metric = metric, metric_hints = metric_hints,
     metrics = function() state$metrics, drop = drop, drops = function() state$drops,
     artifacts = function() state$artifacts, finish = finish
   )

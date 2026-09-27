@@ -13,6 +13,7 @@ import { flowError, parseValueRef } from "@/lib/integration/flow-contract";
 import { getKit } from "./kits/loader";
 import { loadRecipe } from "./recipe";
 import { planOf, runRecords, stepValues } from "./flow-runs";
+import type { MetricDefinition } from "./metric-definition";
 import { resolveContainedPath } from "./storage";
 
 export interface FeedValue {
@@ -28,6 +29,8 @@ export interface FeedValue {
   runNumber: number | null;
   output: null;
   verified: boolean;
+  /** What the value counts and the filters it used, when the step recorded a definition. */
+  definition?: MetricDefinition | null;
 }
 
 export async function flowValues(flowId: string, options: { run?: string | null; planned?: boolean }) {
@@ -47,7 +50,7 @@ export async function flowValues(flowId: string, options: { run?: string | null;
         values.push({
           key: `${entry.analysisId}.${value.key}`, ref: `labdesk://value/${loaded.run.id}/${entry.analysisId}/${encodeURIComponent(value.key)}`, stepId: entry.analysisId, stepLabel: entry.label,
           metric: value.key, label: value.label, unit: value.unit, value: value.value, runId: loaded.run.id, runNumber: loaded.run.number, output: null,
-          verified: loaded.run.status === "completed" && record?.status === "completed",
+          verified: loaded.run.status === "completed" && record?.status === "completed", definition: value.definition,
         });
       }
     }
@@ -138,7 +141,7 @@ export async function resolveValues(refs: string[], canRead: (flow: { id: string
     }
     values.push({
       key: `${parsed.analysisId}.${parsed.key}`, ref, stepId: parsed.analysisId, stepLabel: entry.label, metric: parsed.key, label: value.label, unit: value.unit, value: value.value,
-      runId: loaded.run.id, runNumber: loaded.run.number, output: null, verified, flowId: flow.id, flowName: flow.name, current: flow.currentRunId === loaded.run.id,
+      runId: loaded.run.id, runNumber: loaded.run.number, output: null, verified, definition: value.definition, flowId: flow.id, flowName: flow.name, current: flow.currentRunId === loaded.run.id,
       at: loaded.run.completedAt?.toISOString() ?? null,
       changed: currentValue !== null && JSON.stringify(currentValue.value) !== JSON.stringify(value.value),
       currentValue,

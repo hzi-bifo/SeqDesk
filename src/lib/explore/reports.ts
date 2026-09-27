@@ -39,6 +39,8 @@ export interface ReportFigure {
   figureName: string;
   runId: string;
   runNumber: string;
+  /** The numbered recipe run the figure came from ("Run #8"), when the step ran as part of one. */
+  flowRunNumber?: number | null;
   format: string;
   url: string;
   thumbnailUrl: string | null;
@@ -81,11 +83,15 @@ export interface ReportAnalysis {
   notes?: string[];
   findings?: ReportFindingRef[];
   runNumber: string | null;
+  /** The numbered recipe run the numbers come from ("Run #8"); runNumber stays the step run's own id. */
+  flowRunNumber?: number | null;
   metrics: Record<string, string | number | boolean | null>;
+  /** Per metric, what it counts and the filters it used, when the step recorded a definition. */
+  metricDefinitions?: Record<string, import("./metric-definition").MetricDefinition>;
   /** How the page cites this step; fixed once given. */
   slug?: string | null;
   /** The newest run, which may be newer than the one the numbers come from. */
-  latestRun?: { runNumber: string; status: string } | null;
+  latestRun?: { runNumber: string; flowRunNumber?: number | null; status: string } | null;
   /** Where the numbers come from: template, run, tables read and parameters used. */
   kitId?: string | null;
   runId?: string | null;
@@ -93,7 +99,7 @@ export interface ReportAnalysis {
   inputs?: Array<{ alias: string; datasetId: string; name: string }>;
   params?: Record<string, unknown>;
   /** Metrics of the last completed runs, oldest first, for trends on key figures. */
-  history?: Array<{ runNumber: string; completedAt: string | null; metrics: Record<string, string | number | boolean | null> }>;
+  history?: Array<{ runNumber: string; flowRunNumber?: number | null; completedAt: string | null; metrics: Record<string, string | number | boolean | null> }>;
 }
 
 /** What a chart or numbers block needs to know about its table; the rows come from the rows API. */
@@ -202,9 +208,11 @@ export async function collectReportOutputs(targetKey: string, reportId: string |
       notes: node.data.notes ?? [],
       findings: node.data.findings ?? [],
       runNumber: node.data.metricsRunNumber ?? null,
+      flowRunNumber: node.data.metricsFlowRunNumber ?? null,
       metrics: node.data.metrics ?? {},
+      metricDefinitions: node.data.metricDefinitions ?? {},
       slug: node.data.slug ?? null,
-      latestRun: node.data.latestRun ? { runNumber: node.data.latestRun.runNumber, status: node.data.latestRun.status } : null,
+      latestRun: node.data.latestRun ? { runNumber: node.data.latestRun.runNumber, flowRunNumber: node.data.latestRun.flowRunNumber ?? null, status: node.data.latestRun.status } : null,
       kitId: node.data.kitId,
       runId: node.data.metricsRunId ?? null,
       completedAt: node.data.metricsCompletedAt ?? null,
@@ -223,6 +231,7 @@ export async function collectReportOutputs(targetKey: string, reportId: string |
         figureName: node.data.name,
         runId: node.data.runId,
         runNumber: node.data.runNumber ?? "",
+        flowRunNumber: node.data.flowRunNumber ?? null,
         format: node.data.format,
         url: node.data.url,
         thumbnailUrl: node.data.thumbnailUrl,

@@ -1,3 +1,4 @@
+import { currentRuntimeFingerprint } from "@/lib/explore/runtime-fingerprint";
 import fs from "fs/promises";
 import { inputToken } from "@/lib/explore/input-token";
 import { editTable } from "@/lib/explore/table-edit";
@@ -9,6 +10,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { RevisionConflict, createAnalysis, createRevision, deleteAnalysis, getAnalysisDetail, listAnalyses, listRuns, serializeRun, updateAnalysis, type AnalysisInputBinding } from "@/lib/explore/analyses";
 import { listEnvironments } from "@/lib/explore/environments";
+import { listBaseEnvironments, normalizeStepPackages, PackageSpecError, prepareStepEnvironment, resolveStepEnvironment, stepPackagesOf, type StepEnvironmentState } from "@/lib/explore/step-environments";
 import { loadKits, serializeKit } from "@/lib/explore/kits/loader";
 import { cascadeFromRun } from "@/lib/explore/run-cascade";
 import { cancelRun, createAndStartRun, ExploreRunError } from "@/lib/explore/runner";
@@ -29,7 +31,7 @@ import { isExploreModuleEnabled } from "@/lib/explore/module";
 import { renderReportHtml } from "@/lib/explore/report-export";
 import { createReport, deleteReport, ExploreReportError, getReportRecord, getReportView, listReports, renameReport, resetReport, saveReport, setShareMode, shareModeOf, shareReport, unshareReport, type ReportViewOptions } from "@/lib/explore/reports";
 import { ExploreRouteError } from "@/lib/explore/route-error";
-import { readRunIsolation } from "@/lib/explore/sandbox/prepare";
+import { readRunIsolation, summarizeIsolation } from "@/lib/explore/sandbox/prepare";
 import { parseSchema } from "@/lib/explore/schema";
 import { resolveContainedPath } from "@/lib/explore/storage";
 import type { ExploreScope } from "@/lib/explore/types";
@@ -233,6 +235,15 @@ async function loadDataset(session: IntegrationSession, id: string, level: "read
   return dataset;
 }
 
+/** A step's environment as the client sees it: no prefix paths, the log only as an excerpt. */
+function environmentView(state: StepEnvironmentState) {
+  return {
+    name: state.name, base: state.baseName, derived: state.derived, status: state.status, specHash: state.specHash,
+    packages: state.packages.packages, channels: state.packages.channels, lockDigest: state.lockDigest, builtAt: state.builtAt,
+    log: state.log ? state.log.split("\n").slice(-20).join("\n").slice(-2000) : null,
+  };
+}
+
 async function loadAnalysis(session: IntegrationSession, id: string, level: "read" | "write") {
   const analysis = await db.exploreAnalysis.findUnique({ where: { id }, select: { id: true, targetKey: true } });
   if (!analysis) throw new ExploreRouteError(404, "Not found");
@@ -248,6 +259,7 @@ async function loadRun(session: IntegrationSession, id: string, level: "read" | 
       artifacts: { orderBy: { createdAt: "asc" } },
       analysis: { select: { id: true, name: true, targetKey: true, language: true } },
       _count: { select: { artifacts: true } },
+      flowRun: { select: { number: true } },
     },
   });
   if (!run) throw new ExploreRouteError(404, "Not found");
@@ -639,6 +651,33 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         }
         return json({ version: Number(body.version) + 1 });
       }
+      // explore.packages: a step's extra conda packages, its effective environment and a "prepare now".
+      if (segments.length === 3 && sub === "packages" && (method === "GET" || method === "PUT")) {
+        await loadAnalysis(session, id, method === "GET" ? "read" : "write");
+        if (method === "PUT") {
+          const body = await readJson(request);
+          let packages;
+          try { packages = normalizeStepPackages({ packages: body.packages ?? [], channels: body.channels ?? [] }); }
+          catch (error) { if (error instanceof PackageSpecError) throw new ExploreRouteError(400, error.message); throw error; }
+          await db.exploreAnalysis.update({ where: { id }, data: { packages: packages.packages.length ? (packages as unknown as Prisma.InputJsonValue) : Prisma.DbNull } });
+        }
+        const step = await db.exploreAnalysis.findUnique({ where: { id }, select: { environmentName: true, packages: true } });
+        if (!step) throw new ExploreRouteError(404, "Not found");
+        return json({ ...stepPackagesOf(step.packages), base: step.environmentName, environment: environmentView(await resolveStepEnvironment(step)) });
+      }
+      if (segments.length === 3 && sub === "environment" && method === "GET") {
+        await loadAnalysis(session, id, "read");
+        const step = await db.exploreAnalysis.findUnique({ where: { id }, select: { environmentName: true, packages: true } });
+        if (!step) throw new ExploreRouteError(404, "Not found");
+        return json({ environment: environmentView(await resolveStepEnvironment(step)) });
+      }
+      if (segments.length === 4 && sub === "environment" && subId === "prepare" && method === "POST") {
+        await loadAnalysis(session, id, "write");
+        const step = await db.exploreAnalysis.findUnique({ where: { id }, select: { environmentName: true, packages: true } });
+        if (!step) throw new ExploreRouteError(404, "Not found");
+        const state = await prepareStepEnvironment(step, { retryFailed: true });
+        return json({ environment: environmentView(state) }, state.status === "building" ? 202 : 200);
+      }
       if (segments.length === 3 && sub === "revisions" && method === "GET") {
         await loadAnalysis(session, id, "read");
         const analysis = await getAnalysisDetail(id);
@@ -695,6 +734,10 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
       const { kits, problems } = await loadKits();
       return json({ kits: kits.map(serializeKit), problems });
     }
+    if (head === "environments" && segments.length === 2 && id === "bases" && method === "GET") {
+      requireExplorePrincipal(session);
+      return json({ bases: await listBaseEnvironments() });
+    }
     if (head === "environments" && segments.length === 1 && method === "GET") {
       requireExplorePrincipal(session);
       return json({ environments: await listEnvironments() });
@@ -709,11 +752,14 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
       const run = await loadRun(session, id);
       let results: unknown = null;
       try { results = run.results ? JSON.parse(run.results) : null; } catch { results = null; }
+      const isolation = await readRunIsolation(run.runFolder);
       return json({ run: {
         ...serializeRun(run),
         analysis: run.analysis,
         results,
-        isolation: await readRunIsolation(run.runFolder),
+        // The finalizer code on disk now: results.runtime.finalizer differing from it means an older monitor finished the run.
+        currentRuntime: currentRuntimeFingerprint(),
+        isolation: isolation ? { ...isolation, summary: summarizeIsolation(isolation) } : null,
         outputTail: run.outputTail,
         errorTail: run.errorTail,
         code: run.revision.code,

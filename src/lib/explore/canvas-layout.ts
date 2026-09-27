@@ -88,7 +88,7 @@ export type CanvasAnalysisData = {
   /** First lines of the current revision, so the card reads as a function. */
   codePreview: string;
   codeLines: number;
-  latestRun: { id: string; runNumber: string; status: string; errorTail?: string | null; startedAt?: string | null; completedAt?: string | null; revisionNumber?: number | null } | null;
+  latestRun: { id: string; runNumber: string; flowRunNumber?: number | null; status: string; errorTail?: string | null; startedAt?: string | null; completedAt?: string | null; revisionNumber?: number | null } | null;
   /** Input aliases whose table got a new version after the latest run started: the outputs no longer reflect them. */
   staleInputs?: string[];
   /** True while the latest run is pending, queued or running. */
@@ -104,10 +104,13 @@ export type CanvasAnalysisData = {
   /** Numbers the latest finished run recorded (sx.metric), for summary cards. */
   metrics?: Record<string, string | number | boolean | null>;
   metricsRunNumber?: string;
+  metricsFlowRunNumber?: number | null;
+  /** Per metric, what it counts and the filters it used (metricMeta.<key>.definition), when the step gave one. */
+  metricDefinitions?: Record<string, import("./metric-definition").MetricDefinition>;
   metricsRunId?: string;
   metricsCompletedAt?: string | null;
   /** Metrics of the last completed runs, oldest first, for trends on key figures. */
-  metricHistory?: Array<{ runNumber: string; completedAt: string | null; metrics: Record<string, string | number | boolean | null> }>;
+  metricHistory?: Array<{ runNumber: string; flowRunNumber?: number | null; completedAt: string | null; metrics: Record<string, string | number | boolean | null> }>;
   /** How the report cites the step. */
   slug?: string | null;
 }
@@ -126,6 +129,7 @@ export type CanvasFigureData = {
   /** The analysis that draws this figure; with the name it identifies the figure across runs. */
   analysisId?: string;
   runNumber?: string;
+  flowRunNumber?: number | null;
   /** True when the latest run wrote a byte-identical figure to the run before it. */
   unchanged?: boolean;
   /** True when the report page shows this figure. */

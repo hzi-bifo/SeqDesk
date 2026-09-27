@@ -734,19 +734,96 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
-def metric(key: str, value: Any, label: str | None = None, unit: str | None = None) -> None:
+def _metric_definition(definition: Any) -> dict[str, Any]:
+    """Clean a structured metric definition: what it counts and the filters it used."""
+    if not isinstance(definition, dict):
+        raise ValueError("metric definition must be a dict")
+
+    def text(value: Any, limit: int = 160) -> str | None:
+        if value is None or isinstance(value, (list, dict, tuple, set)):
+            return None
+        out = str(value).strip()
+        return out[:limit] if out else None
+
+    out: dict[str, Any] = {}
+    for name in ("label", "unit", "what", "contrast", "test", "method"):
+        value = text(definition.get(name))
+        if value:
+            out[name] = value
+    raw_filters = definition.get("filters") or []
+    if isinstance(raw_filters, dict):
+        raw_filters = [raw_filters]
+    filters = []
+    for item in raw_filters:
+        if not isinstance(item, dict) or not text(item.get("param")) or not text(item.get("op")) or item.get("value") is None:
+            raise ValueError("each metric filter needs param, op and value")
+        value = item["value"]
+        entry: dict[str, Any] = {"param": text(item["param"], 80), "op": text(item["op"], 8),
+                                 "value": _json_safe(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else text(value, 80)}
+        if text(item.get("column")):
+            entry["column"] = text(item.get("column"), 80)
+        filters.append(entry)
+    out["filters"] = filters
+    return out
+
+
+def metric(key: str, value: Any, label: str | None = None, unit: str | None = None, definition: dict[str, Any] | None = None) -> None:
     """Record a headline number (or short value) for the run.
 
     ``label`` names it for people ("DE genes"), ``unit`` is shown after it.
+    ``definition`` says what it counts and which filters it used, e.g.
+    ``{"what": "DE genes", "contrast": "trt vs untrt", "method": "DESeq2 1.50",
+    "filters": [{"param": "padj_cutoff", "op": "<", "value": 0.05, "column": "padj"}]}``.
     """
     if not isinstance(key, str) or not key.strip():
         raise ValueError("metric key must be a non-empty string")
     key = key.strip()
     _state.metrics[key] = _json_safe(value)
-    meta = {name: str(text).strip()[:80] for name, text in (("label", label), ("unit", unit)) if text is not None and str(text).strip()}
+    meta: dict[str, Any] = {name: str(text).strip()[:80] for name, text in (("label", label), ("unit", unit)) if text is not None and str(text).strip()}
+    if definition is not None:
+        meta["definition"] = _metric_definition(definition)
     if meta:
         _state.metric_meta[key] = meta
     _state.dirty = True
+    for hint in _metric_hints(key, meta.get("label"), meta.get("definition")):
+        log(hint)
+
+
+_FILTER_PARAM = re.compile(r"(cutoff|threshold|thresh|^min_|^max_|_min$|_max$|fdr|padj|alpha|pvalue|p_value|qvalue|lfc|fold)", re.IGNORECASE)
+_PARAM_STOP = {"cutoff", "threshold", "thresh", "min", "max", "value", "level"}
+
+
+def _numeric_filter_params() -> dict[str, float]:
+    """Numeric parameters of the run that look like filters (padj_cutoff, min_depth, fdr...)."""
+    try:
+        chosen = params()
+    except Exception:  # outside a run there are no parameters to look at
+        return {}
+    return {name: value for name, value in chosen.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and _FILTER_PARAM.search(name)}
+
+
+def _metric_hints(key: str, label: str | None, definition: dict[str, Any] | None, filter_params: dict[str, float] | None = None) -> list[str]:
+    """Run-log hints for a value without a label, or one that mentions a filter but has no definition."""
+    hints: list[str] = []
+    if not label:
+        hints.append(f'value "{key}" has no label; pass label= so readers know what it counts')
+    if definition:
+        return hints
+    candidates = _numeric_filter_params() if filter_params is None else filter_params
+    words = set(re.split(r"[^a-z0-9]+", f"{key} {label or ''}".lower())) - {""}
+    mentioned = []
+    for name, value in candidates.items():
+        if name.lower() == key.lower():
+            continue  # the value is the cutoff itself, not something counted with it
+        tokens = {token for token in re.split(r"[^a-z0-9]+", name.lower()) if token and token not in _PARAM_STOP}
+        if tokens & words:
+            mentioned.append((name, value))
+    if mentioned:
+        filters = ", ".join(f'{{"param": "{name}", "op": "<", "value": {value!r}}}' for name, value in mentioned)
+        hints.append(f'value "{key}" mentions {", ".join(name for name, _ in mentioned)} but has no definition; '
+                     f'suggested: definition={{"what": "{label or key}", "filters": [{filters}]}}')
+    return hints
 
 
 def metrics() -> dict[str, Any]:
@@ -858,6 +935,7 @@ def _manifest_document() -> dict[str, Any]:
     return {
         "manifestVersion": MANIFEST_VERSION,
         "helperVersion": __version__,
+        "language": "python",
         "artifacts": [dict(entry) for entry in _state.artifacts],
         "notes": list(_state.notes),
         "metrics": dict(_state.metrics),

@@ -95,3 +95,31 @@ describe("syncExploreRun", () => {
     expect(mocks.db.exploreAnalysisRun.updateMany.mock.calls[0][0].data.status).toBe("failed");
   });
 });
+
+describe("restartIfStale", () => {
+  it("does nothing while the runtime on disk matches", async () => {
+    const { restartIfStale } = await import("./explore-monitor");
+    const exit = vi.fn();
+    const respawn = vi.fn(async () => undefined);
+    expect(await restartIfStale({ loaded: "a", isStale: () => false, respawn, exit })).toBe(false);
+    expect(respawn).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("starts a replacement on the new code and exits with the stale code", async () => {
+    const { restartIfStale } = await import("./explore-monitor");
+    const exit = vi.fn();
+    const respawn = vi.fn(async () => undefined);
+    expect(await restartIfStale({ loaded: "a", isStale: () => true, respawn, exit })).toBe(true);
+    expect(respawn).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(75);
+  });
+
+  it("keeps running when no replacement could be started", async () => {
+    const { restartIfStale } = await import("./explore-monitor");
+    const exit = vi.fn();
+    const respawn = vi.fn(async () => { throw new Error("spawn failed"); });
+    expect(await restartIfStale({ loaded: "a", isStale: () => true, respawn, exit })).toBe(false);
+    expect(exit).not.toHaveBeenCalled();
+  });
+});

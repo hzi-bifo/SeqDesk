@@ -1,3 +1,5 @@
+import { spawn } from "child_process";
+import { openSync } from "fs";
 import path from "path";
 import { db } from "../src/lib/db";
 import { readTail } from "../src/lib/pipelines/nextflow";
@@ -7,6 +9,7 @@ import { finalizeExploreRun } from "../src/lib/explore/run-finalize";
 import { advanceActiveFlowRuns } from "../src/lib/explore/flow-runs";
 import { failStaleCapsules } from "../src/lib/explore/capsules";
 import { deliverOutbox } from "../src/lib/integration/events";
+import { loadedRuntimeFingerprint, runtimeIsStale, STALE_RUNTIME_EXIT_CODE } from "../src/lib/explore/runtime-fingerprint";
 
 const DEFAULT_EVENTS_INTERVAL_MS = 3000;
 
@@ -156,6 +159,56 @@ async function runOnce(): Promise<void> {
   await failStaleCapsules().catch((error) => console.error("[explore-monitor] failed to check capsule builds", error));
 }
 
+/**
+ * Leave when the finalizer code on disk is no longer the code this process
+ * loaded: start a detached replacement on the current code, hand it a fresh
+ * tracking row and exit with STALE_RUNTIME_EXIT_CODE (the spawning server
+ * records that as a deliberate restart). The monitor runs under a tsx wrapper,
+ * so it cannot tell from its parent whether the server is still there; it
+ * always restarts itself. Returns true when the process is on its way out.
+ */
+export async function restartIfStale(options: {
+  loaded: string;
+  root?: string;
+  isStale?: (loaded: string, root: string) => boolean;
+  respawn?: () => Promise<void>;
+  exit?: (code: number) => void;
+}): Promise<boolean> {
+  const root = options.root ?? process.cwd();
+  const isStale = options.isStale ?? runtimeIsStale;
+  if (!isStale(options.loaded, root)) return false;
+  const exit = options.exit ?? ((code: number) => process.exit(code));
+  console.log(`[explore-monitor] finalizer code changed on disk (loaded ${options.loaded}); restarting on the current code`);
+  try {
+    await (options.respawn ?? respawnSelf)();
+  } catch (error) {
+    // Without a replacement, keep running the old code rather than leave no monitor at all.
+    console.error("[explore-monitor] could not start a replacement; staying on the loaded code", error);
+    return false;
+  }
+  exit(STALE_RUNTIME_EXIT_CODE);
+  return true;
+}
+
+/** Start a detached copy of this monitor on the current code and give it its own tracking row. */
+async function respawnSelf(): Promise<void> {
+  const logPath = path.join(process.cwd(), "logs", `explore-monitor-restart-${Date.now()}.log`);
+  const fd = openSync(logPath, "a");
+  const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
+    cwd: process.cwd(),
+    env: process.env,
+    detached: true,
+    stdio: ["ignore", fd, fd],
+  });
+  child.unref();
+  if (!child.pid) throw new Error("no pid for the replacement monitor");
+  await db.backgroundWorkerProcess.updateMany({
+    where: { name: "explore-monitor", status: { in: ["RUNNING", "STOPPING"] } },
+    data: { status: "STOPPED", stoppedAt: new Date(), lastErrorMsg: "restarted: its code changed on disk" },
+  });
+  await db.backgroundWorkerProcess.create({ data: { name: "explore-monitor", pid: child.pid, status: "RUNNING", logPath } });
+}
+
 async function main(): Promise<void> {
   const args = new Set(process.argv.slice(2));
   const interval = Number(process.env.EXPLORE_MONITOR_INTERVAL_MS || DEFAULT_INTERVAL_MS);
@@ -164,13 +217,29 @@ async function main(): Promise<void> {
     await deliverOnce();
     return;
   }
-  console.log(`[explore-monitor] running every ${interval}ms`);
+  const loaded = loadedRuntimeFingerprint();
+  console.log(`[explore-monitor] running every ${interval}ms (runtime ${loaded})`);
   await runOnce();
-  setInterval(runOnce, interval);
+  let leaving = false;
+  let ticking = false;
   // Events are delivered on their own, shorter beat so the notebook and the Inbox hear of runs quickly.
   let delivering = false;
   setInterval(async () => {
-    if (delivering) return;
+    // Never leave in the middle of a finalize or a delivery: the check waits for a quiet moment.
+    if (leaving || ticking) return;
+    ticking = true;
+    try {
+      if (!delivering && (await restartIfStale({ loaded }))) {
+        leaving = true;
+        return;
+      }
+      await runOnce();
+    } finally {
+      ticking = false;
+    }
+  }, interval);
+  setInterval(async () => {
+    if (delivering || leaving) return;
     delivering = true;
     try { await deliverOnce(); } finally { delivering = false; }
   }, Number(process.env.EXPLORE_EVENTS_INTERVAL_MS || DEFAULT_EVENTS_INTERVAL_MS));
