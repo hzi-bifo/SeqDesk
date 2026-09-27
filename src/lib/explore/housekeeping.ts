@@ -21,6 +21,7 @@ import { db } from "@/lib/db";
 import { ExploreReportError } from "./reports";
 import { ExploreRouteError } from "./route-error";
 import { isPathInsideBase, resolveExploreStorage, sanitizeSegment } from "./storage";
+import { effectiveStorageSettings } from "./storage-settings";
 
 export const DEFAULT_PRUNE_AFTER_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -173,7 +174,7 @@ const FINISHED = ["completed", "failed", "cancelled"];
 
 /** What a prune would remove now; nothing is changed. */
 export async function planPrune(options: { olderThanDays?: number; targetKey?: string | null; now?: Date } = {}): Promise<PrunePlan> {
-  const olderThanDays = options.olderThanDays && options.olderThanDays >= 1 ? Math.floor(options.olderThanDays) : pruneAfterDays();
+  const olderThanDays = options.olderThanDays && options.olderThanDays >= 1 ? Math.floor(options.olderThanDays) : (await effectiveStorageSettings().then((settings) => settings.pruneAfterDays, () => pruneAfterDays()));
   const now = options.now ?? new Date();
   const cutoff = new Date(now.getTime() - olderThanDays * DAY_MS);
   const targetKey = options.targetKey ?? null;

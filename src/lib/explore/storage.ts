@@ -3,6 +3,7 @@ import fs from "fs/promises";
 import path from "path";
 import { getResolvedDataBasePath } from "@/lib/files/data-base-path";
 import { getExecutionSettings } from "@/lib/pipelines/execution-settings";
+import { getStoredStorageSettings } from "./storage-settings";
 
 export interface ExploreStorage {
   /** Root for dataset version copies and imports: <dataBasePath>/explore */
@@ -27,7 +28,8 @@ function trimToUndefined(value: string | undefined): string | undefined {
  * overrides the dataset root for tests and unusual installs.
  */
 export async function resolveExploreStorage(): Promise<ExploreStorage> {
-  const override = trimToUndefined(process.env.SEQDESK_EXPLORE_DIR);
+  // The environment wins over the admin setting (Settings › Report analysis), which wins over <data path>/explore.
+  const override = trimToUndefined(process.env.SEQDESK_EXPLORE_DIR) ?? trimToUndefined((await getStoredStorageSettings().catch(() => null))?.exploreDir);
   let baseDir: string;
   if (override) {
     baseDir = path.resolve(override);

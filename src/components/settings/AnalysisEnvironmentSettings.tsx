@@ -24,9 +24,30 @@ interface SandboxSettings {
   limits: { cores: number; memoryGb: number; pids: number };
 }
 
+interface StorageSettings {
+  exploreDir: string;
+  pruneAfterDays: number;
+}
+
+interface StorageStatus {
+  stored: StorageSettings;
+  effective: { exploreDir: string | null; exploreDirSource: "env" | "settings" | "data-path"; pruneAfterDays: number; pruneAfterDaysSource: "env" | "settings" | "default" };
+  dataBasePath: string | null;
+  dataBasePathSource: string;
+}
+
 interface SandboxStatus {
   settings: SandboxSettings;
-  host: { platform: "linux" | "darwin" | null; tool: "bubblewrap" | "seatbelt" | null; toolPath: string | null; problem: string | null };
+  host: { platform: "linux" | "darwin" | null; tool: "bubblewrap" | "seatbelt" | null; toolPath: string | null; problem: string | null; limits?: { mechanism: string; controllers: string[] } | null };
+  storage?: StorageStatus;
+}
+
+interface ProbeResult {
+  status: "passed" | "failed" | "refused" | "unconfined";
+  summary: string;
+  environment?: string | null;
+  probes: Array<{ name: string; expect: "allowed" | "blocked"; outcome: "allowed" | "blocked"; ok: boolean; detail?: string }>;
+  durationMs: number;
 }
 
 interface EnvironmentSummary {
@@ -180,15 +201,33 @@ const MODE_TEXT: Record<SandboxSettings["mode"], string> = {
 function IsolationCard({ status, isAdmin, onSaved }: { status: SandboxStatus; isAdmin: boolean; onSaved: () => void }) {
   const [draft, setDraft] = useState<SandboxSettings>(status.settings);
   const [extra, setExtra] = useState(status.settings.extraReadOnly.join("\n"));
+  const [storage, setStorage] = useState<StorageSettings>(status.storage?.stored ?? { exploreDir: "", pruneAfterDays: 30 });
   const [saving, setSaving] = useState(false);
+  const [probing, setProbing] = useState(false);
+  const [probe, setProbe] = useState<ProbeResult | null>(null);
   const host = status.host;
   const toolLabel = host.tool === "bubblewrap" ? "bubblewrap" : host.tool === "seatbelt" ? "sandbox-exec (macOS, best effort)" : null;
-  const dirty = JSON.stringify({ ...draft, extraReadOnly: extra.split("\n").map((line) => line.trim()).filter(Boolean) }) !== JSON.stringify(status.settings);
+  const storageDirty = Boolean(status.storage) && JSON.stringify(storage) !== JSON.stringify(status.storage?.stored);
+  const dirty = storageDirty || JSON.stringify({ ...draft, extraReadOnly: extra.split("\n").map((line) => line.trim()).filter(Boolean) }) !== JSON.stringify(status.settings);
+  const pruneValid = Number.isInteger(storage.pruneAfterDays) && storage.pruneAfterDays >= 1 && storage.pruneAfterDays <= 3650;
+  const dirValid = !storage.exploreDir.trim() || (storage.exploreDir.trim().startsWith("/") && storage.exploreDir.trim() !== "/" && !/["'`$\\]/.test(storage.exploreDir));
+
+  const runProbe = async () => {
+    setProbing(true);
+    setProbe(null);
+    try {
+      setProbe(await postJson<ProbeResult>("/api/explore/sandbox/probe", {}));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not test the sandbox");
+    } finally {
+      setProbing(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
     try {
-      await postJson("/api/explore/sandbox", { ...draft, extraReadOnly: extra.split("\n").map((line) => line.trim()).filter(Boolean) });
+      await postJson("/api/explore/sandbox", { ...draft, extraReadOnly: extra.split("\n").map((line) => line.trim()).filter(Boolean), ...(status.storage ? { storage: { exploreDir: storage.exploreDir.trim(), pruneAfterDays: storage.pruneAfterDays } } : {}) });
       toast.success("Isolation settings saved");
       onSaved();
     } catch (error) {
@@ -250,21 +289,75 @@ function IsolationCard({ status, isAdmin, onSaved }: { status: SandboxStatus; is
               ))}
             </div>
             <p className="mt-1 text-xs text-muted-foreground">0 means no cap. On Linux the caps use a systemd user scope when cgroup v2 is delegated, otherwise rlimits; macOS caps processes only. SLURM runs use the scheduler limits.</p>
+            {host.limits && <p className="mt-1 text-xs text-muted-foreground">This host applies them with <span className="font-mono">{host.limits.mechanism}</span>{host.limits.controllers.length ? ` (delegated controllers: ${host.limits.controllers.join(", ")})` : ""}.</p>}
           </div>
           <div>
             <label htmlFor="sandbox-extra" className="text-xs font-medium">Extra read-only paths</label>
             <textarea id="sandbox-extra" className="mt-1 min-h-[4.5rem] w-full rounded-md border bg-background px-2 py-1 font-mono text-xs" value={extra} placeholder={"/vol/biotools\n/net/references"} onChange={(event) => setExtra(event.target.value)} />
             <p className="mt-1 text-xs text-muted-foreground">Site tool trees or reference data every analysis may read, one absolute path per line.</p>
           </div>
-          <div className="md:col-span-2">
-            <Button size="sm" onClick={() => void save()} disabled={saving || !dirty}>
+          {status.storage && <StorageFields status={status.storage} value={storage} onChange={setStorage} dirValid={dirValid} pruneValid={pruneValid} />}
+          <div className="flex flex-wrap items-center gap-2 md:col-span-2">
+            <Button size="sm" onClick={() => void save()} disabled={saving || !dirty || !pruneValid || !dirValid}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Save
             </Button>
+            <Button size="sm" variant="outline" onClick={() => void runProbe()} disabled={probing || dirty} title={dirty ? "Save first: the test uses the saved settings" : undefined}>
+              {probing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Test the sandbox
+            </Button>
+            {dirty && <span className="text-xs text-muted-foreground">The test uses the saved settings.</span>}
           </div>
+          {probe && <ProbeReport result={probe} />}
         </div>
       ) : (
         <p className="mt-3 text-xs text-muted-foreground">{MODE_TEXT[status.settings.mode]}</p>
+      )}
+    </div>
+  );
+}
+
+const SOURCE_TEXT: Record<string, string> = { env: "set by the server environment, which wins over this field", settings: "set here", "data-path": "the data path's explore folder", default: "the default" };
+
+/** The data path (read-only here), the Explore dataset folder and the prune age. */
+function StorageFields({ status, value, onChange, dirValid, pruneValid }: { status: StorageStatus; value: StorageSettings; onChange: (next: StorageSettings) => void; dirValid: boolean; pruneValid: boolean }) {
+  const effectiveDir = status.effective.exploreDir ?? (status.dataBasePath ? `${status.dataBasePath.replace(/\/$/, "")}/explore` : null);
+  return (
+    <div className="grid gap-4 border-t pt-4 md:col-span-2 md:grid-cols-2">
+      <div className="md:col-span-2">
+        <span className="text-xs font-medium">Data path</span>
+        <p className="mt-1 font-mono text-xs">{status.dataBasePath ?? "not set"}</p>
+        <p className="mt-1 text-xs text-muted-foreground">Where sequencing files and app data live. Change it under <Link href="/admin/data-storage" className="underline underline-offset-2">Data storage</Link>, which checks the folder before saving.</p>
+      </div>
+      <div>
+        <label htmlFor="explore-dir" className="text-xs font-medium">Explore dataset folder</label>
+        <Input id="explore-dir" className="mt-1 font-mono text-xs" value={value.exploreDir} placeholder={status.dataBasePath ? `${status.dataBasePath.replace(/\/$/, "")}/explore` : "/srv/seqdesk/explore"} aria-invalid={!dirValid} onChange={(event) => onChange({ ...value, exploreDir: event.target.value })} />
+        <p className={`mt-1 text-xs ${dirValid ? "text-muted-foreground" : "text-destructive"}`}>{dirValid ? `Empty uses the data path. In effect: ${effectiveDir ?? "the app's work folder"} (${SOURCE_TEXT[status.effective.exploreDirSource]}).` : "Use an absolute path without quotes, backslashes or $."}</p>
+      </div>
+      <div>
+        <label htmlFor="prune-days" className="text-xs font-medium">Prune unused run outputs after (days)</label>
+        <Input id="prune-days" type="number" min={1} max={3650} className="mt-1 w-32" value={value.pruneAfterDays} aria-invalid={!pruneValid} onChange={(event) => onChange({ ...value, pruneAfterDays: Number.parseInt(event.target.value, 10) || 0 })} />
+        <p className={`mt-1 text-xs ${pruneValid ? "text-muted-foreground" : "text-destructive"}`}>{pruneValid ? `In effect: ${status.effective.pruneAfterDays} days (${SOURCE_TEXT[status.effective.pruneAfterDaysSource]}). Cited, held and current runs are always kept.` : "Between 1 and 3650 days."}</p>
+      </div>
+    </div>
+  );
+}
+
+const PROBE_HEADLINE: Record<ProbeResult["status"], string> = { passed: "Sandbox test passed", failed: "Sandbox test found gaps", refused: "Runs would be refused", unconfined: "Runs are not confined" };
+
+function ProbeReport({ result }: { result: ProbeResult }) {
+  return (
+    <div role="status" className="rounded-md border p-3 md:col-span-2">
+      <p className={`text-sm font-medium ${result.status === "passed" ? "" : "text-destructive"}`}>{PROBE_HEADLINE[result.status]}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{result.summary}{result.environment ? ` Environment: ${result.environment}.` : ""} {(result.durationMs / 1000).toFixed(1)} s.</p>
+      {result.probes.length > 0 && (
+        <ul className="mt-2 grid gap-1 text-xs md:grid-cols-2">
+          {result.probes.map((probe) => (
+            <li key={probe.name} className={probe.ok ? "text-muted-foreground" : "text-destructive"}>
+              {probe.ok ? "✓" : "✗"} {probe.name}: {probe.outcome}{probe.ok ? "" : ` (expected ${probe.expect})`}{probe.detail ? ` — ${probe.detail}` : ""}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

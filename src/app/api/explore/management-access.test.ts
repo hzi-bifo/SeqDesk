@@ -11,6 +11,8 @@ vi.mock("@/lib/explore/module", () => ({ isExploreModuleEnabled: mocks.enabled }
 vi.mock("@/lib/explore/environments", () => ({ buildEnvironment: mocks.build, registerExistingEnvironment: mocks.register, listEnvironments: vi.fn() }));
 vi.mock("@/lib/explore/sandbox/host", () => ({ collectHostFacts: vi.fn() }));
 vi.mock("@/lib/explore/sandbox/settings", () => ({ saveSandboxSettings: mocks.save, getSandboxSettings: vi.fn() }));
+vi.mock("@/lib/explore/storage-settings", () => ({ saveStorageSettings: vi.fn(), getStoredStorageSettings: vi.fn(async () => ({ exploreDir: "", pruneAfterDays: 30 })), effectiveStorageSettings: vi.fn(async () => ({})), StorageSettingsError: class extends Error {} }));
+vi.mock("@/lib/files/data-base-path", () => ({ getResolvedDataBasePath: vi.fn(async () => ({ dataBasePath: null, source: "none" })) }));
 
 import { POST as environmentPost } from "./environments/route";
 import { POST as sandboxPost } from "./sandbox/route";
