@@ -8,6 +8,7 @@ import { Readable } from "stream";
 import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
+import { packagesConflictError, stepConflictError } from "@/lib/explore/step-conflict";
 import { RevisionConflict, analysisLanguageOf, createAnalysis, createRevision, deleteAnalysis, getAnalysisDetail, listAnalyses, listRuns, serializeRun, updateAnalysis, type AnalysisInputBinding } from "@/lib/explore/analyses";
 import { listEnvironments } from "@/lib/explore/environments";
 import { listBaseEnvironments, normalizeStepPackages, PackageSpecError, prepareStepEnvironment, resolveStepEnvironment, stepPackagesOf, type StepEnvironmentState } from "@/lib/explore/step-environments";
@@ -723,6 +724,16 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
           let packages;
           try { packages = normalizeStepPackages({ packages: body.packages ?? [], channels: body.channels ?? [] }); }
           catch (error) { if (error instanceof PackageSpecError) throw new ExploreRouteError(400, error.message); throw error; }
+          // Optional optimistic concurrency: the packages the edit started from must still be the step's.
+          if (body.expected !== undefined) {
+            const stored = await db.exploreAnalysis.findUnique({ where: { id }, select: { packages: true } });
+            const now = stepPackagesOf(stored?.packages);
+            let expected;
+            try { expected = normalizeStepPackages({ packages: (body.expected as Record<string, unknown> | null)?.packages ?? [], channels: (body.expected as Record<string, unknown> | null)?.channels ?? [] }); }
+            catch { throw new ExploreRouteError(400, "Invalid expected packages."); }
+            const channelsNamed = Array.isArray((body.expected as Record<string, unknown> | null)?.channels);
+            if (JSON.stringify(expected.packages) !== JSON.stringify(now.packages) || (channelsNamed && JSON.stringify(expected.channels) !== JSON.stringify(now.channels))) throw packagesConflictError(id, now);
+          }
           await db.exploreAnalysis.update({ where: { id }, data: { packages: packages.packages.length ? (packages as unknown as Prisma.InputJsonValue) : Prisma.DbNull } });
         }
         const step = await db.exploreAnalysis.findUnique({ where: { id }, select: { environmentName: true, packages: true } });
@@ -753,12 +764,17 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         const body = await readJson(request);
         const code = typeof body.code === "string" ? body.code : undefined;
         if (code !== undefined && Buffer.byteLength(code, "utf8") > MAX_CODE_BYTES) throw new ExploreRouteError(400, "The code is larger than 512 KB");
+        const expectedRevisionId = optionalString(body.expectedRevisionId, 80) ?? undefined;
         const revision = await createRevision({
-          analysisId: id, expectedRevisionId: optionalString(body.expectedRevisionId, 80) ?? undefined, revisionId: operationId(body.revisionId), code, params: body.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : undefined,
+          analysisId: id, expectedRevisionId, revisionId: operationId(body.revisionId), code, params: body.params && typeof body.params === "object" ? (body.params as Record<string, unknown>) : undefined,
           inputs: body.inputs === undefined ? undefined : await parseBindings(body.inputs, analysis.targetKey),
           fileInputs: body.fileInputs === undefined ? undefined : await validateFileBindings(body.fileInputs, analysis.targetKey),
           // A client marks code the assistant drafted for the user as agent-written and keeps the request it came from.
           author: body.author === "agent" ? "agent" : "user", authorUserId: session.user.id, authorMemberId: session.integration.memberId || null, message: optionalString(body.message, 500), prompt: body.author === "agent" ? optionalString(body.prompt, 4000) ?? null : null,
+        }).catch(async (error) => {
+          // A save based on an older revision of this step names both revisions, so the page can show what changed.
+          if (error instanceof RevisionConflict && expectedRevisionId) throw await stepConflictError(id, expectedRevisionId, error.message);
+          throw error;
         });
         return json({ revision }, 201);
       }
