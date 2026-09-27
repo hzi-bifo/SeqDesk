@@ -123,12 +123,13 @@ export const httpsRequestOnce: RequestOnce = (url, options) => new Promise((reso
     headers: options.headers,
     signal: options.signal,
     timeout: 30_000,
-    lookup: (hostname, _opts, callback) => {
+    // Node asks for every address (all: true) when it races IPv4/IPv6; answer in the shape it asked for.
+    lookup: ((hostname: string, opts: { all?: boolean }, callback: (...args: unknown[]) => void) => {
       publicAddresses(hostname, options.lookup).then(
-        addresses => callback(null, addresses[0].address, addresses[0].family),
-        error => callback(error as NodeJS.ErrnoException, "", 0),
+        addresses => (opts?.all ? callback(null, addresses) : callback(null, addresses[0].address, addresses[0].family)),
+        error => callback(error),
       );
-    },
+    }) as never,
   }, response => resolve({ status: response.statusCode ?? 0, headers: response.headers, body: response, url: url.toString() }));
   request.on("timeout", () => request.destroy(new Error("TimeoutError")));
   request.on("error", reject);
