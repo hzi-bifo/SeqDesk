@@ -4,8 +4,9 @@ import { getExecutionSettings } from "@/lib/pipelines/execution-settings";
 import type { RunSandbox } from "../run-script";
 import { resolveExploreStorage } from "../storage";
 import { collectHostFacts, realPathMap, type HostFacts } from "./host";
-import { buildMountPlan, describeMountPlan, mountPlanHash, renderBwrapArgs, renderSeatbeltProfile, type MountPlan } from "./mount-plan";
-import { getSandboxSettings, type ExploreSandboxSettings } from "./settings";
+import type { LimitMechanism, RunLimitsRecord } from "./limits";
+import { buildMountPlan, describeMountPlan, GROUP_FILE_NAME, mountPlanHash, PASSWD_FILE_NAME, renderBwrapArgs, renderSeatbeltProfile, syntheticIdentityFiles, type MountPlan } from "./mount-plan";
+import { getSandboxSettings, type ExploreSandboxSettings, type RunResourceLimits } from "./settings";
 
 export const CONTROL_DIR = "control";
 
@@ -26,6 +27,12 @@ export interface RunIsolation {
   reads?: "run" | "host";
   /** Why no sandbox is planned, when tool is "none". */
   reason: string | null;
+  /**
+   * CPU, memory and process caps. `mechanism` is what the app host offers
+   * when the run is prepared; `used` is what the wrapper applied where the
+   * run ran (control/limits.json), filled in once the run has started.
+   */
+  limits?: RunResourceLimits & { mechanism: LimitMechanism; used?: RunLimitsRecord | null };
 }
 
 export class SandboxRefusedError extends Error {}
@@ -40,21 +47,23 @@ export async function prepareRunSandbox(input: { runFolder: string; environmentP
   const controlDir = path.join(input.runFolder, CONTROL_DIR);
   await fs.mkdir(controlDir, { recursive: true });
 
-  if (settings.mode === "off") {
-    const isolation: RunIsolation = { tool: "none", mode: "off", network: "host", planHash: null, readable: [], writable: [], reads: "host", reason: "sandboxing is switched off in the settings" };
+  const facts = settings.mode === "off" ? null : input.facts ?? (await collectHostFacts());
+  const limits = { ...settings.limits, mechanism: (facts?.limits?.mechanism ?? (process.platform === "linux" ? "prlimit" : "ulimit")) as LimitMechanism };
+
+  if (settings.mode === "off" || !facts) {
+    const isolation: RunIsolation = { tool: "none", mode: "off", network: "host", planHash: null, readable: [], writable: [], reads: "host", reason: "sandboxing is switched off in the settings", limits };
     await writeIsolation(controlDir, isolation);
-    return { sandbox: { kind: "none", mode: "off", reason: isolation.reason ?? "" }, isolation, plan: null };
+    return { sandbox: { kind: "none", mode: "off", reason: isolation.reason ?? "", limits: settings.limits }, isolation, plan: null };
   }
 
-  const facts = input.facts ?? (await collectHostFacts());
   const refuse = (reason: string) => {
     if (settings.mode === "required") throw new SandboxRefusedError(`Analysis runs must be sandboxed, but ${reason}. A facility admin can install bubblewrap or relax the setting under Analysis environments.`);
   };
   if (!facts.platform) {
     refuse(`this platform (${process.platform}) has no supported sandbox`);
-    const isolation: RunIsolation = { tool: "none", mode: settings.mode, network: "host", planHash: null, readable: [], writable: [], reads: "host", reason: `no sandbox for ${process.platform}` };
+    const isolation: RunIsolation = { tool: "none", mode: settings.mode, network: "host", planHash: null, readable: [], writable: [], reads: "host", reason: `no sandbox for ${process.platform}`, limits };
     await writeIsolation(controlDir, isolation);
-    return { sandbox: { kind: "none", mode: settings.mode, reason: isolation.reason ?? "" }, isolation, plan: null };
+    return { sandbox: { kind: "none", mode: settings.mode, reason: isolation.reason ?? "", limits: settings.limits }, isolation, plan: null };
   }
   if (facts.problem) refuse(facts.problem);
 
@@ -84,19 +93,23 @@ export async function prepareRunSandbox(input: { runFolder: string; environmentP
   let reason: string | null = null;
   const mode = settings.mode === "required" ? "required" : "auto";
   if (facts.platform === "linux") {
+    // The account files the plan binds over /etc/passwd and /etc/group.
+    const identity = syntheticIdentityFiles({ uid: process.getuid?.() ?? 65534, gid: process.getgid?.() ?? 65534, home: plan.home });
+    await fs.writeFile(path.join(controlDir, PASSWD_FILE_NAME), identity.passwd, { encoding: "utf8", mode: 0o644 });
+    await fs.writeFile(path.join(controlDir, GROUP_FILE_NAME), identity.group, { encoding: "utf8", mode: 0o644 });
     // The wrapper looks for bwrap where it runs (a SLURM node may differ from the app host).
-    sandbox = { kind: "bubblewrap", mode, args: renderBwrapArgs(plan), planHash };
+    sandbox = { kind: "bubblewrap", mode, args: renderBwrapArgs(plan), planHash, limits: settings.limits };
     tool = "bubblewrap";
     if (!facts.tool) reason = "bubblewrap is not installed on the app host; a run there starts unconfined";
   } else {
     const profilePath = path.join(controlDir, "sandbox.sb");
     await fs.writeFile(profilePath, renderSeatbeltProfile(plan), "utf8");
-    sandbox = { kind: "seatbelt", mode, profilePath, planHash };
+    sandbox = { kind: "seatbelt", mode, profilePath, planHash, limits: settings.limits };
     tool = "seatbelt";
     if (!facts.tool) reason = "sandbox-exec is not available";
   }
   if (!facts.tool) refuse(reason ?? "the sandbox tool is missing");
-  const isolation: RunIsolation = { tool, mode: settings.mode, network: plan.network, planHash, readable: summary.readable, writable: summary.writable, reads: facts.tool ? "run" : "host", reason };
+  const isolation: RunIsolation = { tool, mode: settings.mode, network: plan.network, planHash, readable: summary.readable, writable: summary.writable, reads: facts.tool ? "run" : "host", reason, limits };
   await writeIsolation(controlDir, isolation);
   return { sandbox, isolation, plan };
 }
@@ -110,7 +123,15 @@ export async function readRunIsolation(runFolder: string | null | undefined): Pr
   if (!runFolder) return null;
   try {
     const parsed = JSON.parse(await fs.readFile(path.join(runFolder, CONTROL_DIR, "isolation.json"), "utf8")) as RunIsolation;
-    return parsed && typeof parsed === "object" ? parsed : null;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (parsed.limits) {
+      try {
+        parsed.limits.used = JSON.parse(await fs.readFile(path.join(runFolder, CONTROL_DIR, "limits.json"), "utf8")) as RunLimitsRecord;
+      } catch {
+        parsed.limits.used = null;
+      }
+    }
+    return parsed;
   } catch {
     return null;
   }

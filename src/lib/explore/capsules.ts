@@ -8,13 +8,12 @@
  * It says "Not verified yet" until a clean-container check exists.
  */
 import crypto from "crypto";
-import { execFile } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import { db } from "@/lib/db";
 import { flowError } from "@/lib/integration/flow-contract";
 import { codeRegions } from "./code-regions";
-import { resolveCondaExecutable } from "./environments";
+import { explicitLockText } from "./environment-lock";
 import { getHelperLibDir } from "./kits/loader";
 import { planOf, runRecords, type PlanEntry } from "./flow-runs";
 import { resolveExploreStorage } from "./storage";
@@ -122,10 +121,6 @@ export async function requestCapsule(artifactId: string, userId: string, flowRun
   // Built in the background; the client polls GET capsules/:id.
   void buildCapsule(capsule.id).catch((error) => console.error("[flow] capsule build failed", capsule.id, error));
   return { capsule: serializeCapsule(capsule), created: true };
-}
-
-function runCommand(command: string, args: string[]): Promise<string | null> {
-  return new Promise((resolve) => execFile(command, args, { timeout: 60000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => resolve(error ? null : stdout)));
 }
 
 async function readIfSmall(file: string): Promise<Buffer | null> {
@@ -245,9 +240,9 @@ export async function buildCapsule(capsuleId: string): Promise<void> {
       if (extra.length) stepPackageLines.push(`- ${name}: ${environment!.baseName} plus ${extra.join(", ")}`);
       if (environment?.spec) await add(`environment/${name}.yml`, environment.spec);
       if (environment?.prefixPath) {
-        const conda = await resolveCondaExecutable().catch(() => "conda");
-        const lock = await runCommand(conda, ["list", "--explicit", "--md5", "-p", environment.prefixPath]);
-        if (lock && lock.includes("@EXPLICIT")) await add(`environment/${name}.explicit.txt`, lock);
+        // Read from conda-meta (any conda flavour), channel credentials stripped.
+        const lock = await explicitLockText(environment.prefixPath);
+        if (lock) await add(`environment/${name}.explicit.txt`, lock);
       }
     }
     await addTree(zip, contents, path.join(getHelperLibDir(), "python"), "helpers/python");

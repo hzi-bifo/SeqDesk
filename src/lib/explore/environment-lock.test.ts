@@ -38,3 +38,59 @@ describe("environment lock", () => {
     expect(await pinEnvironment("env", "python")).toBeNull();
   });
 });
+
+describe("lock credentials", () => {
+  it("strips anaconda.org tokens, user:password and token parameters from channel URLs", async () => {
+    const { stripChannelCredentials } = await import("./environment-lock");
+    const lock = [
+      "@EXPLICIT",
+      "https://conda.anaconda.org/t/ab-12345678-aaaa-bbbb-cccc-1234567890ab/conda-forge/linux-64/zlib-1.3.1-hb9d3cd8_2.conda#c9f075ab2f33b3bbee9e62d4ad0a6cd8",
+      "https://user:s3cret@repo.example.org/channel/noarch/pkg-1.0-0.tar.bz2#0123",
+      "https://repo.example.org/channel/noarch/pkg-2.0-0.tar.bz2?token=abc123&x=1#0456",
+    ].join("\n");
+    const clean = stripChannelCredentials(lock);
+    expect(clean).toContain("https://conda.anaconda.org/conda-forge/linux-64/zlib-1.3.1-hb9d3cd8_2.conda#c9f075ab2f33b3bbee9e62d4ad0a6cd8");
+    expect(clean).toContain("https://repo.example.org/channel/noarch/pkg-1.0-0.tar.bz2#0123");
+    expect(clean).toContain("?token=REDACTED&x=1");
+    expect(clean).not.toMatch(/ab-12345678|s3cret|abc123/);
+  });
+
+  it("reads the lock from conda-meta without conda and sorts it by package", async () => {
+    const fs = await import("fs/promises");
+    const os = await import("os");
+    const path = await import("path");
+    const { readExplicitLock, lockDigestOf } = await import("./environment-lock");
+    const prefix = await fs.mkdtemp(path.join(os.tmpdir(), "lock-"));
+    await fs.mkdir(path.join(prefix, "conda-meta"));
+    await fs.writeFile(path.join(prefix, "conda-meta", "zlib-1.json"), JSON.stringify({ name: "zlib", url: "https://conda.anaconda.org/t/xy-secret-token/conda-forge/linux-64/zlib-1.conda", md5: "aa" }));
+    await fs.writeFile(path.join(prefix, "conda-meta", "bash-5.json"), JSON.stringify({ name: "bash", channel: "https://conda.anaconda.org/conda-forge", subdir: "linux-64", fn: "bash-5.conda", md5: "bb" }));
+    await fs.writeFile(path.join(prefix, "conda-meta", "history"), "not json");
+    const lock = await readExplicitLock(prefix);
+    expect(lock).toBe("@EXPLICIT\nhttps://conda.anaconda.org/conda-forge/linux-64/bash-5.conda#bb\nhttps://conda.anaconda.org/conda-forge/linux-64/zlib-1.conda#aa\n");
+    expect(lockDigestOf(lock)).toMatch(/^[0-9a-f]{64}$/);
+    expect(await readExplicitLock(path.join(prefix, "missing"))).toBeNull();
+    await fs.rm(prefix, { recursive: true, force: true });
+  });
+});
+
+describe("prefix credential scrub", () => {
+  it("rewrites conda-meta records and the build log without the channel token", async () => {
+    const fs = await import("fs/promises");
+    const os = await import("os");
+    const path = await import("path");
+    const { scrubPrefixCredentials } = await import("./conda-credentials");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "scrub-"));
+    const prefix = path.join(root, "env");
+    await fs.mkdir(path.join(prefix, "conda-meta"), { recursive: true });
+    const record = { name: "zlib", url: "https://conda.anaconda.org/t/xy-0000-secret/conda-forge/linux-64/zlib-1.conda", channel: "https://conda.anaconda.org/t/xy-0000-secret/conda-forge" };
+    await fs.writeFile(path.join(prefix, "conda-meta", "zlib-1.json"), JSON.stringify(record));
+    await fs.writeFile(path.join(prefix, "conda-meta", "clean-1.json"), JSON.stringify({ name: "clean", url: "https://conda.anaconda.org/conda-forge/noarch/clean-1.conda" }));
+    await fs.writeFile(`${prefix}.log`, "Downloading https://conda.anaconda.org/t/xy-0000-secret/conda-forge/linux-64/zlib-1.conda\n");
+    expect(await scrubPrefixCredentials(prefix, `${prefix}.log`)).toBe(2);
+    const rewritten = JSON.parse(await fs.readFile(path.join(prefix, "conda-meta", "zlib-1.json"), "utf8"));
+    expect(rewritten).toEqual({ name: "zlib", url: "https://conda.anaconda.org/conda-forge/linux-64/zlib-1.conda", channel: "https://conda.anaconda.org/conda-forge" });
+    expect(await fs.readFile(`${prefix}.log`, "utf8")).not.toContain("secret");
+    expect(await scrubPrefixCredentials(prefix, `${prefix}.log`)).toBe(0);
+    await fs.rm(root, { recursive: true, force: true });
+  });
+});

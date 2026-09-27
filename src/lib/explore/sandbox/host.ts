@@ -19,6 +19,30 @@ export interface HostFacts {
   tmpRoot: string;
   /** Present when the tool exists but cannot create namespaces (bubblewrap only). */
   problem: string | null;
+  /** How per-run resource caps can be applied here (the wrapper decides again where it runs). */
+  limits?: { mechanism: "systemd" | "prlimit" | "ulimit"; controllers: string[] };
+}
+
+async function detectLimitSupport(platform: SandboxPlatform | null): Promise<HostFacts["limits"]> {
+  if (platform !== "linux") return { mechanism: "ulimit", controllers: [] };
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (uid !== null) {
+    try {
+      const raw = await fs.readFile(`/sys/fs/cgroup/user.slice/user-${uid}.slice/user@${uid}.service/cgroup.subtree_control`, "utf8");
+      const controllers = raw.trim().split(/\s+/).filter(Boolean);
+      if (controllers.length > 0 && (await which("systemd-run"))) {
+        try {
+          await execFileAsync("systemd-run", ["--user", "--scope", "--quiet", "--collect", "-p", "TasksMax=16", "true"], { timeout: 10_000 });
+          return { mechanism: "systemd", controllers };
+        } catch {
+          // no user manager reachable (no lingering session)
+        }
+      }
+    } catch {
+      // cgroup v1 or no delegation
+    }
+  }
+  return { mechanism: (await which("prlimit")) ? "prlimit" : "ulimit", controllers: [] };
 }
 
 async function exists(target: string): Promise<boolean> {
@@ -88,6 +112,7 @@ export async function collectHostFacts(options: { platform?: NodeJS.Platform; fr
     hostHome: os.homedir(),
     tmpRoot: os.tmpdir(),
     problem,
+    limits: await detectLimitSupport(platform),
   };
   cached = { at: Date.now(), facts };
   return facts;

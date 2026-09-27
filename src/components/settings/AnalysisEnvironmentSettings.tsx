@@ -21,6 +21,7 @@ interface SandboxSettings {
   network: "none" | "host";
   extraReadOnly: string[];
   localTimeLimitHours: number;
+  limits: { cores: number; memoryGb: number; pids: number };
 }
 
 interface SandboxStatus {
@@ -233,6 +234,22 @@ function IsolationCard({ status, isAdmin, onSaved }: { status: SandboxStatus; is
             <label htmlFor="sandbox-limit" className="text-xs font-medium">Time limit for local runs (hours)</label>
             <Input id="sandbox-limit" type="number" min={0} max={720} className="mt-1 w-40" value={draft.localTimeLimitHours} onChange={(event) => setDraft({ ...draft, localTimeLimitHours: Math.max(0, Number.parseInt(event.target.value, 10) || 0) })} />
             <p className="mt-1 text-xs text-muted-foreground">0 means no limit. SLURM runs use the scheduler limit.</p>
+          </div>
+          <div className="md:col-span-2">
+            <span className="text-xs font-medium">Limits per local run</span>
+            <div className="mt-1 flex flex-wrap gap-3">
+              {([
+                ["cores", "CPU cores", 1024],
+                ["memoryGb", "Memory (GB)", 16384],
+                ["pids", "Processes", 1000000],
+              ] as const).map(([key, label, max]) => (
+                <label key={key} className="text-xs text-muted-foreground">
+                  {label}
+                  <Input type="number" min={0} max={max} className="mt-1 w-32" value={draft.limits?.[key] ?? 0} onChange={(event) => setDraft({ ...draft, limits: { ...(draft.limits ?? { cores: 4, memoryGb: 16, pids: 512 }), [key]: Math.max(0, Number.parseInt(event.target.value, 10) || 0) } })} />
+                </label>
+              ))}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">0 means no cap. On Linux the caps use a systemd user scope when cgroup v2 is delegated, otherwise rlimits; macOS caps processes only. SLURM runs use the scheduler limits.</p>
           </div>
           <div>
             <label htmlFor="sandbox-extra" className="text-xs font-medium">Extra read-only paths</label>

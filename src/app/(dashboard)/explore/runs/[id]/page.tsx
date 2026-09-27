@@ -39,7 +39,16 @@ interface RunDetail {
   createdAt: string;
   analysis: { id: string; name: string; targetKey: string; language: "python" | "r" };
   results: { notes?: string[]; metrics?: Record<string, unknown>; warnings?: string[]; error?: string; sandbox?: { used: string; detail: string; planHash: string | null; network: string | null } | null } | null;
-  isolation: { tool: "bubblewrap" | "seatbelt" | "none"; mode: string; network: "none" | "host"; planHash: string | null; readable: string[]; writable: string[]; reason: string | null } | null;
+  isolation: {
+    tool: "bubblewrap" | "seatbelt" | "none";
+    mode: string;
+    network: "none" | "host";
+    planHash: string | null;
+    readable: string[];
+    writable: string[];
+    reason: string | null;
+    limits?: { cores: number; memoryGb: number; pids: number; mechanism: string; used?: { mechanism: string; enforced: string[]; notes?: string[] } | null };
+  } | null;
   outputTail: string | null;
   errorTail: string | null;
   runFolder: string | null;
@@ -224,6 +233,14 @@ function IsolationBadge({ run }: { run: RunDetail }) {
   );
 }
 
+const LIMIT_LABELS: Record<string, string> = {
+  systemd: "systemd user scope (cgroup v2)",
+  prlimit: "prlimit (rlimits)",
+  ulimit: "ulimit",
+  slurm: "the SLURM job's limits",
+  none: "not capped",
+};
+
 function IsolationPanel({ run }: { run: RunDetail }) {
   const isolation = run.isolation;
   const reported = run.results?.sandbox ?? null;
@@ -240,6 +257,20 @@ function IsolationPanel({ run }: { run: RunDetail }) {
           <dd>{isolation.mode}</dd>
           <dt className="text-muted-foreground">Network</dt>
           <dd>{isolation.network === "none" ? "none: the analysis cannot open connections" : "the host network"}</dd>
+          {isolation.limits && (
+            <>
+              <dt className="text-muted-foreground">Limits</dt>
+              <dd>
+                {[isolation.limits.cores ? `${isolation.limits.cores} cores` : "cores uncapped", isolation.limits.memoryGb ? `${isolation.limits.memoryGb} GB memory` : "memory uncapped", isolation.limits.pids ? `${isolation.limits.pids} processes` : "processes uncapped"].join(" · ")}
+                <span className="text-muted-foreground">
+                  {isolation.limits.used
+                    ? ` — ${LIMIT_LABELS[isolation.limits.used.mechanism] ?? isolation.limits.used.mechanism}, enforced: ${isolation.limits.used.enforced.length ? isolation.limits.used.enforced.map((cap) => (cap === "pids" ? "processes" : cap)).join(", ") : "nothing"}`
+                    : ` — planned: ${LIMIT_LABELS[isolation.limits.mechanism] ?? isolation.limits.mechanism}`}
+                </span>
+                {isolation.limits.used?.notes?.length ? <span className="block text-xs text-muted-foreground">{isolation.limits.used.notes.join("; ")}</span> : null}
+              </dd>
+            </>
+          )}
           {isolation.planHash && (
             <>
               <dt className="text-muted-foreground">Plan</dt>

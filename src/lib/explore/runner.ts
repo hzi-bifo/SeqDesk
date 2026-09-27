@@ -16,6 +16,7 @@ import { inputContractSnapshot, validateAnalysisInputs } from "./input-validatio
 import { parseSchema } from "./schema";
 import { resolveExploreStorage } from "./storage";
 import { generateInnerScript, generateLocalRunScript, generateSlurmRunScript, INNER_SCRIPT, type ContinualfigMode } from "./run-script";
+import { pinEnvironment } from "./environment-lock";
 import { prepareRunSandbox, SandboxRefusedError } from "./sandbox/prepare";
 import { getSandboxSettings } from "./sandbox/settings";
 import type { ExploreCell } from "./types";
@@ -296,7 +297,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     await fs.writeFile(path.join(runFolder, "inputs.json"), JSON.stringify(inputsJson, null, 2), "utf8");
     await fs.writeFile(path.join(runFolder, "params.json"), JSON.stringify(params, null, 2), "utf8");
     // Which environment the step ran in: the base, or the base plus the step's packages.
-    await fs.writeFile(path.join(runFolder, "environment.json"), JSON.stringify({ name: environmentName, base: stepEnvironment.baseName, specHash: environment.specHash, packages: stepEnvironment.packages, lockDigest: stepEnvironment.lockDigest }, null, 2), "utf8");
+    await fs.writeFile(path.join(runFolder, "environment.json"), JSON.stringify({ name: environmentName, base: stepEnvironment.baseName, specHash: environment.specHash, packages: stepEnvironment.packages, lockDigest: stepEnvironment.lockDigest ?? (await pinEnvironment(environmentName, analysis.language).catch(() => null))?.lockDigest ?? null }, null, 2), "utf8");
     const entrypoint = analysis.language === "r" ? "analysis.R" : analysis.language === "shell" ? "step.sh" : "analysis.py";
     await fs.writeFile(path.join(runFolder, entrypoint), input.flowRun?.codeOverride ?? revision.code, "utf8");
     // The helper library travels with the run: SLURM nodes only share the run

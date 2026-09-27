@@ -4,6 +4,7 @@ import fs from "fs/promises";
 import path from "path";
 import { db } from "@/lib/db";
 import { getExecutionSettings } from "@/lib/pipelines/execution-settings";
+import { scrubPrefixCredentials, stripChannelCredentials } from "./conda-credentials";
 import { getEnvironmentsDir } from "./kits/loader";
 import { resolveExploreStorage } from "./storage";
 
@@ -56,6 +57,7 @@ async function reconcileBuildingRecord(record: ExploreEnvironmentRecord): Promis
   const logPath = `${record.prefixPath}.log`;
   const interpreterReady = await hasInterpreter(record.prefixPath);
   if (interpreterReady) {
+    await scrubPrefixCredentials(record.prefixPath, logPath);
     return db.exploreEnvironment.update({
       where: { name: record.name },
       data: { status: "ready", builtAt: new Date(), lastError: null },
@@ -66,7 +68,7 @@ async function reconcileBuildingRecord(record: ExploreEnvironmentRecord): Promis
   if (/CondaError|EnvironmentFileNotFound|ResolvePackageNotFound|error:/i.test(log) || stale) {
     return db.exploreEnvironment.update({
       where: { name: record.name },
-      data: { status: "failed", lastError: (log.split("\n").slice(-30).join("\n") || "The build stopped without a result").slice(0, 4000) },
+      data: { status: "failed", lastError: stripChannelCredentials(log.split("\n").slice(-30).join("\n") || "The build stopped without a result").slice(0, 4000) },
     });
   }
   return record;
@@ -206,6 +208,8 @@ export async function buildEnvironment(name: string, options: { wait?: boolean }
     child.on("close", async (code) => {
       await log.close().catch(() => {});
       if (code === 0) {
+        // Channel tokens from the builder's .condarc must not reach runs, locks or capsules.
+        await scrubPrefixCredentials(prefix, logPath);
         await db.exploreEnvironment.update({
           where: { name },
           data: { status: "ready", builtAt: new Date(), lastError: null, prefixPath: prefix },
@@ -217,7 +221,7 @@ export async function buildEnvironment(name: string, options: { wait?: boolean }
           .catch(() => "");
         await db.exploreEnvironment.update({
           where: { name },
-          data: { status: "failed", lastError: `conda env create exited with ${code}\n${tail}`.slice(0, 4000) },
+          data: { status: "failed", lastError: stripChannelCredentials(`conda env create exited with ${code}\n${tail}`).slice(0, 4000) },
         });
       }
       resolve(code);
@@ -273,7 +277,8 @@ export async function registerExistingEnvironment(name: string, prefixPath: stri
 export async function readBuildLogTail(prefixPath: string | null, lines = 30): Promise<string | null> {
   if (!prefixPath) return null;
   const text = await fs.readFile(`${prefixPath}.log`, "utf8").catch(() => null);
-  return text === null ? null : text.split("\n").slice(-lines).join("\n").trim();
+  // A build in progress may still print channel URLs with the builder's token.
+  return text === null ? null : stripChannelCredentials(text.split("\n").slice(-lines).join("\n").trim());
 }
 
 export { hashSpec as hashEnvironmentSpec, reconcileBuildingRecord as reconcileEnvironmentRecord, environmentsRoot as exploreEnvironmentsRoot };

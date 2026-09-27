@@ -33,14 +33,36 @@ const READ_ONLY_PURPOSES = new Set<BindPurpose>(["system", "environment", "conda
 export const CONTROL_SUBDIR = "control";
 export const LOGS_SUBDIR = "logs";
 export const INNER_SCRIPT_NAME = "analysis.sh";
+/** Synthetic account files in control/, bound over /etc/passwd and /etc/group on Linux. */
+export const PASSWD_FILE_NAME = "passwd";
+export const GROUP_FILE_NAME = "group";
+
+/**
+ * The account database a run sees: its own uid/gid as "seqdesk" with the
+ * run's home, and nobody. R, Python and bash look up the current user
+ * (getpwuid) and fail or complain without an entry; the host's real files
+ * would expose every user name on the machine. Pure.
+ */
+export function syntheticIdentityFiles(identity: { uid: number; gid: number; home: string }): { passwd: string; group: string } {
+  const uid = Number.isInteger(identity.uid) && identity.uid >= 0 ? identity.uid : 65534;
+  const gid = Number.isInteger(identity.gid) && identity.gid >= 0 ? identity.gid : 65534;
+  const home = identity.home.replace(/[:\n]/g, "");
+  const passwd = [`seqdesk:x:${uid}:${gid}:SeqDesk analysis:${home}:/bin/bash`];
+  const group = [`seqdesk:x:${gid}:`];
+  if (uid !== 65534) passwd.push("nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin");
+  if (gid !== 65534) group.push("nogroup:x:65534:");
+  return { passwd: `${passwd.join("\n")}\n`, group: `${group.join("\n")}\n` };
+}
 const READ_WRITE_PURPOSES = new Set<BindPurpose>(["run"]);
 
 const SYSTEM_DIRS = ["/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64"];
 
 /**
  * Linux: the few files of /etc a conda R or Python needs (the dynamic
- * linker cache, the time zone, name lookup of the own user, Debian's
- * alternatives links, fontconfig). The rest of /etc is absent.
+ * linker cache, the time zone, Debian's alternatives links, fontconfig).
+ * The rest of /etc is absent. /etc/passwd and /etc/group are not the
+ * host's: they would list every account on the machine. The run gets
+ * synthetic ones (see syntheticIdentityFiles) naming only itself.
  */
 export const LINUX_ETC_ENTRIES = [
   "/etc/ld.so.cache",
@@ -49,8 +71,6 @@ export const LINUX_ETC_ENTRIES = [
   "/etc/localtime",
   "/etc/timezone",
   "/etc/nsswitch.conf",
-  "/etc/passwd",
-  "/etc/group",
   "/etc/alternatives",
   "/etc/fonts",
 ];
@@ -163,7 +183,7 @@ export interface MountPlanInput {
   };
   host: {
     system?: Record<string, SystemEntry>;
-    /** sssd client pipes present: LDAP users need them to resolve their own name. */
+    /** sssd client pipes present. No longer bound: the synthetic passwd names the run's user. */
     sss?: boolean;
   };
   /** Logical path -> real path (symlinks resolved); Seatbelt matches real paths. */
@@ -202,7 +222,9 @@ export function buildMountPlan(input: MountPlanInput): MountPlan {
     }
     // Parents before children: bubblewrap mounts in order, so a later /var would hide /var/tmp.
     tmpfs.push("/tmp", "/run", "/var", "/var/tmp", "/home", "/root", "/opt");
-    if (input.host.sss) binds.push({ src: "/var/lib/sss", dst: "/var/lib/sss", mode: "ro", purpose: "system" });
+    // The run's own account files instead of the host's (and no sssd, which would answer for every directory user).
+    binds.push({ src: path.join(srcOf(runFolder), CONTROL_SUBDIR, PASSWD_FILE_NAME), dst: "/etc/passwd", mode: "ro", purpose: "control", type: "file" });
+    binds.push({ src: path.join(srcOf(runFolder), CONTROL_SUBDIR, GROUP_FILE_NAME), dst: "/etc/group", mode: "ro", purpose: "control", type: "file" });
   }
 
   binds.push({ src: srcOf(runFolder), dst: runFolder, mode: "rw", purpose: "run" });

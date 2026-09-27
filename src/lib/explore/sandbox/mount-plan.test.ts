@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMountPlan, DARWIN_DESCRIPTOR_PATHS, DARWIN_SYSTEM_READ, describeMountPlan, mountPlanHash, renderBwrapArgs, renderSeatbeltProfile, traverseDirs, validateMountPlan, type MountPlanInput } from "./mount-plan";
+import { buildMountPlan, DARWIN_DESCRIPTOR_PATHS, DARWIN_SYSTEM_READ, describeMountPlan, mountPlanHash, renderBwrapArgs, renderSeatbeltProfile, syntheticIdentityFiles, traverseDirs, validateMountPlan, type MountPlanInput } from "./mount-plan";
 
 const base: MountPlanInput = {
   platform: "linux",
@@ -15,7 +15,8 @@ describe("mount plans", () => {
     const plan = buildMountPlan(base);
     const summary = describeMountPlan(plan);
     expect(summary.writable).toEqual(["/data/explore/runs/EXP-1--id-run1"]);
-    expect(summary.readable).toEqual(expect.arrayContaining(["/usr", "/etc/ld.so.cache", "/etc/passwd", "/data/explore/environments/seqdesk-explore-python", "/opt/conda/pkgs", "/var/lib/sss"]));
+    expect(summary.readable).toEqual(expect.arrayContaining(["/usr", "/etc/ld.so.cache", "/etc/passwd", "/data/explore/environments/seqdesk-explore-python", "/opt/conda/pkgs"]));
+    expect(summary.readable).not.toContain("/var/lib/sss");
     expect(summary.readable).not.toContain("/data/explore/datasets");
     expect(plan.tmpfs).toEqual(expect.arrayContaining(["/home", "/root", "/tmp", "/opt"]));
     expect(plan.network).toBe("none");
@@ -85,9 +86,24 @@ describe("mount plans", () => {
     const roBinds = args.flatMap((arg, index) => (arg === "--ro-bind" ? [args[index + 1]] : []));
     expect(roBinds).not.toContain("/");
     expect(roBinds).not.toContain("/etc");
-    expect(roBinds).toEqual(expect.arrayContaining(["/usr", "/etc/ld.so.cache", "/etc/passwd"]));
+    expect(roBinds).toEqual(expect.arrayContaining(["/usr", "/etc/ld.so.cache"]));
     expect(args.join(" ")).toContain("--symlink /usr/share/zoneinfo/Europe/Berlin /etc/localtime");
     expect(roBinds.some((src) => src.startsWith("/home"))).toBe(false);
+  });
+
+  it("binds synthetic account files over /etc/passwd and /etc/group, never the host's", () => {
+    const args = renderBwrapArgs(buildMountPlan(base));
+    const run = "/data/explore/runs/EXP-1--id-run1";
+    const passwdAt = args.indexOf("/etc/passwd");
+    expect(args.slice(passwdAt - 2, passwdAt + 1)).toEqual(["--ro-bind", `${run}/control/passwd`, "/etc/passwd"]);
+    const groupAt = args.indexOf("/etc/group");
+    expect(args.slice(groupAt - 2, groupAt + 1)).toEqual(["--ro-bind", `${run}/control/group`, "/etc/group"]);
+    expect(args.filter((arg) => arg === "/etc/passwd")).toHaveLength(1);
+    expect(args).not.toContain("/var/lib/sss");
+    const files = syntheticIdentityFiles({ uid: 1000, gid: 1000, home: `${run}/home` });
+    expect(files.passwd).toBe(`seqdesk:x:1000:1000:SeqDesk analysis:${run}/home:/bin/bash\nnobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n`);
+    expect(files.group).toBe("seqdesk:x:1000:\nnogroup:x:65534:\n");
+    expect(syntheticIdentityFiles({ uid: 1000, gid: 1000, home: "/x:y\nz" }).passwd.split("\n")[0]).toBe("seqdesk:x:1000:1000:SeqDesk analysis:/xyz:/bin/bash");
   });
 
   describe("Seatbelt profile", () => {

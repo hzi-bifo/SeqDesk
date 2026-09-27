@@ -1,7 +1,9 @@
 import path from "path";
 import { buildSeqDeskSlurmJobName } from "@/lib/pipelines/run-directory";
 import type { ExecutionSettings } from "@/lib/pipelines/execution-settings";
+import { resourceLimitLines } from "./sandbox/limits";
 import { CONTROL_SUBDIR, INNER_SCRIPT_NAME } from "./sandbox/mount-plan";
+import type { RunResourceLimits } from "./sandbox/settings";
 
 /**
  * Shell wrappers for Explore analysis runs. They follow the pipeline wrapper
@@ -19,10 +21,14 @@ export const EXPLORE_LOG_ERR = "logs/pipeline.err";
  * executes the script (the SLURM node may differ from the app host);
  * "auto" runs unconfined and says so in the log.
  */
-export type RunSandbox =
+export type RunSandbox = (
   | { kind: "bubblewrap"; mode: "required" | "auto"; args: string[]; planHash: string }
   | { kind: "seatbelt"; mode: "required" | "auto"; profilePath: string; planHash: string }
-  | { kind: "none"; mode: "required" | "auto" | "off"; reason: string };
+  | { kind: "none"; mode: "required" | "auto" | "off"; reason: string }
+) & {
+  /** CPU, memory and process caps for local runs (sandbox/limits.ts). */
+  limits?: RunResourceLimits;
+};
 
 export interface RunScriptOptions {
   runId: string;
@@ -184,20 +190,23 @@ function sandboxLines(options: RunScriptOptions): string[] {
   // script rebuilds what it needs from these few variables.
   const cleanEnv = 'env -i PATH="/usr/bin:/bin" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}"';
   const limit = options.timeLimitHours && options.timeLimitHours > 0 ? Math.floor(options.timeLimitHours) : 0;
-  const lines: string[] = [];
+  const lines: string[] = [...resourceLimitLines(sandbox.limits, options.runId)];
+  // The caps' command prefix; the guard keeps an empty array safe under set -u on bash 3.2.
+  const rlim = '${RLIM[@]+"${RLIM[@]}"}';
   lines.push("# A time limit when the host has GNU timeout (SLURM enforces its own).");
   lines.push('LIMIT=""');
   if (limit > 0) {
     // The absolute path: the limit runs under the emptied PATH of the analysis.
     lines.push(`if [ -z "\${SLURM_JOB_ID:-}" ] && command -v timeout >/dev/null 2>&1; then LIMIT="$(command -v timeout) --signal=TERM --kill-after=60 ${limit}h"; fi`);
   }
-  const plain = `${cleanEnv} $LIMIT /bin/bash ${inner} >> "$STDOUT_LOG" 2>> "$STDERR_LOG"`;
+  const plain = `${rlim} ${cleanEnv} $LIMIT /bin/bash ${inner} >> "$STDOUT_LOG" 2>> "$STDERR_LOG" || RUN_STATUS=$?`;
+  lines.push("RUN_STATUS=0");
   if (sandbox.kind === "bubblewrap") {
     const args = sandbox.args.map(shellQuote).join(" \\\n    ");
     lines.push('BWRAP="$(command -v bwrap 2>/dev/null || true)"');
     lines.push('if [ -n "$BWRAP" ]; then');
     lines.push(`  echo "Sandbox: bubblewrap (plan ${sandbox.planHash})" >> "$STDOUT_LOG"`);
-    lines.push(`  ${cleanEnv} $LIMIT "$BWRAP" \\\n    ${args} \\\n    -- /bin/bash ${inner} >> "$STDOUT_LOG" 2>> "$STDERR_LOG"`);
+    lines.push(`  ${rlim} ${cleanEnv} $LIMIT "$BWRAP" \\\n    ${args} \\\n    -- /bin/bash ${inner} >> "$STDOUT_LOG" 2>> "$STDERR_LOG" || RUN_STATUS=$?`);
     if (sandbox.mode === "required") {
       lines.push("else");
       lines.push('  echo "Sandbox: refused (bubblewrap is required but not installed on $(hostname))" >> "$STDOUT_LOG"');
@@ -212,7 +221,7 @@ function sandboxLines(options: RunScriptOptions): string[] {
   } else if (sandbox.kind === "seatbelt") {
     lines.push("if command -v sandbox-exec >/dev/null 2>&1; then");
     lines.push(`  echo "Sandbox: seatbelt (plan ${sandbox.planHash})" >> "$STDOUT_LOG"`);
-    lines.push(`  ${cleanEnv} $LIMIT sandbox-exec -f ${shellQuote(sandbox.profilePath)} /bin/bash ${inner} >> "$STDOUT_LOG" 2>> "$STDERR_LOG"`);
+    lines.push(`  ${rlim} ${cleanEnv} $LIMIT sandbox-exec -f ${shellQuote(sandbox.profilePath)} /bin/bash ${inner} >> "$STDOUT_LOG" 2>> "$STDERR_LOG" || RUN_STATUS=$?`);
     if (sandbox.mode === "required") {
       lines.push("else");
       lines.push('  echo "Sandbox: refused (sandbox-exec is required but not available)" >> "$STDOUT_LOG"');
@@ -232,6 +241,7 @@ function sandboxLines(options: RunScriptOptions): string[] {
     lines.push(`echo "Sandbox: none (${sandbox.reason.replace(/["$`\\]/g, "")})" >> "$STDOUT_LOG"`);
     lines.push(plain);
   }
+  lines.push('seqdesk_explain_limits "$RUN_STATUS"', 'exit "$RUN_STATUS"');
   return lines;
 }
 

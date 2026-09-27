@@ -6,10 +6,14 @@
  */
 import { execFile } from "child_process";
 import crypto from "crypto";
+import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { db } from "@/lib/db";
+import { stripChannelCredentials } from "./conda-credentials";
 import { resolveCondaExecutable } from "./environments";
+
+export { stripChannelCredentials };
 
 export interface EnvironmentPin {
   name: string;
@@ -28,6 +32,59 @@ function run(command: string, args: string[], timeoutMs = 60000): Promise<string
       resolve(`${stdout}${stderr}`);
     });
   });
+}
+
+interface CondaMetaRecord {
+  name?: string;
+  url?: string;
+  md5?: string;
+  channel?: string;
+  subdir?: string;
+  fn?: string;
+}
+
+/**
+ * The explicit lock of a prefix read straight from conda-meta/*.json, the
+ * record conda, mamba and micromamba all write: one `url#md5` line per
+ * package, sorted by name, credentials stripped. No conda executable is
+ * needed, so the lock is the same whichever tool built the prefix. Null when
+ * the prefix has no package records.
+ */
+export async function readExplicitLock(prefix: string): Promise<string | null> {
+  const metaDir = path.join(prefix, "conda-meta");
+  let entries: string[];
+  try {
+    entries = (await fs.readdir(metaDir)).filter((entry) => entry.endsWith(".json"));
+  } catch {
+    return null;
+  }
+  const lines: Array<{ name: string; line: string }> = [];
+  for (const entry of entries) {
+    try {
+      const record = JSON.parse(await fs.readFile(path.join(metaDir, entry), "utf8")) as CondaMetaRecord;
+      const url = record.url ?? (record.channel && record.subdir && record.fn ? `${record.channel.replace(/\/$/, "")}/${record.subdir}/${record.fn}` : null);
+      if (!url) continue;
+      lines.push({ name: record.name ?? entry, line: `${stripChannelCredentials(url)}${record.md5 ? `#${record.md5}` : ""}` });
+    } catch {
+      // a half-written record: skip it
+    }
+  }
+  if (lines.length === 0) return null;
+  lines.sort((a, b) => a.name.localeCompare(b.name) || a.line.localeCompare(b.line));
+  return `@EXPLICIT\n${lines.map((entry) => entry.line).join("\n")}\n`;
+}
+
+/** The lock text of a prefix: conda-meta first, then `conda list --explicit --md5`; always credential-free. */
+export async function explicitLockText(prefix: string, conda?: string): Promise<string | null> {
+  const fromMeta = await readExplicitLock(prefix);
+  if (fromMeta) return fromMeta;
+  const executable = conda ?? (await resolveCondaExecutable().catch(() => "conda"));
+  const listed = await run(executable, ["list", "--explicit", "--md5", "-p", prefix]);
+  return listed && /@EXPLICIT/.test(listed) ? stripChannelCredentials(listed) : null;
+}
+
+export function lockDigestOf(lock: string | null): string | null {
+  return lock ? crypto.createHash("sha256").update(lock).digest("hex") : null;
 }
 
 /** "Python 3.12.4" / "R version 4.4.1 (2024-06-14) ..." -> "3.12.4" / "4.4.1". */
@@ -50,10 +107,9 @@ export async function pinEnvironment(name: string, language: string): Promise<En
   if (!record || record.status !== "ready" || !record.prefixPath) return null;
   let lockDigest = record.lockSpecHash === record.specHash ? record.lockDigest : null;
   let languageVersion = record.lockSpecHash === record.specHash ? record.languageVersion : null;
-  if (record.lockSpecHash !== record.specHash) {
-    const conda = await resolveCondaExecutable().catch(() => "conda");
-    const lock = await run(conda, ["list", "--explicit", "--md5", "-p", record.prefixPath]);
-    lockDigest = lock && /@EXPLICIT/.test(lock) ? crypto.createHash("sha256").update(lock).digest("hex") : null;
+  // A null digest is retried: an earlier attempt may have failed (no conda on PATH, micromamba).
+  if (record.lockSpecHash !== record.specHash || !lockDigest) {
+    lockDigest = lockDigestOf(await explicitLockText(record.prefixPath));
     const binary = language === "r" ? path.join(record.prefixPath, "bin", "R") : path.join(record.prefixPath, "bin", "python");
     languageVersion = parseLanguageVersion(await run(binary, ["--version"], 20000));
     await db.exploreEnvironment.update({ where: { name }, data: { lockDigest, languageVersion, lockSpecHash: record.specHash } }).catch(() => undefined);
