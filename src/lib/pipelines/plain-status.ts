@@ -61,6 +61,10 @@ export interface PlainRunInput {
   /** SLURM queue (partition) and cores asked for, for "SLURM did not take the job" and the queue sentence. */
   queue?: string | null;
   askedCores?: number | null;
+  /** When the monitor last read the scheduler for this run (queueUpdatedAt); old while the run is active = stale card. */
+  checkedAt?: Date | string | null;
+  /** How many steps the pipeline declares, so "step 2 of 2" does not shrink when the log tail loses the first block. */
+  declaredSteps?: number | null;
   outputCount?: number | null;
 }
 
@@ -355,7 +359,20 @@ function errorSentence(kind: ErrorKind, process: string | null, sample: string |
   }
 }
 
+/** Older than this, an active run's card says when its status was last checked (the monitor is down or SLURM silent). */
+export const STALE_STATUS_SECONDS = 180;
+
 export function plainRunStatus(context: PlainContext): PlainStatus {
+  const status = plainRunStatusOf(context);
+  const { run } = context;
+  const checked = toDate(run.checkedAt);
+  if (!checked || !['pending', 'queued', 'running'].includes(run.status.toLowerCase())) return status;
+  const age = Math.round(((context.now ?? new Date()).getTime() - checked.getTime()) / 1000);
+  // "waiting N min" and "~N left" would go on counting from a status nobody checked; say how old it is.
+  return age > STALE_STATUS_SECONDS ? { ...status, sentence: `${status.sentence} · status last checked ${durationWords(age)} ago` } : status;
+}
+
+function plainRunStatusOf(context: PlainContext): PlainStatus {
   const { run } = context;
   const now = context.now ?? new Date();
   const tasks = context.trace ? parseTraceContent(context.trace).tasks : [];
@@ -432,9 +449,17 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
     // trace.txt only lists processes that ended a task: once they are all done, the console log names the next one.
     const progress = current ? null : logProgress(run.outputTail);
     const logged = progress?.processes.findIndex((p) => p.total > p.done) ?? -1;
-    const where = current ? ` · step ${index} of ${rows.length}: ${stageWords(current.name)}`
-      : progress && logged >= 0 ? ` · step ${logged + 1} of ${progress.steps}${progress.processes[logged].name ? `: ${stageWords(progress.processes[logged].name)}` : ''}` : '';
+    const total = (seen: number) => Math.max(seen, run.declaredSteps ?? 0);
+    const where = current ? ` · step ${index} of ${total(rows.length)}: ${stageWords(current.name)}`
+      : progress && logged >= 0 ? ` · step ${logged + 1} of ${total(progress.steps)}${progress.processes[logged].name ? `: ${stageWords(progress.processes[logged].name)}` : ''}` : '';
     // On SLURM the run's job runs while its task jobs may wait (the monitor keeps their reason).
+    // SLURM already ended a task job badly; Nextflow notices within exitReadTimeout. Say it now.
+    const ended = /^ended:(\w+):(.*)$/.exec(run.queueReason ?? '');
+    if (ended) {
+      const [, kind, process] = ended;
+      const what = kind === 'memory' ? 'ran out of memory' : kind === 'time' ? 'hit its time limit' : kind === 'cancelled' ? 'was cancelled outside SeqDesk' : kind === 'node' ? 'lost its node' : 'failed';
+      return { ...base, shape: 'running', word: 'Running', sentence: `${capital(stageWords(process))} ${what} · Nextflow is still noticing`, action: { kind: 'cancel', label: 'Cancel' } };
+    }
     const reasonWords = slurm && run.queueReason ? slurmReasonWords(run.queueReason) : '';
     const waiting = reasonWords ? ` · ${reasonWords.charAt(0).toLowerCase()}${reasonWords.slice(1)}` : '';
     const left = estimate.seconds != null && elapsedSeconds != null
@@ -456,9 +481,9 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
   if (slurm && queue && (queueState === 'PENDING' || queueState === 'CONFIGURING' || !queueState)) {
     const words = slurmReasonWords(run.queueReason, [run.askedCores ? `${run.askedCores} cores` : '', run.askedMemory ? memoryWords(memoryBytes(run.askedMemory)) || run.askedMemory : ''].filter(Boolean).join(' and ') || null);
     const waited = queued ? Math.round((now.getTime() - queued.getTime()) / 1000) : null;
-    const resources = /Resources/i.test(run.queueReason ?? '');
     return { ...base, shape: 'waiting', word: 'Queued', sentence: `${words}${waited != null && waited > 60 ? ` · waiting ${durationWords(waited)}` : ''}`,
-      action: resources && run.askedMemory ? { kind: 'ask-less-memory', label: 'Ask for less memory?' } : /MaxJobs|GrpJobs/i.test(run.queueReason ?? '') ? { kind: 'see-jobs', label: 'See the lab’s jobs' } : { kind: 'cancel', label: 'Cancel' } };
+      // Cancel is what a person can always do; "less memory" only when SLURM says memory is what it waits for.
+      action: /Mem/i.test(run.queueReason ?? '') && run.askedMemory ? { kind: 'ask-less-memory', label: 'Ask for less memory?' } : { kind: 'cancel', label: 'Cancel' } };
   }
   return { ...base, shape: 'preparing', word: 'Preparing', sentence: run.currentStep && !/^Launching$/i.test(run.currentStep) ? `Preparing · ${run.currentStep}` : 'Preparing to start', action: { kind: 'cancel', label: 'Cancel' } };
 }

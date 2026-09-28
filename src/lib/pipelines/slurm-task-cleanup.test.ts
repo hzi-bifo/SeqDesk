@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cancelLeftoverSlurmTaskJobs, taskJobsOfRun, waitingTaskReason } from './slurm-task-cleanup';
+import { cancelLeftoverSlurmTaskJobs, endedTaskJob, taskJobsOfRun, waitingTaskReason } from './slurm-task-cleanup';
 
 const RUN = '/data/runs/FASTQC-20260928-008--id-abc';
 // squeue --me -h -o '%i|%T|%.1024Z' (the WorkDir column is right-aligned and padded)
@@ -38,5 +38,13 @@ describe('leftover SLURM task jobs of a run', () => {
     // One task running: nothing waits that the person needs to hear about. Other runs' tasks do not count.
     expect(waitingTaskReason([`37|PENDING|Resources|   ${RUN}/work/ac/84`, `38|RUNNING|None|   ${RUN}/work/fe/74`].join('\n'), RUN)).toBeNull();
     expect(waitingTaskReason(`39|PENDING|Resources|   /data/runs/other/work/aa/bb`, RUN)).toBeNull();
+  });
+
+  it('finds a task job SLURM ended badly that no later attempt replaced', () => {
+    const lines = [`38|seqdesk-run|RUNNING|0:0|${RUN}`, `39|nf-RUN_FASTQC_(ERR1)|FAILED|0:9|${RUN}/work/aa/bb`];
+    expect(endedTaskJob(lines.join('\n'), RUN)).toMatchObject({ jobId: '39', process: 'RUN_FASTQC', state: 'FAILED', exitCode: '0:9' });
+    // Nextflow retried it: the retry runs, nothing to say.
+    expect(endedTaskJob([...lines, `41|nf-RUN_FASTQC_(ERR1)|RUNNING|0:0|${RUN}/work/cc/dd`].join('\n'), RUN)).toBeNull();
+    expect(endedTaskJob(`40|nf-X_(a)|OUT_OF_MEMORY|0:125|/data/runs/other/work/aa/bb`, RUN)).toBeNull();
   });
 });

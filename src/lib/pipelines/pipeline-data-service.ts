@@ -13,6 +13,7 @@
  */
 import fs from 'fs/promises';
 import path from 'path';
+import { getStepsForPipeline } from '@/lib/pipelines/definitions';
 import { db } from '@/lib/db';
 import { PIPELINE_REGISTRY } from './registry';
 import { getPipelineEnabled } from './enablement';
@@ -156,7 +157,7 @@ export async function pipelineReadiness(targetKey: string): Promise<{ reads: str
 type RunRow = Awaited<ReturnType<typeof loadRuns>>[number];
 async function loadRuns(where: { id?: string; studyId?: string }) {
   return db.pipelineRun.findMany({ where, orderBy: { createdAt: 'desc' }, take: 50, select: {
-    id: true, runNumber: true, pipelineId: true, status: true, executionMode: true, executionProfile: true, queueJobId: true, queueStatus: true, queueReason: true,
+    id: true, runNumber: true, pipelineId: true, status: true, executionMode: true, executionProfile: true, queueJobId: true, queueStatus: true, queueReason: true, queueUpdatedAt: true,
     currentStep: true, queuedAt: true, startedAt: true, completedAt: true, createdAt: true, outputTail: true, errorTail: true, runFolder: true, inputSampleIds: true,
     config: true, user: { select: { id: true, firstName: true, lastName: true, email: true } },
     artifacts: { select: { id: true, outputId: true, path: true, name: true, size: true, sampleId: true, type: true } },
@@ -241,7 +242,7 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
   const lastResume = run.events[run.events.length - 1]?.message ?? '';
   const resumedTime = /· time (\d+)\.(s|m|h|d)\b/.exec(lastResume);
   const resumedTimeLimitSeconds = resumedTime ? Number(resumedTime[1]) * ({ s: 1, m: 60, h: 3600, d: 86400 } as const)[resumedTime[2] as 's'] : null;
-  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
+  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, checkedAt: run.queueUpdatedAt, declaredSteps: getStepsForPipeline(run.pipelineId).length || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
   const pkg = getPackage(run.pipelineId);
   const datasets = options.targetKey ? await db.exploreDataset.findMany({ where: { targetKey: options.targetKey, kind: 'pipeline-table', sourceConfig: { contains: `"runIds":["${run.id}"]` } }, select: { id: true, name: true, sourceConfig: true, currentVersionId: true, versions: { select: { number: true }, orderBy: { number: 'desc' }, take: 1 } } }) : [];
   const person = run.user ? [run.user.firstName, run.user.lastName].filter(Boolean).join(' ') || run.user.email : null;

@@ -17,9 +17,24 @@ import {
   readIdentityCheckedQueueSnapshot,
 } from '../src/lib/pipelines/queue-probe';
 import { notifyPipelineRunTerminalInApp } from '../src/lib/notifications/in-app';
-import { cancelLeftoverSlurmTaskJobs, readWaitingTaskReason } from '../src/lib/pipelines/slurm-task-cleanup';
+import { cancelLeftoverSlurmTaskJobs, readEndedTaskJob, readWaitingTaskReason } from '../src/lib/pipelines/slurm-task-cleanup';
+import { classifyFailure } from '../src/lib/pipelines/plain-status';
 
 const DEFAULT_INTERVAL_MS = 15000;
+
+/**
+ * "ended:<kind>:<process>" when SLURM already ended one of the run's task jobs badly and Nextflow has not noticed yet;
+ * the card says so at once instead of "Running" for the minute (or, before, four and a half) Nextflow waits.
+ */
+async function endedTaskReason(run: { runFolder: string | null; startedAt?: Date | null }): Promise<string | null> {
+  const ended = await readEndedTaskJob(run.runFolder, run.startedAt ?? null);
+  if (!ended) return null;
+  const log = await readTail(`${ended.workDir}/.command.log`).catch(() => null);
+  const kind = ended.state === 'CANCELLED' || (/\*\*\* JOB \d+ ON \S+ CANCELLED AT /.test(log ?? '') && !/memory/i.test(log ?? ''))
+    ? 'cancelled'
+    : classifyFailure({ texts: [log], slurmStates: [ended.state], exitCodes: [/^0:9$/.test(ended.exitCode) ? 137 : null] });
+  return `ended:${kind}:${ended.process}`;
+}
 
 export async function syncRun(run: {
   id: string;
@@ -29,6 +44,7 @@ export async function syncRun(run: {
   queueJobId: string | null;
   outputPath: string | null;
   errorPath: string | null;
+  startedAt?: Date | null;
 }) {
   let derivedStatus: RunStatus | null = null;
   let traceFailuresAborted = false;
@@ -169,7 +185,7 @@ export async function syncRun(run: {
       const state = queueSnapshot.state;
       // While the run's job runs, its reason is why its Nextflow task jobs wait (a drained node, a full cluster).
       const reason = state === 'PENDING' && queueSnapshot.reason ? queueSnapshot.reason.replace(/^\((.*)\)$/, '$1')
-        : state === 'RUNNING' && /^\d+$/.test(run.queueJobId) ? await readWaitingTaskReason(run.runFolder) : null;
+        : state === 'RUNNING' && /^\d+$/.test(run.queueJobId) ? (await readWaitingTaskReason(run.runFolder)) ?? (await endedTaskReason(run)) : null;
       try {
         await db.pipelineRun.update({ where: { id: run.id }, data: { queueStatus: state, queueReason: reason, queueUpdatedAt: new Date() } });
       } catch (error) {
@@ -308,6 +324,7 @@ async function runOnce() {
       queueJobId: true,
       outputPath: true,
       errorPath: true,
+      startedAt: true,
     },
   });
 

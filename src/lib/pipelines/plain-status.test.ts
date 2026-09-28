@@ -111,9 +111,11 @@ describe('plainRunStatus', () => {
     const resources = plainRunStatus({ now, run: { status: 'queued', executionMode: 'slurm', queueJobId: '4819227', queueStatus: 'PENDING', queueReason: 'Resources', askedMemory: '256 GB', queuedAt: '2026-09-28T11:00:00Z' } });
     expect([resources.shape, resources.word]).toEqual(['waiting', 'Queued']);
     expect(resources.sentence).toBe('Waiting for a free node with 256 GB · waiting 1 h');
-    expect(resources.action?.kind).toBe('ask-less-memory');
+    // "Resources" is cores or memory: Cancel stays the visible action; less memory only when SLURM names memory.
+    expect(resources.action?.kind).toBe('cancel');
+    expect(plainRunStatus({ now, run: { status: 'queued', executionMode: 'slurm', queueJobId: '2', queueStatus: 'PENDING', queueReason: 'MaxMemPerLimit', askedMemory: '256 GB' } }).action?.kind).toBe('ask-less-memory');
     const qos = plainRunStatus({ now, run: { status: 'queued', executionMode: 'slurm', queueJobId: '1', queueStatus: 'PENDING', queueReason: 'QOSMaxJobsPerUserLimit' } });
-    expect(qos.action?.kind).toBe('see-jobs');
+    expect([qos.sentence, qos.action?.kind]).toEqual(['Waiting: your lab already has its maximum of jobs running', 'cancel']);
   });
   it('running: step of steps, estimate only from past runs', () => {
     const run = { status: 'running', executionMode: 'local', startedAt: '2026-09-28T11:59:00Z' };
@@ -168,6 +170,21 @@ describe('plainRunStatus', () => {
   it('every task ended but SLURM cannot confirm the job yet (slurmdbd down)', () => {
     const run = { status: 'running', executionMode: 'slurm', queueJobId: '68', queueStatus: 'RUNNING', currentStep: 'Waiting for scheduler confirmation...', startedAt: '2026-09-28T11:50:00Z' };
     expect(plainRunStatus({ now, run, trace: fixture('trace-running.txt'), pastSeconds: [30] }).sentence).toBe('All steps ended · waiting for SLURM to confirm the job (SLURM is not answering)');
+  });
+  it('a task job SLURM already ended is said at once, before Nextflow notices', () => {
+    const run = { status: 'running', executionMode: 'slurm', queueJobId: '38', queueStatus: 'RUNNING', startedAt: '2026-09-28T11:58:00Z', queueReason: 'ended:memory:RUN_FASTQC' };
+    expect(plainRunStatus({ now, run }).sentence).toBe('FastQC ran out of memory · Nextflow is still noticing');
+    expect(plainRunStatus({ now, run: { ...run, queueReason: 'ended:cancelled:RUN_FASTQC' } }).sentence).toBe('FastQC was cancelled outside SeqDesk · Nextflow is still noticing');
+  });
+  it('an active run whose status nobody checked for a while says how old it is', () => {
+    const run = { status: 'running', executionMode: 'slurm', queueJobId: '38', queueStatus: 'RUNNING', startedAt: '2026-09-28T11:50:00Z', outputTail: 'executor >  slurm (1)\n[ab/cdef12] RUN_FASTQC (s1) | 0 of 1' };
+    expect(plainRunStatus({ now, run: { ...run, checkedAt: '2026-09-28T11:59:30Z' } }).sentence).not.toMatch(/last checked/);
+    expect(plainRunStatus({ now, run: { ...run, checkedAt: '2026-09-28T11:52:00Z' } }).sentence).toMatch(/ · status last checked 8 min ago$/);
+    expect(plainRunStatus({ now, run: { ...run, status: 'completed', checkedAt: '2026-09-28T10:00:00Z' } }).sentence).not.toMatch(/last checked/);
+  });
+  it('the step count keeps the pipeline’s declared steps when the log tail lost the first block', () => {
+    const run = { status: 'running', executionMode: 'slurm', queueJobId: '38', queueStatus: 'RUNNING', outputTail: 'executor >  slurm (1)\n[ab/cdef12] RUN_FASTQC (s1) | 0 of 1', declaredSteps: 2 };
+    expect(plainRunStatus({ now, run }).sentence).toBe('Running · step 1 of 2: FastQC · no estimate yet');
   });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.

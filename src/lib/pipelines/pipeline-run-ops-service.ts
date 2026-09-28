@@ -2044,6 +2044,9 @@ export async function cancelPipelineRunForOperator(
       completedAt: new Date(),
       statusSource: 'manual',
       lastEventAt: new Date(),
+      // The scheduler's last state ("RUNNING") no longer describes a cancelled run.
+      queueStatus: null,
+      queueReason: null,
     },
   });
 
