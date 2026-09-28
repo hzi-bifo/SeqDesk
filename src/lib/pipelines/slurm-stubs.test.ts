@@ -49,6 +49,7 @@ echo "" > "$STDERR_LOG"
 # Run nf-core/mag v3.0.0
 "\${NEXTFLOW_RUNNER[@]}" run 'nf-core/mag' \\
   --input '/runs/MAG-002/samplesheet.csv' \\
+  -name 'MAG-002-cmabc' \\
   -with-trace '/runs/MAG-002/trace.txt' \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 `;
@@ -58,6 +59,8 @@ echo "" > "$STDERR_LOG"
     expect(script).toContain('echo "Resuming nf-core/mag v3.0.0 pipeline at $(date)" >> "$STDOUT_LOG"');
     expect(script).toContain('echo "" >> "$STDERR_LOG"');
     expect(script).toContain('#SBATCH -t 25:0:0');
+    expect(script).toContain("-name 'MAG-002-cmabc-r1'");
+    expect(resumeScript(runSh, '/x', null, 3)).toContain("-name 'MAG-002-cmabc-r3'");
     expect(() => resumeScript('#!/bin/bash\necho hi\n', '/x')).toThrow(/no Nextflow command/);
   });
   it('writes memory/time for one step, and always lets the reports be overwritten', () => {

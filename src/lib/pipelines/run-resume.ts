@@ -52,7 +52,7 @@ export function resumeConfig(overrides: ReturnType<typeof normalizeOverrides>): 
  * The resume script: the run's own run.sh with `-resume` and the resume config added to the Nextflow command, logs
  * appended instead of truncated, and (for SLURM) the head job's time limit raised when the time override asks for it.
  */
-export function resumeScript(runSh: string, configPath: string, hours?: number | null): string {
+export function resumeScript(runSh: string, configPath: string, hours?: number | null, attempt = 1): string {
   const quoted = `'${configPath.replace(/'/g, `'\\''`)}'`;
   let found = false;
   let script = runSh.replace(/("\$\{NEXTFLOW_RUNNER\[@\]\}"\s+run\s+\S+\s+\\\n)/, (match) => { found = true; return `${match}  -resume \\\n  -c ${quoted} \\\n`; });
@@ -60,6 +60,8 @@ export function resumeScript(runSh: string, configPath: string, hours?: number |
   script = script
     .replace(/^echo "Starting (.*) pipeline at \$\(date\)" > "\$STDOUT_LOG"$/m, 'echo "Resuming $1 pipeline at $(date)" >> "$STDOUT_LOG"')
     .replace(/^echo "" > "\$STDERR_LOG"$/m, 'echo "" >> "$STDERR_LOG"');
+  // Nextflow refuses a run name its history already has; -resume picks the last session of this folder by itself.
+  script = script.replace(/-name '([^']+)'/, (_m, name: string) => `-name '${name.replace(/-r\d+$/, '')}-r${attempt}'`);
   if (hours) script = script.replace(/^#SBATCH -t \d+:0:0$/m, (line) => { const current = Number(/-t (\d+)/.exec(line)![1]); return `#SBATCH -t ${Math.max(current, hours + 1)}:0:0`; });
   return script;
 }
@@ -80,7 +82,7 @@ export async function resumePipelineRun(runId: string, input: ResumeOverrides): 
   const n = count + 1;
   const configPath = path.join(run.runFolder, `resume-${n}.config`);
   let script: string;
-  try { script = resumeScript(runSh, configPath, overrides.hours); } catch (error) { return { status: 409, body: { error: (error as Error).message } }; }
+  try { script = resumeScript(runSh, configPath, overrides.hours, n); } catch (error) { return { status: 409, body: { error: (error as Error).message } }; }
   // Keep what the failed attempt wrote: the trace and logs are overwritten/appended by the resumed attempt.
   for (const [from, to] of [['trace.txt', `trace.before-resume-${n}.txt`], ['logs/pipeline.out', `logs/pipeline.before-resume-${n}.out`], ['logs/pipeline.err', `logs/pipeline.before-resume-${n}.err`]]) {
     await fs.copyFile(path.join(run.runFolder, from), path.join(run.runFolder, to)).catch(() => undefined);
