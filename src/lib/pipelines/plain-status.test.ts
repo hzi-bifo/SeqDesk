@@ -45,6 +45,10 @@ describe('redaction', () => {
     expect(redactLog('export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwx')).not.toMatch(/ghp_abc/);
     expect(redactLog('api_key=abc123def')).toBe('api_key=REDACTED');
   });
+  it('strips Nextflow log prefixes and colours from the first lines', () => {
+    const lines = firstErrorLines(["Sep-28 09:49:17.433 [Task monitor] ERROR nextflow.processor.TaskProcessor - Error executing process > 'RUN_FASTQC (ERR10419931)'", '\u001b[31mERROR ~ boom\u001b[39m\u001b[K']);
+    expect(lines).toEqual(["Error executing process > 'RUN_FASTQC (ERR10419931)'", 'ERROR ~ boom']);
+  });
   it('picks the first lines of the real error', () => {
     const lines = firstErrorLines([fixture('log-oom.txt')]);
     expect(lines[0]).toMatch(/Error executing process/);

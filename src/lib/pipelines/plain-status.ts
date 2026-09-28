@@ -234,7 +234,10 @@ function processRows(tasks: NextflowTask[]): { rows: PlainProcess[]; failed: Nex
 
 /** The first lines of the real error: Nextflow's "Error executing process" block, or error-looking lines. */
 export function firstErrorLines(texts: (string | null | undefined)[], max = 3): string[] {
-  const lines = texts.filter(Boolean).flatMap((text) => redactLog(text!).split(/\r?\n/)).map((l) => l.replace(/\s+$/, '')).filter((l) => l.trim());
+  // Nextflow's log prefixes a timestamp, thread, level and logger; ANSI colours come from the console log.
+  const lines = texts.filter(Boolean).flatMap((text) => redactLog(text!).split(/\r?\n/))
+    .map((l) => l.replace(/\u001b\[[0-9;?]*[A-Za-z]|\u001b\]8;;[^\u0007\u001b]*(?:\u0007|\u001b\\)/g, '').replace(/^[A-Z][a-z]{2}-\d{2} [\d:.]+ \[[^\]]+\] [A-Z]+\s+\S+ - /, '').replace(/\s+$/, ''))
+    .filter((l) => l.trim());
   const picked: string[] = [];
   const push = (line: string) => { const clean = line.trim().slice(0, 240); if (clean && !picked.includes(clean) && picked.length < max) picked.push(clean); };
   const block = lines.findIndex((l) => /Error executing process|Process `[^`]+` terminated|ERROR ~/.test(l));
