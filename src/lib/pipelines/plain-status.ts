@@ -312,7 +312,7 @@ function estimateOf(past: number[] | undefined): { seconds: number | null; words
   return value == null ? { seconds: null, words: 'no estimate yet' } : { seconds: value, words: `about ${durationWords(value)}` };
 }
 
-function errorSentence(kind: ErrorKind, process: string | null, sample: string | null, exitCode: number | null, lines: string[], run: PlainRunInput, nodes: string | null): { sentence: string; action: PlainAction } {
+function errorSentence(kind: ErrorKind, process: string | null, sample: string | null, exitCode: number | null, lines: string[], run: PlainRunInput, nodes: string | null, cancelledOutside = false): { sentence: string; action: PlainAction } {
   const stage = stageWords(process);
   const onSample = sample ? ` on sample ${sample}` : '';
   switch (kind) {
@@ -340,6 +340,10 @@ function errorSentence(kind: ErrorKind, process: string | null, sample: string |
     case 'node':
       return { sentence: `${nodes ? `Node ${nodes}` : 'A compute node'} failed during ${stage}`, action: { kind: 'resume', label: 'Resume' } };
     default:
+      // Someone ran scancel on one of the run's task jobs: slurmstepd's line is in its .command.log.
+      if (cancelledOutside) {
+        return { sentence: `${capital(stage)} was stopped outside SeqDesk: its SLURM job was cancelled`, action: { kind: 'resume', label: 'Resume' } };
+      }
       return { sentence: `Failed at ${process ? process.split(':').pop() : 'a step'}${exitCode != null ? ` · exit code ${exitCode}` : ''}`, action: { kind: 'show-log', label: 'Show the log' } };
   }
 }
@@ -400,7 +404,8 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
     const exitCode = failed?.exit ?? failedLine?.exitCode ?? null;
     const kind = classifyFailure({ texts, exitCodes: [failed?.exit, ...sacct.map((l) => l.exitCode), ...sacct.map((l) => (l.signal === 9 ? 137 : null))], slurmStates: [...sacct.map((l) => l.state), queueState] });
     const lines = firstErrorLines([context.taskError, run.errorTail, run.outputTail]);
-    const { sentence, action } = errorSentence(kind, failed?.process ?? failed?.name ?? null, failed?.tag ?? null, exitCode, lines, run, failedLine?.nodes ?? null);
+    const cancelledOutside = /\*\*\* JOB \d+ ON \S+ CANCELLED AT /.test(texts.filter(Boolean).join('\n'));
+    const { sentence, action } = errorSentence(kind, failed?.process ?? failed?.name ?? null, failed?.tag ?? null, exitCode, lines, run, failedLine?.nodes ?? null, cancelledOutside);
     return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action,
       error: { kind, sentence, firstLines: lines, process: failed?.process ?? null, sample: failed?.tag ?? null, exitCode } };
   }

@@ -148,6 +148,13 @@ describe('plainRunStatus', () => {
     expect(plainRunStatus({ now, run, trace, pastSeconds: [30] }).sentence).toBe('Running · step 2 of 2: the FastQC summary · waiting: the nodes it needs are down or reserved');
     expect(plainRunStatus({ now, run: { ...run, queueReason: null }, trace, pastSeconds: [30] }).sentence).toBe('Running · step 2 of 2: the FastQC summary · taking longer than past runs');
   });
+  it('a task job cancelled with scancel is said as such, with Resume', () => {
+    const trace = ['task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\tattempt\tsubmit\tstart\tcomplete\tduration\trealtime\t%cpu\tpeak_rss\tpeak_vmem\trchar\twchar',
+      '1\tb1/aa22cc\t48\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tFAILED\t143\t1\t2026-09-28 12:10:40.000\t2026-09-28 12:10:40.000\t2026-09-28 12:10:59.000\t19s\t19s\t1.0\t2 MB\t5 MB\t0\t0'].join('\n');
+    const status = plainRunStatus({ now, trace, run: { status: 'failed', executionMode: 'slurm', queueJobId: '47' },
+      taskError: 'slurmstepd: error: *** JOB 48 ON pmuench-X399-DESIGNARE-EX CANCELLED AT 2026-09-28T12:10:59 ***' });
+    expect([status.sentence, status.action?.kind]).toEqual(['FastQC was stopped outside SeqDesk: its SLURM job was cancelled', 'resume']);
+  });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
     const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';
