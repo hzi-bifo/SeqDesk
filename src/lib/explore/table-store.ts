@@ -14,7 +14,7 @@ import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { MatrixProfileAccumulator, PROFILE_VERSION, type TableProfile } from "./table-profile";
 import { ContentHashAccumulator, SchemaAccumulator } from "./schema";
-import { streamLines } from "./parsers/delimited-stream";
+import { streamLineBatches } from "./parsers/delimited-stream";
 import { resolveExploreStorage, sanitizeSegment } from "./storage";
 import type { ExploreCell, ExploreProvenance, ExploreRoleMap, ExploreRowData, ExploreRowRecord, ExploreSchema } from "./types";
 
@@ -94,7 +94,8 @@ export async function shareIdenticalData(file: string, contentHash: string, exce
 export interface StreamVersionInput {
   datasetId: string;
   columns: string[];
-  rows: AsyncIterable<ExploreRowData>;
+  /** Rows in batches (a promise per batch, not per row). */
+  rows: AsyncIterable<ExploreRowData[]>;
   provenance: ExploreProvenance;
   buildSource: "auto" | "manual" | "import" | "analysis-run";
   createdById?: string | null;
@@ -134,7 +135,9 @@ export async function writeDatasetVersionStream(input: StreamVersionInput): Prom
   await fs.mkdir(versionDir, { recursive: true });
   const columns = input.columns;
   const width = Math.max(1, columns.length);
-  let inDatabase = !(input.expectedRows && input.expectedRows * width > DB_MAX_CELLS);
+  // The row estimate can be low (quoted newlines, short first rows): above half the limit the file carries the table
+  // from the start, instead of writing rows to the database and deleting them again.
+  let inDatabase = !(input.expectedRows && input.expectedRows * width > DB_MAX_CELLS / 2);
   const version = await db.exploreDatasetVersion.create({
     data: { datasetId: dataset.id, number, contentHash: "pending", schema: JSON.stringify({ columns: [] }), rowCount: 0,
       provenance: JSON.stringify(input.provenance), storagePath: versionDir, buildSource: input.buildSource, createdById: input.createdById ?? null },
@@ -148,6 +151,8 @@ export async function writeDatasetVersionStream(input: StreamVersionInput): Prom
   let offset = 0;
   let rowCount = 0;
   const batchRows = Math.max(1, Math.min(ROW_BATCH_SIZE, Math.floor(BATCH_MAX_CELLS / width)));
+  // Progress (and the cancel check) every ~2 million cells: often for a wide table, every 10,000 rows at most.
+  const progressEvery = Math.max(1, Math.min(10_000, Math.floor(2_000_000 / width)));
   let batch: Prisma.ExploreDatasetRowCreateManyInput[] = [];
   const flush = async () => {
     if (inDatabase && batch.length) await db.exploreDatasetRow.createMany({ data: batch });
@@ -158,7 +163,7 @@ export async function writeDatasetVersionStream(input: StreamVersionInput): Prom
     await writeChunk(out, header);
     offset += Buffer.byteLength(header);
     let text = "";
-    for await (const row of input.rows) {
+    for await (const rows of input.rows) for (const row of rows) {
       if (rowCount % INDEX_EVERY === 0) {
         if (text) { await writeChunk(out, text); text = ""; }
         index.push(offset);
@@ -185,7 +190,7 @@ export async function writeDatasetVersionStream(input: StreamVersionInput): Prom
         }
       }
       rowCount += 1;
-      if (rowCount % 10_000 === 0) {
+      if (rowCount % progressEvery === 0) {
         input.onProgress?.(rowCount);
         if (input.signal?.aborted) throw new ImportCancelled();
       }
@@ -265,18 +270,18 @@ export async function readRowsFromFile(storagePath: string, columns: string[], o
   let end = true;
   let lastIndex: number | null = null;
   try {
-    for await (const line of streamLines(stream)) {
+    outer: for await (const lines of streamLineBatches(stream)) for (const line of lines) {
       if (rowIndex === -1) { rowIndex = 0; continue; } // header when no index
       const current = rowIndex;
       // The file ends with a newline; its last "line" is not a row.
-      if (index ? current >= index.rows : line === "") break;
+      if (index ? current >= index.rows : line === "") break outer;
       rowIndex += 1;
       if (current < start) continue;
       scanned += 1;
       lastIndex = current;
       const data = rowOfLine(line, columns);
       if (!options.filter || options.filter(data)) rows.push({ rowIndex: current, sampleId: null, subjectId: null, key: null, data });
-      if (rows.length >= options.limit || (options.scanLimit !== undefined && scanned >= options.scanLimit)) { end = false; break; }
+      if (rows.length >= options.limit || (options.scanLimit !== undefined && scanned >= options.scanLimit)) { end = false; break outer; }
     }
   } finally {
     stream.destroy();

@@ -40,11 +40,14 @@ vi.mock("./storage", () => ({
 }));
 
 async function* generate(count: number, width = 3) {
+  let batch: Array<Record<string, string | null>> = [];
   for (let index = 0; index < count; index += 1) {
     const row: Record<string, string | null> = { gene: `g${index}` };
     for (let column = 1; column < width; column += 1) row[`s${column}`] = String((index * column) % 97);
-    yield row;
+    batch.push(row);
+    if (batch.length === 999) { yield batch; batch = []; }
   }
+  if (batch.length) yield batch;
 }
 
 beforeAll(async () => {

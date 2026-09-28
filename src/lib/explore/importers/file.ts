@@ -4,7 +4,7 @@ import { createReadStream } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { createGunzip } from "zlib";
-import { parseDelimitedStream, streamLines, type DelimitedStreamHeader } from "../parsers/delimited-stream";
+import { parseDelimitedStream, streamLineBatches, type DelimitedStreamHeader } from "../parsers/delimited-stream";
 import { getTableKind, suggestRoles } from "../dataset-kinds";
 import { parseDelimited, uniqueColumnKeys } from "../parsers/delimited";
 import { coerceCell, inferSchema } from "../schema";
@@ -201,13 +201,20 @@ function delimiterOf(fileName: string): "," | "auto" {
  * Bytes of a stored file, decompressed when it is .gz, hashed as read: when the whole file has been read the
  * sha256 is compared with the stored checksum and a changed file stops the import.
  */
-async function* fileBytes(filePath: string, fileName: string, verify?: { checksum: string }, onBytes?: (bytes: number) => void): AsyncGenerator<Buffer> {
+async function* fileBytes(filePath: string, fileName: string, verify?: { checksum: string }, onBytes?: (bytes: number) => void, onText?: (bytes: number) => void): AsyncGenerator<Buffer> {
   const raw = createReadStream(filePath, { highWaterMark: 1 << 20 });
   const hash = verify ? crypto.createHash("sha256") : null;
-  raw.on("data", (chunk) => { hash?.update(chunk as Buffer); onBytes?.((chunk as Buffer).length); });
-  const source = /\.gz$/i.test(fileName) ? raw.pipe(createGunzip()) : raw;
+  const gunzip = /\.gz$/i.test(fileName) ? createGunzip() : null;
+  // Bytes of the file behind the text handed out so far: what gunzip has consumed, or what was read.
+  raw.on("data", (chunk) => { hash?.update(chunk as Buffer); if (!gunzip) onBytes?.((chunk as Buffer).length); });
+  const source = gunzip ? raw.pipe(gunzip) : raw;
+  let consumed = 0;
   try {
-    for await (const chunk of source) yield chunk as Buffer;
+    for await (const chunk of source) {
+      if (gunzip) { onBytes?.(gunzip.bytesWritten - consumed); consumed = gunzip.bytesWritten; }
+      onText?.((chunk as Buffer).length);
+      yield chunk as Buffer;
+    }
   } finally {
     raw.destroy();
   }
@@ -216,14 +223,14 @@ async function* fileBytes(filePath: string, fileName: string, verify?: { checksu
 
 export interface StreamedImport {
   header: DelimitedStreamHeader | undefined;
-  rows: AsyncGenerator<ExploreRowData>;
+  rows: AsyncGenerator<ExploreRowData[]>;
   state: { header?: DelimitedStreamHeader; truncated?: boolean };
 }
 
 /** Rows of a delimited file on disk, one at a time; `state.header` is set before the first row. */
-export function streamDelimitedFile(filePath: string, fileName: string, options: { verify?: { checksum: string }; maxRows?: number; onBytes?: (bytes: number) => void } = {}) {
+export function streamDelimitedFile(filePath: string, fileName: string, options: { verify?: { checksum: string }; maxRows?: number; onBytes?: (bytes: number) => void; onText?: (bytes: number) => void } = {}) {
   const state: { header?: DelimitedStreamHeader; truncated?: boolean } = {};
-  const rows = parseDelimitedStream(streamLines(fileBytes(filePath, fileName, options.verify, options.onBytes)), { delimiter: delimiterOf(fileName), hashComments: true, maxRows: options.maxRows }, state);
+  const rows = parseDelimitedStream(streamLineBatches(fileBytes(filePath, fileName, options.verify, options.onBytes, options.onText)), { delimiter: delimiterOf(fileName), hashComments: true, maxRows: options.maxRows }, state);
   return { rows, state };
 }
 
@@ -236,17 +243,25 @@ const SAMPLE_BYTES = 4 * 1024 * 1024;
 export async function previewDelimitedFile(filePath: string, fileName: string, rowsWanted: number): Promise<{ columns: string[]; rows: ExploreRowData[]; rowCount: number; approximate: boolean }> {
   const size = (await fs.stat(filePath)).size;
   let bytes = 0;
-  const { rows: stream, state } = streamDelimitedFile(filePath, fileName, { onBytes: (count) => { bytes += count; } });
+  let text = 0;
+  const { rows: stream, state } = streamDelimitedFile(filePath, fileName, { onBytes: (count) => { bytes += count; }, onText: (count) => { text += count; } });
   const rows: ExploreRowData[] = [];
   let counted = 0;
+  let parsed = 0;
   let stopped = false;
-  for await (const row of stream) {
-    counted += 1;
-    if (rows.length < rowsWanted) rows.push(row);
+  for await (const batch of stream) {
+    for (const row of batch) {
+      counted += 1;
+      if (rows.length < rowsWanted) rows.push(row);
+      // About the row's length in the file: its cells plus one separator each.
+      for (const key in row) { const value = row[key]; parsed += (value === null ? 0 : String(value).length) + 1; }
+    }
     // Enough to estimate: stop reading once a few MB went by (and the preview rows are in).
     if (rows.length >= rowsWanted && bytes >= SAMPLE_BYTES && bytes < size) { stopped = true; break; }
   }
   if (!stopped) return { columns: state.header?.columns ?? [], rows, rowCount: counted, approximate: false };
-  const estimate = Math.round(counted * (size / Math.max(1, bytes)));
-  return { columns: state.header?.columns ?? [], rows, rowCount: estimate, approximate: true };
+  // Reads run ahead of the parser: scale by the text the counted rows took, not by the bytes read so far.
+  // Text bytes per file byte is 1 for plain files and the compression ratio for .gz.
+  const fileBytesPerRow = (parsed / counted) * (bytes / Math.max(1, text));
+  return { columns: state.header?.columns ?? [], rows, rowCount: Math.round(size / Math.max(1, fileBytesPerRow)), approximate: true };
 }

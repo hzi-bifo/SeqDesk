@@ -1,7 +1,7 @@
 import { Readable } from "stream";
 import { describe, expect, it } from "vitest";
 import { parseDelimited, type DelimitedParseOptions } from "./delimited";
-import { parseDelimitedStream, streamLines } from "./delimited-stream";
+import { parseDelimitedStream, streamLineBatches } from "./delimited-stream";
 
 async function viaStream(text: string, options: DelimitedParseOptions = {}, chunk = 3) {
   const bytes = Buffer.from(text, "utf8");
@@ -9,7 +9,7 @@ async function viaStream(text: string, options: DelimitedParseOptions = {}, chun
   for (let at = 0; at < bytes.length; at += chunk) pieces.push(bytes.subarray(at, at + chunk));
   const state: { header?: { columns: string[]; delimiter: string }; truncated?: boolean } = {};
   const rows = [];
-  for await (const row of parseDelimitedStream(streamLines(Readable.from(pieces)), options, state)) rows.push(row);
+  for await (const batch of parseDelimitedStream(streamLineBatches(Readable.from(pieces)), options, state, 7)) rows.push(...batch);
   return { columns: state.header?.columns ?? [], rows, truncated: Boolean(state.truncated), delimiter: state.header?.delimiter ?? "\t" };
 }
 
@@ -52,5 +52,14 @@ describe("parseDelimitedStream", () => {
     const result = await viaStream(`${lines.join("\n")}\n`, {}, 1 << 16);
     expect(result.rows).toHaveLength(50_000);
     expect(result.rows[49_999]).toEqual({ gene: "g49999", s1: "49999", s2: "99998" });
+  });
+
+  it("hands rows over in batches, not one promise per row", async () => {
+    const lines = ["gene\ts1"];
+    for (let index = 0; index < 50_000; index += 1) lines.push(`g${index}\t${index}`);
+    let batches = 0, rows = 0;
+    for await (const batch of parseDelimitedStream(streamLineBatches(Readable.from([Buffer.from(`${lines.join("\n")}\n`)])))) { batches += 1; rows += batch.length; }
+    expect(rows).toBe(50_000);
+    expect(batches).toBeLessThanOrEqual(51);
   });
 });
