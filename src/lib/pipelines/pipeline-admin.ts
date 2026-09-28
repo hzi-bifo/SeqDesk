@@ -13,15 +13,15 @@ import { getExecutionSettings, type ExecutionSettings } from './execution-settin
 import { slurmRefusal, durationWords } from './plain-status';
 
 const run = promisify(execFile);
-export type Exec = (file: string, args: string[], options?: { timeout?: number; cwd?: string }) => Promise<{ stdout: string; stderr?: string }>;
-const defaultExec: Exec = (file, args, options) => run(file, args, { timeout: options?.timeout ?? 20_000, cwd: options?.cwd, maxBuffer: 1 << 20 });
+export type Exec = (file: string, args: string[], options?: { timeout?: number; cwd?: string; env?: Record<string, string> }) => Promise<{ stdout: string; stderr?: string }>;
+const defaultExec: Exec = (file, args, options) => run(file, args, { timeout: options?.timeout ?? 20_000, cwd: options?.cwd, maxBuffer: 1 << 20, ...(options?.env ? { env: { ...process.env, ...options.env } } : {}) });
 
 export interface ReadinessCheck { id: string; ok: boolean; line: string }
 export interface ServerReadiness { mode: 'slurm' | 'local'; ok: boolean; checks: ReadinessCheck[]; queues: { name: string; up: boolean; nodes: number; state: string }[] }
 
-async function tryRun(exec: Exec, file: string, args: string[], timeout = 20_000): Promise<{ ok: boolean; text: string }> {
+async function tryRun(exec: Exec, file: string, args: string[], timeout = 20_000, env?: Record<string, string>): Promise<{ ok: boolean; text: string }> {
   try {
-    const { stdout, stderr } = await exec(file, args, { timeout });
+    const { stdout, stderr } = await exec(file, args, { timeout, ...(env ? { env } : {}) });
     return { ok: true, text: `${stdout}\n${stderr ?? ''}`.trim() };
   } catch (error) {
     const e = error as { code?: unknown; stderr?: string; message?: string };
@@ -34,6 +34,11 @@ function tool(settings: ExecutionSettings, name: string): string {
   return settings.condaPath && settings.condaEnv ? path.join(settings.condaPath, 'envs', settings.condaEnv, 'bin', name) : name;
 }
 async function exists(file: string) { return fs.access(file).then(() => true, () => false); }
+/** The pipeline environment's JAVA_HOME (<env>/lib/jvm) when it has a Java there, else ''. */
+async function environmentJavaHome(s: ExecutionSettings): Promise<string> {
+  const home = s.condaPath && s.condaEnv ? path.join(s.condaPath, 'envs', s.condaEnv, 'lib', 'jvm') : '';
+  return home && await exists(path.join(home, 'bin', 'java')) ? home : '';
+}
 
 /** `sinfo -h -o "%P|%a|%D|%T"` → queues (the default queue keeps its name without the trailing *). */
 export function parseSinfo(text: string): ServerReadiness['queues'] {
@@ -47,10 +52,15 @@ export async function checkServerReadiness(exec: Exec = defaultExec, settings?: 
   const s = settings ?? await getExecutionSettings();
   const checks: ReadinessCheck[] = [];
   const nextflowPath = tool(s, 'nextflow');
-  const nextflow = (await exists(nextflowPath)) || nextflowPath === 'nextflow' ? await tryRun(exec, nextflowPath, ['-version'], 60_000) : { ok: false, text: `not found at ${nextflowPath}` };
+  // An activated conda environment puts its Java on the path (JAVA_HOME=<env>/lib/jvm, where a Mac's openjdk keeps
+  // bin/java); the runs activate it, so the check must find the same Java, not the system's stub ("Unable to locate a Java Runtime").
+  const javaHome = await environmentJavaHome(s);
+  const javaEnv = javaHome ? { JAVA_HOME: javaHome } : undefined;
+  const nextflow = (await exists(nextflowPath)) || nextflowPath === 'nextflow' ? await tryRun(exec, nextflowPath, ['-version'], 60_000, javaEnv) : { ok: false, text: `not found at ${nextflowPath}` };
   const version = /version\s+(\d+\.\d+\.\d+)/.exec(nextflow.text)?.[1];
   checks.push({ id: 'nextflow', ok: nextflow.ok && !!version, line: nextflow.ok && version ? `Nextflow ${version}` : `Nextflow: ${nextflow.text}` });
-  const java = await tryRun(exec, tool(s, 'java'), ['-version']);
+  const javaPath = javaHome && !(await exists(tool(s, 'java'))) ? path.join(javaHome, 'bin', 'java') : tool(s, 'java');
+  const java = await tryRun(exec, javaPath, ['-version']);
   const javaVersion = /version "?(\d+)/.exec(java.text)?.[1];
   checks.push({ id: 'java', ok: java.ok && Number(javaVersion) >= 11, line: java.ok ? `Java ${javaVersion ?? '?'}${Number(javaVersion) >= 11 ? '' : ' · Nextflow needs 11 or newer'}` : `Java: ${java.text}` });
   // The environment's own micromamba, the one on PATH (the Linux kit's), then the conda install's conda.
@@ -89,7 +99,8 @@ export async function testServer(exec: Exec = defaultExec, settings?: ExecutionS
   const started = now();
   const dir = await fs.mkdtemp(path.join(s.pipelineRunDir || os.tmpdir(), '.seqdesk-server-test-'));
   const outFile = path.join(dir, 'test.out');
-  const script = `echo "host $(hostname)"; echo "cores \${SLURM_CPUS_ON_NODE:-$(nproc)}"; (${tool(s, 'nextflow')} -version 2>/dev/null | grep -m1 -o 'version [0-9.]*') || echo "nextflow not found"`;
+  const javaHome = await environmentJavaHome(s);
+  const script = `${javaHome ? `export JAVA_HOME=${JSON.stringify(javaHome)}; ` : ''}echo "host $(hostname)"; echo "cores \${SLURM_CPUS_ON_NODE:-$(nproc)}"; (${tool(s, 'nextflow')} -version 2>/dev/null | grep -m1 -o 'version [0-9.]*') || echo "nextflow not found"`;
   const finish = async (result: Omit<ServerTest, 'seconds' | 'output'>) => {
     const output = (await fs.readFile(outFile, 'utf8').catch(() => '')).split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 10);
     await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);

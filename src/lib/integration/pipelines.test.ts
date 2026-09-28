@@ -96,6 +96,17 @@ describe('data-pipelines: a run is managed by whoever owns the study’s Data', 
     expect((await started.json()).error).toBe('Only Lena Lead or a SeqDesk admin can start pipelines on this study’s Data.');
   });
 
+  it('the readiness list says up front that another member may not start, and whose Data it is', async () => {
+    const { pipelineReadiness } = await import('@/lib/pipelines/pipeline-data-service');
+    vi.mocked(pipelineReadiness).mockResolvedValue({ reads: '1 FASTQ pair', pipelines: [] } as never);
+    const other = await (await call('sam', 'GET', ['data-pipelines'])).json();
+    expect(other).toMatchObject({ canStart: false, startNote: 'Only Lena Lead or a SeqDesk admin can start pipelines on this study’s Data.' });
+    const owner = await (await call('lena', 'GET', ['data-pipelines'])).json();
+    expect(owner.canStart).toBeUndefined();
+    mocks.decide.mockReturnValue({ allowed: true, grant: { scope: 'installation' } });
+    expect((await (await call('sam', 'GET', ['data-pipelines'])).json()).canStart).toBeUndefined();
+  });
+
   it('the admin part is for this Compute server’s admin only', async () => {
     const denied = await call('lena', 'GET', ['data-pipelines', 'admin']);
     expect(denied.status).toBe(403);

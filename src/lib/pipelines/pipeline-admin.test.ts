@@ -48,6 +48,32 @@ describe('whether this Compute server can run pipelines', () => {
   });
 });
 
+describe('the pipeline environment’s own Java', () => {
+  it('a Mac’s conda openjdk keeps bin/java under lib/jvm: the check finds it and Nextflow gets JAVA_HOME', async () => {
+    // Real Mac (Nextflow in a conda env, /usr/bin/java is the "Unable to locate a Java Runtime" stub): every run worked,
+    // the admin page said "Java: not found".
+    const conda = fs.mkdtempSync(path.join(os.tmpdir(), 'pipeline-admin-conda-'));
+    const env = path.join(conda, 'envs', 'seqdesk-pipelines');
+    fs.mkdirSync(path.join(env, 'bin'), { recursive: true });
+    fs.mkdirSync(path.join(env, 'lib', 'jvm', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(env, 'bin', 'nextflow'), '');
+    fs.writeFileSync(path.join(env, 'lib', 'jvm', 'bin', 'java'), '');
+    const seen: { file: string; javaHome?: string }[] = [];
+    const mac = async (file: string, args: string[], options?: { env?: Record<string, string> }) => {
+      seen.push({ file, javaHome: options?.env?.JAVA_HOME });
+      if (file.endsWith('/nextflow')) {
+        if (!options?.env?.JAVA_HOME) throw Object.assign(new Error('x'), { stderr: 'Unable to locate a Java Runtime.' });
+        return { stdout: 'version 25.10.4 build 1' };
+      }
+      if (file.endsWith('/lib/jvm/bin/java')) return { stdout: '', stderr: 'openjdk version "17.0.11" 2024-04-16' };
+      return exec()(file, args);
+    };
+    const ready = await checkServerReadiness(mac, { ...settings(false), condaPath: conda, condaEnv: 'seqdesk-pipelines' } as ExecutionSettings);
+    expect(ready.checks.filter((c) => ['nextflow', 'java'].includes(c.id)).map((c) => c.line)).toEqual(['Nextflow 25.10.4', 'Java 17']);
+    expect(seen.find((c) => c.file.endsWith('/nextflow'))?.javaHome).toBe(path.join(env, 'lib', 'jvm'));
+  });
+});
+
 describe('test this server', () => {
   it('sends a tiny job through SLURM and reports what it saw', async () => {
     let t = 0;

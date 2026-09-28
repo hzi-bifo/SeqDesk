@@ -83,7 +83,17 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
     };
     const [, sub, runId, action] = segments; // data-pipelines/<sub>/<id>/<action>
 
-    if (!sub && method === 'GET') return json(await pipelineReadiness(await read(url.searchParams.get('targetKey'))));
+    if (!sub && method === 'GET') {
+      const readinessKey = await read(url.searchParams.get('targetKey'));
+      const readiness = await pipelineReadiness(readinessKey);
+      // Say up front what a Start would answer: only the study's owner or an installation-wide grant starts pipelines.
+      if (scope() !== 'installation') {
+        const data = await findDataStudy(readinessKey);
+        const owner = data ? (await db.study.findUnique({ where: { id: data.id }, select: { userId: true } }))?.userId : null;
+        if (owner && owner !== session.user.id) return json({ ...readiness, canStart: false, startNote: `Only ${await ownerName(owner)} or a SeqDesk admin can start pipelines on this study’s Data.` });
+      }
+      return json(readiness);
+    }
     if (sub === 'reads' && !runId && method === 'GET') {
       // The imported read records this study uses in place (ENA, SRA), beside the FASTQ files in its Data.
       const targetKey = await read(url.searchParams.get('targetKey'));
