@@ -64,8 +64,10 @@ export async function storeLibraryFileStream(input: { targetKey: string; name: s
     for await (const chunk of input.body) {
       size += chunk.byteLength;
       if (size > maxBytes) throw new FileLibraryError(413, `Files must be ${Math.round(maxBytes / 1024 / 1024 / 1024 * 10) / 10} GB or smaller.`);
-      hash.update(chunk);
-      if (!out.write(chunk)) await new Promise<void>((resolve, reject) => { out.once("drain", resolve); out.once("error", reject); });
+      // The request body may reuse its chunk buffers once the next chunk is read; the file gets its own copy.
+      const bytes = Buffer.from(chunk);
+      hash.update(bytes);
+      if (!out.write(bytes)) await new Promise<void>((resolve, reject) => { out.once("drain", resolve); out.once("error", reject); });
     }
     await new Promise<void>((resolve, reject) => out.end((error?: Error | null) => (error ? reject(error) : resolve())));
     if (size === 0) throw new FileLibraryError(400, "The file is empty.");
