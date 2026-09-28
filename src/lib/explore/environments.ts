@@ -190,6 +190,11 @@ export async function buildEnvironment(name: string, options: { wait?: boolean }
   // A previous attempt may have left a partial prefix behind.
   await fs.rm(prefix, { recursive: true, force: true }).catch(() => {});
   const log = await fs.open(logPath, "w");
+  // Package link scripts (post-link / pre-unlink) run here as the service account, outside the run sandbox. conda
+  // (checked on 26.1) has no switch to skip them, and conda-forge/bioconda packages rely on them, so the defence is the
+  // channel allowlist in step-environments.ts. Still open: run this build under bwrap (Linux) or the seatbelt profile
+  // (macOS) with only the prefix and the package cache writable, network on and $HOME/.condarc tokens not readable;
+  // the run mount plan (sandbox/mount-plan.ts) is shaped for runs, not builds, so that is its own piece of work.
   const child = spawn(conda, ["env", "create", "--yes", "-p", prefix, "-f", specPath], {
     stdio: ["ignore", log.fd, log.fd],
     detached: !options.wait,
