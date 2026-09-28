@@ -110,7 +110,8 @@ trap ${SLURM_WRAPPER_FINALIZER_FUNCTION} EXIT
 # died at once: the EXIT finalizer saw the last finished command's status (0) and attested success, and SLURM killed
 # Nextflow before it had cancelled its own nf-* jobs. With it, bash waits for the foreground Nextflow (which gets the
 # same SIGTERM) to finish shutting down, then exits 143.
-trap 'exit 143' TERM`;
+seqdesk_slurm_wrapper_terminated() { exit 143; }
+trap seqdesk_slurm_wrapper_terminated TERM`;
 }
 
 /**
