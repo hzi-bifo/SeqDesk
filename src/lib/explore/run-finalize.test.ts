@@ -40,6 +40,31 @@ describe("finalizeExploreRun", () => {
     expect(JSON.parse(mocks.db.exploreAnalysisRun.updateMany.mock.calls[0][0].data.results).warnings).toEqual([expect.stringContaining("must contain number")]);
   });
 
+  it("never follows an output symlink out of the run folder", async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "explore-outside-"));
+    try {
+      await fs.writeFile(path.join(outside, "secret.tsv"), "key\tvalue\nAPI_KEY\thost-secret\n");
+      await fs.symlink(path.join(outside, "secret.tsv"), path.join(runFolder, "outputs", "leak.tsv"));
+      await fs.symlink("/dev/zero", path.join(runFolder, "outputs", "zero.txt"));
+      await fs.writeFile(path.join(runFolder, "outputs", "own.tsv"), "sample\tvalue\nS1\t1\n");
+      await fs.symlink("own.tsv", path.join(runFolder, "outputs", "alias.tsv"));
+      await fs.writeFile(path.join(runFolder, "outputs", "manifest.json"), JSON.stringify({ artifacts: [
+        { name: "leak", kind: "table", format: "tsv", path: "outputs/leak.tsv" },
+        { name: "zero", kind: "log", format: "txt", path: "outputs/zero.txt" },
+        { name: "alias", kind: "table", format: "tsv", path: "outputs/alias.tsv" },
+      ] }));
+      await finalizeExploreRun("run1", 0);
+      const recorded = mocks.db.exploreArtifact.upsert.mock.calls.map(([args]: [{ create: { name: string } }]) => args.create.name);
+      expect(recorded).toEqual(["alias"]);
+      expect(mocks.writeDatasetVersion).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(mocks.writeDatasetVersion.mock.calls)).not.toContain("host-secret");
+      const warnings = JSON.parse(mocks.db.exploreAnalysisRun.updateMany.mock.calls[0][0].data.results).warnings;
+      expect(warnings).toEqual(expect.arrayContaining([expect.stringContaining("outputs/leak.tsv: a link that leaves the run folder"), expect.stringContaining("outputs/zero.txt: a link")]));
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+
   beforeEach(async () => {
     vi.clearAllMocks();
     runFolder = await fs.mkdtemp(path.join(os.tmpdir(), "explore-run-"));

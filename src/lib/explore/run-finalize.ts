@@ -13,6 +13,7 @@ import type { ExploreRole, ExploreRoleMap, ExploreSensitivity } from "./types";
 import { SENSITIVITY_RANK } from "./types";
 import { parseMetricDefinition, type MetricDefinition } from "./metric-definition";
 import { loadedResultsRuntimeFingerprint, runRuntimeInfo } from "./runtime-fingerprint";
+import { resolveContainedPath } from "./storage";
 
 const ARTIFACT_FORMATS = new Set(["plotly-json", "png", "svg", "html", "tsv", "md", "txt", "json", "csv", "pdf"]);
 const ARTIFACT_KINDS = new Set(["figure", "table", "report", "log"]);
@@ -55,6 +56,18 @@ function parseMetricMeta(raw: unknown): Record<string, { label?: string; unit?: 
 function isInside(base: string, target: string): boolean {
   const relative = path.relative(base, target);
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+/**
+ * The real file behind a path the step named, or null. The step wrote the run folder, so a name inside it may be a
+ * symlink to anywhere on the host (another run, the Compute env, $HOME): this runs outside the sandbox, so it must
+ * follow links itself and accept only a regular file whose real path stays inside the run folder.
+ */
+async function containedFile(runFolder: string, absolute: string): Promise<string | null> {
+  const real = await resolveContainedPath(runFolder, absolute).catch(() => null);
+  if (!real) return null;
+  const stat = await fs.stat(real).catch(() => null);
+  return stat?.isFile() ? real : null;
 }
 
 async function sha256(filePath: string): Promise<string> {
@@ -112,16 +125,14 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
       warnings.push(`Skipped ${relative}: outside the run folder.`);
       continue;
     }
-    let size: bigint | null = null;
-    try {
-      const stat = await fs.stat(absolute);
-      if (!stat.isFile()) throw new Error("not a file");
-      size = BigInt(stat.size);
-    } catch {
-      warnings.push(`Skipped ${relative}: file not found.`);
+    const real = await containedFile(runFolder, absolute);
+    if (!real) {
+      const link = await fs.lstat(absolute).then((stat) => stat.isSymbolicLink()).catch(() => false);
+      warnings.push(link ? `Skipped ${relative}: a link that leaves the run folder or is not a file.` : `Skipped ${relative}: file not found.`);
       continue;
     }
-    const checksum = await sha256(absolute).catch(() => null);
+    const size = BigInt((await fs.stat(real)).size);
+    const checksum = await sha256(real).catch(() => null);
     const artifact = await db.exploreArtifact.upsert({
       where: { runId_path: { runId: run.id, path: absolute } },
       update: { kind, format, name, size, checksum },
@@ -133,7 +144,7 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
       tables += 1;
       if (format !== "tsv" && format !== "csv") continue;
       const roles = entry.table?.roles && typeof entry.table.roles === "object" ? (entry.table.roles as Record<string, unknown>) : {};
-      const scanned = await scanTable(absolute, { delimiter: format === "csv" ? "," : "\t", sampleColumn: typeof roles.sample === "string" ? roles.sample : null }).catch(() => null);
+      const scanned = await scanTable(real, { delimiter: format === "csv" ? "," : "\t", sampleColumn: typeof roles.sample === "string" ? roles.sample : null }).catch(() => null);
       ledgerOutputs.push({ name, dims: scanned?.dims ?? null, samples: scanned?.samples ?? null });
       // Trial runs (a sample of the data) never write tables: they feed nothing (FLOW-GAPS D13).
       if (run.trial) continue;
@@ -145,7 +156,7 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
       }
       try {
         const contract = TableContractSchema.parse({ columns: entry.table?.columns, schemaId: entry.table?.schemaId, schemaVersion: entry.table?.schemaVersion, rowEntity: entry.table?.rowEntity });
-        const derived = await promoteTable(run, artifact.id, absolute, {
+        const derived = await promoteTable(run, artifact.id, real, {
           artifactName: name,
           name: typeof entry.title === "string" && entry.title.trim() ? entry.title.trim() : name,
           format: format as "tsv" | "csv",
@@ -176,7 +187,8 @@ export async function finalizeExploreRun(runId: string, exitCode: number): Promi
   for (const [alias, input] of Object.entries(inputsInfo?.inputs ?? {})) {
     const relative = typeof input.path === "string" ? input.path : "";
     const absolute = relative ? path.resolve(runFolder, relative) : "";
-    const scanned = absolute && isInside(runFolder, absolute) ? await scanTable(absolute, { sampleColumn: typeof input.roles?.sample === "string" ? input.roles.sample : null }).catch(() => null) : null;
+    const real = absolute && isInside(runFolder, absolute) ? await containedFile(runFolder, absolute) : null;
+    const scanned = real ? await scanTable(real, { sampleColumn: typeof input.roles?.sample === "string" ? input.roles.sample : null }).catch(() => null) : null;
     ledgerInputs.push({ alias, dims: scanned?.dims ?? null, samples: scanned?.samples ?? null });
   }
   const ledger = buildLedger(ledgerInputs, ledgerOutputs, manifest?.drops);
