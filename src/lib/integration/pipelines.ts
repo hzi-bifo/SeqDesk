@@ -57,6 +57,19 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
     };
     const body = async () => { const text = await request.text(); if (text.length > 65536) throw new RouteError(413, 'Too large.'); try { return text ? JSON.parse(text) as Record<string, unknown> : {}; } catch { throw new RouteError(400, 'Invalid JSON.'); } };
     const ownRun = async (runId: string, targetKey: string) => { if (!(await runBelongsTo(runId, targetKey))) throw new RouteError(404, 'Run not found in this study.'); };
+    // SeqDesk's own rule for a pipeline run: the study's owner (or an installation-wide grant) starts it, and the same
+    // person cancels or resumes it. Before, another member could cancel a colleague's run but not start one.
+    const scope = () => decideServerCapability(session, 'analysis.run').grant?.scope ?? 'own';
+    const ownerName = async (userId: string | null | undefined) => {
+      const user = userId ? await db.user.findUnique({ where: { id: userId }, select: { firstName: true, lastName: true, email: true } }) : null;
+      return user ? [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email : 'its owner';
+    };
+    const mayManageRun = async (runId: string, verb: string) => {
+      if (scope() === 'installation') return;
+      const run = await db.pipelineRun.findUnique({ where: { id: runId }, select: { userId: true, study: { select: { userId: true } } } });
+      const owner = run?.study?.userId ?? run?.userId;
+      if (owner && owner !== session.user.id) throw new RouteError(409, `Only ${await ownerName(owner)} or a SeqDesk admin can ${verb} this run.`);
+    };
     const [, sub, runId, action] = segments; // data-pipelines/<sub>/<id>/<action>
 
     if (!sub && method === 'GET') return json(await pipelineReadiness(await read(url.searchParams.get('targetKey'))));
@@ -76,6 +89,11 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       const created = await createPipelineRunForOperator({ body: { pipelineId, studyId, ...(input.config && typeof input.config === 'object' ? { config: input.config } : {}) },
         userId: session.user.id, accessScope: scope, canManageConfig: false });
       const runIdCreated = (created.body as { run?: { id?: string }; runId?: string; id?: string }).run?.id ?? (created.body as { runId?: string }).runId ?? (created.body as { id?: string }).id;
+      if (created.status === 403 && (created.body as { error?: unknown }).error === 'Forbidden') {
+        // The study's Data belongs to whoever set it up; say so instead of a bare 403 the web app reads as "not connected".
+        const study = await db.study.findUnique({ where: { id: studyId }, select: { userId: true } });
+        return json({ error: `Only ${await ownerName(study?.userId)} or a SeqDesk admin can start pipelines on this study’s Data.` }, 409);
+      }
       if (created.status >= 300 || !runIdCreated) return json(created.body, created.status >= 300 ? created.status : 500);
       const started = await startPipelineRunForOperator({ runId: runIdCreated, body: {}, userId: session.user.id, accessScope: scope });
       if (started.status >= 300) {
@@ -101,6 +119,7 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       const input = await body();
       // Fixed in Data: the study's reads are mirrored again before Nextflow resumes (a replaced file reruns its tasks).
       await ensureDataStudy({ targetKey, userId: session.user.id });
+      await mayManageRun(runId, 'resume');
       const result = await resumePipelineRun(runId, { process: typeof input.process === 'string' ? input.process : null, memory: typeof input.memory === 'string' ? input.memory : null, time: typeof input.time === 'string' ? input.time : null });
       if (result.status >= 300) return json(result.body, result.status);
       return json({ ...result.body, run: await getDataRun(runId, targetKey) });
@@ -111,6 +130,7 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       // A second Cancel (a double click, a teammate a moment later) finds the run cancelled: that is what was asked.
       const current = await db.pipelineRun.findUnique({ where: { id: runId }, select: { status: true } });
       if (current?.status === 'cancelled') return json({ success: true, status: 'cancelled', already: true });
+      await mayManageRun(runId, 'cancel');
       const result = await cancelPipelineRunForOperator(runId);
       if (result.status === 400 && (current?.status === 'completed' || current?.status === 'failed')) {
         return json({ error: current.status === 'completed' ? 'This run already finished; there is nothing to cancel.' : 'This run already stopped with an error; there is nothing to cancel.' }, 409);
