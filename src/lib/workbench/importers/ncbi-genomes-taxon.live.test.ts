@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createMockWorkbenchImportStartContext,
@@ -50,7 +51,7 @@ describe.runIf(runLive)("NCBI genomes by taxon live smoke", () => {
         expect(result.genomeCount).toBe(preview.genomes.length);
         expect(result.sizeBytes).toBeGreaterThan(0);
         expect(result.checksumSha256).toMatch(/^[a-f0-9]{64}$/);
-        expect(result.storagePath).toBe(context.storage.cacheDir);
+        expect(result.storagePath).toBe(path.join(context.storage.cacheDir, "dataset"));
         expect(context.updates.map((update) => update.phase)).toEqual(
           expect.arrayContaining(["downloading", "extracting", "indexing"])
         );
