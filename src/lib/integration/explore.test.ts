@@ -32,7 +32,7 @@ vi.mock('@/lib/explore/analyses', async () => {
   return { ...actual, listAnalyses: mocks.listAnalyses };
 });
 import { NextRequest } from 'next/server';
-import { createFlowStudy, handleExploreRequest, listFlowStudies } from './explore';
+import { createFlowStudy, handleExploreRequest, listFlowStudies, statusOf } from './explore';
 import type { IntegrationSession } from './identity';
 
 const session = { user: { id: 'local' }, integration: { authority: 'https://collab.example', workspaceId: 'team', memberId: 'member', projectId: '' } } as IntegrationSession;
@@ -188,5 +188,14 @@ describe('step conversation persistence', () => {
     expect(await (await call('PUT', { version: 2, state: { turns: [], draft: 'test' } })).json()).toEqual({ version: 3 });
     expect(mocks.conversationUpdate.mock.calls[0][0].where).toEqual({ analysisId: 'a1', userId: 'local', version: 2 });
     expect((await call('PUT', { version: 2, state: { draft: 'x'.repeat(800001) } })).status).toBe(400);
+  });
+});
+
+describe('a full disk while storing', () => {
+  it('answers 507 with a plain sentence for ENOSPC and quota errors', () => {
+    for (const code of ['ENOSPC', 'EDQUOT']) {
+      expect(statusOf(Object.assign(new Error(`${code}: no space left on device, write`), { code }))).toEqual({ status: 507, message: 'The server has no space left to store this. Nothing was added.' });
+    }
+    expect(statusOf(new Error('something else'))).toBeNull();
   });
 });

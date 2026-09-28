@@ -161,7 +161,10 @@ export async function updateFlowStudy(session: IntegrationSession, id: string, c
   return studyOf(project, "write", link);
 }
 
-function statusOf(error: unknown): { status: number; message: string } | null {
+export function statusOf(error: unknown): { status: number; message: string } | null {
+  // A full disk or an exceeded quota while storing an upload or a table: say so instead of a generic failure.
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === "ENOSPC" || code === "EDQUOT") return { status: 507, message: "The server has no space left to store this. Nothing was added." };
   if (error instanceof RevisionConflict) return { status: error.status, message: error.message };
   if (error instanceof ExploreBuildInputError) return { status: 422, message: error.message };
   if (error instanceof Error && !(error instanceof ExploreRouteError) && /Unknown kit/.test(error.message)) return { status: 400, message: error.message };
