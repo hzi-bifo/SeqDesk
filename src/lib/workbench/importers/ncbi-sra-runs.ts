@@ -20,11 +20,15 @@ import {
   formatBytes,
   manifestEntry,
   mapWithLimit,
+  recordMaxDownloadBytes,
+  type DownloadedRecordAsset,
   sizeWarnings,
   splitIdList,
   type RecordAsset,
 } from "./public-record-download";
 import { pickRecordFiles, storedRecordFilename } from "./record-selection";
+import { archiveReadImport } from "./archive-reads";
+import { validateFastqFile } from "@/lib/workbench/fastq-validation";
 import type { WorkbenchImporterProvider, WorkbenchImportPreview } from "./types";
 
 const SOURCE = "NCBI SRA";
@@ -295,6 +299,34 @@ export function sraRunsTsv(runs: SraRun[], via: (run: string) => string): string
   return [RUN_COLUMNS.map(([name]) => name).join("\t"), ...runs.map(run => RUN_COLUMNS.map(([, read]) => clean(read(run, via(run.run)))).join("\t"))].join("\n") + "\n";
 }
 
+/**
+ * FASTQ runs become read records like ENA's (study = BioProject, sample = BioSample): each file is validated as
+ * four-line FASTQ, pairs must match read for read. .sra files stay files; they need converting first.
+ */
+async function sraReadImports(runs: SraRun[], files: DownloadedRecordAsset[], directory: string, signal?: AbortSignal) {
+  const imports = [];
+  let expanded = 0;
+  for (const run of runs) {
+    const fastq = files.filter(file => file.role === "fastq" && file.filename.startsWith(`${run.run}_`) || file.filename === `${run.run}.fastq.gz`);
+    if (!fastq.length) continue;
+    const reads = [];
+    for (const file of fastq) {
+      const filePath = path.join(directory, file.storedFilename);
+      const checked = await validateFastqFile(filePath, { gzip: true, maxExpandedBytes: recordMaxDownloadBytes() * 20 - expanded, signal });
+      expanded += checked.expandedBytes;
+      reads.push({ filename: file.filename, path: filePath, url: file.url, bytes: file.bytes, sourceMd5: /^md5:(.+)$/.exec(file.etag)?.[1], md5: file.md5, sha256: file.sha256, records: checked.records, readNamesSha256: checked.readNamesSha256 });
+    }
+    imports.push(archiveReadImport({
+      run: run.run, paired: run.layout === "PAIRED",
+      studyKey: run.bioproject ?? run.study ?? "", sampleKey: run.biosample ?? run.sample ?? "", sampleTitle: run.title,
+      metadata: { source: "NCBI SRA", experimentAccession: run.experiment, studyAccession: run.study, bioproject: run.bioproject, sampleAccession: run.sample, biosample: run.biosample,
+        scientificName: run.organism, libraryStrategy: run.strategy, librarySource: run.source, libraryLayout: run.layout, instrumentModel: run.instrument, spots: run.spots, bases: run.bases },
+      files: reads,
+    }, processing));
+  }
+  return imports;
+}
+
 export const ncbiSraRunsImporter: WorkbenchImporterProvider<NcbiSraRunsInput> = {
   id: "ncbi-sra-runs",
   label: "NCBI SRA runs",
@@ -317,6 +349,8 @@ export const ncbiSraRunsImporter: WorkbenchImporterProvider<NcbiSraRunsInput> = 
   async start(context) {
     const assets = context.preview.assets ?? [];
     if (!assets.length) throw new Error("The NCBI SRA preview has no files to import. Preview it again.");
+    // NCBI's record of each run (study, sample, layout) names the read records; read before anything downloads.
+    const resolved = await resolveSraRuns(context.input.accessions);
     const result = await downloadRecordAssets(context, {
       source: SOURCE,
       assets,
@@ -333,8 +367,8 @@ export const ncbiSraRunsImporter: WorkbenchImporterProvider<NcbiSraRunsInput> = 
     });
     // The runs table: re-read from NCBI at import time so it describes exactly the downloaded runs.
     const runIds = new Set(result.files.map(file => /^([SED]RR\d{5,12})/.exec(file.filename)?.[1]).filter((run): run is string => Boolean(run)));
-    const resolved = await resolveSraRuns(context.input.accessions).catch(() => null);
-    const runs = resolved?.runs.filter(run => runIds.has(run.run)) ?? [];
+    const runs = resolved.runs.filter(run => runIds.has(run.run));
+    const scientificImports = await sraReadImports(runs, result.files, result.directory, context.signal);
     const via = (run: string) => result.files.some(file => file.filename.startsWith(run) && file.role === "fastq") ? "ENA FASTQ" : "NCBI .sra";
     const manifest = result.files.map(manifestEntry);
     if (runs.length) {
@@ -346,9 +380,10 @@ export const ncbiSraRunsImporter: WorkbenchImporterProvider<NcbiSraRunsInput> = 
     }
     const first = context.preview.records?.[0]?.id;
     return {
+      ...(scientificImports.length ? { scientificImports } : {}),
       cacheKey: context.cacheKey,
       name: context.preview.summary.label,
-      description: `${result.files.length} file(s) of ${runIds.size} SRA run(s), each checked against its published MD5.`,
+      description: `${result.files.length} file(s) of ${runIds.size} SRA run(s), each checked against its published MD5${scientificImports.length ? `; ${scientificImports.length} run(s) registered as reads` : ""}.`,
       sourceType: "ncbi-sra-runs",
       sourceMetadata: {
         source: "NCBI SRA",

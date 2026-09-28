@@ -151,6 +151,11 @@ describe("NCBI SRA runs importer", () => {
       expect(meta.files.map(file => [file.filename, file.role])).toEqual([["SRR10008674_1.fastq.gz", "fastq"], ["SRR10008674_2.fastq.gz", "fastq"], ["sra_runs.tsv", "runs"]]);
       expect(meta.files[0].md5).toBe(md5(r1));
       expect(meta.files[2].sourceVersion).toBe("derived:ncbi-sra-metadata");
+      // The pair becomes a read record like an ENA import: study = BioProject, sample = BioSample, R1 then R2.
+      expect(result.scientificImports).toHaveLength(1);
+      expect(result.scientificImports![0]).toMatchObject({ studyKey: "PRJNA561290", sampleKey: "SAMN12613307", readKey: "SRR10008674", technology: "short", synthetic: false,
+        metadata: { pairingValidated: true, instrumentModel: "Illumina MiniSeq" } });
+      expect(result.scientificImports![0].reads.map(read => [path.basename(read.path), read.records])).toEqual([["0001-SRR10008674_1.fastq.gz", 1], ["0002-SRR10008674_2.fastq.gz", 1]]);
       expect(meta.citation).toContain("PRJNA561290");
       const tsv = await fs.readFile(path.join(result.storagePath, "sra_runs.tsv"), "utf8");
       expect(tsv.split("\n")[1]).toMatch(/^SRR10008674\tSRX6747018\tSRS5297270\tSAMN12613307\t/);
