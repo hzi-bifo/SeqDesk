@@ -67,6 +67,8 @@ vi.mock('child_process', () => ({
   spawn: (...args: unknown[]) => mocks.spawn(...args),
 }));
 
+// What is left of a local run after its cancel is looked up by command line (local-cleanup.test.ts); here only the signals to the run count.
+vi.mock('@/lib/pipelines/local-cleanup', () => ({ killLocalLeftovers: vi.fn(async () => []), waitForExit: vi.fn(async () => true) }));
 vi.mock('@/lib/db', () => ({
   db: mocks.db,
 }));

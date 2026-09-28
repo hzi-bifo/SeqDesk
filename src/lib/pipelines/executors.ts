@@ -6,6 +6,7 @@
 import * as nextflow from './nextflow';
 import { classifyFailure } from './plain-status';
 import { readIdentityCheckedQueueSnapshot, type QueueSnapshot } from './queue-probe';
+import { killLocalLeftovers, waitForExit } from './local-cleanup';
 import { cancelLeftoverSlurmTaskJobs, readEndedTaskJob, readWaitingTaskReason } from './slurm-task-cleanup';
 
 export interface RunRef { id: string; runFolder: string | null; queueJobId: string | null; startedAt?: Date | null }
@@ -71,8 +72,14 @@ export function localExecutor(deps: ExecutorDeps = DEPS): RunExecutor {
     async evidence(run) {
       return { scheduler: await deps.snapshot({ jobId: run.queueJobId, runId: run.id, runFolder: run.runFolder }), slurm: false, waitingTaskReason: null, endedTask: null };
     },
-    // The run's process group is signalled by cancel; its scope ends with it. Nothing else to clean.
-    async cleanup() { /* nothing */ },
+    // Cancel signals the run's process group; on a host without a systemd scope (a Mac) a task that left the group, or
+    // a Nextflow killed with kill -9, keeps running: find what names the run folder and stop it.
+    async cleanup(run) {
+      // A cancelled Nextflow stops its own tasks and writes its reports first: give the wrapper a moment to end.
+      const pid = Number(/^local-(\d+)$/.exec(run.queueJobId ?? '')?.[1]);
+      if (Number.isInteger(pid) && pid > 0) await waitForExit(pid, 8000);
+      await killLocalLeftovers(run.runFolder);
+    },
   };
 }
 
