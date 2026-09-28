@@ -563,7 +563,7 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         combined.set("X-Content-Type-Options", "nosniff");
         if (download.rows !== null) combined.set("X-Table-Rows", String(download.rows));
         if (download.limited) combined.set("X-Table-Limited", download.limited);
-        return new NextResponse(Readable.toWeb(Readable.from(download.body)) as ReadableStream, { headers: combined });
+        return new NextResponse(Readable.toWeb(Readable.from((async function* () { for await (const chunk of download.body) yield typeof chunk === "string" ? Buffer.from(chunk) : chunk; })(), { objectMode: false })) as ReadableStream, { headers: combined });
       }
       if (segments.length === 3 && sub === "table" && method === "GET") {
         const dataset = await loadDataset(session, id, "read");
