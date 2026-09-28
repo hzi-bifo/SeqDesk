@@ -21,7 +21,14 @@ import {
 } from '@/lib/pipelines/run-completion';
 import { findTraceFile, parseTraceFile } from '@/lib/pipelines/nextflow';
 import { cancelLeftoverSlurmTaskJobs } from '@/lib/pipelines/slurm-task-cleanup';
-import { transitionEvent } from '@/lib/pipelines/run-reconciler';
+import { queueFieldsFrom, transitionEvent } from '@/lib/pipelines/run-reconciler';
+import type { RunStatus as RunStatusForQueue } from '@/lib/pipelines/monitor-status';
+
+/** One event-log row per change of state, whichever path made it (the monitor, this sync, cancel, resume). */
+async function recordRunTransition(runId: string, from: string, to: string, source: string) {
+  if (from === to) return;
+  await Promise.resolve().then(() => db.pipelineRunEvent.create({ data: transitionEvent(runId, from, to, source) })).catch(() => undefined);
+}
 import { getPipelineRunTargetKey } from '@/lib/pipelines/result-files';
 import { resolveCondaEnvironmentReference } from '@/lib/pipelines/conda-environment';
 import {
@@ -1049,9 +1056,11 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     const queueReason = queueSnapshot.reason;
     const queueSource = queueSnapshot.source;
 
-    if (queueState) {
-      updateData.queueStatus = queueState;
-      updateData.queueReason = queueReason || undefined;
+    // The scheduler fields follow the one rule the monitor uses (run-reconciler.ts).
+    const noTraceQueue = queueFieldsFrom(queueSnapshot, { slurm: !!run.queueJobId && /^\d+$/.test(run.queueJobId) });
+    if (noTraceQueue) {
+      updateData.queueStatus = noTraceQueue.status;
+      updateData.queueReason = noTraceQueue.reason;
       updateData.queueUpdatedAt = now;
     }
 
@@ -1200,6 +1209,8 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
       }
     }
     if (updateApplied) {
+      if (nextStatus === 'cancelled') await db.pipelineRun.updateMany({ where: { id: runId, status: 'cancelled' }, data: { queueStatus: null, queueReason: null } }).catch(() => undefined);
+      await recordRunTransition(runId, run.status, nextStatus, 'sync');
       await notifyPipelineRunTerminalInApp(runId, run.status, nextStatus);
     }
 
@@ -1615,9 +1626,10 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     statusSource: statusDeterminedByQueue || forceRunningFromQueue ? 'queue' : 'trace',
   };
 
-  if (traceQueueSnapshot.state) {
-    updateData.queueStatus = traceQueueSnapshot.state;
-    updateData.queueReason = traceQueueSnapshot.reason || undefined;
+  const traceQueue = queueFieldsFrom(traceQueueSnapshot, { slurm: !!run.queueJobId && /^\d+$/.test(run.queueJobId), status: nextStatus as RunStatusForQueue });
+  if (traceQueue) {
+    updateData.queueStatus = traceQueue.status;
+    updateData.queueReason = traceQueue.reason;
     updateData.queueUpdatedAt = new Date();
   }
 
@@ -1710,6 +1722,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     });
   }
   if (updateApplied) {
+    await recordRunTransition(runId, run.status, nextStatus, 'sync');
     await notifyPipelineRunTerminalInApp(runId, run.status, nextStatus);
   }
 
@@ -2059,7 +2072,7 @@ export async function cancelPipelineRunForOperator(
     return cancellationClaimUnavailableResponse(current, newStatus);
   }
 
-  await Promise.resolve().then(() => db.pipelineRunEvent.create({ data: transitionEvent(runId, claimedRun.status, newStatus, 'manual') })).catch(() => undefined);
+  await recordRunTransition(runId, claimedRun.status, newStatus, 'manual');
   return jsonResponse({ success: true, status: newStatus });
 }
 

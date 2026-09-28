@@ -155,3 +155,16 @@ export function historyLines(events: { occurredAt: Date; eventType: string; mess
     .filter((e) => e.eventType === 'state' || e.eventType === 'resumed')
     .map((e) => `${e.occurredAt.toISOString().slice(11, 16)} ${e.message ?? e.eventType}`);
 }
+
+/**
+ * The scheduler fields to keep on a run from one identity-checked snapshot: the same rule the monitor follows
+ * (PENDING keeps its reason without parentheses, a running job keeps why its task jobs wait, a terminal or cancelled
+ * run keeps no stale reason). Null when the snapshot says nothing trustworthy.
+ */
+export function queueFieldsFrom(snapshot: QueueSnapshot | null, options: { slurm: boolean; status?: RunStatus | null; waitingTaskReason?: string | null } = { slurm: false }) {
+  if (options.status === 'cancelled') return { status: null, reason: null };
+  if (!snapshot?.identityVerified || !snapshot.state || snapshot.state === 'UNKNOWN') return null;
+  const reason = snapshot.state === 'PENDING' && snapshot.reason ? snapshot.reason.replace(/^\((.*)\)$/, '$1')
+    : snapshot.state === 'RUNNING' && options.slurm ? options.waitingTaskReason ?? null : null;
+  return { status: snapshot.state, reason };
+}

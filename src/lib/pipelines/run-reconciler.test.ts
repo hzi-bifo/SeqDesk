@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { parseTraceFile } from './nextflow';
 import { parseSacct, plainRunStatus } from './plain-status';
 import type { QueueSnapshot } from './queue-probe';
-import { historyLines, reconcileRun, summarizeTrace, transitionEvent } from './run-reconciler';
+import { historyLines, queueFieldsFrom, reconcileRun, summarizeTrace, transitionEvent } from './run-reconciler';
 
 type Evidence = { run: string; trace: string | null; outputTail: string | null; errorTail: string | null; sacct: string | null };
 const FIXTURES = path.join(__dirname, '__fixtures__', 'elektra-slurm');
@@ -91,5 +91,12 @@ describe('the run reconciler on real SLURM evidence', () => {
     expect(event).toMatchObject({ pipelineRunId: 'run-1', eventType: 'state', status: 'cancelled', message: 'running → cancelled' });
     expect(historyLines([{ occurredAt: new Date('2026-09-28T12:19:00Z'), eventType: 'state', message: 'queued → running' },
       { occurredAt: new Date('2026-09-28T12:20:00Z'), eventType: 'weblog', message: 'x' }])).toEqual(['12:19 queued → running']);
+  });
+
+  it('the legacy sync route keeps the scheduler fields by the same rule', () => {
+    expect(queueFieldsFrom({ state: 'PENDING', reason: '(Resources)', source: 'squeue', identityVerified: true }, { slurm: true })).toEqual({ status: 'PENDING', reason: 'Resources' });
+    expect(queueFieldsFrom({ state: 'RUNNING', reason: 'None', source: 'squeue', identityVerified: true }, { slurm: true, waitingTaskReason: 'AssocMaxJobsLimit' })).toEqual({ status: 'RUNNING', reason: 'AssocMaxJobsLimit' });
+    expect(queueFieldsFrom({ state: 'UNKNOWN', reason: 'x', source: 'sacct', identityVerified: false }, { slurm: true })).toBeNull();
+    expect(queueFieldsFrom({ state: 'RUNNING', reason: null, source: 'squeue', identityVerified: true }, { slurm: true, status: 'cancelled' })).toEqual({ status: null, reason: null });
   });
 });
