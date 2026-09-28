@@ -187,7 +187,10 @@ describe("generic-executor", () => {
 
     expect(result.success).toBe(true);
     const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
-    expect(script).toContain(`run ${packageRoot} \\`);
+    // The run launches its own copy of the package, so a server rebuild mid-run cannot pull it away.
+    const copy = path.join(result.runFolder!, "pipeline");
+    expect(script).toContain(`run ${copy} \\`);
+    await expect(fs.readFile(path.join(copy, "main.nf"), "utf8")).resolves.toBe("workflow {}\n");
   });
 
   it("returns validation errors when samplesheet generation has no valid samples", async () => {
@@ -1224,7 +1227,8 @@ describe("generic-executor", () => {
 
     expect(result.success).toBe(true);
     const script = await fs.readFile(path.join(result.runFolder!, "run.sh"), "utf8");
-    expect(script).toContain(`run '${workflowPath}' \\`);
+    expect(script).toContain(`run '${path.join(result.runFolder!, "pipeline", "workflow", "main.nf")}' \\`);
+    expect(workflowPath.startsWith(packageRoot)).toBe(true);
     expect(script).toContain(`--input '${path.join(result.runFolder!, "samplesheet.csv")}'`);
     expect(script).toContain(`--outdir '${path.join(result.runFolder!, "output")}'`);
     expect(script).toContain(`-with-trace '${path.join(result.runFolder!, "trace.txt")}'`);
@@ -1356,6 +1360,9 @@ describe("generic-executor", () => {
 
     expect(slurmResult.success).toBe(true);
     const slurmScript = await fs.readFile(path.join(slurmResult.runFolder!, "run.sh"), "utf8");
+    // A task job SLURM killed is noticed within a minute, not Nextflow's default 270 s.
+    expect(await fs.readFile(path.join(slurmResult.runFolder!, "nextflow.config"), "utf8")).toMatch(/\$slurm \{\s+exitReadTimeout = '60 sec'/);
+    expect(await fs.readFile(path.join(localResult.runFolder!, "nextflow.config"), "utf8").catch(() => "")).not.toContain("exitReadTimeout");
     expect(slurmScript).toContain(
       "trap finalize_seqdesk_slurm_wrapper EXIT"
     );

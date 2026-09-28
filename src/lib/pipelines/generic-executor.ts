@@ -164,6 +164,23 @@ function resolvePipelineLaunchTarget(pkg: LoadedPackage): PipelineLaunchTarget {
 }
 
 /**
+ * Copy a bundled (local) pipeline package into the run folder and point the launch at the copy. Remote pipelines
+ * (nf-core by name and revision) are pinned by Nextflow itself and stay as they are.
+ */
+export async function snapshotLocalPipeline(pkg: LoadedPackage, target: PipelineLaunchTarget, runFolder: string): Promise<PipelineLaunchTarget> {
+  if (!target.isLocal) return target;
+  const base = path.resolve(pkg.basePath);
+  const resolved = path.resolve(target.target);
+  // Only a pipeline inside its own package is copied; an admin's absolute path elsewhere is theirs to keep stable.
+  if (resolved !== base && !resolved.startsWith(`${base}${path.sep}`)) return target;
+  // A run folder inside the package (a test or dev layout) cannot hold a copy of it.
+  if (path.resolve(runFolder).startsWith(`${base}${path.sep}`)) return target;
+  const copy = path.join(runFolder, 'pipeline');
+  await fs.cp(base, copy, { recursive: true, dereference: true, errorOnExist: false, force: true });
+  return { target: path.join(copy, path.relative(base, resolved)), isLocal: true };
+}
+
+/**
  * Create run directory and prepare files
  */
 async function prepareRunDirectory(
@@ -254,6 +271,9 @@ function buildRunConfig(
     }
     processLines.push('}');
     sections.push(processLines.join('\n'));
+    // A task job SLURM killed (memory, scancel, a lost node) never writes .exitcode; Nextflow waits exitReadTimeout
+    // (default 270 s) before it notices, and the run looked "Running" for minutes. One minute still covers NFS lag.
+    sections.push(`executor {\n  $slurm {\n    exitReadTimeout = '60 sec'\n  }\n}`);
   }
 
   // Overwrite the run report/timeline/trace/dag instead of ABORTING when they already exist.
@@ -1048,11 +1068,16 @@ export async function prepareGenericRun(
         await fs.writeFile(runConfigPath, runConfig);
       }
 
+      // The run keeps its own copy of a bundled pipeline: a rebuild or upgrade of the server replaces the package
+      // folder (.next/standalone/pipelines/...) while a SLURM job, or a later Resume, still needs the version it
+      // started with ("Project manifest does not exist" on a real Slurm after a rebuild mid-run).
+      const launchTarget = await snapshotLocalPipeline(pkg, pipelineTarget, runFolder);
+
       // Generate execution script
       const script = executionSettings.useSlurm
         ? generateSlurmScript(
             pkg,
-            pipelineTarget,
+            launchTarget,
             runFolder,
             samplesheetPath,
             outputDir,
@@ -1064,7 +1089,7 @@ export async function prepareGenericRun(
           )
         : generateLocalScript(
             pkg,
-            pipelineTarget,
+            launchTarget,
             runFolder,
             samplesheetPath,
             outputDir,
