@@ -58,7 +58,7 @@ def slurm(command, **kw):
 
 
 def driver(*args, env=""):
-    out = sh(f"source {T}/env.sh >/dev/null; cd {T}/e2e && source compute.env; {env}; cd compute && node --import tsx scripts/pipelines-check-driver.ts {' '.join(shlex.quote(a) for a in args)}", timeout=900)
+    out = sh(f"source {T}/env.sh >/dev/null; cd {T}/e2e && source compute.env; {env + "; " if env else ""}cd compute && node --import tsx scripts/pipelines-check-driver.ts {' '.join(shlex.quote(a) for a in args)}", timeout=900)
     line = [l for l in out.strip().splitlines() if l.startswith("{")][-1]
     return json.loads(line)
 
