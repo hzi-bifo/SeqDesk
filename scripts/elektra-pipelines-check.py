@@ -31,11 +31,13 @@ import time
 SSH = os.environ.get("ELEKTRA_SSH", "ssh -o BatchMode=yes -i ~/Documents/Keys/aime_pmuench_key.txt -p 32244 pmuench@elektra.stat.uni-muenchen.de")
 ANALYSIS = os.environ.get("ELEKTRA_ANALYSIS", "FASTQ QC: fastp, seqkit and a summary")
 T = "~/seqdesk-linux-test"
-WF = f"{T}/e2e/compute/.next/standalone/pipelines/fastqc/workflow/main.nf"
+# The web server runs from the standalone build; the driver and the pipeline monitor (which starts queued local runs)
+# run from the compute tree. Both copies of the workflow get the hooks.
+WFS = [f"{T}/e2e/compute/.next/standalone/pipelines/fastqc/workflow/main.nf", f"{T}/e2e/compute/pipelines/fastqc/workflow/main.nf"]
 HOOKS = f"""    mkdir -p fastqc_raw fastqc_reports summary
     # CHECK HOOKS (scripts/elektra-pipelines-check.py; removed at the end)
-    if [ -f \\\\$HOME/seqdesk-linux-test/e2e/check-sleep ]; then sleep \\\\$(cat \\\\$HOME/seqdesk-linux-test/e2e/check-sleep); fi
-    if [ -f \\\\$HOME/seqdesk-linux-test/e2e/check-oom ]; then head -c 6G /dev/zero | tail > /dev/null; fi
+    if [ -f @HOME@/seqdesk-linux-test/e2e/check-sleep ]; then sleep \\\\$(cat @HOME@/seqdesk-linux-test/e2e/check-sleep); fi
+    if [ -f @HOME@/seqdesk-linux-test/e2e/check-oom ]; then head -c 6G /dev/zero | tail > /dev/null; fi
 """
 # Local share for the check: two runs fit at once (2 cores each of 4), a third waits.
 LOCAL_ENV = "export SEQDESK_LOCAL_CORES=4 SEQDESK_LOCAL_RUN_CORES=2 SEQDESK_LOCAL_MEMORY_GB=24 SEQDESK_LOCAL_RUN_MEMORY_GB=8"
@@ -332,8 +334,10 @@ SCENARIOS = {f.__name__.replace("_", "-"): f for f in [
 def setup():
     sh(f"cd {T}/e2e && [ -f compute.env.check-bak ] || cp compute.env compute.env.check-bak; cat compute.env.check-bak compute.env.slurm > compute.env; echo '{LOCAL_ENV}' >> compute.env")
     sh(f"C={T}/slurm/etc/slurm.conf; [ -f $C.check-bak ] || cp $C $C.check-bak; grep -q OverMemoryKill $C || printf 'JobAcctGatherParams=OverMemoryKill\\nJobAcctGatherFrequency=task=5\\n' >> $C")
-    sh(f"[ -f {WF}.check-bak ] || cp {WF} {WF}.check-bak")
-    sh(f"python3 - <<'PY'\nimport os\np=os.path.expanduser('{WF}')\ns=open(p).read()\nif 'CHECK HOOKS' not in s:\n    s=s.replace('    mkdir -p fastqc_raw fastqc_reports summary\\n', '''{HOOKS}''', 1)\n    open(p,'w').write(s)\nPY")
+    for WF in WFS:
+        sh(f"[ -f {WF}.check-bak ] || cp {WF} {WF}.check-bak")
+        # The task's own $HOME can differ (sandbox, SLURM environment): the hooks name the kit's home literally.
+        sh(f"python3 - <<'PY'\nimport os\np=os.path.expanduser('{WF}')\ns=open(p).read()\nif 'CHECK HOOKS' not in s:\n    s=s.replace('    mkdir -p fastqc_raw fastqc_reports summary\\n', '''{HOOKS}'''.replace('@HOME@', os.path.expanduser('~')), 1)\n    open(p,'w').write(s)\nPY")
     sh(f"{T}/slurm/start.sh >/dev/null 2>&1; cd {T}/e2e && ./start.sh >/dev/null", timeout=300)
 
 
@@ -343,7 +347,7 @@ def teardown():
         f"source {T}/slurm/env.sh >/dev/null 2>&1; scancel -u $(id -un) >/dev/null 2>&1 || true; {T}/slurm/stop.sh >/dev/null 2>&1 || true",
         f"cd {T}/e2e && [ -f compute.env.check-bak ] && mv compute.env.check-bak compute.env || true",
         f"C={T}/slurm/etc/slurm.conf; [ -f $C.check-bak ] && mv $C.check-bak $C || true",
-        f"[ -f {WF}.check-bak ] && mv {WF}.check-bak {WF} || true",
+        *[f"[ -f {WF}.check-bak ] && mv {WF}.check-bak {WF} || true" for WF in WFS],
         f"rm -f {T}/e2e/check-sleep {T}/e2e/check-oom",
         f"source {T}/slurm/env.sh >/dev/null 2>&1; sacctmgr -i modify user where name=$(id -un) set MaxJobs=-1 >/dev/null 2>&1 || true",
     ]

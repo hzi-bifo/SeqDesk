@@ -72,7 +72,8 @@ async function main() {
   const copyFile = async (file: { storagePath: string; originalName: string; mimeType: string; sizeBytes: bigint; checksumSha256: string; createdById: string }, targetKey: string, name: string, tag: string) => {
     const root = await filesRoot();
     const storagePath = `${path.dirname(file.storagePath)}/${tag}-${Date.now()}-${path.basename(file.storagePath)}`;
-    await fs.copyFile(await resolveContainedPath(root, file.storagePath), await resolveContainedPath(root, storagePath));
+    const source = await resolveContainedPath(root, file.storagePath);
+    await fs.copyFile(source, path.join(path.dirname(source), path.basename(storagePath)));
     return db.managedFile.create({ data: { targetKey, originalName: name, storagePath, mimeType: file.mimeType, sizeBytes: file.sizeBytes, checksumSha256: file.checksumSha256, createdById: file.createdById, tags: [tag] }, select: { id: true } });
   };
   const fastqs = (targetKey: string) => db.managedFile.findMany({ where: { targetKey, removedAt: null, originalName: { contains: '.f' } }, orderBy: { originalName: 'asc' } });
