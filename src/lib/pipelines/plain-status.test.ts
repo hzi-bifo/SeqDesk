@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { classifyFailure, durationWords, firstErrorLines, logProgress, parseSacct, prepareFailureWords, parseSqueue, plainRunStatus, redactLog, slurmReasonWords, slurmRefusal } from './plain-status';
+import { classifyFailure, countWorkflowProcesses, durationWords, firstErrorLines, logProgress, parseSacct, prepareFailureWords, parseSqueue, plainRunStatus, redactLog, slurmReasonWords, slurmRefusal } from './plain-status';
 
 const fixture = (name: string) => fs.readFileSync(path.join(__dirname, '__fixtures__', 'plain-status', name), 'utf8');
 const now = new Date('2026-09-28T12:00:00Z');
@@ -211,6 +211,11 @@ describe('plainRunStatus', () => {
     // Real Slurm, MaxJobs=1 with limits enforced: the run's job runs, nf-RUN_FASTQC waits with AssocMaxJobsLimit.
     const run = { status: 'running', executionMode: 'slurm', queueJobId: '117', queueStatus: 'RUNNING', queueReason: 'AssocMaxJobsLimit', outputTail: 'executor >  slurm (1)\n[ab/cdef12] RUN_FASTQC (s1) | 0 of 1', declaredSteps: 2 };
     expect(plainRunStatus({ now, run }).sentence).toBe('Running · step 1 of 2: FastQC · waiting: your lab already has its maximum of jobs running (this run’s own job counts too; ask the admin if it does not move)');
+  });
+  it('counts the processes of a workflow script for the step total', () => {
+    const script = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'pipelines', 'fastqc', 'workflow', 'main.nf'), 'utf8');
+    expect(countWorkflowProcesses(script)).toBe(2);
+    expect(countWorkflowProcesses('// process X {\nworkflow {}')).toBe(0);
   });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.

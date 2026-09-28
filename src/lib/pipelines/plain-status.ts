@@ -299,6 +299,11 @@ export function firstErrorLines(texts: (string | null | undefined)[], max = 3): 
 
 // ------------------------------------------------------------------ Nextflow's console progress
 
+/** How many processes a Nextflow script declares (`process NAME {` at a line start). */
+export function countWorkflowProcesses(script: string | null | undefined): number {
+  return (script ?? '').match(/^\s*process\s+[A-Za-z_][A-Za-z0-9_]*\s*\{/gm)?.length ?? 0;
+}
+
 export interface LogProgress { submitted: number; processes: { name: string; done: number; total: number }[]; steps: number }
 
 /**
