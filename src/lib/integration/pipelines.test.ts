@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
     pipelineRun: { findUnique: vi.fn() },
     study: { findUnique: vi.fn() },
     user: { findUnique: vi.fn() },
+    pipelineConfig: { updateMany: vi.fn(async () => ({ count: 1 })), findMany: vi.fn(async () => []) },
+    siteSettings: { findUnique: vi.fn(async () => null) },
     pipelineRunEvent: { create: vi.fn(async () => ({})), findFirst: (...a: unknown[]) => mocks.events(...a) },
   },
   decide: vi.fn(),
@@ -27,9 +29,12 @@ vi.mock('@/lib/pipelines/data-study', async (importOriginal) => ({ ...(await imp
   ensureDataStudy: vi.fn(async () => ({ studyId: 'study-1', sampleIds: ['s1'], pairs: [] })), readsInData: mocks.readsInData }));
 vi.mock('@/lib/pipelines/pipeline-data-service', () => ({
   getDataRun: vi.fn(async () => ({ id: 'run-1' })), listDataRuns: vi.fn(), pipelineReadiness: vi.fn(), runBelongsTo: vi.fn(async () => true), runOutputToData: vi.fn(),
+  analysisPipelineDefinitions: () => [{ id: 'mag', name: 'MAG Pipeline', description: 'x' }],
 }));
 vi.mock('@/lib/pipelines/run-resume', () => ({ resumePipelineRun: mocks.resume }));
 vi.mock('@/lib/files/library', () => ({ storeLibraryFile: vi.fn() }));
+vi.mock('@/lib/pipelines/enablement', () => ({ getPipelineEnabled: vi.fn(async () => true), parsePipelineAllowlist: () => null, resolvePipelineEnabled: () => true }));
+vi.mock('@/lib/pipelines/pipeline-management-service', () => ({ updateManagedPipeline: vi.fn(), listInstalledManagedPipelineStatuses: vi.fn(async () => []) }));
 vi.mock('@/lib/integration/config', () => ({ integrationConfig: () => null }));
 
 import { handleDataPipelinesRequest } from './pipelines';
@@ -97,5 +102,15 @@ describe('data-pipelines: a run is managed by whoever owns the study’s Data', 
     expect(mocks.resume).not.toHaveBeenCalled();
     expect((await call('lena', 'POST', ['data-pipelines', 'runs', 'run-1', 'resume'], { force: true })).status).toBe(200);
     expect(mocks.resume).toHaveBeenCalledTimes(1);
+  });
+
+  it('the admin can always put a pipeline back to the server’s default, without a readiness check', async () => {
+    mocks.db.user.findUnique.mockResolvedValue(null);
+    const admin = { user: { id: 'kit', role: 'FACILITY_ADMIN' } } as never;
+    const res = await handleDataPipelinesRequest(new Request('http://compute/api/integration/v1/data-pipelines/admin/pipelines/mag', { method: 'POST', body: JSON.stringify({ enabled: 'default' }) }),
+      admin, ['data-pipelines', 'admin', 'pipelines', 'mag'], new Headers());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: 'mag', enabled: true, default: true });
+    expect(mocks.db.pipelineConfig.updateMany).toHaveBeenCalledWith({ where: { pipelineId: 'mag' }, data: { enabled: true } });
   });
 });

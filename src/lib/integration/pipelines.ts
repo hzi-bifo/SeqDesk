@@ -31,8 +31,9 @@ import { resumePipelineRun } from '@/lib/pipelines/run-resume';
 import { prepareFailureWords, slurmRefusal } from '@/lib/pipelines/plain-status';
 import { PIPELINE_FILE_LINK_TTL_MS, pipelineFileToken } from '@/lib/pipelines/pipeline-file-link';
 import { integrationConfig } from '@/lib/integration/config';
-import { getPipelineEnabled } from '@/lib/pipelines/enablement';
-import { updateManagedPipeline } from '@/lib/pipelines/pipeline-management-service';
+import { getPipelineEnabled, parsePipelineAllowlist, resolvePipelineEnabled } from '@/lib/pipelines/enablement';
+import { getBlockingReadinessDetails } from '@/lib/pipelines/pipeline-readiness-service';
+import { listInstalledManagedPipelineStatuses, updateManagedPipeline } from '@/lib/pipelines/pipeline-management-service';
 import { checkServerReadiness, testServer } from '@/lib/pipelines/pipeline-admin';
 import { storeLibraryFile } from '@/lib/files/library';
 import type { IntegrationSession } from './identity';
@@ -90,13 +91,37 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       if ((session.user as { role?: string }).role !== 'FACILITY_ADMIN') throw new RouteError(403, 'Only this Compute server’s admin can change its pipelines.');
       if (!runId && method === 'GET') {
         // Only pipelines that can serve an Analysis study; order-only ones (checksums, ENA submission) stay in SeqDesk's own admin.
-        const pipelines = await Promise.all(analysisPipelineDefinitions().map(async (d) => ({ id: d.id, name: d.name, version: d.version ?? null, description: d.description, enabled: await getPipelineEnabled(d.id) })));
+        const defs = analysisPipelineDefinitions();
+        const [statuses, rows, settings] = await Promise.all([
+          listInstalledManagedPipelineStatuses({ pipelineIds: defs.map((d) => d.id) }).catch(() => []),
+          db.pipelineConfig.findMany({ where: { pipelineId: { in: defs.map((d) => d.id) } }, select: { pipelineId: true, enabled: true } }),
+          db.siteSettings.findUnique({ where: { id: 'singleton' }, select: { extraSettings: true } }),
+        ]);
+        const allowlist = parsePipelineAllowlist(settings?.extraSettings);
+        const pipelines = await Promise.all(defs.map(async (d) => {
+          const status = statuses.find((st) => st.pipelineId === d.id || st.id === d.id);
+          const readiness = status?.readiness ?? null;
+          const row = rows.find((r) => r.pipelineId === d.id);
+          return { id: d.id, name: d.name, version: d.version ?? null, description: d.description, enabled: await getPipelineEnabled(d.id),
+            // Whether it could be switched on now, and what is missing (MAG without its GTDB-Tk database).
+            ready: readiness ? readiness.canEnable : true, blocking: readiness ? getBlockingReadinessDetails(readiness).slice(0, 3) : [],
+            // The server's default when no one has chosen, and whether someone has.
+            defaultEnabled: resolvePipelineEnabled(d.id, null, allowlist), chosen: !!row };
+        }));
         return json({ readiness: await checkServerReadiness(), pipelines: pipelines.sort((a, b) => a.name.localeCompare(b.name)) });
       }
       if (runId === 'pipelines' && action && method === 'POST') {
         const input = await body();
-        if (typeof input.enabled !== 'boolean') throw new RouteError(400, 'Say whether the pipeline is on.');
+        if (typeof input.enabled !== 'boolean' && input.enabled !== 'default') throw new RouteError(400, 'Say whether the pipeline is on.');
         if (!analysisPipelineDefinitions().some((d) => d.id === action)) throw new RouteError(404, 'No such pipeline for Analysis on this server.');
+        if (input.enabled === 'default') {
+          // Back to the server's default is always possible: it is the state the pipeline had before anyone chose, so it
+          // needs no readiness check (a pipeline that is on by default and not ready fails its runs with its own words).
+          const settings = await db.siteSettings.findUnique({ where: { id: 'singleton' }, select: { extraSettings: true } });
+          const enabled = resolvePipelineEnabled(action, null, parsePipelineAllowlist(settings?.extraSettings));
+          await db.pipelineConfig.updateMany({ where: { pipelineId: action }, data: { enabled } });
+          return json({ id: action, enabled: await getPipelineEnabled(action), default: true });
+        }
         try {
           await updateManagedPipeline({ pipelineId: action, enabled: input.enabled });
         } catch (error) {
