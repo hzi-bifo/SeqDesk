@@ -40,6 +40,7 @@ import {
   combineTaskStatuses,
   deriveStepStatus,
   getTraceTaskAttemptGroupKeys,
+  traceFailuresAreOnlyAborts,
 } from '@/lib/pipelines/monitor-status';
 
 const spawn = childProcess.spawn;
@@ -1438,7 +1439,8 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   if (!hasRunning && queueFailed) {
     nextStatus = 'failed';
     statusDeterminedByQueue = true;
-  } else if (!hasRunning && queueCancelled && nextStatus !== 'failed') {
+  } else if (!hasRunning && queueCancelled && (nextStatus !== 'failed' || traceFailuresAreOnlyAborts(traceResult.tasks))) {
+    // scancel of the run's job leaves the tasks Nextflow was running ABORTED: that run was cancelled, not failed.
     nextStatus = 'cancelled';
     statusDeterminedByQueue = true;
   }

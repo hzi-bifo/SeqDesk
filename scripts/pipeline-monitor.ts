@@ -7,6 +7,7 @@ import {
   deriveStepStatus,
   getTraceTaskAttemptGroupKeys,
   reconcileRunStatus,
+  traceFailuresAreOnlyAborts,
   type RunStatus,
 } from '../src/lib/pipelines/monitor-status';
 import { finalizeCompletedPipelineRun } from '../src/lib/pipelines/run-completion';
@@ -30,6 +31,7 @@ export async function syncRun(run: {
   errorPath: string | null;
 }) {
   let derivedStatus: RunStatus | null = null;
+  let traceFailuresAborted = false;
   let currentStep: string | null = null;
   let progress: number | null = null;
 
@@ -42,6 +44,7 @@ export async function syncRun(run: {
     if (tracePath) {
       const trace = await parseTraceFile(tracePath);
       const taskGroupKeys = getTraceTaskAttemptGroupKeys(trace.tasks);
+      traceFailuresAborted = traceFailuresAreOnlyAborts(trace.tasks);
       const stepMap = new Map<string, {
         stepName: string;
         status: 'pending' | 'running' | 'completed' | 'failed';
@@ -175,7 +178,7 @@ export async function syncRun(run: {
     }
   }
   const traceDerivedStatus = derivedStatus;
-  derivedStatus = reconcileRunStatus(derivedStatus, schedulerStatus);
+  derivedStatus = reconcileRunStatus(derivedStatus, schedulerStatus, { traceFailuresAborted });
   if (
     schedulerConfirmationPending &&
     derivedStatus !== null &&

@@ -236,9 +236,20 @@ export function getTraceTaskAttemptGroupKeys(
  * also prevents a completed trace from hiding a wrapper-level failure after the
  * last task (for example, output publication or teardown).
  */
+/**
+ * Whether every failed task in the trace is one Nextflow ABORTED while it shut down (no exit code of its own). That is
+ * what a run whose SLURM job was cancelled leaves behind once Nextflow gets to finish its shutdown: the tasks it was
+ * running are ABORTED, none of them FAILED.
+ */
+export function traceFailuresAreOnlyAborts(tasks: { status: string; exit?: number | null }[]): boolean {
+  const failed = tasks.filter((task) => deriveStepStatus(task.status, task.exit ?? undefined) === 'failed');
+  return failed.length > 0 && failed.every((task) => /abort/i.test(task.status) && (task.exit == null || task.exit === 143 || task.exit === 137));
+}
+
 export function reconcileRunStatus(
   traceStatus: RunStatus | null,
-  schedulerStatus: RunStatus | null
+  schedulerStatus: RunStatus | null,
+  options: { traceFailuresAborted?: boolean } = {}
 ): RunStatus | null {
   if (!traceStatus) {
     return schedulerStatus;
@@ -262,6 +273,10 @@ export function reconcileRunStatus(
     TERMINAL_RUN_STATUSES.has(traceStatus) &&
     TERMINAL_RUN_STATUSES.has(schedulerStatus)
   ) {
+    // scancel of the run's job: the tasks Nextflow was running are ABORTED, not failed.
+    if (traceStatus === 'failed' && schedulerStatus === 'cancelled' && options.traceFailuresAborted) {
+      return 'cancelled';
+    }
     if (traceStatus === 'failed' || schedulerStatus === 'failed') {
       return 'failed';
     }

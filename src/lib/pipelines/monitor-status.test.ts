@@ -6,6 +6,7 @@ import {
   getTraceTaskAttemptGroupKeys,
   reconcileRunStatus,
   resolveLocalLiveness,
+  traceFailuresAreOnlyAborts,
 } from "./monitor-status";
 
 describe("reconcileRunStatus", () => {
@@ -243,5 +244,22 @@ describe("resolveLocalLiveness", () => {
 
   it("returns null (unknown) when there is no marker and the PID is gone", () => {
     expect(resolveLocalLiveness(null, false)).toBeNull();
+  });
+});
+
+describe('a run whose SLURM job was cancelled with scancel', () => {
+  // Real Slurm: scancel of the head job; Nextflow shuts down and writes its running task as ABORTED with no exit.
+  it('is cancelled, not failed, when every failed task was only aborted', () => {
+    const aborted = [{ status: 'COMPLETED', exit: 0 }, { status: 'ABORTED', exit: null }];
+    expect(traceFailuresAreOnlyAborts(aborted)).toBe(true);
+    expect(reconcileRunStatus('failed', 'cancelled', { traceFailuresAborted: true })).toBe('cancelled');
+  });
+  it('stays failed when a task really failed, or when SLURM says it failed', () => {
+    const failed = [{ status: 'FAILED', exit: 1 }, { status: 'ABORTED', exit: null }];
+    expect(traceFailuresAreOnlyAborts(failed)).toBe(false);
+    expect(traceFailuresAreOnlyAborts([{ status: 'COMPLETED', exit: 0 }])).toBe(false);
+    expect(reconcileRunStatus('failed', 'cancelled', { traceFailuresAborted: false })).toBe('failed');
+    expect(reconcileRunStatus('failed', 'failed', { traceFailuresAborted: true })).toBe('failed');
+    expect(reconcileRunStatus('failed', 'cancelled')).toBe('failed');
   });
 });
