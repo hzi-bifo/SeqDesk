@@ -82,6 +82,21 @@ export function dryadDetail(dataset: Record<string, unknown>): string {
     .filter(Boolean).join(" · ");
 }
 
+/** Dryad's recommended form: "Authors (year). Title [Dataset]. Dryad. https://doi.org/…" (names only, never e-mails). */
+export function dryadCitation(dataset: Record<string, unknown>, doi: string): string {
+  const authors = (Array.isArray(dataset.authors) ? dataset.authors : []).flatMap((author) => {
+    if (!isRecord(author)) return [];
+    const last = text(author.lastName);
+    const initials = (text(author.firstName) ?? "").split(/[\s-]+/).filter(Boolean).map(part => `${part[0]}.`).join(" ");
+    return last ? [initials ? `${last}, ${initials}` : last] : [];
+  });
+  const names = authors.length > 20 ? [...authors.slice(0, 19), "…", authors[authors.length - 1]] : authors;
+  const list = names.length > 1 ? `${names.slice(0, -1).join(", ")}, & ${names[names.length - 1]}` : names[0];
+  const year = text(dataset.publicationDate)?.slice(0, 4);
+  const title = text(dataset.title)?.replace(/\s+/g, " ").replace(/\.$/, "") ?? doi;
+  return [list, year ? `(${year}).` : undefined, `${title} [Dataset].`, "Dryad.", `https://doi.org/${doi}`].filter(Boolean).join(" ");
+}
+
 function link(body: Record<string, unknown>, rel: string): string | undefined {
   const links = isRecord(body._links) ? body._links : {};
   const entry = links[rel];
@@ -127,14 +142,14 @@ export function mapDryadDataset(dataset: unknown, files: unknown[], input: Dryad
     assets: pick.selected,
     choices: pick.choices,
     records: [{ id: doi, title, detail: dryadDetail(dataset) }],
-    sampleMetadata: Object.fromEntries(Object.entries({ licence: licenceName(licence), licenceUrl: licence, version: version !== undefined ? `v${version}` : undefined, doi })
+    sampleMetadata: Object.fromEntries(Object.entries({ licence: licenceName(licence), licenceUrl: licence, version: version !== undefined ? `v${version}` : undefined, doi, citation: dryadCitation(dataset, doi) })
       .filter((entry): entry is [string, string] => Boolean(entry[1]))),
     ...(warnings.length ? { warnings } : {}),
   };
 }
 
 export async function fetchDryadDataset(doi: string): Promise<{ dataset: unknown; files: unknown[] }> {
-  const dataset = (await fetchSourceJson(apiDataset(doi), { source: SOURCE, notFound: `Dryad has no public dataset ${doi}.` }))?.body;
+  const dataset = (await fetchSourceJson(apiDataset(doi), { source: SOURCE, attempts: 2, notFound: `Dryad has no public dataset ${doi}.` }))?.body;
   if (!isRecord(dataset)) throw new Error("Dryad returned a dataset that could not be read. Try again later.");
   const version = link(dataset, "stash:version");
   if (!version || !/^\/api\/v2\/versions\/\d{1,12}$/.test(version)) throw new Error("Dryad returned a dataset without a readable version. Try again later.");
@@ -142,7 +157,7 @@ export async function fetchDryadDataset(doi: string): Promise<{ dataset: unknown
   let next: string | undefined = `${version}/files`;
   for (let page = 0; next && page < MAX_PAGES; page += 1) {
     if (!/^\/api\/v2\/versions\/\d{1,12}\/files(?:\?page=\d{1,4})?$/.test(next)) throw new Error("Dryad returned an unexpected file list address.");
-    const body: unknown = (await fetchSourceJson(`${ORIGIN}${next}`, { source: SOURCE }))?.body;
+    const body: unknown = (await fetchSourceJson(`${ORIGIN}${next}`, { source: SOURCE, attempts: 2 }))?.body;
     const embedded = isRecord(body) && isRecord(body._embedded) ? body._embedded["stash:files"] : undefined;
     if (!Array.isArray(embedded)) throw new Error("Dryad returned a file list that could not be read. Try again later.");
     files.push(...embedded);

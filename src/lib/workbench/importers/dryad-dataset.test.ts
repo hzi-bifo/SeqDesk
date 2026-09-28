@@ -59,6 +59,19 @@ describe("Dryad dataset importer", () => {
     expect(await dryadDatasetImporter.preflight()).toMatchObject({ ok: false, previewOnly: true });
   });
 
+  it("records Dryad's citation with author names only, never their e-mail addresses", async () => {
+    stubFetch({
+      [DATASET]: () => json(dataset({ authors: [
+        { firstName: "Karumathil", lastName: "Murali", email: "someone@example.org" },
+        { firstName: "Judy", lastName: "Mullan", email: "" },
+      ] })),
+      "https://datadryad.org/api/v2/versions/85949/files": () => json(files([file(1, "data.xlsx", "hello")])),
+    });
+    const preview = await dryadDatasetImporter.preview(input("10.5061/dryad.2bvq83bnv"));
+    expect(preview.sampleMetadata?.citation).toBe("Murali, K., & Mullan, J. (2020). Health literacy profile [Dataset]. Dryad. https://doi.org/10.5061/dryad.2bvq83bnv");
+    expect(JSON.stringify(preview)).not.toContain("someone@example.org");
+  });
+
   it("refuses unexpected download addresses", async () => {
     stubFetch({
       [DATASET]: () => json(dataset()),
