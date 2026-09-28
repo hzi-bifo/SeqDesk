@@ -74,7 +74,7 @@ export function localLimitLines(limits: LocalRunLimits, runId: string, runFolder
     `  echo "Limits: none enforced for the process tree on this server (no systemd user scope); Nextflow asks for at most ${limits.cores} cores and ${limits.memoryGb} GB" >> "$STDOUT_LOG"`,
     'fi',
     '# The run\'s own time limit; --foreground keeps it in this process group, so Cancel still reaches everything.',
-    `SEQDESK_TIMEOUT=(); command -v timeout >/dev/null 2>&1 && SEQDESK_TIMEOUT=(timeout --foreground -s TERM -k 120 ${seconds})`,
+    `SEQDESK_TIMEOUT=(); if command -v timeout >/dev/null 2>&1; then SEQDESK_TIMEOUT=(timeout --foreground -s TERM -k 120 ${seconds}); else echo "Limits: no time limit enforced (the timeout command is not installed on this server; coreutils has it)" >> "$STDOUT_LOG"; fi`,
     'seqdesk_local_limit_words() {',
     '  local status="$1"',
     '  declare -F seqdesk_explain_limits >/dev/null && seqdesk_explain_limits "$status"',

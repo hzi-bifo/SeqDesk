@@ -23,6 +23,14 @@ describe('runs on this server share it', () => {
     expect(localWaitWords(`${localWaitReason(run)}:2`)).toBe('Waiting for 8 cores and 24 GB on this server · 2 runs ahead');
     expect(localWaitWords('Resources')).toBeNull();
   });
+  it('without a timeout command the log says no time limit is enforced (it used to say nothing)', () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'local-limits-none-'));
+    fs.mkdirSync(path.join(folder, 'logs'));
+    const lines = localLimitLines({ cores: 0, memoryGb: 0, timeHours: 1 }, 'run-1', folder).join('\n');
+    // A PATH with bash's own builtins only: `command -v timeout` finds nothing.
+    execFileSync('/bin/bash', ['-c', `set -uo pipefail\nPATH=/nonexistent\nSTDOUT_LOG="${folder}/logs/pipeline.out"; STDERR_LOG="${folder}/logs/pipeline.err"\n${lines}\n`]);
+    expect(fs.readFileSync(path.join(folder, 'logs', 'pipeline.out'), 'utf8')).toMatch(/no time limit enforced \(the timeout command is not installed/);
+  });
   it('the wrapper stops a run at its time limit and says so', () => {
     const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'local-limits-'));
     fs.mkdirSync(path.join(folder, 'logs'));
