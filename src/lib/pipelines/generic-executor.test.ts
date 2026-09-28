@@ -1344,7 +1344,7 @@ describe("generic-executor", () => {
     const localScript = await fs.readFile(path.join(localResult.runFolder!, "run.sh"), "utf8");
     // The marker must be written from a trap so "set -e" cannot skip it on failure.
     expect(localScript).toContain(
-      `trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT`
+      `trap 'EXIT_CODE=$?; if declare -F seqdesk_local_limit_words >/dev/null; then seqdesk_local_limit_words "$EXIT_CODE"; fi; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT`
     );
     // The dead post-command capture must be gone.
     expect(localScript).not.toContain("EXIT_CODE=$?\necho");

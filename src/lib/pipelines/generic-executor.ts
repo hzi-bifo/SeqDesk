@@ -35,6 +35,7 @@ import {
   renderSlurmChdirDirective,
 } from './slurm-completion-attestation';
 import { NEXTFLOW_NAME_FLAG, NEXTFLOW_REQUEUE_ARGS, nextflowRequeueBlock } from './slurm-requeue';
+import { localLimitLines, type LocalRunLimits } from './local-executor';
 import { resolveCondaEnvironmentReference } from './conda-environment';
 import { stagePriorRunArtifacts } from './prior-run-artifact-staging';
 import type { PipelineTarget } from './types';
@@ -67,6 +68,8 @@ export interface ExecutionSettings {
   /** When true, omit conda from Nextflow profiles (macOS ARM local execution) */
   skipConda?: boolean;
   slurmInline?: boolean;
+  /** This run's share of the server (local runs): cores, memory and time for its whole process tree. */
+  localLimits?: LocalRunLimits;
 }
 
 export interface PrepareRunOptions {
@@ -302,8 +305,9 @@ function buildRunConfig(
   // this app host's size would be the wrong cap.
   if (!settings.useSlurm) {
     const totalMemGb = Math.floor(os.totalmem() / 1024 ** 3);
-    const memCapGb = Math.max(1, Math.floor(totalMemGb * 0.9));
-    const cpuCap = Math.max(1, os.cpus().length);
+    // A run with its own share of the server asks Nextflow for no more than that share.
+    const memCapGb = settings.localLimits ? settings.localLimits.memoryGb : Math.max(1, Math.floor(totalMemGb * 0.9));
+    const cpuCap = settings.localLimits ? settings.localLimits.cores : Math.max(1, os.cpus().length);
     sections.push(
       ['process {', `  resourceLimits = [ memory: ${memCapGb}.GB, cpus: ${cpuCap}, time: 240.h ]`, '}'].join('\n'),
     );
@@ -909,15 +913,15 @@ STDERR_LOG="${runFolder}/logs/pipeline.err"
 # Always record the real exit code for the pipeline monitor, even when a
 # command fails under "set -e" (which would otherwise abort before the marker
 # below is reached).
-trap 'EXIT_CODE=$?; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT
+trap 'EXIT_CODE=$?; if declare -F seqdesk_local_limit_words >/dev/null; then seqdesk_local_limit_words "$EXIT_CODE"; fi; echo "Pipeline completed with exit code: $EXIT_CODE at $(date)" >> "$STDOUT_LOG"; exit $EXIT_CODE' EXIT
 
 echo "Starting ${pipelineLabel} pipeline at $(date)" > "$STDOUT_LOG"
 echo "" > "$STDERR_LOG"
 
 ${runtimeBootstrap}
-
+${settings.localLimits ? `\n# This run's share of the server: cores, memory and time, for its whole process tree.\n${localLimitLines(settings.localLimits, runId, runFolder).join('\n')}\n` : 'RLIM=(); SEQDESK_TIMEOUT=()'}
 # Run ${pipelineLabel}
-"\${NEXTFLOW_RUNNER[@]}" run ${shellQuote(pipelineTarget.target)} \\
+\${RLIM[@]+"\${RLIM[@]}"} \${SEQDESK_TIMEOUT[@]+"\${SEQDESK_TIMEOUT[@]}"} "\${NEXTFLOW_RUNNER[@]}" run ${shellQuote(pipelineTarget.target)} \\
   ${nextflowArgs} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 `;

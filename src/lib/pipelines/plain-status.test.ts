@@ -238,6 +238,10 @@ describe('plainRunStatus', () => {
     const status = plainRunStatus({ now, run: { status: 'cancelled', readsChanged: '2 files added' } });
     expect([status.sentence, status.action?.kind]).toEqual(['Cancelled · the reads in Data changed since (2 files added); Run again uses them', 'run-again']);
   });
+  it('a local run waiting for its share of this server says what it waits for', () => {
+    const status = plainRunStatus({ now, run: { status: 'queued', executionMode: 'local', queueStatus: 'PENDING', queueReason: 'LocalCapacity:8:24:1', queuedAt: '2026-09-28T11:55:00Z' } });
+    expect([status.shape, status.sentence, status.action?.kind]).toEqual(['waiting', 'Waiting for 8 cores and 24 GB on this server · 1 run ahead · waiting 5 min', 'cancel']);
+  });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
     const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';

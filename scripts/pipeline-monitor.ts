@@ -148,6 +148,7 @@ export async function syncRun(run: {
     if (outputTail) update.outputTail = outputTail;
     const errorTail = await readTail(run.errorPath);
     if (errorTail) update.errorTail = errorTail;
+    if (next.note) update.errorTail = `${errorTail ? `${errorTail}\n` : ''}${next.note}`;
 
     const { count } = await db.pipelineRun.updateMany({
       where: {
@@ -191,6 +192,14 @@ async function recordTransition(runId: string, from: string, to: string) {
 }
 
 async function runOnce() {
+  // Local runs that waited for a share of this server start once they fit (oldest first).
+  try {
+    const { admitWaitingLocalRuns } = await import('../src/lib/pipelines/pipeline-run-service');
+    const started = await admitWaitingLocalRuns();
+    if (started.length) console.log('[pipeline-monitor] admitted local runs', started.join(', '));
+  } catch (error) {
+    console.error('[pipeline-monitor] Could not admit waiting local runs', error);
+  }
   const runs = await db.pipelineRun.findMany({
     where: { status: { in: ['pending', 'queued', 'running'] } },
     select: {

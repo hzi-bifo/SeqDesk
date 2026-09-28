@@ -23,6 +23,8 @@ export interface ExecutionSettings {
   skipConda?: boolean;
   /** SLURM lets this server have only one job: the run keeps every step inside its own job (Nextflow's local executor). */
   slurmInline?: boolean;
+  /** Local runs: this run's share of the server (set when the run is admitted). */
+  localLimits?: import('./local-executor').LocalRunLimits;
 }
 
 export interface SlurmSettings {

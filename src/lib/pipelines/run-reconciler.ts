@@ -89,7 +89,14 @@ export interface Reconciled {
   nextCheckSeconds: number | null;
   /** A change of status, for the run's event log. */
   transition: { from: RunStatus; to: RunStatus } | null;
+  /** Words for the run's error log when the evidence itself is the reason (a local process that vanished). */
+  note?: string | null;
 }
+
+/** A local run whose process is gone without its exit marker (killed with the server, a reboot, kill -9). */
+export const LOCAL_VANISHED_NOTE = 'The run\'s process on this server ended without writing its exit code (the server restarted, the host rebooted or the process was killed).';
+const vanishedLocal = (snapshot: QueueSnapshot | null) => !!snapshot && snapshot.source === 'local' && !snapshot.identityVerified
+  && /exited before its canonical exit marker|belongs to another process|missing its process arguments/.test(snapshot.reason ?? '');
 
 const TERMINAL: RunStatus[] = ['completed', 'failed', 'cancelled'];
 const ACTIVE: RunStatus[] = ['pending', 'queued', 'running'];
@@ -131,8 +138,15 @@ export function reconcileRun(input: ReconcileInput): Reconciled {
     queue = { status: null, reason: null };
   }
 
+  let note: string | null = null;
+  if (vanishedLocal(scheduler) && ACTIVE.includes(run.status) && (!status || ACTIVE.includes(status))) {
+    // Nothing will ever write this run's exit marker: waiting for confirmation would last for ever.
+    status = trace.derived === 'completed' ? 'running' : 'failed';
+    if (status === 'failed') { currentStep = 'Failed'; note = LOCAL_VANISHED_NOTE; }
+  }
   const terminal = !!status && TERMINAL.includes(status);
   return {
+    note,
     status, currentStep, progress, queue,
     finalize: status === 'completed',
     nextCheckSeconds: terminal ? null : confirmationPending ? 15 : status === 'queued' || status === 'pending' ? 30 : 15,

@@ -9,6 +9,7 @@
  */
 import { parseTraceContent, type NextflowTask } from './nextflow/trace-parser';
 import { stripChannelCredentials } from '@/lib/explore/conda-credentials';
+import { localWaitWords } from './local-executor';
 
 export type RunShape = 'preparing' | 'waiting' | 'running' | 'finished' | 'cancelled' | 'needs-you';
 export type ErrorKind = 'memory' | 'time' | 'input' | 'database' | 'software' | 'node' | 'unknown';
@@ -188,7 +189,7 @@ export function prepareFailureWords(text: string | null | undefined): string | n
 // ------------------------------------------------------------------ failure kind
 
 const RULES: { kind: ErrorKind; test: (s: Signals) => boolean }[] = [
-  { kind: 'memory', test: (s) => s.states.includes('OUT_OF_MEMORY') || s.exits.includes(137) || /oom[_-]?kill|out[ _-]of[ _-]memory|OutOfMemoryError|Cannot allocate memory|MemoryError|std::bad_alloc|exceeded (?:its )?memory|Killed\s+(?:\S+\s+)?\(core dumped\)?/i.test(s.text) },
+  { kind: 'memory', test: (s) => s.states.includes('OUT_OF_MEMORY') || s.exits.includes(137) || /memory limit \(\d+ GB\) reached|oom[_-]?kill|out[ _-]of[ _-]memory|OutOfMemoryError|Cannot allocate memory|MemoryError|std::bad_alloc|exceeded (?:its )?memory|Killed\s+(?:\S+\s+)?\(core dumped\)?/i.test(s.text) },
   // Nextflow's local executor stops a task over its `time` limit and then fails with "process hasn't exited" from
   // LocalTaskHandler.checkIfCompleted (its time-limit branch); on SLURM the job state says TIMEOUT.
   { kind: 'time', test: (s) => s.states.includes('TIMEOUT') || s.exits.includes(140) || /DUE TO TIME LIMIT|exceeded running time limit|time limit exceeded|TIMEOUT/.test(s.text)
@@ -478,6 +479,12 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
     const kind = classifyFailure({ texts, exitCodes: [failed?.exit, ...sacct.map((l) => l.exitCode), ...sacct.map((l) => (l.signal === 9 ? 137 : null))], slurmStates: [...sacct.map((l) => l.state), queueState] });
     const found = firstErrorLines([context.taskError, run.errorTail, run.outputTail]);
     const lines = kind === 'software' && run.softwareReason?.length ? [...run.softwareReason.map((l) => redactLog(l).slice(0, 240)), ...found].slice(0, 3) : found;
+    // A local run whose process vanished without its exit code (the server restarted, a reboot).
+    if (!failed && /ended without writing its exit code/.test(run.errorTail ?? '')) {
+      const sentence = 'The run stopped when its process on this server ended (a restart or a kill) · Resume continues where it stopped';
+      return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action: { kind: 'resume', label: 'Resume' },
+        error: { kind: 'unknown', sentence, firstLines: lines, process: null, sample: null, exitCode: null } };
+    }
     // Nextflow itself was killed (kill -9, the OOM killer on the node running it): no task failed, the wrapper saw 137.
     const exits = [...(run.outputTail ?? '').matchAll(/Pipeline completed with exit code: (\d+)/g)];
     const wrapperExit = exits.length ? Number(exits[exits.length - 1][1]) : NaN;
@@ -541,6 +548,12 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
       return { ...base, shape: 'running', word: 'Running', sentence: `All steps ended · waiting for SLURM to confirm the job${slurm ? ' (SLURM is not answering)' : ''}`, action: { kind: 'cancel', label: 'Cancel' } };
     }
     return { ...base, shape: 'running', word: 'Running', sentence: `Running${where}${waiting || left}`, action: { kind: 'cancel', label: 'Cancel' } };
+  }
+  // A local run waiting for its share of this server (the admission queue).
+  const localWait = localWaitWords(run.queueReason);
+  if ((status === 'queued' || status === 'pending') && localWait) {
+    const waited = queued ? Math.round((now.getTime() - queued.getTime()) / 1000) : null;
+    return { ...base, shape: 'waiting', word: 'Queued', sentence: `${localWait}${waited != null && waited > 60 ? ` · waiting ${durationWords(waited)}` : ''}`, action: { kind: 'cancel', label: 'Cancel' } };
   }
   // pending / queued (or running on SLURM without a started task yet)
   if (slurm && queue && (queueState === 'PENDING' || queueState === 'CONFIGURING' || !queueState)) {

@@ -11,6 +11,7 @@ import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { mergePipelineDerivedConfig } from '@/lib/pipelines/derived-config';
 import { getPipelineEnabled } from '@/lib/pipelines/enablement';
 import { needsInlineSlurm, slurmJobSlots } from '@/lib/pipelines/slurm-limits';
+import { admits, localBudget, localRunLimits, localWaitReason, localWaitWords, type LocalRunLimits } from '@/lib/pipelines/local-executor';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import {
   normalizeRunExecutionOverride,
@@ -1037,6 +1038,15 @@ export async function startPipelineRunForOperator({
   });
   let effectiveExecutionSettings = executionPolicy.settings;
   let executionProfileJson = buildExecutionProfileJson(executionPolicy);
+  if (!effectiveExecutionSettings.useSlurm) {
+    // A local run gets its share of this server (cores, memory, time) for its whole process tree.
+    const budget = localBudget();
+    const limits = localRunLimits();
+    const share = { ...limits, cores: Math.min(limits.cores, budget.cores), memoryGb: Math.min(limits.memoryGb, budget.memoryGb) };
+    effectiveExecutionSettings = { ...effectiveExecutionSettings, localLimits: share };
+    const profile = JSON.parse(executionProfileJson) as Record<string, unknown>;
+    executionProfileJson = JSON.stringify({ ...profile, local: share });
+  }
   if (effectiveExecutionSettings.useSlurm && process.env.SEQDESK_SLURM_INLINE_EXECUTOR !== '0') {
     // With one job allowed, Nextflow's task jobs would wait behind the run's own job for ever: keep the steps inside it.
     const slots = await slurmJobSlots();
@@ -1371,6 +1381,18 @@ export async function startPipelineRunForOperator({
     // queued, and both preparers now guard their folder/path write on that
     // queued claim. Restrict launch to queued as well so a cancellation can
     // never be bypassed by a stale pending snapshot.
+    if (!effectiveExecutionSettings.useSlurm && effectiveExecutionSettings.localLimits) {
+      // The admission queue: a run that does not fit beside the running ones waits, as a SLURM job would.
+      const wait = await localAdmissionWait(runId, effectiveExecutionSettings.localLimits);
+      if (wait) {
+        const parked = await db.pipelineRun.updateMany({
+          where: { id: runId, status: 'queued', ...unlockedLifecycleSourceFilter() },
+          data: { queueStatus: 'PENDING', queueReason: wait, queueUpdatedAt: new Date(), queuedAt: new Date(), currentStep: 'Waiting for a share of this server', statusSource: 'launcher', lastEventAt: new Date() },
+        });
+        if (parked.count === 0) return buildLostLaunchClaimResponse(runId, 'local admission');
+        return jsonResponse({ success: true, status: 'queued', waiting: localWaitWords(wait), runFolder: prepResult.runFolder, executionMode: executionPolicy.mode, warnings: prepWarnings });
+      }
+    }
     const launchClaim = await db.pipelineRun.updateMany({
       where: {
         id: runId,
@@ -1720,4 +1742,60 @@ export async function startPipelineRunForOperator({
     executionMode: executionPolicy.mode,
     warnings: prepWarnings,
   });
+}
+
+/** The local runs that hold this server now, with the share each was given. */
+async function runningLocalShares(exceptRunId?: string): Promise<LocalRunLimits[]> {
+  const rows = await db.pipelineRun.findMany({ where: { status: 'running', executionMode: 'local', ...(exceptRunId ? { id: { not: exceptRunId } } : {}) }, select: { executionProfile: true } });
+  const fallback = localRunLimits();
+  return rows.map((row) => { try { const local = JSON.parse(row.executionProfile ?? '{}').local; return local && typeof local.cores === 'number' ? local as LocalRunLimits : fallback; } catch { return fallback; } });
+}
+
+/** Null when the run may start now; else the reason it waits (with how many waiting runs are ahead of it). */
+export async function localAdmissionWait(runId: string, share: LocalRunLimits): Promise<string | null> {
+  let running: LocalRunLimits[], ahead: number;
+  try {
+    running = await runningLocalShares(runId);
+    ahead = await db.pipelineRun.count({ where: { status: 'queued', executionMode: 'local', id: { not: runId }, queueReason: { startsWith: 'LocalCapacity:' } } });
+  } catch (error) {
+    // The queue could not be read: start the run as before rather than hold it with nothing to release it.
+    console.warn('[Pipeline Run] Local admission check failed; starting the run', error);
+    return null;
+  }
+  // Runs that waited first go first: a run that fits still waits while others are ahead of it.
+  if (!ahead && admits(localBudget(), running, share)) return null;
+  return `${localWaitReason(share)}${ahead ? `:${ahead}` : ''}`;
+}
+
+/**
+ * Start the local runs that waited for a share of this server, oldest first, while they fit (the monitor calls this
+ * every pass). Each is launched exactly as the start route launches one: bash run.sh in its own process group.
+ */
+export async function admitWaitingLocalRuns(): Promise<string[]> {
+  const waiting = await db.pipelineRun.findMany({ where: { status: 'queued', executionMode: 'local', queueJobId: null, queueReason: { startsWith: 'LocalCapacity:' } },
+    orderBy: { queuedAt: 'asc' }, select: { id: true, pipelineId: true, runFolder: true, executionProfile: true } });
+  const started: string[] = [];
+  const budget = localBudget();
+  for (const [index, run] of waiting.entries()) {
+    let share: LocalRunLimits = localRunLimits();
+    try { const local = JSON.parse(run.executionProfile ?? '{}').local; if (local && typeof local.cores === 'number') share = local; } catch { /* the default share */ }
+    if (!admits(budget, await runningLocalShares(run.id), share)) {
+      // Keep the queue position current on the ones that still wait.
+      for (const [position, later] of waiting.slice(index).entries()) {
+        await db.pipelineRun.updateMany({ where: { id: later.id, status: 'queued' }, data: { queueReason: `${localWaitReason(share)}${position ? `:${position}` : ''}`, queueUpdatedAt: new Date() } });
+      }
+      break;
+    }
+    if (!run.runFolder) continue;
+    const claimed = await db.pipelineRun.updateMany({ where: { id: run.id, status: 'queued', queueJobId: null, ...unlockedLifecycleSourceFilter() },
+      data: { status: 'running', currentStep: 'Launching', statusSource: 'launcher', queueReason: null, lastEventAt: new Date() } });
+    if (!claimed.count) continue;
+    const child = spawn('bash', [path.join(run.runFolder, 'run.sh')], { cwd: run.runFolder, stdio: 'ignore', detached: true });
+    child.unref();
+    if (!child.pid) { await markClaimedRunFailed(run.id, ['running'], 'The admitted run did not start.'); continue; }
+    await writePipelineLaunchIdentity({ runFolder: run.runFolder, runId: run.id, kind: 'local', numericId: child.pid });
+    await db.pipelineRun.updateMany({ where: { id: run.id, status: 'running' }, data: { queueJobId: `local-${child.pid}`, startedAt: new Date(), queueStatus: 'RUNNING', queueUpdatedAt: new Date() } });
+    started.push(run.id);
+  }
+  return started;
 }

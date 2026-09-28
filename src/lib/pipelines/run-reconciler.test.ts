@@ -99,4 +99,12 @@ describe('the run reconciler on real SLURM evidence', () => {
     expect(queueFieldsFrom({ state: 'UNKNOWN', reason: 'x', source: 'sacct', identityVerified: false }, { slurm: true })).toBeNull();
     expect(queueFieldsFrom({ state: 'RUNNING', reason: null, source: 'squeue', identityVerified: true }, { slurm: true, status: 'cancelled' })).toEqual({ status: null, reason: null });
   });
+
+  it('a local run whose process vanished without its exit code fails with words, instead of waiting for ever', () => {
+    const vanished = { state: 'UNKNOWN', reason: 'Local process exited before its canonical exit marker was observed', source: 'local' as const, identityVerified: false, pid: 4242 };
+    const next = reconcileRun({ run: { status: 'running' }, trace: { derived: 'running', currentStep: 'FastQC', progress: 10, failuresAborted: false }, scheduler: vanished, slurm: false });
+    expect([next.status, next.note]).toEqual(['failed', expect.stringMatching(/ended without writing its exit code/)]);
+    const plain = plainRunStatus({ now, run: { status: 'failed', executionMode: 'local', queueJobId: 'local-4242', errorTail: next.note } });
+    expect([plain.sentence, plain.action?.kind]).toEqual(['The run stopped when its process on this server ended (a restart or a kill) · Resume continues where it stopped', 'resume']);
+  });
 });
