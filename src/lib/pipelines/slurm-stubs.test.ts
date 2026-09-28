@@ -49,7 +49,7 @@ echo "" > "$STDERR_LOG"
 # Run nf-core/mag v3.0.0
 "\${NEXTFLOW_RUNNER[@]}" run 'nf-core/mag' \\
   --input '/runs/MAG-002/samplesheet.csv' \\
-  -name 'MAG-002-cmabc' \\
+  -name MAG-002-cmabc \\
   -with-trace '/runs/MAG-002/trace.txt' \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 `;

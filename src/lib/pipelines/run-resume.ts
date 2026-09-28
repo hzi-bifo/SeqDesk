@@ -61,7 +61,7 @@ export function resumeScript(runSh: string, configPath: string, hours?: number |
     .replace(/^echo "Starting (.*) pipeline at \$\(date\)" > "\$STDOUT_LOG"$/m, 'echo "Resuming $1 pipeline at $(date)" >> "$STDOUT_LOG"')
     .replace(/^echo "" > "\$STDERR_LOG"$/m, 'echo "" >> "$STDERR_LOG"');
   // Nextflow refuses a run name its history already has; -resume picks the last session of this folder by itself.
-  script = script.replace(/-name '([^']+)'/, (_m, name: string) => `-name '${name.replace(/-r\d+$/, '')}-r${attempt}'`);
+  script = script.replace(/-name '?([A-Za-z0-9._-]+)'?/, (_m, name: string) => `-name '${name.replace(/-r\d+$/, '')}-r${attempt}'`);
   if (hours) script = script.replace(/^#SBATCH -t \d+:0:0$/m, (line) => { const current = Number(/-t (\d+)/.exec(line)![1]); return `#SBATCH -t ${Math.max(current, hours + 1)}:0:0`; });
   return script;
 }
