@@ -66,3 +66,18 @@ it("keeps XLSX values when generated column names collide", async () => {
   expect(new Set(result.columns).size).toBe(3);
   expect(Object.values(result.rows[0])).toEqual([1, 2, 3]);
 });
+
+describe("workbooks with several sheets", () => {
+  it("says which sheet it read when a workbook has several and none was chosen", async () => {
+    const ExcelJS = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet("One").addRows([["a"], [1]]);
+    workbook.addWorksheet("Two").addRows([["b"], [2]]);
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+    const first = await parseImportFile(buffer, { fileName: "two.xlsx" });
+    expect(first.warnings).toEqual(["This workbook has 2 sheets (One, Two); this reads “One”."]);
+    const chosen = await parseImportFile(buffer, { fileName: "two.xlsx", sheet: "Two" });
+    expect(chosen.warnings).toEqual([]);
+    expect(chosen.rows).toEqual([{ b: 2 }]);
+  });
+});

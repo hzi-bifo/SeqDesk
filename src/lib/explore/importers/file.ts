@@ -74,7 +74,9 @@ async function parseXlsx(buffer: Buffer, sheetName: string | null | undefined): 
     });
     if (hasValue) rows.push(data);
   });
-  return { columns, rows, sheets, sheet: worksheet.name, truncated, warnings: [] };
+  // Several sheets and none chosen: say which one was read, so the others are not silently missing.
+  const warnings = sheets.length > 1 && !sheetName ? [`This workbook has ${sheets.length} sheets (${sheets.join(", ")}); this reads “${worksheet.name}”.`] : [];
+  return { columns, rows, sheets, sheet: worksheet.name, truncated, warnings };
 }
 
 function cellText(value: unknown): unknown {
