@@ -25,7 +25,7 @@ import { requireTargetAccess } from '@/lib/explore/authorization';
 import { resolveContainedPath } from '@/lib/explore/storage';
 import { createPipelineRunForOperator, startPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-service';
 import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-service';
-import { ensureDataStudy } from '@/lib/pipelines/data-study';
+import { ensureDataStudy, readsChangeWords, readsInData, readsSnapshot, type ReadsSnapshot } from '@/lib/pipelines/data-study';
 import { analysisPipelineDefinitions, getDataRun, listDataRuns, pipelineReadiness, runBelongsTo, runOutputToData } from '@/lib/pipelines/pipeline-data-service';
 import { resumePipelineRun } from '@/lib/pipelines/run-resume';
 import { prepareFailureWords, slurmRefusal } from '@/lib/pipelines/plain-status';
@@ -66,6 +66,11 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
     // SeqDesk's own rule for a pipeline run: the study's owner (or an installation-wide grant) starts it, and the same
     // person cancels or resumes it. Before, another member could cancel a colleague's run but not start one.
     const scope = () => decideServerCapability(session, 'analysis.run').grant?.scope ?? 'own';
+    const readsChangedSince = async (runId: string, targetKey: string) => {
+      const event = await db.pipelineRunEvent.findFirst({ where: { pipelineRunId: runId, eventType: 'inputs' }, orderBy: { occurredAt: 'asc' }, select: { payload: true } });
+      if (!event?.payload) return null;
+      try { return readsChangeWords(JSON.parse(event.payload) as ReadsSnapshot, (await readsInData(targetKey)).files); } catch { return null; }
+    };
     const ownerName = async (userId: string | null | undefined) => {
       const user = userId ? await db.user.findUnique({ where: { id: userId }, select: { firstName: true, lastName: true, email: true } }) : null;
       return user ? [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email : 'its owner';
@@ -125,6 +130,9 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
         return json({ error: `Only ${await ownerName(study?.userId)} or a SeqDesk admin can start pipelines on this study’s Data.` }, 409);
       }
       if (created.status >= 300 || !runIdCreated) return json(created.body, created.status >= 300 ? created.status : 500);
+      // Keep which reads the run starts from: a Resume after they changed in Data says so (it would use these).
+      const { files: startFiles } = await readsInData(targetKey);
+      await db.pipelineRunEvent.create({ data: { pipelineRunId: runIdCreated, eventType: 'inputs', source: 'launcher', message: `${startFiles.length} FASTQ file${startFiles.length === 1 ? '' : 's'}`, payload: JSON.stringify(readsSnapshot(startFiles)) } }).catch(() => undefined);
       const started = await startPipelineRunForOperator({ runId: runIdCreated, body: {}, userId: session.user.id, accessScope: scope });
       if (started.status >= 300) {
         // sbatch refusing the job is not a server failure: say why, as the card does (422 so the web app shows it).
@@ -150,9 +158,15 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       const targetKey = await write(url.searchParams.get('targetKey'));
       await ownRun(runId, targetKey);
       const input = await body();
+      await mayManageRun(runId, 'resume');
+      // Resume uses the reads the run started with. If Data changed since, say so and point to Run again (force: true
+      // resumes anyway, on the old reads).
+      if (input.force !== true) {
+        const changed = await readsChangedSince(runId, targetKey);
+        if (changed) return json({ error: `The reads in Data changed since this run (${changed}). Resume would use the reads it started with; Run again uses the new ones.`, code: 'reads_changed' }, 409);
+      }
       // Fixed in Data: the study's reads are mirrored again before Nextflow resumes (a replaced file reruns its tasks).
       await ensureDataStudy({ targetKey, userId: session.user.id });
-      await mayManageRun(runId, 'resume');
       const result = await resumePipelineRun(runId, { process: typeof input.process === 'string' ? input.process : null, memory: typeof input.memory === 'string' ? input.memory : null, time: typeof input.time === 'string' ? input.time : null });
       if (result.status >= 300) return json(result.body, result.status);
       return json({ ...result.body, run: await getDataRun(runId, targetKey) });

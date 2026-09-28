@@ -124,3 +124,18 @@ export async function ensureDataStudy(input: { targetKey: string; userId: string
   }
   return { studyId: study.id, sampleIds, pairs: wanted };
 }
+
+/** The reads a run starts from, as a record kept with the run: which files (id, name, size) were in Data. */
+export type ReadsSnapshot = { files: { id: string; name: string; size: number }[] };
+export const readsSnapshot = (files: DataFastq[]): ReadsSnapshot => ({ files: files.map((f) => ({ id: f.id, name: f.name, size: f.sizeBytes })).sort((a, b) => a.id.localeCompare(b.id)) });
+
+/** How the reads in Data differ from those a run started with, in words; null when they are the same. */
+export function readsChangeWords(before: ReadsSnapshot, now: DataFastq[]): string | null {
+  const was = new Map(before.files.map((f) => [f.id, f]));
+  const is = new Map(now.map((f) => [f.id, f]));
+  const added = now.filter((f) => !was.has(f.id)).length;
+  const removed = before.files.filter((f) => !is.has(f.id)).length;
+  const replaced = now.filter((f) => was.has(f.id) && was.get(f.id)!.size !== f.sizeBytes).length;
+  const parts = [added ? `${added} file${added === 1 ? '' : 's'} added` : '', removed ? `${removed} removed` : '', replaced ? `${replaced} replaced` : ''].filter(Boolean);
+  return parts.length ? parts.join(', ') : null;
+}

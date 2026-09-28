@@ -7,12 +7,15 @@ const mocks = vi.hoisted(() => ({
     pipelineRun: { findUnique: vi.fn() },
     study: { findUnique: vi.fn() },
     user: { findUnique: vi.fn() },
+    pipelineRunEvent: { create: vi.fn(async () => ({})), findFirst: (...a: unknown[]) => mocks.events(...a) },
   },
   decide: vi.fn(),
   cancel: vi.fn(),
   resume: vi.fn(),
   create: vi.fn(),
   start: vi.fn(),
+  readsInData: vi.fn(async () => ({ files: [], pairs: [], words: '' })),
+  events: vi.fn(async () => null),
 }));
 vi.mock('@/lib/db', () => ({ db: mocks.db }));
 vi.mock('@/lib/authorization/api', () => ({ decideServerCapability: mocks.decide }));
@@ -20,7 +23,8 @@ vi.mock('@/lib/explore/authorization', () => ({ requireTargetAccess: vi.fn(async
 vi.mock('@/lib/explore/storage', () => ({ resolveContainedPath: vi.fn() }));
 vi.mock('@/lib/pipelines/pipeline-run-service', () => ({ createPipelineRunForOperator: mocks.create, startPipelineRunForOperator: mocks.start }));
 vi.mock('@/lib/pipelines/pipeline-run-ops-service', () => ({ cancelPipelineRunForOperator: mocks.cancel }));
-vi.mock('@/lib/pipelines/data-study', () => ({ ensureDataStudy: vi.fn(async () => ({ studyId: 'study-1', sampleIds: ['s1'], pairs: [] })) }));
+vi.mock('@/lib/pipelines/data-study', async (importOriginal) => ({ ...(await importOriginal<object>()),
+  ensureDataStudy: vi.fn(async () => ({ studyId: 'study-1', sampleIds: ['s1'], pairs: [] })), readsInData: mocks.readsInData }));
 vi.mock('@/lib/pipelines/pipeline-data-service', () => ({
   getDataRun: vi.fn(async () => ({ id: 'run-1' })), listDataRuns: vi.fn(), pipelineReadiness: vi.fn(), runBelongsTo: vi.fn(async () => true), runOutputToData: vi.fn(),
 }));
@@ -82,5 +86,16 @@ describe('data-pipelines: a run is managed by whoever owns the study’s Data', 
     const denied = await call('lena', 'GET', ['data-pipelines', 'admin']);
     expect(denied.status).toBe(403);
     expect((await denied.json()).error).toBe('Only this Compute server’s admin can change its pipelines.');
+  });
+
+  it('Resume after the reads in Data changed says so and points to Run again; force resumes anyway', async () => {
+    mocks.events.mockResolvedValue({ payload: JSON.stringify({ files: [{ id: 'f1', name: 'a_1.fastq.gz', size: 10 }, { id: 'f2', name: 'a_2.fastq.gz', size: 10 }] }) });
+    mocks.readsInData.mockResolvedValue({ files: [{ id: 'f1', name: 'a_1.fastq.gz', sizeBytes: 10 }, { id: 'f2', name: 'a_2.fastq.gz', sizeBytes: 10 }, { id: 'f3', name: 'b_1.fastq.gz', sizeBytes: 9 }, { id: 'f4', name: 'b_2.fastq.gz', sizeBytes: 9 }], pairs: [], words: '' });
+    const refused = await call('lena', 'POST', ['data-pipelines', 'runs', 'run-1', 'resume'], {});
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toMatchObject({ code: 'reads_changed', error: 'The reads in Data changed since this run (2 files added). Resume would use the reads it started with; Run again uses the new ones.' });
+    expect(mocks.resume).not.toHaveBeenCalled();
+    expect((await call('lena', 'POST', ['data-pipelines', 'runs', 'run-1', 'resume'], { force: true })).status).toBe(200);
+    expect(mocks.resume).toHaveBeenCalledTimes(1);
   });
 });

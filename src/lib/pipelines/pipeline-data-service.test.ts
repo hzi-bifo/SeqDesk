@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   },
 }));
 vi.mock('@/lib/db', () => ({ db: mocks.db }));
-vi.mock('./data-study', () => ({ findDataStudy: vi.fn(async () => ({ id: 'study-1' })), readsInData: vi.fn(), readsWords: vi.fn() }));
+vi.mock('./data-study', () => ({ findDataStudy: vi.fn(async () => ({ id: 'study-1' })), readsInData: vi.fn(async () => ({ files: [], pairs: [], words: '' })), readsWords: vi.fn(), readsChangeWords: vi.fn(() => null) }));
 vi.mock('./package-loader', () => ({ getPackage: () => null }));
 vi.mock('./registry', () => ({ PIPELINE_REGISTRY: {} }));
 vi.mock('./enablement', () => ({ getPipelineEnabled: vi.fn() }));

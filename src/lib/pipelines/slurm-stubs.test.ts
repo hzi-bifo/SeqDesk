@@ -8,7 +8,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { parseSacct, parseSqueue, plainRunStatus } from './plain-status';
 import { normalizeOverrides, resumeConfig, resumeScript } from './run-resume';
-import { pairFastqFiles, readsWords } from './data-study';
+import { pairFastqFiles, readsChangeWords, readsSnapshot, readsWords } from './data-study';
 
 const STUBS = path.join(__dirname, '..', '..', '..', 'scripts', 'test-slurm-stubs');
 const run = (command: string, state: string, args: string[] = []) =>
@@ -101,5 +101,15 @@ describe('sample ids from FASTQ names with spaces and accents', () => {
     expect(pairs.map((p) => p.sampleId).sort()).toEqual(['Probe_1', 'Probe_1_2', 'Probe_1_3']);
     expect(pairs.every((p) => /^[A-Za-z0-9._-]+$/.test(p.sampleId))).toBe(true);
     expect(pairs.filter((p) => p.r2).length).toBe(2);
+  });
+});
+
+describe('which reads a run started from', () => {
+  it('says how Data changed since', () => {
+    const f = (id: string, size = 10) => ({ id, name: `${id}.fastq.gz`, sizeBytes: size });
+    const before = readsSnapshot([f('a'), f('b')]);
+    expect(readsChangeWords(before, [f('b'), f('a')])).toBeNull();
+    expect(readsChangeWords(before, [f('a'), f('b'), f('c'), f('d')])).toBe('2 files added');
+    expect(readsChangeWords(before, [f('a', 11)])).toBe('1 removed, 1 replaced');
   });
 });

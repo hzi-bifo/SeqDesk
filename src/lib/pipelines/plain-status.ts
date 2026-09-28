@@ -67,6 +67,8 @@ export interface PlainRunInput {
   softwareReason?: string[] | null;
   /** The server's copy of the pipeline differs from the one this run started with (its own copy in the run folder). */
   pipelineChanged?: boolean;
+  /** How the reads in Data changed since a failed or cancelled run started ("1 file added"); Resume would use the old ones. */
+  readsChanged?: string | null;
   /** SLURM allows this server one job, so the run keeps every step inside its own job. */
   slurmInline?: boolean;
   /** The run folder is gone (deleted while it ran, or after): nothing can continue or resume there. */
@@ -396,6 +398,9 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
     status = { ...status, sentence: `${status.sentence} · all steps in one SLURM job (SLURM allows this server one job at a time)` };
   }
   const checked = toDate(run.checkedAt);
+  if (run.readsChanged && ['failed', 'cancelled'].includes(run.status.toLowerCase())) {
+    return { ...status, sentence: `${status.sentence} · the reads in Data changed since (${run.readsChanged}); Run again uses them`, action: { kind: 'run-again', label: 'Run again' } };
+  }
   if (!checked || !['pending', 'queued', 'running'].includes(run.status.toLowerCase())) return status;
   const age = Math.round(((context.now ?? new Date()).getTime() - checked.getTime()) / 1000);
   // "waiting N min" and "~N left" would go on counting from a status nobody checked; say how old it is.

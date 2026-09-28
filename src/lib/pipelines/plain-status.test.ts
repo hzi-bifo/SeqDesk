@@ -234,6 +234,10 @@ describe('plainRunStatus', () => {
     const run = { status: 'running', executionMode: 'slurm', queueJobId: '160', queueStatus: 'RUNNING', slurmInline: true, outputTail: 'executor >  local (1)\n[ab/cdef12] RUN_FASTQC (s1) | 0 of 1', declaredSteps: 2 };
     expect(plainRunStatus({ now, run }).sentence).toBe('Running · step 1 of 2: FastQC · no estimate yet · all steps in one SLURM job (SLURM allows this server one job at a time)');
   });
+  it('a failed run whose reads changed in Data offers Run again', () => {
+    const status = plainRunStatus({ now, run: { status: 'cancelled', readsChanged: '2 files added' } });
+    expect([status.sentence, status.action?.kind]).toEqual(['Cancelled · the reads in Data changed since (2 files added); Run again uses them', 'run-again']);
+  });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
     const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';

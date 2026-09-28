@@ -21,7 +21,7 @@ import { getPackage } from './package-loader';
 import { getExecutionSettings } from './execution-settings';
 import { getPipelineDatabaseStatuses } from './database-downloads';
 import { parsePipelineConfig } from './pipeline-readiness-service';
-import { findDataStudy, readsInData, readsWords, type DataReadPair } from './data-study';
+import { findDataStudy, readsChangeWords, readsInData, readsWords, type DataFastq, type DataReadPair, type ReadsSnapshot } from './data-study';
 import { countWorkflowProcesses, durationWords, memoryWords, plainRunStatus, redactLog, type PlainStatus } from './plain-status';
 import { runBuilder } from '@/lib/explore/build';
 import { createDataset, writeDatasetVersion } from '@/lib/explore/datasets';
@@ -168,7 +168,7 @@ async function loadRuns(where: { id?: string | { in: string[] }; studyId?: strin
     currentStep: true, queuedAt: true, startedAt: true, completedAt: true, createdAt: true, outputTail: true, errorTail: true, runFolder: true, inputSampleIds: true,
     config: true, studyId: true, user: { select: { id: true, firstName: true, lastName: true, email: true } },
     artifacts: { select: { id: true, outputId: true, path: true, name: true, size: true, sampleId: true, type: true } },
-    events: { where: { eventType: { in: ['resumed', 'state'] } }, select: { occurredAt: true, message: true, eventType: true }, orderBy: { occurredAt: 'asc' }, take: 200 },
+    events: { where: { eventType: { in: ['resumed', 'state', 'inputs'] } }, select: { occurredAt: true, message: true, eventType: true, payload: true }, orderBy: { occurredAt: 'asc' }, take: 200 },
   } });
 }
 
@@ -234,8 +234,14 @@ async function failedTaskError(runFolder: string | null, trace: string | null): 
 }
 
 /** One run as a card/record: plain status, outputs, provenance, datasets made from it. */
-export async function runView(run: RunRow, options: { detail?: boolean; targetKey?: string } = {}) {
+export async function runView(run: RunRow, options: { detail?: boolean; targetKey?: string; readsNow?: DataFastq[] } = {}) {
   const trace = run.runFolder ? await fs.readFile(path.join(run.runFolder, 'trace.txt'), 'utf8').catch(() => null) : null;
+  // A failed or cancelled run whose reads in Data changed since it started: Resume would use the old reads.
+  const inputs = run.events.find((e) => e.eventType === 'inputs')?.payload;
+  let readsChanged: string | null = null;
+  if (inputs && options.readsNow && (run.status === 'failed' || run.status === 'cancelled')) {
+    try { readsChanged = readsChangeWords(JSON.parse(inputs) as ReadsSnapshot, options.readsNow); } catch { readsChanged = null; }
+  }
   const softwareReason = run.status === 'failed' && run.runFolder
     ? (await fs.readFile(path.join(run.runFolder, CONDA_EXPLAIN_FILE), 'utf8').catch(() => '')).split('\n').filter(Boolean)
     : [];
@@ -265,7 +271,7 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
   const lastResume = resumes[resumes.length - 1]?.message ?? '';
   const resumedTime = /· time (\d+)\.(s|m|h|d)\b/.exec(lastResume);
   const resumedTimeLimitSeconds = resumedTime ? Number(resumedTime[1]) * ({ s: 1, m: 60, h: 3600, d: 86400 } as const)[resumedTime[2] as 's'] : null;
-  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, folderMissing, pipelineChanged, softwareReason, slurmInline: slurm?.inline === true, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
+  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, folderMissing, pipelineChanged, softwareReason, readsChanged, slurmInline: slurm?.inline === true, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
   const pkg = getPackage(run.pipelineId);
   const datasets = options.targetKey ? await db.exploreDataset.findMany({ where: { targetKey: options.targetKey, kind: 'pipeline-table', sourceConfig: { contains: `"runIds":["${run.id}"]` } }, select: { id: true, name: true, sourceConfig: true, currentVersionId: true, versions: { select: { number: true }, orderBy: { number: 'desc' }, take: 1 } } }) : [];
   const person = run.user ? [run.user.firstName, run.user.lastName].filter(Boolean).join(' ') || run.user.email : null;
@@ -273,7 +279,7 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
     id: run.id, runNumber: run.runNumber, pipelineId: run.pipelineId, pipelineName: pkg?.manifest.package.name ?? run.pipelineId, version: pkg?.manifest.package.version ?? null,
     status: run.status, where: run.executionMode === 'slurm' ? 'SLURM' : 'this server', samples, startedBy: person,
     createdAt: run.createdAt.toISOString(), startedAt: run.startedAt?.toISOString() ?? null, completedAt: run.completedAt?.toISOString() ?? null,
-    resumed: run.events.filter((e) => e.eventType === 'resumed').length, plain: { ...status, processes: options.detail ? status.processes : [] },
+    resumed: run.events.filter((e) => e.eventType === 'resumed').length, readsChanged, plain: { ...status, processes: options.detail ? status.processes : [] },
     outputs: outputs.map((output) => {
       const dataset = datasets.find((d) => { try { return JSON.parse(d.sourceConfig ?? '{}').outputId === output.id; } catch { return false; } });
       return { ...output, dataset: dataset ? { id: dataset.id, name: dataset.name, version: dataset.versions[0]?.number ?? null } : null };
@@ -304,12 +310,14 @@ export async function listDataRuns(targetKey: string) {
   const pinnedIds = pinned.flatMap((d) => { try { const ids = JSON.parse(d.sourceConfig ?? '{}').runIds; return Array.isArray(ids) ? ids.filter((v: unknown): v is string => typeof v === 'string') : []; } catch { return []; } });
   const missing = [...new Set([...active.map((r) => r.id), ...pinnedIds])].filter((id) => !have.has(id));
   const extra = missing.length ? (await loadRuns({ id: { in: missing } })).filter((run) => run.studyId === study.id) : [];
-  return Promise.all([...runs, ...extra].map((run) => runView(run, { targetKey })));
+  const { files: readsNow } = await readsInData(targetKey);
+  return Promise.all([...runs, ...extra].map((run) => runView(run, { targetKey, readsNow })));
 }
 
 export async function getDataRun(runId: string, targetKey?: string) {
   const [run] = await loadRuns({ id: runId });
-  return run ? runView(run, { detail: true, targetKey }) : null;
+  const readsNow = targetKey ? (await readsInData(targetKey)).files : undefined;
+  return run ? runView(run, { detail: true, targetKey, readsNow }) : null;
 }
 
 /** Whether a run belongs to the Data of this Analysis study (its backing study). */
