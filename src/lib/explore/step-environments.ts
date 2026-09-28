@@ -52,6 +52,25 @@ const CONSTRAINT = `(?:==|>=|<=|!=|~=|=|<|>)${VERSION}`;
 const PACKAGE_RE = new RegExp(`^(?:(${NAME})::)?(${NAME})((?:${CONSTRAINT})(?:,${CONSTRAINT})*)?$`);
 const CHANNEL_RE = new RegExp(`^${NAME}$`);
 
+/*
+ * Channels a step may name. `conda env create` runs a package's link scripts on the Compute host, outside the run
+ * sandbox, as the service account: a channel anyone can upload to (an anaconda.org user channel) would let a step
+ * author, or an assistant steered by a crafted input, run code there. Only the reviewed community channels are
+ * allowed; an operator adds a lab channel they control with SEQDESK_EXPLORE_STEP_CHANNELS (comma-separated).
+ */
+export const DEFAULT_STEP_CHANNELS = ["conda-forge", "bioconda", "nodefaults"] as const;
+
+export function allowedStepChannels(env: Record<string, string | undefined> = process.env): Set<string> {
+  const extra = (env.SEQDESK_EXPLORE_STEP_CHANNELS ?? "").split(",").map((entry) => entry.trim().toLowerCase()).filter((entry) => CHANNEL_RE.test(entry));
+  return new Set([...DEFAULT_STEP_CHANNELS, ...extra]);
+}
+
+function assertAllowedChannel(channel: string): void {
+  if (!allowedStepChannels().has(channel)) {
+    throw new PackageSpecError(`The channel "${channel.slice(0, 60)}" is not allowed for steps. Use conda-forge or bioconda, or ask an administrator to allow a lab channel.`);
+  }
+}
+
 /** "Bioconductor-DESeq2 = 1.42" -> "bioconductor-deseq2=1.42"; throws PackageSpecError for anything else. */
 export function normalizePackageSpec(raw: unknown): string {
   if (typeof raw !== "string") throw new PackageSpecError("A package is a text like bioconductor-deseq2 or bioconductor-deseq2=1.42.");
@@ -60,7 +79,9 @@ export function normalizePackageSpec(raw: unknown): string {
   if (trimmed.length > MAX_PACKAGE_SPEC_LENGTH) throw new PackageSpecError(`A package spec is longer than ${MAX_PACKAGE_SPEC_LENGTH} characters.`);
   // Spaces around operators are forgiven ("deseq2 >= 1.4"); spaces anywhere else are not.
   const compact = trimmed.toLowerCase().replace(/\s*(==|>=|<=|!=|~=|=|<|>|,)\s*/g, "$1");
-  if (!PACKAGE_RE.test(compact)) throw new PackageSpecError(`"${trimmed.slice(0, 60)}" is not a conda package spec. Use a name with an optional version, like bioconductor-deseq2=1.42.`);
+  const match = PACKAGE_RE.exec(compact);
+  if (!match) throw new PackageSpecError(`"${trimmed.slice(0, 60)}" is not a conda package spec. Use a name with an optional version, like bioconductor-deseq2=1.42.`);
+  if (match[1]) assertAllowedChannel(match[1]);
   return compact;
 }
 
@@ -88,6 +109,7 @@ export function normalizeStepPackages(input: unknown): StepPackages {
   for (const raw of rawChannels) {
     const channel = typeof raw === "string" ? raw.trim().toLowerCase() : "";
     if (!CHANNEL_RE.test(channel) || channel.length > 60) throw new PackageSpecError(`"${String(raw).slice(0, 60)}" is not a channel name. Use a name like bioconda or conda-forge.`);
+    assertAllowedChannel(channel);
     if (!channels.includes(channel)) channels.push(channel);
   }
   if (channels.length > 8) throw new PackageSpecError("A step can add at most 8 channels.");

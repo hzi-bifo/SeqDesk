@@ -14,6 +14,7 @@ vi.mock("./environments", () => ({
 }));
 
 import {
+  allowedStepChannels,
   condaErrorExcerpt, deriveEnvironment, normalizePackageSpec, normalizeStepPackages, parseBaseSpec, prepareStepEnvironment, preparingWords,
   pruneStepEnvironments, resolveStepEnvironment, PackageSpecError,
 } from "./step-environments";
@@ -56,6 +57,20 @@ describe("package specs", () => {
     expect(normalizeStepPackages({ packages: ["r-lme4", "bioconductor-deseq2=1.40", "bioconductor-deseq2=1.42", "r-lme4"], channels: ["Bioconda", "bioconda"] }))
       .toEqual({ packages: ["bioconductor-deseq2=1.42", "r-lme4"], channels: ["bioconda"] });
     expect(() => normalizeStepPackages({ packages: [], channels: ["https://x"] })).toThrow(PackageSpecError);
+  });
+
+  it("only allows the reviewed channels, plus lab channels an operator names", () => {
+    expect(() => normalizeStepPackages({ packages: [], channels: ["attacker"] })).toThrow(/not allowed/);
+    expect(() => normalizeStepPackages({ packages: ["attacker::evil"], channels: [] })).toThrow(/not allowed/);
+    expect(normalizeStepPackages({ packages: ["bioconda::samtools"], channels: ["conda-forge"] })).toEqual({ packages: ["bioconda::samtools"], channels: ["conda-forge"] });
+    const previous = process.env.SEQDESK_EXPLORE_STEP_CHANNELS;
+    process.env.SEQDESK_EXPLORE_STEP_CHANNELS = "My-Lab, bad channel";
+    try {
+      expect(normalizeStepPackages({ packages: ["my-lab::tool"], channels: ["my-lab"] })).toEqual({ packages: ["my-lab::tool"], channels: ["my-lab"] });
+      expect(allowedStepChannels().has("bad channel")).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.SEQDESK_EXPLORE_STEP_CHANNELS; else process.env.SEQDESK_EXPLORE_STEP_CHANNELS = previous;
+    }
     expect(() => normalizeStepPackages({ packages: Array.from({ length: 41 }, (_, i) => `p${i}`) })).toThrow(PackageSpecError);
     expect(normalizeStepPackages(null)).toEqual({ packages: [], channels: [] });
   });
@@ -77,7 +92,9 @@ describe("derived environments", () => {
     expect(deriveEnvironment("seqdesk-explore-r", `${BASE}  - r-vegan\n`, { packages: ["r-lme4", "bioconductor-fgsea"], channels: [] }).name).not.toBe(a.name);
   });
   it("merges packages into the base: a pinned package replaces the base entry, extra channels go before nodefaults", () => {
+    process.env.SEQDESK_EXPLORE_STEP_CHANNELS = "my-lab";
     const derived = deriveEnvironment("seqdesk-explore-r", BASE, { packages: ["bioconductor-deseq2=1.42"], channels: ["my-lab"] });
+    delete process.env.SEQDESK_EXPLORE_STEP_CHANNELS;
     expect(derived.spec).toContain(`name: ${derived.name}`);
     expect(derived.spec).toMatch(/channels:\n  - my-lab\n  - conda-forge\n  - bioconda\n  - nodefaults\n/);
     expect(derived.spec).toMatch(/dependencies:\n  - r-base=4\.5\.\*\n  - r-jsonlite\n  - bioconductor-deseq2=1\.42\n$/);
