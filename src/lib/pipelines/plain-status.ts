@@ -88,7 +88,35 @@ export interface PlainContext {
   sacct?: string | null;
   /** Durations (seconds) of past finished runs of the same pipeline at a similar size; empty means no estimate. */
   pastSeconds?: number[];
+  /**
+   * Tasks Nextflow's own log (.nextflow.log) says it submitted. A run on this server prints no console progress and
+   * trace.txt only gets a row when a task ends, so while the first task runs this is the only sign of work.
+   */
+  submitted?: SubmittedTask[];
   now?: Date;
+}
+
+export interface SubmittedTask { process: string; tag: string | null }
+
+/** The tasks a .nextflow.log text says were submitted ("Submitted process > NAME (tag)"), in order. */
+export function submittedTasks(log: string | null | undefined): SubmittedTask[] {
+  const found: SubmittedTask[] = [];
+  for (const m of (log ?? '').matchAll(/Submitted process > (\S+)(?: \(([^)\n]*)\))?/g)) found.push({ process: m[1], tag: m[2] ?? null });
+  return found;
+}
+
+/** Rows for submitted tasks that have no trace row yet (they are running): added to, or counted in, the process rows. */
+function withSubmitted(rows: PlainProcess[], tasks: NextflowTask[], submitted: SubmittedTask[]): PlainProcess[] {
+  const traced = new Set(tasks.map((t) => `${t.process || t.name}|${t.tag ?? ''}`));
+  const out = rows.map((row) => ({ ...row }));
+  for (const item of submitted) {
+    if (traced.has(`${item.process}|${item.tag ?? ''}`)) continue;
+    traced.add(`${item.process}|${item.tag ?? ''}`);
+    const row = out.find((r) => r.name === item.process);
+    if (row) { row.tasks += 1; row.running += 1; row.status = row.status === 'failed' ? 'failed' : 'running'; }
+    else out.push({ name: item.process, status: 'running', tasks: 1, done: 0, running: 1, failed: 0, cpuHours: null, peakBytes: null, seconds: null });
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------ redaction
@@ -421,7 +449,8 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
   const { run } = context;
   const now = context.now ?? new Date();
   const tasks = context.trace ? parseTraceContent(context.trace).tasks : [];
-  const { rows, failed: traced } = processRows(tasks);
+  const { rows: tracedRows, failed: traced } = processRows(tasks);
+  const rows = context.submitted?.length && run.status.toLowerCase() === 'running' ? withSubmitted(tracedRows, tasks, context.submitted) : tracedRows;
   let failed = traced;
   const estimate = estimateOf(context.pastSeconds);
   const started = toDate(run.startedAt), ended = toDate(run.completedAt), queued = toDate(run.queuedAt);
@@ -539,8 +568,11 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
       : ` · ${estimate.words}`;
     // Every log says "Launching `main.nf`" and names its conda; only a log where no task has been handed to the
     // executor yet is still preparing (building environments), not one whose first task is running.
-    if (!tasks.length && !progress?.submitted && /conda|environment|Launching|Preparing/i.test(`${run.currentStep ?? ''} ${run.outputTail ?? ''}`)) {
-      return { ...base, shape: 'preparing', word: 'Preparing', sentence: 'Preparing software · first run only', action: { kind: 'cancel', label: 'Cancel' } };
+    if (!tasks.length && !rows.length && !progress?.submitted && /conda|environment|Launching|Preparing/i.test(`${run.currentStep ?? ''} ${run.outputTail ?? ''}`)) {
+      // Only a log that says an environment is being built is "software"; before that Nextflow itself is starting
+      // (the path of a conda install in "Using nextflow: …/miniconda/…" is not a sign of that).
+      const building = /Creating env|Solving environment|Collecting package metadata|Executing transaction|Preparing (?:software|environment)|conda create/i.test(`${run.currentStep ?? ''} ${run.outputTail ?? ''}`);
+      return { ...base, shape: 'preparing', word: 'Preparing', sentence: building ? 'Preparing software · first run only' : 'Starting Nextflow', action: { kind: 'cancel', label: 'Cancel' } };
     }
     // Every task ended but squeue no longer lists the job and sacct did not answer: the monitor waits for SLURM to
     // say how the job ended before it finishes the run (and writes its outputs to Data).

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { classifyFailure, countWorkflowProcesses, durationWords, firstErrorLines, logProgress, parseSacct, prepareFailureWords, parseSqueue, plainRunStatus, redactLog, slurmReasonWords, slurmRefusal } from './plain-status';
+import { classifyFailure, submittedTasks, countWorkflowProcesses, durationWords, firstErrorLines, logProgress, parseSacct, prepareFailureWords, parseSqueue, plainRunStatus, redactLog, slurmReasonWords, slurmRefusal } from './plain-status';
 
 const fixture = (name: string) => fs.readFileSync(path.join(__dirname, '__fixtures__', 'plain-status', name), 'utf8');
 const now = new Date('2026-09-28T12:00:00Z');
@@ -123,6 +123,26 @@ describe('plainRunStatus', () => {
     expect(none.sentence).toBe('Running · step 2 of 2: collecting statistics · no estimate yet');
     const past = plainRunStatus({ now, run, trace: fixture('trace-running.txt'), pastSeconds: [300, 360, 420] });
     expect(past.sentence).toBe('Running · step 2 of 2: collecting statistics · ~5 min left');
+  });
+  it('running on this server: a task that Nextflow’s own log submitted is the running step, not "Preparing software"', () => {
+    // Real Mac run (Nextflow 3.14.1, local executor, output to a file): the console shows no progress and trace.txt has
+    // no row until RUN_FASTQC ends, so the card said "Preparing software · first run only" for the whole task.
+    const nfLog = [
+      'Sep-28 21:16:47.184 [Task submitter] WARN  n.executor.BashWrapperBuilder - Task runtime metrics are not reported when using macOS without a container engine',
+      'Sep-28 21:16:47.207 [Task submitter] INFO  nextflow.Session - [ed/41e282] Submitted process > RUN_FASTQC (ERR10419931)',
+    ].join('\n');
+    expect(submittedTasks(nfLog)).toEqual([{ process: 'RUN_FASTQC', tag: 'ERR10419931' }]);
+    const run = { status: 'running', executionMode: 'local', startedAt: '2026-09-28T11:59:00Z', declaredSteps: 2, currentStep: 'Launching', outputTail: 'Starting ./workflow (local) pipeline at Mon\nUsing nextflow: /opt/homebrew/Caskroom/miniconda/base/envs/x/bin/nextflow\n[PIPELINE] main.nf' };
+    const before = plainRunStatus({ now, run });
+    expect([before.shape, before.sentence]).toEqual(['preparing', 'Starting Nextflow']);
+    const during = plainRunStatus({ now, run, trace: 'task_id\thash\n', submitted: submittedTasks(nfLog) });
+    expect([during.shape, during.sentence]).toEqual(['running', 'Running · step 1 of 2: FastQC · no estimate yet']);
+    expect(during.stages).toEqual([{ name: 'RUN_FASTQC', state: 'running' }]);
+    // A task that already has its trace row is not counted twice.
+    const traced = 'task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\n1\ted/41e282\t1\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tCOMPLETED\t0\n';
+    expect(plainRunStatus({ now, run, trace: traced, submitted: submittedTasks(nfLog) }).processes).toMatchObject([{ name: 'RUN_FASTQC', tasks: 1, done: 1, running: 0, status: 'done' }]);
+    // Only a log that builds an environment says "Preparing software · first run only".
+    expect(plainRunStatus({ now, run: { ...run, outputTail: 'Creating env using conda: /x/env.yml [cache /c/env-1]' } }).sentence).toBe('Preparing software · first run only');
   });
   it('running on SLURM before the first task ends: the console log, not "Preparing software"', () => {
     // Nextflow's console log as a SLURM run writes it while RUN_FASTQC runs; trace.txt has no row until a task ends.

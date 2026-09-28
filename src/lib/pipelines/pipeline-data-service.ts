@@ -22,7 +22,7 @@ import { getExecutionSettings } from './execution-settings';
 import { getPipelineDatabaseStatuses } from './database-downloads';
 import { parsePipelineConfig } from './pipeline-readiness-service';
 import { findDataStudy, linkedReadRecords, readsAndRecordsWords, readsChangeWords, readsInData, readsWords, type DataFastq, type DataReadPair, type ReadsSnapshot } from './data-study';
-import { countWorkflowProcesses, durationWords, memoryWords, plainRunStatus, redactLog, type PlainStatus } from './plain-status';
+import { countWorkflowProcesses, durationWords, memoryWords, plainRunStatus, redactLog, submittedTasks, type PlainStatus } from './plain-status';
 import { runBuilder } from '@/lib/explore/build';
 import { createDataset, writeDatasetVersion } from '@/lib/explore/datasets';
 import { resolveTableSpec } from '@/lib/explore/builders/pipeline-table';
@@ -237,6 +237,20 @@ async function failedTaskError(runFolder: string | null, trace: string | null): 
   return [await readTail(path.join(workdir, '.command.err'), 40), await readTail(path.join(workdir, '.command.log'), 20), nextflowLog].filter(Boolean).join('\n') || null;
 }
 
+/** The end of a run's .nextflow.log (its last 256 KB), where the tasks it submitted recently are named. */
+async function nextflowLogTail(runFolder: string | null): Promise<string | null> {
+  if (!runFolder) return null;
+  let handle: import('fs/promises').FileHandle | null = null;
+  try {
+    handle = await fs.open(path.join(runFolder, '.nextflow.log'), 'r');
+    const { size } = await handle.stat();
+    const length = Math.min(size, 256 * 1024);
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, size - length);
+    return buffer.toString('utf8');
+  } catch { return null; } finally { await handle?.close().catch(() => undefined); }
+}
+
 /** One run as a card/record: plain status, outputs, provenance, datasets made from it. */
 export async function runView(run: RunRow, options: { detail?: boolean; targetKey?: string; readsNow?: DataFastq[]; viewer?: { id: string; installation: boolean } } = {}) {
   const trace = run.runFolder ? await fs.readFile(path.join(run.runFolder, 'trace.txt'), 'utf8').catch(() => null) : null;
@@ -275,7 +289,9 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
   const lastResume = resumes[resumes.length - 1]?.message ?? '';
   const resumedTime = /· time (\d+)\.(s|m|h|d)\b/.exec(lastResume);
   const resumedTimeLimitSeconds = resumedTime ? Number(resumedTime[1]) * ({ s: 1, m: 60, h: 3600, d: 86400 } as const)[resumedTime[2] as 's'] : null;
-  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, folderMissing, pipelineChanged, softwareReason, readsChanged, slurmInline: slurm?.inline === true, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
+  // A run on this server prints no console progress: the tasks it handed to Nextflow's executor come from its own log.
+  const submitted = run.status === 'running' && run.executionMode !== 'slurm' ? submittedTasks(await nextflowLogTail(run.runFolder)) : undefined;
+  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, folderMissing, pipelineChanged, softwareReason, readsChanged, slurmInline: slurm?.inline === true, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, submitted, pastSeconds: past });
   const pkg = getPackage(run.pipelineId);
   const datasets = options.targetKey ? await db.exploreDataset.findMany({ where: { targetKey: options.targetKey, kind: 'pipeline-table', sourceConfig: { contains: `"runIds":["${run.id}"]` } }, select: { id: true, name: true, sourceConfig: true, currentVersionId: true, versions: { select: { number: true }, orderBy: { number: 'desc' }, take: 1 } } }) : [];
   const person = run.user ? [run.user.firstName, run.user.lastName].filter(Boolean).join(' ') || run.user.email : null;
