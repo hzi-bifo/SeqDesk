@@ -60,9 +60,18 @@ def slurm(command, **kw):
 
 
 def driver(*args, env=""):
-    out = sh(f"source {T}/env.sh >/dev/null; cd {T}/e2e && source compute.env; {env + '; ' if env else ''}cd compute && node --import tsx scripts/pipelines-check-driver.ts {' '.join(shlex.quote(a) for a in args)}", timeout=900)
-    line = [l for l in out.strip().splitlines() if l.startswith("{")][-1]
-    return json.loads(line)
+    # Node on the test host sometimes segfaults while exiting (after the answer is printed): the answer counts; a
+    # read-only command without an answer is asked again.
+    command = f"source {T}/env.sh >/dev/null; cd {T}/e2e && source compute.env; {env + '; ' if env else ''}cd compute && node --import tsx scripts/pipelines-check-driver.ts {' '.join(shlex.quote(a) for a in args)} 2>&1"
+    for attempt in range(3):
+        out = sh(command, timeout=900, check=False)
+        lines = [l for l in out.strip().splitlines() if l.startswith("{")]
+        if lines:
+            return json.loads(lines[-1])
+        if args[0] not in ("status", "target", "other-target"):
+            break
+        print(f"  (driver {args[0]} gave no answer, asking again: {out.strip()[-160:]})", flush=True)
+    raise RuntimeError(f"driver {args[0]}: {out.strip()[-300:]}")
 
 
 def wait(run_id, done=lambda s: s["status"] in ("completed", "failed", "cancelled"), timeout=900, poll=10):
