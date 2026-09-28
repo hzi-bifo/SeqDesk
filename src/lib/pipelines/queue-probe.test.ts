@@ -93,6 +93,23 @@ describe('identity-checked queue probe', () => {
     expect(queueSnapshotToRunStatus(snapshot)).toBe('running');
   });
 
+  it('a resumed local run is verified by the script the Resume started, not only run.sh', async () => {
+    // Regression (Mac local run): Resume starts `bash <run folder>/run.resume-N.sh`, which the probe called "another
+    // process", so the monitor lost track of the resumed run.
+    mocks.inferPipelineExitCode.mockResolvedValue(null);
+    mocks.execFile.mockImplementation((file, _args, callback) => {
+      callback(null, { stdout: file === 'ps' ? 'bash /runs/run-1/run.resume-2.sh\n' : '', stderr: '' });
+    });
+    const snapshot = await readIdentityCheckedQueueSnapshot({ jobId: 'local-42', runId: 'run-1', runFolder: '/runs/run-1' });
+    expect(snapshot).toMatchObject({ identityVerified: true, state: 'RUNNING', source: 'local', pid: 42 });
+    // Another run's resume script is still another process.
+    mocks.execFile.mockImplementation((file, _args, callback) => {
+      callback(null, { stdout: file === 'ps' ? 'bash /runs/run-2/run.resume-1.sh\n' : '', stderr: '' });
+    });
+    const other = await readIdentityCheckedQueueSnapshot({ jobId: 'local-42', runId: 'run-1', runFolder: '/runs/run-1' });
+    expect(other.identityVerified).toBe(false);
+  });
+
   it('does not relax exact local argv identity across a real symlink', async () => {
     const tempRoot = await fs.mkdtemp(
       path.join(os.tmpdir(), 'seqdesk-queue-probe-local-')

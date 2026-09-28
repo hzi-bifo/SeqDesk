@@ -314,9 +314,12 @@ export async function readIdentityCheckedQueueSnapshot({
           { pid }
         );
       }
+      // The run's own script, or the script a Resume wrote (run.resume-N.sh) and started in its place.
       const expectedScript = path.resolve(runFolder, 'run.sh');
+      const runDir = path.resolve(runFolder);
+      const isResumeScript = (argument: string) => path.dirname(argument) === runDir && /^run\.resume-\d+\.sh$/.test(path.basename(argument));
       const processArgs = parseDisplayedProcessArgs(command);
-      if (!processArgs?.some((argument) => argument === expectedScript)) {
+      if (!processArgs?.some((argument) => argument === expectedScript || isResumeScript(argument))) {
         return unverifiedQueueIdentity(
           'local',
           'Stored PID belongs to another process',
