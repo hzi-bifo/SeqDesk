@@ -428,6 +428,14 @@ function plainRunStatusOf(context: PlainContext): PlainStatus {
     const exitCode = failed?.exit ?? failedLine?.exitCode ?? null;
     const kind = classifyFailure({ texts, exitCodes: [failed?.exit, ...sacct.map((l) => l.exitCode), ...sacct.map((l) => (l.signal === 9 ? 137 : null))], slurmStates: [...sacct.map((l) => l.state), queueState] });
     const lines = firstErrorLines([context.taskError, run.errorTail, run.outputTail]);
+    // Nextflow itself was killed (kill -9, the OOM killer on the node running it): no task failed, the wrapper saw 137.
+    const exits = [...(run.outputTail ?? '').matchAll(/Pipeline completed with exit code: (\d+)/g)];
+    const wrapperExit = exits.length ? Number(exits[exits.length - 1][1]) : NaN;
+    if (!failed && kind === 'unknown' && (wrapperExit === 137 || wrapperExit === 134)) {
+      const sentence = `Nextflow itself was stopped before it finished (exit ${wrapperExit}) · Resume continues where it stopped`;
+      return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action: { kind: 'resume', label: 'Resume' },
+        error: { kind: 'unknown', sentence, firstLines: lines, process: null, sample: null, exitCode: wrapperExit } };
+    }
     const cancelledOutside = /\*\*\* JOB \d+ ON \S+ CANCELLED AT /.test(texts.filter(Boolean).join('\n'));
     // Nextflow's own sbatch for a task was refused (the controller was down, the queue closed): say that, with Resume.
     const all = texts.filter(Boolean).join('\n');

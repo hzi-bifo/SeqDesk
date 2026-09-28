@@ -191,6 +191,11 @@ describe('plainRunStatus', () => {
     expect(plainRunStatus({ now, run }).sentence).toBe('SLURM put it back in the queue (its node failed or it was requeued); it resumes shortly · waiting 2 min');
     expect(plainRunStatus({ now, run: { ...run, startedAt: null } }).sentence).toBe('Waiting for its start time · waiting 2 min');
   });
+  it('Nextflow itself killed (kill -9 of its Java) says so, with Resume', () => {
+    const outputTail = ['executor >  slurm (1)', '[7b/360c6c] RUN_FASTQC (ERR10419931) | 0 of 1', '[-        ] SUMMARIZE_FASTQC         -', 'Pipeline completed with exit code: 137 at Mon Sep 28 02:26:33 PM CEST 2026'].join('\n');
+    const status = plainRunStatus({ now, run: { status: 'failed', executionMode: 'slurm', queueJobId: '110', outputTail } });
+    expect([status.sentence, status.action?.kind]).toEqual(['Nextflow itself was stopped before it finished (exit 137) · Resume continues where it stopped', 'resume']);
+  });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
     const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';
