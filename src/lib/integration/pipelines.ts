@@ -10,6 +10,7 @@
  *   POST data-pipelines/runs/{id}/cancel?targetKey
  *   POST data-pipelines/runs/{id}/data?targetKey    { outputId }  a table output into Data, pinned to the run
  *   GET  data-pipelines/runs/{id}/file?targetKey&artifact&preview=1              an output file (MultiQC opens in a tab)
+ *   POST data-pipelines/from-step       { targetKey, stepId, output }  a step's latest output saved into Data as a file
  */
 import fs from 'fs/promises';
 import path from 'path';
@@ -23,6 +24,7 @@ import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-s
 import { ensureDataStudy } from '@/lib/pipelines/data-study';
 import { getDataRun, listDataRuns, pipelineReadiness, runBelongsTo, runOutputToData } from '@/lib/pipelines/pipeline-data-service';
 import { resumePipelineRun } from '@/lib/pipelines/run-resume';
+import { storeLibraryFile } from '@/lib/files/library';
 import type { IntegrationSession } from './identity';
 
 export const DATA_PIPELINE_CAPABILITIES = ['pipelines.readiness', 'pipelines.data-runs', 'runs.plain-status', 'runs.resume'];
@@ -100,6 +102,22 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       const input = await body();
       if (typeof input.outputId !== 'string' || !input.outputId) throw new RouteError(400, 'Choose an output.');
       return json(await runOutputToData({ runId, outputId: input.outputId, targetKey, userId: session.user.id }), 201);
+    }
+    if (sub === 'from-step' && method === 'POST') {
+      const input = await body();
+      const targetKey = await write(typeof input.targetKey === 'string' ? input.targetKey : null);
+      const stepId = typeof input.stepId === 'string' ? input.stepId : '';
+      const output = typeof input.output === 'string' ? input.output : '';
+      const analysis = await db.exploreAnalysis.findFirst({ where: { id: stepId, targetKey }, select: { id: true, name: true } });
+      if (!analysis) throw new RouteError(404, 'Step not found in this study.');
+      const artifact = await db.exploreArtifact.findFirst({ where: { run: { analysisId: analysis.id, status: 'completed' }, OR: [{ name: output }, { path: { endsWith: `/${output}` } }, { path: output }] },
+        orderBy: { createdAt: 'desc' }, select: { name: true, path: true, run: { select: { runFolder: true, runNumber: true } } } });
+      if (!artifact?.run.runFolder) throw new RouteError(404, `${output} has not been made yet; run the step first.`);
+      const file = await resolveContainedPath(artifact.run.runFolder, artifact.path).catch(() => { throw new RouteError(404, 'The output file is gone.'); });
+      const bytes = await fs.readFile(file);
+      const stored = await storeLibraryFile({ targetKey, file: new File([bytes], path.basename(artifact.path)), createdById: session.user.id });
+      await db.managedFile.update({ where: { id: stored.id }, data: { description: `From step ${analysis.name}, run ${artifact.run.runNumber}`.slice(0, 1000) } });
+      return json({ file: { id: stored.id, name: stored.originalName, sizeBytes: Number(stored.sizeBytes) } }, 201);
     }
     if (sub === 'runs' && runId && action === 'file' && method === 'GET') {
       const targetKey = await read(url.searchParams.get('targetKey'));

@@ -57,6 +57,8 @@ export type PipelineReadiness = {
   outputs: { id: string; label: string; kind: string }[];
   settings: { key: string; title: string; description?: string; type: string; default?: unknown; enum?: unknown[] }[];
   citation?: string | null; license?: string | null; homepage?: string | null;
+  /** Reference data the pipeline reads (Library › Reference data). */
+  databases: { id: string; label: string; description?: string; version?: string; installed: boolean; sizeBytes: number | null }[];
 };
 
 const sampleCount = (raw: string | null) => { try { const v = JSON.parse(raw ?? 'null'); return Array.isArray(v) ? v.length : null; } catch { return null; } };
@@ -139,6 +141,7 @@ export async function pipelineReadiness(targetKey: string): Promise<{ reads: str
         .map(([key, p]) => { const prop = p as { title?: string; description?: string; type?: string; default?: unknown; enum?: unknown[] }; return { key, title: prop.title ?? key, description: prop.description, type: prop.type ?? 'string', default: prop.default, enum: prop.enum }; }),
       citation: (manifest.package as { citation?: string }).citation ?? null, license: (manifest.package as { license?: string }).license ?? null,
       homepage: (manifest.package as { homepage?: string }).homepage ?? null,
+      databases: databases.map((d) => ({ id: d.id, label: d.label, description: d.description, version: d.version, installed: d.status === 'downloaded', sizeBytes: (d as { sizeBytes?: number }).sizeBytes ?? null })),
     });
   }
   const order = ['Genomes from reads', 'Check reads', 'Clean reads', 'Who is there', 'Benchmarks', 'Submission', 'Other'];
