@@ -116,6 +116,26 @@ export function normalizeStepPackages(input: unknown): StepPackages {
   return { packages: [...byName.values()].sort(), channels };
 }
 
+/**
+ * Why a step's stored packages cannot be installed here, or null. Rows written before the channel allowlist (or on a
+ * server that allows a lab channel this one does not) may name a channel this server refuses: the step says so
+ * instead of quietly running without its packages.
+ */
+export function stepPackagesProblem(stored: unknown): string | null {
+  if (!stored || typeof stored !== "object") return null;
+  const record = Array.isArray(stored) ? { packages: stored } : (stored as Record<string, unknown>);
+  const named: string[] = [];
+  for (const raw of Array.isArray(record.channels) ? record.channels : []) if (typeof raw === "string") named.push(raw.trim().toLowerCase());
+  for (const raw of Array.isArray(record.packages) ? record.packages : []) {
+    const prefix = typeof raw === "string" ? /^\s*([^:\s]+)::/.exec(raw) : null;
+    if (prefix) named.push(prefix[1].toLowerCase());
+  }
+  const allowed = allowedStepChannels();
+  const refused = named.find((channel) => channel && !allowed.has(channel));
+  if (!refused) return null;
+  return `This step asks for packages from channel ${refused.slice(0, 60)}, which this server does not allow. Ask the admin to allow it.`;
+}
+
 /** The stored packages of a step, tolerant of rows written before this existed. */
 export function stepPackagesOf(stored: unknown): StepPackages {
   try {
@@ -210,6 +230,8 @@ export interface StepEnvironmentState {
   /** The conda error or build log tail when the build failed; the progress tail while it builds. */
   log: string | null;
   error: string | null;
+  /** Set when the stored packages cannot be installed on this server (a refused channel); the step shows it as is. */
+  problem?: string | null;
 }
 
 /** Base environments with their dependency lists, for the step's Environment block. */
@@ -271,6 +293,8 @@ export function condaErrorExcerpt(text: string): string {
  * "missing" on first sight) and touches lastUsedAt.
  */
 export async function resolveStepEnvironment(analysis: { environmentName: string; packages?: unknown }): Promise<StepEnvironmentState> {
+  const problem = stepPackagesProblem(analysis.packages);
+  if (problem) return blockedState(analysis.environmentName, problem);
   const packages = stepPackagesOf(analysis.packages);
   const specs = await readEnvironmentSpecs();
   const baseSpec = specs.get(analysis.environmentName);
@@ -295,9 +319,17 @@ export async function resolveStepEnvironment(analysis: { environmentName: string
   return stateOf(derived, row);
 }
 
+function blockedState(name: string, problem: string): StepEnvironmentState {
+  return {
+    name, baseName: name, derived: true, status: "failed", specHash: "", packages: { packages: [], channels: [] },
+    prefixPath: null, lockDigest: null, builtAt: null, log: problem, error: problem, problem,
+  };
+}
+
 /** Start the build of a step's environment unless it is ready or already building. */
 export async function prepareStepEnvironment(analysis: { environmentName: string; packages?: unknown }, options: { retryFailed?: boolean } = {}): Promise<StepEnvironmentState> {
   const state = await resolveStepEnvironment(analysis);
+  if (state.problem) return state;
   if (state.status === "ready" || state.status === "building") return state;
   if (state.status === "failed" && !options.retryFailed) return state;
   // Shipped bases stay an admin's decision (they are shared by everyone); a step only builds its own derived environment.
@@ -341,6 +373,9 @@ export async function pruneStepEnvironments(options: { unusedDays?: number; cap?
 export async function stepEnvironmentByName(name: string): Promise<StepEnvironmentState | null> {
   const row = await db.exploreEnvironment.findUnique({ where: { name } });
   if (!row) return null;
+  // A derived environment recorded before the channel allowlist is never built or used again.
+  const problem = row.baseName ? stepPackagesProblem(row.packages) : null;
+  if (problem) return { ...blockedState(name, problem), baseName: row.baseName ?? name };
   const packages = stepPackagesOf(row.packages);
   const derived: DerivedEnvironment = { name, baseName: row.baseName ?? name, baseSpecHash: row.baseSpecHash ?? row.specHash, key: "", spec: row.spec, packages };
   return stateOf(derived, row);
@@ -349,7 +384,7 @@ export async function stepEnvironmentByName(name: string): Promise<StepEnvironme
 /** Start the build of a derived environment by name when it is missing (or failed and asked to retry). */
 export async function prepareEnvironmentByName(name: string, options: { retryFailed?: boolean } = {}): Promise<StepEnvironmentState | null> {
   const state = await stepEnvironmentByName(name);
-  if (!state || !state.derived) return state;
+  if (!state || !state.derived || state.problem) return state;
   if (state.status === "missing" || state.status === "stale" || (state.status === "failed" && options.retryFailed)) {
     await buildEnvironment(name);
     return stepEnvironmentByName(name);

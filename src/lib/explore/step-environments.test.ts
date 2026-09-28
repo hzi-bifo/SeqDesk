@@ -14,7 +14,7 @@ vi.mock("./environments", () => ({
 }));
 
 import {
-  allowedStepChannels,
+  allowedStepChannels, prepareEnvironmentByName, stepPackagesProblem,
   condaErrorExcerpt, deriveEnvironment, normalizePackageSpec, normalizeStepPackages, parseBaseSpec, prepareStepEnvironment, preparingWords,
   pruneStepEnvironments, resolveStepEnvironment, PackageSpecError,
 } from "./step-environments";
@@ -145,6 +145,20 @@ describe("resolving and preparing a step environment", () => {
     expect(mocks.build).not.toHaveBeenCalled();
     await prepareStepEnvironment(step, { retryFailed: true });
     expect(mocks.build).toHaveBeenCalledOnce();
+  });
+  it("says so when a stored step names a channel this server does not allow, and never builds it", async () => {
+    const stored = { packages: ["someone::tool", "r-lme4"], channels: ["someone"] };
+    const state = await prepareStepEnvironment({ environmentName: "seqdesk-explore-r", packages: stored }, { retryFailed: true });
+    expect(state.problem).toBe("This step asks for packages from channel someone, which this server does not allow. Ask the admin to allow it.");
+    expect(state).toMatchObject({ status: "failed", derived: true, log: state.problem });
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.build).not.toHaveBeenCalled();
+    expect(stepPackagesProblem({ packages: ["bioconda::samtools"], channels: ["conda-forge"] })).toBeNull();
+    expect(stepPackagesProblem({ packages: ["evil::x"], channels: [] })).toContain("channel evil,");
+    // A derived record written before the allowlist is not rebuilt either.
+    mocks.findUnique.mockResolvedValue({ name: "r+old", baseName: "seqdesk-explore-r", spec: BASE, specHash: "h1", status: "failed", packages: stored });
+    expect(await prepareEnvironmentByName("r+old", { retryFailed: true })).toMatchObject({ problem: expect.stringContaining("channel someone") });
+    expect(mocks.build).not.toHaveBeenCalled();
   });
   it("excerpts from the first conda error line", () => {
     expect(condaErrorExcerpt("a\nb\nPackagesNotFoundError: x\n  - y")).toBe("PackagesNotFoundError: x\n  - y");

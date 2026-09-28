@@ -246,6 +246,7 @@ function environmentView(state: StepEnvironmentState) {
     name: state.name, base: state.baseName, derived: state.derived, status: state.status, specHash: state.specHash,
     packages: state.packages.packages, channels: state.packages.channels, lockDigest: state.lockDigest, builtAt: state.builtAt,
     log: state.log ? state.log.split("\n").slice(-20).join("\n").slice(-2000) : null,
+    problem: state.problem ?? null,
   };
 }
 

@@ -245,6 +245,7 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
   // The step's effective environment: its base, or the base plus the step's packages (built once, then reused).
   // A flow run fixes it when the run starts, so an edit to the packages mid-run does not change a queued step.
   const stepEnvironment = (input.flowRun?.environmentName ? await stepEnvironmentByName(input.flowRun.environmentName) : null) ?? await resolveStepEnvironment(analysis);
+  if (stepEnvironment.problem) throw new ExploreRunError(409, stepEnvironment.problem);
   if (stepEnvironment.derived && stepEnvironment.status !== "ready") {
     // Runs never install packages: start (or keep) the build and ask the caller to come back when it is ready.
     const prepared = stepEnvironment.status === "failed" ? stepEnvironment : input.flowRun?.environmentName ? (await prepareEnvironmentByName(stepEnvironment.name)) ?? stepEnvironment : await prepareStepEnvironment(analysis);
