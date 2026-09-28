@@ -26,12 +26,11 @@ import { resolveContainedPath } from '@/lib/explore/storage';
 import { createPipelineRunForOperator, startPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-service';
 import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-service';
 import { ensureDataStudy } from '@/lib/pipelines/data-study';
-import { getDataRun, listDataRuns, pipelineReadiness, runBelongsTo, runOutputToData } from '@/lib/pipelines/pipeline-data-service';
+import { analysisPipelineDefinitions, getDataRun, listDataRuns, pipelineReadiness, runBelongsTo, runOutputToData } from '@/lib/pipelines/pipeline-data-service';
 import { resumePipelineRun } from '@/lib/pipelines/run-resume';
 import { prepareFailureWords, slurmRefusal } from '@/lib/pipelines/plain-status';
 import { PIPELINE_FILE_LINK_TTL_MS, pipelineFileToken } from '@/lib/pipelines/pipeline-file-link';
 import { integrationConfig } from '@/lib/integration/config';
-import { PIPELINE_REGISTRY } from '@/lib/pipelines/registry';
 import { getPipelineEnabled } from '@/lib/pipelines/enablement';
 import { updateManagedPipeline } from '@/lib/pipelines/pipeline-management-service';
 import { checkServerReadiness, testServer } from '@/lib/pipelines/pipeline-admin';
@@ -84,15 +83,22 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       // The Compute server's admin (a SeqDesk facility admin) turns pipelines on and checks the server from the web app.
       if ((session.user as { role?: string }).role !== 'FACILITY_ADMIN') throw new RouteError(403, 'Only this Compute server’s admin can change its pipelines.');
       if (!runId && method === 'GET') {
-        const ids = Object.keys(PIPELINE_REGISTRY);
-        const pipelines = await Promise.all(ids.map(async (id) => { const d = PIPELINE_REGISTRY[id]; return { id, name: d.name, version: d.version ?? null, description: d.description, enabled: await getPipelineEnabled(id) }; }));
+        // Only pipelines that can serve an Analysis study; order-only ones (checksums, ENA submission) stay in SeqDesk's own admin.
+        const pipelines = await Promise.all(analysisPipelineDefinitions().map(async (d) => ({ id: d.id, name: d.name, version: d.version ?? null, description: d.description, enabled: await getPipelineEnabled(d.id) })));
         return json({ readiness: await checkServerReadiness(), pipelines: pipelines.sort((a, b) => a.name.localeCompare(b.name)) });
       }
       if (runId === 'pipelines' && action && method === 'POST') {
         const input = await body();
         if (typeof input.enabled !== 'boolean') throw new RouteError(400, 'Say whether the pipeline is on.');
-        if (!PIPELINE_REGISTRY[action]) throw new RouteError(404, 'No such pipeline on this server.');
-        await updateManagedPipeline({ pipelineId: action, enabled: input.enabled });
+        if (!analysisPipelineDefinitions().some((d) => d.id === action)) throw new RouteError(404, 'No such pipeline for Analysis on this server.');
+        try {
+          await updateManagedPipeline({ pipelineId: action, enabled: input.enabled });
+        } catch (error) {
+          // "Pipeline is not ready to enable" alone gives the admin nothing to do; its details say what is missing.
+          const e = error as { status?: number; details?: string[]; message?: string };
+          if (typeof e.status === 'number' && e.status >= 400 && e.status < 500) throw new RouteError(409, `${e.message ?? 'Could not change the pipeline'}${e.details?.length ? `: ${e.details.slice(0, 3).join('; ')}` : ''}.`);
+          throw error;
+        }
         return json({ id: action, enabled: await getPipelineEnabled(action) });
       }
       if (runId === 'test' && !action && method === 'POST') return json(await testServer());

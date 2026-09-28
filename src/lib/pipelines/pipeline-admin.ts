@@ -53,9 +53,14 @@ export async function checkServerReadiness(exec: Exec = defaultExec, settings?: 
   const java = await tryRun(exec, tool(s, 'java'), ['-version']);
   const javaVersion = /version "?(\d+)/.exec(java.text)?.[1];
   checks.push({ id: 'java', ok: java.ok && Number(javaVersion) >= 11, line: java.ok ? `Java ${javaVersion ?? '?'}${Number(javaVersion) >= 11 ? '' : ' · Nextflow needs 11 or newer'}` : `Java: ${java.text}` });
-  const mamba = await tryRun(exec, tool(s, 'micromamba'), ['--version']);
-  const conda = mamba.ok ? mamba : await tryRun(exec, 'conda', ['--version']);
-  checks.push({ id: 'conda', ok: conda.ok || !!s.skipConda, line: conda.ok ? `${mamba.ok ? 'micromamba' : 'conda'} ${conda.text.split('\n')[0].replace(/^conda\s+/, '')} · builds each step's software` : s.skipConda ? 'conda is off for this server' : `conda: ${conda.text}` });
+  // The environment's own micromamba, the one on PATH (the Linux kit's), then the conda install's conda.
+  const candidates: [string, string][] = [[tool(s, 'micromamba'), 'micromamba'], ['micromamba', 'micromamba'], ...(s.condaPath ? [[path.join(s.condaPath, 'bin', 'conda'), 'conda'] as [string, string]] : []), ['conda', 'conda']];
+  let conda = { ok: false, text: 'not found' }, condaName = 'conda';
+  for (const [file, name] of candidates) {
+    const found = await tryRun(exec, file, ['--version']);
+    if (found.ok) { conda = found; condaName = name; break; }
+  }
+  checks.push({ id: 'conda', ok: conda.ok || !!s.skipConda, line: conda.ok ? `${condaName} ${conda.text.split('\n')[0].replace(/^conda\s+/, '')} · builds each step's software` : s.skipConda ? 'conda is off for this server' : 'Neither micromamba nor conda was found; steps cannot get their software' });
   const runDir = s.pipelineRunDir;
   const writable = runDir ? await fs.access(runDir, (await import('fs')).constants.W_OK).then(() => true, () => false) : false;
   checks.push({ id: 'run-folder', ok: writable, line: writable ? `Run folders go to ${runDir}` : `Compute cannot write its run folder ${runDir || '(not set)'}` });

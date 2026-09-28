@@ -37,6 +37,14 @@ describe('whether this Compute server can run pipelines', () => {
     const noJava = await checkServerReadiness(exec({ 'java -version': Object.assign(new Error('x'), { code: 'ENOENT' }) }), settings(false));
     expect(noJava.checks.find((c) => c.id === 'java')).toEqual({ id: 'java', ok: false, line: 'Java: not found' });
     expect(parseSinfo('cpu*|up|1|idle\ngpu|down|2|down*\n').map((q) => q.name)).toEqual(['cpu', 'gpu']);
+    // elektra: the pipeline environment has no micromamba of its own; the kit's is on PATH.
+    const kit = { ...settings(true), condaPath: '/data/conda', condaEnv: 'seqdesk-pipelines' } as ExecutionSettings;
+    const onPath = await checkServerReadiness(async (file, args) => {
+      if (file === 'micromamba') return { stdout: '2.0.5' };
+      if (file.endsWith('/nextflow')) throw Object.assign(new Error('x'), { code: 'ENOENT' });
+      return exec()(file, args);
+    }, kit);
+    expect(onPath.checks.find((c) => c.id === 'conda')?.line).toBe("micromamba 2.0.5 · builds each step's software");
   });
 });
 

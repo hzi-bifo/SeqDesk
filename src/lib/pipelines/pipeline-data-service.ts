@@ -86,6 +86,11 @@ function outputKind(output: { id: string; type?: string; discovery?: { pattern?:
 }
 
 /** The pipelines this server offers for Analysis studies (enabled, study-capable, not internal). */
+/** Pipelines that can serve an Analysis study at all (study scope, not internal), on or off. */
+export function analysisPipelineDefinitions() {
+  return Object.values(PIPELINE_REGISTRY).filter((definition) => !HIDDEN.has(definition.id) && definition.input.supportedScopes.includes('study'));
+}
+
 export async function dataPipelines() {
   const list = [];
   for (const definition of Object.values(PIPELINE_REGISTRY)) {
