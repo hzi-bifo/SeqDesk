@@ -438,6 +438,11 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
     if (!tasks.length && !progress?.submitted && /conda|environment|Launching|Preparing/i.test(`${run.currentStep ?? ''} ${run.outputTail ?? ''}`)) {
       return { ...base, shape: 'preparing', word: 'Preparing', sentence: 'Preparing software · first run only', action: { kind: 'cancel', label: 'Cancel' } };
     }
+    // Every task ended but squeue no longer lists the job and sacct did not answer: the monitor waits for SLURM to
+    // say how the job ended before it finishes the run (and writes its outputs to Data).
+    if (/Waiting for scheduler confirmation/i.test(run.currentStep ?? '')) {
+      return { ...base, shape: 'running', word: 'Running', sentence: `All steps ended · waiting for SLURM to confirm the job${slurm ? ' (SLURM is not answering)' : ''}`, action: { kind: 'cancel', label: 'Cancel' } };
+    }
     return { ...base, shape: 'running', word: 'Running', sentence: `Running${where}${waiting || left}`, action: { kind: 'cancel', label: 'Cancel' } };
   }
   // pending / queued (or running on SLURM without a started task yet)
