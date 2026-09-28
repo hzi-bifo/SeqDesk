@@ -136,6 +136,8 @@ describe('plainRunStatus', () => {
     expect([running.shape, running.sentence]).toEqual(['running', 'Running · step 1 of 2: FastQC · no estimate yet']);
     // Shortened names keep no name; before any task is submitted it is still preparing.
     expect(logProgress(`executor >  slurm (2)\n${link('ac')} SUMM…ZE_FASTQC (fastqc-summary) | 0 of 1`)?.processes).toEqual([{ name: '', done: 0, total: 1 }]);
+    const later = `${tail}\nexecutor >  slurm (2)\n${link('ef')} RUN_FASTQC (ERR10419931)       | 1 of 1 ✔\n${link('ac')} SUMM…ZE_FASTQC (fastqc-summary) | 0 of 1\n`;
+    expect(logProgress(later)?.processes.map((p) => p.name)).toEqual(['RUN_FASTQC', 'SUMMARIZE_FASTQC']);
     const before = tail.split('executor >')[0];
     expect(plainRunStatus({ now, run: { status: 'running', executionMode: 'slurm', queueStatus: 'RUNNING', outputTail: before } }).shape).toBe('preparing');
   });

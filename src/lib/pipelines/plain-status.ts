@@ -284,7 +284,8 @@ export interface LogProgress { submitted: number; processes: { name: string; don
 /**
  * The last progress block of Nextflow's console log ("executor >  slurm (2)" and one "[ab/cdef12] NAME (tag) | 1 of 2"
  * line per process). trace.txt only gets a row when a task ends, so while the first task runs this is the only sign
- * that work was handed to the executor. Long names come shortened with "…"; those keep no name.
+ * that work was handed to the executor. Long names come shortened with "…"; those take the full name from an earlier
+ * line, or none.
  */
 export function logProgress(text: string | null | undefined): LogProgress | null {
   if (!text) return null;
@@ -297,7 +298,13 @@ export function logProgress(text: string | null | undefined): LogProgress | null
   for (const line of lines.slice(start + 1)) {
     const m = /^\[[^\]]*\]\s+(?:process > )?(\S+)(?:\s+\([^)]*\))?\s*(?:\|\s*(\d+) of (\d+))?/.exec(line.trim());
     if (!m) break;
-    processes.push({ name: m[1].includes('…') ? '' : m[1], done: Number(m[2] ?? 0), total: Number(m[3] ?? 0) });
+    processes.push({ name: m[1], done: Number(m[2] ?? 0), total: Number(m[3] ?? 0) });
+  }
+  // A shortened name ("SUMM…ZE_FASTQC") is the full name an earlier, wider line of the log gave ("SUMMARIZE_FASTQC").
+  const full = [...new Set(lines.map((line) => /^\[[^\]]*\]\s+(?:process > )?([A-Za-z0-9_:.-]+)(?=\s|$)/.exec(line.trim())?.[1]).filter((n): n is string => !!n))];
+  for (const p of processes) if (p.name.includes('…')) {
+    const [head, tail] = p.name.split('…');
+    p.name = full.find((n) => n.startsWith(head) && n.endsWith(tail) && n.length > head.length + tail.length) ?? '';
   }
   // Nextflow redraws the block and may leave out a process it has not reached; the first block lists them all.
   let steps = 0, run = 0;
