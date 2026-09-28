@@ -211,6 +211,9 @@ describe("submg runner", () => {
     // matching the generic/mag executors).
     expect(script).toContain("#SBATCH -p cpu");
     expect(script).toContain("#SBATCH --mem='16GB'");
+    // A requeued submission stops before submitting anything a second time.
+    expect(script.indexOf("the ENA submission is not started again")).toBeGreaterThan(-1);
+    expect(script.indexOf("SLURM_RESTART_COUNT")).toBeLessThan(script.indexOf("export ENA_USERNAME"));
     expect(script).toContain("#SBATCH --job-name=seqdesk-run-1");
     expect(script).toContain(`#SBATCH -D "${result.runFolder}"`);
     expect(script).toContain(result.runFolder!);

@@ -369,6 +369,9 @@ describe('prepareMagRun', () => {
     expect(scriptWrite).toBeDefined();
     const script = scriptWrite![1] as string;
     expect(script).toContain('#SBATCH');
+    // A requeued MAG job resumes under a name of its own instead of stopping on "Run name ... already used".
+    expect(script).toContain('SEQDESK_REQUEUE_FLAGS=(-resume)');
+    expect(script).toContain('-name "$SEQDESK_RUN_NAME"');
     expect(script).toContain('#SBATCH --job-name=seqdesk-run-1');
     expect(script.match(/^#SBATCH --job-name=/gm)).toHaveLength(1);
     expect(script).toContain('-p batch');

@@ -18,6 +18,7 @@ import {
   buildSlurmWrapperFinalizerBlock,
   renderSlurmChdirDirective,
 } from '@/lib/pipelines/slurm-completion-attestation';
+import { NEXTFLOW_NAME_FLAG, NEXTFLOW_REQUEUE_ARGS, nextflowRequeueBlock } from '@/lib/pipelines/slurm-requeue';
 import { resolveCondaEnvironmentReference } from '@/lib/pipelines/conda-environment';
 import path from 'path';
 import fs from 'fs/promises';
@@ -368,7 +369,7 @@ function generateSlurmScript(
   const runtimeBootstrap = buildRuntimeBootstrap(settings);
 
   const runName = buildNextflowRunName(runNumber, runId);
-  const nameFlag = `-name ${shellQuote(runName)}`;
+  const nameFlag = NEXTFLOW_NAME_FLAG;
   const profileFlag = settings.nextflowProfile ? `-profile ${shellQuote(settings.nextflowProfile)}` : '';
   const configFlag = runConfigPath ? `-c ${shellQuote(runConfigPath)}` : '';
 
@@ -434,9 +435,12 @@ echo "" > "$STDERR_LOG"
 
 ${runtimeBootstrap}
 
+${nextflowRequeueBlock(runName)}
+
 # Run nf-core/mag (uses default/latest release)
 "\${NEXTFLOW_RUNNER[@]}" run nf-core/mag \\
   ${nextflowArgs} \\
+  ${NEXTFLOW_REQUEUE_ARGS} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 `;
 }

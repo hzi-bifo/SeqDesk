@@ -16,6 +16,7 @@ import {
   buildSlurmWrapperFinalizerBlock,
   renderSlurmChdirDirective,
 } from "@/lib/pipelines/slurm-completion-attestation";
+import { refuseRequeueBlock } from "@/lib/pipelines/slurm-requeue";
 
 interface PrepareSubmgRunOptions {
   runId: string;
@@ -809,6 +810,7 @@ function buildSubmgScript(params: {
   lines.push("  sleep 2");
   lines.push("done");
   lines.push(buildSlurmCompletionAttestationBlock({ runId, runFolder }));
+  lines.push(refuseRequeueBlock("the ENA submission"));
   lines.push('echo "Starting submg submission at $(date)" > "$STDOUT_LOG"');
   lines.push('echo "" > "$STDERR_LOG"');
   lines.push("");

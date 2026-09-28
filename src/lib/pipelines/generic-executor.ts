@@ -34,6 +34,7 @@ import {
   buildSlurmWrapperFinalizerBlock,
   renderSlurmChdirDirective,
 } from './slurm-completion-attestation';
+import { NEXTFLOW_NAME_FLAG, NEXTFLOW_REQUEUE_ARGS, nextflowRequeueBlock } from './slurm-requeue';
 import { resolveCondaEnvironmentReference } from './conda-environment';
 import { stagePriorRunArtifacts } from './prior-run-artifact-staging';
 import type { PipelineTarget } from './types';
@@ -765,7 +766,7 @@ function generateSlurmScript(
 
   const runName = buildNextflowRunName(runNumber, runId);
   // The run name lives in a variable: a requeued job (below) needs another one, and -name may appear only once.
-  const nameFlag = '-name "$SEQDESK_RUN_NAME"';
+  const nameFlag = NEXTFLOW_NAME_FLAG;
   // Merge manifest profiles with admin-configured profile
   const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile, { skipConda: settings.skipConda });
   const profileFlag = mergedProfiles ? `-profile ${shellQuote(mergedProfiles)}` : '';
@@ -838,20 +839,12 @@ echo "" > "$STDERR_LOG"
 
 ${runtimeBootstrap}
 
-# SLURM requeues this job after its node failed (or on scontrol requeue) and runs this script again from the top.
-# Nextflow refuses a run name its history already has, so a restart resumes the same work under a name of its own.
-SEQDESK_RUN_NAME=${shellQuote(runName)}
-SEQDESK_REQUEUE_FLAGS=()
-if [ "\${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
-  SEQDESK_RUN_NAME="\${SEQDESK_RUN_NAME}-j\${SLURM_JOB_ID}-q\${SLURM_RESTART_COUNT}"
-  SEQDESK_REQUEUE_FLAGS=(-resume)
-  echo "Requeued by SLURM (restart \${SLURM_RESTART_COUNT}); resuming at $(date)" >> "$STDOUT_LOG"
-fi
+${nextflowRequeueBlock(runName)}
 
 # Run ${pipelineLabel}
 "\${NEXTFLOW_RUNNER[@]}" run ${shellQuote(pipelineTarget.target)} \\
   ${nextflowArgs} \\
-  \${SEQDESK_REQUEUE_FLAGS[@]+"\${SEQDESK_REQUEUE_FLAGS[@]}"} \\
+  ${NEXTFLOW_REQUEUE_ARGS} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 `;
 }
