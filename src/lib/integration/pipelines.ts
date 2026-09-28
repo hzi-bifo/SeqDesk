@@ -11,6 +11,9 @@
  *   POST data-pipelines/runs/{id}/data?targetKey    { outputId }  a table output into Data, pinned to the run
  *   GET  data-pipelines/runs/{id}/file?targetKey&artifact&preview=1              an output file
  *   POST data-pipelines/runs/{id}/file-link?targetKey&artifact                   a 5-minute link to one output file (MultiQC opens in a tab)
+ *   GET  data-pipelines/admin                          pipelines on this server and whether it can run them (admin)
+ *   POST data-pipelines/admin/pipelines/{id}  { enabled }   turn a pipeline on or off (admin)
+ *   POST data-pipelines/admin/test                     a tiny job through the executor (admin)
  *   POST data-pipelines/from-step       { targetKey, stepId, output }  a step's latest output saved into Data as a file
  */
 import fs from 'fs/promises';
@@ -28,6 +31,10 @@ import { resumePipelineRun } from '@/lib/pipelines/run-resume';
 import { prepareFailureWords, slurmRefusal } from '@/lib/pipelines/plain-status';
 import { PIPELINE_FILE_LINK_TTL_MS, pipelineFileToken } from '@/lib/pipelines/pipeline-file-link';
 import { integrationConfig } from '@/lib/integration/config';
+import { PIPELINE_REGISTRY } from '@/lib/pipelines/registry';
+import { getPipelineEnabled } from '@/lib/pipelines/enablement';
+import { updateManagedPipeline } from '@/lib/pipelines/pipeline-management-service';
+import { checkServerReadiness, testServer } from '@/lib/pipelines/pipeline-admin';
 import { storeLibraryFile } from '@/lib/files/library';
 import type { IntegrationSession } from './identity';
 
@@ -73,6 +80,23 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
     const [, sub, runId, action] = segments; // data-pipelines/<sub>/<id>/<action>
 
     if (!sub && method === 'GET') return json(await pipelineReadiness(await read(url.searchParams.get('targetKey'))));
+    if (sub === 'admin') {
+      // The Compute server's admin (a SeqDesk facility admin) turns pipelines on and checks the server from the web app.
+      if ((session.user as { role?: string }).role !== 'FACILITY_ADMIN') throw new RouteError(403, 'Only this Compute server’s admin can change its pipelines.');
+      if (!runId && method === 'GET') {
+        const ids = Object.keys(PIPELINE_REGISTRY);
+        const pipelines = await Promise.all(ids.map(async (id) => { const d = PIPELINE_REGISTRY[id]; return { id, name: d.name, version: d.version ?? null, description: d.description, enabled: await getPipelineEnabled(id) }; }));
+        return json({ readiness: await checkServerReadiness(), pipelines: pipelines.sort((a, b) => a.name.localeCompare(b.name)) });
+      }
+      if (runId === 'pipelines' && action && method === 'POST') {
+        const input = await body();
+        if (typeof input.enabled !== 'boolean') throw new RouteError(400, 'Say whether the pipeline is on.');
+        if (!PIPELINE_REGISTRY[action]) throw new RouteError(404, 'No such pipeline on this server.');
+        await updateManagedPipeline({ pipelineId: action, enabled: input.enabled });
+        return json({ id: action, enabled: await getPipelineEnabled(action) });
+      }
+      if (runId === 'test' && !action && method === 'POST') return json(await testServer());
+    }
     if (sub === 'runs' && !runId && method === 'GET') {
       const targetKey = await read(url.searchParams.get('targetKey'));
       return json({ runs: await listDataRuns(targetKey) });

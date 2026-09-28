@@ -77,4 +77,10 @@ describe('data-pipelines: a run is managed by whoever owns the study’s Data', 
     expect(started.status).toBe(409);
     expect((await started.json()).error).toBe('Only Lena Lead or a SeqDesk admin can start pipelines on this study’s Data.');
   });
+
+  it('the admin part is for this Compute server’s admin only', async () => {
+    const denied = await call('lena', 'GET', ['data-pipelines', 'admin']);
+    expect(denied.status).toBe(403);
+    expect((await denied.json()).error).toBe('Only this Compute server’s admin can change its pipelines.');
+  });
 });
