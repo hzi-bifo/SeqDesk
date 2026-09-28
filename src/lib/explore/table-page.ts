@@ -112,7 +112,7 @@ export async function readTablePage(version: ExploreDatasetVersion | null, edits
   const query = queryOf(options, schema.columns);
   const scanning = !isPlain(query);
   const excluded = new Set(edits.filter((edit) => edit.kind === "row-exclude" && edit.target.rowKey).map((edit) => edit.target.rowKey)).size;
-  const emptyView = scanning ? { search: query.search, filters: query.filters, sort: query.sort, matched: 0, scanned: 0, rows: 0, complete: true, stopped: "end" as const, budgetMs: 0 } : null;
+  const emptyView = scanning ? { search: query.search, filters: query.filters, sort: query.sort, matched: 0, scanned: 0, rows: 0, complete: true, stopped: "end" as "end" | "limit" | "budget" | "aborted", budgetMs: 0 } : null;
   const empty = { fileBacked, rowEntity: schema.rowEntity, body: { columns, rows: [] as ExploreRowData[], total: 0, truncated: false, nextCursor: null as string | null, limitedBy, search: query.search ? { query: query.search, complete: true } : null, view: emptyView } };
   if (!version) return empty;
 
@@ -164,7 +164,7 @@ export async function readTablePage(version: ExploreDatasetVersion | null, edits
       // Enough matches: continue after the last one shown. Budget spent: continue after the last row read.
       nextCursor = more ? String(page[page.length - 1].rowIndex) : !scan.end && scan.lastIndex !== null ? String(scan.lastIndex) : null;
       total = page.length + (nextCursor !== null ? 1 : 0);
-      view = { ...emptyView!, matched: scan.matched, scanned: scan.scanned + start, rows: rowsTotal, complete: scan.end && !more, stopped: more ? "limit" : scan.end ? "end" : scan.stopped as "budget", budgetMs };
+      view = { ...emptyView!, matched: scan.matched, scanned: scan.scanned + start, rows: rowsTotal, complete: scan.end && !more, stopped: more ? "limit" : scan.end ? "end" : scan.stopped, budgetMs };
       (view as Record<string, unknown>).from = start;
     }
   } else {

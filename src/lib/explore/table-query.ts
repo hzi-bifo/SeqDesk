@@ -242,7 +242,7 @@ async function forEachRow(storagePath: string, layout: FileLayout, options: Scan
   let skipHeader = here.skipHeader;
   let tail = "";
   let lastIndex: number | null = null;
-  let stopped: ScanResult["stopped"] = "end";
+  let stopped = "end" as ScanResult["stopped"];
   const stop = (why: ScanResult["stopped"]) => { stopped = why; };
   try {
     outer: for await (const buffer of stream) {
