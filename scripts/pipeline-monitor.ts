@@ -11,27 +11,11 @@ import {
 } from '../src/lib/pipelines/monitor-status';
 import { reconcileRun, summarizeTrace, transitionEvent } from '../src/lib/pipelines/run-reconciler';
 import { finalizeCompletedPipelineRun } from '../src/lib/pipelines/run-completion';
-import { readIdentityCheckedQueueSnapshot } from '../src/lib/pipelines/queue-probe';
 import { notifyPipelineRunTerminalInApp } from '../src/lib/notifications/in-app';
-import { cancelLeftoverSlurmTaskJobs, readEndedTaskJob, readWaitingTaskReason } from '../src/lib/pipelines/slurm-task-cleanup';
-import { classifyFailure } from '../src/lib/pipelines/plain-status';
+import { executorFor } from '../src/lib/pipelines/executors';
 import { explainCondaFailure } from '../src/lib/pipelines/conda-explain';
 
 const DEFAULT_INTERVAL_MS = 15000;
-
-/**
- * "ended:<kind>:<process>" when SLURM already ended one of the run's task jobs badly and Nextflow has not noticed yet;
- * the card says so at once instead of "Running" for the minute (or, before, four and a half) Nextflow waits.
- */
-async function endedTaskReason(run: { runFolder: string | null; startedAt?: Date | null }): Promise<string | null> {
-  const ended = await readEndedTaskJob(run.runFolder, run.startedAt ?? null);
-  if (!ended) return null;
-  const log = await readTail(`${ended.workDir}/.command.log`).catch(() => null);
-  const kind = ended.state === 'CANCELLED' || (/\*\*\* JOB \d+ ON \S+ CANCELLED AT /.test(log ?? '') && !/memory/i.test(log ?? ''))
-    ? 'cancelled'
-    : classifyFailure({ texts: [log], slurmStates: [ended.state], exitCodes: [/^0:9$/.test(ended.exitCode) ? 137 : null] });
-  return `ended:${kind}:${ended.process}`;
-}
 
 export async function syncRun(run: {
   id: string;
@@ -69,17 +53,10 @@ export async function syncRun(run: {
 
   // Everything the run's state depends on goes through the one reconciler (src/lib/pipelines/run-reconciler.ts):
   // the trace summary above, the exact scheduler job, why its task jobs wait, a task job SLURM already ended.
-  let scheduler = null;
-  let waitingTaskReason: string | null = null;
-  let endedTask: string | null = null;
-  const slurm = !!run.queueJobId && /^\d+$/.test(run.queueJobId);
-  if (run.queueJobId) {
-    scheduler = await readIdentityCheckedQueueSnapshot({ jobId: run.queueJobId, runId: run.id, runFolder: run.runFolder });
-    if (slurm && scheduler.identityVerified && scheduler.state === 'RUNNING') {
-      waitingTaskReason = await readWaitingTaskReason(run.runFolder);
-      if (!waitingTaskReason) endedTask = await endedTaskReason(run);
-    }
-  }
+  // The run's executor (this server or SLURM) reads its evidence in one shape for the reconciler.
+  const executor = executorFor(run);
+  const evidence = await executor.evidence(run);
+  const { scheduler, slurm, waitingTaskReason, endedTask } = evidence;
   const next = reconcileRun({
     run: { status: run.status },
     trace: { derived: derivedStatus, currentStep, progress, failuresAborted: traceFailuresAborted },
@@ -167,7 +144,7 @@ export async function syncRun(run: {
       (nextStatus === 'failed' || nextStatus === 'cancelled')
     ) {
       // The run's own job is gone; its nf-* task jobs must not keep running (scancel of the head, its time limit).
-      if (slurm) await cancelLeftoverSlurmTaskJobs(run.runFolder);
+      await executor.cleanup(run);
       // Nextflow's own message for a failed conda environment is empty; ask the solver why, once, for the card.
       const log = `${update.outputTail ?? ''}\n${update.errorTail ?? ''}`;
       if (nextStatus === 'failed' && run.runFolder && /Failed to create Conda environment/.test(log)) {

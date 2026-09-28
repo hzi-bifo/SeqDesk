@@ -20,7 +20,7 @@ import {
   processCompletedPipelineRun,
 } from '@/lib/pipelines/run-completion';
 import { findTraceFile, parseTraceFile } from '@/lib/pipelines/nextflow';
-import { cancelLeftoverSlurmTaskJobs } from '@/lib/pipelines/slurm-task-cleanup';
+import { executorFor } from '@/lib/pipelines/executors';
 import { queueFieldsFrom, transitionEvent } from '@/lib/pipelines/run-reconciler';
 import type { RunStatus as RunStatusForQueue } from '@/lib/pipelines/monitor-status';
 
@@ -2040,7 +2040,7 @@ export async function cancelPipelineRunForOperator(
   }
 
   // Nextflow cancels its own task jobs when it gets the SIGTERM; any it could not reach must not keep running.
-  if (queueJobId && !queueJobId.startsWith('local-')) await cancelLeftoverSlurmTaskJobs(claimedRun.runFolder);
+  if (queueJobId) await executorFor({ queueJobId }).cleanup({ id: runId, runFolder: claimedRun.runFolder, queueJobId });
 
   const newStatus = 'cancelled';
 
