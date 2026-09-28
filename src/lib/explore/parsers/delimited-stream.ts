@@ -44,7 +44,8 @@ async function* utf8Text(source: AsyncIterable<Buffer | string>): AsyncGenerator
  * byte-order mark, or a Windows-1252 export; binary content stops the read with a plain sentence.
  */
 async function* decodedText(source: AsyncIterable<Buffer | string>): AsyncGenerator<string> {
-  let decoder: { write(chunk: Buffer): string; end(): string } | null = null;
+  type Decoder = { write(chunk: Buffer): string; end(): string };
+  let decoder = null as Decoder | null;
   const held: Buffer[] = [];
   let heldBytes = 0;
   const choose = () => {
@@ -57,13 +58,13 @@ async function* decodedText(source: AsyncIterable<Buffer | string>): AsyncGenera
   };
   for await (const chunk of source) {
     if (typeof chunk === "string") { yield chunk; continue; }
-    if (decoder) { yield decoder.write(chunk); continue; }
+    if (decoder) { yield (decoder as Decoder).write(chunk); continue; }
     held.push(chunk);
     heldBytes += chunk.length;
     if (heldBytes >= 65_536) yield choose();
   }
   if (!decoder && held.length) yield choose();
-  if (decoder) yield (decoder as { end(): string }).end();
+  if (decoder) yield (decoder as Decoder).end();
 }
 
 /** Line by line (tests and small inputs); large readers use streamLineBatches. */
