@@ -121,6 +121,13 @@ describe('plainRunStatus', () => {
     expect(lines).toEqual(expect.arrayContaining(["process hasn't exited"]));
     expect(lines.filter((l) => l === 'Caused by:')).toHaveLength(1);
   });
+  it('local: a task that got SIGTERM (exit 143) says it was stopped and offers Resume, not a dead end', () => {
+    const trace = 'task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\n1\t20/5153b7\t49713\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tFAILED\t143\n';
+    const errorTail = "error [nextflow.exception.ProcessFailedException]: Process `RUN_FASTQC (ERR10419931)` terminated with an error exit status (143)";
+    const status = plainRunStatus({ now, run: { status: 'failed', executionMode: 'local', queueJobId: 'local-42', errorTail }, trace });
+    expect(status.sentence).toBe('FastQC was stopped before it finished (exit 143) · Resume continues where it stopped');
+    expect(status.action?.kind).toBe('resume');
+  });
   it('queued on SLURM says the reason in words and offers one action', () => {
     const resources = plainRunStatus({ now, run: { status: 'queued', executionMode: 'slurm', queueJobId: '4819227', queueStatus: 'PENDING', queueReason: 'Resources', askedMemory: '256 GB', queuedAt: '2026-09-28T11:00:00Z' } });
     expect([resources.shape, resources.word]).toEqual(['waiting', 'Queued']);

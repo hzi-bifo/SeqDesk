@@ -423,6 +423,8 @@ function errorSentence(kind: ErrorKind, process: string | null, sample: string |
       if (cancelledOutside) {
         return { sentence: `${capital(stage)} was stopped outside SeqDesk: its SLURM job was cancelled`, action: { kind: 'resume', label: 'Resume' } };
       }
+      // A task that got SIGTERM (exit 143, someone's kill or a shutdown) failed for nothing in its own work: Resume runs it again.
+      if (exitCode === 143) return { sentence: `${capital(stage)} was stopped before it finished (exit 143) · Resume continues where it stopped`, action: { kind: 'resume', label: 'Resume' } };
       return { sentence: `Failed at ${process ? process.split(':').pop() : 'a step'}${exitCode != null ? ` · exit code ${exitCode}` : ''}`, action: { kind: 'show-log', label: 'Show the log' } };
   }
 }
