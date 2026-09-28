@@ -532,7 +532,8 @@ describe("generic-executor", () => {
     expect(config).toContain("trace.fields = '");
     expect(config).toContain("process,tag,name,status,exit,attempt,");
 
-    // And NOT emitted when unset.
+    // Unset: a local run shares one cache next to the run folders (each run built its environments again in its own
+    // work folder: a MultiQC run took three minutes every time); SLURM keeps per-run caches unless one is configured.
     const result2 = await prepareGenericRun({
       runId: "run-nocache",
       pipelineId: "mag",
@@ -542,7 +543,17 @@ describe("generic-executor", () => {
       userId: "user-1",
     });
     const config2 = await fs.readFile(path.join(result2.runFolder!, "nextflow.config"), "utf8");
-    expect(config2).not.toContain("cacheDir");
+    expect(config2).toContain(`cacheDir = '${path.join(tempDir, ".conda-cache")}'`);
+    const result3 = await prepareGenericRun({
+      runId: "run-slurm-nocache",
+      pipelineId: "mag",
+      target: { type: "order", orderId: "order-1", sampleIds: ["s1"] },
+      config: {},
+      executionSettings: { ...baseExecutionSettings(tempDir), useSlurm: true },
+      userId: "user-1",
+    });
+    const config3 = await fs.readFile(path.join(result3.runFolder!, "nextflow.config"), "utf8");
+    expect(config3).not.toContain("cacheDir");
   });
 
   it("passes MetaxPath params files using Nextflow -params-file", async () => {

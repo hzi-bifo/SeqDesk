@@ -330,8 +330,11 @@ function buildRunConfig(
   // Shared conda cacheDir: per-process envs are cached here by hash and reused across
   // runs, so a host with network can pre-build an env that network-isolated SLURM
   // compute nodes reuse without fetching from conda channels.
-  if (settings.condaCacheDir?.trim()) {
-    condaBlock.push(`  cacheDir = '${escapeNextflowString(settings.condaCacheDir.trim())}'`);
+  // On this server without a configured cache, every run built its process environments again inside its own work
+  // folder (a MultiQC run took three minutes each time): share one next to the run folders.
+  const condaCacheDir = settings.condaCacheDir?.trim() || (!settings.useSlurm && settings.pipelineRunDir?.trim() ? path.join(settings.pipelineRunDir.trim(), '.conda-cache') : '');
+  if (condaCacheDir) {
+    condaBlock.push(`  cacheDir = '${escapeNextflowString(condaCacheDir)}'`);
   }
   condaBlock.push(`}`);
   sections.push(condaBlock.join('\n'));
