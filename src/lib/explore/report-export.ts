@@ -366,6 +366,7 @@ function renderBlock(block: ResolvedReportBlock, context: BlockContext): string 
           return direction === "asc" ? order : -order;
         });
       }
+      if (block.perGroup) rows = topPerGroup(rows, block.perGroup.column, block.perGroup.n);
       const limit = Math.min(block.rows ?? 12, MAX_TABLE_ROWS);
       const all = table.columns.filter((column) => !column.key.endsWith("_db_id"));
       const columns = block.columns && block.columns.length > 0 ? block.columns.map((key) => all.find((column) => column.key === key)).filter((column): column is ExploreColumn => Boolean(column)) : all;
@@ -942,3 +943,14 @@ footer{padding:12px 20px 32px;color:var(--muted);font-size:12px;border-top:1px s
 `;
 
 const INIT_SCRIPT = `(function(){var el=document.getElementById('plot-data');if(!el||typeof Plotly==='undefined')return;var plots=JSON.parse(el.textContent||'[]');plots.forEach(function(p){var node=document.getElementById(p.id);if(!node)return;var layout=Object.assign({autosize:true,margin:{l:50,r:20,t:40,b:50},paper_bgcolor:'rgba(0,0,0,0)'},p.layout);Plotly.newPlot(node,p.data,layout,{responsive:true,displaylogo:false});});})();`;
+
+/** The first `n` rows of each value of `column`, in the order given (so after sorting, the top N per group). */
+export function topPerGroup<R extends Record<string, unknown>>(rows: readonly R[], column: string, n: number): R[] {
+  const seen = new Map<string, number>();
+  return rows.filter((row) => {
+    const key = String(row[column] ?? "");
+    const count = seen.get(key) ?? 0;
+    seen.set(key, count + 1);
+    return count < n;
+  });
+}

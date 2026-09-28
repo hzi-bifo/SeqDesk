@@ -34,6 +34,8 @@ const TableBlockSchema = z
     /** Columns to show, in this order; absent means every column. */
     columns: z.array(z.string().min(1).max(200)).max(60).optional(),
     sort: z.object({ column: z.string().min(1).max(200), direction: z.enum(["asc", "desc"]) }).strict().optional(),
+    /** Top N per group: after sorting, keep the first `n` rows of each value of `column` ("top 5 terms per pattern"). */
+    perGroup: z.object({ column: z.string().min(1).max(200), n: z.number().int().min(1).max(100) }).strict().optional(),
     /** A row filter in R notation, e.g. `specimen_type == "Urine" & q_value < 0.05`. */
     filter: z.string().max(500).optional(),
     /** What readers may do with the table. */

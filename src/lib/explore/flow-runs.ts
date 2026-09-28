@@ -183,6 +183,11 @@ export async function runRecords(flowRunId: string): Promise<{ run: FlowRunRecor
   return { run, records, stepRuns };
 }
 
+function paramsObject(raw: string | undefined): Record<string, unknown> | null {
+  if (!raw) return null;
+  try { const value: unknown = JSON.parse(raw); return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; } catch { return null; }
+}
+
 /** The revisions the records used, for telling code from param changes. */
 export async function revisionsUsedBy(records: Map<string, StepRecord>): Promise<Map<string, { codeHash: string; params: string }>> {
   const ids = [...new Set([...records.values()].map((record) => record.revisionId))];
@@ -831,6 +836,8 @@ export async function getFlowRunDetail(flowRunId: string) {
   const artifacts: ArtifactLite[] = artifactRunIds.length ? await db.exploreArtifact.findMany({ where: { runId: { in: artifactRunIds } }, select: { id: true, runId: true, kind: true, format: true, name: true, derivedDatasetId: true, derivedVersionId: true, checksum: true, path: true }, orderBy: { createdAt: "asc" } }) : [];
   const isolations = new Map<string, ReturnType<typeof summarizeIsolation>>();
   await Promise.all([...stepRuns.values()].map(async (stepRun) => { if (stepRun.runFolder) isolations.set(stepRun.id, summarizeIsolation(await readRunIsolation(stepRun.runFolder))); }));
+  // The settings each step ran with in this run (its revision's params), so Methods can cite them against the run.
+  const used = await revisionsUsedBy(records);
   const steps = plan.map((entry) => {
     const record = records.get(entry.analysisId);
     const stepRun = record ? stepRuns.get(record.stepRunId) : undefined;
@@ -843,6 +850,7 @@ export async function getFlowRunDetail(flowRunId: string) {
       stepRunId: stepRun?.id ?? null, runNumber: stepRun?.runNumber ?? null,
       reusedFrom: !entry.execute && entry.reusedFrom ? { flowRunId: entry.reusedFrom.flowRunId, number: entry.reusedFrom.number } : null,
       revisionId: entry.revisionId,
+      params: record ? paramsObject(used.get(record.revisionId)?.params) : null,
       durationMs: stepRun?.durationMs ?? null,
       startedAt: stepRun?.startedAt?.toISOString() ?? null,
       completedAt: stepRun?.completedAt?.toISOString() ?? null,

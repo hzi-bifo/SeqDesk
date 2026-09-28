@@ -114,7 +114,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
     db.exploreAnalysisRun.findMany({
       where: { analysis: analysisWhere },
       orderBy: { createdAt: "desc" },
-      include: { artifacts: true, revision: { select: { number: true } }, flowRun: { select: { number: true } } },
+      include: { artifacts: true, revision: { select: { number: true, params: true } }, flowRun: { select: { number: true } } },
     }),
     db.exploreFlow.findMany({ where: { targetKey }, select: { id: true, name: true } }),
   ]);
@@ -331,6 +331,8 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         metricsFlowRunNumber: completedByAnalysis.get(analysis.id)?.[0]?.flowRun?.number ?? null,
         metricDefinitions: runMetricDefinitions(completedByAnalysis.get(analysis.id)?.[0]?.results),
         metricsRunId: completedByAnalysis.get(analysis.id)?.[0]?.id,
+        // The settings the run behind the numbers ran with (they may differ from the step's current settings).
+        metricsRunParams: parseJsonObject(completedByAnalysis.get(analysis.id)?.[0]?.revision?.params) ?? {},
         metricsCompletedAt: completedByAnalysis.get(analysis.id)?.[0]?.completedAt?.toISOString() ?? null,
         notes: runNotes(completedByAnalysis.get(analysis.id)?.[0]?.results),
         findings: (completedByAnalysis.get(analysis.id)?.[0]?.artifacts ?? [])
@@ -339,7 +341,7 @@ export async function loadCanvasGraph(targetKey: string, reportId: string | null
         // The newest runs first in the source; oldest first here, for trends.
         metricHistory: (completedByAnalysis.get(analysis.id) ?? [])
           .slice(0, METRIC_HISTORY_RUNS)
-          .map((run) => ({ runNumber: run.runNumber, flowRunNumber: run.flowRun?.number ?? null, completedAt: run.completedAt?.toISOString() ?? null, metrics: runMetrics(run.results) ?? {} }))
+          .map((run) => ({ runNumber: run.runNumber, flowRunNumber: run.flowRun?.number ?? null, completedAt: run.completedAt?.toISOString() ?? null, metrics: runMetrics(run.results) ?? {}, params: parseJsonObject(run.revision?.params) ?? {} }))
           .reverse(),
         params: parseJsonObject(revision?.params) ?? {},
         // A kit brings its manifest; a plain script declares parameters through its sx.param calls.

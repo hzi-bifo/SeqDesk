@@ -110,7 +110,9 @@ export type CanvasAnalysisData = {
   metricsRunId?: string;
   metricsCompletedAt?: string | null;
   /** Metrics of the last completed runs, oldest first, for trends on key figures. */
-  metricHistory?: Array<{ runNumber: string; flowRunNumber?: number | null; completedAt: string | null; metrics: Record<string, string | number | boolean | null> }>;
+  metricHistory?: Array<{ runNumber: string; flowRunNumber?: number | null; completedAt: string | null; metrics: Record<string, string | number | boolean | null>; params?: Record<string, unknown> }>;
+  /** The settings the run behind `metrics` ran with. */
+  metricsRunParams?: Record<string, unknown>;
   /** How the report cites the step. */
   slug?: string | null;
 }

@@ -98,8 +98,10 @@ export interface ReportAnalysis {
   completedAt?: string | null;
   inputs?: Array<{ alias: string; datasetId: string; name: string }>;
   params?: Record<string, unknown>;
-  /** Metrics of the last completed runs, oldest first, for trends on key figures. */
-  history?: Array<{ runNumber: string; flowRunNumber?: number | null; completedAt: string | null; metrics: Record<string, string | number | boolean | null> }>;
+  /** The settings the run behind `metrics` ran with; Methods cite these, not the step's current settings. */
+  runParams?: Record<string, unknown>;
+  /** Metrics of the last completed runs, oldest first, for trends on key figures; `params` are that run's settings. */
+  history?: Array<{ runNumber: string; flowRunNumber?: number | null; completedAt: string | null; metrics: Record<string, string | number | boolean | null>; params?: Record<string, unknown> }>;
 }
 
 /** What a chart or numbers block needs to know about its table; the rows come from the rows API. */
@@ -220,6 +222,7 @@ export async function collectReportOutputs(targetKey: string, reportId: string |
       history: node.data.metricHistory ?? [],
       inputs: (node.data.inputs ?? []).map((binding) => ({ alias: binding.alias, datasetId: binding.datasetId, name: datasetNames.get(binding.datasetId) ?? binding.alias })),
       params: node.data.params ?? {},
+      runParams: node.data.metricsRunParams ?? {},
     });
   }
   const figures: ReportFigure[] = [];
