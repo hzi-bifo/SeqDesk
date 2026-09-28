@@ -10,6 +10,11 @@ Slurm and MySQL, and prints a PASS/FAIL table. Exit code 0 only when every scena
     python3 scripts/elektra-pipelines-check.py                      # everything
     python3 scripts/elektra-pipelines-check.py --only local-happy,slurm-cancel
     python3 scripts/elektra-pipelines-check.py --list
+    python3 scripts/elektra-pipelines-check.py --attached           # drive over ssh from here (drops with the VPN)
+
+By default the check runs detached ON elektra (a systemd --user unit, else nohup), so a dropped VPN does not stop it:
+it prints the folder where the log and the results table land ($T/check-runs/<timestamp>/: check.log, results.txt,
+exit-code), which you poll with ssh. `--status <folder>` prints the log tail and the table once it is there.
 
 Needs: ssh access (ELEKTRA_SSH, default the kit's key and port), a deployed Compute build in e2e/compute (the kit's
 git-archive sync), and the FASTQ QC study of the E2E lab. Only user space on elektra is touched.
@@ -36,9 +41,12 @@ HOOKS = f"""    mkdir -p fastqc_raw fastqc_reports summary
 LOCAL_ENV = "export SEQDESK_LOCAL_CORES=4 SEQDESK_LOCAL_RUN_CORES=2 SEQDESK_LOCAL_MEMORY_GB=24 SEQDESK_LOCAL_RUN_MEMORY_GB=8"
 
 
+ON_HOST = os.environ.get("ELEKTRA_ON_HOST") == "1"  # set by --detach: the check runs on elektra itself
+
+
 def sh(command, timeout=600, check=True):
-    """Run a bash command on elektra; returns stdout."""
-    full = SSH.split() + [f"bash -lc {shlex.quote(command)}"]
+    """Run a bash command on elektra (here when running on it); returns stdout."""
+    full = ["bash", "-lc", command] if ON_HOST else SSH.split() + [f"bash -lc {shlex.quote(command)}"]
     result = subprocess.run(full, capture_output=True, text=True, timeout=timeout)
     if check and result.returncode != 0:
         raise RuntimeError(f"elektra: {command[:120]}… failed: {result.stderr.strip()[-400:]}")
@@ -346,14 +354,44 @@ def teardown():
             print(f"teardown: {error}", file=sys.stderr)
 
 
+def detach(argv):
+    """Copy this script to elektra and start it there as its own unit; print where the results land."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    folder = f"{T}/check-runs/{stamp}"
+    here = os.path.abspath(__file__)
+    subprocess.run(SSH.split() + [f"mkdir -p {folder}"], check=True, timeout=60)
+    with open(here, "rb") as source:
+        subprocess.run(SSH.split() + [f"cat > {folder}/check.py"], stdin=source, check=True, timeout=120)
+    args = " ".join(shlex.quote(a) for a in argv)
+    inner = f"cd {folder} && ELEKTRA_ON_HOST=1 python3 -u check.py --attached {args} > check.log 2>&1; echo $? > exit-code"
+    # KillMode=process: the stack the check starts must not die with the unit mid-teardown; teardown stops it.
+    start = (f"systemd-run --user --unit=seqdesk-check-{stamp} -p KillMode=process --collect bash -lc {shlex.quote(inner)} 2>/dev/null"
+             f" || (nohup setsid bash -lc {shlex.quote(inner)} >/dev/null 2>&1 &)")
+    subprocess.run(SSH.split() + [start], check=True, timeout=60)
+    print(f"started on elektra: {folder}\npoll:   python3 scripts/elektra-pipelines-check.py --status {folder}")
+    return 0
+
+
+def status(folder):
+    out = subprocess.run(SSH.split() + [f"tail -n 25 {folder}/check.log; echo ---; cat {folder}/results.txt 2>/dev/null; cat {folder}/exit-code 2>/dev/null"], capture_output=True, text=True, timeout=60)
+    print(out.stdout or out.stderr)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--only", help="comma-separated scenario names")
     parser.add_argument("--list", action="store_true")
+    parser.add_argument("--attached", action="store_true", help="run here, driving elektra over ssh (or on elektra itself)")
+    parser.add_argument("--status", metavar="FOLDER", help="show a detached check's log tail and results")
     a = parser.parse_args()
     if a.list:
         print("\n".join(SCENARIOS))
         return 0
+    if a.status:
+        return status(a.status)
+    if not a.attached and not ON_HOST:
+        return detach(sys.argv[1:])
     names = a.only.split(",") if a.only else list(SCENARIOS)
     unknown = [n for n in names if n not in SCENARIOS]
     if unknown:
@@ -382,6 +420,9 @@ def main():
         print(f"{name:<{width}}  {result:<6}  {truth} / {shown}")
     failed = [r for r in c.rows if r[3] != "PASS"]
     print(f"\n{len(c.rows) - len(failed)} of {len(c.rows)} passed")
+    if ON_HOST:
+        with open("results.txt", "w") as table:
+            table.write("\n".join(f"{n}\t{r}\t{t}\t{sh_}" for n, t, sh_, r in c.rows) + f"\n{len(c.rows) - len(failed)} of {len(c.rows)} passed\n")
     return 1 if failed else 0
 
 
