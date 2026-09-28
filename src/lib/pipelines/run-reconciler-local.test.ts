@@ -14,7 +14,7 @@ import { plainRunStatus } from './plain-status';
 import type { QueueSnapshot } from './queue-probe';
 import { reconcileRun, summarizeTrace } from './run-reconciler';
 
-type Evidence = { run: string; trace: string | null; outputTail: string | null; errorTail: string | null; nextflowLog?: string | null; exitCode?: number; resumedTimeLimitSeconds?: number; dbErrorTail?: string };
+type Evidence = { run: string; trace: string | null; outputTail: string | null; errorTail: string | null; nextflowLog?: string | null; exitCode?: number; resumedTimeLimitSeconds?: number; dbErrorTail?: string; taskError?: string };
 const runs = JSON.parse(fs.readFileSync(path.join(__dirname, '__fixtures__', 'local-mac', 'runs.json'), 'utf8')) as Record<string, Evidence>;
 const now = new Date('2026-09-28T20:00:00Z');
 
@@ -33,6 +33,7 @@ const TABLE: [string, QueueSnapshot, string, RegExp, string][] = [
   ['completed', exited(0), 'completed', /^Finished in/, 'open-outputs'],
   ['nextflow-killed', exited(137), 'failed', /^Nextflow itself was stopped before it finished \(exit 137\)/, 'resume'],
   ['wrapper-killed', vanished, 'failed', /^The run stopped when its process on this server ended/, 'resume'],
+  ['truncated-input', exited(1), 'failed', /^The input did not pass the check: Failed to process file ERR10419931_1\.fastq\.gz$/, 'fix-data'],
   ['time-limit-resume', exited(1), 'failed', /^FastQC hit the 1 s time limit$/, 'resume'],
 ];
 
@@ -43,7 +44,7 @@ describe('the run reconciler on real local evidence', () => {
     const next = reconcileRun({ run: { status: 'running' }, trace: await traceOf(evidence.trace), scheduler, slurm: false });
     expect(next.status).toBe(status);
     expect(next.finalize).toBe(status === 'completed');
-    const plain = plainRunStatus({ now, trace: evidence.trace, taskError: evidence.nextflowLog ?? null, run: {
+    const plain = plainRunStatus({ now, trace: evidence.trace, taskError: evidence.taskError ?? evidence.nextflowLog ?? null, run: {
       status: next.status!, executionMode: 'local', queueJobId: 'local-42', outputTail: evidence.outputTail,
       errorTail: [evidence.dbErrorTail ?? evidence.errorTail, next.note].filter(Boolean).join('\n') || null,
       startedAt: '2026-09-28T19:59:00Z', completedAt: '2026-09-28T19:59:30Z', outputCount: status === 'completed' ? 3 : 0, resumedTimeLimitSeconds: evidence.resumedTimeLimitSeconds ?? null } });

@@ -225,7 +225,7 @@ const RULES: { kind: ErrorKind; test: (s: Signals) => boolean }[] = [
   { kind: 'node', test: (s) => s.states.includes('NODE_FAIL') || s.states.includes('BOOT_FAIL') || /NODE_FAIL|node failure|lost connection to (?:the )?node|Node \S+ not responding/i.test(s.text) || (s.exits.includes(143) && /CANCELLED D/i.test(s.text)) },
   { kind: 'database', test: (s) => /database (?:is )?not (?:found|installed)|db(?: path)? not found|(?:--\w*_?db|kraken2?_db|db_path)\b[^\n]*(?:not found|does not exist|missing)|no such database/i.test(s.text) },
   { kind: 'software', test: (s) => /Failed to create Conda environment|CondaHTTPError|CondaError|PackagesNotFoundError|ResolvePackageNotFound|UnsatisfiableError|Solving environment: failed|conda: command not found|Failed to pull (?:singularity|docker|apptainer)|Error pulling (?:image|container)|container (?:pull|image) (?:failed|not found)|mamba.*(?:error|failed)/i.test(s.text) },
-  { kind: 'input', test: (s) => /Validation of pipeline parameters failed|samplesheet|Missing required value|not a valid FASTQ|Cannot find any reads|MissingInputFile|No files match pattern|input file[^\n]*(?:not found|missing|empty)|Input file does not exist|unexpected end of file|gzip: .*(?:unexpected end|not in gzip format)/i.test(s.text) },
+  { kind: 'input', test: (s) => /Validation of pipeline parameters failed|samplesheet|Missing required value|not a valid FASTQ|Cannot find any reads|MissingInputFile|No files match pattern|input file[^\n]*(?:not found|missing|empty)|Input file does not exist|unexpected end of file|gzip: .*(?:unexpected end|not in gzip format)|Unexpected end of (?:ZLIB|GZIP) input stream|SequenceFormatException|unexpected EOF|Failed to process file/i.test(s.text) },
 ];
 
 interface Signals { states: string[]; exits: number[]; text: string }
@@ -325,6 +325,11 @@ export function firstErrorLines(texts: (string | null | undefined)[], max = 3): 
   const picked: string[] = [];
   const push = (line: string) => { const clean = line.trim().slice(0, 240); if (clean && !picked.includes(clean) && picked.length < max) picked.push(clean); };
   const block = lines.findIndex((l) => /Error executing process|Process `[^`]+` terminated|ERROR ~/.test(l));
+  // The failed task's own error comes before Nextflow's wrapper in what the caller reads (the task's .command.err
+  // first): "Failed to process file x.fastq.gz" says more than "Process `RUN_FASTQC` terminated with an error".
+  if (block > 0) {
+    for (const l of lines.slice(0, block).filter((line) => /error|exception|failed|killed|not found|No such file/i.test(line) && !/^\s*at |^error \[nextflow\./.test(line)).slice(0, 2)) push(l);
+  }
   if (block >= 0) {
     push(lines[block]);
     for (const l of lines.slice(block + 1)) if (/error|exit status|Caused by|Missing|not found|failed|Killed|oom|Command exit/i.test(l)) push(l);
@@ -399,7 +404,7 @@ function errorSentence(kind: ErrorKind, process: string | null, sample: string |
       return { sentence: `${capital(stage)} hit the ${durationWords(seconds)} time limit`, action: { kind: 'resume', label: `Resume with ${next.replace(/h$/, ' h')}`, time: next } };
     }
     case 'input': {
-      const detail = lines.find((l) => /Missing required value|not a valid|no reverse|Cannot find|No such file|samplesheet/i.test(l));
+      const detail = lines.find((l) => /Missing required value|not a valid|no reverse|Cannot find|No such file|samplesheet|Failed to process file|Unexpected end|unexpected EOF/i.test(l));
       return { sentence: detail ? `The input did not pass the check: ${detail.replace(/^.*?(?:ERROR ~|\*)\s*/, '').slice(0, 140)}` : 'The input did not pass the pipeline’s check', action: { kind: 'fix-data', label: 'Fix in Data' } };
     }
     case 'database':
