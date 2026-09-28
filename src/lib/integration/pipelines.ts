@@ -105,8 +105,9 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       const scope = decideServerCapability(session, 'analysis.run').grant?.scope === 'installation';
       const samples = await db.sample.findMany({
         where: { AND: [sequencingEntryScope(session.user.id, scope), { OR: [{ id: { in: keys } }, { sampleAccessionNumber: { in: keys } }, { sampleId: { in: keys } }, { reads: { some: { runAccessionNumber: { in: keys } } } }] }] },
-        select: { id: true, sampleId: true, reads: { where: { isActive: true }, select: { id: true, file1: true }, take: 1 } },
+        select: { id: true, sampleId: true, reads: { where: { NOT: { file1: null } }, select: { id: true, file1: true }, take: 1 } },
       });
+      // Imported records are stored inactive; any read with a file counts, and ensureDataStudy picks it at start.
       const usable = samples.filter((s) => s.reads[0]?.file1);
       if (!usable.length) throw new RouteError(404, `No read records you can use were found for ${keys.join(', ')}.`);
       const study = await dataStudyFor(targetKey, session.user.id);

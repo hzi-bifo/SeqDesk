@@ -105,12 +105,24 @@ export async function dataStudyFor(targetKey: string, userId: string): Promise<{
  * Read records (ENA, SRA or other imports) that belong to an Analysis study: their samples are linked to its data
  * study (imported into it, or linked by sample later). Pipelines use them in place, no copy and no size cap.
  */
-export async function linkedReadRecords(dataStudyId: string): Promise<{ sampleId: string; label: string; paired: boolean; readId: string }[]> {
+export async function linkedReadRecords(dataStudyId: string): Promise<{ sampleId: string; label: string; paired: boolean; readId: string; active: boolean }[]> {
+  // Imports store their reads inactive (Read.isActive is the pipeline's chosen input, one per sample). A sample's
+  // active read wins; a sample with none uses its newest imported read, which ensureDataStudy then makes active.
   const samples = await db.sample.findMany({
     where: { OR: [{ studyId: dataStudyId }, { studyMemberships: { some: { studyId: dataStudyId } } }] },
-    select: { id: true, sampleId: true, sampleTitle: true, reads: { where: { isActive: true, NOT: { dataClassSource: 'analysis_data' } }, select: { id: true, file1: true, file2: true }, take: 1 } },
+    select: { id: true, sampleId: true, sampleTitle: true, reads: { where: { NOT: { dataClassSource: 'analysis_data' } }, select: { id: true, file1: true, file2: true, isActive: true }, orderBy: [{ isActive: 'desc' }, { id: 'desc' }] } },
   });
-  return samples.filter((s) => s.reads.length && s.reads[0].file1).map((s) => ({ sampleId: s.id, label: s.sampleId, paired: !!s.reads[0].file2, readId: s.reads[0].id }));
+  return samples.flatMap((s) => {
+    const read = s.reads.find((r) => r.file1);
+    return read ? [{ sampleId: s.id, label: s.sampleId, paired: !!read.file2, readId: read.id, active: !!read.isActive }] : [];
+  });
+}
+
+/** Make a linked record the sample's pipeline input when the sample has none, keeping one active read per sample. */
+export async function activateLinkedRecord(record: { sampleId: string; readId: string; active: boolean }): Promise<void> {
+  if (record.active) return;
+  if (await db.read.count({ where: { sampleId: record.sampleId, isActive: true } })) return;
+  await db.read.update({ where: { id: record.readId }, data: { isActive: true } });
 }
 
 /** "1 FASTQ pair + 2 imported read records" for the drawer. */
@@ -149,6 +161,7 @@ export async function ensureDataStudy(input: { targetKey: string; userId: string
   for (const record of await linkedReadRecords(study.id)) {
     if (sampleIds.includes(record.sampleId)) continue;
     if (input.onlySamples?.length && !input.onlySamples.includes(record.label) && !input.onlySamples.includes(record.sampleId)) continue;
+    await activateLinkedRecord(record);
     sampleIds.push(record.sampleId);
   }
   return { studyId: study.id, sampleIds, pairs: wanted };
