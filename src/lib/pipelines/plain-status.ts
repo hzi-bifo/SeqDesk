@@ -63,6 +63,8 @@ export interface PlainRunInput {
   askedCores?: number | null;
   /** When the monitor last read the scheduler for this run (queueUpdatedAt); old while the run is active = stale card. */
   checkedAt?: Date | string | null;
+  /** The conda solver's own reason for a failed environment (logs/conda-explain.txt), shown first. */
+  softwareReason?: string[] | null;
   /** The server's copy of the pipeline differs from the one this run started with (its own copy in the run folder). */
   pipelineChanged?: boolean;
   /** The run folder is gone (deleted while it ran, or after): nothing can continue or resume there. */
@@ -464,7 +466,8 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
     for (const stage of stages) if (stage.state === 'running') stage.state = 'failed';
     const exitCode = failed?.exit ?? failedLine?.exitCode ?? null;
     const kind = classifyFailure({ texts, exitCodes: [failed?.exit, ...sacct.map((l) => l.exitCode), ...sacct.map((l) => (l.signal === 9 ? 137 : null))], slurmStates: [...sacct.map((l) => l.state), queueState] });
-    const lines = firstErrorLines([context.taskError, run.errorTail, run.outputTail]);
+    const found = firstErrorLines([context.taskError, run.errorTail, run.outputTail]);
+    const lines = kind === 'software' && run.softwareReason?.length ? [...run.softwareReason.map((l) => redactLog(l).slice(0, 240)), ...found].slice(0, 3) : found;
     // Nextflow itself was killed (kill -9, the OOM killer on the node running it): no task failed, the wrapper saw 137.
     const exits = [...(run.outputTail ?? '').matchAll(/Pipeline completed with exit code: (\d+)/g)];
     const wrapperExit = exits.length ? Number(exits[exits.length - 1][1]) : NaN;

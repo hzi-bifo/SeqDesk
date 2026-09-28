@@ -29,6 +29,7 @@ import { resolveTableSpec } from '@/lib/explore/builders/pipeline-table';
 import { outputFileView } from '@/lib/explore/pipeline-output-types';
 import { readTail } from './nextflow';
 import { historyLines } from './run-reconciler';
+import { CONDA_EXPLAIN_FILE } from './conda-explain';
 import { parseTraceContent } from './nextflow/trace-parser';
 
 /** What a pipeline does, in the drawer's groups. */
@@ -235,6 +236,9 @@ async function failedTaskError(runFolder: string | null, trace: string | null): 
 /** One run as a card/record: plain status, outputs, provenance, datasets made from it. */
 export async function runView(run: RunRow, options: { detail?: boolean; targetKey?: string } = {}) {
   const trace = run.runFolder ? await fs.readFile(path.join(run.runFolder, 'trace.txt'), 'utf8').catch(() => null) : null;
+  const softwareReason = run.status === 'failed' && run.runFolder
+    ? (await fs.readFile(path.join(run.runFolder, CONDA_EXPLAIN_FILE), 'utf8').catch(() => '')).split('\n').filter(Boolean)
+    : [];
   const folderMissing = !!run.runFolder && !(await fs.stat(run.runFolder).then((st) => st.isDirectory(), () => false));
   // How many processes the run's own copy of a bundled workflow declares (FastQC's definition names one step, its
   // workflow has two processes; Nextflow's redrawn progress lines alone gave "step 1 of 1").
@@ -261,7 +265,7 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
   const lastResume = resumes[resumes.length - 1]?.message ?? '';
   const resumedTime = /· time (\d+)\.(s|m|h|d)\b/.exec(lastResume);
   const resumedTimeLimitSeconds = resumedTime ? Number(resumedTime[1]) * ({ s: 1, m: 60, h: 3600, d: 86400 } as const)[resumedTime[2] as 's'] : null;
-  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, folderMissing, pipelineChanged, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
+  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, folderMissing, pipelineChanged, softwareReason, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
   const pkg = getPackage(run.pipelineId);
   const datasets = options.targetKey ? await db.exploreDataset.findMany({ where: { targetKey: options.targetKey, kind: 'pipeline-table', sourceConfig: { contains: `"runIds":["${run.id}"]` } }, select: { id: true, name: true, sourceConfig: true, currentVersionId: true, versions: { select: { number: true }, orderBy: { number: 'desc' }, take: 1 } } }) : [];
   const person = run.user ? [run.user.firstName, run.user.lastName].filter(Boolean).join(' ') || run.user.email : null;

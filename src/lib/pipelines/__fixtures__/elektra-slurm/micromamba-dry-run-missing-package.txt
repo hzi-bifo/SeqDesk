@@ -1,0 +1,12 @@
+Using Cached Shard Index for bioconda/linux-64                                                      ✔ Done
+Using Cached Shard Index for bioconda/noarch                                                        ✔ Done
+Fetching and Parsing Packages' Shards                                                           ⧖ Starting
+Fetching and Parsing Packages' Shards                                                     ✔ Done (0.0 sec)
+Parsing Packages' Records                                                                 ✔ Done (5.6 sec)
+
+Resolving Environment                                                                           ⧖ Starting
+Resolving Environment                                                                     ✔ Done (0.8 sec)
+error    libmamba Could not solve for environment specs
+    The following package could not be installed
+    └─ no-such-package-seqdesk =9.9 * does not exist (perhaps a typo or a missing channel).
+critical libmamba Could not solve for environment specs

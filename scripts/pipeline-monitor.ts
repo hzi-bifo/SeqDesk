@@ -15,6 +15,7 @@ import { readIdentityCheckedQueueSnapshot } from '../src/lib/pipelines/queue-pro
 import { notifyPipelineRunTerminalInApp } from '../src/lib/notifications/in-app';
 import { cancelLeftoverSlurmTaskJobs, readEndedTaskJob, readWaitingTaskReason } from '../src/lib/pipelines/slurm-task-cleanup';
 import { classifyFailure } from '../src/lib/pipelines/plain-status';
+import { explainCondaFailure } from '../src/lib/pipelines/conda-explain';
 
 const DEFAULT_INTERVAL_MS = 15000;
 
@@ -166,6 +167,11 @@ export async function syncRun(run: {
     ) {
       // The run's own job is gone; its nf-* task jobs must not keep running (scancel of the head, its time limit).
       if (slurm) await cancelLeftoverSlurmTaskJobs(run.runFolder);
+      // Nextflow's own message for a failed conda environment is empty; ask the solver why, once, for the card.
+      const log = `${update.outputTail ?? ''}\n${update.errorTail ?? ''}`;
+      if (nextStatus === 'failed' && run.runFolder && /Failed to create Conda environment/.test(log)) {
+        await explainCondaFailure(run.runFolder, log).catch((error) => console.error('[pipeline-monitor] Could not explain the conda failure for run', run.id, error));
+      }
       await notifyPipelineRunTerminalInApp(
         run.id,
         run.status,
