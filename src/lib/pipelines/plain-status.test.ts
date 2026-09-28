@@ -107,6 +107,15 @@ describe('plainRunStatus', () => {
     expect(status.stages).toEqual([{ name: 'RUN_FASTQC', state: 'failed' }]);
     expect(classifyFailure({ texts: ["process hasn't exited"] })).toBe('unknown');
   });
+  it('local: a killed wrapper is "the process ended", even when the log names the task Nextflow was stopping', () => {
+    // Real Mac run: kill -9 of run.sh; Nextflow noticed as it died and its log names RUN_FASTQC (no exit code).
+    const errorTail = "java.util.ConcurrentModificationException\nThe run's process on this server ended without writing its exit code (the server restarted, the host rebooted or the process was killed).";
+    const outputTail = "[PROCESS c6/e95999] RUN_FASTQC (ERR10419931)\n[WARN] WARN: Killing running tasks (1)\n\n[FAILED] completed=0 failed=0 cached=0";
+    const trace = 'task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\n1\tc6/e95999\t1\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tABORTED\t-\n';
+    const status = plainRunStatus({ now, run: { status: 'failed', executionMode: 'local', queueJobId: 'local-42', errorTail, outputTail }, trace });
+    expect([status.shape, status.action?.kind]).toEqual(['needs-you', 'resume']);
+    expect(status.sentence).toMatch(/^The run stopped when its process on this server ended/);
+  });
   it('queued on SLURM says the reason in words and offers one action', () => {
     const resources = plainRunStatus({ now, run: { status: 'queued', executionMode: 'slurm', queueJobId: '4819227', queueStatus: 'PENDING', queueReason: 'Resources', askedMemory: '256 GB', queuedAt: '2026-09-28T11:00:00Z' } });
     expect([resources.shape, resources.word]).toEqual(['waiting', 'Queued']);

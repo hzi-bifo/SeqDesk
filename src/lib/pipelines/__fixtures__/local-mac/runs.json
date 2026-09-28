@@ -1,0 +1,41 @@
+{
+ "time-limit-resume": {
+  "run": "FASTQC-20260928-004",
+  "trace": "task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\tattempt\tsubmit\tstart\tcomplete\tduration\trealtime\t%cpu\tpeak_rss\tpeak_vmem\trchar\twchar\n1\te8/5d5108\t76383\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tRUNNING\t-\t1\t2026-09-28 20:45:43.747\t2026-09-28 20:45:43.880\t-\t-\t-\t-\t-\t-\t-\t-\n",
+  "outputTail": "Starting ./workflow (local) pipeline at Mon Sep 28 20:45:16 CEST 2026\nPipeline completed with exit code: 1 at Mon Sep 28 20:45:18 CEST 2026\nResuming ./workflow (local) pipeline at Mon Sep 28 20:45:26 CEST 2026\nUsing nextflow: /opt/homebrew/Caskroom/miniconda/base/envs/seqdesk-pipelines/bin/nextflow\nLimits: none (cores 7, memory 24 GB, processes 0; enforced: nothing)\nWARN: It appears you have never run this project before -- Option `-resume` is ignored\n[PIPELINE] main.nf | profile=standard\n[WORKDIR] /srv/seqdesk/runs/FASTQC-20260928-004--id-cmullkqil003lcxz7hvnhqklb/work\n[WARN] WARN: Task runtime metrics are not reported when using macOS without a container engine\n[PROCESS e8/5d5108] RUN_FASTQC (ERR10419931)\n[ERROR] ERROR ~ Error executing process > 'RUN_FASTQC (ERR10419931)'\n\nCaused by:\n  process hasn't exited\n\n\n\n -- Check '.nextflow.log' file for details\n\n[FAILED] completed=0 failed=0 cached=0\nPipeline completed with exit code: 1 at Mon Sep 28 20:45:52 CEST 2026\n",
+  "errorTail": "\n\n",
+  "nextflowLog": "  error [java.lang.IllegalThreadStateException]: process hasn't exited\n  process hasn't exited\njava.lang.IllegalThreadStateException: process hasn't exited\n\tat nextflow.executor.local.LocalTaskHandler.checkIfCompleted(LocalTaskHandler.groovy:220)\nSep-28 20:45:44.984 [Task monitor] DEBUG nextflow.Session - Session aborted -- Cause: process hasn't exited\n",
+  "resumedTimeLimitSeconds": 1
+ },
+ "completed": {
+  "run": "FASTQC-20260928-013",
+  "trace": "task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\tattempt\tsubmit\tstart\tcomplete\tduration\trealtime\t%cpu\tpeak_rss\tpeak_vmem\trchar\twchar\n1\t55/6d7a64\t37752\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tCOMPLETED\t0\t1\t2026-09-28 21:31:27.707\t2026-09-28 21:31:27.795\t2026-09-28 21:31:38.635\t10.9s\t10.8s\t-\t-\t-\t-\t-\n2\t66/819bfa\t38262\tSUMMARIZE_FASTQC\tfastqc-summary\tSUMMARIZE_FASTQC (fastqc-summary)\tCOMPLETED\t0\t1\t2026-09-28 21:31:39.023\t2026-09-28 21:31:39.054\t2026-09-28 21:31:39.309\t286ms\t66ms\t-\t-\t-\t-\t-\n",
+  "outputTail": "Starting ./workflow (local) pipeline at Mon Sep 28 21:31:22 CEST 2026\nUsing nextflow: /opt/homebrew/Caskroom/miniconda/base/envs/seqdesk-pipelines/bin/nextflow\nLimits: none (cores 2, memory 24 GB, processes 0; enforced: nothing)\n[PIPELINE] main.nf | profile=standard\n[WORKDIR] /srv/seqdesk/runs/FASTQC-20260928-013--id-cmuln84wh0003h5mng1xd5pi2/work\n[WARN] WARN: Task runtime metrics are not reported when using macOS without a container engine\n[PROCESS 55/6d7a64] RUN_FASTQC (ERR10419931)\n[PROCESS 66/819bfa] SUMMARIZE_FASTQC (fastqc-summary)\n\n[SUCCESS] completed=2 failed=0 cached=0\nPipeline completed with exit code: 0 at Mon Sep 28 21:31:41 CEST 2026\n",
+  "errorTail": "\n",
+  "nextflowLog": null
+ },
+ "nextflow-killed": {
+  "run": "FASTQC-20260928-016",
+  "trace": "task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\tattempt\tsubmit\tstart\tcomplete\tduration\trealtime\t%cpu\tpeak_rss\tpeak_vmem\trchar\twchar\n",
+  "outputTail": "Starting ./workflow (local) pipeline at Mon Sep 28 21:47:54 CEST 2026\nUsing nextflow: /opt/homebrew/Caskroom/miniconda/base/envs/seqdesk-pipelines/bin/nextflow\nLimits: none (cores 2, memory 24 GB, processes 0; enforced: nothing)\n[PIPELINE] main.nf | profile=standard\n[WORKDIR] /srv/seqdesk/runs/FASTQC-20260928-016--id-cmulntet70003hbwpqz97alia/work\n[WARN] WARN: Task runtime metrics are not reported when using macOS without a container engine\n[PROCESS 67/cbd1b4] RUN_FASTQC (ERR10419931)\nPipeline completed with exit code: 137 at Mon Sep 28 21:48:01 CEST 2026\n",
+  "errorTail": "\n",
+  "nextflowLog": null,
+  "exitCode": 137
+ },
+ "wrapper-killed": {
+  "run": "FASTQC-20260928-019",
+  "trace": "task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\tattempt\tsubmit\tstart\tcomplete\tduration\trealtime\t%cpu\tpeak_rss\tpeak_vmem\trchar\twchar\n1\tc6/e95999\t73038\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tABORTED\t-\t1\t2026-09-28 21:52:36.119\t2026-09-28 21:52:36.189\t-\t-\t-\t-\t-\t-\t-\t-\n",
+  "outputTail": "Starting ./workflow (local) pipeline at Mon Sep 28 21:52:33 CEST 2026\nUsing nextflow: /opt/homebrew/Caskroom/miniconda/base/envs/seqdesk-pipelines/bin/nextflow\nLimits: none (cores 2, memory 24 GB, processes 0; enforced: nothing)\n[PIPELINE] main.nf | profile=standard\n[WORKDIR] /srv/seqdesk/runs/FASTQC-20260928-019--id-cmulnze1c0003c661j8d0frm5/work\n[WARN] WARN: Task runtime metrics are not reported when using macOS without a container engine\n[PROCESS c6/e95999] RUN_FASTQC (ERR10419931)\n[WARN] WARN: Killing running tasks (1)\n\n[FAILED] completed=0 failed=0 cached=0\n",
+  "errorTail": "\n",
+  "nextflowLog": null,
+  "dbErrorTail": "java.util.ConcurrentModificationException\nThe run's process on this server ended without writing its exit code (the server restarted, the host rebooted or the process was killed)."
+ },
+ "cancelled-running": {
+  "run": "FASTQC-20260928-012",
+  "trace": "task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\tattempt\tsubmit\tstart\tcomplete\tduration\trealtime\t%cpu\tpeak_rss\tpeak_vmem\trchar\twchar\n1\ted/41e282\t18513\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tABORTED\t-\t1\t2026-09-28 21:16:47.207\t2026-09-28 21:16:47.285\t-\t-\t-\t-\t-\t-\t-\t-\n",
+  "outputTail": "Starting ./workflow (local) pipeline at Mon Sep 28 21:16:40 CEST 2026\nUsing nextflow: /opt/homebrew/Caskroom/miniconda/base/envs/seqdesk-pipelines/bin/nextflow\nLimits: none (cores 2, memory 24 GB, processes 0; enforced: nothing)\n[PIPELINE] main.nf | profile=standard\n[WORKDIR] /srv/seqdesk/runs/FASTQC-20260928-012--id-cmulmp8cw001811fqlq1clmo5/work\n[WARN] WARN: Task runtime metrics are not reported when using macOS without a container engine\n[PROCESS ed/41e282] RUN_FASTQC (ERR10419931)\nPipeline completed with exit code: 0 at Mon Sep 28 21:16:48 CEST 2026\n[WARN] WARN: Killing running tasks (1)\n\n[FAILED] completed=0 failed=0 cached=0\n",
+  "errorTail": "\n",
+  "nextflowLog": null,
+  "exitCode": 0
+ }
+}

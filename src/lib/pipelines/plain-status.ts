@@ -509,7 +509,8 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
     const found = firstErrorLines([context.taskError, run.errorTail, run.outputTail]);
     const lines = kind === 'software' && run.softwareReason?.length ? [...run.softwareReason.map((l) => redactLog(l).slice(0, 240)), ...found].slice(0, 3) : found;
     // A local run whose process vanished without its exit code (the server restarted, a reboot).
-    if (!failed && /ended without writing its exit code/.test(run.errorTail ?? '')) {
+    // (A task Nextflow named while it was being killed has no exit code of its own: that is not a failure of the task.)
+    if ((!failed || failed.exit == null) && /ended without writing its exit code/.test(run.errorTail ?? '')) {
       const sentence = 'The run stopped when its process on this server ended (a restart or a kill) · Resume continues where it stopped';
       return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action: { kind: 'resume', label: 'Resume' },
         error: { kind: 'unknown', sentence, firstLines: lines, process: null, sample: null, exitCode: null } };
