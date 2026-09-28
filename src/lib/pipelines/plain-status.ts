@@ -179,7 +179,7 @@ export function durationWords(seconds: number | null | undefined): string {
   const m = Math.round(s / 60);
   if (m < 60) return `${m} min`;
   const h = Math.floor(m / 60), rest = m % 60;
-  return rest ? `${h} h ${rest}` : `${h} h`;
+  return rest ? `${h} h ${rest} min` : `${h} h`;
 }
 
 const toDate = (v: Date | string | null | undefined) => (v ? new Date(v) : null);
@@ -248,6 +248,31 @@ export function firstErrorLines(texts: (string | null | undefined)[], max = 3): 
   for (const l of lines) if (/error|exception|failed|killed|oom_kill|CANCELLED|not found|No such file/i.test(l) && !/^\s*at /.test(l)) push(l);
   if (!picked.length) for (const l of lines.slice(-max)) push(l);
   return picked;
+}
+
+// ------------------------------------------------------------------ Nextflow's console progress
+
+export interface LogProgress { submitted: number; processes: { name: string; done: number; total: number }[] }
+
+/**
+ * The last progress block of Nextflow's console log ("executor >  slurm (2)" and one "[ab/cdef12] NAME (tag) | 1 of 2"
+ * line per process). trace.txt only gets a row when a task ends, so while the first task runs this is the only sign
+ * that work was handed to the executor. Long names come shortened with "…"; those keep no name.
+ */
+export function logProgress(text: string | null | undefined): LogProgress | null {
+  if (!text) return null;
+  const lines = text.replace(/\u001b\]8;;[^\u0007\u001b]*(?:\u0007|\u001b\\)/g, '').replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').split(/\r?\n/);
+  let start = -1;
+  for (let i = lines.length - 1; i >= 0 && start < 0; i -= 1) if (/^executor >\s+\S+ \(\d+\)/.test(lines[i].trim())) start = i;
+  if (start < 0) return null;
+  const submitted = Number(/\((\d+)\)/.exec(lines[start])![1]);
+  const processes: LogProgress['processes'] = [];
+  for (const line of lines.slice(start + 1)) {
+    const m = /^\[[^\]]*\]\s+(?:process > )?(\S+)(?:\s+\([^)]*\))?\s*(?:\|\s*(\d+) of (\d+))?/.exec(line.trim());
+    if (!m) break;
+    processes.push({ name: m[1].includes('…') ? '' : m[1], done: Number(m[2] ?? 0), total: Number(m[3] ?? 0) });
+  }
+  return { submitted, processes };
 }
 
 // ------------------------------------------------------------------ the status
@@ -339,11 +364,16 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
   if (status === 'running' && (tasks.length || !slurm || queueState === 'RUNNING')) {
     const current = rows.find((row) => row.status === 'running') ?? firstOpen;
     const index = current ? rows.indexOf(current) + 1 : rows.length;
-    const where = current ? ` · step ${index} of ${rows.length}: ${stageWords(current.name)}` : '';
+    const progress = tasks.length ? null : logProgress(run.outputTail);
+    const logged = progress?.processes.findIndex((p) => p.total > p.done) ?? -1;
+    const where = current ? ` · step ${index} of ${rows.length}: ${stageWords(current.name)}`
+      : progress && logged >= 0 ? ` · step ${logged + 1} of ${progress.processes.length}${progress.processes[logged].name ? `: ${stageWords(progress.processes[logged].name)}` : ''}` : '';
     const left = estimate.seconds != null && elapsedSeconds != null
       ? (estimate.seconds > elapsedSeconds ? ` · ~${durationWords(estimate.seconds - elapsedSeconds)} left` : ' · taking longer than past runs')
       : ` · ${estimate.words}`;
-    if (!tasks.length && /conda|environment|Launching|Preparing/i.test(`${run.currentStep ?? ''} ${run.outputTail ?? ''}`)) {
+    // Every log says "Launching `main.nf`" and names its conda; only a log where no task has been handed to the
+    // executor yet is still preparing (building environments), not one whose first task is running.
+    if (!tasks.length && !progress?.submitted && /conda|environment|Launching|Preparing/i.test(`${run.currentStep ?? ''} ${run.outputTail ?? ''}`)) {
       return { ...base, shape: 'preparing', word: 'Preparing', sentence: 'Preparing software · first run only', action: { kind: 'cancel', label: 'Cancel' } };
     }
     return { ...base, shape: 'running', word: 'Running', sentence: `Running${where}${left}`, action: { kind: 'cancel', label: 'Cancel' } };
