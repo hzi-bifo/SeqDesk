@@ -21,6 +21,7 @@ import {
 } from '@/lib/pipelines/run-completion';
 import { findTraceFile, parseTraceFile } from '@/lib/pipelines/nextflow';
 import { cancelLeftoverSlurmTaskJobs } from '@/lib/pipelines/slurm-task-cleanup';
+import { transitionEvent } from '@/lib/pipelines/run-reconciler';
 import { getPipelineRunTargetKey } from '@/lib/pipelines/result-files';
 import { resolveCondaEnvironmentReference } from '@/lib/pipelines/conda-environment';
 import {
@@ -2058,6 +2059,7 @@ export async function cancelPipelineRunForOperator(
     return cancellationClaimUnavailableResponse(current, newStatus);
   }
 
+  await Promise.resolve().then(() => db.pipelineRunEvent.create({ data: transitionEvent(runId, claimedRun.status, newStatus, 'manual') })).catch(() => undefined);
   return jsonResponse({ success: true, status: newStatus });
 }
 

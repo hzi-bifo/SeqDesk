@@ -6,16 +6,12 @@ import {
   combineTaskStatuses,
   deriveStepStatus,
   getTraceTaskAttemptGroupKeys,
-  reconcileRunStatus,
   traceFailuresAreOnlyAborts,
   type RunStatus,
 } from '../src/lib/pipelines/monitor-status';
+import { reconcileRun, summarizeTrace, transitionEvent } from '../src/lib/pipelines/run-reconciler';
 import { finalizeCompletedPipelineRun } from '../src/lib/pipelines/run-completion';
-import {
-  isQueueSnapshotRetryable,
-  queueSnapshotToRunStatus,
-  readIdentityCheckedQueueSnapshot,
-} from '../src/lib/pipelines/queue-probe';
+import { readIdentityCheckedQueueSnapshot } from '../src/lib/pipelines/queue-probe';
 import { notifyPipelineRunTerminalInApp } from '../src/lib/notifications/in-app';
 import { cancelLeftoverSlurmTaskJobs, readEndedTaskJob, readWaitingTaskReason } from '../src/lib/pipelines/slurm-task-cleanup';
 import { classifyFailure } from '../src/lib/pipelines/plain-status';
@@ -51,192 +47,56 @@ export async function syncRun(run: {
   let currentStep: string | null = null;
   let progress: number | null = null;
 
-  const pipelineSteps = getStepsForPipeline(run.pipelineId);
-  const totalSteps = pipelineSteps.length;
-  const declaredStepIds = new Set(pipelineSteps.map((step) => step.id));
-
   if (run.runFolder) {
     const tracePath = await findTraceFile(run.runFolder);
     if (tracePath) {
       const trace = await parseTraceFile(tracePath);
-      const taskGroupKeys = getTraceTaskAttemptGroupKeys(trace.tasks);
-      traceFailuresAborted = traceFailuresAreOnlyAborts(trace.tasks);
-      const stepMap = new Map<string, {
-        stepName: string;
-        status: 'pending' | 'running' | 'completed' | 'failed';
-        // A step can map several DISTINCT processes/per-sample tasks to one id,
-        // so we keep each task's attempts separate to resolve retries WITHOUT
-        // letting one task's success mask a different task's failure.
-        attemptsByTask: Map<string, ('pending' | 'running' | 'completed' | 'failed')[]>;
-        startedAt?: Date;
-        completedAt?: Date;
-      }>();
-
-      for (const [taskIndex, task] of trace.tasks.entries()) {
-        const stepDef = findStepByProcess(run.pipelineId, task.process);
-        const stepId = stepDef?.id || task.process;
-        const stepName = stepDef?.name || task.process;
-
-        if (!stepMap.has(stepId)) {
-          stepMap.set(stepId, { stepName, status: 'pending', attemptsByTask: new Map() });
-        }
-
-        const entry = stepMap.get(stepId)!;
-        // The parser supplies task_id/attempt metadata when available. The
-        // grouping helper uses it to join retries while keeping blank/reused-tag
-        // siblings distinct; ambiguous legacy rows remain separate (fail-safe).
-        const taskIdentity = taskGroupKeys[taskIndex];
-        const attempts = entry.attemptsByTask.get(taskIdentity) ?? [];
-        attempts.push(deriveStepStatus(task.status, task.exit));
-        entry.attemptsByTask.set(taskIdentity, attempts);
-
-        const startedAt = task.start || task.submit;
-        if (startedAt && (!entry.startedAt || startedAt < entry.startedAt)) {
-          entry.startedAt = startedAt;
-        }
-        if (task.complete && (!entry.completedAt || task.complete > entry.completedAt)) {
-          entry.completedAt = task.complete;
-        }
-      }
-
-      for (const entry of stepMap.values()) {
-        // Resolve each distinct task (retry-aware), then combine across tasks so
-        // a genuinely-failed sibling is never hidden by another task's success.
-        const taskStatuses = Array.from(entry.attemptsByTask.values()).map(aggregateStepStatus);
-        entry.status = combineTaskStatuses(taskStatuses);
-      }
-
-      for (const [stepId, entry] of stepMap) {
+      const summary = summarizeTrace(run.pipelineId, trace.tasks, trace.overallProgress);
+      for (const [stepId, entry] of summary.steps) {
         await db.pipelineRunStep.upsert({
-          where: {
-            pipelineRunId_stepId: {
-              pipelineRunId: run.id,
-              stepId,
-            },
-          },
-          create: {
-            pipelineRunId: run.id,
-            stepId,
-            stepName: entry.stepName,
-            status: entry.status,
-            startedAt: entry.startedAt,
-            completedAt: entry.completedAt,
-          },
-          update: {
-            status: entry.status,
-            stepName: entry.stepName,
-            startedAt: entry.startedAt,
-            completedAt: entry.completedAt,
-          },
+          where: { pipelineRunId_stepId: { pipelineRunId: run.id, stepId } },
+          create: { pipelineRunId: run.id, stepId, stepName: entry.stepName, status: entry.status, startedAt: entry.startedAt, completedAt: entry.completedAt },
+          update: { status: entry.status, stepName: entry.stepName, startedAt: entry.startedAt, completedAt: entry.completedAt },
         });
       }
-
-      const runningSteps = Array.from(stepMap.values()).filter((s) => s.status === 'running');
-      const completedKnownSteps = Array.from(stepMap.entries()).filter(
-        ([stepId, step]) => declaredStepIds.has(stepId) && step.status === 'completed'
-      ).length;
-      if (runningSteps.length > 0) {
-        currentStep = runningSteps[0].stepName;
-        derivedStatus = 'running';
-      } else if (
-        stepMap.size > 0 &&
-        Array.from(stepMap.values()).every((s) => s.status === 'completed') &&
-        totalSteps > 0 &&
-        completedKnownSteps === totalSteps
-      ) {
-        // stepMap contains only processes that have appeared so far. Require every
-        // declared step for both local and SLURM runs; packages whose definitions
-        // intentionally cover only part of an external workflow finalize from the
-        // authoritative local exit marker or scheduler state below.
-        derivedStatus = 'completed';
-        currentStep = 'Completed';
-      } else if (Array.from(stepMap.values()).some((s) => s.status === 'failed')) {
-        derivedStatus = 'failed';
-        currentStep = 'Failed';
-      }
-
-      if (totalSteps > 0) {
-        progress = Math.min(99, Math.round((completedKnownSteps / totalSteps) * 100));
-      } else {
-        progress = trace.overallProgress;
-      }
+      derivedStatus = summary.derived;
+      currentStep = summary.currentStep;
+      progress = summary.progress;
+      traceFailuresAborted = summary.failuresAborted;
     }
   }
 
-  // Always reconcile against the live scheduler job. A wedged Nextflow trace can
-  // report "running 99%" long after the SLURM/local job has actually finished;
-  // a terminal scheduler state overrides a stuck non-terminal trace status so a
-  // completed/failed run does not hang as running. Conversely, an active job
-  // overrides a terminal-looking trace: the trace may only contain an early
-  // completed task wave while later tasks have not appeared yet.
-  let schedulerStatus: RunStatus | null = null;
-  let schedulerConfirmationPending = false;
+  // Everything the run's state depends on goes through the one reconciler (src/lib/pipelines/run-reconciler.ts):
+  // the trace summary above, the exact scheduler job, why its task jobs wait, a task job SLURM already ended.
+  let scheduler = null;
+  let waitingTaskReason: string | null = null;
+  let endedTask: string | null = null;
+  const slurm = !!run.queueJobId && /^\d+$/.test(run.queueJobId);
   if (run.queueJobId) {
-    const queueSnapshot = await readIdentityCheckedQueueSnapshot({
-      jobId: run.queueJobId,
-      runId: run.id,
-      runFolder: run.runFolder,
-    });
-    schedulerStatus = queueSnapshotToRunStatus(queueSnapshot);
-    schedulerConfirmationPending = isQueueSnapshotRetryable(queueSnapshot);
-    // Keep the scheduler's own state and pending reason on the run: the card's queue sentence ("Waiting for a free
-    // node", "other jobs go first") reads them, and without this they stayed at the launcher's PENDING with no reason.
-    if (queueSnapshot.identityVerified && queueSnapshot.state) {
-      const state = queueSnapshot.state;
-      // While the run's job runs, its reason is why its Nextflow task jobs wait (a drained node, a full cluster).
-      const reason = state === 'PENDING' && queueSnapshot.reason ? queueSnapshot.reason.replace(/^\((.*)\)$/, '$1')
-        : state === 'RUNNING' && /^\d+$/.test(run.queueJobId) ? (await readWaitingTaskReason(run.runFolder)) ?? (await endedTaskReason(run)) : null;
-      try {
-        await db.pipelineRun.update({ where: { id: run.id }, data: { queueStatus: state, queueReason: reason, queueUpdatedAt: new Date() } });
-      } catch (error) {
-        console.error('[pipeline-monitor] Could not record the queue state for run', run.id, error);
-      }
+    scheduler = await readIdentityCheckedQueueSnapshot({ jobId: run.queueJobId, runId: run.id, runFolder: run.runFolder });
+    if (slurm && scheduler.identityVerified && scheduler.state === 'RUNNING') {
+      waitingTaskReason = await readWaitingTaskReason(run.runFolder);
+      if (!waitingTaskReason) endedTask = await endedTaskReason(run);
     }
   }
-  const traceDerivedStatus = derivedStatus;
-  derivedStatus = reconcileRunStatus(derivedStatus, schedulerStatus, { traceFailuresAborted });
-  if (
-    schedulerConfirmationPending &&
-    derivedStatus !== null &&
-    ['completed', 'failed', 'cancelled'].includes(derivedStatus)
-  ) {
-    // A trace terminal label is not proof that the outer wrapper/allocation
-    // exited. Failed tasks may still retry while it is alive. Keep the run
-    // retryable until the exact stored identity is verified.
-    derivedStatus =
-      run.status === 'pending' || run.status === 'queued'
-        ? run.status
-        : 'running';
-    currentStep = 'Waiting for scheduler confirmation...';
-    progress = Math.min(99, progress ?? 99);
+  const next = reconcileRun({
+    run: { status: run.status },
+    trace: { derived: derivedStatus, currentStep, progress, failuresAborted: traceFailuresAborted },
+    scheduler, slurm, waitingTaskReason, endedTask,
+  });
+  if (next.queue) {
+    // The card's queue sentence reads these ("Waiting for a free node", "other jobs go first").
+    try {
+      await db.pipelineRun.update({ where: { id: run.id }, data: { queueStatus: next.queue.status, queueReason: next.queue.reason, queueUpdatedAt: new Date() } });
+    } catch (error) {
+      console.error('[pipeline-monitor] Could not record the queue state for run', run.id, error);
+    }
   }
+  let nextStatus = next.status;
+  currentStep = next.currentStep;
+  progress = next.progress;
 
-  if (
-    (traceDerivedStatus === 'completed' ||
-      traceDerivedStatus === 'failed') &&
-    (derivedStatus === 'running' ||
-      derivedStatus === 'queued' ||
-      derivedStatus === 'pending')
-  ) {
-    currentStep =
-      schedulerConfirmationPending
-        ? 'Waiting for scheduler confirmation...'
-        : derivedStatus === 'running'
-        ? 'Running on compute node'
-        : 'Waiting for scheduler';
-    progress = Math.min(99, progress ?? 0);
-  }
-
-  if (derivedStatus === 'completed') {
-    progress = 100;
-    if (!currentStep) currentStep = 'Completed';
-  } else if (derivedStatus === 'failed' && !currentStep) {
-    currentStep = 'Failed';
-  } else if (derivedStatus === 'cancelled' && !currentStep) {
-    currentStep = 'Cancelled';
-  }
-
-  if (derivedStatus) {
+  if (nextStatus) {
     // When the monitor (the safety-net daemon) finalizes a run as completed it
     // must ingest the pipeline's outputs BEFORE recording the terminal status.
     // runOnce only selects non-terminal runs, so once a row is marked completed
@@ -245,7 +105,7 @@ export async function syncRun(run: {
     // with no artifacts/read writebacks and no retry. Ingest first; on failure
     // hold the run in a non-terminal "finalizing" state so the next pass retries.
     // Resolution is idempotent (re-resolving skips existing artifacts).
-    if (derivedStatus === 'completed') {
+    if (next.finalize) {
       try {
         const finalized = await finalizeCompletedPipelineRun(
           run.id,
@@ -258,6 +118,7 @@ export async function syncRun(run: {
           // Cancellation or another finalizer owns the lifecycle boundary.
           return;
         }
+        await recordTransition(run.id, run.status, 'completed');
         await notifyPipelineRunTerminalInApp(
           run.id,
           run.status,
@@ -266,19 +127,19 @@ export async function syncRun(run: {
         return;
       } catch (error) {
         console.error('[pipeline-monitor] Post-completion output resolution failed for run', run.id, error);
-        derivedStatus = 'running';
+        nextStatus = 'running';
         currentStep = 'Finalizing outputs...';
         progress = 99;
       }
     }
 
-    const update: Record<string, unknown> = { status: derivedStatus };
+    const update: Record<string, unknown> = { status: nextStatus };
     if (currentStep) update.currentStep = currentStep;
     if (progress !== null) update.progress = progress;
-    if (derivedStatus === 'failed' || derivedStatus === 'cancelled') {
+    if (nextStatus === 'failed' || nextStatus === 'cancelled') {
       update.completedAt = new Date();
     }
-    if (derivedStatus === 'running' && run.status !== 'running') {
+    if (nextStatus === 'running' && run.status !== 'running') {
       update.startedAt = new Date();
     }
 
@@ -298,18 +159,28 @@ export async function syncRun(run: {
       },
       data: update,
     });
+    if (count > 0 && nextStatus !== run.status) await recordTransition(run.id, run.status, nextStatus);
     if (
       count > 0 &&
-      (derivedStatus === 'failed' || derivedStatus === 'cancelled')
+      (nextStatus === 'failed' || nextStatus === 'cancelled')
     ) {
       // The run's own job is gone; its nf-* task jobs must not keep running (scancel of the head, its time limit).
-      if (run.queueJobId && /^\d+$/.test(run.queueJobId)) await cancelLeftoverSlurmTaskJobs(run.runFolder);
+      if (slurm) await cancelLeftoverSlurmTaskJobs(run.runFolder);
       await notifyPipelineRunTerminalInApp(
         run.id,
         run.status,
-        derivedStatus
+        nextStatus
       );
     }
+  }
+}
+
+/** One row in the run's event log per change of state; a lost write never stops the monitor. */
+async function recordTransition(runId: string, from: string, to: string) {
+  try {
+    await db.pipelineRunEvent.create({ data: transitionEvent(runId, from, to, 'monitor') });
+  } catch (error) {
+    console.error('[pipeline-monitor] Could not record the transition for run', runId, error);
   }
 }
 

@@ -28,6 +28,7 @@ import { createDataset, writeDatasetVersion } from '@/lib/explore/datasets';
 import { resolveTableSpec } from '@/lib/explore/builders/pipeline-table';
 import { outputFileView } from '@/lib/explore/pipeline-output-types';
 import { readTail } from './nextflow';
+import { historyLines } from './run-reconciler';
 import { parseTraceContent } from './nextflow/trace-parser';
 
 /** What a pipeline does, in the drawer's groups. */
@@ -161,7 +162,7 @@ async function loadRuns(where: { id?: string | { in: string[] }; studyId?: strin
     currentStep: true, queuedAt: true, startedAt: true, completedAt: true, createdAt: true, outputTail: true, errorTail: true, runFolder: true, inputSampleIds: true,
     config: true, studyId: true, user: { select: { id: true, firstName: true, lastName: true, email: true } },
     artifacts: { select: { id: true, outputId: true, path: true, name: true, size: true, sampleId: true, type: true } },
-    events: { where: { eventType: 'resumed' }, select: { occurredAt: true, message: true }, orderBy: { occurredAt: 'asc' } },
+    events: { where: { eventType: { in: ['resumed', 'state'] } }, select: { occurredAt: true, message: true, eventType: true }, orderBy: { occurredAt: 'asc' }, take: 200 },
   } });
 }
 
@@ -251,7 +252,8 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
   }
   const outputs = outputsOf(run);
   // A Resume that set a time limit ("Resumed (1) · time 1.m") is the limit the failed attempt ran under.
-  const lastResume = run.events[run.events.length - 1]?.message ?? '';
+  const resumes = run.events.filter((e) => e.eventType === 'resumed');
+  const lastResume = resumes[resumes.length - 1]?.message ?? '';
   const resumedTime = /· time (\d+)\.(s|m|h|d)\b/.exec(lastResume);
   const resumedTimeLimitSeconds = resumedTime ? Number(resumedTime[1]) * ({ s: 1, m: 60, h: 3600, d: 86400 } as const)[resumedTime[2] as 's'] : null;
   const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, folderMissing, pipelineChanged, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
@@ -262,7 +264,7 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
     id: run.id, runNumber: run.runNumber, pipelineId: run.pipelineId, pipelineName: pkg?.manifest.package.name ?? run.pipelineId, version: pkg?.manifest.package.version ?? null,
     status: run.status, where: run.executionMode === 'slurm' ? 'SLURM' : 'this server', samples, startedBy: person,
     createdAt: run.createdAt.toISOString(), startedAt: run.startedAt?.toISOString() ?? null, completedAt: run.completedAt?.toISOString() ?? null,
-    resumed: run.events.length, plain: { ...status, processes: options.detail ? status.processes : [] },
+    resumed: run.events.filter((e) => e.eventType === 'resumed').length, plain: { ...status, processes: options.detail ? status.processes : [] },
     outputs: outputs.map((output) => {
       const dataset = datasets.find((d) => { try { return JSON.parse(d.sourceConfig ?? '{}').outputId === output.id; } catch { return false; } });
       return { ...output, dataset: dataset ? { id: dataset.id, name: dataset.name, version: dataset.versions[0]?.number ?? null } : null };
@@ -271,7 +273,8 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
   };
   if (!options.detail) return base;
   const logLines = redactLog([run.outputTail ?? '', run.errorTail ?? ''].join('\n')).split(/\r?\n/).filter((l) => l.trim()).slice(-40);
-  return { ...base, provenance: await provenanceOf(run), log: logLines, workFolder: run.runFolder ? path.join(run.runFolder, 'work') : null, queueJobId: run.queueJobId,
+  // The run's event log (the reconciler's transitions, resumes), for Details' History.
+  return { ...base, history: historyLines(run.events), provenance: await provenanceOf(run), log: logLines, workFolder: run.runFolder ? path.join(run.runFolder, 'work') : null, queueJobId: run.queueJobId,
     config: (() => { try { return JSON.parse(run.config ?? '{}'); } catch { return {}; } })() };
 }
 

@@ -10,6 +10,7 @@ import path from 'path';
 import { db } from '@/lib/db';
 import { writePipelineLaunchIdentity } from './launch-identity';
 import { finalizeLocalRun } from './pipeline-run-service';
+import { transitionEvent } from './run-reconciler';
 
 export interface ResumeOverrides { process?: string | null; memory?: string | null; time?: string | null }
 
@@ -103,6 +104,7 @@ export async function resumePipelineRun(runId: string, input: ResumeOverrides): 
       completedAt: null, errorTail: null, queueStatus: slurm ? 'PENDING' : 'RUNNING', queueReason: null, queueUpdatedAt: new Date(), lastEventAt: new Date(), ...(slurm ? { queuedAt: new Date() } : {}) },
   });
   if (!claimed.count) return { status: 409, body: { error: 'The run is still stopping or someone else resumed it a moment ago. Try again in a few seconds.' } };
+  await Promise.resolve().then(() => db.pipelineRunEvent.create({ data: transitionEvent(runId, run.status, slurm ? 'queued' : 'running', 'launcher', `resume ${n}`) })).catch(() => undefined);
   await db.pipelineRunEvent.create({ data: { pipelineRunId: runId, eventType: 'resumed', status: 'info', source: 'launcher',
     message: `Resumed (${n})${overrides.memory ? ` · memory ${overrides.memory}` : ''}${overrides.time ? ` · time ${overrides.time}` : ''}${overrides.process ? ` · ${overrides.process}` : ''}`,
     payload: JSON.stringify({ n, ...overrides }) } });

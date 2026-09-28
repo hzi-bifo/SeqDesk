@@ -1,0 +1,6 @@
+35|PENDING|Resources
+35|PENDING|JobHeldAdmin
+35|PENDING|PartitionDown
+99|PENDING|BeginTime
+118|PENDING|AssocMaxJobsLimit
+37|PENDING|Nodes required for job are DOWN, DRAINED or reserved for jobs in higher priority partitions
