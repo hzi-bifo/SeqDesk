@@ -56,6 +56,9 @@ export interface PlainRunInput {
   askedMemory?: string | null;
   /** SLURM time limit in hours. */
   timeLimitHours?: number | null;
+  /** SLURM queue (partition) and cores asked for, for "SLURM did not take the job" and the queue sentence. */
+  queue?: string | null;
+  askedCores?: number | null;
   outputCount?: number | null;
 }
 
@@ -128,6 +131,27 @@ export function slurmReasonWords(reason: string | null | undefined, askedMemory?
   if (/JobHeld|Held/i.test(code)) return 'Held in the queue until someone releases it';
   if (/Reservation/i.test(code)) return 'Waiting for a reservation';
   return 'Waiting in the queue';
+}
+
+/**
+ * Why sbatch refused a job, in words (null when the text is not an sbatch refusal). The run never reached the queue,
+ * so there is no job id, no trace and no scheduler state: the refusal is all there is to say.
+ */
+export function slurmRefusal(text: string | null | undefined, asked: { queue?: string | null; memory?: string | null; cores?: number | null } = {}): { words: string; retry: boolean } | null {
+  const raw = /(?:Batch job submission failed:|sbatch: error:)\s*([^\n]+)/.exec(text ?? '')?.[1]?.trim()
+    ?? (/Failed to run sbatch|sbatch exited with code|sbatch did not return a job id/.test(text ?? '') ? '' : null);
+  if (raw == null) return null;
+  const queue = asked.queue ? `the ${asked.queue} queue` : 'the queue';
+  if (/inactive or drain|partition not available/i.test(raw)) return { words: `${queue} is closed for new jobs (drained or inactive)`, retry: true };
+  if (/Invalid partition/i.test(raw)) return { words: `there is no queue called ${asked.queue ?? 'that'} on this cluster`, retry: false };
+  if (/Memory specification can not be satisfied|Requested node configuration is not available|More processors requested than permitted|exceeded? .*limit/i.test(raw)) {
+    const what = [asked.cores ? `${asked.cores} cores` : '', asked.memory ? memoryWords(memoryBytes(asked.memory)) || asked.memory : ''].filter(Boolean).join(' and ');
+    return { words: `no node in ${queue} has ${what || 'the cores and memory asked for'}`, retry: false };
+  }
+  if (/MaxSubmit|QOSMax|AssocMax/i.test(raw)) return { words: 'your lab already has its maximum of jobs in the queue', retry: true };
+  if (/Invalid account|Invalid qos|Invalid wckey/i.test(raw)) return { words: 'the SLURM account or QOS set for this server is not valid', retry: false };
+  if (/Unable to contact slurm controller|Socket timed out|Connection refused|Zero Bytes were transmitted/i.test(raw)) return { words: 'the SLURM controller did not answer', retry: true };
+  return { words: raw ? raw.replace(/\.$/, '') : 'sbatch did not say why', retry: false };
 }
 
 // ------------------------------------------------------------------ failure kind
@@ -342,6 +366,15 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
     const at = firstOpen ? ` at ${stageWords(firstOpen.name)}` : '';
     return { ...base, shape: 'cancelled', word: 'Cancelled', sentence: `Cancelled${at}${doneSteps ? ` · ${doneSteps} finished step${doneSteps === 1 ? ' is' : 's are'} kept` : ''}`, action: { kind: 'run-again', label: 'Run again' } };
   }
+  if (status === 'failed' && slurm && !run.queueJobId && !tasks.length) {
+    const refusal = slurmRefusal(run.errorTail, { queue: run.queue, memory: run.askedMemory, cores: run.askedCores });
+    if (refusal) {
+      const sentence = `SLURM did not take the job: ${refusal.words}`;
+      const lines = firstErrorLines([run.errorTail]);
+      return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action: refusal.retry ? { kind: 'retry', label: 'Retry' } : { kind: 'ask-admin', label: 'Ask the admin' },
+        error: { kind: 'unknown', sentence, firstLines: lines, process: null, sample: null, exitCode: null } };
+    }
+  }
   if (status === 'failed') {
     const failedLine = sacct.find((line) => line.state !== 'COMPLETED') ?? null;
     const texts = [context.taskError, run.errorTail, run.outputTail];
@@ -380,7 +413,7 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
   }
   // pending / queued (or running on SLURM without a started task yet)
   if (slurm && queue && (queueState === 'PENDING' || queueState === 'CONFIGURING' || !queueState)) {
-    const words = slurmReasonWords(run.queueReason, run.askedMemory);
+    const words = slurmReasonWords(run.queueReason, [run.askedCores ? `${run.askedCores} cores` : '', run.askedMemory ? memoryWords(memoryBytes(run.askedMemory)) || run.askedMemory : ''].filter(Boolean).join(' and ') || null);
     const waited = queued ? Math.round((now.getTime() - queued.getTime()) / 1000) : null;
     const resources = /Resources/i.test(run.queueReason ?? '');
     return { ...base, shape: 'waiting', word: 'Queued', sentence: `${words}${waited != null && waited > 60 ? ` · waiting ${durationWords(waited)}` : ''}`,

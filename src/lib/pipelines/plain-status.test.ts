@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { classifyFailure, durationWords, firstErrorLines, logProgress, parseSacct, parseSqueue, plainRunStatus, redactLog, slurmReasonWords } from './plain-status';
+import { classifyFailure, durationWords, firstErrorLines, logProgress, parseSacct, parseSqueue, plainRunStatus, redactLog, slurmReasonWords, slurmRefusal } from './plain-status';
 
 const fixture = (name: string) => fs.readFileSync(path.join(__dirname, '__fixtures__', 'plain-status', name), 'utf8');
 const now = new Date('2026-09-28T12:00:00Z');
@@ -127,6 +127,22 @@ describe('plainRunStatus', () => {
     expect(logProgress(`executor >  slurm (2)\n${link('ac')} SUMM…ZE_FASTQC (fastqc-summary) | 0 of 1`)?.processes).toEqual([{ name: '', done: 0, total: 1 }]);
     const before = tail.split('executor >')[0];
     expect(plainRunStatus({ now, run: { status: 'running', executionMode: 'slurm', queueStatus: 'RUNNING', outputTail: before } }).shape).toBe('preparing');
+  });
+  it('sbatch refused the job: says why, not "Failed at a step"', () => {
+    // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
+    const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';
+    const run = { status: 'failed', executionMode: 'slurm', queueJobId: null, errorTail: drained, queue: 'cpu', askedMemory: '4GB', askedCores: 2 };
+    const status = plainRunStatus({ now, run });
+    expect([status.shape, status.sentence, status.action?.kind]).toEqual(['needs-you', 'SLURM did not take the job: the cpu queue is closed for new jobs (drained or inactive)', 'retry']);
+    expect(status.error?.firstLines[0]).toMatch(/Required partition not available/);
+    const asked = { queue: 'cpu', memory: '500GB', cores: 2 };
+    expect(slurmRefusal('sbatch: error: Batch job submission failed: Requested node configuration is not available', asked)).toEqual({ words: 'no node in the cpu queue has 2 cores and 500 GB', retry: false });
+    expect(slurmRefusal('sbatch: error: Memory specification can not be satisfied\nsbatch: error: Batch job submission failed: Requested node configuration is not available', asked)?.words).toBe('no node in the cpu queue has 2 cores and 500 GB');
+    expect(slurmRefusal('sbatch exited with code 1: sbatch: error: invalid partition specified: gpu\nsbatch: error: Batch job submission failed: Invalid partition name specified', { queue: 'gpu' })?.words).toBe('there is no queue called gpu on this cluster');
+    expect(slurmRefusal('Failed to run sbatch: spawn sbatch ENOENT')?.words).toBe('sbatch did not say why');
+    expect(slurmRefusal('Error executing process > FASTQC')).toBeNull();
+    // A queued run's sentence says what it waits for in the same words.
+    expect(plainRunStatus({ now, run: { status: 'queued', executionMode: 'slurm', queueJobId: '35', queueStatus: 'PENDING', queueReason: 'Resources', askedMemory: '4GB', askedCores: 2 } }).sentence).toBe('Waiting for a free node with 2 cores and 4 GB');
   });
   it('finished, cancelled and preparing', () => {
     expect(plainRunStatus({ now, run: { status: 'completed', startedAt: '2026-09-28T09:00:00Z', completedAt: '2026-09-28T12:12:00Z', outputCount: 3 } }).sentence).toBe('Finished in 3 h 12 min · 3 outputs in Data');

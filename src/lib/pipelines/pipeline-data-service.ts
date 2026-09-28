@@ -237,7 +237,7 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
     askedMemory = memoryWords(Math.max(peak, 1024 ** 3)) || '1 GB';
   }
   const outputs = outputsOf(run);
-  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
+  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
   const pkg = getPackage(run.pipelineId);
   const datasets = options.targetKey ? await db.exploreDataset.findMany({ where: { targetKey: options.targetKey, kind: 'pipeline-table', sourceConfig: { contains: `"runIds":["${run.id}"]` } }, select: { id: true, name: true, sourceConfig: true, currentVersionId: true, versions: { select: { number: true }, orderBy: { number: 'desc' }, take: 1 } } }) : [];
   const person = run.user ? [run.user.firstName, run.user.lastName].filter(Boolean).join(' ') || run.user.email : null;

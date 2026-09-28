@@ -24,6 +24,7 @@ import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-s
 import { ensureDataStudy } from '@/lib/pipelines/data-study';
 import { getDataRun, listDataRuns, pipelineReadiness, runBelongsTo, runOutputToData } from '@/lib/pipelines/pipeline-data-service';
 import { resumePipelineRun } from '@/lib/pipelines/run-resume';
+import { slurmRefusal } from '@/lib/pipelines/plain-status';
 import { storeLibraryFile } from '@/lib/files/library';
 import type { IntegrationSession } from './identity';
 
@@ -74,7 +75,16 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       const runIdCreated = (created.body as { run?: { id?: string }; runId?: string; id?: string }).run?.id ?? (created.body as { runId?: string }).runId ?? (created.body as { id?: string }).id;
       if (created.status >= 300 || !runIdCreated) return json(created.body, created.status >= 300 ? created.status : 500);
       const started = await startPipelineRunForOperator({ runId: runIdCreated, body: {}, userId: session.user.id, accessScope: scope });
-      if (started.status >= 300) return json({ ...started.body, runId: runIdCreated }, started.status);
+      if (started.status >= 300) {
+        // sbatch refusing the job is not a server failure: say why, as the card does (422 so the web app shows it).
+        const askedSlurm = async () => {
+          const row = await db.pipelineRun.findUnique({ where: { id: runIdCreated }, select: { executionProfile: true } });
+          try { const p = JSON.parse(row?.executionProfile ?? '{}')?.slurm ?? {}; return { queue: p.queue ?? null, memory: p.memory ?? null, cores: p.cores ?? null }; } catch { return {}; }
+        };
+        const refusal = started.status >= 500 ? slurmRefusal(String((started.body as { error?: unknown }).error ?? ''), await askedSlurm()) : null;
+        if (refusal) return json({ ...started.body, error: `SLURM did not take the job: ${refusal.words}. The run is kept as failed${refusal.retry ? '; Retry once that is fixed' : ''}.`, runId: runIdCreated }, 422);
+        return json({ ...started.body, runId: runIdCreated }, started.status);
+      }
       return json({ run: await getDataRun(runIdCreated, targetKey) }, 201);
     }
     if (sub === 'runs' && runId && !action && method === 'GET') {
