@@ -947,6 +947,7 @@ export async function prepareGenericRun(
   const errors: string[] = [];
   const warnings: string[] = [];
   let ownedRunFolder: string | null = null;
+  let preparedRunNumber: string | null = null;
   let preparationSucceeded = false;
 
   try {
@@ -1027,6 +1028,7 @@ export async function prepareGenericRun(
     let runFolder = '';
     for (let attempt = 0; ; attempt++) {
       const runNumber = await generateRunNumber(pipelineId);
+      preparedRunNumber = runNumber;
       runFolder = await prepareRunDirectory(
         runNumber,
         runId,
@@ -1172,6 +1174,11 @@ export async function prepareGenericRun(
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     errors.push(`Failed to prepare run: ${message}`);
+    // The run keeps its real number (FASTQC-20260928-035), not the provisional one, even when its folder could not
+    // be made (an unwritable run folder on a real Slurm showed "FASTQC-1790598748882-EY47A").
+    if (preparedRunNumber && /^E[A-Z]+$/.test(String((error as { code?: unknown }).code ?? ''))) {
+      await db.pipelineRun.updateMany({ where: { id: runId, runNumber: { not: preparedRunNumber } }, data: { runNumber: preparedRunNumber } }).catch(() => undefined);
+    }
     return { success: false, runId, errors, warnings };
   } finally {
     if (!preparationSucceeded && ownedRunFolder) {

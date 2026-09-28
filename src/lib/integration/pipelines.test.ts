@@ -63,6 +63,14 @@ describe('data-pipelines: a run is managed by whoever owns the study’s Data', 
     expect(mocks.cancel).toHaveBeenCalledTimes(2);
   });
 
+  it('a run folder Compute may not write is said at start, as a 422 the web app shows', async () => {
+    mocks.create.mockResolvedValue({ status: 201, body: { run: { id: 'run-9' } } });
+    mocks.start.mockResolvedValue({ status: 400, body: { error: 'Failed to prepare run', details: ["Failed to prepare run: EACCES: permission denied, mkdir '/e2e/runs/FASTQC-1--id-x'"] } });
+    const started = await call('lena', 'POST', ['data-pipelines', 'runs'], { targetKey: 'project:p1', pipelineId: 'fastqc' });
+    expect(started.status).toBe(422);
+    expect((await started.json()).error).toBe('Compute may not write its run folder (/e2e/runs): permission denied. The run is kept as failed; ask the admin.');
+  });
+
   it('starting on someone else’s study Data says whose it is, not "not connected"', async () => {
     mocks.create.mockResolvedValue({ status: 403, body: { error: 'Forbidden' } });
     const started = await call('sam', 'POST', ['data-pipelines', 'runs'], { targetKey: 'project:p1', pipelineId: 'fastqc' });

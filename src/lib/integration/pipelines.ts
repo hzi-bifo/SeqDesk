@@ -25,7 +25,7 @@ import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-s
 import { ensureDataStudy } from '@/lib/pipelines/data-study';
 import { getDataRun, listDataRuns, pipelineReadiness, runBelongsTo, runOutputToData } from '@/lib/pipelines/pipeline-data-service';
 import { resumePipelineRun } from '@/lib/pipelines/run-resume';
-import { slurmRefusal } from '@/lib/pipelines/plain-status';
+import { prepareFailureWords, slurmRefusal } from '@/lib/pipelines/plain-status';
 import { PIPELINE_FILE_LINK_TTL_MS, pipelineFileToken } from '@/lib/pipelines/pipeline-file-link';
 import { integrationConfig } from '@/lib/integration/config';
 import { storeLibraryFile } from '@/lib/files/library';
@@ -102,6 +102,9 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
           const row = await db.pipelineRun.findUnique({ where: { id: runIdCreated }, select: { executionProfile: true } });
           try { const p = JSON.parse(row?.executionProfile ?? '{}')?.slurm ?? {}; return { queue: p.queue ?? null, memory: p.memory ?? null, cores: p.cores ?? null }; } catch { return {}; }
         };
+        const told = started.body as { error?: unknown; details?: unknown };
+        const prepared = prepareFailureWords([told.error, ...(Array.isArray(told.details) ? told.details : [])].map((v) => String(v ?? '')).join('\n'));
+        if (prepared) return json({ ...started.body, error: `${prepared}. The run is kept as failed; ask the admin.`, runId: runIdCreated }, 422);
         const refusal = started.status >= 500 ? slurmRefusal(String((started.body as { error?: unknown }).error ?? ''), await askedSlurm()) : null;
         if (refusal) return json({ ...started.body, error: `SLURM did not take the job: ${refusal.words}. The run is kept as failed${refusal.retry ? '; Retry once that is fixed' : ''}.`, runId: runIdCreated }, 422);
         return json({ ...started.body, runId: runIdCreated }, started.status);

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { classifyFailure, durationWords, firstErrorLines, logProgress, parseSacct, parseSqueue, plainRunStatus, redactLog, slurmReasonWords, slurmRefusal } from './plain-status';
+import { classifyFailure, durationWords, firstErrorLines, logProgress, parseSacct, prepareFailureWords, parseSqueue, plainRunStatus, redactLog, slurmReasonWords, slurmRefusal } from './plain-status';
 
 const fixture = (name: string) => fs.readFileSync(path.join(__dirname, '__fixtures__', 'plain-status', name), 'utf8');
 const now = new Date('2026-09-28T12:00:00Z');
@@ -200,6 +200,12 @@ describe('plainRunStatus', () => {
     const run = { status: 'running', executionMode: 'slurm', queueJobId: '112', queueStatus: 'RUNNING', folderMissing: true };
     expect([plainRunStatus({ now, run }).sentence, plainRunStatus({ now, run }).action?.kind]).toEqual(['Its run folder is gone, so it cannot go on or be resumed · Run it again', 'run-again']);
     expect(plainRunStatus({ now, run: { ...run, status: 'completed' } }).shape).toBe('finished');
+  });
+  it('a run folder Compute may not write says so, not "Failed at a step"', () => {
+    const errorTail = "Failed to prepare run: EACCES: permission denied, mkdir '/data/e2e/runs/FASTQC-20260928-035--id-cmul89h3n'";
+    const status = plainRunStatus({ now, run: { status: 'failed', executionMode: 'slurm', queueJobId: null, errorTail } });
+    expect([status.sentence, status.action?.kind]).toEqual(['Compute may not write its run folder (/data/e2e/runs): permission denied', 'ask-admin']);
+    expect(prepareFailureWords("Failed to prepare run: ENOSPC: no space left on device, write '/x/y--id-z'")).toBe('The disk for run folders is full (/x)');
   });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.

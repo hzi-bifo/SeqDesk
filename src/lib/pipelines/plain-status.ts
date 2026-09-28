@@ -163,6 +163,20 @@ export function slurmRefusal(text: string | null | undefined, asked: { queue?: s
   return { words: raw ? raw.replace(/\.$/, '') : 'sbatch did not say why', retry: false };
 }
 
+/** Why Compute could not prepare a run's folder, in words (null when the text is not such a failure). */
+export function prepareFailureWords(text: string | null | undefined): string | null {
+  const m = /Failed to prepare run: (?:Error: )?(\w+)?[:,]?\s*([^\n]*)/.exec(text ?? '');
+  if (!m) return null;
+  const code = m[1] ?? '';
+  const where = /'([^']+)'/.exec(m[2])?.[1];
+  const place = where ? ` (${where.replace(/\/[^/]*--id-[^/]*$/, '')})` : '';
+  if (code === 'EACCES' || code === 'EPERM') return `Compute may not write its run folder${place}: permission denied`;
+  if (code === 'ENOSPC') return `The disk for run folders is full${place}`;
+  if (code === 'EDQUOT') return `The quota for run folders is used up${place}`;
+  if (code === 'EROFS') return `The run folder location is read-only${place}`;
+  return `Compute could not prepare the run: ${m[2] || code}`.slice(0, 200);
+}
+
 // ------------------------------------------------------------------ failure kind
 
 const RULES: { kind: ErrorKind; test: (s: Signals) => boolean }[] = [
@@ -414,6 +428,11 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
   if (status === 'cancelled') {
     const at = firstOpen ? ` at ${stageWords(firstOpen.name)}` : '';
     return { ...base, shape: 'cancelled', word: 'Cancelled', sentence: `Cancelled${at}${doneSteps ? ` · ${doneSteps} finished step${doneSteps === 1 ? ' is' : 's are'} kept` : ''}`, action: { kind: 'run-again', label: 'Run again' } };
+  }
+  if (status === 'failed' && !run.queueJobId && !tasks.length && prepareFailureWords(run.errorTail)) {
+    const sentence = prepareFailureWords(run.errorTail)!;
+    return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action: { kind: 'ask-admin', label: 'Ask the admin' },
+      error: { kind: 'unknown', sentence, firstLines: firstErrorLines([run.errorTail]), process: null, sample: null, exitCode: null } };
   }
   if (status === 'failed' && slurm && !run.queueJobId && !tasks.length) {
     const refusal = slurmRefusal(run.errorTail, { queue: run.queue, memory: run.askedMemory, cores: run.askedCores });
