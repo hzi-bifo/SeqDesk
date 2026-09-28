@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
     user: { findUnique: vi.fn() },
     pipelineConfig: { updateMany: vi.fn(async () => ({ count: 1 })), findMany: vi.fn(async () => []) },
     siteSettings: { findUnique: vi.fn(async () => null) },
+    sample: { findMany: vi.fn() },
+    studySample: { upsert: vi.fn(async () => ({})) },
     pipelineRunEvent: { create: vi.fn(async () => ({})), findFirst: (...a: unknown[]) => mocks.events(...a) },
   },
   decide: vi.fn(),
@@ -26,7 +28,10 @@ vi.mock('@/lib/explore/storage', () => ({ resolveContainedPath: vi.fn() }));
 vi.mock('@/lib/pipelines/pipeline-run-service', () => ({ createPipelineRunForOperator: mocks.create, startPipelineRunForOperator: mocks.start }));
 vi.mock('@/lib/pipelines/pipeline-run-ops-service', () => ({ cancelPipelineRunForOperator: mocks.cancel }));
 vi.mock('@/lib/pipelines/data-study', async (importOriginal) => ({ ...(await importOriginal<object>()),
-  ensureDataStudy: vi.fn(async () => ({ studyId: 'study-1', sampleIds: ['s1'], pairs: [] })), readsInData: mocks.readsInData }));
+  ensureDataStudy: vi.fn(async () => ({ studyId: 'study-1', sampleIds: ['s1'], pairs: [] })), readsInData: mocks.readsInData,
+  dataStudyFor: vi.fn(async () => ({ id: 'data-study-1' })), findDataStudy: vi.fn(async () => ({ id: 'data-study-1' })),
+  linkedReadRecords: vi.fn(async () => [{ sampleId: 's-sra', label: 'SAMN12613329', paired: true, readId: 'r1' }]) }));
+vi.mock('@/lib/sequencing/entry-access', () => ({ sequencingEntryScope: () => ({ ownerCheck: true }) }));
 vi.mock('@/lib/pipelines/pipeline-data-service', () => ({
   getDataRun: vi.fn(async () => ({ id: 'run-1' })), listDataRuns: vi.fn(), pipelineReadiness: vi.fn(), runBelongsTo: vi.fn(async () => true), runOutputToData: vi.fn(),
   analysisPipelineDefinitions: () => [{ id: 'mag', name: 'MAG Pipeline', description: 'x' }],
@@ -112,5 +117,19 @@ describe('data-pipelines: a run is managed by whoever owns the study’s Data', 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ id: 'mag', enabled: true, default: true });
     expect(mocks.db.pipelineConfig.updateMany).toHaveBeenCalledWith({ where: { pipelineId: 'mag' }, data: { enabled: true } });
+  });
+
+  it('links read records already in SeqDesk to the study by sample, without copying them', async () => {
+    mocks.db.sample.findMany.mockResolvedValue([{ id: 's-sra', sampleId: 'SAMN12613329', reads: [{ id: 'r1', file1: '/imports/SRR10008722_1.fastq.gz' }] }, { id: 's-none', sampleId: 'X', reads: [] }]);
+    const linked = await call('lena', 'POST', ['data-pipelines', 'reads', 'link'], { targetKey: 'project:p1', accessions: ['SRR10008722'] });
+    expect(linked.status).toBe(201);
+    expect(await linked.json()).toMatchObject({ linked: ['SAMN12613329'], records: [{ label: 'SAMN12613329' }] });
+    expect(mocks.db.studySample.upsert).toHaveBeenCalledTimes(1);
+    expect(mocks.db.studySample.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: { studyId: 'data-study-1', sampleId: 's-sra' } }));
+    const where = mocks.db.sample.findMany.mock.calls[0][0].where.AND[1].OR;
+    expect(where).toContainEqual({ reads: { some: { runAccessionNumber: { in: ['SRR10008722'] } } } });
+    mocks.db.sample.findMany.mockResolvedValue([]);
+    const none = await call('lena', 'POST', ['data-pipelines', 'reads', 'link'], { targetKey: 'project:p1', accessions: ['SRR0'] });
+    expect([none.status, (await none.json()).error]).toEqual([404, 'No read records you can use were found for SRR0.']);
   });
 });

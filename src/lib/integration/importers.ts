@@ -8,6 +8,7 @@
  *   GET  importers                                     list with preflight
  *   GET  importers/search?q                            one search across the enabled connectors' sources
  *   POST importers/{providerId}/preview                 preview + fingerprint
+ *   (POST imports takes an optional targetKey: the read records join that Analysis study's Data)
  *   GET  importers/cami-benchmark/samples?collection&dataset&technology
  *   GET  importers/cami-benchmark/files?dataset&technology
  *   GET  imports[?collection]                          this account's jobs
@@ -35,6 +36,8 @@ import { camiFilesQuerySchema, camiSampleQuerySchema } from '@/lib/workbench/cam
 import { getCamiSampleStatuses } from '@/lib/workbench/cami-sample-status.server';
 import { getCamiSampleFileInfo } from '@/lib/workbench/cami-file-info.server';
 import type { IntegrationSession } from './identity';
+import { requireTargetAccess } from '@/lib/explore/authorization';
+import { dataStudyFor } from '@/lib/pipelines/data-study';
 import { searchPdb, searchUniprot, searchZenodo, type SearchGroup } from './importer-search';
 
 export const IMPORTER_CAPABILITIES = ['imports.read', 'imports.create', 'imports.search'];
@@ -169,7 +172,13 @@ export async function handleImportersRequest(request: Request, session: Integrat
         return json({ error: 'The selection changed or was not reviewed. Preview it again.' }, 409);
       }
       if (preview.summary.selectedCount === 0) return json({ error: 'The preview found nothing to import.' }, 400);
-      const { job } = await createWorkbenchImportJob({ userId, providerId: provider.id, input, preview, ...(idempotencyKey ? { idempotencyKey } : {}) });
+      // An import can target an Analysis study: its read records join that study's Data (pipelines use them in place).
+      let targetStudyId: string | undefined;
+      if (typeof body?.targetKey === 'string' && body.targetKey) {
+        await requireTargetAccess(session as never, body.targetKey, 'write');
+        targetStudyId = (await dataStudyFor(body.targetKey, userId)).id;
+      }
+      const { job } = await createWorkbenchImportJob({ userId, providerId: provider.id, input, preview, ...(idempotencyKey ? { idempotencyKey } : {}), ...(targetStudyId ? { targetStudyId } : {}) });
       void runWorkbenchImportJob(job.id).catch(() => { console.error('[integration] Immediate import dispatch failed; the worker retries queued work.'); });
       return json({ job, ...(collection?.success ? { collectionOrderId: scientificRecordId('data', userId, 'collection', collection.data.key) } : {}) }, 202);
     }

@@ -73,6 +73,8 @@ export async function createWorkbenchImportJob(args: {
   analysisId?: string;
   analysisNodeId?: string;
   idempotencyKey?: string;
+  /** The SeqDesk study the imported read records join (an Analysis study's Data), whatever the importer. */
+  targetStudyId?: string;
 }) {
   const provider = getWorkbenchImporter(args.providerId);
   if (!provider) {
@@ -80,6 +82,9 @@ export async function createWorkbenchImportJob(args: {
   }
   const parsedInput = provider.inputSchema.parse(args.input);
   await requireRawReadImporter(provider.id);
+  if (args.targetStudyId && !await db.study.findFirst({ where: { id: args.targetStudyId, userId: args.userId, user: { isActive: true }, submitted: false }, select: { id: true } })) {
+    throw new Error("Destination study is unavailable or cannot accept imports");
+  }
   const priorRequestId = args.idempotencyKey ? `import-${createHash("sha256").update(JSON.stringify([args.userId, args.providerId, args.idempotencyKey])).digest("hex")}` : undefined;
   if (provider.id === "cami-benchmark") {
     const prior = priorRequestId ? await db.workbenchImportJob.findUnique({ where: { id: priorRequestId } }) : null;
@@ -107,7 +112,8 @@ export async function createWorkbenchImportJob(args: {
         providerId: args.providerId,
         status: "queued",
         phase: "queued",
-        request: JSON.stringify(parsedInput),
+        // The destination study rides with the request; providers never see it (their schema strips it).
+        request: JSON.stringify(args.targetStudyId ? { ...(parsedInput as object), targetStudyId: args.targetStudyId } : parsedInput),
         preview: JSON.stringify(args.preview),
         progress: 0,
         createdById: args.userId,
@@ -161,6 +167,19 @@ export async function createWorkbenchImportJob(args: {
   return {
     cacheKey,
     job: serializeWorkbenchImportJob(job),
+  };
+}
+
+/** Every read record of the import joins the study the request named (an Analysis study's Data), when it named one. */
+export function withTargetStudy<R extends WorkbenchImportResult>(result: R, request: string): R {
+  let target: unknown;
+  try { target = (JSON.parse(request) as { targetStudyId?: unknown }).targetStudyId; } catch { target = undefined; }
+  if (typeof target !== "string" || !target) return result;
+  const join = <S extends { targetStudyId?: string }>(spec: S): S => ({ ...spec, targetStudyId: spec.targetStudyId ?? target });
+  return {
+    ...result,
+    ...(result.scientificImport ? { scientificImport: join(result.scientificImport) } : {}),
+    ...(result.scientificImports ? { scientificImports: result.scientificImports.map(join) } : {}),
   };
 }
 
@@ -410,7 +429,7 @@ export async function runWorkbenchImportJob(jobId: string): Promise<void> {
       workspaceId: job.workspaceId,
       userId: job.createdById,
       // Destination comes from the persisted, validated request, not the provider.
-      result: { ...result, collection: importCollectionSchema.optional().parse((input as { collection?: unknown }).collection), processingDeclaration: processingDeclarationSchema.optional().parse((input as { processingDeclaration?: unknown }).processingDeclaration) },
+      result: { ...withTargetStudy(result, job.request), collection: importCollectionSchema.optional().parse((input as { collection?: unknown }).collection), processingDeclaration: processingDeclarationSchema.optional().parse((input as { processingDeclaration?: unknown }).processingDeclaration) },
     });
     await notifyImport(job.createdById, jobId, job.request, false);
     await updateWorkbenchAnalysisNodeForImportJob({

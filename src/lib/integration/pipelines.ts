@@ -14,6 +14,8 @@
  *   GET  data-pipelines/admin                          pipelines on this server and whether it can run them (admin)
  *   POST data-pipelines/admin/pipelines/{id}  { enabled }   turn a pipeline on or off (admin)
  *   POST data-pipelines/admin/test                     a tiny job through the executor (admin)
+ *   GET  data-pipelines/reads?targetKey                 imported read records this study uses in place
+ *   POST data-pipelines/reads/link   { targetKey, accessions }   link read records already in SeqDesk, by sample
  *   POST data-pipelines/from-step       { targetKey, stepId, output }  a step's latest output saved into Data as a file
  */
 import fs from 'fs/promises';
@@ -25,7 +27,8 @@ import { requireTargetAccess } from '@/lib/explore/authorization';
 import { resolveContainedPath } from '@/lib/explore/storage';
 import { createPipelineRunForOperator, startPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-service';
 import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-service';
-import { ensureDataStudy, readsChangeWords, readsInData, readsSnapshot, type ReadsSnapshot } from '@/lib/pipelines/data-study';
+import { dataStudyFor, ensureDataStudy, findDataStudy, linkedReadRecords, readsChangeWords, readsInData, readsSnapshot, type ReadsSnapshot } from '@/lib/pipelines/data-study';
+import { sequencingEntryScope } from '@/lib/sequencing/entry-access';
 import { analysisPipelineDefinitions, getDataRun, listDataRuns, pipelineReadiness, runBelongsTo, runOutputToData } from '@/lib/pipelines/pipeline-data-service';
 import { resumePipelineRun } from '@/lib/pipelines/run-resume';
 import { prepareFailureWords, slurmRefusal } from '@/lib/pipelines/plain-status';
@@ -86,6 +89,32 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
     const [, sub, runId, action] = segments; // data-pipelines/<sub>/<id>/<action>
 
     if (!sub && method === 'GET') return json(await pipelineReadiness(await read(url.searchParams.get('targetKey'))));
+    if (sub === 'reads' && !runId && method === 'GET') {
+      // The imported read records this study uses in place (ENA, SRA), beside the FASTQ files in its Data.
+      const targetKey = await read(url.searchParams.get('targetKey'));
+      const study = await findDataStudy(targetKey);
+      return json({ records: study ? await linkedReadRecords(study.id) : [] });
+    }
+    if (sub === 'reads' && runId === 'link' && method === 'POST') {
+      // Link read records that are already in SeqDesk to this study by sample (a run or sample accession, or a
+      // SeqDesk sample id). Nothing is copied; the records keep their owner and their own study.
+      const input = await body();
+      const targetKey = await write(typeof input.targetKey === 'string' ? input.targetKey : null);
+      const keys = (Array.isArray(input.accessions) ? input.accessions : []).filter((v): v is string => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(v)).slice(0, 200);
+      if (!keys.length) throw new RouteError(400, 'Name the runs or samples to link (for example SRR10008722 or SAMN12613329).');
+      const scope = decideServerCapability(session, 'analysis.run').grant?.scope === 'installation';
+      const samples = await db.sample.findMany({
+        where: { AND: [sequencingEntryScope(session.user.id, scope), { OR: [{ id: { in: keys } }, { sampleAccessionNumber: { in: keys } }, { sampleId: { in: keys } }, { reads: { some: { runAccessionNumber: { in: keys } } } }] }] },
+        select: { id: true, sampleId: true, reads: { where: { isActive: true }, select: { id: true, file1: true }, take: 1 } },
+      });
+      const usable = samples.filter((s) => s.reads[0]?.file1);
+      if (!usable.length) throw new RouteError(404, `No read records you can use were found for ${keys.join(', ')}.`);
+      const study = await dataStudyFor(targetKey, session.user.id);
+      for (const sample of usable) {
+        await db.studySample.upsert({ where: { studyId_sampleId: { studyId: study.id, sampleId: sample.id } }, update: {}, create: { studyId: study.id, sampleId: sample.id } });
+      }
+      return json({ linked: usable.map((s) => s.sampleId), records: await linkedReadRecords(study.id) }, 201);
+    }
     if (sub === 'admin') {
       // The Compute server's admin (a SeqDesk facility admin) turns pipelines on and checks the server from the web app.
       if ((session.user as { role?: string }).role !== 'FACILITY_ADMIN') throw new RouteError(403, 'Only this Compute server’s admin can change its pipelines.');

@@ -21,7 +21,7 @@ import { getPackage } from './package-loader';
 import { getExecutionSettings } from './execution-settings';
 import { getPipelineDatabaseStatuses } from './database-downloads';
 import { parsePipelineConfig } from './pipeline-readiness-service';
-import { findDataStudy, readsChangeWords, readsInData, readsWords, type DataFastq, type DataReadPair, type ReadsSnapshot } from './data-study';
+import { findDataStudy, linkedReadRecords, readsAndRecordsWords, readsChangeWords, readsInData, readsWords, type DataFastq, type DataReadPair, type ReadsSnapshot } from './data-study';
 import { countWorkflowProcesses, durationWords, memoryWords, plainRunStatus, redactLog, type PlainStatus } from './plain-status';
 import { runBuilder } from '@/lib/explore/build';
 import { createDataset, writeDatasetVersion } from '@/lib/explore/datasets';
@@ -106,6 +106,10 @@ export async function dataPipelines() {
 
 export async function pipelineReadiness(targetKey: string): Promise<{ reads: string; where: string; pipelines: PipelineReadiness[] }> {
   const [{ pairs }, settings, dataStudy] = await Promise.all([readsInData(targetKey), getExecutionSettings(), findDataStudy(targetKey)]);
+  // Read records imported into or linked to this study (ENA, SRA) count as reads too, used in place.
+  const records = dataStudy ? await linkedReadRecords(dataStudy.id) : [];
+  const readsFound = readsAndRecordsWords(pairs, records);
+  const anyReads = pairs.length + records.length;
   const where = settings.useSlurm ? 'SLURM' : 'this server';
   const priorQc = dataStudy ? await db.pipelineRun.findMany({ where: { studyId: dataStudy.id, status: 'completed', pipelineId: { in: QC_SOURCES } }, select: { runNumber: true, pipelineId: true }, orderBy: { completedAt: 'desc' } }) : [];
   const result: PipelineReadiness[] = [];
@@ -117,11 +121,11 @@ export async function pipelineReadiness(targetKey: string): Promise<{ reads: str
     const long = manifest.sequencingCompatibility?.readLengthClass === 'long';
     for (const input of manifest.inputs) {
       if (input.source === 'sample.reads') {
-        const ok = pairs.length > 0 && (!long || looksLong(pairs));
+        const ok = anyReads > 0 && (!long || looksLong(pairs));
         if (inputs.some((i) => i.label === (long ? 'Long reads' : 'Reads'))) continue;
-        inputs.push({ id: input.id, label: long ? 'Long reads' : 'Reads', found: ok ? readsWords(pairs) : null, optional: !input.required });
-        if (ok) found.push(readsWords(pairs));
-        else if (input.required) missing.push(!pairs.length ? 'Needs FASTQ reads in Data' : 'Not for this data: no long reads');
+        inputs.push({ id: input.id, label: long ? 'Long reads' : 'Reads', found: ok ? readsFound : null, optional: !input.required });
+        if (ok) found.push(readsFound);
+        else if (input.required) missing.push(!anyReads ? 'Needs FASTQ reads in Data' : 'Not for this data: no long reads');
       } else if (input.id === 'samples' && definition.id === 'multiqc') {
         const qc = priorQc[0];
         inputs.push({ id: 'qc', label: 'FastQC or NanoPlot results', found: qc ? `${qc.pipelineId === 'fastqc' ? 'FastQC' : 'NanoPlot'} · ${qc.runNumber}` : null, optional: false });
@@ -136,7 +140,7 @@ export async function pipelineReadiness(targetKey: string): Promise<{ reads: str
     const databases = await getPipelineDatabaseStatuses(definition.id, config, settings.pipelineRunDir, (settings as { pipelineDatabaseDir?: string | null }).pipelineDatabaseDir).catch(() => []);
     const blocked = databases.filter((d) => d.status !== 'downloaded');
     for (const database of blocked) missing.push(`Needs the ${database.label.replace(/\s+database$/i, '')} database on ${where === 'SLURM' ? 'the cluster' : 'this server'}`);
-    const durations = await pastDurations(definition.id, pairs.length || null);
+    const durations = await pastDurations(definition.id, anyReads || null);
     const seconds = median(durations);
     const estimate = { seconds, words: seconds == null ? 'no estimate yet' : `about ${durationWords(seconds)}` };
     const state: PipelineReadiness['state'] = blocked.length ? 'blocked' : missing.length ? 'not-yet' : 'ready';
@@ -156,7 +160,7 @@ export async function pipelineReadiness(targetKey: string): Promise<{ reads: str
   }
   const order = ['Genomes from reads', 'Check reads', 'Clean reads', 'Who is there', 'Benchmarks', 'Submission', 'Other'];
   result.sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group) || Number(a.state !== 'ready') - Number(b.state !== 'ready') || a.name.localeCompare(b.name));
-  return { reads: readsWords(pairs), where, pipelines: result };
+  return { reads: readsFound, where, pipelines: result };
 }
 
 // ------------------------------------------------------------------ runs

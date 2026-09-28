@@ -89,17 +89,40 @@ async function linkDataFile(fileId: string, linkDir: string): Promise<string> {
  * Create (once) the backing SeqDesk study for an Analysis study and mirror its FASTQ pairs as samples with reads.
  * Returns the study id and the sample ids that mirror the given pairs (all pairs when none are named).
  */
-export async function ensureDataStudy(input: { targetKey: string; userId: string; onlySamples?: string[] }): Promise<{ studyId: string; sampleIds: string[]; pairs: DataReadPair[] }> {
-  const target = parseTargetKey(input.targetKey);
+/** The backing SeqDesk study of an Analysis study, created the first time it is needed (imports can target it). */
+export async function dataStudyFor(targetKey: string, userId: string): Promise<{ id: string }> {
+  const target = parseTargetKey(targetKey);
   if (!target || target.type !== 'project') throw new Error('Pipelines run on an Analysis study’s Data.');
   const project = await db.exploreProject.findUnique({ where: { id: target.id }, select: { name: true } });
   if (!project) throw new Error('Study not found.');
-  const alias = dataStudyAlias(input.targetKey);
-  let study = await findDataStudy(input.targetKey);
-  if (!study) {
-    study = await db.study.create({ data: { title: `${project.name} · Data`.slice(0, 200), alias, userId: input.userId,
-      description: 'Holds the reads of an Analysis study’s Data so pipelines can run on them. Managed by SeqDesk; the files stay in the study’s Data.' }, select: { id: true } });
-  }
+  const found = await findDataStudy(targetKey);
+  if (found) return found;
+  return db.study.create({ data: { title: `${project.name} · Data`.slice(0, 200), alias: dataStudyAlias(targetKey), userId,
+    description: 'Holds the reads of an Analysis study’s Data so pipelines can run on them. Managed by SeqDesk; the files stay in the study’s Data.' }, select: { id: true } });
+}
+
+/**
+ * Read records (ENA, SRA or other imports) that belong to an Analysis study: their samples are linked to its data
+ * study (imported into it, or linked by sample later). Pipelines use them in place, no copy and no size cap.
+ */
+export async function linkedReadRecords(dataStudyId: string): Promise<{ sampleId: string; label: string; paired: boolean; readId: string }[]> {
+  const samples = await db.sample.findMany({
+    where: { OR: [{ studyId: dataStudyId }, { studyMemberships: { some: { studyId: dataStudyId } } }] },
+    select: { id: true, sampleId: true, sampleTitle: true, reads: { where: { isActive: true, NOT: { dataClassSource: 'analysis_data' } }, select: { id: true, file1: true, file2: true }, take: 1 } },
+  });
+  return samples.filter((s) => s.reads.length && s.reads[0].file1).map((s) => ({ sampleId: s.id, label: s.sampleId, paired: !!s.reads[0].file2, readId: s.reads[0].id }));
+}
+
+/** "1 FASTQ pair + 2 imported read records" for the drawer. */
+export function readsAndRecordsWords(pairs: DataReadPair[], records: { paired: boolean }[]): string {
+  const files = pairs.length ? readsWords(pairs) : '';
+  const recs = records.length ? `${records.length} imported read record${records.length === 1 ? '' : 's'}` : '';
+  return [files, recs].filter(Boolean).join(' + ') || 'no FASTQ files';
+}
+
+export async function ensureDataStudy(input: { targetKey: string; userId: string; onlySamples?: string[] }): Promise<{ studyId: string; sampleIds: string[]; pairs: DataReadPair[] }> {
+  const target = parseTargetKey(input.targetKey)!;
+  const study = await dataStudyFor(input.targetKey, input.userId);
   const { pairs } = await readsInData(input.targetKey);
   const wanted = input.onlySamples?.length ? pairs.filter((p) => input.onlySamples!.includes(p.sampleId)) : pairs;
   const storage = await resolveExploreStorage();
@@ -121,6 +144,12 @@ export async function ensureDataStudy(input: { targetKey: string; userId: string
       await db.read.create({ data: { sampleId: sample.id, file1, file2, dataClass: 'raw', dataClassSource: 'analysis_data' } });
     }
     sampleIds.push(sample.id);
+  }
+  // Imported read records linked to this study run in place, beside the Data files' samples.
+  for (const record of await linkedReadRecords(study.id)) {
+    if (sampleIds.includes(record.sampleId)) continue;
+    if (input.onlySamples?.length && !input.onlySamples.includes(record.label) && !input.onlySamples.includes(record.sampleId)) continue;
+    sampleIds.push(record.sampleId);
   }
   return { studyId: study.id, sampleIds, pairs: wanted };
 }
