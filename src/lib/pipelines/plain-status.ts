@@ -67,6 +67,8 @@ export interface PlainRunInput {
   softwareReason?: string[] | null;
   /** The server's copy of the pipeline differs from the one this run started with (its own copy in the run folder). */
   pipelineChanged?: boolean;
+  /** SLURM allows this server one job, so the run keeps every step inside its own job. */
+  slurmInline?: boolean;
   /** The run folder is gone (deleted while it ran, or after): nothing can continue or resume there. */
   folderMissing?: boolean;
   /** How many steps the pipeline declares, so "step 2 of 2" does not shrink when the log tail loses the first block. */
@@ -388,8 +390,11 @@ function errorSentence(kind: ErrorKind, process: string | null, sample: string |
 export const STALE_STATUS_SECONDS = 180;
 
 export function plainRunStatus(context: PlainContext): PlainStatus {
-  const status = plainRunStatusOf(context);
+  let status = plainRunStatusOf(context);
   const { run } = context;
+  if (run.slurmInline && ['pending', 'queued', 'running'].includes(run.status.toLowerCase()) && status.shape !== 'needs-you') {
+    status = { ...status, sentence: `${status.sentence} · all steps in one SLURM job (SLURM allows this server one job at a time)` };
+  }
   const checked = toDate(run.checkedAt);
   if (!checked || !['pending', 'queued', 'running'].includes(run.status.toLowerCase())) return status;
   const age = Math.round(((context.now ?? new Date()).getTime() - checked.getTime()) / 1000);

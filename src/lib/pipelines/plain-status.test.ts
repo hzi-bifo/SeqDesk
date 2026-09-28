@@ -230,6 +230,10 @@ describe('plainRunStatus', () => {
       softwareReason: ['The following package could not be installed', 'no-such-package-seqdesk =9.9 * does not exist (perhaps a typo or a missing channel).'] } });
     expect(status.error?.firstLines.slice(0, 2)).toEqual(['The following package could not be installed', 'no-such-package-seqdesk =9.9 * does not exist (perhaps a typo or a missing channel).']);
   });
+  it('a run kept inside one SLURM job (one job allowed) says so', () => {
+    const run = { status: 'running', executionMode: 'slurm', queueJobId: '160', queueStatus: 'RUNNING', slurmInline: true, outputTail: 'executor >  local (1)\n[ab/cdef12] RUN_FASTQC (s1) | 0 of 1', declaredSteps: 2 };
+    expect(plainRunStatus({ now, run }).sentence).toBe('Running · step 1 of 2: FastQC · no estimate yet · all steps in one SLURM job (SLURM allows this server one job at a time)');
+  });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
     const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';

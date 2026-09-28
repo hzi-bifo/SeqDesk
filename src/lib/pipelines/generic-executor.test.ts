@@ -1372,6 +1372,10 @@ NEXTFLOW_RUNNER=(printf '%s\\n'); ${launch.replace(/>> "\$STDOUT_LOG" 2>> "\$STD
     expect(requeued.filter((arg) => arg === "-name")).toHaveLength(1);
     expect(requeued[requeued.indexOf("-name") + 1]).toMatch(/^MAG-\d{8}-\d{3}-run-trap-j99-q1$/);
     expect(requeued.at(-1)).toBe("-resume");
+    // One job allowed: the steps run inside the run's own job (no executor = 'slurm' for processes).
+    const inline = await prepareGenericRun({ runId: "run-inline", pipelineId: "mag", target: { type: "study", studyId: "study-1", sampleIds: ["sample-1"] },
+      config: {}, executionSettings: { ...baseExecutionSettings(tempDir), useSlurm: true, slurmInline: true }, userId: "user-1" });
+    expect(await fs.readFile(path.join(inline.runFolder!, "nextflow.config"), "utf8")).not.toContain("executor = 'slurm'");
     // A task job SLURM killed is noticed within a minute, not Nextflow's default 270 s.
     expect(await fs.readFile(path.join(slurmResult.runFolder!, "nextflow.config"), "utf8")).toMatch(/\$slurm \{\s+exitReadTimeout = '60 sec'/);
     expect(await fs.readFile(path.join(localResult.runFolder!, "nextflow.config"), "utf8").catch(() => "")).not.toContain("exitReadTimeout");

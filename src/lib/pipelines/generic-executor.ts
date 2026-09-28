@@ -66,6 +66,7 @@ export interface ExecutionSettings {
   weblogSecret?: string;
   /** When true, omit conda from Nextflow profiles (macOS ARM local execution) */
   skipConda?: boolean;
+  slurmInline?: boolean;
 }
 
 export interface PrepareRunOptions {
@@ -245,7 +246,8 @@ function buildRunConfig(
   // no further jobs are submitted — at the cost of single-node parallelism.
   const slurmInlineExecutor =
     process.env.SEQDESK_SLURM_INLINE_EXECUTOR === '1' ||
-    process.env.SEQDESK_SLURM_INLINE_EXECUTOR === 'true';
+    process.env.SEQDESK_SLURM_INLINE_EXECUTOR === 'true' ||
+    settings.slurmInline === true;
 
   if (settings.useSlurm && !slurmInlineExecutor) {
     const processLines = [`process {`, `  executor = 'slurm'`];

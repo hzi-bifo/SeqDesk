@@ -173,7 +173,7 @@ async function loadRuns(where: { id?: string | { in: string[] }; studyId?: strin
 }
 
 function slurmOf(profile: string | null) {
-  try { const p = JSON.parse(profile ?? '{}'); return p && typeof p === 'object' ? (p.slurm as { memory?: string; timeLimit?: number; queue?: string; cores?: number } | undefined) ?? null : null; } catch { return null; }
+  try { const p = JSON.parse(profile ?? '{}'); return p && typeof p === 'object' ? (p.slurm as { memory?: string; timeLimit?: number; queue?: string; cores?: number; inline?: boolean } | undefined) ?? null : null; } catch { return null; }
 }
 
 async function readHead(file: string, bytes = 16_384): Promise<string> {
@@ -265,7 +265,7 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
   const lastResume = resumes[resumes.length - 1]?.message ?? '';
   const resumedTime = /· time (\d+)\.(s|m|h|d)\b/.exec(lastResume);
   const resumedTimeLimitSeconds = resumedTime ? Number(resumedTime[1]) * ({ s: 1, m: 60, h: 3600, d: 86400 } as const)[resumedTime[2] as 's'] : null;
-  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, folderMissing, pipelineChanged, softwareReason, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
+  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, folderMissing, pipelineChanged, softwareReason, slurmInline: slurm?.inline === true, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, pastSeconds: past });
   const pkg = getPackage(run.pipelineId);
   const datasets = options.targetKey ? await db.exploreDataset.findMany({ where: { targetKey: options.targetKey, kind: 'pipeline-table', sourceConfig: { contains: `"runIds":["${run.id}"]` } }, select: { id: true, name: true, sourceConfig: true, currentVersionId: true, versions: { select: { number: true }, orderBy: { number: 'desc' }, take: 1 } } }) : [];
   const person = run.user ? [run.user.firstName, run.user.lastName].filter(Boolean).join(' ') || run.user.email : null;

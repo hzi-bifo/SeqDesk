@@ -21,6 +21,8 @@ export interface ExecutionSettings {
   weblogSecret: string;
   /** When true, omit conda from Nextflow profiles (macOS ARM local execution) */
   skipConda?: boolean;
+  /** SLURM lets this server have only one job: the run keeps every step inside its own job (Nextflow's local executor). */
+  slurmInline?: boolean;
 }
 
 export interface SlurmSettings {

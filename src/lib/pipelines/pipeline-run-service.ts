@@ -10,6 +10,7 @@ import { PIPELINE_REGISTRY } from '@/lib/pipelines';
 import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { mergePipelineDerivedConfig } from '@/lib/pipelines/derived-config';
 import { getPipelineEnabled } from '@/lib/pipelines/enablement';
+import { needsInlineSlurm, slurmJobSlots } from '@/lib/pipelines/slurm-limits';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import {
   normalizeRunExecutionOverride,
@@ -1034,8 +1035,17 @@ export async function startPipelineRunForOperator({
     settings: executionSettings,
     runOverride: requestExecutionOverride || storedExecutionRequest,
   });
-  const effectiveExecutionSettings = executionPolicy.settings;
-  const executionProfileJson = buildExecutionProfileJson(executionPolicy);
+  let effectiveExecutionSettings = executionPolicy.settings;
+  let executionProfileJson = buildExecutionProfileJson(executionPolicy);
+  if (effectiveExecutionSettings.useSlurm && process.env.SEQDESK_SLURM_INLINE_EXECUTOR !== '0') {
+    // With one job allowed, Nextflow's task jobs would wait behind the run's own job for ever: keep the steps inside it.
+    const slots = await slurmJobSlots();
+    if (needsInlineSlurm(slots)) {
+      effectiveExecutionSettings = { ...effectiveExecutionSettings, slurmInline: true };
+      const profile = JSON.parse(executionProfileJson) as { slurm?: Record<string, unknown> };
+      executionProfileJson = JSON.stringify({ ...profile, slurm: { ...(profile.slurm ?? {}), inline: true, jobSlots: slots } });
+    }
+  }
 
   console.log('[Start Pipeline] Execution settings:', {
     condaPath: effectiveExecutionSettings.condaPath,
