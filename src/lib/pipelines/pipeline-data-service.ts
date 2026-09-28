@@ -30,6 +30,7 @@ import { outputFileView } from '@/lib/explore/pipeline-output-types';
 import { readTail } from './nextflow';
 import { historyLines } from './run-reconciler';
 import { CONDA_EXPLAIN_FILE } from './conda-explain';
+import { databaseSettingWords, missingDatabaseSettings } from './readiness-databases';
 import { parseTraceContent } from './nextflow/trace-parser';
 
 /** What a pipeline does, in the drawer's groups. */
@@ -140,10 +141,13 @@ export async function pipelineReadiness(targetKey: string): Promise<{ reads: str
     const databases = await getPipelineDatabaseStatuses(definition.id, config, settings.pipelineRunDir, (settings as { pipelineDatabaseDir?: string | null }).pipelineDatabaseDir).catch(() => []);
     const blocked = databases.filter((d) => d.status !== 'downloaded');
     for (const database of blocked) missing.push(`Needs the ${database.label.replace(/\s+database$/i, '')} database on ${where === 'SLURM' ? 'the cluster' : 'this server'}`);
+    // A database the admin has not configured (a Kraken2 path) blocks the run as much as one that is not installed.
+    const unconfigured = missingDatabaseSettings({ pipelineId: definition.id, configSchema: definition.configSchema, defaultConfig: definition.defaultConfig as Record<string, unknown>, storedConfig: config, executionMode: settings.useSlurm ? 'slurm' : 'local' });
+    for (const label of unconfigured) missing.push(`Needs ${databaseSettingWords(label)} set up on ${where === 'SLURM' ? 'the cluster' : 'this server'}`);
     const durations = await pastDurations(definition.id, anyReads || null);
     const seconds = median(durations);
     const estimate = { seconds, words: seconds == null ? 'no estimate yet' : `about ${durationWords(seconds)}` };
-    const state: PipelineReadiness['state'] = blocked.length ? 'blocked' : missing.length ? 'not-yet' : 'ready';
+    const state: PipelineReadiness['state'] = blocked.length || unconfigured.length ? 'blocked' : missing.length ? 'not-yet' : 'ready';
     const line = state === 'ready' ? `Ready with ${[...new Set(found)].join(' + ') || 'this study’s Data'} · ${estimate.words}${where === 'SLURM' ? ' on SLURM' : ''}`
       : state === 'blocked' ? missing.find((m) => /database/.test(m))! : missing[0];
     const schema = definition.configSchema?.properties ?? {};
