@@ -213,13 +213,15 @@ function outputsOf(run: RunRow) {
 }
 
 async function failedTaskError(runFolder: string | null, trace: string | null): Promise<string | null> {
-  if (!runFolder || !trace) return null;
+  if (!runFolder) return null;
+  // Nextflow's own log names errors the task files cannot (a time limit on the local executor, a staging failure).
+  const nextflowLog = (await readTail(path.join(runFolder, '.nextflow.log'), 400))?.split(/\r?\n/)
+    .filter((line) => /ERROR|Caused by|Exception|exceeded|hasn't exited|checkIfCompleted|No such file|Missing/.test(line)).slice(0, 30).join('\n') ?? '';
+  if (!trace) return nextflowLog || null;
   const failed = trace.split(/\r?\n/).find((line) => /\tFAILED\t/.test(line));
   const workdir = failed?.split('\t').find((cell) => /\/work\/[0-9a-f]{2}\//.test(cell));
-  if (!workdir) return null;
-  const inside = path.resolve(workdir).startsWith(path.resolve(runFolder));
-  if (!inside) return null;
-  return [await readTail(path.join(workdir, '.command.err'), 40), await readTail(path.join(workdir, '.command.log'), 20)].filter(Boolean).join('\n') || null;
+  if (!workdir || !path.resolve(workdir).startsWith(path.resolve(runFolder))) return nextflowLog || null;
+  return [await readTail(path.join(workdir, '.command.err'), 40), await readTail(path.join(workdir, '.command.log'), 20), nextflowLog].filter(Boolean).join('\n') || null;
 }
 
 /** One run as a card/record: plain status, outputs, provenance, datasets made from it. */

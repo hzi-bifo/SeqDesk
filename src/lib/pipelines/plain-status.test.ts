@@ -85,6 +85,15 @@ describe('plainRunStatus', () => {
     const node = plainRunStatus({ now, run: { status: 'failed', executionMode: 'slurm' }, sacct: fixture('sacct-nodefail.txt') });
     expect([node.error?.kind, node.sentence]).toEqual(['node', 'Node hpc-c17 failed during a step']);
   });
+  it('local time limit: the task stays running in the trace and Nextflow names it in the log', () => {
+    const log = "ERROR ~ Error executing process > 'RUN_FASTQC (ERR10419931)'\n\nCaused by:\n  process hasn't exited";
+    const nfLog = "java.lang.IllegalThreadStateException: process hasn't exited\n\tat nextflow.executor.local.LocalTaskHandler.checkIfCompleted(LocalTaskHandler.groovy:220)";
+    const trace = 'task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\n1\t2c/675315\t30512\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tRUNNING\t-\n';
+    const status = plainRunStatus({ now, run: { status: 'failed', executionMode: 'local', outputTail: log }, taskError: nfLog, trace });
+    expect([status.error?.kind, status.sentence, status.action?.kind]).toEqual(['time', 'FastQC hit the time limit', 'resume']);
+    expect(status.stages).toEqual([{ name: 'RUN_FASTQC', state: 'failed' }]);
+    expect(classifyFailure({ texts: ["process hasn't exited"] })).toBe('unknown');
+  });
   it('queued on SLURM says the reason in words and offers one action', () => {
     const resources = plainRunStatus({ now, run: { status: 'queued', executionMode: 'slurm', queueJobId: '4819227', queueStatus: 'PENDING', queueReason: 'Resources', askedMemory: '256 GB', queuedAt: '2026-09-28T11:00:00Z' } });
     expect([resources.shape, resources.word]).toEqual(['waiting', 'Queued']);

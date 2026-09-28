@@ -134,7 +134,10 @@ export function slurmReasonWords(reason: string | null | undefined, askedMemory?
 
 const RULES: { kind: ErrorKind; test: (s: Signals) => boolean }[] = [
   { kind: 'memory', test: (s) => s.states.includes('OUT_OF_MEMORY') || s.exits.includes(137) || /oom[_-]?kill|out[ _-]of[ _-]memory|OutOfMemoryError|Cannot allocate memory|MemoryError|std::bad_alloc|exceeded (?:its )?memory|Killed\s+(?:\S+\s+)?\(core dumped\)?/i.test(s.text) },
-  { kind: 'time', test: (s) => s.states.includes('TIMEOUT') || s.exits.includes(140) || /DUE TO TIME LIMIT|exceeded running time limit|time limit exceeded|TIMEOUT/.test(s.text) },
+  // Nextflow's local executor stops a task over its `time` limit and then fails with "process hasn't exited" from
+  // LocalTaskHandler.checkIfCompleted (its time-limit branch); on SLURM the job state says TIMEOUT.
+  { kind: 'time', test: (s) => s.states.includes('TIMEOUT') || s.exits.includes(140) || /DUE TO TIME LIMIT|exceeded running time limit|time limit exceeded|TIMEOUT/.test(s.text)
+    || (/process hasn't exited/.test(s.text) && /LocalTaskHandler\.checkIfCompleted/.test(s.text)) },
   { kind: 'node', test: (s) => s.states.includes('NODE_FAIL') || s.states.includes('BOOT_FAIL') || /NODE_FAIL|node failure|lost connection to (?:the )?node|Node \S+ not responding/i.test(s.text) || (s.exits.includes(143) && /CANCELLED D/i.test(s.text)) },
   { kind: 'database', test: (s) => /database (?:is )?not (?:found|installed)|db(?: path)? not found|(?:--\w*_?db|kraken2?_db|db_path)\b[^\n]*(?:not found|does not exist|missing)|no such database/i.test(s.text) },
   { kind: 'software', test: (s) => /Failed to create Conda environment|CondaHTTPError|CondaError|PackagesNotFoundError|ResolvePackageNotFound|UnsatisfiableError|Solving environment: failed|conda: command not found|Failed to pull (?:singularity|docker|apptainer)|Error pulling (?:image|container)|container (?:pull|image) (?:failed|not found)|mamba.*(?:error|failed)/i.test(s.text) },
@@ -159,7 +162,7 @@ const LOWER_WORDS: Record<string, string> = {
   MEGAHIT: 'assembly', SPADES: 'assembly', METASPADES: 'assembly', QUAST: 'assembly check', METABAT2: 'binning', MAXBIN2: 'binning', CONCOCT: 'binning',
   CHECKM: 'bin check', CHECKM2: 'bin check', GTDBTK: 'taxonomy', GTDBTK_CLASSIFYWF: 'taxonomy', PROKKA: 'annotation', BAKTA: 'annotation',
   FASTQC: 'FastQC', FASTQC_RAW: 'FastQC', FASTP: 'trimming', MULTIQC: 'MultiQC', BOWTIE2_HOST_REMOVAL: 'host removal', KRAKEN2: 'Kraken2', BRACKEN: 'Bracken',
-  SEQKIT_STATS: 'read statistics', COLLECT_STATS: 'collecting statistics', GENERATE_REPORT: 'the report', NANOPLOT: 'NanoPlot',
+  RUN_FASTQC: 'FastQC', SUMMARIZE_FASTQC: 'the FastQC summary', MULTIQC_STUDY: 'MultiQC', SEQKIT_STATS: 'read statistics', COLLECT_STATS: 'collecting statistics', GENERATE_REPORT: 'the report', NANOPLOT: 'NanoPlot',
 };
 /** A process name in words for sentences ("assembly"), falling back to the process name itself. */
 export function stageWords(process: string | null | undefined): string {
@@ -283,7 +286,8 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
   const { run } = context;
   const now = context.now ?? new Date();
   const tasks = context.trace ? parseTraceContent(context.trace).tasks : [];
-  const { rows, failed } = processRows(tasks);
+  const { rows, failed: traced } = processRows(tasks);
+  let failed = traced;
   const estimate = estimateOf(context.pastSeconds);
   const started = toDate(run.startedAt), ended = toDate(run.completedAt), queued = toDate(run.queuedAt);
   const elapsedSeconds = started ? Math.round(((ended ?? now).getTime() - started.getTime()) / 1000) : null;
@@ -313,6 +317,15 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
   if (status === 'failed') {
     const failedLine = sacct.find((line) => line.state !== 'COMPLETED') ?? null;
     const texts = [context.taskError, run.errorTail, run.outputTail];
+    // A task the executor stopped (time limit, lost node) can stay "running" in the trace: the log names it.
+    const named = /Error executing process > '([^'(]+?)(?: \(([^)]+)\))?'/.exec(texts.filter(Boolean).join('\n'));
+    if (!failed && named) {
+      const name = named[1].trim().split(':').pop()!;
+      failed = { process: name, name: named[1].trim(), tag: named[2] ?? null, exit: null } as unknown as NextflowTask;
+      for (const row of rows) if (row.name === name && row.status !== 'done') row.status = 'failed';
+      for (const stage of stages) if (stage.name === name && stage.state !== 'done') stage.state = 'failed';
+    }
+    for (const stage of stages) if (stage.state === 'running') stage.state = 'failed';
     const exitCode = failed?.exit ?? failedLine?.exitCode ?? null;
     const kind = classifyFailure({ texts, exitCodes: [failed?.exit, ...sacct.map((l) => l.exitCode), ...sacct.map((l) => (l.signal === 9 ? 137 : null))], slurmStates: [...sacct.map((l) => l.state), queueState] });
     const lines = firstErrorLines([context.taskError, run.errorTail, run.outputTail]);
