@@ -837,9 +837,19 @@ echo "" > "$STDERR_LOG"
 
 ${runtimeBootstrap}
 
+# SLURM requeues this job after its node failed (or on scontrol requeue) and runs this script again from the top.
+# Nextflow refuses a run name its history already has, so a restart resumes the same work under a name of its own.
+SEQDESK_REQUEUE_FLAGS=()
+if [ "\${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
+  SEQDESK_REQUEUE_NAME=${shellQuote(runName)}"-j\${SLURM_JOB_ID}-q\${SLURM_RESTART_COUNT}"
+  SEQDESK_REQUEUE_FLAGS=(-resume -name "$SEQDESK_REQUEUE_NAME")
+  echo "Requeued by SLURM (restart \${SLURM_RESTART_COUNT}); resuming at $(date)" >> "$STDOUT_LOG"
+fi
+
 # Run ${pipelineLabel}
 "\${NEXTFLOW_RUNNER[@]}" run ${shellQuote(pipelineTarget.target)} \\
   ${nextflowArgs} \\
+  \${SEQDESK_REQUEUE_FLAGS[@]+"\${SEQDESK_REQUEUE_FLAGS[@]}"} \\
   >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
 `;
 }

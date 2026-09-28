@@ -479,7 +479,9 @@ function plainRunStatusOf(context: PlainContext): PlainStatus {
   }
   // pending / queued (or running on SLURM without a started task yet)
   if (slurm && queue && (queueState === 'PENDING' || queueState === 'CONFIGURING' || !queueState)) {
-    const words = slurmReasonWords(run.queueReason, [run.askedCores ? `${run.askedCores} cores` : '', run.askedMemory ? memoryWords(memoryBytes(run.askedMemory)) || run.askedMemory : ''].filter(Boolean).join(' and ') || null);
+    // A job that already ran and waits for its start time was requeued by SLURM (its node failed, or scontrol requeue).
+    const requeued = /^BeginTime$/i.test((run.queueReason ?? '').replace(/[()]/g, '')) && !!run.startedAt;
+    const words = requeued ? 'SLURM put it back in the queue (its node failed or it was requeued); it resumes shortly' : slurmReasonWords(run.queueReason, [run.askedCores ? `${run.askedCores} cores` : '', run.askedMemory ? memoryWords(memoryBytes(run.askedMemory)) || run.askedMemory : ''].filter(Boolean).join(' and ') || null);
     const waited = queued ? Math.round((now.getTime() - queued.getTime()) / 1000) : null;
     return { ...base, shape: 'waiting', word: 'Queued', sentence: `${words}${waited != null && waited > 60 ? ` · waiting ${durationWords(waited)}` : ''}`,
       // Cancel is what a person can always do; "less memory" only when SLURM says memory is what it waits for.

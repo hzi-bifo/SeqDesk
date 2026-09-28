@@ -1360,6 +1360,13 @@ describe("generic-executor", () => {
 
     expect(slurmResult.success).toBe(true);
     const slurmScript = await fs.readFile(path.join(slurmResult.runFolder!, "run.sh"), "utf8");
+    // A requeued job (node failure, scontrol requeue) resumes under a run name of its own; the first run is unchanged.
+    const launch = slurmScript.slice(slurmScript.indexOf("SEQDESK_REQUEUE_FLAGS=()"));
+    const runLine = (restarts: string) => execFileSync("bash", ["-c", `set -euo pipefail; STDOUT_LOG=/dev/null; STDERR_LOG=/dev/null; SLURM_JOB_ID=99; ${restarts}
+NEXTFLOW_RUNNER=(printf '%s\\n'); ${launch.replace(/>> "\$STDOUT_LOG" 2>> "\$STDERR_LOG"/, "")}`], { encoding: "utf8" });
+    expect(runLine("")).not.toMatch(/-resume/);
+    const requeued = runLine("SLURM_RESTART_COUNT=1").trim().split("\n");
+    expect(requeued.slice(-3)).toEqual(["-resume", "-name", expect.stringMatching(/^MAG-\d{8}-\d{3}-run-trap-j99-q1$/)]);
     // A task job SLURM killed is noticed within a minute, not Nextflow's default 270 s.
     expect(await fs.readFile(path.join(slurmResult.runFolder!, "nextflow.config"), "utf8")).toMatch(/\$slurm \{\s+exitReadTimeout = '60 sec'/);
     expect(await fs.readFile(path.join(localResult.runFolder!, "nextflow.config"), "utf8").catch(() => "")).not.toContain("exitReadTimeout");
