@@ -9,7 +9,8 @@
  *   POST data-pipelines/runs/{id}/resume?targetKey  { process?, memory?, time? }      Nextflow -resume in place
  *   POST data-pipelines/runs/{id}/cancel?targetKey
  *   POST data-pipelines/runs/{id}/data?targetKey    { outputId }  a table output into Data, pinned to the run
- *   GET  data-pipelines/runs/{id}/file?targetKey&artifact&preview=1              an output file (MultiQC opens in a tab)
+ *   GET  data-pipelines/runs/{id}/file?targetKey&artifact&preview=1              an output file
+ *   POST data-pipelines/runs/{id}/file-link?targetKey&artifact                   a 5-minute link to one output file (MultiQC opens in a tab)
  *   POST data-pipelines/from-step       { targetKey, stepId, output }  a step's latest output saved into Data as a file
  */
 import fs from 'fs/promises';
@@ -25,6 +26,8 @@ import { ensureDataStudy } from '@/lib/pipelines/data-study';
 import { getDataRun, listDataRuns, pipelineReadiness, runBelongsTo, runOutputToData } from '@/lib/pipelines/pipeline-data-service';
 import { resumePipelineRun } from '@/lib/pipelines/run-resume';
 import { slurmRefusal } from '@/lib/pipelines/plain-status';
+import { PIPELINE_FILE_LINK_TTL_MS, pipelineFileToken } from '@/lib/pipelines/pipeline-file-link';
+import { integrationConfig } from '@/lib/integration/config';
 import { storeLibraryFile } from '@/lib/files/library';
 import type { IntegrationSession } from './identity';
 
@@ -136,6 +139,19 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       const stored = await storeLibraryFile({ targetKey, file: new File([bytes], path.basename(artifact.path)), createdById: session.user.id });
       await db.managedFile.update({ where: { id: stored.id }, data: { description: `From step ${analysis.name}, run ${artifact.run.runNumber}`.slice(0, 1000) } });
       return json({ file: { id: stored.id, name: stored.originalName, sizeBytes: Number(stored.sizeBytes) } }, 201);
+    }
+    if (sub === 'runs' && runId && action === 'file-link' && method === 'POST') {
+      // A link a browser tab opens by itself: the report runs sandboxed on Compute's origin, not framed in the app.
+      const targetKey = await read(url.searchParams.get('targetKey'));
+      await ownRun(runId, targetKey);
+      const artifactId = url.searchParams.get('artifact') ?? '';
+      const artifact = await db.pipelineArtifact.findFirst({ where: { id: artifactId, pipelineRunId: runId, pipelineRun: { status: 'completed' } }, select: { id: true } });
+      if (!artifact) throw new RouteError(404, 'File not found.');
+      const config = integrationConfig();
+      const base = process.env.NEXTAUTH_URL;
+      if (!config || !base) throw new RouteError(409, 'This Compute server has no public address for reports (NEXTAUTH_URL).');
+      const link = new URL(`/share/pipeline-files/${pipelineFileToken(config.secret, runId, artifact.id)}`, base);
+      return json({ url: link.toString(), expiresInSeconds: PIPELINE_FILE_LINK_TTL_MS / 1000 });
     }
     if (sub === 'runs' && runId && action === 'file' && method === 'GET') {
       const targetKey = await read(url.searchParams.get('targetKey'));
