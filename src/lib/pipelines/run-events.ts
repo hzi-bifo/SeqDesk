@@ -7,3 +7,4 @@ export function transitionEvent(runId: string, from: string, to: string, source:
   };
 }
 
+export const LOCAL_VANISHED_NOTE = 'The run\'s process on this server ended without writing its exit code (the server restarted, the host rebooted or the process was killed).';

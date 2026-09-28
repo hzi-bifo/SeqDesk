@@ -1236,6 +1236,19 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     ).toBe(false);
   });
 
+  it("local execution: a process killed by a signal says it vanished, so the card offers Resume", async () => {
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => child.emit("close", null));
+      return child;
+    });
+    const response = await POST(makeRequest(), { params: baseParams });
+    expect(response.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const failedUpdate = mocks.db.pipelineRun.updateMany.mock.calls.find((call) => call[0]?.data?.status === "failed");
+    expect(failedUpdate?.[0].data.errorTail).toContain("ended without writing its exit code");
+  });
+
   it("a local run's History gets its start and its end (Details showed no events for runs that finished by themselves)", async () => {
     mocks.spawn.mockImplementation(() => {
       const child = makeChildProcess();

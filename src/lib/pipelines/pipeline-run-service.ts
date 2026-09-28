@@ -53,7 +53,7 @@ import { getReadCleaningPathIssues } from '@/lib/pipelines/read-cleaning-path-va
 import { pipelineConfigOverrideIssues, pipelineSchemaRunIssues } from '@/lib/pipelines/config-schema-validation';
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { supportsPipelineTarget } from '@/lib/pipelines/target';
-import { transitionEvent } from '@/lib/pipelines/run-events';
+import { LOCAL_VANISHED_NOTE, transitionEvent } from '@/lib/pipelines/run-events';
 import { loadStudyPipelineSamples, scopePipelineStudyTarget } from './study-samples';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import type { ResourceScope } from '@/lib/authorization';
@@ -380,13 +380,19 @@ export async function finalizeLocalRun(
       select: {
         outputPath: true,
         errorPath: true,
+        runFolder: true,
+        queueJobId: true,
       },
     });
-    const { outputTail, errorTail } = await summarizePipelineFailure({
+    const summary = await summarizePipelineFailure({
       outputPath: run?.outputPath ?? null,
       errorPath: run?.errorPath ?? null,
       exitCode,
     });
+    const { outputTail } = summary;
+    // A process that was killed leaves no exit marker; say so, so the card offers Resume instead of "Failed at a step".
+    const vanished = exitCode === null && !/Pipeline completed with exit code:/.test(outputTail ?? '');
+    const errorTail = vanished ? `${summary.errorTail ? `${summary.errorTail}\n` : ''}${LOCAL_VANISHED_NOTE}` : summary.errorTail;
     // A SIGTERM-killed process (e.g. an operator cancel) emits 'close' with a
     // non-zero/null code. The status guard ensures we do NOT overwrite a run
     // that has already reached a terminal state such as 'cancelled'.
@@ -410,6 +416,12 @@ export async function finalizeLocalRun(
     });
     if (count === 0) return;
     await recordLocalTransition(runId, 'running', 'failed', 'process', exitCode != null ? `exit ${exitCode}` : undefined);
+    // Nothing of the run may keep running (a Nextflow killed with kill -9 leaves its tasks behind on this server).
+    if (run?.queueJobId) {
+      await import('@/lib/pipelines/executors')
+        .then(({ executorFor }) => executorFor({ queueJobId: run.queueJobId }).cleanup({ id: runId, runFolder: run.runFolder, queueJobId: run.queueJobId }))
+        .catch(() => undefined);
+    }
     await notifyPipelineRunTerminalInApp(runId, null, 'failed');
   }
 }

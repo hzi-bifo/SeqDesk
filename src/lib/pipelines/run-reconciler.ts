@@ -94,7 +94,7 @@ export interface Reconciled {
 }
 
 /** A local run whose process is gone without its exit marker (killed with the server, a reboot, kill -9). */
-export const LOCAL_VANISHED_NOTE = 'The run\'s process on this server ended without writing its exit code (the server restarted, the host rebooted or the process was killed).';
+export { LOCAL_VANISHED_NOTE };
 const vanishedLocal = (snapshot: QueueSnapshot | null) => !!snapshot && snapshot.source === 'local' && !snapshot.identityVerified
   && /exited before its canonical exit marker|belongs to another process|missing its process arguments/.test(snapshot.reason ?? '');
 
@@ -154,7 +154,8 @@ export function reconcileRun(input: ReconcileInput): Reconciled {
   };
 }
 
-export { transitionEvent } from './run-events';
+import { LOCAL_VANISHED_NOTE, transitionEvent } from './run-events';
+export { transitionEvent };
 
 /** A run's event log as Details shows it: "14:19 queued → running", newest last. */
 export function historyLines(events: { occurredAt: Date; eventType: string; message: string | null }[]): string[] {
