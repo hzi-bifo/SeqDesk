@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { shouldAutostartPipelineMonitor } from "./instrumentation";
+import { superviseMonitors } from "./instrumentation-node";
 
 function environment(
   values: Record<string, string | undefined>,
@@ -69,5 +70,27 @@ describe("pipeline monitor instrumentation", () => {
     expect(edgeSafeEntry).toContain('"./instrumentation-node"');
     expect(edgeSafeEntry).not.toContain('"@/lib/workers/process"');
     expect(nodeEntry).toContain('from "@/lib/workers/process"');
+  });
+});
+
+describe("the monitor watchdog", () => {
+  it("starts a monitor again when it has stopped, and leaves a running one alone", async () => {
+    vi.useFakeTimers();
+    const answers: Record<string, { action: "already-running" | "started"; pid?: number }[]> = {
+      "pipeline-monitor": [{ action: "already-running", pid: 10 }, { action: "started", pid: 11 }],
+      "explore-monitor": [{ action: "already-running", pid: 20 }, { action: "already-running", pid: 20 }],
+    };
+    const ensure = vi.fn(async (name: string) => answers[name].shift()!);
+    const started: number[] = [];
+    const stop = superviseMonitors(ensure as never, 1000, (pid) => started.push(pid));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(started).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(started).toEqual([11]);
+    expect(ensure).toHaveBeenCalledTimes(4);
+    stop();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(ensure).toHaveBeenCalledTimes(4);
+    vi.useRealTimers();
   });
 });
