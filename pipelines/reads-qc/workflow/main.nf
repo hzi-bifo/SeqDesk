@@ -95,7 +95,7 @@ process COLLECT_STATS {
 
 process GENERATE_REPORT {
   tag "report"
-  conda "conda-forge::python>=3.9"
+  conda "conda-forge::python=3.12"
 
   publishDir "${params.outdir}", mode: 'copy', pattern: "report/*.html"
 
