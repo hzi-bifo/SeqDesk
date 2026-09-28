@@ -3,7 +3,7 @@
  * of evidence about a run for the reconciler (run-reconciler.ts) and cleans up after a run that ended; the monitor
  * and cancel no longer branch on the executor themselves.
  */
-import { readTail } from './nextflow';
+import * as nextflow from './nextflow';
 import { classifyFailure } from './plain-status';
 import { readIdentityCheckedQueueSnapshot, type QueueSnapshot } from './queue-probe';
 import { cancelLeftoverSlurmTaskJobs, readEndedTaskJob, readWaitingTaskReason } from './slurm-task-cleanup';
@@ -29,10 +29,14 @@ export interface ExecutorDeps {
   snapshot: typeof readIdentityCheckedQueueSnapshot;
   waitingTaskReason: typeof readWaitingTaskReason;
   endedTaskJob: typeof readEndedTaskJob;
-  readTail: typeof readTail;
+  readTail: typeof nextflow.readTail;
   cancelLeftovers: typeof cancelLeftoverSlurmTaskJobs;
 }
-const DEPS: ExecutorDeps = { snapshot: readIdentityCheckedQueueSnapshot, waitingTaskReason: readWaitingTaskReason, endedTaskJob: readEndedTaskJob, readTail, cancelLeftovers: cancelLeftoverSlurmTaskJobs };
+// Looked up when used, so a test that mocks one of these modules partly can still load this one.
+const DEPS: ExecutorDeps = {
+  snapshot: (...a) => readIdentityCheckedQueueSnapshot(...a), waitingTaskReason: (...a) => readWaitingTaskReason(...a),
+  endedTaskJob: (...a) => readEndedTaskJob(...a), readTail: (...a) => nextflow.readTail(...a), cancelLeftovers: (...a) => cancelLeftoverSlurmTaskJobs(...a),
+};
 
 /** "ended:<kind>:<process>" for a task job SLURM already ended badly while Nextflow has not noticed yet. */
 async function endedTaskReason(run: RunRef, deps: ExecutorDeps): Promise<string | null> {
