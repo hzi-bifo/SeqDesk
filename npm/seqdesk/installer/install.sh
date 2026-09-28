@@ -3969,7 +3969,14 @@ const profiles = {
     domains: ["core", "analysis", "publishing", "workbench"],
   },
 };
+// Presets only choose defaults and an access policy, never a different app.
+for (const profile of Object.values(profiles)) {
+  profile.domains = ["core", "facility-intake", "sample-catalog", "sequencing-operations", "analysis", "publishing", "support", "workbench"];
+}
 const requirements = {
+  "sequencing-management": ["core"],
+  "import-cami": ["core"],
+  "import-sra": ["core"],
   "ai-validation": ["facility-intake"],
   "mixs-metadata": ["sample-catalog"],
   "account-validation": ["core"],
@@ -3982,6 +3989,9 @@ const requirements = {
 };
 const alwaysEnabled = new Set(["sequencing-tech"]);
 const defaultStates = {
+  "sequencing-management": process.env.SEQDESK_PLAN_COMPATIBILITY_PROFILE !== "research-workbench",
+  "import-cami": true,
+  "import-sra": true,
   "ai-validation": true,
   "mixs-metadata": true,
   "account-validation": false,
@@ -4082,7 +4092,7 @@ prompt_deployment_profile() {
         return 0
     fi
 
-    print_info "Operating model — how will this SeqDesk installation be used?"
+    print_info "Account and module preset — how will this SeqDesk installation be used?"
     echo "    1) Sequencing center"
     echo "       People request sequencing work and facility staff receive, process, and deliver it."
     echo "       Select this when requesters and sequencing operators are different groups."
@@ -4091,16 +4101,17 @@ prompt_deployment_profile() {
     echo "       One team shares sequencing projects, samples, runs, and analyses."
     echo "       All members can do normal shared work; one or more administrators additionally configure SeqDesk."
     echo "       Preview on this branch until the packaged Shared Lab acceptance journey passes."
-    echo "    3) Research workbench"
-    echo "       Researchers upload or import existing data and run analyses in private workspaces."
-    echo "       Select this when sequencing orders and facility handoffs should not organize the UI."
+    echo "    3) Research"
+    echo "       Researchers import raw reads and metadata with private ownership."
+    echo "       The same sequencing data and studies UI; facility management starts disabled."
     echo "       Administrators manage SeqDesk but do not automatically see another member's private workspace."
     echo "       Preview on this branch until the packaged Workbench acceptance journey passes."
     echo ""
     echo "  Not sure? External requesters -> 1. One shared lab team -> 2. Existing-data analysis -> 3."
-    echo "  This selects one operating mode in the same application; it does not install a separate edition."
-    echo "  The mode changes workflows, permissions, navigation, and setup guidance."
-    echo "  It cannot currently be changed in Settings or with Reconfigure; updates preserve it."
+    echo "  One application and one UI. Facility sequencing, CAMI and SRA/ENA modules can coexist."
+    echo "  Administrators select modules under Modules after login; local raw-file upload is not available yet."
+    echo "  The preset preserves access policy and initial module choices, not separate navigation."
+    echo "  Changing sharing policy requires a guarded migration; updates preserve it."
     echo "  Use Back at the final review if you chose the wrong mode."
 
     local profile_choice
@@ -4145,7 +4156,7 @@ prompt_profile_pipeline_support() {
         research-workbench)
             default_answer="y"
             print_info "Workflow execution is recommended for a Research workbench."
-            echo "  Uploads and imports work without it, but analyses need Conda, Java, and Nextflow."
+            echo "  Raw-read imports work without it. Pipeline support for imported inputs is a follow-on feature."
             ;;
     esac
 
@@ -4163,7 +4174,7 @@ prompt_profile_pipeline_support() {
         print_info "  Approved workflow packages are selected after the administrator signs in."
     else
         if [ "$SEQDESK_DEPLOYMENT_PROFILE" = "research-workbench" ]; then
-            print_warning "  Workbench uploads/imports will work, but analysis execution will remain blocked."
+            print_warning "  Raw-read imports will work; workflow runtime will remain deferred."
             answer=$(read_input "  Continue with workflow runtime deferred? (y/N): ")
             if ! is_truthy "$answer"; then
                 print_info "  Workflow runtime preparation remains selected."
@@ -7499,7 +7510,7 @@ const formatBytes = (bytes) => {
 const profileSummary = {
   "sequencing-center": "requesters submit sequencing work; facility staff process and deliver it",
   "shared-lab": "one lab shares sequencing and analysis work; administrators also configure SeqDesk",
-  "research-workbench": "researchers import or upload data and run analyses in private workspaces",
+  "research-workbench": "shared sequencing data and studies UI, private ownership, facility management initially off",
 };
 const sourceLabels = {
   default: "built-in default",
@@ -9366,8 +9377,9 @@ print_next_steps() {
         else
             echo "  2. In Admin settings, verify managed data storage and configure a pipeline runtime."
         fi
-        echo "  3. Invite Workbench members, then open Workbench Data to upload files or configure an importer."
-        echo "  4. Install at least one pipeline and complete a small test run before production use."
+        echo "  3. Invite members; choose input modules under Modules, then open Sequencing data > Add sequencing data."
+        echo "  4. Verify a bounded CAMI or SRA/ENA import and its sample/study metadata before production use."
+        echo "     Local raw-file upload and pipeline integration for imported reads are follow-on features."
         echo "     Guide: https://seqdesk.org/docs"
         echo "  5. Before production, configure HTTPS, backups, monitoring, and retention."
         echo ""
