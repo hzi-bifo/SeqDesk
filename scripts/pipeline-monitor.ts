@@ -16,7 +16,7 @@ import {
   readIdentityCheckedQueueSnapshot,
 } from '../src/lib/pipelines/queue-probe';
 import { notifyPipelineRunTerminalInApp } from '../src/lib/notifications/in-app';
-import { cancelLeftoverSlurmTaskJobs } from '../src/lib/pipelines/slurm-task-cleanup';
+import { cancelLeftoverSlurmTaskJobs, readWaitingTaskReason } from '../src/lib/pipelines/slurm-task-cleanup';
 
 const DEFAULT_INTERVAL_MS = 15000;
 
@@ -164,7 +164,9 @@ export async function syncRun(run: {
     // node", "other jobs go first") reads them, and without this they stayed at the launcher's PENDING with no reason.
     if (queueSnapshot.identityVerified && queueSnapshot.state) {
       const state = queueSnapshot.state;
-      const reason = state === 'PENDING' && queueSnapshot.reason ? queueSnapshot.reason.replace(/^\((.*)\)$/, '$1') : null;
+      // While the run's job runs, its reason is why its Nextflow task jobs wait (a drained node, a full cluster).
+      const reason = state === 'PENDING' && queueSnapshot.reason ? queueSnapshot.reason.replace(/^\((.*)\)$/, '$1')
+        : state === 'RUNNING' && /^\d+$/.test(run.queueJobId) ? await readWaitingTaskReason(run.runFolder) : null;
       try {
         await db.pipelineRun.update({ where: { id: run.id }, data: { queueStatus: state, queueReason: reason, queueUpdatedAt: new Date() } });
       } catch (error) {

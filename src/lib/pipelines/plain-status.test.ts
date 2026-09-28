@@ -128,6 +128,15 @@ describe('plainRunStatus', () => {
     const before = tail.split('executor >')[0];
     expect(plainRunStatus({ now, run: { status: 'running', executionMode: 'slurm', queueStatus: 'RUNNING', outputTail: before } }).shape).toBe('preparing');
   });
+  it('running on SLURM while its next task job waits for a drained node', () => {
+    // Real Slurm 24.11: RUN_FASTQC is done (in the trace), SUMMARIZE_FASTQC's job waits; the monitor keeps its reason.
+    const trace = fixture('trace-running.txt').split('\n')[0];
+    const tail = ['executor >  slurm (2)', '[fe/7415e1] RUN_FASTQC (ERR10419931)       | 1 of 1 ✔', '[ac/841b18] SUMMARIZE_FASTQC (fastqc-summary) | 0 of 1'].join('\n');
+    const run = { status: 'running', executionMode: 'slurm', queueJobId: '35', queueStatus: 'RUNNING', startedAt: '2026-09-28T11:57:00Z', outputTail: tail,
+      queueReason: 'Nodes required for job are DOWN, DRAINED or reserved for jobs in higher priority partitions' };
+    expect(plainRunStatus({ now, run, trace, pastSeconds: [30] }).sentence).toBe('Running · step 2 of 2: the FastQC summary · waiting: the nodes it needs are down or reserved');
+    expect(plainRunStatus({ now, run: { ...run, queueReason: null }, trace, pastSeconds: [30] }).sentence).toBe('Running · step 2 of 2: the FastQC summary · taking longer than past runs');
+  });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
     const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';

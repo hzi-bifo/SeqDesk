@@ -127,7 +127,8 @@ export function slurmReasonWords(reason: string | null | undefined, askedMemory?
   if (/MaxCpu|GrpCpu|MaxTRES|GrpTRES|AssocGrpCpu/i.test(code)) return 'Waiting: your lab is using its share of cores';
   if (/^Dependency$/i.test(code)) return 'Waiting for another job to finish first';
   if (/^BeginTime$/i.test(code)) return 'Waiting for its start time';
-  if (/ReqNodeNotAvail|NodeDown|PartitionDown|PartitionInactive/i.test(code)) return 'Waiting: the nodes it needs are down or reserved';
+  // Slurm 24 prints some reasons as sentences ("Nodes required for job are DOWN, DRAINED or reserved for jobs in …").
+  if (/ReqNodeNotAvail|NodeDown|PartitionDown|PartitionInactive|Nodes required for job are DOWN/i.test(code)) return 'Waiting: the nodes it needs are down or reserved';
   if (/JobHeld|Held/i.test(code)) return 'Held in the queue until someone releases it';
   if (/Reservation/i.test(code)) return 'Waiting for a reservation';
   return 'Waiting in the queue';
@@ -397,10 +398,14 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
   if (status === 'running' && (tasks.length || !slurm || queueState === 'RUNNING')) {
     const current = rows.find((row) => row.status === 'running') ?? firstOpen;
     const index = current ? rows.indexOf(current) + 1 : rows.length;
-    const progress = tasks.length ? null : logProgress(run.outputTail);
+    // trace.txt only lists processes that ended a task: once they are all done, the console log names the next one.
+    const progress = current ? null : logProgress(run.outputTail);
     const logged = progress?.processes.findIndex((p) => p.total > p.done) ?? -1;
     const where = current ? ` · step ${index} of ${rows.length}: ${stageWords(current.name)}`
       : progress && logged >= 0 ? ` · step ${logged + 1} of ${progress.processes.length}${progress.processes[logged].name ? `: ${stageWords(progress.processes[logged].name)}` : ''}` : '';
+    // On SLURM the run's job runs while its task jobs may wait (the monitor keeps their reason).
+    const reasonWords = slurm && run.queueReason ? slurmReasonWords(run.queueReason) : '';
+    const waiting = reasonWords ? ` · ${reasonWords.charAt(0).toLowerCase()}${reasonWords.slice(1)}` : '';
     const left = estimate.seconds != null && elapsedSeconds != null
       ? (estimate.seconds > elapsedSeconds ? ` · ~${durationWords(estimate.seconds - elapsedSeconds)} left` : ' · taking longer than past runs')
       : ` · ${estimate.words}`;
@@ -409,7 +414,7 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
     if (!tasks.length && !progress?.submitted && /conda|environment|Launching|Preparing/i.test(`${run.currentStep ?? ''} ${run.outputTail ?? ''}`)) {
       return { ...base, shape: 'preparing', word: 'Preparing', sentence: 'Preparing software · first run only', action: { kind: 'cancel', label: 'Cancel' } };
     }
-    return { ...base, shape: 'running', word: 'Running', sentence: `Running${where}${left}`, action: { kind: 'cancel', label: 'Cancel' } };
+    return { ...base, shape: 'running', word: 'Running', sentence: `Running${where}${waiting || left}`, action: { kind: 'cancel', label: 'Cancel' } };
   }
   // pending / queued (or running on SLURM without a started task yet)
   if (slurm && queue && (queueState === 'PENDING' || queueState === 'CONFIGURING' || !queueState)) {

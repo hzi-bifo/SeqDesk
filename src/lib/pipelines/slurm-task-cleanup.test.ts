@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { cancelLeftoverSlurmTaskJobs, taskJobsOfRun } from './slurm-task-cleanup';
+import { cancelLeftoverSlurmTaskJobs, taskJobsOfRun, waitingTaskReason } from './slurm-task-cleanup';
 
 const RUN = '/data/runs/FASTQC-20260928-008--id-abc';
 // squeue --me -h -o '%i|%T|%.1024Z' (the WorkDir column is right-aligned and padded)
@@ -30,5 +30,13 @@ describe('leftover SLURM task jobs of a run', () => {
     const down = async () => { throw new Error('slurm_load_jobs error: Unable to contact slurm controller'); };
     await expect(cancelLeftoverSlurmTaskJobs(RUN, down)).resolves.toEqual([]);
     await expect(cancelLeftoverSlurmTaskJobs(null, exec)).resolves.toEqual([]);
+  });
+
+  it('names why the run’s task jobs wait while none of them runs', () => {
+    const drained = 'Nodes required for job are DOWN, DRAINED or reserved for jobs in higher priority partitions';
+    expect(waitingTaskReason([`35|RUNNING|None|   ${RUN}`, `37|PENDING|${drained}|   ${RUN}/work/ac/841b18`].join('\n'), RUN)).toBe(drained);
+    // One task running: nothing waits that the person needs to hear about. Other runs' tasks do not count.
+    expect(waitingTaskReason([`37|PENDING|Resources|   ${RUN}/work/ac/84`, `38|RUNNING|None|   ${RUN}/work/fe/74`].join('\n'), RUN)).toBeNull();
+    expect(waitingTaskReason(`39|PENDING|Resources|   /data/runs/other/work/aa/bb`, RUN)).toBeNull();
   });
 });
