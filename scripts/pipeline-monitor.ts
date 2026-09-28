@@ -159,6 +159,17 @@ export async function syncRun(run: {
     });
     schedulerStatus = queueSnapshotToRunStatus(queueSnapshot);
     schedulerConfirmationPending = isQueueSnapshotRetryable(queueSnapshot);
+    // Keep the scheduler's own state and pending reason on the run: the card's queue sentence ("Waiting for a free
+    // node", "other jobs go first") reads them, and without this they stayed at the launcher's PENDING with no reason.
+    if (queueSnapshot.identityVerified && queueSnapshot.state) {
+      const state = queueSnapshot.state;
+      const reason = state === 'PENDING' && queueSnapshot.reason ? queueSnapshot.reason.replace(/^\((.*)\)$/, '$1') : null;
+      try {
+        await db.pipelineRun.update({ where: { id: run.id }, data: { queueStatus: state, queueReason: reason, queueUpdatedAt: new Date() } });
+      } catch (error) {
+        console.error('[pipeline-monitor] Could not record the queue state for run', run.id, error);
+      }
+    }
   }
   const traceDerivedStatus = derivedStatus;
   derivedStatus = reconcileRunStatus(derivedStatus, schedulerStatus);
