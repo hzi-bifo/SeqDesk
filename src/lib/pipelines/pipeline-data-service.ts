@@ -124,7 +124,7 @@ export async function pipelineReadiness(targetKey: string): Promise<{ reads: str
     const config = parsePipelineConfig((await db.pipelineConfig.findUnique({ where: { pipelineId: definition.id }, select: { config: true } }))?.config);
     const databases = await getPipelineDatabaseStatuses(definition.id, config, settings.pipelineRunDir, (settings as { pipelineDatabaseDir?: string | null }).pipelineDatabaseDir).catch(() => []);
     const blocked = databases.filter((d) => d.status !== 'downloaded');
-    for (const database of blocked) missing.push(`Needs the ${database.label} database on ${where === 'SLURM' ? 'the cluster' : 'this server'}`);
+    for (const database of blocked) missing.push(`Needs the ${database.label.replace(/\s+database$/i, '')} database on ${where === 'SLURM' ? 'the cluster' : 'this server'}`);
     const durations = await pastDurations(definition.id, pairs.length || null);
     const seconds = median(durations);
     const estimate = { seconds, words: seconds == null ? 'no estimate yet' : `about ${durationWords(seconds)}` };
