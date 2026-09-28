@@ -332,7 +332,12 @@ export function firstErrorLines(texts: (string | null | undefined)[], max = 3): 
   }
   if (block >= 0) {
     push(lines[block]);
-    for (const l of lines.slice(block + 1)) if (/error|exit status|Caused by|Missing|not found|failed|Killed|oom|Command exit/i.test(l)) push(l);
+    const after = lines.slice(block + 1);
+    after.forEach((l, i) => {
+      if (/error|exit status|Caused by|Missing|not found|failed|Killed|oom|Command exit/i.test(l)) push(l);
+      // "Caused by:" alone says nothing: the cause is the line under it.
+      if (/^\s*Caused by:?\s*$/.test(l) && after[i + 1]) push(after[i + 1]);
+    });
   }
   for (const l of lines) if (/error|exception|failed|killed|oom_kill|CANCELLED|not found|No such file/i.test(l) && !/^\s*at /.test(l)) push(l);
   if (!picked.length) for (const l of lines.slice(-max)) push(l);

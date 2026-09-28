@@ -116,6 +116,11 @@ describe('plainRunStatus', () => {
     expect([status.shape, status.action?.kind]).toEqual(['needs-you', 'resume']);
     expect(status.sentence).toMatch(/^The run stopped when its process on this server ended/);
   });
+  it('the error lines keep the cause under "Caused by:" (a time limit showed a bare "Caused by:")', () => {
+    const lines = firstErrorLines([["error [java.lang.IllegalThreadStateException]: process hasn't exited", "Sep-28 22:33:58.1 [Task monitor] ERROR nextflow.processor.TaskProcessor - Error executing process > 'RUN_FASTQC (ERR10419931)'", 'Caused by:', "  process hasn't exited"].join('\n')], 4);
+    expect(lines).toEqual(expect.arrayContaining(["process hasn't exited"]));
+    expect(lines.filter((l) => l === 'Caused by:')).toHaveLength(1);
+  });
   it('queued on SLURM says the reason in words and offers one action', () => {
     const resources = plainRunStatus({ now, run: { status: 'queued', executionMode: 'slurm', queueJobId: '4819227', queueStatus: 'PENDING', queueReason: 'Resources', askedMemory: '256 GB', queuedAt: '2026-09-28T11:00:00Z' } });
     expect([resources.shape, resources.word]).toEqual(['waiting', 'Queued']);
