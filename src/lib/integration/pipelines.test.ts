@@ -27,10 +27,14 @@ vi.mock('@/lib/explore/authorization', () => ({ requireTargetAccess: vi.fn(async
 vi.mock('@/lib/explore/storage', () => ({ resolveContainedPath: vi.fn() }));
 vi.mock('@/lib/pipelines/pipeline-run-service', () => ({ createPipelineRunForOperator: mocks.create, startPipelineRunForOperator: mocks.start }));
 vi.mock('@/lib/pipelines/pipeline-run-ops-service', () => ({ cancelPipelineRunForOperator: mocks.cancel }));
-vi.mock('@/lib/pipelines/data-study', async (importOriginal) => ({ ...(await importOriginal<object>()),
+vi.mock('@/lib/pipelines/data-study', async (importOriginal) => { const original = await importOriginal<typeof import('@/lib/pipelines/data-study')>(); return { ...original,
+  readsChangedSinceRun: vi.fn(async (runId: string, targetKey: string) => {
+    const event = await mocks.events({ where: { pipelineRunId: runId, eventType: 'inputs' } }) as { payload?: string } | null;
+    return event?.payload ? original.readsChangeWords(JSON.parse(event.payload), (await mocks.readsInData(targetKey)).files) : null;
+  }),
   ensureDataStudy: vi.fn(async () => ({ studyId: 'study-1', sampleIds: ['s1'], pairs: [] })), readsInData: mocks.readsInData,
   dataStudyFor: vi.fn(async () => ({ id: 'data-study-1' })), findDataStudy: vi.fn(async () => ({ id: 'data-study-1' })),
-  linkedReadRecords: vi.fn(async () => [{ sampleId: 's-sra', label: 'SAMN12613329', paired: true, readId: 'r1' }]) }));
+  linkedReadRecords: vi.fn(async () => [{ sampleId: 's-sra', label: 'SAMN12613329', paired: true, readId: 'r1' }]) }; });
 vi.mock('@/lib/sequencing/entry-access', () => ({ sequencingEntryScope: () => ({ ownerCheck: true }) }));
 vi.mock('@/lib/pipelines/pipeline-data-service', () => ({
   getDataRun: vi.fn(async () => ({ id: 'run-1' })), listDataRuns: vi.fn(), pipelineReadiness: vi.fn(), runBelongsTo: vi.fn(async () => true), runOutputToData: vi.fn(),

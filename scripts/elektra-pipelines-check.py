@@ -82,6 +82,10 @@ def wait_task(pattern="nf-RUN", timeout=300):
     return False
 
 
+def jobs_named(part):
+    return sum(1 for name in slurm("squeue -h -o %j", check=False).split() if part in name)
+
+
 def local_procs(run_id):
     return int(sh(f"pgrep -u $(id -u) -f 'java.*{run_id[:8]}|runs/.*{run_id}' | wc -l", check=False).strip() or 0)
 
@@ -249,10 +253,70 @@ def slurm_nextflow_kill(c, key):
     hook("sleep")
 
 
+def slurm_maxjobs_inline(c, key):
+    # SLURM lets this user run one job at a time: Nextflow's head job would wait forever for its own task jobs.
+    # SeqDesk sees the limit at submit and runs the steps inside the one job, and says so on the card.
+    slurm(f"sacctmgr -i modify user where name=$(id -un) set MaxJobs=1 >/dev/null")
+    hook("sleep", 60)
+    try:
+        r = driver("start", key, "fastqc", "slurm")
+        seen, children = "", 0
+        until = time.time() + 240
+        while time.time() < until:
+            s = driver("status", r["runId"])
+            seen = s["sentence"] if "one SLURM job" in s["sentence"] else seen
+            children = max(children, jobs_named("nf-"))
+            if s["status"] in ("completed", "failed", "cancelled"):
+                break
+            time.sleep(10)
+        s = wait(r["runId"], timeout=900)
+        c.record("slurm-maxjobs-inline", f"MaxJobs=1, {children} task jobs", seen or s["sentence"], s["status"] == "completed" and children == 0 and "one SLURM job" in seen)
+    finally:
+        slurm("sacctmgr -i modify user where name=$(id -un) set MaxJobs=-1 >/dev/null", check=False)
+        hook("sleep")
+
+
+def parallel_studies(c, key):
+    other = driver("other-target", key)
+    if "targetKey" not in other:
+        return c.record("parallel-studies", "no second study", other.get("error", "?"), False)
+    driver("seed-copy", key, other["targetKey"])
+    hook("sleep", 60)
+    try:
+        runs = [driver("start", key, "fastqc", "slurm"), driver("start", other["targetKey"], "fastqc", "slurm")]
+        time.sleep(40)
+        heads = str(jobs_named("seqdesk-"))
+        ends = [wait(r["runId"], timeout=1200) for r in runs]
+        c.record("parallel-studies", f"{heads} head jobs at once ({other['name']})", ", ".join(e["sentence"] for e in ends), all(e["status"] == "completed" for e in ends) and heads == "2")
+    finally:
+        hook("sleep")
+        driver("unseed", other["targetKey"])
+
+
+def resume_reads_changed(c, key):
+    hook("sleep", 120)
+    try:
+        r = driver("start", key, "fastqc", "slurm")
+        wait_task()
+        driver("cancel", r["runId"])
+        wait(r["runId"], timeout=300)
+        driver("reads-add", key)
+        s = driver("status", r["runId"])
+        refused = driver("resume", r["runId"])
+        hook("sleep")
+        forced = driver("resume", r["runId"], "", "", "force")
+        end = wait(r["runId"], timeout=900)
+        ok = refused["status"] == 409 and refused["body"].get("code") == "reads_changed" and bool(s.get("readsChanged")) and forced["status"] < 300 and end["status"] == "completed"
+        c.record("resume-reads-changed", f"409 {refused['body'].get('code')}; forced {forced['status']}", f"{s.get('readsChanged')} / {end['sentence']}", ok)
+    finally:
+        hook("sleep")
+        driver("reads-drop", key)
+
+
 SCENARIOS = {f.__name__.replace("_", "-"): f for f in [
     local_happy, local_oversubscribe, local_cancel, local_timeout, local_oom, local_restart,
     slurm_happy, slurm_cancel, slurm_scancel_head, slurm_scancel_child, slurm_timeout, slurm_oom, slurm_requeue,
-    slurm_controller_down, slurm_nextflow_kill]}
+    slurm_controller_down, slurm_nextflow_kill, slurm_maxjobs_inline, parallel_studies, resume_reads_changed]}
 
 
 # ------------------------------------------------------------------ setup and teardown
@@ -273,6 +337,7 @@ def teardown():
         f"C={T}/slurm/etc/slurm.conf; [ -f $C.check-bak ] && mv $C.check-bak $C || true",
         f"[ -f {WF}.check-bak ] && mv {WF}.check-bak {WF} || true",
         f"rm -f {T}/e2e/check-sleep {T}/e2e/check-oom",
+        f"source {T}/slurm/env.sh >/dev/null 2>&1; sacctmgr -i modify user where name=$(id -un) set MaxJobs=-1 >/dev/null 2>&1 || true",
     ]
     for step in steps:
         try:

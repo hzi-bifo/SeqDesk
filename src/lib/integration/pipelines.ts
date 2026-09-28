@@ -27,7 +27,7 @@ import { requireTargetAccess } from '@/lib/explore/authorization';
 import { resolveContainedPath } from '@/lib/explore/storage';
 import { createPipelineRunForOperator, startPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-service';
 import { cancelPipelineRunForOperator } from '@/lib/pipelines/pipeline-run-ops-service';
-import { dataStudyFor, ensureDataStudy, findDataStudy, linkedReadRecords, readsChangeWords, readsInData, readsSnapshot, type ReadsSnapshot } from '@/lib/pipelines/data-study';
+import { dataStudyFor, ensureDataStudy, readsChangedSinceRun, findDataStudy, linkedReadRecords, readsInData, readsSnapshot } from '@/lib/pipelines/data-study';
 import { sequencingEntryScope } from '@/lib/sequencing/entry-access';
 import { analysisPipelineDefinitions, getDataRun, listDataRuns, pipelineReadiness, runBelongsTo, runOutputToData } from '@/lib/pipelines/pipeline-data-service';
 import { resumePipelineRun } from '@/lib/pipelines/run-resume';
@@ -71,11 +71,6 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
     // person cancels or resumes it. Before, another member could cancel a colleague's run but not start one.
     const scope = () => decideServerCapability(session, 'analysis.run').grant?.scope ?? 'own';
     const viewer = () => ({ id: session.user.id, installation: scope() === 'installation' });
-    const readsChangedSince = async (runId: string, targetKey: string) => {
-      const event = await db.pipelineRunEvent.findFirst({ where: { pipelineRunId: runId, eventType: 'inputs' }, orderBy: { occurredAt: 'asc' }, select: { payload: true } });
-      if (!event?.payload) return null;
-      try { return readsChangeWords(JSON.parse(event.payload) as ReadsSnapshot, (await readsInData(targetKey)).files); } catch { return null; }
-    };
     const ownerName = async (userId: string | null | undefined) => {
       const user = userId ? await db.user.findUnique({ where: { id: userId }, select: { firstName: true, lastName: true, email: true } }) : null;
       return user ? [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email : 'its owner';
@@ -218,7 +213,7 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       // Resume uses the reads the run started with. If Data changed since, say so and point to Run again (force: true
       // resumes anyway, on the old reads).
       if (input.force !== true) {
-        const changed = await readsChangedSince(runId, targetKey);
+        const changed = await readsChangedSinceRun(runId, targetKey);
         if (changed) return json({ error: `The reads in Data changed since this run (${changed}). Resume would use the reads it started with; Run again uses the new ones.`, code: 'reads_changed' }, 409);
       }
       // Fixed in Data: the study's reads are mirrored again before Nextflow resumes (a replaced file reruns its tasks).

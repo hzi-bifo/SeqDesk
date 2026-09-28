@@ -181,3 +181,10 @@ export function readsChangeWords(before: ReadsSnapshot, now: DataFastq[]): strin
   const parts = [added ? `${added} file${added === 1 ? '' : 's'} added` : '', removed ? `${removed} removed` : '', replaced ? `${replaced} replaced` : ''].filter(Boolean);
   return parts.length ? parts.join(', ') : null;
 }
+
+/** How the study's reads changed since a run started ("1 file added"), or null: the run's 'inputs' event against Data now. */
+export async function readsChangedSinceRun(runId: string, targetKey: string): Promise<string | null> {
+  const event = await db.pipelineRunEvent.findFirst({ where: { pipelineRunId: runId, eventType: 'inputs' }, orderBy: { occurredAt: 'asc' }, select: { payload: true } });
+  if (!event?.payload) return null;
+  try { return readsChangeWords(JSON.parse(event.payload) as ReadsSnapshot, (await readsInData(targetKey)).files); } catch { return null; }
+}
