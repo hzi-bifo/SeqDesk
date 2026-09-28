@@ -105,7 +105,13 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
     if (sub === 'runs' && runId && action === 'cancel' && method === 'POST') {
       const targetKey = await write(url.searchParams.get('targetKey'));
       await ownRun(runId, targetKey);
+      // A second Cancel (a double click, a teammate a moment later) finds the run cancelled: that is what was asked.
+      const current = await db.pipelineRun.findUnique({ where: { id: runId }, select: { status: true } });
+      if (current?.status === 'cancelled') return json({ success: true, status: 'cancelled', already: true });
       const result = await cancelPipelineRunForOperator(runId);
+      if (result.status === 400 && (current?.status === 'completed' || current?.status === 'failed')) {
+        return json({ error: current.status === 'completed' ? 'This run already finished; there is nothing to cancel.' : 'This run already stopped with an error; there is nothing to cancel.' }, 409);
+      }
       return json(result.body, result.status);
     }
     if (sub === 'runs' && runId && action === 'data' && method === 'POST') {
