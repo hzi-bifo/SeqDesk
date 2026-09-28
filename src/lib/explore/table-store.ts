@@ -56,7 +56,12 @@ function cellToKey(value: ExploreCell | undefined): string | null {
 }
 
 async function writeChunk(stream: WriteStream, text: string) {
-  if (!stream.write(text)) await new Promise<void>((resolve, reject) => { stream.once("drain", resolve); stream.once("error", reject); });
+  if (stream.write(text)) return;
+  await new Promise<void>((resolve, reject) => {
+    const done = (error?: Error) => { stream.off("drain", done); stream.off("error", done); if (error) reject(error); else resolve(); };
+    stream.on("drain", done);
+    stream.on("error", done);
+  });
 }
 
 async function closeStream(stream: WriteStream) {

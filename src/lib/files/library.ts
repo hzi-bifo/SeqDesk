@@ -67,7 +67,11 @@ export async function storeLibraryFileStream(input: { targetKey: string; name: s
       // The request body may reuse its chunk buffers once the next chunk is read; the file gets its own copy.
       const bytes = Buffer.from(chunk);
       hash.update(bytes);
-      if (!out.write(bytes)) await new Promise<void>((resolve, reject) => { out.once("drain", resolve); out.once("error", reject); });
+      if (!out.write(bytes)) await new Promise<void>((resolve, reject) => {
+        const done = (error?: Error) => { out.off("drain", done); out.off("error", done); if (error) reject(error); else resolve(); };
+        out.on("drain", done);
+        out.on("error", done);
+      });
     }
     await new Promise<void>((resolve, reject) => out.end((error?: Error | null) => (error ? reject(error) : resolve())));
     if (size === 0) throw new FileLibraryError(400, "The file is empty.");
