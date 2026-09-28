@@ -22,7 +22,10 @@ vi.mock('@/lib/explore/builders/pipeline-table', () => ({ resolveTableSpec: vi.f
 vi.mock('@/lib/explore/pipeline-output-types', () => ({ outputFileView: vi.fn(() => ({ kind: 'file' })) }));
 vi.mock('@/lib/pipelines/definitions', () => ({ getStepsForPipeline: () => [] }));
 
-import { listDataRuns } from './pipeline-data-service';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { failedTaskError, listDataRuns } from './pipeline-data-service';
 
 const row = (id: string, status = 'completed') => ({
   id, runNumber: id.toUpperCase(), pipelineId: 'fastqc', status, executionMode: 'slurm', executionProfile: null, queueJobId: null, queueStatus: null, queueReason: null,
@@ -58,5 +61,17 @@ describe('the study’s runs for the band', () => {
     expect((await listDataRuns('project:p1', { id: 'lena', installation: false }))[0].canManage).toBe(true);
     expect((await listDataRuns('project:p1', { id: 'sam', installation: false }))[0].canManage).toBe(false);
     expect((await listDataRuns('project:p1', { id: 'sam', installation: true }))[0].canManage).toBe(true);
+  });
+});
+
+describe('the failed task’s own error', () => {
+  it('is found from the trace’s hash column (a Mac trace has no path in it), so the card can say what the tool said', async () => {
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'failed-task-'));
+    const work = path.join(folder, 'work', 'a7', '044e64d74926baf0c1a3d4b95fe1ae');
+    fs.mkdirSync(work, { recursive: true });
+    fs.writeFileSync(path.join(work, '.command.err'), 'Failed to process file ERR10419931_1.fastq.gz\nuk.ac.babraham.FastQC.Sequence.SequenceFormatException: Unexpected end of ZLIB input stream\n');
+    const trace = 'task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\n1\ta7/044e64\t95761\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tFAILED\t1\n';
+    expect(await failedTaskError(folder, trace)).toContain('Failed to process file ERR10419931_1.fastq.gz');
+    fs.rmSync(folder, { recursive: true, force: true });
   });
 });

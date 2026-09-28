@@ -228,7 +228,7 @@ function outputsOf(run: RunRow) {
   return [...groups.values()];
 }
 
-async function failedTaskError(runFolder: string | null, trace: string | null): Promise<string | null> {
+export async function failedTaskError(runFolder: string | null, trace: string | null): Promise<string | null> {
   if (!runFolder) return null;
   // Nextflow's own log names errors the task files cannot (a time limit on the local executor, a staging failure).
   const nextflowLog = (await readTail(path.join(runFolder, '.nextflow.log'), 400))?.split(/\r?\n/)
@@ -236,7 +236,15 @@ async function failedTaskError(runFolder: string | null, trace: string | null): 
     .filter((line) => !/\] DEBUG /.test(line) && /ERROR|Caused by|Exception|exceeded|hasn't exited|checkIfCompleted|No such file|Missing/.test(line)).slice(0, 30).join('\n') ?? '';
   if (!trace) return nextflowLog || null;
   const failed = trace.split(/\r?\n/).find((line) => /\tFAILED\t/.test(line));
-  const workdir = failed?.split('\t').find((cell) => /\/work\/[0-9a-f]{2}\//.test(cell));
+  let workdir = failed?.split('\t').find((cell) => /\/work\/[0-9a-f]{2}\//.test(cell));
+  // trace.txt names a task's folder by its hash ("a7/044e64"), not by path: find <run folder>/work/a7/044e64….
+  if (!workdir && failed) {
+    const hash = /^([0-9a-f]{2})\/([0-9a-f]{6,})$/.exec(failed.split('\t')[1] ?? '');
+    if (hash) {
+      const dir = (await fs.readdir(path.join(runFolder, 'work', hash[1])).catch(() => [] as string[])).find((name) => name.startsWith(hash[2]));
+      if (dir) workdir = path.join(runFolder, 'work', hash[1], dir);
+    }
+  }
   if (!workdir || !path.resolve(workdir).startsWith(path.resolve(runFolder))) return nextflowLog || null;
   return [await readTail(path.join(workdir, '.command.err'), 40), await readTail(path.join(workdir, '.command.log'), 20), nextflowLog].filter(Boolean).join('\n') || null;
 }
