@@ -110,6 +110,7 @@ export async function pipelineReadiness(targetKey: string): Promise<{ reads: str
     for (const input of manifest.inputs) {
       if (input.source === 'sample.reads') {
         const ok = pairs.length > 0 && (!long || looksLong(pairs));
+        if (inputs.some((i) => i.label === (long ? 'Long reads' : 'Reads'))) continue;
         inputs.push({ id: input.id, label: long ? 'Long reads' : 'Reads', found: ok ? readsWords(pairs) : null, optional: !input.required });
         if (ok) found.push(readsWords(pairs));
         else if (input.required) missing.push(!pairs.length ? 'Needs FASTQ reads in Data' : 'Not for this data: no long reads');
@@ -131,7 +132,8 @@ export async function pipelineReadiness(targetKey: string): Promise<{ reads: str
     const seconds = median(durations);
     const estimate = { seconds, words: seconds == null ? 'no estimate yet' : `about ${durationWords(seconds)}` };
     const state: PipelineReadiness['state'] = blocked.length ? 'blocked' : missing.length ? 'not-yet' : 'ready';
-    const line = state === 'ready' ? `Ready with ${found.join(' + ') || 'this study’s Data'} · ${estimate.words}${where === 'SLURM' ? ' on SLURM' : ''}` : missing[0];
+    const line = state === 'ready' ? `Ready with ${[...new Set(found)].join(' + ') || 'this study’s Data'} · ${estimate.words}${where === 'SLURM' ? ' on SLURM' : ''}`
+      : state === 'blocked' ? missing.find((m) => /database/.test(m))! : missing[0];
     const schema = definition.configSchema?.properties ?? {};
     result.push({
       id: definition.id, name: manifest.package.name, version: manifest.package.version, description: manifest.package.description,
@@ -178,8 +180,11 @@ async function provenanceOf(run: RunRow) {
   const log = run.runFolder ? await readHead(path.join(run.runFolder, '.nextflow.log')) : '';
   const nextflowVersion = /N E X T F L O W\s+~\s+version\s+([\d.]+)/.exec(log)?.[1] ?? /version\s+(\d+\.\d+\.\d+)/.exec(`${log}\n${run.outputTail ?? ''}`)?.[1] ?? null;
   const revision = /revision:\s*([0-9a-f]{6,40})/.exec(`${log}\n${run.outputTail ?? ''}`)?.[1] ?? null;
+  // Per-process environments: Nextflow's conda cache in the work folder, or the env paths its log names.
   const condaDir = run.runFolder ? path.join(run.runFolder, 'work', 'conda') : null;
-  const envs = condaDir ? (await fs.readdir(condaDir).catch(() => [] as string[])).filter((name) => /^env-/.test(name) && !name.endsWith('.lock')) : [];
+  const fullLog = run.runFolder ? await readHead(path.join(run.runFolder, '.nextflow.log'), 512 * 1024) : '';
+  const fromLog = [...fullLog.matchAll(/\/(env-[0-9a-f]{8,})\b/g)].map((m) => m[1]);
+  const envs = [...new Set([...(condaDir ? (await fs.readdir(condaDir).catch(() => [] as string[])).filter((name) => /^env-/.test(name) && !name.endsWith('.lock')) : []), ...fromLog])];
   const slurm = run.executionMode === 'slurm';
   return {
     pipelineId: run.pipelineId, pipelineName: pkg?.manifest.package.name ?? run.pipelineId, pipelineVersion: pkg?.manifest.package.version ?? null,
