@@ -20,6 +20,7 @@ import {
   processCompletedPipelineRun,
 } from '@/lib/pipelines/run-completion';
 import { findTraceFile, parseTraceFile } from '@/lib/pipelines/nextflow';
+import { cancelLeftoverSlurmTaskJobs } from '@/lib/pipelines/slurm-task-cleanup';
 import { getPipelineRunTargetKey } from '@/lib/pipelines/result-files';
 import { resolveCondaEnvironmentReference } from '@/lib/pipelines/conda-environment';
 import {
@@ -2021,6 +2022,9 @@ export async function cancelPipelineRunForOperator(
       'The job already reached a terminal scheduler state; waiting for lifecycle reconciliation'
     );
   }
+
+  // Nextflow cancels its own task jobs when it gets the SIGTERM; any it could not reach must not keep running.
+  if (queueJobId && !queueJobId.startsWith('local-')) await cancelLeftoverSlurmTaskJobs(claimedRun.runFolder);
 
   const newStatus = 'cancelled';
 

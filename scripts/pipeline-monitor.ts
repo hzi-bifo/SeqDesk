@@ -16,6 +16,7 @@ import {
   readIdentityCheckedQueueSnapshot,
 } from '../src/lib/pipelines/queue-probe';
 import { notifyPipelineRunTerminalInApp } from '../src/lib/notifications/in-app';
+import { cancelLeftoverSlurmTaskJobs } from '../src/lib/pipelines/slurm-task-cleanup';
 
 const DEFAULT_INTERVAL_MS = 15000;
 
@@ -280,6 +281,8 @@ export async function syncRun(run: {
       count > 0 &&
       (derivedStatus === 'failed' || derivedStatus === 'cancelled')
     ) {
+      // The run's own job is gone; its nf-* task jobs must not keep running (scancel of the head, its time limit).
+      if (run.queueJobId && /^\d+$/.test(run.queueJobId)) await cancelLeftoverSlurmTaskJobs(run.runFolder);
       await notifyPipelineRunTerminalInApp(
         run.id,
         run.status,
