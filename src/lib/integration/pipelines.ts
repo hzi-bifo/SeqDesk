@@ -66,6 +66,7 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
     // SeqDesk's own rule for a pipeline run: the study's owner (or an installation-wide grant) starts it, and the same
     // person cancels or resumes it. Before, another member could cancel a colleague's run but not start one.
     const scope = () => decideServerCapability(session, 'analysis.run').grant?.scope ?? 'own';
+    const viewer = () => ({ id: session.user.id, installation: scope() === 'installation' });
     const readsChangedSince = async (runId: string, targetKey: string) => {
       const event = await db.pipelineRunEvent.findFirst({ where: { pipelineRunId: runId, eventType: 'inputs' }, orderBy: { occurredAt: 'asc' }, select: { payload: true } });
       if (!event?.payload) return null;
@@ -110,7 +111,7 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
     }
     if (sub === 'runs' && !runId && method === 'GET') {
       const targetKey = await read(url.searchParams.get('targetKey'));
-      return json({ runs: await listDataRuns(targetKey) });
+      return json({ runs: await listDataRuns(targetKey, viewer()) });
     }
     if (sub === 'runs' && !runId && method === 'POST') {
       const input = await body();
@@ -152,7 +153,7 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
     if (sub === 'runs' && runId && !action && method === 'GET') {
       const targetKey = await read(url.searchParams.get('targetKey'));
       await ownRun(runId, targetKey);
-      return json({ run: await getDataRun(runId, targetKey) });
+      return json({ run: await getDataRun(runId, targetKey, viewer()) });
     }
     if (sub === 'runs' && runId && action === 'resume' && method === 'POST') {
       const targetKey = await write(url.searchParams.get('targetKey'));

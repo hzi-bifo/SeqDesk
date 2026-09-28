@@ -14,8 +14,8 @@ const mocks = vi.hoisted(() => ({
   resume: vi.fn(),
   create: vi.fn(),
   start: vi.fn(),
-  readsInData: vi.fn(async () => ({ files: [], pairs: [], words: '' })),
-  events: vi.fn(async () => null),
+  readsInData: vi.fn(async (): Promise<{ files: { id: string; name: string; sizeBytes: number }[]; pairs: unknown[]; words: string }> => ({ files: [], pairs: [], words: '' })),
+  events: vi.fn(async (..._args: unknown[]): Promise<{ payload: string } | null> => null),
 }));
 vi.mock('@/lib/db', () => ({ db: mocks.db }));
 vi.mock('@/lib/authorization/api', () => ({ decideServerCapability: mocks.decide }));

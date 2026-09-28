@@ -166,7 +166,7 @@ async function loadRuns(where: { id?: string | { in: string[] }; studyId?: strin
   return db.pipelineRun.findMany({ where, orderBy: { createdAt: 'desc' }, take: 50, select: {
     id: true, runNumber: true, pipelineId: true, status: true, executionMode: true, executionProfile: true, queueJobId: true, queueStatus: true, queueReason: true, queueUpdatedAt: true,
     currentStep: true, queuedAt: true, startedAt: true, completedAt: true, createdAt: true, outputTail: true, errorTail: true, runFolder: true, inputSampleIds: true,
-    config: true, studyId: true, user: { select: { id: true, firstName: true, lastName: true, email: true } },
+    config: true, studyId: true, userId: true, study: { select: { userId: true } }, user: { select: { id: true, firstName: true, lastName: true, email: true } },
     artifacts: { select: { id: true, outputId: true, path: true, name: true, size: true, sampleId: true, type: true } },
     events: { where: { eventType: { in: ['resumed', 'state', 'inputs'] } }, select: { occurredAt: true, message: true, eventType: true, payload: true }, orderBy: { occurredAt: 'asc' }, take: 200 },
   } });
@@ -234,7 +234,7 @@ async function failedTaskError(runFolder: string | null, trace: string | null): 
 }
 
 /** One run as a card/record: plain status, outputs, provenance, datasets made from it. */
-export async function runView(run: RunRow, options: { detail?: boolean; targetKey?: string; readsNow?: DataFastq[] } = {}) {
+export async function runView(run: RunRow, options: { detail?: boolean; targetKey?: string; readsNow?: DataFastq[]; viewer?: { id: string; installation: boolean } } = {}) {
   const trace = run.runFolder ? await fs.readFile(path.join(run.runFolder, 'trace.txt'), 'utf8').catch(() => null) : null;
   // A failed or cancelled run whose reads in Data changed since it started: Resume would use the old reads.
   const inputs = run.events.find((e) => e.eventType === 'inputs')?.payload;
@@ -279,6 +279,8 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
     id: run.id, runNumber: run.runNumber, pipelineId: run.pipelineId, pipelineName: pkg?.manifest.package.name ?? run.pipelineId, version: pkg?.manifest.package.version ?? null,
     status: run.status, where: run.executionMode === 'slurm' ? 'SLURM' : 'this server', samples, startedBy: person,
     createdAt: run.createdAt.toISOString(), startedAt: run.startedAt?.toISOString() ?? null, completedAt: run.completedAt?.toISOString() ?? null,
+    // Whether the one asking may cancel or resume it: the study's owner (who started its Data), or an installation-wide grant.
+    canManage: !options.viewer || options.viewer.installation || (run.study?.userId ?? run.userId) === options.viewer.id,
     resumed: run.events.filter((e) => e.eventType === 'resumed').length, readsChanged, plain: { ...status, processes: options.detail ? status.processes : [] },
     outputs: outputs.map((output) => {
       const dataset = datasets.find((d) => { try { return JSON.parse(d.sourceConfig ?? '{}').outputId === output.id; } catch { return false; } });
@@ -298,7 +300,7 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
  * Data is pinned to, however old. With 56 runs on elektra, a run that had queued for hours fell out of the newest 50:
  * its card and its "finished" notice never came.
  */
-export async function listDataRuns(targetKey: string) {
+export async function listDataRuns(targetKey: string, viewer?: { id: string; installation: boolean }) {
   const study = await findDataStudy(targetKey);
   if (!study) return [];
   const runs = await loadRuns({ studyId: study.id });
@@ -311,13 +313,13 @@ export async function listDataRuns(targetKey: string) {
   const missing = [...new Set([...active.map((r) => r.id), ...pinnedIds])].filter((id) => !have.has(id));
   const extra = missing.length ? (await loadRuns({ id: { in: missing } })).filter((run) => run.studyId === study.id) : [];
   const { files: readsNow } = await readsInData(targetKey);
-  return Promise.all([...runs, ...extra].map((run) => runView(run, { targetKey, readsNow })));
+  return Promise.all([...runs, ...extra].map((run) => runView(run, { targetKey, readsNow, viewer })));
 }
 
-export async function getDataRun(runId: string, targetKey?: string) {
+export async function getDataRun(runId: string, targetKey?: string, viewer?: { id: string; installation: boolean }) {
   const [run] = await loadRuns({ id: runId });
   const readsNow = targetKey ? (await readsInData(targetKey)).files : undefined;
-  return run ? runView(run, { detail: true, targetKey, readsNow }) : null;
+  return run ? runView(run, { detail: true, targetKey, readsNow, viewer }) : null;
 }
 
 /** Whether a run belongs to the Data of this Analysis study (its backing study). */

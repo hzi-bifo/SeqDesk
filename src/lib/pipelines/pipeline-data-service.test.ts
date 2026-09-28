@@ -27,7 +27,7 @@ import { listDataRuns } from './pipeline-data-service';
 const row = (id: string, status = 'completed') => ({
   id, runNumber: id.toUpperCase(), pipelineId: 'fastqc', status, executionMode: 'slurm', executionProfile: null, queueJobId: null, queueStatus: null, queueReason: null,
   queueUpdatedAt: null, currentStep: null, queuedAt: null, startedAt: null, completedAt: null, createdAt: new Date('2026-09-28T10:00:00Z'), outputTail: null, errorTail: null,
-  runFolder: null, inputSampleIds: null, config: null, studyId: 'study-1', user: null, artifacts: [], events: [],
+  runFolder: null, inputSampleIds: null, config: null, studyId: 'study-1', userId: id.startsWith('old') ? 'sam' : 'lena', study: { userId: 'lena' }, user: null, artifacts: [], events: [],
 });
 
 describe('the study’s runs for the band', () => {
@@ -50,5 +50,13 @@ describe('the study’s runs for the band', () => {
     // Active, or ended in the last day (a long-queued run that just finished keeps its card and its notice).
     const activeQuery = mocks.db.pipelineRun.findMany.mock.calls.find(([arg]) => (arg as { where: { OR?: unknown } }).where.OR)?.[0] as { where: { OR: Record<string, unknown>[] } };
     expect(activeQuery.where.OR).toEqual([{ status: { in: ['pending', 'queued', 'running'] } }, { completedAt: { gte: expect.any(Date) } }]);
+  });
+
+  it('says per run whether the one asking may cancel or resume it', async () => {
+    mocks.db.pipelineRun.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => (where.pipelineId || where.OR || where.id ? [] : [row('r1', 'running')]));
+    mocks.db.exploreDataset.findMany.mockResolvedValue([]);
+    expect((await listDataRuns('project:p1', { id: 'lena', installation: false }))[0].canManage).toBe(true);
+    expect((await listDataRuns('project:p1', { id: 'sam', installation: false }))[0].canManage).toBe(false);
+    expect((await listDataRuns('project:p1', { id: 'sam', installation: true }))[0].canManage).toBe(true);
   });
 });
