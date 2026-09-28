@@ -185,6 +185,21 @@ export interface CreateDatasetInput {
   createdById: string;
 }
 
+/**
+ * A name no other imported table of the study has: "counts" when free, else "counts (2)", "counts (3)", ...
+ * Two tables called the same are indistinguishable in every picker and list, so an import never makes one
+ * (it keeps the earlier table as it is; the person can rename either).
+ */
+export async function freeImportName(targetKey: string, wanted: string): Promise<string> {
+  const base = wanted.trim() || "Untitled dataset";
+  const taken = new Set((await db.exploreDataset.findMany({ where: { targetKey, kind: "external" }, select: { name: true } })).map((row) => row.name.trim().toLowerCase()));
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let n = 2; ; n += 1) {
+    const candidate = `${base.slice(0, Math.max(1, 200 - String(n).length - 3))} (${n})`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+}
+
 export async function createDataset(input: CreateDatasetInput) {
   return db.exploreDataset.create({
     data: {

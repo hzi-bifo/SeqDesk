@@ -3,7 +3,7 @@ import { DelimitedParseError } from "./parsers/delimited";
 import { db } from "@/lib/db";
 import { requireTargetAccess, type SessionLike } from "@/lib/explore/authorization";
 import { getTableKind, suggestRoles } from "@/lib/explore/dataset-kinds";
-import { createDataset, deleteDataset, getDatasetRecord, serializeDatasetSummary, writeDatasetVersion } from "@/lib/explore/datasets";
+import { createDataset, deleteDataset, freeImportName, getDatasetRecord, serializeDatasetSummary, writeDatasetVersion } from "@/lib/explore/datasets";
 import { createImportJob, finishImportJob, serializeImportJob } from "@/lib/explore/import-jobs";
 import { ImportCancelled, writeDatasetVersionStream } from "@/lib/explore/table-store";
 import { importRoles, isStreamableTable, parseImportFile, prepareImport, previewDelimitedFile, streamDelimitedFile } from "@/lib/explore/importers/file";
@@ -131,7 +131,7 @@ export async function importDatasetFromForm(session: SessionLike & { user: { id:
     targetKey,
     kind: "external",
     tableKind,
-    name: formString(form, "name") ?? fileName.replace(/\.[^.]+$/, ""),
+    name: await freeImportName(targetKey, formString(form, "name") ?? fileName.replace(/\.[^.]+$/, "")),
     description: `Imported from ${fileName}`,
     sensitivity,
     roles: prepared.roles,
@@ -188,7 +188,7 @@ async function importStreamed(session: SessionLike & { user: { id: string } }, f
   const sensitivity = SENSITIVITY_RANK[inherited] > SENSITIVITY_RANK[chosen] ? inherited : chosen;
   const checksum = storedFile.checksumSha256;
   const created = await createDataset({
-    targetKey, kind: "external", tableKind, name: formString(form, "name") ?? fileName.replace(/(\.[^.]+)?\.gz$|\.[^.]+$/i, ""),
+    targetKey, kind: "external", tableKind, name: await freeImportName(targetKey, formString(form, "name") ?? fileName.replace(/(\.[^.]+)?\.gz$|\.[^.]+$/i, "")),
     description: `Imported from ${fileName}`, sensitivity, roles, sourceFileId: storedFile.id,
     sourceConfig: { builder: "import", fileId: storedFile.id, fileName, checksum, idGrammar: null, idColumn: null },
     createdById: session.user.id,

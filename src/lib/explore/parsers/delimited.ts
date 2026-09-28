@@ -201,7 +201,7 @@ export function parseDelimited(text: string, options: DelimitedParseOptions = {}
     }
     const record = recordAt(index);
     const cells = record.cells;
-    if (cells.length > columns.length) throw new DelimitedParseError(`Line ${index + 1} has more fields than the header`);
+    if (cells.length > columns.length) throw new DelimitedParseError(`Line ${index + 1} has more fields than the header (${cells.length} values, ${columns.length} columns)`);
     index = record.end;
     const row: ExploreRowData = {};
     columns.forEach((column, columnIndex) => {

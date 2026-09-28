@@ -191,7 +191,7 @@ export async function* parseDelimitedStream(
       cells = record.cells;
       index = record.end;
     }
-    if (cells.length > columns.length) throw new DelimitedParseError(`Line ${first + 1} has more fields than the header`);
+    if (cells.length > columns.length) throw new DelimitedParseError(`Line ${first + 1} has more fields than the header (${cells.length} values, ${columns.length} columns)`);
     const row: ExploreRowData = {};
     for (let column = 0; column < columns.length; column += 1) row[columns[column]] = coerceCell(cells[column] ?? null);
     count += 1;
