@@ -155,6 +155,14 @@ describe('plainRunStatus', () => {
       taskError: 'slurmstepd: error: *** JOB 48 ON pmuench-X399-DESIGNARE-EX CANCELLED AT 2026-09-28T12:10:59 ***' });
     expect([status.sentence, status.action?.kind]).toEqual(['FastQC was stopped outside SeqDesk: its SLURM job was cancelled', 'resume']);
   });
+  it('Nextflow could not submit a task because the controller was down: Resume, in words', () => {
+    // Real Slurm: slurmctld stopped while RUN_FASTQC ran; Nextflow's sbatch for SUMMARIZE_FASTQC failed.
+    const errorTail = ["ERROR ~ Error executing process > 'SUMMARIZE_FASTQC (fastqc-summary)'", '', 'Caused by:', '  Failed to submit process to grid scheduler for execution', '',
+      'Command executed:', '', '  sbatch .command.run', '', 'Command exit status:', '  1', '', 'Command output:',
+      '  sbatch: error: Batch job submission failed: Unable to contact slurm controller (connect failure)'].join('\n');
+    const status = plainRunStatus({ now, run: { status: 'failed', executionMode: 'slurm', queueJobId: '66', errorTail } });
+    expect([status.sentence, status.action?.kind]).toEqual(['Couldn’t hand the FastQC summary to SLURM: the SLURM controller did not answer', 'resume']);
+  });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
     const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';

@@ -405,6 +405,16 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
     const kind = classifyFailure({ texts, exitCodes: [failed?.exit, ...sacct.map((l) => l.exitCode), ...sacct.map((l) => (l.signal === 9 ? 137 : null))], slurmStates: [...sacct.map((l) => l.state), queueState] });
     const lines = firstErrorLines([context.taskError, run.errorTail, run.outputTail]);
     const cancelledOutside = /\*\*\* JOB \d+ ON \S+ CANCELLED AT /.test(texts.filter(Boolean).join('\n'));
+    // Nextflow's own sbatch for a task was refused (the controller was down, the queue closed): say that, with Resume.
+    const all = texts.filter(Boolean).join('\n');
+    if (/Failed to submit process to grid scheduler/.test(all)) {
+      const refusal = slurmRefusal(all, { queue: run.queue, memory: run.askedMemory, cores: run.askedCores });
+      const stage = stageWords(failed?.process ?? failed?.name ?? null);
+      const sentence = `Couldn’t hand ${stage} to SLURM: ${refusal?.words ?? 'sbatch refused it'}`;
+      const lines = firstErrorLines([all]);
+      return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action: refusal && !refusal.retry ? { kind: 'ask-admin', label: 'Ask the admin' } : { kind: 'resume', label: 'Resume' },
+        error: { kind: 'unknown', sentence, firstLines: lines, process: failed?.process ?? null, sample: failed?.tag ?? null, exitCode: null } };
+    }
     const { sentence, action } = errorSentence(kind, failed?.process ?? failed?.name ?? null, failed?.tag ?? null, exitCode, lines, run, failedLine?.nodes ?? null, cancelledOutside);
     return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action,
       error: { kind, sentence, firstLines: lines, process: failed?.process ?? null, sample: failed?.tag ?? null, exitCode } };
