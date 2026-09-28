@@ -400,9 +400,15 @@ describe("install profile installer wiring", () => {
   });
 
   it("keeps the standalone installer's feature-module requirements aligned with the application validator", () => {
-    const validator = extractShellFunction(
-      installDist,
-      "validate_install_plan_profile_compatibility"
+    // The embedded script contains a column-0 "}" (the preset loop), so the
+    // generic extractor would stop early; cut after the defaults table instead.
+    const validatorStart = installDist.indexOf(
+      "validate_install_plan_profile_compatibility() {"
+    );
+    expect(validatorStart).toBeGreaterThanOrEqual(0);
+    const validator = installDist.slice(
+      validatorStart,
+      installDist.indexOf("\n}\n", installDist.indexOf("const defaultStates", validatorStart)) + 2
     );
     const requirementsMatch = validator.match(
       /const requirements = (\{[\s\S]*?\});\nconst alwaysEnabled/
@@ -853,7 +859,6 @@ describe("install profile installer wiring", () => {
   it("accepts the repository's maintained installer and hosted-profile examples", () => {
     const examples = [
       "seqdesk.config.example.json",
-      "docs/infrastructure-setup.example.json",
       ".github/fixtures/ci-install-profile.json",
       "setups/twincore/infrastructure-setup.json",
     ];

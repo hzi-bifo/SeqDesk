@@ -66,8 +66,10 @@ describe("Modules settings", () => {
   it("shows facility and import modules together with shared catalog descriptions", async () => {
     hooks.query = "category=data-sources";
     render(<ModulesPage />);
-    // Facility sequencing, the two raw-read importers and the five public-record connectors.
-    expect(screen.getAllByRole("article")).toHaveLength(8);
+    // Facility sequencing, the raw-read importers and every public-record connector.
+    expect(screen.getAllByRole("article")).toHaveLength(
+      AVAILABLE_MODULES.filter((module) => module.category === "data-sources").length
+    );
     expect(screen.getByRole("heading", { name: "Zenodo records" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Facility sequencing" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "CAMI benchmark reads" })).toBeTruthy();

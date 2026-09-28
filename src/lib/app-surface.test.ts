@@ -17,29 +17,31 @@ describe("app surface", () => {
     expect(isWorkbenchAppSurface()).toBe(false);
   });
 
-  it("uses the explicit Workbench app surface", () => {
+  // Deployment presets are one application (57854cfa): every preset shares
+  // the sequencing experience, so legacy Workbench inputs still resolve to it.
+  it("keeps the Lab surface for the explicit Workbench app surface", () => {
     process.env.SEQDESK_APP_SURFACE = "workbench";
 
-    expect(getSeqDeskAppSurface()).toBe("workbench");
-    expect(isWorkbenchAppSurface()).toBe(true);
+    expect(getSeqDeskAppSurface()).toBe("lab");
+    expect(isWorkbenchAppSurface()).toBe(false);
   });
 
-  it("uses the public app surface value for client code", () => {
+  it("keeps the Lab surface for the public app surface value", () => {
     process.env.SEQDESK_APP_SURFACE = "lab";
     process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE = "workbench";
 
-    expect(getSeqDeskAppSurface()).toBe("workbench");
+    expect(getSeqDeskAppSurface()).toBe("lab");
   });
 
-  it("keeps the legacy Workbench-only flag as a fallback", () => {
+  it("keeps the Lab surface for the legacy Workbench-only flag", () => {
     process.env.NEXT_PUBLIC_SEQDESK_WORKBENCH_ONLY = "1";
 
-    expect(getSeqDeskAppSurface()).toBe("workbench");
+    expect(getSeqDeskAppSurface()).toBe("lab");
   });
 
-  it("maps the canonical public deployment profile for compatibility callers", () => {
+  it("keeps the Lab surface for the research-workbench preset", () => {
     process.env.NEXT_PUBLIC_SEQDESK_DEPLOYMENT_PROFILE = "research-workbench";
 
-    expect(getSeqDeskAppSurface()).toBe("workbench");
+    expect(getSeqDeskAppSurface()).toBe("lab");
   });
 });

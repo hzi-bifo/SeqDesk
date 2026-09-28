@@ -90,7 +90,7 @@ describe("demo seed helpers", () => {
     expect(extraSettings.departmentSharing).toBe(false);
   });
 
-  it("does not seed facility-only module defaults in Research Workbench", () => {
+  it("seeds the same module defaults in the Research preset, which is one application", () => {
     const updated = getDemoSiteSettingsUpdate(
       null,
       getDeploymentProfileDefinition("research-workbench")
@@ -100,11 +100,11 @@ describe("demo seed helpers", () => {
     };
 
     expect(modulesConfig.modules).toMatchObject({
-      "ai-validation": false,
-      "mixs-metadata": false,
-      "ena-sample-fields": false,
-      "sequencing-tech": false,
-      "dynamic-studies": false,
+      "ai-validation": true,
+      "mixs-metadata": true,
+      "ena-sample-fields": true,
+      "sequencing-tech": true,
+      "dynamic-studies": true,
       notifications: false,
     });
   });

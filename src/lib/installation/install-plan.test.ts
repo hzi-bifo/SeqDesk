@@ -140,7 +140,7 @@ describe("InstallPlan", () => {
     ).toThrow(/estimated byte size/i);
   });
 
-  it("rejects feature modules that require a domain absent from the deployment profile", () => {
+  it("accepts facility feature modules in the research preset because presets share every domain", () => {
     const plan = validPlan();
     expect(() =>
       parseInstallPlan({
@@ -150,9 +150,7 @@ describe("InstallPlan", () => {
           featureModules: { "billing-info": true },
         },
       })
-    ).toThrow(
-      /Research workbench cannot enable modules\.billing-info[\s\S]*facility-intake[\s\S]*Disable modules\.billing-info/
-    );
+    ).not.toThrow();
   });
 
   it("fails closed when an install plan names an unknown feature module", () => {

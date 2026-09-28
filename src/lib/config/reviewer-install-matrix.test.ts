@@ -196,9 +196,9 @@ describe("reviewer installation matrix contract", () => {
     expect(smokeSource).toContain("/api/auth/providers");
     expect(smokeSource).toContain("/api/setup/status");
     expect(smokeSource).toContain('touch "$OUTPUT_DIR/auth-admin.ok"');
-    expect(smokeSource).toContain('touch "$OUTPUT_DIR/auth-researcher.ok"');
-    expect(smokeSource).toContain('"FACILITY_ADMIN"');
-    expect(smokeSource).toContain('"RESEARCHER"');
+    // Only the administrator is generated; the installer must not advertise a researcher account.
+    expect(smokeSource).toContain("Installer unexpectedly advertised a researcher account");
+    expect(smokeSource).not.toContain("auth-researcher.ok");
   });
 
   it("enforces the exact Node floor and only the two tested LTS lines", () => {
@@ -269,7 +269,6 @@ describe("reviewer installation matrix contract", () => {
     expect(reportSource).toContain("versions.txt");
     expect(reportSource).toContain("GITHUB_STEP_SUMMARY");
     expect(reportSource).toContain("auth-admin.ok");
-    expect(reportSource).toContain("auth-researcher.ok");
     expect(reportSource).toContain("candidate-checksums.ok");
     expect(reportSource).toContain("demo-data-cli.ok");
   });

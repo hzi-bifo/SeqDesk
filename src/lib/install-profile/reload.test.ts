@@ -300,7 +300,8 @@ describe("install profile reload helpers", () => {
     ]);
   });
 
-  it("rejects feature modules that do not belong to the installed deployment profile before mutating", async () => {
+  it("applies feature modules in the research preset because presets share every domain", async () => {
+    // Presets are one application (57854cfa): no feature module is incompatible.
     const markerPath = path.join(tempDir, "settings-applied.marker");
     await fs.writeFile(
       path.join(tempDir, "settings.json"),
@@ -328,17 +329,12 @@ describe("install profile reload helpers", () => {
         profileCode: "setup-code",
         cwd: tempDir,
       })
-    ).rejects.toThrow(
-      /Research workbench cannot enable modules\.billing-info[\s\S]*facility-intake[\s\S]*Disable modules\.billing-info/
-    );
+    ).resolves.toMatchObject({ profile: { id: "dev" } });
 
-    await expect(fs.stat(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(fs.stat(path.join(tempDir, "pipelines"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(fs.stat(markerPath)).resolves.toBeTruthy();
   });
 
-  it("rejects an incompatible persisted module omitted by the hosted delta before mutating", async () => {
+  it("keeps a persisted billing-info module when the hosted delta omits it", async () => {
     const markerPath = path.join(tempDir, "settings-applied.marker");
     await fs.writeFile(
       path.join(tempDir, "settings.json"),
@@ -372,9 +368,9 @@ describe("install profile reload helpers", () => {
         profileCode: "setup-code",
         cwd: tempDir,
       })
-    ).rejects.toThrow(/Research workbench cannot enable modules\.billing-info/);
+    ).resolves.toMatchObject({ profile: { id: "dev" } });
 
-    await expect(fs.stat(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(markerPath)).resolves.toBeTruthy();
   });
 
   it("lets a hosted delta turn off an incompatible persisted module", async () => {

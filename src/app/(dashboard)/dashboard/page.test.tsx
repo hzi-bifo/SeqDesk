@@ -28,7 +28,8 @@ describe("dashboard landing route", () => {
   it.each([
     ["sequencing-center", "/orders"],
     ["shared-lab", "/orders"],
-    ["research-workbench", "/workbench/data"],
+    // Presets are one application (57854cfa): the research preset lands on the same route.
+    ["research-workbench", "/orders"],
   ] as const)("redirects %s to its configured landing route", (profileId, route) => {
     mocks.profileId = profileId;
 
