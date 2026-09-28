@@ -196,6 +196,11 @@ describe('plainRunStatus', () => {
     const status = plainRunStatus({ now, run: { status: 'failed', executionMode: 'slurm', queueJobId: '110', outputTail } });
     expect([status.sentence, status.action?.kind]).toEqual(['Nextflow itself was stopped before it finished (exit 137) · Resume continues where it stopped', 'resume']);
   });
+  it('a run whose folder was deleted says it cannot go on, with Run again', () => {
+    const run = { status: 'running', executionMode: 'slurm', queueJobId: '112', queueStatus: 'RUNNING', folderMissing: true };
+    expect([plainRunStatus({ now, run }).sentence, plainRunStatus({ now, run }).action?.kind]).toEqual(['Its run folder is gone, so it cannot go on or be resumed · Run it again', 'run-again']);
+    expect(plainRunStatus({ now, run: { ...run, status: 'completed' } }).shape).toBe('finished');
+  });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
     const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';

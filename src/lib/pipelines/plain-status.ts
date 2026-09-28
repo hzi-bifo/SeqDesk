@@ -63,6 +63,8 @@ export interface PlainRunInput {
   askedCores?: number | null;
   /** When the monitor last read the scheduler for this run (queueUpdatedAt); old while the run is active = stale card. */
   checkedAt?: Date | string | null;
+  /** The run folder is gone (deleted while it ran, or after): nothing can continue or resume there. */
+  folderMissing?: boolean;
   /** How many steps the pipeline declares, so "step 2 of 2" does not shrink when the log tail loses the first block. */
   declaredSteps?: number | null;
   outputCount?: number | null;
@@ -373,6 +375,15 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
 }
 
 function plainRunStatusOf(context: PlainContext): PlainStatus {
+  if (context.run.folderMissing && context.run.status.toLowerCase() !== 'completed' && context.run.status.toLowerCase() !== 'cancelled') {
+    const sentence = 'Its run folder is gone, so it cannot go on or be resumed · Run it again';
+    return { shape: 'needs-you', word: 'Needs you', sentence, action: { kind: 'run-again', label: 'Run again' }, stages: [], processes: [],
+      error: { kind: 'unknown', sentence, firstLines: [], process: null, sample: null, exitCode: null }, keeps: null, queue: null, estimate: { seconds: null, words: 'no estimate yet' }, elapsedSeconds: null };
+  }
+  return plainRunStatusBody(context);
+}
+
+function plainRunStatusBody(context: PlainContext): PlainStatus {
   const { run } = context;
   const now = context.now ?? new Date();
   const tasks = context.trace ? parseTraceContent(context.trace).tasks : [];
