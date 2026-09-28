@@ -27,6 +27,8 @@ import { loadCanvasGraph } from "@/lib/explore/canvas";
 import { importDatasetFromForm, isImportInputError } from "@/lib/explore/dataset-import";
 import { cancelImportJob, getImportJob, serializeImportJob } from "@/lib/explore/import-jobs";
 import { readTablePage } from "@/lib/explore/table-page";
+import { QueryInputError } from "@/lib/explore/table-query";
+import { openTableDownload } from "@/lib/explore/table-download";
 import { computeDatasetCacheToken, deleteDataset, fetchDatasetRows, getDatasetDetail, getDatasetRecord, listDatasets, updateDatasetRoles } from "@/lib/explore/datasets";
 import { applyEditsToRows, listActiveEdits } from "@/lib/explore/edits";
 import { createFlow, deleteFlow, getFlow, getFlowRecord, listFlows, updateFlow } from "@/lib/explore/flows";
@@ -546,6 +548,23 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         await loadDataset(session, id, "write");
         return json(await editTable(id, session.user.id, await readJson(request), sub === "copy"));
       }
+      if (segments.length === 4 && sub === "table" && segments[3] === "download" && method === "GET") {
+        // The table, or the current view of it (search, filters, sort), streamed as a file.
+        const dataset = await loadDataset(session, id, "read");
+        const version = dataset.versions.find((entry) => entry.id === (query.get("versionId") ?? dataset.currentVersionId)) ?? dataset.versions[0] ?? null;
+        if (!version) throw new ExploreRouteError(404, "This table has no rows yet.");
+        const format = query.get("format") === "csv" ? "csv" : "tsv";
+        const download = await openTableDownload(version, await listActiveEdits(dataset.id), { columns: query.get("columns"), search: query.get("q"), sort: query.get("sort"), filters: query.get("filters"), format, signal: request.signal })
+          .catch((error) => { throw error instanceof QueryInputError ? new ExploreRouteError(400, error.message) : error; });
+        const combined = new Headers(headers);
+        combined.set("Content-Type", download.contentType);
+        const base = (dataset.name || "table").replace(/[\\/:*?"<>|]+/g, "-").trim() || "table";
+        combined.set("Content-Disposition", `attachment; filename="download.${download.extension}"; filename*=UTF-8''${encodeURIComponent(`${base}.${download.extension}`)}`);
+        combined.set("X-Content-Type-Options", "nosniff");
+        if (download.rows !== null) combined.set("X-Table-Rows", String(download.rows));
+        if (download.limited) combined.set("X-Table-Limited", download.limited);
+        return new NextResponse(Readable.toWeb(Readable.from(download.body)) as ReadableStream, { headers: combined });
+      }
       if (segments.length === 3 && sub === "table" && method === "GET") {
         const dataset = await loadDataset(session, id, "read");
         const artifactId = query.get("artifactId");
@@ -560,8 +579,8 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         // A page, not the table: rows from the cursor on, bounded by a cell budget so a wide table gives fewer rows.
         const page = await readTablePage(current, activeEdits, {
           columns: query.get("columns"), limit: Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 100_000,
-          cursor: query.get("cursor"), search: query.get("q"),
-        });
+          cursor: query.get("cursor"), search: query.get("q"), sort: query.get("sort"), filters: query.get("filters"), signal: request.signal,
+        }).catch((error) => { throw error instanceof QueryInputError ? new ExploreRouteError(400, error.message) : error; });
         return json({ datasetId: dataset.id, inputToken: current ? inputToken(current.id, activeEdits) : null, version: current?.number ?? null, versionId: current?.id ?? null,
           editable: !artifactId && dataset.kind === "external" && activeEdits.length === 0 && !page.fileBacked, rowEntity: page.rowEntity, ...page.body });
       }
