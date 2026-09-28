@@ -68,6 +68,8 @@ echo "" > "$STDERR_LOG"
     expect(() => normalizeOverrides({ memory: 'lots' })).toThrow(/128 GB/);
     expect(() => normalizeOverrides({ process: "x'; rm -rf" })).toThrow();
     expect(normalizeOverrides({ time: '2 d' }).hours).toBe(48);
+    expect(normalizeOverrides({ time: '30 s' }).time).toBe('30.s');
+    expect(normalizeOverrides({ time: '10 min' }).time).toBe('10.m');
   });
 });
 

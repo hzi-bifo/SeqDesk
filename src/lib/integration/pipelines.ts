@@ -86,6 +86,8 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
       const targetKey = await write(url.searchParams.get('targetKey'));
       await ownRun(runId, targetKey);
       const input = await body();
+      // Fixed in Data: the study's reads are mirrored again before Nextflow resumes (a replaced file reruns its tasks).
+      await ensureDataStudy({ targetKey, userId: session.user.id });
       const result = await resumePipelineRun(runId, { process: typeof input.process === 'string' ? input.process : null, memory: typeof input.memory === 'string' ? input.memory : null, time: typeof input.time === 'string' ? input.time : null });
       if (result.status >= 300) return json(result.body, result.status);
       return json({ ...result.body, run: await getDataRun(runId, targetKey) });

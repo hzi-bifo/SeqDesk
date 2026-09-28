@@ -15,7 +15,7 @@ export interface ResumeOverrides { process?: string | null; memory?: string | nu
 
 const PROCESS = /^[A-Za-z0-9_:.*-]{1,120}$/;
 const MEMORY = /^\s*(\d{1,5}(?:\.\d{1,2})?)\s*(MB|GB|TB)\s*$/i;
-const TIME = /^\s*(\d{1,4})\s*(m|h|d)\s*$/i;
+const TIME = /^\s*(\d{1,4})\s*(s|m|min|h|d)\s*$/i;
 
 /** Validated overrides, normalized for Nextflow ("128.GB", "24.h"); throws with words the person can act on. */
 export function normalizeOverrides(input: ResumeOverrides): { process: string | null; memory: string | null; time: string | null; hours: number | null } {
@@ -30,9 +30,9 @@ export function normalizeOverrides(input: ResumeOverrides): { process: string | 
   if (input.time) {
     const t = TIME.exec(input.time);
     if (!t) throw new Error('Time must look like “24 h”.');
-    const unit = t[2].toLowerCase();
+    const unit = t[2].toLowerCase() === 'min' ? 'm' : t[2].toLowerCase();
     time = `${t[1]}.${unit}`;
-    hours = unit === 'h' ? Number(t[1]) : unit === 'd' ? Number(t[1]) * 24 : Math.ceil(Number(t[1]) / 60);
+    hours = unit === 'h' ? Number(t[1]) : unit === 'd' ? Number(t[1]) * 24 : unit === 'm' ? Math.ceil(Number(t[1]) / 60) : 1;
   }
   return { process, memory, time, hours };
 }
