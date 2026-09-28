@@ -276,7 +276,7 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
 }
 
 /**
- * The study's runs for the band: the 50 newest, plus every run still active and every run a dataset in this study's
+ * The study's runs for the band: the 50 newest, plus every run still active or ended in the last day, and every run a dataset in this study's
  * Data is pinned to, however old. With 56 runs on elektra, a run that had queued for hours fell out of the newest 50:
  * its card and its "finished" notice never came.
  */
@@ -285,7 +285,9 @@ export async function listDataRuns(targetKey: string) {
   if (!study) return [];
   const runs = await loadRuns({ studyId: study.id });
   const have = new Set(runs.map((run) => run.id));
-  const active = await db.pipelineRun.findMany({ where: { studyId: study.id, status: { in: ['pending', 'queued', 'running'] } }, select: { id: true } });
+  // Runs that ended in the last day too: the moment a long-queued run finishes it must stay in the list, or its
+  // "finished" notice never comes and its tables never go to Data.
+  const active = await db.pipelineRun.findMany({ where: { studyId: study.id, OR: [{ status: { in: ['pending', 'queued', 'running'] } }, { completedAt: { gte: new Date(Date.now() - 86_400_000) } }] }, select: { id: true } });
   const pinned = await db.exploreDataset.findMany({ where: { targetKey, kind: 'pipeline-table' }, select: { sourceConfig: true } });
   const pinnedIds = pinned.flatMap((d) => { try { const ids = JSON.parse(d.sourceConfig ?? '{}').runIds; return Array.isArray(ids) ? ids.filter((v: unknown): v is string => typeof v === 'string') : []; } catch { return []; } });
   const missing = [...new Set([...active.map((r) => r.id), ...pinnedIds])].filter((id) => !have.has(id));

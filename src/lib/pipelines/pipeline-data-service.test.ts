@@ -37,7 +37,7 @@ describe('the study’s runs for the band', () => {
     const newest = Array.from({ length: 50 }, (_, i) => row(`new-${i}`));
     mocks.db.pipelineRun.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
       if (where.pipelineId) return []; // past durations for the estimate
-      if (where.status) return [{ id: 'old-queued' }, { id: 'new-3' }];
+      if (where.OR) return [{ id: 'old-queued' }, { id: 'new-3' }];
       if (where.id) return [row('old-queued', 'queued'), row('old-pinned')];
       return newest;
     });
@@ -47,5 +47,8 @@ describe('the study’s runs for the band', () => {
     expect(runs.map((r) => r.id)).toEqual(expect.arrayContaining(['old-queued', 'old-pinned']));
     const byId = mocks.db.pipelineRun.findMany.mock.calls.find(([arg]) => (arg as { where: { id?: { in?: unknown } } }).where.id?.in)?.[0] as { where: { id: { in: string[] } } };
     expect(byId.where.id.in.sort()).toEqual(['old-pinned', 'old-queued']);
+    // Active, or ended in the last day (a long-queued run that just finished keeps its card and its notice).
+    const activeQuery = mocks.db.pipelineRun.findMany.mock.calls.find(([arg]) => (arg as { where: { OR?: unknown } }).where.OR)?.[0] as { where: { OR: Record<string, unknown>[] } };
+    expect(activeQuery.where.OR).toEqual([{ status: { in: ['pending', 'queued', 'running'] } }, { completedAt: { gte: expect.any(Date) } }]);
   });
 });
