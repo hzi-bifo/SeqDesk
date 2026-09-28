@@ -5,7 +5,7 @@
  *
  *   node --import tsx scripts/flow-run-real.ts "Airway: dexamethasone response" "Moving Pictures: gut vs tongue"
  *
- * Exits non-zero when a run fails or does not finish within SEQDESK_FLOW_RUN_TIMEOUT_S (default 5400).
+ * Missing flows are reported and skipped; the others still run. Exits non-zero when a flow is missing, a run fails or does not finish within SEQDESK_FLOW_RUN_TIMEOUT_S (default 5400).
  */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -24,9 +24,11 @@ async function main() {
   const scopes = await db.integrationExploreScope.findMany({ where: { workspaceId: account.workspaceId } });
   const targets = scopes.map((scope) => scope.targetKey);
   const runs: { name: string; id: string; started: number }[] = [];
+  // A missing flow does not stop the others: run what exists, name what was missing, and fail at the end.
+  const missing: string[] = [];
   for (const name of names) {
     const flow = await db.exploreFlow.findFirst({ where: { name, targetKey: { in: targets } }, orderBy: { createdAt: 'desc' } });
-    if (!flow) throw new Error(`No flow "${name}" in workspace ${account.workspaceId}; seed it first.`);
+    if (!flow) { missing.push(name); console.log(`MISSING ${name}: no such flow in workspace ${account.workspaceId}; seed it first. Running the others.`); continue; }
     const run = await startFlowRun(flow.id, { scope: 'all', actor: { userId: account.userId, memberId: account.memberId, name: 'Real-data check' } });
     console.log(`Started ${name}: run #${run.number ?? '?'} (${run.id})`);
     runs.push({ name, id: run.id, started: Date.now() });
@@ -50,6 +52,7 @@ async function main() {
     }
     if (pending.size) await new Promise((resolve) => setTimeout(resolve, 5000));
   }
-  if (failed) process.exitCode = 1;
+  if (missing.length) console.log(`Not run (missing): ${missing.map((name) => `"${name}"`).join(', ')}`);
+  if (failed || missing.length) process.exitCode = 1;
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => db.$disconnect());
