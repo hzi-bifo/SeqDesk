@@ -198,10 +198,15 @@ describe("GET /api/ai/validate", () => {
     expect(json.moduleDisabled).toBe(true);
   });
 
-  it("treats the facility-only AI module as disabled in Research Workbench", async () => {
+  it("follows the module setting, not the preset, in Research Workbench", async () => {
+    // Presets are one application; AI validation is hidden by disabling the
+    // module rather than by the deployment profile.
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
     );
+    mocks.db.siteSettings.findUnique.mockResolvedValue({
+      modulesConfig: JSON.stringify({ modules: { "ai-validation": false }, globalDisabled: false }),
+    });
 
     const response = await GET();
     const json = await response.json();

@@ -228,7 +228,10 @@ describe("ticket and sample route quick wins", () => {
     expect(userResult.status).toBe(200);
     expect(mocks.db.sample.findMany).toHaveBeenCalledWith({
       where: {
-        order: { userId: "user-1" },
+        OR: [
+          { order: { userId: "user-1" } },
+          { orderId: null, study: { userId: "user-1" } },
+        ],
         orderId: "order-1",
         studyId: null,
       },

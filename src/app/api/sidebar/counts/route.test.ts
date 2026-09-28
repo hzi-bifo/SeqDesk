@@ -126,7 +126,9 @@ describe("GET /api/sidebar/counts", () => {
     });
   });
 
-  it("returns 404 for the facility sidebar in Research Workbench", async () => {
+  it("serves sidebar counts in the Research Workbench preset", async () => {
+    // Deployment profiles are presets of one application (57854cfa); the
+    // route stays available and only the capability checks gate it.
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
     );
@@ -136,7 +138,7 @@ describe("GET /api/sidebar/counts", () => {
 
     const response = await GET();
 
-    expect(response.status).toBe(404);
-    expect(mocks.db.order.count).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mocks.db.order.count).toHaveBeenCalled();
   });
 });

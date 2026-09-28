@@ -51,7 +51,7 @@ describe("GET /api/setup/status", () => {
       phase: "ready",
       deploymentProfile: {
         id: "sequencing-center",
-        label: "Sequencing center",
+        label: "Sequencing center preset",
       },
       enrollment: {
         policy: "self-registration",

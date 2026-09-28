@@ -107,7 +107,9 @@ describe("GET /api/admin/sequencing-tech", () => {
     expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
   });
 
-  it("returns 404 when sequencing operations are unavailable", async () => {
+  it("keeps sequencing technologies available in the Research Workbench preset", async () => {
+    // Deployment profiles are presets of one application (57854cfa); the
+    // route stays available and only the capability checks gate it.
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
     );
@@ -115,9 +117,8 @@ describe("GET /api/admin/sequencing-tech", () => {
 
     const response = await GET();
 
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "Not found" });
-    expect(mocks.db.siteSettings.findUnique).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mocks.db.siteSettings.findUnique).toHaveBeenCalled();
   });
 
   it("returns stored config for an administrator", async () => {

@@ -126,7 +126,7 @@ describe("GET /api/files", () => {
     });
   });
 
-  it("returns not found when the sequencing-data module is unavailable", async () => {
+  it("forbids researchers without file management in the research preset", async () => {
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
     );
@@ -136,7 +136,9 @@ describe("GET /api/files", () => {
 
     const response = await GET(new NextRequest("http://localhost:3000/api/files"));
 
-    expect(response.status).toBe(404);
+    // Profiles are presets of one application; the capability, not the
+    // profile, decides access to the facility file browser.
+    expect(response.status).toBe(403);
     expect(mocks.scanDirectory).not.toHaveBeenCalled();
   });
 

@@ -35,7 +35,8 @@ vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
 
-vi.mock("crypto", () => ({
+vi.mock("crypto", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("crypto")>()),
   randomBytes: mocks.randomBytes,
 }));
 

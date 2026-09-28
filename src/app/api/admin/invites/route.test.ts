@@ -17,7 +17,10 @@ vi.mock("@/lib/db", () => ({ db: mocks.db }));
 vi.mock("@/lib/deployment-profile/server", () => ({
   getServerDeploymentProfile: mocks.getServerDeploymentProfile,
 }));
-vi.mock("crypto", () => ({ randomBytes: mocks.randomBytes }));
+vi.mock("crypto", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("crypto")>()),
+  randomBytes: mocks.randomBytes,
+}));
 vi.mock("@prisma/client", () => ({
   Prisma: {
     PrismaClientKnownRequestError: class PrismaClientKnownRequestError extends Error {

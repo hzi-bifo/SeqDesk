@@ -291,7 +291,7 @@ describe("GET /api/orders/[id]/files/inspect", () => {
     expect(await response.json()).toEqual({ error: "Data base path not configured" });
   });
 
-  it("returns not found when sequencing operations are unavailable", async () => {
+  it("forbids researchers who do not own the order in the research preset", async () => {
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
     );
@@ -306,8 +306,9 @@ describe("GET /api/orders/[id]/files/inspect", () => {
       { params: Promise.resolve({ id: "order-1" }) }
     );
 
-    expect(response.status).toBe(404);
-    expect(mocks.db.read.findFirst).not.toHaveBeenCalled();
+    // Profiles are presets of one application: order ownership, not the
+    // profile, decides access.
+    expect(response.status).toBe(403);
   });
 
   it("returns validation errors before touching the filesystem", async () => {

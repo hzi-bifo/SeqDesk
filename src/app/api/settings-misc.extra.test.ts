@@ -20,7 +20,18 @@ const mocks = vi.hoisted(() => ({
     user: {
       findMany: vi.fn(),
     },
+    order: {
+      findFirst: vi.fn(),
+    },
+    study: {
+      findFirst: vi.fn(),
+    },
   },
+}));
+
+vi.mock("@/lib/pipelines/study-samples", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/pipelines/study-samples")>()),
+  loadStudyPipelineSamples: vi.fn(async () => []),
 }));
 
 vi.mock("next-auth", () => ({
@@ -131,6 +142,8 @@ describe("settings and misc route quick wins", () => {
       valid: true,
       errors: [],
     });
+    mocks.db.order.findFirst.mockResolvedValue({ id: "order-1" });
+    mocks.db.study.findFirst.mockResolvedValue({ id: "study-1" });
     mocks.db.siteSettings.findUnique.mockResolvedValue({
       enaUsername: "Webin-12345",
       enaPassword: "super-secret",

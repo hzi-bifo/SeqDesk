@@ -169,7 +169,9 @@ describe("/api/orders/[id]/notes", () => {
     );
   });
 
-  it("returns not found for notes when facility intake is unavailable", async () => {
+  it("serves order notes in the Research Workbench preset", async () => {
+    // Deployment profiles are presets of one application (57854cfa); order
+    // access is decided by capability and ownership, not the profile.
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
     );
@@ -182,8 +184,8 @@ describe("/api/orders/[id]/notes", () => {
       { params: Promise.resolve({ id: "order-1" }) }
     );
 
-    expect(response.status).toBe(404);
-    expect(mocks.db.order.findUnique).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mocks.db.order.findUnique).toHaveBeenCalled();
   });
 
   it("updates notes for an accessible order", async () => {

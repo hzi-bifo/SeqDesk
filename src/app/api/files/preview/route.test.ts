@@ -317,7 +317,9 @@ describe("GET /api/files/preview", () => {
     expect(response.headers.get("Content-Type")).toBe("application/pdf");
   });
 
-  it("blocks non-admin order owners from unselected run outputs", async () => {
+  it("lets order owners who can run analyses preview unselected run outputs", async () => {
+    // Since 57854cfa, users holding analysis.run read their own unpublished
+    // runs; the result-selection gate applies only to read-only requesters.
     mocks.getServerSession.mockResolvedValue({
       user: { id: "owner-user", role: "RESEARCHER" },
     });
@@ -335,7 +337,7 @@ describe("GET /api/files/preview", () => {
       makeRequest({ path: "/data/runs/run-1/output/report.pdf" })
     );
 
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(200);
   });
 
   it("returns 404 when file does not exist on disk", async () => {

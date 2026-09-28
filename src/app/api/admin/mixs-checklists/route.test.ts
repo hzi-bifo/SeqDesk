@@ -149,17 +149,20 @@ describe("GET /api/admin/mixs-checklists", () => {
     expect(mocks.getActiveMixsConfig).not.toHaveBeenCalled();
   });
 
-  it("returns 404 when the sample catalog is unavailable", async () => {
+  it("keeps the sample catalog available in the Research Workbench preset", async () => {
+    // Deployment profiles are presets of one application (57854cfa); the
+    // route stays available and only the capability checks gate it.
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
     );
     mocks.getServerSession.mockResolvedValue(adminSession);
 
+    mocks.getActiveMixsConfig.mockResolvedValue(baseConfig);
+
     const response = await GET();
 
-    expect(response.status).toBe(404);
-    expect(await response.json()).toEqual({ error: "Not found" });
-    expect(mocks.getActiveMixsConfig).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mocks.getActiveMixsConfig).toHaveBeenCalled();
   });
 
   it("returns active config for an administrator", async () => {

@@ -288,7 +288,7 @@ describe("GET /api/files/download", () => {
     expect(await response.text()).toBe("abc");
   });
 
-  it("returns not found when sequencing data is unavailable", async () => {
+  it("forbids researchers who own no matching file in the research preset", async () => {
     mocks.getServerDeploymentProfile.mockReturnValue(
       getDeploymentProfileDefinition("research-workbench")
     );
@@ -300,8 +300,9 @@ describe("GET /api/files/download", () => {
       new NextRequest("http://localhost:3000/api/files/download?path=reads/sample_R1.fastq")
     );
 
-    expect(response.status).toBe(404);
-    expect(mocks.db.read.findFirst).not.toHaveBeenCalled();
+    // Profiles are presets of one application: sequencing data stays
+    // reachable, and ownership decides access.
+    expect(response.status).toBe(403);
   });
 
   it("allows owners to download published customer-facing artifacts", async () => {

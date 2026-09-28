@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     },
     adminInvite: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       updateMany: vi.fn(),
     },
   },
@@ -191,7 +192,11 @@ describe("small admin route quick wins", () => {
     expect(success.status).toBe(200);
     expect(mocks.db.adminInvite.updateMany).toHaveBeenCalledWith({
       where: { id: "invite-1", usedAt: null, revokedAt: null },
-      data: { revokedAt: expect.any(Date), revokedById: "admin-1" },
+      data: {
+        revokedAt: expect.any(Date),
+        revokedById: "admin-1",
+        code: null,
+      },
     });
     expect(await success.json()).toMatchObject({ success: true });
 
@@ -204,6 +209,9 @@ describe("small admin route quick wins", () => {
   });
 
   it("verifies invite codes across all branches", async () => {
+    mocks.db.adminInvite.findFirst.mockResolvedValue(
+      await mocks.db.adminInvite.findUnique()
+    );
     const missingCode = await verifyInvite(
       new Request("http://localhost", {
         method: "POST",
@@ -216,7 +224,7 @@ describe("small admin route quick wins", () => {
       error: "This invitation is invalid or no longer active",
     });
 
-    mocks.db.adminInvite.findUnique.mockResolvedValueOnce(null);
+    mocks.db.adminInvite.findFirst.mockResolvedValueOnce(null);
     const invalid = await verifyInvite(
       new Request("http://localhost", {
         method: "POST",
@@ -224,8 +232,13 @@ describe("small admin route quick wins", () => {
       }) as never
     );
     expect(invalid.status).toBe(400);
-    expect(mocks.db.adminInvite.findUnique).toHaveBeenCalledWith({
-      where: { code: "ABC123" },
+    expect(mocks.db.adminInvite.findFirst).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { codeDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) },
+          { code: "ABC123" },
+        ],
+      },
       include: {
         createdBy: { select: { systemRole: true, isActive: true } },
       },
@@ -235,7 +248,7 @@ describe("small admin route quick wins", () => {
       error: "This invitation is invalid or no longer active",
     });
 
-    mocks.db.adminInvite.findUnique.mockResolvedValueOnce({
+    mocks.db.adminInvite.findFirst.mockResolvedValueOnce({
       code: "ABC123",
       usedAt: new Date("2026-03-20T00:00:00.000Z"),
       expiresAt: new Date("2099-01-01T00:00:00.000Z"),
@@ -253,7 +266,7 @@ describe("small admin route quick wins", () => {
       error: "This invitation is invalid or no longer active",
     });
 
-    mocks.db.adminInvite.findUnique.mockResolvedValueOnce({
+    mocks.db.adminInvite.findFirst.mockResolvedValueOnce({
       code: "ABC123",
       usedAt: null,
       expiresAt: new Date("2000-01-01T00:00:00.000Z"),
@@ -286,7 +299,7 @@ describe("small admin route quick wins", () => {
       },
     });
 
-    mocks.db.adminInvite.findUnique.mockRejectedValueOnce(new Error("db down"));
+    mocks.db.adminInvite.findFirst.mockRejectedValueOnce(new Error("db down"));
     const failed = await verifyInvite(
       new Request("http://localhost", {
         method: "POST",
