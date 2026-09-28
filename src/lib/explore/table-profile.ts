@@ -41,40 +41,75 @@ function numberOf(value: unknown): number | null {
 const fmt = (n: number) => Math.abs(n) >= 1000 ? Math.round(n).toLocaleString("en-US") : Number(n.toPrecision(3)).toString();
 const pct = (share: number) => `${Math.round(share * 100)}%`;
 
+/** A matrix is mostly number columns (one per sample) beside an id column or two; a sample sheet is not. */
+function matrixColumns(columns: Column[]): string[] | null {
+  const numeric = columns.filter((column) => column.type === "number").map((column) => column.key);
+  const other = columns.length - numeric.length;
+  if (numeric.length < 2 || numeric.length <= 2 * other || columns.some((column) => column.role === "sample")) return null;
+  return numeric;
+}
+
+/**
+ * The profile built one row at a time, so an import can profile a table while it streams (memory is a few
+ * numbers per column, whatever the row count). Columns are tracked by key; which of them count is decided at
+ * `finish`, when the column types are known.
+ */
+export class MatrixProfileAccumulator {
+  private stats = new Map<string, { count: number; whole: number; negative: number; min: number; max: number; sum: number }>();
+  private rows = 0;
+  constructor(private keys: string[]) {
+    for (const key of keys) this.stats.set(key, { count: 0, whole: 0, negative: 0, min: Infinity, max: -Infinity, sum: 0 });
+  }
+  add(row: Record<string, unknown>) {
+    this.rows += 1;
+    for (const key of this.keys) {
+      const value = numberOf(row[key]);
+      if (value === null) continue;
+      const stat = this.stats.get(key)!;
+      stat.count += 1;
+      if (Number.isInteger(value)) stat.whole += 1;
+      if (value < 0) stat.negative += 1;
+      if (value < stat.min) stat.min = value;
+      if (value > stat.max) stat.max = value;
+      stat.sum += value;
+    }
+  }
+  finish(columns: Column[]): TableProfile | null {
+    const numeric = matrixColumns(columns);
+    if (!numeric || this.rows === 0) return null;
+    let count = 0, whole = 0, negative = 0, min = Infinity, max = -Infinity;
+    const sums: number[] = [];
+    for (const key of numeric) {
+      const stat = this.stats.get(key) ?? { count: 0, whole: 0, negative: 0, min: Infinity, max: -Infinity, sum: 0 };
+      count += stat.count; whole += stat.whole; negative += stat.negative;
+      if (stat.min < min) min = stat.min;
+      if (stat.max > max) max = stat.max;
+      sums.push(stat.sum);
+    }
+    if (count === 0) return null;
+    return verdictOf(numeric.length, this.rows, count, whole, negative, min, max, sums);
+  }
+}
+
 /**
  * Profile the number columns of a table; null when it is not a matrix (fewer than two number columns, or
  * no numbers at all). `rows` should be all rows so column sums mean something.
  */
 export function profileNumericMatrix(columns: Column[], rows: Array<Record<string, unknown>>): TableProfile | null {
-  const numeric = columns.filter((column) => column.type === "number").map((column) => column.key);
-  // A matrix is mostly number columns (one per sample) beside an id column or two; a sample sheet is not.
-  const other = columns.length - numeric.length;
-  if (numeric.length < 2 || numeric.length <= 2 * other || columns.some((column) => column.role === "sample") || rows.length === 0) return null;
-  let count = 0;
-  let whole = 0;
-  let negative = 0;
-  let min = Infinity;
-  let max = -Infinity;
-  const sums = numeric.map(() => 0);
-  for (const row of rows) {
-    numeric.forEach((key, index) => {
-      const value = numberOf(row[key]);
-      if (value === null) return;
-      count += 1;
-      if (Number.isInteger(value)) whole += 1;
-      if (value < 0) negative += 1;
-      if (value < min) min = value;
-      if (value > max) max = value;
-      sums[index] += value;
-    });
-  }
-  if (count === 0) return null;
+  const numeric = matrixColumns(columns);
+  if (!numeric || rows.length === 0) return null;
+  const accumulator = new MatrixProfileAccumulator(numeric);
+  for (const row of rows) accumulator.add(row);
+  return accumulator.finish(columns);
+}
+
+function verdictOf(numericColumns: number, rows: number, count: number, whole: number, negative: number, min: number, max: number, sums: number[]): TableProfile {
   const wholeShare = whole / count;
   const sorted = [...sums].sort((a, b) => a - b);
   const median = sorted[Math.floor(sorted.length / 2)];
   const sumSpread = median > 0 ? (sorted[sorted.length - 1] - sorted[0]) / median : null;
   const equalSums = sumSpread !== null && sumSpread < 0.02;
-  const base = { version: PROFILE_VERSION, numericColumns: numeric.length, rows: rows.length, wholeShare, negativeCount: negative, min, max, sumSpread };
+  const base = { version: PROFILE_VERSION, numericColumns, rows, wholeShare, negativeCount: negative, min, max, sumSpread };
 
   if (wholeShare === 1 && negative === 0) {
     return { ...base, verdict: "raw-counts", sentence: "raw counts, whole numbers",

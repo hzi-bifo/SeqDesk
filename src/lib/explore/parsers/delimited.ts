@@ -26,7 +26,7 @@ export interface DelimitedParseResult {
   delimiter: string;
 }
 
-function detectDelimiter(headerLine: string): "\t" | "," | ";" {
+export function detectDelimiter(headerLine: string): "\t" | "," | ";" {
   let tabs = 0, commas = 0, semis = 0, quoted = false;
   for (let index = 0; index < headerLine.length; index++) {
     const char = headerLine[index];
@@ -44,7 +44,7 @@ function detectDelimiter(headerLine: string): "\t" | "," | ";" {
 }
 
 /** Split one line honouring double-quoted fields (RFC 4180 style). */
-function splitLine(line: string, delimiter: string): string[] | null {
+export function splitLine(line: string, delimiter: string): string[] | null {
   const out: string[] = [];
   let current = "";
   let quoted = false;

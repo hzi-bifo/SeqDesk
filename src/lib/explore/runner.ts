@@ -7,7 +7,8 @@ import { getExecutionSettings } from "@/lib/pipelines/execution-settings";
 import { writePipelineLaunchIdentity } from "@/lib/pipelines/launch-identity";
 import { preparePipelineRunDirectory } from "@/lib/pipelines/run-directory";
 import { allocateRunNumber, parseInputBindings, serializeRun, type RunSummary } from "./analyses";
-import { fetchAllDatasetRows, getDatasetRecord } from "./datasets";
+import { fetchAllDatasetRows, fetchDatasetRows, getDatasetRecord } from "./datasets";
+import { copyVersionData } from "./table-store";
 import { applyEditsToRows, listActiveEdits } from "./edits";
 import { resolveReadyEnvironment } from "./environments";
 import { condaErrorExcerpt, prepareStepEnvironment, preparingWords, resolveStepEnvironment, stepEnvironmentByName, prepareEnvironmentByName } from "./step-environments";
@@ -104,17 +105,39 @@ async function stageInput(runFolder: string, alias: string, datasetId: string, v
   const edits = await listActiveEdits(datasetId);
   if (expectedToken && inputToken(version.id, edits) !== expectedToken) throw new ExploreRunError(409, "The input data changed. Review it before running again.");
   const roles = dataset.roles ? (JSON.parse(dataset.roles) as Record<string, string>) : {};
-  const allRows = applyEditsToRows(await fetchAllDatasetRows(version.id), edits);
-  const rows = trialSamples ? trialRows(allRows, roles.sample ?? null, trialSamples) : allRows;
   const columns = schema.columns.map((column) => column.key);
-  const lines = [columns.join("\t")];
-  for (const row of rows) lines.push(columns.map((key) => tsvEscape(row.data[key] ?? null)).join("\t"));
-
   const inputsDir = path.join(runFolder, "inputs");
   await fs.mkdir(inputsDir, { recursive: true });
   const relativePath = path.posix.join("inputs", `${alias}.tsv`);
   const relativeSchemaPath = path.posix.join("inputs", `${alias}.schema.json`);
-  await fs.writeFile(path.join(runFolder, relativePath), `${lines.join("\n")}\n`, "utf8");
+  let rowCount: number;
+  if (trialSamples) {
+    const rows = trialRows(applyEditsToRows(await fetchAllDatasetRows(version.id), edits), roles.sample ?? null, trialSamples);
+    const lines = [columns.join("\t")];
+    for (const row of rows) lines.push(columns.map((key) => tsvEscape(row.data[key] ?? null)).join("\t"));
+    await fs.writeFile(path.join(runFolder, relativePath), `${lines.join("\n")}\n`, "utf8");
+    rowCount = rows.length;
+  } else if (!edits.length && version.storagePath && await copyVersionData(version.storagePath, path.join(runFolder, relativePath))) {
+    // Uncurated: the version's own file is the input, byte for byte (same header and escaping), without a parse.
+    rowCount = version.rowCount;
+  } else {
+    // Curated: page through the rows and write them as they come, so the input never sits in memory whole.
+    const handle = await fs.open(path.join(runFolder, relativePath), "w");
+    rowCount = 0;
+    try {
+      await handle.write(`${columns.join("\t")}\n`);
+      let cursor: string | null = null;
+      do {
+        const page = await fetchDatasetRows(version.id, { cursor, limit: 2000 });
+        const rows = applyEditsToRows(page.rows, edits);
+        rowCount += rows.length;
+        if (rows.length) await handle.write(rows.map((row) => `${columns.map((key) => tsvEscape(row.data[key] ?? null)).join("\t")}\n`).join(""));
+        cursor = page.nextCursor;
+      } while (cursor);
+    } finally {
+      await handle.close();
+    }
+  }
   await fs.writeFile(
     path.join(runFolder, relativeSchemaPath),
     JSON.stringify({ schema, provenance: JSON.parse(version.provenance), contentHash: version.contentHash, editCount: edits.length }, null, 2),
@@ -130,7 +153,7 @@ async function stageInput(runFolder: string, alias: string, datasetId: string, v
     versionId: version.id,
     versionNumber: version.number,
     contentHash: version.contentHash,
-    rowCount: rows.length,
+    rowCount,
     name: dataset.name,
     sensitivity: dataset.sensitivity,
   };

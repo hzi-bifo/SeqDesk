@@ -1,5 +1,10 @@
-import { profileNumericMatrix } from "@/lib/explore/table-profile";
+import { PROFILE_VERSION, profileNumericMatrix } from "@/lib/explore/table-profile";
+import crypto from "crypto";
+import { createReadStream } from "fs";
+import fs from "fs/promises";
 import path from "path";
+import { createGunzip } from "zlib";
+import { parseDelimitedStream, streamLines, type DelimitedStreamHeader } from "../parsers/delimited-stream";
 import { getTableKind, suggestRoles } from "../dataset-kinds";
 import { parseDelimited, uniqueColumnKeys } from "../parsers/delimited";
 import { coerceCell, inferSchema } from "../schema";
@@ -119,6 +124,26 @@ export async function parseImportFile(buffer: Buffer, options: ImportFileOptions
   return parsed;
 }
 
+/** Roles of an imported table: suggested from the column names, then what the person chose. */
+export function importRoles(columns: string[], tableKind: string | null, requested?: ExploreRoleMap): { roles: ExploreRoleMap; warnings: string[] } {
+  const kindDefinition = getTableKind(tableKind);
+  const roles: ExploreRoleMap = { ...suggestRoles(columns, tableKind ?? "sample-summary") };
+  // Columns derived by an id grammar are canonical and win over name-based guesses.
+  if (columns.includes("subject")) roles.subject = "subject";
+  if (columns.includes("timepoint")) roles.timepoint = "timepoint";
+  if (columns.includes("specimen_type")) roles.group = "specimen_type";
+  for (const [role, column] of Object.entries(requested ?? {})) {
+    if (column === "") delete roles[role as ExploreRole];
+    if (column && columns.includes(column)) roles[role as ExploreRole] = column;
+  }
+  const warnings: string[] = [];
+  if (kindDefinition) {
+    const missing = kindDefinition.requiredRoles.filter((role) => !roles[role]);
+    if (missing.length) warnings.push(`Roles still missing for ${kindDefinition.label}: ${missing.join(", ")}.`);
+  }
+  return { roles, warnings };
+}
+
 export interface PreparedImport {
   schema: ExploreSchema;
   rows: ExploreRowData[];
@@ -137,21 +162,8 @@ export function prepareImport(
   parsed: ParsedImport,
   options: { tableKind: string | null; roles?: ExploreRoleMap; fileName: string; checksum: string }
 ): PreparedImport {
-  const kindDefinition = getTableKind(options.tableKind);
-  const roles: ExploreRoleMap = { ...suggestRoles(parsed.columns, options.tableKind ?? "sample-summary") };
-  // Columns derived by an id grammar are canonical and win over name-based guesses.
-  if (parsed.columns.includes("subject")) roles.subject = "subject";
-  if (parsed.columns.includes("timepoint")) roles.timepoint = "timepoint";
-  if (parsed.columns.includes("specimen_type")) roles.group = "specimen_type";
-  for (const [role, column] of Object.entries(options.roles ?? {})) {
-    if (column === "") delete roles[role as ExploreRole];
-    if (column && parsed.columns.includes(column)) roles[role as ExploreRole] = column;
-  }
-  const warnings = [...parsed.warnings];
-  if (kindDefinition) {
-    const missing = kindDefinition.requiredRoles.filter((role) => !roles[role]);
-    if (missing.length) warnings.push(`Roles still missing for ${kindDefinition.label}: ${missing.join(", ")}.`);
-  }
+  const { roles, warnings: roleWarnings } = importRoles(parsed.columns, options.tableKind, options.roles);
+  const warnings = [...parsed.warnings, ...roleWarnings];
   const groups: Record<string, string> = {};
   for (const derived of INDIVO_DERIVED_COLUMNS) groups[derived] = "derived";
   const schema = inferSchema(parsed.rows, { roles, groups });
@@ -166,9 +178,75 @@ export function prepareImport(
       builder: "import@1",
       sources: [{ type: "file", id: options.fileName, label: options.fileName, checksum: options.checksum }],
       notes: [`${parsed.rows.length} rows${parsed.sheet ? ` from sheet ${parsed.sheet}` : ""}`],
-      ...(profile ? { profile } : {}),
+      // "Not a matrix" is a finding too: recorded, so a listing does not profile the table again.
+      ...(profile ? { profile } : { profileChecked: PROFILE_VERSION }),
     },
     keys: { sample: roles.sample, subject: roles.subject, key: roles.taxon_id ?? roles.taxon },
     warnings,
   };
+}
+
+/** Delimited text (optionally gzipped) is read as a stream; XLSX is a zip that exceljs loads whole. */
+export function isStreamableTable(fileName: string): boolean {
+  const name = fileName.toLowerCase().replace(/\.gz$/, "");
+  const kind = fileKind(name);
+  return kind === "csv" || kind === "tsv";
+}
+
+function delimiterOf(fileName: string): "," | "auto" {
+  return fileKind(fileName.toLowerCase().replace(/\.gz$/, "")) === "csv" ? "," : "auto";
+}
+
+/**
+ * Bytes of a stored file, decompressed when it is .gz, hashed as read: when the whole file has been read the
+ * sha256 is compared with the stored checksum and a changed file stops the import.
+ */
+async function* fileBytes(filePath: string, fileName: string, verify?: { checksum: string }, onBytes?: (bytes: number) => void): AsyncGenerator<Buffer> {
+  const raw = createReadStream(filePath, { highWaterMark: 1 << 20 });
+  const hash = verify ? crypto.createHash("sha256") : null;
+  raw.on("data", (chunk) => { hash?.update(chunk as Buffer); onBytes?.((chunk as Buffer).length); });
+  const source = /\.gz$/i.test(fileName) ? raw.pipe(createGunzip()) : raw;
+  try {
+    for await (const chunk of source) yield chunk as Buffer;
+  } finally {
+    raw.destroy();
+  }
+  if (hash && verify && hash.digest("hex") !== verify.checksum) throw new Error("The original file has changed on disk. Upload it again before importing it.");
+}
+
+export interface StreamedImport {
+  header: DelimitedStreamHeader | undefined;
+  rows: AsyncGenerator<ExploreRowData>;
+  state: { header?: DelimitedStreamHeader; truncated?: boolean };
+}
+
+/** Rows of a delimited file on disk, one at a time; `state.header` is set before the first row. */
+export function streamDelimitedFile(filePath: string, fileName: string, options: { verify?: { checksum: string }; maxRows?: number; onBytes?: (bytes: number) => void } = {}) {
+  const state: { header?: DelimitedStreamHeader; truncated?: boolean } = {};
+  const rows = parseDelimitedStream(streamLines(fileBytes(filePath, fileName, options.verify, options.onBytes)), { delimiter: delimiterOf(fileName), hashComments: true, maxRows: options.maxRows }, state);
+  return { rows, state };
+}
+
+const SAMPLE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Preview of a large delimited file without reading all of it: the header, the first rows and a row count
+ * estimated from the bytes the first rows took (marked approximate). Small files are counted exactly.
+ */
+export async function previewDelimitedFile(filePath: string, fileName: string, rowsWanted: number): Promise<{ columns: string[]; rows: ExploreRowData[]; rowCount: number; approximate: boolean }> {
+  const size = (await fs.stat(filePath)).size;
+  let bytes = 0;
+  const { rows: stream, state } = streamDelimitedFile(filePath, fileName, { onBytes: (count) => { bytes += count; } });
+  const rows: ExploreRowData[] = [];
+  let counted = 0;
+  let stopped = false;
+  for await (const row of stream) {
+    counted += 1;
+    if (rows.length < rowsWanted) rows.push(row);
+    // Enough to estimate: stop reading once a few MB went by (and the preview rows are in).
+    if (rows.length >= rowsWanted && bytes >= SAMPLE_BYTES && bytes < size) { stopped = true; break; }
+  }
+  if (!stopped) return { columns: state.header?.columns ?? [], rows, rowCount: counted, approximate: false };
+  const estimate = Math.round(counted * (size / Math.max(1, bytes)));
+  return { columns: state.header?.columns ?? [], rows, rowCount: estimate, approximate: true };
 }

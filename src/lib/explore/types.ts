@@ -138,6 +138,8 @@ export interface ExploreDatasetSummary {
   roles: ExploreRoleMap;
   /** Current-version schema for compatibility checks, without fetching the rows. */
   schema?: ExploreSchema;
+  /** Columns of the current version, sent instead of the schema by a lean listing. */
+  columnCount?: number;
   currentVersion: {
     id: string;
     number: number;
@@ -146,6 +148,8 @@ export interface ExploreDatasetSummary {
     createdAt: string;
     /** Numeric-matrix check of this version ("normalised, not raw counts"), when the table is a matrix. */
     profile?: { verdict: string; sentence: string; why: string } | null;
+    /** "file" when the table is too large for per-row storage and is read from its file. */
+    rows?: "database" | "file";
   } | null;
   createdAt: string;
   updatedAt: string;

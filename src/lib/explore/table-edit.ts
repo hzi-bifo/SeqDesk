@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { db } from '@/lib/db';
 import { fetchAllDatasetRows, writeDatasetVersion } from './datasets';
+import { fileStorageOf } from './table-store';
 import { applyEditsToRows, listActiveEdits } from './edits';
 import { parseRoles, parseSchema } from './schema';
 import { ExploreRouteError } from './route-error';
@@ -43,6 +44,7 @@ export async function editTable(datasetId: string, userId: string, body: Record<
     const version = await tx.exploreDatasetVersion.findUniqueOrThrow({ where: { id: dataset.currentVersionId } });
     const edits = await listActiveEdits(dataset.id);
     if (!copy && (dataset.kind !== 'external' || edits.length)) throw new ExploreRouteError(409, 'Create an editable copy of this table first.');
+    if (fileStorageOf(version.provenance)) throw new ExploreRouteError(409, 'This table is too large to edit cell by cell here. Change it in an analysis step, which writes a new table.');
     const schema = parseSchema(version.schema);
     const sourceRows = await fetchAllDatasetRows(version.id);
     const rows = applyEditsToRows(sourceRows, edits).map(row => row.data);

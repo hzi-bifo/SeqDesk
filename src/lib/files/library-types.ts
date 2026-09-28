@@ -50,7 +50,7 @@ export interface LibraryResponse {
 }
 
 export function canImportFileAsTable(name: string): boolean {
-  return /\.(csv|tsv|tab|txt|xlsx|xlsm)$/i.test(name);
+  return /\.(?:(?:csv|tsv|tab|txt)(?:\.gz)?|xlsx|xlsm)$/i.test(name);
 }
 
 export function filesHref(scope: string, reportId?: string | null): string {

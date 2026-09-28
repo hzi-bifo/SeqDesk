@@ -1,4 +1,4 @@
-import { PROFILE_VERSION, profileNumericMatrix, readProfile } from "@/lib/explore/table-profile";
+import { MatrixProfileAccumulator, PROFILE_VERSION, readProfile } from "@/lib/explore/table-profile";
 import fs from "fs/promises";
 import path from "path";
 import type { Prisma } from "@prisma/client";
@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { computeCacheToken } from "./cache-token";
 import { computeContentHash, parseJsonObject, parseRoles, parseSchema } from "./schema";
 import { resolveExploreStorage, sanitizeSegment } from "./storage";
+import { fileStorageOf, INDEX_EVERY, readRowsFromFile, shareIdenticalData } from "./table-store";
 import { parseTargetKey } from "./target-key";
 import type {
   ExploreCell,
@@ -65,6 +66,7 @@ export function serializeDatasetSummary(dataset: DatasetWithVersion): ExploreDat
           contentHash: current.contentHash,
           createdAt: toIso(current.createdAt),
           profile: profileSummary(current.provenance),
+          rows: fileStorageOf(current.provenance) ? "file" : "database",
         }
       : null,
     createdAt: toIso(dataset.createdAt),
@@ -72,7 +74,7 @@ export function serializeDatasetSummary(dataset: DatasetWithVersion): ExploreDat
   };
 }
 
-export async function listDatasets(targetKey: string): Promise<ExploreDatasetSummary[]> {
+export async function listDatasets(targetKey: string, options: { lean?: boolean } = {}): Promise<ExploreDatasetSummary[]> {
   const datasets = await db.exploreDataset.findMany({
     where: { targetKey },
     include: { versions: { orderBy: { number: "desc" }, take: 1 } },
@@ -82,11 +84,15 @@ export async function listDatasets(targetKey: string): Promise<ExploreDatasetSum
   let budget = 5;
   for (const dataset of datasets) {
     const current = dataset.versions[0];
-    if (!current || budget <= 0 || profileChecked(current.provenance)) continue;
+    if (!current || budget <= 0 || current.rowCount > PROFILE_MAX_ROWS || profileChecked(current.provenance)) continue;
     budget -= 1;
     current.provenance = await ensureVersionProfile(current.id) ?? current.provenance;
   }
-  return datasets.map(serializeDatasetSummary);
+  // Lean: the column count instead of every column (a 10,000-column table is a megabyte of schema).
+  return datasets.map((dataset) => {
+    const summary = serializeDatasetSummary(dataset);
+    return options.lean ? { ...summary, columnCount: summary.schema?.columns.length ?? 0, schema: { columns: [] } } : summary;
+  });
 }
 
 function profileChecked(provenance: string | null): boolean {
@@ -108,9 +114,16 @@ export async function ensureVersionProfile(versionId: string): Promise<string | 
   const provenance = parseJsonObject(version.provenance) ?? {};
   const columns = parseSchema(version.schema).columns;
   let profile = null;
-  if (columns.filter((column) => column.type === "number").length >= 2 && version.rowCount <= PROFILE_MAX_ROWS) {
-    const rows = await db.exploreDatasetRow.findMany({ where: { versionId }, select: { data: true } });
-    profile = profileNumericMatrix(columns, rows.map((row) => (row.data ?? {}) as Record<string, unknown>));
+  if (columns.filter((column) => column.type === "number").length >= 2) {
+    // One pass over pages of rows: memory is a page, not the table.
+    const accumulator = new MatrixProfileAccumulator(columns.map((column) => column.key));
+    let cursor: string | null = null;
+    do {
+      const page = await fetchDatasetRows(versionId, { cursor, limit: MAX_PAGE_SIZE });
+      for (const row of page.rows) accumulator.add(row.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    profile = accumulator.finish(columns);
   }
   const { profile: _old, profileChecked: _checked, ...rest } = provenance;
   const next = JSON.stringify(profile ? { ...rest, profile } : { ...rest, profileChecked: PROFILE_VERSION });
@@ -259,11 +272,26 @@ export async function writeDatasetVersion(input: WriteVersionInput, client: Pris
   await fs.mkdir(versionDir, { recursive: true });
 
   const columns = input.schema.columns.map((column) => column.key);
-  const tsvLines = [columns.join("\t")];
-  for (const row of input.rows) {
-    tsvLines.push(columns.map((key) => tsvEscape(row[key] ?? null)).join("\t"));
+  // Written in chunks with a sparse line index, so pages of the file can be read without the database.
+  const handle = await fs.open(path.join(versionDir, "data.tsv"), "w");
+  const offsets: number[] = [];
+  try {
+    let offset = 0;
+    let text = `${columns.join("\t")}\n`;
+    for (let index = 0; index < input.rows.length; index += 1) {
+      if (index % INDEX_EVERY === 0) {
+        if (text) { await handle.write(text); offset += Buffer.byteLength(text); text = ""; }
+        offsets.push(offset);
+      }
+      const row = input.rows[index];
+      text += `${columns.map((key) => tsvEscape(row[key] ?? null)).join("\t")}\n`;
+      if (text.length > 1 << 20) { await handle.write(text); offset += Buffer.byteLength(text); text = ""; }
+    }
+    if (text) await handle.write(text);
+  } finally {
+    await handle.close();
   }
-  await fs.writeFile(path.join(versionDir, "data.tsv"), `${tsvLines.join("\n")}\n`, "utf8");
+  await fs.writeFile(path.join(versionDir, "rows.idx.json"), JSON.stringify({ every: INDEX_EVERY, offsets, rows: input.rows.length }), "utf8");
   await fs.writeFile(
     path.join(versionDir, "schema.json"),
     JSON.stringify({ schema: input.schema, provenance: input.provenance, contentHash }, null, 2),
@@ -287,8 +315,10 @@ export async function writeDatasetVersion(input: WriteVersionInput, client: Pris
   const sampleKey = input.keys?.sample;
   const subjectKey = input.keys?.subject;
   const secondaryKey = input.keys?.key;
-  for (let start = 0; start < input.rows.length; start += ROW_BATCH_SIZE) {
-    const batch = input.rows.slice(start, start + ROW_BATCH_SIZE).map((row, offset) => ({
+  // Wide tables insert fewer rows per statement (at most ~200,000 cells each).
+  const batchSize = Math.max(1, Math.min(ROW_BATCH_SIZE, Math.floor(200_000 / Math.max(1, columns.length))));
+  for (let start = 0; start < input.rows.length; start += batchSize) {
+    const batch = input.rows.slice(start, start + batchSize).map((row, offset) => ({
       versionId: version.id,
       rowIndex: start + offset,
       sampleId: sampleKey ? cellToKey(row[sampleKey]) : null,
@@ -303,6 +333,8 @@ export async function writeDatasetVersion(input: WriteVersionInput, client: Pris
     where: { id: dataset.id },
     data: { currentVersionId: version.id },
   });
+  // Same content as another stored version (a copy, a re-import): share its file instead of keeping two.
+  await shareIdenticalData(path.join(versionDir, "data.tsv"), contentHash, version.id).catch(() => false);
 
   return { versionId: version.id, number, rowCount: input.rows.length, contentHash, unchanged: false };
 }
@@ -326,6 +358,20 @@ export async function fetchDatasetRows(
 ): Promise<{ rows: ExploreRowRecord[]; nextCursor: string | null; total: number }> {
   const limit = Math.min(Math.max(options.limit ?? DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
   const cursorIndex = options.cursor ? Number.parseInt(options.cursor, 10) : null;
+  const version = await versionStorage(versionId);
+  const filtered = Boolean(options.sampleId || options.subjectId || options.key);
+  if (version?.file) {
+    // File-backed: a seek to the page; key filters scan the file (bounded) since there are no row indexes.
+    const start = cursorIndex !== null && Number.isFinite(cursorIndex) ? cursorIndex + 1 : 0;
+    const test = (value: ExploreCell | undefined, wanted: string | null | undefined) => !wanted || cellToKey(value) === wanted;
+    const keys = version.keys;
+    const filter = filtered ? (row: ExploreRowData) => test(keys.sample ? row[keys.sample] : null, options.sampleId) && test(keys.subject ? row[keys.subject] : null, options.subjectId) && test(keys.key ? row[keys.key] : null, options.key) : undefined;
+    const page = await readRowsFromFile(version.storagePath, version.columns, { start, limit: limit + 1, filter, scanLimit: filtered ? FILE_FILTER_SCAN_ROWS : undefined });
+    const rows = page.rows.slice(0, limit);
+    const more = page.rows.length > limit || (!page.end && filtered && page.lastIndex !== null);
+    const next = page.rows.length > limit ? rows[rows.length - 1].rowIndex : more ? page.lastIndex : null;
+    return { rows, nextCursor: next === null ? null : String(next), total: filtered ? rows.length : version.rowCount };
+  }
   const where: Prisma.ExploreDatasetRowWhereInput = {
     versionId,
     ...(options.sampleId ? { sampleId: options.sampleId } : {}),
@@ -333,7 +379,8 @@ export async function fetchDatasetRows(
     ...(options.key ? { key: options.key } : {}),
   };
   const [total, rows] = await Promise.all([
-    db.exploreDatasetRow.count({ where }),
+    // Unfiltered, the version knows its row count; counting a million rows per page is wasted work.
+    !filtered && version ? Promise.resolve(version.rowCount) : db.exploreDatasetRow.count({ where }),
     db.exploreDatasetRow.findMany({
       where: {
         ...where,
@@ -356,6 +403,30 @@ export async function fetchDatasetRows(
     nextCursor,
     total,
   };
+}
+
+const FILE_FILTER_SCAN_ROWS = 2_000_000;
+type VersionStorage = { rowCount: number; file: boolean; storagePath: string; columns: string[]; keys: { sample?: string; subject?: string; key?: string } };
+/** Versions never change, so where their rows live is cached per process. */
+const versionStorageCache = new Map<string, VersionStorage>();
+
+async function versionStorage(versionId: string): Promise<VersionStorage | null> {
+  const cached = versionStorageCache.get(versionId);
+  if (cached) return cached;
+  const version = await db.exploreDatasetVersion.findUnique({ where: { id: versionId }, select: { rowCount: true, provenance: true, storagePath: true, schema: true, contentHash: true, dataset: { select: { roles: true } } } });
+  if (!version || version.contentHash === "pending") return null;
+  const file = Boolean(fileStorageOf(version.provenance) && version.storagePath);
+  const roles = parseRoles(version.dataset.roles);
+  const entry: VersionStorage = { rowCount: version.rowCount, file, storagePath: version.storagePath ?? "", columns: file ? parseSchema(version.schema).columns.map((column) => column.key) : [],
+    keys: { sample: roles.sample, subject: roles.subject, key: roles.taxon_id ?? roles.taxon } };
+  if (versionStorageCache.size > 500) versionStorageCache.clear();
+  versionStorageCache.set(versionId, entry);
+  return entry;
+}
+
+/** True when a version keeps its rows only in its file (too large for the database). */
+export async function isFileBackedVersion(versionId: string): Promise<boolean> {
+  return Boolean((await versionStorage(versionId))?.file);
 }
 
 /** Load every row of a version, in rowIndex order, in batches. */

@@ -25,7 +25,7 @@ describe("Flow contract", () => {
   it("advertises only known capabilities", () => {
     const advertised = exploreIntegrationCapabilities({ eventsConfigured: false });
     expect(advertised).toContain("explore.flows");
-    for (const capability of advertised.filter((entry) => !["explore.files", "explore.datasets", "explore.reports", "explore.flows"].includes(entry))) {
+    for (const capability of advertised.filter((entry) => !["explore.files", "explore.datasets", "explore.reports", "explore.flows", "explore.large-tables"].includes(entry))) {
       expect(FLOW_CAPABILITIES).toContain(capability);
     }
     expect(advertised).not.toContain("explore.events");

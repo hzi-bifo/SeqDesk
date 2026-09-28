@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { db } from "@/lib/db";
@@ -41,6 +42,52 @@ export async function storeLibraryFile(input: { targetKey: string; file: File; c
     await fs.unlink(destination).catch(() => {});
     throw error;
   }
+}
+
+/** Largest streamed upload (raw request body); the multipart route keeps its 100 MB limit. */
+export const MAX_STREAM_UPLOAD_BYTES = Number(process.env.SEQDESK_MAX_UPLOAD_BYTES) > 0 ? Number(process.env.SEQDESK_MAX_UPLOAD_BYTES) : 20 * 1024 * 1024 * 1024;
+
+/**
+ * Store an upload that arrives as a byte stream (the request body): written to disk as it comes, hashed on the
+ * way, never held in memory. Stops with 413 past `maxBytes`, and removes the partial file on any error.
+ */
+export async function storeLibraryFileStream(input: { targetKey: string; name: string; mimeType?: string | null; body: AsyncIterable<Uint8Array>; createdById: string; maxBytes?: number }) {
+  const maxBytes = input.maxBytes ?? MAX_STREAM_UPLOAD_BYTES;
+  const originalName = input.name.split(/[\\/]/).pop()?.replace(/\p{Cc}/gu, "").trim().slice(0, 240) || "file";
+  const storagePath = crypto.randomUUID();
+  const root = await libraryRoot();
+  const destination = path.join(root, storagePath);
+  const out = createWriteStream(destination, { flags: "wx", mode: 0o600 });
+  const hash = crypto.createHash("sha256");
+  let size = 0;
+  try {
+    for await (const chunk of input.body) {
+      size += chunk.byteLength;
+      if (size > maxBytes) throw new FileLibraryError(413, `Files must be ${Math.round(maxBytes / 1024 / 1024 / 1024 * 10) / 10} GB or smaller.`);
+      hash.update(chunk);
+      if (!out.write(chunk)) await new Promise<void>((resolve, reject) => { out.once("drain", resolve); out.once("error", reject); });
+    }
+    await new Promise<void>((resolve, reject) => out.end((error?: Error | null) => (error ? reject(error) : resolve())));
+    if (size === 0) throw new FileLibraryError(400, "The file is empty.");
+    return await db.managedFile.create({ data: {
+      targetKey: input.targetKey, originalName, storagePath,
+      mimeType: input.mimeType || "application/octet-stream",
+      sizeBytes: BigInt(size),
+      checksumSha256: hash.digest("hex"),
+      createdById: input.createdById,
+    } });
+  } catch (error) {
+    out.destroy();
+    await fs.unlink(destination).catch(() => {});
+    throw error;
+  }
+}
+
+/** Where a stored file lives, for readers that stream it (large tables) instead of loading it. */
+export async function libraryFilePath(file: { storagePath: string }): Promise<string> {
+  const root = await libraryRoot();
+  try { return await resolveContainedPath(root, file.storagePath); }
+  catch { throw new FileLibraryError(404, "The original file is unavailable in Files."); }
 }
 
 export async function getLibraryFile(id: string) {

@@ -35,36 +35,74 @@ export function coerceCell(value: unknown): ExploreCell {
   return JSON.stringify(value);
 }
 
-function detectType(values: ExploreCell[]): ExploreColumnType {
-  let numbers = 0;
-  let booleans = 0;
-  let dates = 0;
-  let strings = 0;
-  for (const value of values) {
-    if (value === null) continue;
-    if (typeof value === "number") {
-      numbers += 1;
-    } else if (typeof value === "boolean") {
-      booleans += 1;
-    } else if (typeof value === "string") {
-      const lower = value.toLowerCase();
-      if (lower === "true" || lower === "false") {
-        booleans += 1;
-      } else if (value !== "" && !Number.isNaN(Number(value)) && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(value)) {
-        numbers += 1;
-      } else if (DATE_PATTERN.test(value)) {
-        dates += 1;
-      } else {
-        strings += 1;
-      }
+type TypeCounts = { numbers: number; booleans: number; dates: number; strings: number };
+
+function countType(counts: TypeCounts, value: ExploreCell) {
+  if (value === null) return;
+  if (typeof value === "number") {
+    counts.numbers += 1;
+  } else if (typeof value === "boolean") {
+    counts.booleans += 1;
+  } else if (typeof value === "string") {
+    const lower = value.toLowerCase();
+    if (lower === "true" || lower === "false") {
+      counts.booleans += 1;
+    } else if (value !== "" && !Number.isNaN(Number(value)) && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(value)) {
+      counts.numbers += 1;
+    } else if (DATE_PATTERN.test(value)) {
+      counts.dates += 1;
+    } else {
+      counts.strings += 1;
     }
   }
+}
+
+function typeOfCounts({ numbers, booleans, dates, strings }: TypeCounts): ExploreColumnType {
   const total = numbers + booleans + dates + strings;
   if (total === 0) return "string";
   if (numbers === total) return "number";
   if (booleans === total) return "boolean";
   if (dates === total) return "date";
   return "string";
+}
+
+function detectType(values: ExploreCell[]): ExploreColumnType {
+  const counts: TypeCounts = { numbers: 0, booleans: 0, dates: 0, strings: 0 };
+  for (const value of values) countType(counts, value);
+  return typeOfCounts(counts);
+}
+
+/**
+ * inferSchema one row at a time: the same column order (first appearance) and the same type rules, with
+ * memory per column instead of per cell, for imports that stream.
+ */
+export class SchemaAccumulator {
+  private keys: string[] = [];
+  private counts = new Map<string, TypeCounts>();
+  add(row: ExploreRowData) {
+    for (const key in row) {
+      let counts = this.counts.get(key);
+      if (!counts) {
+        counts = { numbers: 0, booleans: 0, dates: 0, strings: 0 };
+        this.counts.set(key, counts);
+        this.keys.push(key);
+      }
+      countType(counts, row[key] ?? null);
+    }
+  }
+  schema(options: { labels?: Record<string, string>; roles?: ExploreRoleMap; groups?: Record<string, string> } = {}): ExploreSchema {
+    const roleByColumn = new Map<string, ExploreRole>();
+    for (const [role, column] of Object.entries(options.roles ?? {})) {
+      if (column) roleByColumn.set(column, role as ExploreRole);
+    }
+    return { columns: this.keys.map((key) => ({
+      key,
+      label: options.labels?.[key] ?? key,
+      type: typeOfCounts(this.counts.get(key)!),
+      role: roleByColumn.get(key),
+      group: options.groups?.[key],
+    })) };
+  }
 }
 
 /**
@@ -235,4 +273,50 @@ export function parseJsonObject(raw: string | null | undefined): Record<string, 
   } catch {
     return null;
   }
+}
+
+/** Row hashes kept for the exact (sorted) content hash up to this many rows; beyond it a multiset sum is used. */
+export const EXACT_HASH_MAX_ROWS = 1_000_000;
+
+/**
+ * computeContentHash one row at a time. Up to EXACT_HASH_MAX_ROWS rows the result is identical to
+ * computeContentHash (sorted row hashes); above that, keeping every row hash would cost more memory than the
+ * rows are worth, so the rows are combined as a sum of their hashes (still independent of row order, and still
+ * changing with any value). Such hashes carry the prefix "m1-".
+ */
+export class ContentHashAccumulator {
+  private hashes: string[] | null = [];
+  private lanes = [BigInt(0), BigInt(0), BigInt(0), BigInt(0)];
+  private rows = 0;
+  constructor(private exactMaxRows = EXACT_HASH_MAX_ROWS) {}
+  add(row: ExploreRowData) {
+    const digest = crypto.createHash("sha256").update(stableStringify(row)).digest();
+    this.rows += 1;
+    if (this.hashes) {
+      this.hashes.push(digest.toString("hex"));
+      if (this.hashes.length > this.exactMaxRows) this.hashes = null;
+    }
+    for (let lane = 0; lane < 4; lane += 1) this.lanes[lane] = BigInt.asUintN(64, this.lanes[lane] + digest.readBigUInt64BE(lane * 8));
+  }
+  digest(schema: ExploreSchema): string {
+    const digest = crypto.createHash("sha256");
+    digest.update(columnSignatureOf(schema));
+    if (this.hashes) {
+      digest.update("\n");
+      for (const hash of this.hashes.sort()) digest.update(hash);
+      return digest.digest("hex");
+    }
+    digest.update(`\nm1:${this.rows}:`);
+    for (const lane of this.lanes) digest.update(lane.toString(16).padStart(16, "0"));
+    return `m1-${digest.digest("hex")}`;
+  }
+}
+
+function columnSignatureOf(schema: ExploreSchema): string {
+  let text = schema.columns.map((column) => `${column.key}:${column.type}`).sort().join("|");
+  if (schema.schemaId || schema.schemaVersion || schema.rowEntity || schema.columns.some(column => column.unit || column.nullable !== undefined)) {
+    text += stableStringify({ schemaId: schema.schemaId, schemaVersion: schema.schemaVersion, rowEntity: schema.rowEntity,
+      columns: schema.columns.map(({ key, unit, nullable }) => ({ key, unit, nullable })).sort((a, b) => a.key.localeCompare(b.key)) });
+  }
+  return text;
 }

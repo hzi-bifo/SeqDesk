@@ -25,7 +25,9 @@ import { parseTargetKey, type ExploreTargetKey } from "@/lib/explore/target-key"
 import { ExploreBuildInputError } from "@/lib/explore/builders/types";
 import { loadCanvasGraph } from "@/lib/explore/canvas";
 import { importDatasetFromForm, isImportInputError } from "@/lib/explore/dataset-import";
-import { computeDatasetCacheToken, deleteDataset, fetchAllDatasetRows, fetchDatasetRows, getDatasetDetail, getDatasetRecord, listDatasets, updateDatasetRoles } from "@/lib/explore/datasets";
+import { cancelImportJob, getImportJob, serializeImportJob } from "@/lib/explore/import-jobs";
+import { readTablePage } from "@/lib/explore/table-page";
+import { computeDatasetCacheToken, deleteDataset, fetchDatasetRows, getDatasetDetail, getDatasetRecord, listDatasets, updateDatasetRoles } from "@/lib/explore/datasets";
 import { applyEditsToRows, listActiveEdits } from "@/lib/explore/edits";
 import { createFlow, deleteFlow, getFlow, getFlowRecord, listFlows, updateFlow } from "@/lib/explore/flows";
 import { flowCitations, housekeepingCounts, processCleanupJobs, pruneRuns } from "@/lib/explore/housekeeping";
@@ -35,10 +37,9 @@ import { changeReportChecks, getReportReview, reviewSummaries, importReportRevie
 import { createReport, deleteReport, ExploreReportError, getReportRecord, getReportView, listReports, renameReport, resetReport, saveReport, setShareMode, shareModeOf, shareReport, unshareReport, type ReportViewOptions } from "@/lib/explore/reports";
 import { ExploreRouteError } from "@/lib/explore/route-error";
 import { readRunIsolation, summarizeIsolation } from "@/lib/explore/sandbox/prepare";
-import { parseSchema } from "@/lib/explore/schema";
 import { resolveContainedPath } from "@/lib/explore/storage";
 import type { ExploreScope } from "@/lib/explore/types";
-import { FileLibraryError, getLibraryFile, listLibraryFiles, readLibraryFile, removeLibraryFile, storeLibraryFile, updateLibraryFile, validateFileBindings } from "@/lib/files/library";
+import { FileLibraryError, getLibraryFile, listLibraryFiles, readLibraryFile, removeLibraryFile, storeLibraryFile, storeLibraryFileStream, updateLibraryFile, validateFileBindings } from "@/lib/files/library";
 import { MAX_FILE_DESCRIPTION_LENGTH, MAX_LIBRARY_FILE_BYTES, normalizeFileTags } from "@/lib/files/library-types";
 import { IntegrationAccessError, type IntegrationSession } from "./identity";
 import { codeForStatus, flowError, FLOW_CAPABILITIES_BUILT } from "./flow-contract";
@@ -48,7 +49,8 @@ import { flowChanged, handleFlowRequest, isFlowPath } from "./explore-flow";
 import { prepareFlowRemoval } from "./events";
 
 /** Capabilities advertised by /info while the Explore module is on. */
-export const EXPLORE_INTEGRATION_CAPABILITIES = ["explore.files", "explore.datasets", "explore.reports", "explore.flows"] as const;
+/** explore.large-tables: streamed uploads (POST files/stream), background imports with progress (datasets/imports/{job}), paged and searchable table reads. */
+export const EXPLORE_INTEGRATION_CAPABILITIES = ["explore.files", "explore.datasets", "explore.reports", "explore.flows", "explore.large-tables"] as const;
 
 /** Everything /info advertises while the Explore module is on: the base surface plus the Flow features built so far. */
 export function exploreIntegrationCapabilities(options: { eventsConfigured?: boolean } = {}): string[] {
@@ -339,6 +341,14 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         const stored = await storeLibraryFile({ file, targetKey, createdById: session.user.id });
         return json({ file: { id: stored.id, originalName: stored.originalName } }, 201);
       }
+      if (segments.length === 2 && id === "stream" && method === "POST") {
+        // The raw body is the file (no multipart): streamed to disk, hashed on the way, never held in memory.
+        const targetKey = query.get("targetKey") ?? "";
+        await requireTargetAccess(session, targetKey, "write");
+        if (!request.body) throw new FileLibraryError(400, "Choose a file to upload.");
+        const stored = await storeLibraryFileStream({ targetKey, name: query.get("name") ?? "file", mimeType: request.headers.get("content-type"), body: request.body as unknown as AsyncIterable<Uint8Array>, createdById: session.user.id });
+        return json({ file: { id: stored.id, originalName: stored.originalName, sizeBytes: Number(stored.sizeBytes) } }, 201);
+      }
       if (segments.length === 2 && method === "GET") {
         const file = await getLibraryFile(id);
         await requireTargetAccess(session, file.targetKey, "read");
@@ -501,13 +511,20 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
     if (head === "datasets") {
       if (segments.length === 2 && id === "import" && method === "POST") {
         const form = await request.formData();
-        const result = await importDatasetFromForm(session, form, query.get("preview") === "1");
+        const result = await importDatasetFromForm(session, form, query.get("preview") === "1", { background: query.get("background") === "1" });
         return json(result.body, result.status);
+      }
+      if (segments.length === 3 && id === "imports" && (method === "GET" || method === "DELETE")) {
+        const job = getImportJob(sub);
+        if (!job) throw new ExploreRouteError(404, "Import not found");
+        await requireTargetAccess(session, job.targetKey, method === "GET" ? "read" : "write");
+        if (method === "DELETE") cancelImportJob(job);
+        return json({ job: serializeImportJob(job) });
       }
       if (segments.length === 1 && method === "GET") {
         const targetKey = query.get("targetKey") ?? "";
         await requireTargetAccess(session, targetKey, "read");
-        return json({ datasets: await listDatasets(targetKey) });
+        return json({ datasets: await listDatasets(targetKey, { lean: query.get("lean") === "1" }) });
       }
       if (segments.length === 2 && method === "GET") {
         await loadDataset(session, id, "read");
@@ -537,22 +554,15 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
           : query.get("versionId") ? await db.exploreDatasetVersion.findFirst({ where: { datasetId: id, id: query.get("versionId")! } }) : dataset.versions.find((version) => version.id === dataset.currentVersionId) ?? dataset.versions[0] ?? null;
         if (query.get("versionId") && !current) throw new ExploreRouteError(404, "Input version not found.");
         if (artifactId && (!current || (!original?.derivedVersionId && !JSON.stringify(JSON.parse(current.provenance)).includes(JSON.stringify(artifactId))))) throw new ExploreRouteError(404, "The original result table is unavailable.");
-        const schema = parseSchema(current?.schema);
-        const requested = query.get("columns");
-        const wanted = requested ? new Set(requested.split(",").map((key) => key.trim()).filter(Boolean)) : null;
-        const columns = schema.columns.filter((column) => !column.key.endsWith("_db_id") && (!wanted || wanted.has(column.key)));
-        const limitParam = Number.parseInt(query.get("limit") ?? "", 10);
-        const limit = Math.min(250_000, Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 100_000);
         const activeEdits = artifactId ? [] : await listActiveEdits(dataset.id);
-        const records = current ? applyEditsToRows(await fetchAllDatasetRows(current.id), activeEdits) : [];
-        const keys = columns.map((column) => column.key);
-        const rows = records.slice(0, limit).map((record) => {
-          if (!wanted) return record.data;
-          const picked: Record<string, (typeof record.data)[string]> = {};
-          for (const key of keys) picked[key] = record.data[key];
-          return picked;
+        const limitParam = Number.parseInt(query.get("limit") ?? "", 10);
+        // A page, not the table: rows from the cursor on, bounded by a cell budget so a wide table gives fewer rows.
+        const page = await readTablePage(current, activeEdits, {
+          columns: query.get("columns"), limit: Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 100_000,
+          cursor: query.get("cursor"), search: query.get("q"),
         });
-        return json({ datasetId: dataset.id, inputToken: current ? inputToken(current.id, activeEdits) : null, version: current?.number ?? null, versionId: current?.id ?? null, editable: !artifactId && dataset.kind === "external" && activeEdits.length === 0, rowEntity: schema.rowEntity, columns, rows, total: records.length, truncated: records.length > limit });
+        return json({ datasetId: dataset.id, inputToken: current ? inputToken(current.id, activeEdits) : null, version: current?.number ?? null, versionId: current?.id ?? null,
+          editable: !artifactId && dataset.kind === "external" && activeEdits.length === 0 && !page.fileBacked, rowEntity: page.rowEntity, ...page.body });
       }
       if (segments.length === 3 && sub === "rows" && method === "GET") {
         const dataset = await loadDataset(session, id, "read");
