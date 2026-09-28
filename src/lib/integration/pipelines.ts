@@ -96,7 +96,7 @@ export async function handleDataPipelinesRequest(request: Request, session: Inte
         } catch (error) {
           // "Pipeline is not ready to enable" alone gives the admin nothing to do; its details say what is missing.
           const e = error as { status?: number; details?: string[]; message?: string };
-          if (typeof e.status === 'number' && e.status >= 400 && e.status < 500) throw new RouteError(409, `${e.message ?? 'Could not change the pipeline'}${e.details?.length ? `: ${e.details.slice(0, 3).join('; ')}` : ''}.`);
+          if (typeof e.status === 'number' && e.status >= 400 && e.status < 500) throw new RouteError(409, `${e.message ?? 'Could not change the pipeline'}${e.details?.length ? `: ${e.details.slice(0, 3).map((d) => d.replace(/\.$/, '')).join('; ')}` : ''}.`);
           throw error;
         }
         return json({ id: action, enabled: await getPipelineEnabled(action) });
