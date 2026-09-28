@@ -24,6 +24,32 @@ function getDemoFrameAncestors() {
   ].join(" ");
 }
 
+/**
+ * The policy for Compute's own pages. Next inlines its bootstrap scripts, so scripts stay 'self' plus inline; the
+ * dev server also needs eval and its HMR websocket. Share links and API routes set their own, stricter policy.
+ */
+export function computePageCsp(dev = process.env.NODE_ENV !== "production"): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline'${dev ? " 'unsafe-eval'" : ""}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    `connect-src 'self'${dev ? " ws: wss:" : ""}`,
+    "frame-src 'self' blob:",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+  ].join("; ");
+}
+
+export const COMPUTE_SECURITY_HEADERS = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+];
+
 function getPublicAppSurface() {
   if (process.env.NEXT_PUBLIC_SEQDESK_APP_SURFACE === "workbench") {
     return "workbench";
@@ -76,7 +102,17 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     if (process.env.SEQDESK_ENABLE_PUBLIC_DEMO !== "true") {
-      return [];
+      return [
+        { source: "/:path*", headers: COMPUTE_SECURITY_HEADERS },
+        {
+          // Pages only: /api and /share answer with their own Content-Security-Policy (files, reports).
+          source: "/((?!api/|share/|_next/).*)",
+          headers: [
+            { key: "Content-Security-Policy", value: computePageCsp() },
+            { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          ],
+        },
+      ];
     }
 
     return [
