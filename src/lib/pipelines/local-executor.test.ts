@@ -7,8 +7,10 @@ import { describe, expect, it } from 'vitest';
 import { admits, localBudget, localLimitLines, localRunLimits, localWaitReason, localWaitWords } from './local-executor';
 
 describe('runs on this server share it', () => {
-  it('each run gets half the host by default, the budget is the host', () => {
-    expect(localRunLimits({ cores: 16, memoryGb: 62 })).toEqual({ cores: 8, memoryGb: 31, timeHours: 48 });
+  it('each run gets half the cores and 45 % of the memory by default, so two runs fit the budget', () => {
+    expect(localRunLimits({ cores: 16, memoryGb: 62 })).toEqual({ cores: 8, memoryGb: 27, timeHours: 48 });
+    const two = [localRunLimits({ cores: 16, memoryGb: 62 }), localRunLimits({ cores: 16, memoryGb: 62 })];
+    expect(admits(localBudget({ cores: 16, memoryGb: 62 }), [two[0]], two[1])).toBe(true);
     expect(localBudget({ cores: 16, memoryGb: 62 })).toEqual({ cores: 16, memoryGb: 55 });
   });
   it('admits a run while it fits beside the running ones; the first always starts', () => {

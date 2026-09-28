@@ -16,11 +16,14 @@ const envNumber = (name: string, fallback: number) => {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 };
 
-/** What one run may use. SEQDESK_LOCAL_RUN_CORES / _MEMORY_GB / _TIME_HOURS; defaults: half the host, 48 h. */
+/**
+ * What one run may use. SEQDESK_LOCAL_RUN_CORES / _MEMORY_GB / _TIME_HOURS; defaults: half the cores, 45 % of the memory
+ * (two runs then fit into the 90 % of memory the budget allows, so two runs really run at once), 48 h.
+ */
 export function localRunLimits(host = { cores: os.cpus().length, memoryGb: Math.floor(os.totalmem() / 1024 ** 3) }): LocalRunLimits {
   return {
     cores: Math.max(1, Math.floor(envNumber('SEQDESK_LOCAL_RUN_CORES', Math.max(1, Math.floor(host.cores / 2))))),
-    memoryGb: Math.max(1, Math.floor(envNumber('SEQDESK_LOCAL_RUN_MEMORY_GB', Math.max(1, Math.floor(host.memoryGb / 2))))),
+    memoryGb: Math.max(1, Math.floor(envNumber('SEQDESK_LOCAL_RUN_MEMORY_GB', Math.max(1, Math.floor(host.memoryGb * 0.45))))),
     timeHours: envNumber('SEQDESK_LOCAL_RUN_TIME_HOURS', 48),
   };
 }
