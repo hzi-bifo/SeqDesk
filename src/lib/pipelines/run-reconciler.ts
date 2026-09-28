@@ -154,14 +154,7 @@ export function reconcileRun(input: ReconcileInput): Reconciled {
   };
 }
 
-/** The event-log row for a run's change of state (the monitor, cancel and resume all write it the same way). */
-export function transitionEvent(runId: string, from: string, to: string, source: string, detail?: string | null) {
-  return {
-    pipelineRunId: runId, eventType: 'state', status: to, source,
-    message: `${from} → ${to}${detail ? ` · ${detail}` : ''}`.slice(0, 500),
-    payload: JSON.stringify({ from, to, ...(detail ? { detail: detail.slice(0, 300) } : {}) }),
-  };
-}
+export { transitionEvent } from './run-events';
 
 /** A run's event log as Details shows it: "14:19 queued → running", newest last. */
 export function historyLines(events: { occurredAt: Date; eventType: string; message: string | null }[]): string[] {

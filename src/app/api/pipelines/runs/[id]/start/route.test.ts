@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
+    pipelineRunEvent: { create: vi.fn() },
     pipelineConfig: {
       findUnique: vi.fn(),
     },
@@ -1233,6 +1234,20 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
           call[0]?.data?.status === "completed"
       )
     ).toBe(false);
+  });
+
+  it("a local run's History gets its start and its end (Details showed no events for runs that finished by themselves)", async () => {
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => child.emit("close", 1));
+      return child;
+    });
+    const response = await POST(makeRequest(), { params: baseParams });
+    expect(response.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const messages = mocks.db.pipelineRunEvent.create.mock.calls.map((call) => call[0].data.message);
+    expect(messages).toContain("queued → running");
+    expect(messages).toContain("running → failed · exit 1");
   });
 
   it("keeps a successful local process non-terminal when output resolution fails", async () => {

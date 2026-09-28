@@ -53,6 +53,7 @@ import { getReadCleaningPathIssues } from '@/lib/pipelines/read-cleaning-path-va
 import { pipelineConfigOverrideIssues, pipelineSchemaRunIssues } from '@/lib/pipelines/config-schema-validation';
 import { prepareSubmgRun } from '@/lib/pipelines/submg/submg-runner';
 import { supportsPipelineTarget } from '@/lib/pipelines/target';
+import { transitionEvent } from '@/lib/pipelines/run-events';
 import { loadStudyPipelineSamples, scopePipelineStudyTarget } from './study-samples';
 import type { PipelineTarget } from '@/lib/pipelines/types';
 import type { ResourceScope } from '@/lib/authorization';
@@ -343,6 +344,11 @@ function terminateDetachedLocalProcess(pid: number): void {
   }
 }
 
+/** One event-log row per change of state of a run on this server (Details' History); never blocks the run. */
+async function recordLocalTransition(runId: string, from: string, to: string, source: string, detail?: string) {
+  await Promise.resolve().then(() => db.pipelineRunEvent.create({ data: transitionEvent(runId, from, to, source, detail) })).catch(() => undefined);
+}
+
 export async function finalizeLocalRun(
   runId: string,
   pipelineId: string,
@@ -360,6 +366,7 @@ export async function finalizeLocalRun(
         queueUpdatedAt: completedAt,
       });
       if (result === 'claim-unavailable') return;
+      await recordLocalTransition(runId, 'running', 'completed', 'process');
     } catch (err) {
       console.error('[Pipeline Run] Output resolution failed:', err);
       // Leave the row non-terminal. The pipeline monitor will retry the
@@ -402,6 +409,7 @@ export async function finalizeLocalRun(
       },
     });
     if (count === 0) return;
+    await recordLocalTransition(runId, 'running', 'failed', 'process', exitCode != null ? `exit ${exitCode}` : undefined);
     await notifyPipelineRunTerminalInApp(runId, null, 'failed');
   }
 }
@@ -1419,6 +1427,8 @@ export async function startPipelineRunForOperator({
       );
     }
 
+    if (!effectiveExecutionSettings.useSlurm) await recordLocalTransition(runId, 'queued', 'running', 'launcher');
+
     // Record skipped-sample warnings as a durable run event so they remain
     // visible in the run history (best-effort; never blocks the launch).
     if (prepWarnings.length > 0) {
@@ -1790,6 +1800,7 @@ export async function admitWaitingLocalRuns(): Promise<string[]> {
     const claimed = await db.pipelineRun.updateMany({ where: { id: run.id, status: 'queued', queueJobId: null, ...unlockedLifecycleSourceFilter() },
       data: { status: 'running', currentStep: 'Launching', statusSource: 'launcher', queueReason: null, lastEventAt: new Date() } });
     if (!claimed.count) continue;
+    await recordLocalTransition(run.id, 'queued', 'running', 'launcher', 'a share of this server was free');
     const child = spawn('bash', [path.join(run.runFolder, 'run.sh')], { cwd: run.runFolder, stdio: 'ignore', detached: true });
     child.unref();
     if (!child.pid) { await markClaimedRunFailed(run.id, ['running'], 'The admitted run did not start.'); continue; }
