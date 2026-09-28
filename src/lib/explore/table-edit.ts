@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { db } from '@/lib/db';
 import { fetchAllDatasetRows, writeDatasetVersion } from './datasets';
 import { fileStorageOf } from './table-store';
+import { resolveExploreStorage, sanitizeSegment } from './storage';
 import { applyEditsToRows, listActiveEdits } from './edits';
 import { parseRoles, parseSchema } from './schema';
 import { ExploreRouteError } from './route-error';
@@ -45,6 +48,7 @@ export async function editTable(datasetId: string, userId: string, body: Record<
     const edits = await listActiveEdits(dataset.id);
     if (!copy && (dataset.kind !== 'external' || edits.length)) throw new ExploreRouteError(409, 'Create an editable copy of this table first.');
     if (fileStorageOf(version.provenance)) throw new ExploreRouteError(409, 'This table is too large to edit cell by cell here. Change it in an analysis step, which writes a new table.');
+    if (copy && !edits.length && version.storagePath) return copyWithoutReading(tx, dataset, version, userId);
     const schema = parseSchema(version.schema);
     const sourceRows = await fetchAllDatasetRows(version.id);
     const rows = applyEditsToRows(sourceRows, edits).map(row => row.data);
@@ -65,4 +69,41 @@ export async function editTable(datasetId: string, userId: string, body: Record<
     }, tx);
     return { datasetId: target.id, version: result };
   }, { timeout: 60000 });
+}
+
+type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
+type DatasetRecord = NonNullable<Awaited<ReturnType<typeof db.exploreDataset.findUnique>>>;
+type VersionRecord = Awaited<ReturnType<typeof db.exploreDatasetVersion.findUniqueOrThrow>>;
+
+/**
+ * An editable copy of an uncurated table without reading it into memory: the copy's rows are one INSERT … SELECT
+ * in Postgres and its data file is a hard link to the original's (the same bytes, so no second file on disk).
+ */
+async function copyWithoutReading(tx: Tx, dataset: DatasetRecord, version: VersionRecord, userId: string) {
+  const target = await tx.exploreDataset.create({ data: {
+    targetKey: dataset.targetKey, kind: 'external', name: `${dataset.name.slice(0, 180)} (editable copy)`,
+    tableKind: dataset.tableKind, description: `Editable copy of ${dataset.name}, version ${version.number}`,
+    roles: dataset.roles, sensitivity: dataset.sensitivity, createdById: userId,
+    sourceConfig: JSON.stringify({ copiedFrom: dataset.id, versionId: version.id }),
+  } });
+  const storage = await resolveExploreStorage();
+  const dir = path.join(storage.datasetsRoot, sanitizeSegment(target.id), `v1-${sanitizeSegment(randomUUID())}`);
+  await fs.mkdir(dir, { recursive: true });
+  for (const name of ['data.tsv', 'rows.idx.json']) {
+    const from = path.join(version.storagePath!, name);
+    await fs.link(from, path.join(dir, name)).catch(() => fs.copyFile(from, path.join(dir, name))).catch(() => {});
+  }
+  const schema = parseSchema(version.schema);
+  const provenance = { builtAt: new Date().toISOString(), builder: 'table-copy@1',
+    sources: [{ type: 'dataset-version', id: version.id, checksum: version.contentHash, label: dataset.name }],
+    notes: ['Editable copy; original results retained.'] };
+  await fs.writeFile(path.join(dir, 'schema.json'), JSON.stringify({ schema, provenance, contentHash: version.contentHash }, null, 2), 'utf8');
+  const created = await tx.exploreDatasetVersion.create({ data: {
+    datasetId: target.id, number: 1, contentHash: version.contentHash, schema: version.schema, rowCount: version.rowCount,
+    provenance: JSON.stringify(provenance), storagePath: dir, buildSource: 'manual', createdById: userId,
+  } });
+  await tx.$executeRaw`INSERT INTO "ExploreDatasetRow" ("versionId", "rowIndex", "sampleId", "subjectId", "key", "data")
+    SELECT ${created.id}, "rowIndex", "sampleId", "subjectId", "key", "data" FROM "ExploreDatasetRow" WHERE "versionId" = ${version.id}`;
+  await tx.exploreDataset.update({ where: { id: target.id }, data: { currentVersionId: created.id } });
+  return { datasetId: target.id, version: { versionId: created.id, number: 1, rowCount: version.rowCount, contentHash: version.contentHash, unchanged: false } };
 }
