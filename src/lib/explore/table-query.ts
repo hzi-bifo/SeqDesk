@@ -106,6 +106,8 @@ function test(cell: string, filter: TableFilter, type: ExploreColumnType): boole
       case "lte": return a <= b;
     }
   }
+  // A number asked for, a cell that is text: it is neither greater nor less than it.
+  if (b !== null && a === null && filter.op !== "eq") return false;
   const x = cell.trim().toLowerCase(), y = wanted.trim().toLowerCase();
   switch (filter.op) {
     case "eq": return x === y;

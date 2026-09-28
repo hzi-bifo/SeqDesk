@@ -125,6 +125,11 @@ describe("filters", () => {
     // "9" is greater than "10" as text: a text comparison would have missed these.
     expect(counts.some((value) => value >= 10)).toBe(true);
   });
+  it("does not compare text cells with a number", async () => {
+    // Rows hold "plain" text in the note column; "> 5" must not treat it as bigger than 5.
+    expect((await scanMatching(dir, layout, compile({ filters: [{ column: "note", op: "gt", value: "5" }] }), opts)).rows.length).toBe(0);
+    expect((await scanMatching(dir, layout, compile({ filters: [{ column: "note", op: "gt", value: "a" }] }), opts)).rows.length).toBe(ROWS);
+  });
   it("keeps equals, contains and empty apart", async () => {
     expect((await scanMatching(dir, layout, compile({ filters: [{ column: "gene", op: "eq", value: "or4f5" }] }), opts)).rows.length).toBe(10);
     expect((await scanMatching(dir, layout, compile({ filters: [{ column: "gene", op: "contains", value: "ash" }] }), opts)).rows.length).toBe(10);
