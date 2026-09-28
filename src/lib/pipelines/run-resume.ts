@@ -90,11 +90,12 @@ export async function resumePipelineRun(runId: string, input: ResumeOverrides): 
   await fs.writeFile(scriptPath, script, { mode: 0o755 });
   const slurm = run.executionMode === 'slurm';
   const claimed = await db.pipelineRun.updateMany({
-    where: { id: runId, status: { in: ['failed', 'cancelled'] } },
+    // A cancel that is still stopping processes owns the row; resuming now would lose the resumed attempt's end.
+    where: { id: runId, status: { in: ['failed', 'cancelled'] }, OR: [{ statusSource: null }, { statusSource: { notIn: ['cancelling', 'finalizing'] } }] },
     data: { status: slurm ? 'queued' : 'running', currentStep: slurm ? 'Waiting for scheduler' : 'Resuming', statusSource: 'launcher',
       completedAt: null, errorTail: null, queueStatus: slurm ? 'PENDING' : 'RUNNING', queueReason: null, queueUpdatedAt: new Date(), lastEventAt: new Date(), ...(slurm ? { queuedAt: new Date() } : {}) },
   });
-  if (!claimed.count) return { status: 409, body: { error: 'Someone else resumed or changed this run a moment ago.' } };
+  if (!claimed.count) return { status: 409, body: { error: 'The run is still stopping or someone else resumed it a moment ago. Try again in a few seconds.' } };
   await db.pipelineRunEvent.create({ data: { pipelineRunId: runId, eventType: 'resumed', status: 'info', source: 'launcher',
     message: `Resumed (${n})${overrides.memory ? ` · memory ${overrides.memory}` : ''}${overrides.time ? ` · time ${overrides.time}` : ''}${overrides.process ? ` · ${overrides.process}` : ''}`,
     payload: JSON.stringify({ n, ...overrides }) } });
