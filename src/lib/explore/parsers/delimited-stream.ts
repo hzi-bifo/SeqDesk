@@ -6,17 +6,18 @@
 import { StringDecoder } from "string_decoder";
 import { coerceCell } from "../schema";
 import type { ExploreRowData } from "../types";
-import { DelimitedParseError, detectCsvDelimiter, detectDelimiter, sniffTextEncoding, splitLine, uniqueColumnKeys, type DelimitedParseOptions } from "./delimited";
+import { DelimitedParseError, detectCsvDelimiter, detectDelimiter, sniffTextEncoding, splitLine, startsWithSpreadsheetError, uniqueColumnKeys, type DelimitedParseOptions } from "./delimited";
 
 /**
  * Lines of a byte stream split on \n with a trailing \r removed, as text.split(/\r?\n/) does (including the final
  * empty line), handed over one chunk's lines at a time: a promise per chunk, not per line (a table of 20 million
  * rows would otherwise make 20 million promises, which also overflows the dev server's async tracking).
  */
-export async function* streamLineBatches(source: AsyncIterable<Buffer | string>): AsyncGenerator<string[]> {
+export async function* streamLineBatches(source: AsyncIterable<Buffer | string>, options: { utf8?: boolean } = {}): AsyncGenerator<string[]> {
   let rest = "";
-  let bomChecked = false;
-  for await (const text of decodedText(source)) {
+  // `utf8`: text this server wrote itself (a stored table): decoded as UTF-8 as it is, with no encoding guess.
+  let bomChecked = options.utf8 === true;
+  for await (const text of options.utf8 ? utf8Text(source) : decodedText(source)) {
     rest += text;
     if (!bomChecked && rest.length) { bomChecked = true; if (rest.charCodeAt(0) === 0xfeff) rest = rest.slice(1); }
     const lines: string[] = [];
@@ -30,6 +31,12 @@ export async function* streamLineBatches(source: AsyncIterable<Buffer | string>)
     if (lines.length) yield lines;
   }
   yield [rest.endsWith("\r") ? rest.slice(0, -1) : rest];
+}
+
+async function* utf8Text(source: AsyncIterable<Buffer | string>): AsyncGenerator<string> {
+  const decoder = new StringDecoder("utf8");
+  for await (const chunk of source) yield typeof chunk === "string" ? chunk : decoder.write(chunk);
+  yield decoder.end();
 }
 
 /**
@@ -142,7 +149,7 @@ export async function* parseDelimitedStream(
     }
   }
   const header = (await line(headerIndex))!.slice(options.headerLinePrefix?.length ?? 0);
-  const skipped = (text: string) => text.trim() === "" || Boolean(skipPrefix && text.startsWith(skipPrefix)) || Boolean(options.hashComments && text.startsWith("#"));
+  const skipped = (text: string) => text.trim() === "" || Boolean(skipPrefix && text.startsWith(skipPrefix)) || Boolean(options.hashComments && text.startsWith("#") && !startsWithSpreadsheetError(text));
   const delimiter = !options.delimiter || options.delimiter === "auto" ? detectDelimiter(header) : options.delimiter === "csv" ? detectCsvDelimiter(header) : options.delimiter;
   const recordAt = async (start: number, initial?: string) => {
     let text = initial ?? (await line(start))!;

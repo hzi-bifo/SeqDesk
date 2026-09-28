@@ -107,3 +107,50 @@ describe("text tables people export from Excel", () => {
     await expect(read(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x08, 0x00, 0x0a, 0x00]))).rejects.toThrow(/binary data/);
   });
 });
+
+describe("quoted line breaks and #N/A, wherever the chunks fall", () => {
+  // Rows: a quoted line break, a first column of #N/A whose last column has a quoted line break (an Excel/R export),
+  // a QIIME-style "#" directive that must still be left out, quoted commas, and a doubled quote next to a line break.
+  const text = [
+    "id,note,last",
+    '1,"a, b","line\nbreak"',
+    '#N/A,"x ""y""","line\nbreak2"',
+    "#q2:types,categorical,categorical",
+    '3,"multi\n\nblank line above",tail',
+    '#NULL!,plain,"end\nquote"',
+    "5,\"quote at end\"\"\",z",
+  ].join("\n") + "\n";
+  const expected = [
+    { id: "1", note: "a, b", last: "line\nbreak" },
+    { id: "#N/A", note: 'x "y"', last: "line\nbreak2" },
+    { id: "3", note: "multi\n\nblank line above", last: "tail" },
+    { id: "#NULL!", note: "plain", last: "end\nquote" },
+    { id: "5", note: 'quote at end"', last: "z" },
+  ];
+
+  it("reads the same rows at every chunk size, so a line break inside quotes may fall on a chunk boundary", async () => {
+    expect(parseDelimited(text, { delimiter: "csv", hashComments: true }).rows).toEqual(expected);
+    for (let chunk = 1; chunk <= text.length; chunk += 1) {
+      const result = await viaStream(text, { delimiter: "csv", hashComments: true }, chunk);
+      expect(result.rows, `chunk size ${chunk}`).toEqual(expected);
+    }
+  });
+
+  it("reads Windows line endings inside quotes the same way", async () => {
+    const crlf = text.replace(/\n/g, "\r\n");
+    for (const chunk of [1, 2, 7, 64, crlf.length]) {
+      const result = await viaStream(crlf, { delimiter: "csv", hashComments: true }, chunk);
+      expect(result.rows.map((row) => row.id), `chunk size ${chunk}`).toEqual(["1", "#N/A", "3", "#NULL!", "5"]);
+      expect(result.rows[0].last).toMatch(/^line\r?\nbreak$/);
+    }
+  });
+});
+
+describe("a stored table is read back as UTF-8 exactly as written", () => {
+  it("does not guess an encoding, drop a leading U+FEFF or stop at a NUL", async () => {
+    const stored = Buffer.from("﻿first\tsecond\n\u0000\tx\n", "utf8");
+    const lines: string[] = [];
+    for await (const batch of streamLineBatches(Readable.from([stored.subarray(0, 4), stored.subarray(4)]), { utf8: true })) lines.push(...batch);
+    expect(lines).toEqual(["﻿first\tsecond", "\u0000\tx", ""]);
+  });
+});

@@ -81,3 +81,37 @@ describe("workbooks with several sheets", () => {
     expect(chosen.rows).toEqual([{ b: 2 }]);
   });
 });
+
+describe("large delimited files with quoted line breaks", () => {
+  it("reads every row of a .csv and a .csv.gz once, with #N/A first cells and line breaks inside quotes across many chunks", async () => {
+    const fs = await import("fs/promises");
+    const os = await import("os");
+    const path = await import("path");
+    const zlib = await import("zlib");
+    const { streamDelimitedFile } = await import("./file");
+    const rowsWanted = 30_000;
+    const lines = ["int_0,text_1,text_2"];
+    for (let index = 0; index < rowsWanted; index += 1) lines.push(`${index % 7 === 0 ? "#N/A" : index},"a, b ""${index}""","line\nbreak${index}"`);
+    const text = lines.join("\n") + "\n";
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "csv-breaks-"));
+    try {
+      await fs.writeFile(path.join(dir, "messy.csv"), text);
+      await fs.writeFile(path.join(dir, "messy.csv.gz"), zlib.gzipSync(text));
+      for (const name of ["messy.csv", "messy.csv.gz"]) {
+        const { rows } = streamDelimitedFile(path.join(dir, name), name);
+        let count = 0;
+        let fragments = 0;
+        for await (const batch of rows as AsyncIterable<Array<Record<string, unknown>>>) {
+          for (const row of batch) {
+            const expected = count;
+            if (row.text_2 !== `line\nbreak${expected}` || row.int_0 !== (expected % 7 === 0 ? "#N/A" : String(expected))) fragments += 1;
+            count += 1;
+          }
+        }
+        expect({ name, count, fragments }).toEqual({ name, count: rowsWanted, fragments: 0 });
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});

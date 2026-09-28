@@ -270,7 +270,7 @@ export async function readRowsFromFile(storagePath: string, columns: string[], o
   let end = true;
   let lastIndex: number | null = null;
   try {
-    outer: for await (const lines of streamLineBatches(stream)) for (const line of lines) {
+    outer: for await (const lines of streamLineBatches(stream, { utf8: true })) for (const line of lines) {
       if (rowIndex === -1) { rowIndex = 0; continue; } // header when no index
       const current = rowIndex;
       // The file ends with a newline; its last "line" is not a row.

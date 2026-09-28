@@ -44,6 +44,15 @@ export function detectDelimiter(headerLine: string): "\t" | "," | ";" {
   return semis > commas ? ";" : ",";
 }
 
+/**
+ * A line that starts with a spreadsheet error value (#N/A, #DIV/0!, ...) is a data row, not a "#" comment: a table
+ * exported from Excel or R can have #N/A in its first column, and dropping that line would also leave the rest of a
+ * record with a quoted line break as a row of its own.
+ */
+export function startsWithSpreadsheetError(line: string): boolean {
+  return /^#(?:N\/A|NA|NULL!|DIV\/0!|VALUE!|REF!|NAME\?|NUM!|SPILL!|CALC!)(?=[,;\t"]|$)/i.test(line);
+}
+
 /** The delimiter of a .csv file: the comma, unless the header line is separated by semicolons or tabs instead. */
 export function detectCsvDelimiter(headerLine: string): "\t" | "," | ";" {
   const found = detectDelimiter(headerLine);
@@ -159,7 +168,7 @@ export function parseDelimited(text: string, options: DelimitedParseOptions = {}
     }
   }
   const header = lines[headerIndex].slice(options.headerLinePrefix?.length ?? 0);
-  const skipped = (line: string) => line.trim() === "" || Boolean(skipPrefix && line.startsWith(skipPrefix)) || Boolean(options.hashComments && line.startsWith("#"));
+  const skipped = (line: string) => line.trim() === "" || Boolean(skipPrefix && line.startsWith(skipPrefix)) || Boolean(options.hashComments && line.startsWith("#") && !startsWithSpreadsheetError(line));
   const delimiter =
     !options.delimiter || options.delimiter === "auto" ? detectDelimiter(header) : options.delimiter === "csv" ? detectCsvDelimiter(header) : options.delimiter;
   const recordAt = (start: number, initial = lines[start]) => {
