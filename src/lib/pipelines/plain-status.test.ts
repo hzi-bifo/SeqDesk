@@ -217,6 +217,13 @@ describe('plainRunStatus', () => {
     expect(countWorkflowProcesses(script)).toBe(2);
     expect(countWorkflowProcesses('// process X {\nworkflow {}')).toBe(0);
   });
+  it('a software failure after the server’s pipeline changed offers Run again, not Retry', () => {
+    const errorTail = "Error executing process > 'RUN_FASTQC (1)'\nCaused by:\n  java.lang.IllegalStateException: Failed to create Conda environment";
+    const run = { status: 'failed', executionMode: 'slurm', queueJobId: '130', errorTail };
+    expect(plainRunStatus({ now, run }).action?.kind).toBe('retry');
+    const changed = plainRunStatus({ now, run: { ...run, pipelineChanged: true } });
+    expect([changed.sentence, changed.action?.kind]).toEqual(['Couldn’t install the environment for RUN_FASTQC · the server’s pipeline has changed since; Run again uses it', 'run-again']);
+  });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
     const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';

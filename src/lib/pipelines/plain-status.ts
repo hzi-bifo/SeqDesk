@@ -63,6 +63,8 @@ export interface PlainRunInput {
   askedCores?: number | null;
   /** When the monitor last read the scheduler for this run (queueUpdatedAt); old while the run is active = stale card. */
   checkedAt?: Date | string | null;
+  /** The server's copy of the pipeline differs from the one this run started with (its own copy in the run folder). */
+  pipelineChanged?: boolean;
   /** The run folder is gone (deleted while it ran, or after): nothing can continue or resume there. */
   folderMissing?: boolean;
   /** How many steps the pipeline declares, so "step 2 of 2" does not shrink when the log tail loses the first block. */
@@ -482,7 +484,12 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
       return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action: refusal && !refusal.retry ? { kind: 'ask-admin', label: 'Ask the admin' } : { kind: 'resume', label: 'Resume' },
         error: { kind: 'unknown', sentence, firstLines: lines, process: failed?.process ?? null, sample: failed?.tag ?? null, exitCode: null } };
     }
-    const { sentence, action } = errorSentence(kind, failed?.process ?? failed?.name ?? null, failed?.tag ?? null, exitCode, lines, run, failedLine?.nodes ?? null, cancelledOutside);
+    const said = errorSentence(kind, failed?.process ?? failed?.name ?? null, failed?.tag ?? null, exitCode, lines, run, failedLine?.nodes ?? null, cancelledOutside);
+    // Resume and Retry use the run's own copy of the pipeline; when the server's copy changed since (an admin fixed an
+    // environment), only Run again picks the change up.
+    const changed = run.pipelineChanged && (kind === 'software' || kind === 'unknown');
+    const sentence = changed ? `${said.sentence} · the server’s pipeline has changed since; Run again uses it` : said.sentence;
+    const action: PlainAction = changed ? { kind: 'run-again', label: 'Run again' } : said.action;
     return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action,
       error: { kind, sentence, firstLines: lines, process: failed?.process ?? null, sample: failed?.tag ?? null, exitCode } };
   }
