@@ -2,7 +2,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { QueryInputError, compileQuery, emptyQuery, numberOf, parseFilters, parseSort, readLayout, rowRecord, scanMatching, scanSorted, type FileLayout } from "./table-query";
+import { QueryInputError, isMissingCell, compileQuery, emptyQuery, numberOf, parseFilters, parseSort, readLayout, rowRecord, scanMatching, scanSorted, type FileLayout } from "./table-query";
 import type { ExploreColumn } from "./types";
 
 const columns: ExploreColumn[] = [
@@ -166,5 +166,20 @@ describe("sort", () => {
   it("reports a partial sort when the budget ends", async () => {
     const result = await scanSorted(dir, layout, compile({ sort: [{ column: "count", dir: "asc" }] }), { ...opts, budgetMs: -1, keep: 5, chunkBytes: 64 });
     expect(result.end).toBe(false);
+  });
+});
+
+describe("messy cells", () => {
+  it("counts NA, null and a dash as missing", () => {
+    for (const cell of ["", " ", "NA", "n/a", "#N/A", "NaN", "null", "None", "-"]) expect(isMissingCell(cell)).toBe(true);
+    for (const cell of ["0", "NAN0", "-1", "nullable"]) expect(isMissingCell(cell)).toBe(false);
+  });
+  it("sorts numbers, then text, then missing values, in either direction", () => {
+    const sortBy = (dir: "asc" | "desc") => {
+      const compiled = compileQuery(["v"], [{ key: "v", label: "v", type: "string" }], { ...emptyQuery(), sort: [{ column: "v", dir }] });
+      return ["b", "NA", "10", "a", "2", "null", "-5"].map((cell, rowIndex) => ({ rowIndex, key: compiled.sortKey([cell]), cell })).sort(compiled.compare).map((row) => row.cell);
+    };
+    expect(sortBy("asc")).toEqual(["-5", "2", "10", "a", "b", "NA", "null"]);
+    expect(sortBy("desc")).toEqual(["10", "2", "-5", "b", "a", "NA", "null"]);
   });
 });

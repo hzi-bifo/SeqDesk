@@ -75,6 +75,10 @@ export function parseFilters(text: string | null | undefined, columns: ExploreCo
 }
 
 const NUMBER = /^[+-]?(\d+([.,]\d*)?|[.,]\d+)(e[+-]?\d+)?$/i;
+/** Cells that stand for "no value" in messy files: blank, NA, N/A, #N/A, NaN, null, none and a lone dash. */
+const MISSING = /^(na|n\/a|#n\/a|nan|null|none|-)$/i;
+export const isMissingCell = (cell: string): boolean => { const text = cell.trim(); return text === "" || MISSING.test(text); };
+
 /** A cell as a number when it reads as one (thousands separators are not guessed). */
 export function numberOf(cell: string): number | null {
   const text = cell.trim();
@@ -85,7 +89,7 @@ export function numberOf(cell: string): number | null {
 
 /** How one cell compares with a filter value, by the column's type. Blank cells only match `empty`. */
 function test(cell: string, filter: TableFilter, type: ExploreColumnType): boolean {
-  const blank = cell.trim() === "";
+  const blank = isMissingCell(cell);
   if (filter.op === "empty") return blank;
   if (filter.op === "notempty") return !blank;
   if (blank) return false;
@@ -145,21 +149,21 @@ export function compileQuery(header: string[], columns: ExploreColumn[], query: 
     },
     sortKey(cells) {
       return keys.map((key) => {
-        const cell = (cells[key.index] ?? "").trim();
-        if (cell === "") return null;
+        const cell = cells[key.index] ?? "";
+        if (isMissingCell(cell)) return null;
         const number = numberOf(cell);
-        return key.numeric && number !== null ? number : number !== null ? number : cell.toLowerCase();
+        return number !== null ? number : cell.trim().toLowerCase();
       });
     },
     compare(a, b) {
       for (let i = 0; i < keys.length; i += 1) {
         const x = a.key[i], y = b.key[i];
-        if (x === null || y === null) { if (x === y) continue; return x === null ? 1 : -1; }
-        // A number sorts before text in one column, so mixed columns stay in a predictable order.
-        let c = typeof x === "number" && typeof y === "number" ? x - y : typeof x === "number" ? -1 : typeof y === "number" ? 1 : x < y ? -1 : x > y ? 1 : 0;
-        if (c === 0) continue;
-        c *= keys[i].dir;
-        return c;
+        // Numbers, then text, then blanks, whichever way the column is sorted.
+        const rx = x === null ? 2 : typeof x === "number" ? 0 : 1, ry = y === null ? 2 : typeof y === "number" ? 0 : 1;
+        if (rx !== ry) return rx - ry;
+        if (x === null || y === null) continue;
+        const c = typeof x === "number" && typeof y === "number" ? x - y : (x as string) < (y as string) ? -1 : (x as string) > (y as string) ? 1 : 0;
+        if (c !== 0) return c * keys[i].dir;
       }
       return a.rowIndex - b.rowIndex;
     },
