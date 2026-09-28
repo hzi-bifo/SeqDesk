@@ -73,6 +73,15 @@ describe('plainRunStatus', () => {
     const status = plainRunStatus({ now, run: { status: 'failed', executionMode: 'slurm', timeLimitHours: 12, errorTail: 'slurmstepd: error: *** JOB 4819544 CANCELLED DUE TO TIME LIMIT ***' }, sacct: fixture('sacct-timeout.txt') });
     expect(status.error?.kind).toBe('time');
     expect(status.action).toMatchObject({ kind: 'resume', label: 'Resume with 24 h', time: '24h' });
+    expect(status.sentence).toBe('A step hit the 12 h time limit');
+  });
+  it('failed: the time limit a Resume set is the one it hit', () => {
+    // Real Slurm: Resume with "1 min"; Nextflow's --signal B:USR2@30 ends the task job with exit 140 before SLURM's TIMEOUT.
+    const trace = ['task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\tattempt\tsubmit\tstart\tcomplete\tduration\trealtime\t%cpu\tpeak_rss\tpeak_vmem\trchar\twchar',
+      '1\t63/10d94b\t46\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tFAILED\t140\t1\t2026-09-28 12:08:11.000\t2026-09-28 12:08:11.000\t2026-09-28 12:08:41.000\t30s\t30s\t1.0\t2 MB\t5 MB\t0\t0'].join('\n');
+    const status = plainRunStatus({ now, trace, run: { status: 'failed', executionMode: 'slurm', timeLimitHours: 1, resumedTimeLimitSeconds: 60 } });
+    expect(status.error?.kind).toBe('time');
+    expect([status.sentence, status.action?.label, status.action?.time]).toEqual(['FastQC hit the 1 min time limit', 'Resume with 2 min', '2 min']);
   });
   it('failed: input, database, software, node and unknown have their own action', () => {
     const kinds = [
@@ -120,7 +129,9 @@ describe('plainRunStatus', () => {
       ' N E X T F L O W   ~  version 26.04.6', '', 'Launching `/pipelines/fastqc/workflow/main.nf` [FASTQC-1] revision: 83ff1a4f58', '',
       '[-        ] RUN_FASTQC       -', '[-        ] SUMMARIZE_FASTQC -', '', 'executor >  slurm (1)',
       `${link('ef')} RUN_FASTQC (ERR10419931) | 0 of 1`, '[-        ] SUMMARIZE_FASTQC         -', ''].join('\n');
-    expect(logProgress(tail)).toEqual({ submitted: 1, processes: [{ name: 'RUN_FASTQC', done: 0, total: 1 }, { name: 'SUMMARIZE_FASTQC', done: 0, total: 0 }] });
+    expect(logProgress(tail)).toEqual({ submitted: 1, processes: [{ name: 'RUN_FASTQC', done: 0, total: 1 }, { name: 'SUMMARIZE_FASTQC', done: 0, total: 0 }], steps: 2 });
+    // A redrawn block that leaves out the process not reached yet still counts both steps.
+    expect(plainRunStatus({ now, run: { status: 'running', executionMode: 'slurm', queueStatus: 'RUNNING', outputTail: tail.replace('[-        ] SUMMARIZE_FASTQC         -\n', '') } }).sentence).toBe('Running · step 1 of 2: FastQC · no estimate yet');
     const running = plainRunStatus({ now, run: { status: 'running', executionMode: 'slurm', queueJobId: '30', queueStatus: 'RUNNING', startedAt: '2026-09-28T11:59:00Z', outputTail: tail }, trace: 'task_id\thash\n' });
     expect([running.shape, running.sentence]).toEqual(['running', 'Running · step 1 of 2: FastQC · no estimate yet']);
     // Shortened names keep no name; before any task is submitted it is still preparing.

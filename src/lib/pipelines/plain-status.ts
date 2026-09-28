@@ -56,6 +56,8 @@ export interface PlainRunInput {
   askedMemory?: string | null;
   /** SLURM time limit in hours. */
   timeLimitHours?: number | null;
+  /** The per-step time limit a Resume set ("time 1.m"), in seconds; it wins over timeLimitHours in the time sentence. */
+  resumedTimeLimitSeconds?: number | null;
   /** SLURM queue (partition) and cores asked for, for "SLURM did not take the job" and the queue sentence. */
   queue?: string | null;
   askedCores?: number | null;
@@ -277,7 +279,7 @@ export function firstErrorLines(texts: (string | null | undefined)[], max = 3): 
 
 // ------------------------------------------------------------------ Nextflow's console progress
 
-export interface LogProgress { submitted: number; processes: { name: string; done: number; total: number }[] }
+export interface LogProgress { submitted: number; processes: { name: string; done: number; total: number }[]; steps: number }
 
 /**
  * The last progress block of Nextflow's console log ("executor >  slurm (2)" and one "[ab/cdef12] NAME (tag) | 1 of 2"
@@ -297,7 +299,10 @@ export function logProgress(text: string | null | undefined): LogProgress | null
     if (!m) break;
     processes.push({ name: m[1].includes('…') ? '' : m[1], done: Number(m[2] ?? 0), total: Number(m[3] ?? 0) });
   }
-  return { submitted, processes };
+  // Nextflow redraws the block and may leave out a process it has not reached; the first block lists them all.
+  let steps = 0, run = 0;
+  for (const line of lines) { run = /^\[[^\]]*\]\s+\S+/.test(line.trim()) ? run + 1 : 0; steps = Math.max(steps, run); }
+  return { submitted, processes, steps: Math.max(steps, processes.length) };
 }
 
 // ------------------------------------------------------------------ the status
@@ -317,8 +322,12 @@ function errorSentence(kind: ErrorKind, process: string | null, sample: string |
       return { sentence: `${capital(stage)} ran out of memory${onSample}`, action: { kind: 'resume', label: more ? `Resume with ${more}` : 'Resume with more memory', ...(more ? { memory: more } : {}) } };
     }
     case 'time': {
-      const hours = run.timeLimitHours ?? null;
-      return { sentence: `${capital(stage)} hit the ${hours ? `${hours} h ` : ''}time limit`, action: { kind: 'resume', label: hours ? `Resume with ${hours * 2} h` : 'Resume with more time', ...(hours ? { time: `${hours * 2}h` } : {}) } };
+      // The limit the failed attempt ran under: a Resume's own ("1 min"), else the server's hours.
+      const seconds = run.resumedTimeLimitSeconds ?? (run.timeLimitHours ? run.timeLimitHours * 3600 : null);
+      if (!seconds) return { sentence: `${capital(stage)} hit the time limit`, action: { kind: 'resume', label: 'Resume with more time' } };
+      const twice = seconds * 2;
+      const next = twice % 3600 === 0 ? `${twice / 3600}h` : twice >= 60 ? `${Math.ceil(twice / 60)} min` : `${twice} s`;
+      return { sentence: `${capital(stage)} hit the ${durationWords(seconds)} time limit`, action: { kind: 'resume', label: `Resume with ${next.replace(/h$/, ' h')}`, time: next } };
     }
     case 'input': {
       const detail = lines.find((l) => /Missing required value|not a valid|no reverse|Cannot find|No such file|samplesheet/i.test(l));
@@ -402,7 +411,7 @@ export function plainRunStatus(context: PlainContext): PlainStatus {
     const progress = current ? null : logProgress(run.outputTail);
     const logged = progress?.processes.findIndex((p) => p.total > p.done) ?? -1;
     const where = current ? ` · step ${index} of ${rows.length}: ${stageWords(current.name)}`
-      : progress && logged >= 0 ? ` · step ${logged + 1} of ${progress.processes.length}${progress.processes[logged].name ? `: ${stageWords(progress.processes[logged].name)}` : ''}` : '';
+      : progress && logged >= 0 ? ` · step ${logged + 1} of ${progress.steps}${progress.processes[logged].name ? `: ${stageWords(progress.processes[logged].name)}` : ''}` : '';
     // On SLURM the run's job runs while its task jobs may wait (the monitor keeps their reason).
     const reasonWords = slurm && run.queueReason ? slurmReasonWords(run.queueReason) : '';
     const waiting = reasonWords ? ` · ${reasonWords.charAt(0).toLowerCase()}${reasonWords.slice(1)}` : '';
