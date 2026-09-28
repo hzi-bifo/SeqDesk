@@ -32,10 +32,17 @@ export function pairFastqFiles(files: DataFastq[]): DataReadPair[] {
     bySample.set(key, entry);
   }
   const pairs: DataReadPair[] = [];
+  const used = new Set<string>();
   for (const [sampleId, entry] of bySample) {
     const r1 = entry.r1 ?? entry.single ?? entry.r2;
     if (!r1) continue;
-    pairs.push({ sampleId: sampleId.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80), r1, r2: entry.r1 && entry.r2 ? entry.r2 : null });
+    // Names that differ only in spaces or accents ("Probe ä 1", "Probe ö 1") must not become the same sample id:
+    // Nextflow would publish both samples' outputs to one file name.
+    const base = sampleId.replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 76) || 'sample';
+    let id = base;
+    for (let n = 2; used.has(id.toLowerCase()); n += 1) id = `${base}_${n}`;
+    used.add(id.toLowerCase());
+    pairs.push({ sampleId: id, r1, r2: entry.r1 && entry.r2 ? entry.r2 : null });
   }
   return pairs;
 }

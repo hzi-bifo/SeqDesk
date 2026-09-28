@@ -93,3 +93,13 @@ describe('FASTQ files in Data → samples', () => {
     expect(readsWords([])).toBe('no FASTQ files');
   });
 });
+
+describe('sample ids from FASTQ names with spaces and accents', () => {
+  it('stay distinct and safe for Nextflow', () => {
+    const f = (name: string) => ({ id: name, name, sizeBytes: 1 } as never);
+    const pairs = pairFastqFiles([f('Probe ä 1_R1.fastq.gz'), f('Probe ä 1_R2.fastq.gz'), f('Probe ö 1_R1.fastq.gz'), f('Probe ö 1_R2.fastq.gz'), f('Probe  1_R1.fastq.gz')]);
+    expect(pairs.map((p) => p.sampleId).sort()).toEqual(['Probe_1', 'Probe_1_2', 'Probe_1_3']);
+    expect(pairs.every((p) => /^[A-Za-z0-9._-]+$/.test(p.sampleId))).toBe(true);
+    expect(pairs.filter((p) => p.r2).length).toBe(2);
+  });
+});
