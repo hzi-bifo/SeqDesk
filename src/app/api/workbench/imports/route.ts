@@ -12,6 +12,9 @@ import { requireRawReadImporter } from "@/lib/modules/input-modules.server";
 import { importCollectionSchema } from "@/lib/workbench/import-collection";
 import { ImportSelectionConflict } from "@/lib/workbench/import-conflict";
 import { scientificRecordId } from "@/lib/workbench/scientific-publication";
+import { assertMayImport, DataSourcesError, importLimits } from "@/lib/workbench/data-sources";
+import { decideCapability } from "@/lib/authorization";
+import { getServerDeploymentProfile } from "@/lib/deployment-profile/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +48,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Workbench importer not found" }, { status: 404 });
     }
 
+    await assertMayImport(provider.id, decideCapability(session, "system.settings.manage", getServerDeploymentProfile()).allowed);
     const preflight = await provider.preflight();
     if (!preflight.ok) {
       return NextResponse.json(
@@ -83,6 +87,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Settings › Data sources: over the source's download limit is refused before the job exists.
+    await importLimits(provider.id, preview, { phase: "start" });
     const { job } = await createWorkbenchImportJob({
       userId: access.userId,
       providerId,
@@ -97,6 +103,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, started: true, job, collectionOrderId: scientificRecordId("data", access.userId, "collection", collection.data.key) }, { status: 202 });
   } catch (error) {
     if (error instanceof ImportSelectionConflict) return NextResponse.json({ error: error.message }, { status: 409 });
+    if (error instanceof DataSourcesError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (error instanceof ZodError) {
       return NextResponse.json(
         { error: "Invalid importer input", issues: error.issues },

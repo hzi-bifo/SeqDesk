@@ -110,6 +110,8 @@ describe("POST /api/workbench/importers/[providerId]/preview", () => {
         providerId: "mock",
         summary: { selectedCount: 1 },
         genomes: [{ accession: "GCF_1" }],
+        // Settings › Data sources: the limits that apply to this selection (defaults: 250 GB, asks above 20 GB).
+        limits: { source: null, maxBytes: 250 * 1024 ** 3, askAboveBytes: 20 * 1024 ** 3, totalBytes: 0, needsConfirmation: false },
       },
     });
   });

@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { HelpBox } from "@/components/ui/help-box";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { NcbiApiKeyCard } from "./NcbiApiKeyCard";
+import { DryadAccountCard } from "./DryadAccountCard";
 import { notifyPanel } from "@/lib/notifications/client";
 import { toast } from "@/components/ui/toast";
 import {
@@ -1040,6 +1041,7 @@ export default function ENASettingsPage() {
         </GlassCard>
 
         <NcbiApiKeyCard />
+        <DryadAccountCard />
 
         <GlassCard className="p-6">
           <div className="flex items-center gap-3 mb-3">

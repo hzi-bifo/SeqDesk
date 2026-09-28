@@ -104,7 +104,8 @@ function link(body: Record<string, unknown>, rel: string): string | undefined {
 }
 
 /** Map a dataset and its latest version's file list to the preview shape. */
-export function mapDryadDataset(dataset: unknown, files: unknown[], input: DryadDatasetInput): WorkbenchImportPreview {
+export function mapDryadDataset(dataset: unknown, files: unknown[], input: DryadDatasetInput,
+  hasAccount = Boolean(process.env.SEQDESK_DRYAD_CLIENT_ID?.trim() && process.env.SEQDESK_DRYAD_CLIENT_SECRET?.trim())): WorkbenchImportPreview {
   const unreadable = "Dryad returned a dataset that could not be read. Try again later.";
   if (!isRecord(dataset)) throw new Error(unreadable);
   const doi = text(dataset.identifier)?.replace(/^doi:/i, "").toLowerCase();
@@ -132,7 +133,7 @@ export function mapDryadDataset(dataset: unknown, files: unknown[], input: Dryad
   if (!publicDataset) warnings.push("This dataset is not public yet; its files cannot be downloaded.");
   warnings.push(...pick.warnings);
   if (pick.selected.some(asset => !asset.etag)) warnings.push("Dryad did not publish a checksum for every file; those files are checked by size only.");
-  if (!dryadCredentials()) warnings.push("Dryad only hands out files to registered API accounts; an administrator adds the account to SeqDesk before these files can be downloaded.");
+  if (!hasAccount) warnings.push("Dryad only hands out files to registered API accounts; an administrator adds the account to SeqDesk before these files can be downloaded.");
   warnings.push(...sizeWarnings(pick.selected, SOURCE));
   const licence = text(dataset.license);
   return {
@@ -167,15 +168,15 @@ export async function fetchDryadDataset(doi: string): Promise<{ dataset: unknown
   return { dataset, files };
 }
 
-function dryadCredentials(): { id: string; secret: string } | null {
-  const id = process.env.SEQDESK_DRYAD_CLIENT_ID?.trim();
-  const secret = process.env.SEQDESK_DRYAD_CLIENT_SECRET?.trim();
-  return id && secret ? { id, secret } : null;
+/** The API account an admin saved in Settings › Data sources (encrypted), else SEQDESK_DRYAD_CLIENT_ID/SECRET. */
+async function dryadCredentials(): Promise<{ id: string; secret: string } | null> {
+  const { dryadAccount } = await import("../data-sources");
+  return (await dryadAccount()).value;
 }
 
 /** An access token for the registered API account (client credentials); never logged or stored. */
 async function dryadToken(): Promise<string> {
-  const credentials = dryadCredentials();
+  const credentials = await dryadCredentials();
   if (!credentials) throw new Error("Dryad only hands out files to registered API accounts, and none is set up in SeqDesk. Ask an administrator to add one.");
   let response: Response;
   try {
@@ -201,13 +202,13 @@ export const dryadDatasetImporter: WorkbenchImporterProvider<DryadDatasetInput> 
   category: "dataset",
   inputSchema: dryadDatasetInputSchema,
   async preflight() {
-    return dryadCredentials()
+    return (await dryadCredentials())
       ? { ok: true, message: "Uses the Dryad API with this server's registered API account." }
-      : { ok: false, previewOnly: true, message: "Previews work; downloads need a Dryad API account.", details: "Set SEQDESK_DRYAD_CLIENT_ID and SEQDESK_DRYAD_CLIENT_SECRET (an API account from datadryad.org) on the SeqDesk server." };
+      : { ok: false, previewOnly: true, message: "Previews work; downloads need a Dryad API account.", details: "An admin adds a Dryad API account (from datadryad.org) in Settings › Data sources, or sets SEQDESK_DRYAD_CLIENT_ID and SEQDESK_DRYAD_CLIENT_SECRET on the SeqDesk server." };
   },
   async preview(input) {
     const { dataset, files } = await fetchDryadDataset(input.dataset);
-    return mapDryadDataset(dataset, files, input);
+    return mapDryadDataset(dataset, files, input, Boolean(await dryadCredentials()));
   },
   getCacheKey(input, preview) {
     return buildStableRequestHash("dryad-dataset", {

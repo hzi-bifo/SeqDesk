@@ -16,6 +16,10 @@
  *   POST imports/{jobId}/cancel
  *   GET  imports/{jobId}/files                         a finished import's verified files (and which can be tables)
  *   POST imports/{jobId}/tables                        { targetKey, storedFilename, name?, roles? } -> Analysis table with provenance
+ *   importers/sources…                                 Settings › Data sources (./data-sources.ts)
+ *
+ * Every preview and start checks the data-source settings: the source is on, this person may import from it, the
+ * selection is under its download limit, and above the ask size the start carries confirmedBytes (tick-to-confirm).
  */
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
@@ -39,8 +43,10 @@ import type { IntegrationSession } from './identity';
 import { requireTargetAccess } from '@/lib/explore/authorization';
 import { dataStudyFor } from '@/lib/pipelines/data-study';
 import { searchPdb, searchUniprot, searchZenodo, type SearchGroup } from './importer-search';
+import { handleDataSourcesRequest, isDataSourcesAdmin } from './data-sources';
+import { assertMayImport, DataSourcesError, importLimits, previewHint } from '@/lib/workbench/data-sources';
 
-export const IMPORTER_CAPABILITIES = ['imports.read', 'imports.create', 'imports.search'];
+export const IMPORTER_CAPABILITIES = ['imports.read', 'imports.create', 'imports.search', 'imports.sources'];
 
 const SEARCH_TIMEOUT = 12_000;
 
@@ -83,6 +89,7 @@ async function searchTaxa(words: string[]): Promise<SearchGroup> {
 
 export async function handleImportersRequest(request: Request, session: IntegrationSession, path: string[], headers: Headers): Promise<Response> {
   const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers });
+  if (path[0] === 'importers' && path[1] === 'sources') return handleDataSourcesRequest(request, session, path, headers);
   const access = authorizeWorkbenchRequest(session, 'workbench.import');
   if (!access.allowed) {
     const denied = await access.response.json().catch(() => ({ error: 'Forbidden' }));
@@ -136,6 +143,7 @@ export async function handleImportersRequest(request: Request, session: Integrat
     if (path[0] === 'importers' && path.length === 3 && path[2] === 'preview' && method === 'POST') {
       const provider = getWorkbenchImporter(path[1]);
       if (!provider || !(await enabled(provider.id))) return json({ error: 'This connector is not available on this server.' }, 404);
+      await assertMayImport(provider.id, isDataSourcesAdmin(session));
       const preflight = await provider.preflight();
       if (!preflight.ok && !preflight.previewOnly) return json({ error: preflight.message, details: preflight.details }, 400);
       const input = provider.inputSchema.parse(await request.json());
@@ -144,7 +152,9 @@ export async function handleImportersRequest(request: Request, session: Integrat
       // web page instead of a file); answer 422 so the web app shows it instead of a generic server error.
       try { preview = await provider.preview(input); }
       catch (error) { if (error instanceof ZodError) throw error; return json({ error: error instanceof Error ? error.message : 'The preview failed.' }, 422); }
-      return json({ preview: { ...preview, fingerprint: importPreviewFingerprint(provider.id, input, preview) } });
+      const limits = await importLimits(provider.id, preview, { phase: 'preview' });
+      const hint = await previewHint(provider.id, preview, !preflight.ok && preflight.previewOnly);
+      return json({ preview: { ...preview, fingerprint: importPreviewFingerprint(provider.id, input, preview), limits, ...(hint ? { hint } : {}) } });
     }
     if (path[0] === 'imports' && path.length === 1 && method === 'GET') {
       const collection = url.searchParams.get('collection') ?? undefined;
@@ -158,6 +168,7 @@ export async function handleImportersRequest(request: Request, session: Integrat
       if (idempotencyKey && !/^[a-zA-Z0-9_-]{16,128}$/.test(idempotencyKey)) return json({ error: 'Invalid import request key.' }, 400);
       const provider = getWorkbenchImporter(typeof body?.providerId === 'string' ? body.providerId : '');
       if (!provider || !(await enabled(provider.id))) return json({ error: 'This connector is not available on this server.' }, 404);
+      await assertMayImport(provider.id, isDataSourcesAdmin(session));
       const preflight = await provider.preflight();
       if (!preflight.ok) return json({ error: preflight.message, details: preflight.details }, 400);
       try { await resolveWorkbenchStorageBase(); }
@@ -172,6 +183,7 @@ export async function handleImportersRequest(request: Request, session: Integrat
         return json({ error: 'The selection changed or was not reviewed. Preview it again.' }, 409);
       }
       if (preview.summary.selectedCount === 0) return json({ error: 'The preview found nothing to import.' }, 400);
+      await importLimits(provider.id, preview, { phase: 'start', requireConfirmation: true, confirmedBytes: typeof body?.confirmedBytes === 'number' ? body.confirmedBytes : 0 });
       // An import can target an Analysis study: its read records join that study's Data (pipelines use them in place).
       let targetStudyId: string | undefined;
       if (typeof body?.targetKey === 'string' && body.targetKey) {
@@ -218,6 +230,7 @@ export async function handleImportersRequest(request: Request, session: Integrat
     return json({ error: 'Unknown connector route.' }, 404);
   } catch (error) {
     if (error instanceof ImportSelectionConflict) return json({ error: error.message }, 409);
+    if (error instanceof DataSourcesError) return json({ error: error.message }, error.status);
     if (error instanceof ExploreRouteError) return json({ error: error.message }, error.status);
     if (error instanceof ZodError) {
       const field = String(error.issues[0]?.path[0] ?? '');
