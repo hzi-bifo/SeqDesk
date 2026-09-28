@@ -107,7 +107,27 @@ export async function fetchSourceJson(url: string, options: {
   timeoutMs?: number;
   /** Read the JSON body of a 3xx answer instead of following it (UniProt explains merged entries this way). */
   readRedirectBody?: boolean;
+  /** 2: one retry after a timeout, a dropped connection, 429 or 5xx (the ENA metadata rule). Default 1. */
+  attempts?: number;
 }): Promise<{ body: unknown; headers: Headers; status: number } | null> {
+  const attempts = Math.max(1, Math.min(3, options.attempts ?? 1));
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await fetchSourceJsonOnce(url, options, attempt < attempts);
+    } catch (error) {
+      if (!(error instanceof RetryableSourceError) || attempt >= attempts) throw error instanceof RetryableSourceError ? error.plain : error;
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+    }
+  }
+}
+
+/** A failure worth one more try; `plain` is what the person reads when no try is left. */
+class RetryableSourceError extends Error {
+  constructor(readonly plain: Error) { super(plain.message); }
+}
+
+async function fetchSourceJsonOnce(url: string, options: Parameters<typeof fetchSourceJson>[1], retry: boolean): Promise<{ body: unknown; headers: Headers; status: number } | null> {
+  const soft = (error: Error) => retry ? new RetryableSourceError(error) : error;
   let response: Response;
   try {
     response = await fetch(url, {
@@ -117,7 +137,7 @@ export async function fetchSourceJson(url: string, options: {
       signal: AbortSignal.timeout(options.timeoutMs ?? LOOKUP_TIMEOUT_MS),
     });
   } catch (error) {
-    throw unreachable(options.source, error);
+    throw soft(unreachable(options.source, error));
   }
   if ((response.status === 404 || response.status === 410) && options.notFound) {
     await response.body?.cancel().catch(() => {});
@@ -130,14 +150,15 @@ export async function fetchSourceJson(url: string, options: {
   const redirected = options.readRedirectBody && response.status >= 300 && response.status < 400;
   if (!response.ok && !redirected) {
     await response.body?.cancel().catch(() => {});
-    throw httpProblem(options.source, response.status);
+    const problem = httpProblem(options.source, response.status);
+    throw response.status === 429 || response.status >= 500 ? soft(problem) : problem;
   }
   let text: string;
   try {
     text = (await readLimited(response, options.maxBytes ?? MAX_LOOKUP_BYTES, options.source)).toString("utf8");
   } catch (error) {
     if (error instanceof Error && error.message.startsWith(options.source)) throw error;
-    throw unreachable(options.source, error);
+    throw soft(unreachable(options.source, error));
   }
   try {
     return { body: JSON.parse(text) as unknown, headers: response.headers, status: response.status };

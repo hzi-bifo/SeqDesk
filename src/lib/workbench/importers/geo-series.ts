@@ -128,7 +128,7 @@ export function mapGeoSeries(input: GeoSeriesInput, soft: Record<string, string[
     preselect: asset => asset.role === "series-matrix" || (asset.bytes > 0 && asset.bytes <= 50 * 1024 ** 2 && !/_RAW\.tar$/i.test(asset.filename)),
   });
   const warnings: string[] = [];
-  if (sra.length) warnings.push(`Raw reads of this series are in SRA (${[...new Set(sra)].join(", ")}); fetch them with the ENA connector instead of the processed files.`);
+  if (sra.length) warnings.push(`Raw reads of this series are in SRA (${[...new Set(sra)].join(", ")}); fetch them with the NCBI SRA connector (it takes this GSE) instead of the processed files.`);
   if (!all.some(asset => asset.role === "series-matrix")) warnings.push("GEO has no series matrix for this series, so no sample table can be made from it.");
   else warnings.push("The series matrix is turned into a Samples table (one row per GSM sample, its characteristics as columns) after the download.");
   warnings.push(...pick.warnings);

@@ -75,6 +75,8 @@ export const AVAILABLE_MODULES: ModuleDefinition[] = [
   { id: "import-geo", name: "GEO series", description: "Download a GEO series' matrix and supplementary files; sample characteristics become a Samples table.", category: "data-sources", featureLocation: "Data > Connectors" },
   { id: "import-link", name: "Any DOI or link", description: "Resolve DOIs to their connector or download public https files, refusing private addresses (SEQDESK_URL_IMPORT_MAX_BYTES, SEQDESK_URL_IMPORT_ALLOW_HOSTS / DENY_HOSTS).", category: "data-sources", featureLocation: "Data > Connectors" },
   { id: "import-ncbi-genomes", name: "NCBI genomes by taxon", description: "Download genome FASTA for a taxon through the NCBI Datasets REST API (no command-line tool needed).", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-ncbi-sra", name: "NCBI SRA runs", description: "Download SRA runs by SRA, BioProject, BioSample or GEO accession: FASTQ from the ENA mirror, otherwise NCBI's .sra files, MD5-checked. An NCBI API key (Admin settings or NCBI_API_KEY) raises NCBI's limit from 3 to 10 requests a second.", category: "data-sources", featureLocation: "Data > Connectors" },
+  { id: "import-ncbi-assembly", name: "NCBI assemblies", description: "Download genome FASTA and GFF3 of NCBI assemblies by accession through the NCBI Datasets API; large genomes need their files ticked first.", category: "data-sources", featureLocation: "Data > Connectors" },
   { id: "import-reference", name: "Reference resources", description: "Install versioned reference tables (GO Biological Process, MSigDB Hallmark gene sets) from their official sources, with licence and citation.", category: "data-sources", featureLocation: "Data > Resources" },
   // Form Extensions
   {
@@ -174,6 +176,8 @@ export const DEFAULT_MODULE_STATES: Record<string, boolean> = {
   "import-geo": true,
   "import-link": true,
   "import-ncbi-genomes": true,
+  "import-ncbi-sra": true,
+  "import-ncbi-assembly": true,
   "ai-validation": true,
   "mixs-metadata": true,
   "account-validation": false,

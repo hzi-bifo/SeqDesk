@@ -71,6 +71,8 @@ export const FEATURE_MODULE_DOMAIN_REQUIREMENTS = {
   "import-geo": ["core"],
   "import-link": ["core"],
   "import-ncbi-genomes": ["core"],
+  "import-ncbi-sra": ["core"],
+  "import-ncbi-assembly": ["core"],
   explore: ["analysis"],
   "ai-validation": ["facility-intake"],
   "mixs-metadata": ["sample-catalog"],

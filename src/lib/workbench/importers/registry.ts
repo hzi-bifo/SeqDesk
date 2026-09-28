@@ -11,12 +11,16 @@ import { dryadDatasetImporter } from "./dryad-dataset";
 import { mgnifyDownloadsImporter } from "./mgnify-downloads";
 import { geoSeriesImporter } from "./geo-series";
 import { linkDownloadImporter } from "./link-download";
+import { ncbiSraRunsImporter } from "./ncbi-sra-runs";
+import { ncbiAssemblyImporter } from "./ncbi-assembly";
 import type { WorkbenchImporterProvider } from "./types";
 
 const providers = [
   camiBenchmarkImporter,
   enaFastqAccessionImporter,
   ncbiGenomesTaxonImporter,
+  ncbiSraRunsImporter,
+  ncbiAssemblyImporter,
   zenodoRecordImporter,
   pdbEntryImporter,
   alphafoldModelImporter,

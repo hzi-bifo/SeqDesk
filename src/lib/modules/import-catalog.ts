@@ -43,6 +43,10 @@ export const connectorModuleCatalog = [
     summary: "Resolve a DOI to its connector, or download a public https file with a size preview and safe-address checks." },
   { id: "import-ncbi-genomes", providerId: "ncbi-genomes-taxon", name: "NCBI genomes by taxon", category: "Reference data",
     summary: "Download genome FASTA for a taxon through the NCBI Datasets API, verified against NCBI's MD5 list." },
+  { id: "import-ncbi-sra", providerId: "ncbi-sra-runs", name: "NCBI SRA runs", category: "Public repositories",
+    summary: "Download SRA runs by SRA, BioProject, BioSample or GEO accession: FASTQ from the ENA mirror, otherwise NCBI's .sra files, MD5-checked." },
+  { id: "import-ncbi-assembly", providerId: "ncbi-assembly", name: "NCBI assemblies", category: "Reference data",
+    summary: "Download genome FASTA and GFF3 of NCBI assemblies by accession, verified against NCBI's MD5 list." },
 ] as const;
 
 // Facility requests are creation actions, separate from file import modules.

@@ -1,17 +1,11 @@
-import fs from "fs/promises";
 import path from "path";
-import { createHash } from "crypto";
-import { createReadStream, createWriteStream } from "fs";
-import { Readable, Transform } from "stream";
-import { pipeline } from "stream/promises";
 import { z } from "zod";
 import {
   buildStableRequestHash,
-  computeFileSha256,
   getPathSizeBytes,
 } from "@/lib/workbench/storage";
-import { recordMaxDownloadBytes, SOURCE_USER_AGENT } from "./public-record-download";
-import { extractWorkbenchZip } from "@/lib/workbench/safe-zip";
+import { DATASETS_API, NCBI_LICENCE, NCBI_LICENCE_URL, ncbiApiKey, ncbiJson } from "./ncbi-client";
+import { downloadGenomePackage, parseMd5List } from "./ncbi-datasets";
 import {
   WORKBENCH_REQUIRED_TEST_LAYERS,
   type WorkbenchIntegrationTestSpec,
@@ -118,18 +112,14 @@ export function parseNcbiGenomeSummaryLines(output: string, cap = DEFAULT_CAP): 
   return genomes;
 }
 
-const DATASETS_API = "https://api.ncbi.nlm.nih.gov/datasets/v2";
 const LEVELS: Record<NcbiGenomesTaxonInput["assemblyLevels"][number], string> = { complete: "complete_genome", chromosome: "chromosome", scaffold: "scaffold", contig: "contig" };
 const MAG: Record<NcbiGenomesTaxonInput["mag"], string> = { exclude: "METAGENOME_DERIVED_EXCLUDE", all: "METAGENOME_DERIVED_UNSET", only: "METAGENOME_DERIVED_ONLY" };
 
-/** NCBI's optional per-lab API key raises the rate limit (3 → 10 requests a second); it is sent as a header only. */
-function ncbiHeaders(accept: string): Record<string, string> {
-  const key = process.env.NCBI_API_KEY?.trim();
-  return { accept, "user-agent": SOURCE_USER_AGENT, ...(key && /^[A-Za-z0-9]{20,64}$/.test(key) ? { "api-key": key } : {}) };
-}
+export { parseMd5List };
 
 async function preflight(): Promise<WorkbenchImporterPreflight> {
-  return { ok: true, message: "Uses the public NCBI Datasets API; no command-line tool is needed." };
+  const key = await ncbiApiKey();
+  return { ok: true, message: `Uses the public NCBI Datasets API${key.value ? " with this server's NCBI API key (10 requests a second)" : " (3 requests a second; an administrator can add an NCBI API key for 10)"}.` };
 }
 
 /** The dataset_report query the old `datasets summary genome taxon` call made, as REST parameters. */
@@ -147,21 +137,13 @@ export function buildDatasetReportUrl(input: NcbiGenomesTaxonInput, limit: numbe
 
 async function preview(input: NcbiGenomesTaxonInput): Promise<WorkbenchImportPreview> {
   const cap = Math.min(input.cap, HARD_MAX);
-  let response: Response;
-  try {
-    response = await fetch(buildDatasetReportUrl(input, cap + 1), { redirect: "error", headers: ncbiHeaders("application/json"), signal: AbortSignal.timeout(PREVIEW_TIMEOUT_MS) });
-  } catch {
-    throw new Error("NCBI Datasets could not be reached. Try again later.");
-  }
-  if (response.status === 404 || response.status === 400) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error(`NCBI does not know the taxon “${input.taxon}”. Use a scientific name or an NCBI taxon ID.`);
-  }
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error(response.status === 429 ? "NCBI is limiting requests right now. Try again in a minute." : `NCBI Datasets did not answer as expected (HTTP ${response.status}).`);
-  }
-  const body = await response.json().catch(() => null) as { reports?: unknown[]; total_count?: number } | null;
+  const body = await ncbiJson(buildDatasetReportUrl(input, cap + 1), {
+    source: "NCBI Datasets", timeoutMs: PREVIEW_TIMEOUT_MS,
+    notFound: `NCBI does not know the taxon “${input.taxon}”. Use a scientific name or an NCBI taxon ID.`,
+  }).catch((error: unknown) => {
+    if (error instanceof Error && /returned an answer that could not be read/.test(error.message)) return null;
+    throw error;
+  }) as { reports?: unknown[]; total_count?: number } | null;
   if (!body || (body.reports !== undefined && !Array.isArray(body.reports))) throw new Error("NCBI returned invalid genome metadata");
   const genomes = parseNcbiGenomeSummaryLines((body.reports ?? []).map((report) => JSON.stringify(report)).join("\n"), cap + 1);
   const total = typeof body.total_count === "number" ? body.total_count : genomes.length;
@@ -183,25 +165,9 @@ async function preview(input: NcbiGenomesTaxonInput): Promise<WorkbenchImportPre
       hardMax: HARD_MAX,
     },
     genomes: selected,
-    sampleMetadata: { licence: "NCBI: public domain in the US; submitters may claim rights — see NCBI's policies", licenceUrl: "https://www.ncbi.nlm.nih.gov/home/about/policies/", approximateFastaBytes: String(Math.round(bytes * 1.02)) },
+    sampleMetadata: { licence: NCBI_LICENCE, licenceUrl: NCBI_LICENCE_URL, approximateFastaBytes: String(Math.round(bytes * 1.02)) },
     warnings: warnings.length ? warnings : undefined,
   };
-}
-
-/** md5sum.txt of an NCBI Datasets package: "<md5>  <path>" per file. */
-export function parseMd5List(text: string): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const line of text.split(/\r?\n/)) {
-    const match = /^([0-9a-f]{32})\s+\*?(.+)$/.exec(line.trim());
-    if (match) out.set(match[2].trim(), match[1]);
-  }
-  return out;
-}
-
-async function md5File(filePath: string): Promise<string> {
-  const hash = createHash("md5");
-  for await (const chunk of createReadStream(filePath)) hash.update(chunk as Buffer);
-  return hash.digest("hex");
 }
 
 function getCacheKey(input: NcbiGenomesTaxonInput, previewResult: WorkbenchImportPreview): string {
@@ -223,64 +189,14 @@ async function start(
     throw new Error("Import requires distinct, explicitly versioned assembly accessions");
   }
 
-  const zipPath = path.join(context.storage.jobDir, "ncbi_dataset.zip");
-  const limit = recordMaxDownloadBytes();
-  const url = `${DATASETS_API}/genome/accession/${accessions.map(encodeURIComponent).join(",")}/download?include_annotation_type=GENOME_FASTA&hydrated=FULLY_HYDRATED`;
-
-  await context.update({ status: "running", phase: "downloading", progress: 10, targetPath: zipPath });
-  await context.log(`Downloading ${accessions.length} genome package(s) from the NCBI Datasets API.`);
-  let response: Response;
-  try {
-    response = await fetch(url, { redirect: "error", headers: ncbiHeaders("application/zip"), signal: AbortSignal.any([AbortSignal.timeout(6 * 60 * 60 * 1000), ...(context.signal ? [context.signal] : [])]) });
-  } catch (error) {
-    if (context.signal?.aborted) throw error;
-    throw new Error("NCBI Datasets could not be reached. Try again later.");
-  }
-  if (!response.ok || !response.body) {
-    await response.body?.cancel().catch(() => {});
-    throw new Error(response.status === 429 ? "NCBI is limiting requests right now. Try again in a minute." : `NCBI Datasets did not answer as expected (HTTP ${response.status}).`);
-  }
-  let bytes = 0;
-  const meter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      bytes += chunk.length;
-      if (bytes > limit) return callback(new Error("The NCBI genome package exceeds this server's download limit."));
-      callback(null, chunk);
-    },
-  });
-  await pipeline(Readable.fromWeb(response.body as never), meter, createWriteStream(zipPath, { mode: 0o600 }), ...(context.signal ? [{ signal: context.signal }] : []));
-  await context.log(`Downloaded ${bytes} bytes.`);
-
-  await context.update({ phase: "extracting", progress: 70, targetPath: context.storage.cacheDir });
   const extractedPath = path.join(context.storage.cacheDir, "dataset");
-  await extractWorkbenchZip(zipPath, extractedPath);
-  for (const accession of accessions) {
-    const directory = path.join(extractedPath, "ncbi_dataset", "data", accession);
-    const entries = await fs.readdir(directory);
-    if (!entries.some((name) => name.endsWith(".fna"))) throw new Error(`Missing genome FASTA for ${accession}`);
-  }
-  // NCBI lists an MD5 for every file of the package; each extracted file is checked against it.
-  const md5s = parseMd5List(await fs.readFile(path.join(extractedPath, "md5sum.txt"), "utf8").catch(() => ""));
-  if (!md5s.size) throw new Error("The NCBI package has no checksum list (md5sum.txt); import it again.");
-  const files: { accession: string; filename: string; path: string; bytes: number; md5: string; sha256: string }[] = [];
-  for (const [relative, expected] of md5s) {
-    const absolute = path.resolve(extractedPath, relative);
-    if (!absolute.startsWith(`${extractedPath}${path.sep}`)) throw new Error("The NCBI checksum list names a file outside the package.");
-    const actual = await md5File(absolute);
-    if (actual !== expected) throw new Error(`${relative} did not match the MD5 NCBI published. Import it again.`);
-    const accession = /data\/(GC[AF]_\d+\.\d+)\//.exec(relative)?.[1];
-    if (accession && relative.endsWith(".fna")) {
-      files.push({ accession, filename: path.basename(relative), path: relative, bytes: (await fs.stat(absolute)).size, md5: actual, sha256: await computeFileSha256(absolute) });
-    }
-  }
-  if (accessions.some((accession) => !files.some((file) => file.accession === accession))) throw new Error("NCBI's checksum list does not cover every genome FASTA; import it again.");
-  await context.log(`Verified ${md5s.size} file(s) against NCBI's md5sum.txt.`);
+  const pack = await downloadGenomePackage(context, { accessions, types: ["GENOME_FASTA"], destination: extractedPath, name: "ncbi_dataset" });
+  const url = pack.url;
+  const files = pack.files.filter((file) => file.kind === "genome");
 
   await context.update({ phase: "indexing", progress: 90 });
-  const [sizeBytes, checksumSha256] = await Promise.all([
-    getPathSizeBytes(extractedPath),
-    computeFileSha256(zipPath),
-  ]);
+  const sizeBytes = await getPathSizeBytes(extractedPath);
+  const checksumSha256 = pack.zipSha256;
 
   const taxon = context.input.taxon.trim();
   return {
