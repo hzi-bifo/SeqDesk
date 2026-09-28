@@ -174,6 +174,53 @@ describe("SLURM completion attestation shell block", () => {
     }
   });
 
+  it("on scancel's SIGTERM waits for the workload to shut down and never attests success", async () => {
+    const runFolder = await fs.mkdtemp(
+      path.join(os.tmpdir(), "seqdesk-slurm-finalizer-sigterm-"),
+    );
+    const jobId = `${process.pid}95`;
+    const localStdout = `/tmp/seqdesk-slurm-${jobId}.out`;
+    const localStderr = `/tmp/seqdesk-slurm-${jobId}.err`;
+    try {
+      await fs.mkdir(path.join(runFolder, "logs"));
+      await fs.writeFile(localStdout, "");
+      await fs.writeFile(localStderr, "");
+      // The workload stands in for Nextflow: on SIGTERM it takes a moment to cancel its own jobs, then exits.
+      const workload = `bash -c 'trap "sleep 1; echo cleaned >> ${path.join(runFolder, "logs", "workload")}; exit 1" TERM; sleep 60 & wait'`;
+      const script = [
+        "set -euo pipefail",
+        buildSlurmWrapperFinalizerBlock(runFolder),
+        buildSlurmCompletionAttestationBlock({ runId: "run-cancelled", runFolder }),
+        'echo "Starting" > "$STDOUT_LOG"',
+        workload,
+      ].join("\n");
+      const { spawn } = await import("node:child_process");
+      const child = spawn("bash", ["-c", script], {
+        detached: true,
+        env: { ...process.env, SLURM_JOB_ID: jobId, SLURMD_NODENAME: "compute-03" },
+      });
+      const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      // SLURM signals every process of the job step, as proctrack does.
+      process.kill(-child.pid!, "SIGTERM");
+      expect(await exited).toBe(143);
+
+      await expect(
+        fs.readFile(path.join(runFolder, "logs", "workload"), "utf8"),
+      ).resolves.toBe("cleaned\n");
+      await expect(
+        fs.access(path.join(runFolder, "logs", `slurm-${jobId}.attestation`)),
+      ).rejects.toThrow();
+      await expect(
+        fs.readFile(path.join(runFolder, "logs", "pipeline.out"), "utf8"),
+      ).resolves.toMatch(/Pipeline completed with exit code: 143 at/);
+    } finally {
+      await fs.rm(localStdout, { force: true });
+      await fs.rm(localStderr, { force: true });
+      await fs.rm(runFolder, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed instead of attesting success when capture logs cannot be copied", async () => {
     const runFolder = await fs.mkdtemp(
       path.join(os.tmpdir(), "seqdesk-slurm-finalizer-fail-closed-"),
