@@ -352,6 +352,17 @@ export function previewBytes(preview: Partial<Pick<WorkbenchImportPreview, "file
 
 export interface ImportLimits { source: string | null; maxBytes: number; askAboveBytes: number; totalBytes: number; needsConfirmation: boolean }
 
+/** Which providers this person may see in Find data: a source that is off, or admins-only for a member, is hidden. */
+export async function importAllowedFilter(isAdmin: boolean): Promise<(providerId: string) => boolean> {
+  const settings = await readDataSourcesSettings();
+  return (providerId) => {
+    const source = sourceForProvider(providerId);
+    if (!source) return true;
+    const effective = effectiveSource(settings, source);
+    return effective.enabled && (effective.who === "members" || isAdmin);
+  };
+}
+
 /** Who may import from a source, before anything is fetched. */
 export async function assertMayImport(providerId: string, isAdmin: boolean): Promise<void> {
   const source = sourceForProvider(providerId);
@@ -391,8 +402,9 @@ export async function previewHint(providerId: string, preview: Partial<Pick<Work
   if (sourceForProvider(providerId)?.id !== "ncbi") return null;
   const key = await ncbiApiKey();
   if (key.value) return null;
+  // What the search reads is everything it found (a BioProject's runs), not the few this preview selects.
   const runs = new Set((preview.files ?? []).map((f) => f.runAccession)).size;
-  const count = runs || preview.genomes?.length || preview.summary.totalFound || 0;
+  const count = Math.max(preview.summary.totalFound || 0, runs, preview.genomes?.length ?? 0);
   const seconds = Math.ceil(count / ncbiRequestsPerSecond(false));
   const withKey = Math.ceil(count / ncbiRequestsPerSecond(true));
   if (seconds - withKey <= 30) return null;

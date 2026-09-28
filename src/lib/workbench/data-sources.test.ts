@@ -157,3 +157,23 @@ describe("data sources", () => {
     expect((await dataSourcesStatus(deps, true)).sources.find((s) => s.id === "geo")?.status).toBe("unreachable");
   });
 });
+
+describe("Find data's connector list", () => {
+  beforeEach(() => {
+    mocks.stored = null;
+    mocks.db.siteSettings.findUnique.mockImplementation(async () => ({ extraSettings: mocks.stored }));
+    mocks.db.siteSettings.upsert.mockImplementation(async ({ update }: { update: { extraSettings: string } }) => { mocks.stored = update.extraSettings; });
+  });
+  it("hides sources that are off, and admins-only sources from members", async () => {
+    const { importAllowedFilter } = await import("./data-sources");
+    await applySettingsChange({ sources: { structures: { enabled: false }, reference: { who: "admins" } } }, "Alex Morgan");
+    const member = await importAllowedFilter(false);
+    const admin = await importAllowedFilter(true);
+    expect(member("pdb-entry")).toBe(false);
+    expect(admin("uniprot-entry")).toBe(false);
+    expect(member("reference-resource")).toBe(false);
+    expect(admin("reference-resource")).toBe(true);
+    expect(member("ena-fastq-accession")).toBe(true);
+    expect(member("some-new-importer")).toBe(true);
+  });
+});

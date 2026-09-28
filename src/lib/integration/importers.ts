@@ -44,7 +44,7 @@ import { requireTargetAccess } from '@/lib/explore/authorization';
 import { dataStudyFor } from '@/lib/pipelines/data-study';
 import { searchPdb, searchUniprot, searchZenodo, type SearchGroup } from './importer-search';
 import { handleDataSourcesRequest, isDataSourcesAdmin } from './data-sources';
-import { assertMayImport, DataSourcesError, importLimits, previewHint } from '@/lib/workbench/data-sources';
+import { assertMayImport, DataSourcesError, importAllowedFilter, importLimits, previewHint } from '@/lib/workbench/data-sources';
 
 export const IMPORTER_CAPABILITIES = ['imports.read', 'imports.create', 'imports.search', 'imports.sources'];
 
@@ -98,7 +98,9 @@ export async function handleImportersRequest(request: Request, session: Integrat
   const userId = access.userId;
   const method = request.method;
   const url = new URL(request.url);
-  const enabled = async (providerId: string) => { try { await requireRawReadImporter(providerId); return true; } catch { return false; } };
+  // Settings › Data sources: a source an admin turned off (or keeps for admins) is not offered at all.
+  const allowed = await importAllowedFilter(isDataSourcesAdmin(session));
+  const enabled = async (providerId: string) => { if (!allowed(providerId)) return false; try { await requireRawReadImporter(providerId); return true; } catch { return false; } };
 
   try {
     if (path[0] === 'importers' && path.length === 1 && method === 'GET') {
