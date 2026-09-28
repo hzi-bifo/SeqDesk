@@ -59,3 +59,19 @@ describe("public-record connector search", () => {
     expect(await searchPdb(["zzqqxx"])).toMatchObject({ total: 0, hits: [] });
   });
 });
+
+describe("search words and errors", () => {
+  it("keeps a very long word short and words few", async () => {
+    const { searchWords } = await import("./importers");
+    expect(searchWords("a".repeat(3000))[0]).toHaveLength(60);
+    expect(searchWords("one two three four five six seven")).toHaveLength(5);
+  });
+  it("never shows a parser's message for a source that sent something unreadable", async () => {
+    const { searchErrorWords } = await import("./importers");
+    let parsed: unknown;
+    try { JSON.parse('[{"a":1}\n{'); } catch (error) { parsed = error; }
+    expect(searchErrorWords(parsed)).toBe("The source sent an answer that could not be read. Try again in a moment.");
+    expect(searchErrorWords(new Error("ENA search failed (HTTP 500)"))).toBe("ENA search failed (HTTP 500)");
+    expect(searchErrorWords(Object.assign(new Error("x"), { name: "TimeoutError" }))).toBe("The source did not answer in time.");
+  });
+});

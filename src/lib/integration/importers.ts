@@ -53,7 +53,14 @@ const SEARCH_TIMEOUT = 12_000;
 
 /** Free-text words only: the archives' query languages must never see quotes, wildcards or operators from the user. */
 export function searchWords(q: string): string[] {
-  return q.toLowerCase().split(/[^\p{L}\p{N}-]+/u).map(w => w.replace(/^-+|-+$/g, '')).filter(w => w.length >= 2).slice(0, 5);
+  return q.toLowerCase().split(/[^\p{L}\p{N}-]+/u).map(w => w.replace(/^-+|-+$/g, '')).filter(w => w.length >= 2).map(w => w.slice(0, 60)).slice(0, 5);
+}
+
+/** What a person reads when one source failed: its HTTP failure sentence, never a parser's message. */
+export function searchErrorWords(error: unknown): string {
+  if (!(error instanceof Error) || error.name === 'TimeoutError') return 'The source did not answer in time.';
+  if (error instanceof SyntaxError) return 'The source sent an answer that could not be read. Try again in a moment.';
+  return error.message;
 }
 
 async function searchEna(words: string[]): Promise<SearchGroup> {
@@ -125,7 +132,7 @@ export async function handleImportersRequest(request: Request, session: Integrat
       const groups = await Promise.all(searches.map(async ({ connector, kind, source, run }) => {
         if (!(await enabled(connector))) return null;
         try { return await run(); }
-        catch (error) { return { kind, connector, source, total: null, hits: [], error: error instanceof Error && error.name !== 'TimeoutError' ? error.message : 'The source did not answer in time.' }; }
+        catch (error) { return { kind, connector, source, total: null, hits: [], error: searchErrorWords(error) }; }
       }));
       return json({ groups: groups.filter(Boolean) });
     }
