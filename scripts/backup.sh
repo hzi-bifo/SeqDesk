@@ -49,9 +49,11 @@ done
 
 : "${DATABASE_URL:?DATABASE_URL must name the SeqDesk database}"
 DB_URL=${DATABASE_URL%%\?*}
-EXPLORE_DIR=${SEQDESK_EXPLORE_DIR:-}
+# Compute's own default: <data base path>/explore when SEQDESK_DATA_PATH is set (the Linux kit's compute.env).
+# A folder chosen in Admin › Settings › Report analysis is not visible here: pass it as SEQDESK_EXPLORE_DIR.
+EXPLORE_DIR=${SEQDESK_EXPLORE_DIR:-${SEQDESK_DATA_PATH:+${SEQDESK_DATA_PATH%/}/explore}}
 RUN_DIR=${SEQDESK_EXPLORE_RUN_DIR:-${SEQDESK_PIPELINE_RUN_DIR:+$SEQDESK_PIPELINE_RUN_DIR/explore}}
-[[ -n $EXPLORE_DIR && -d $EXPLORE_DIR ]] || { echo "Set SEQDESK_EXPLORE_DIR to the Explore storage root (it holds datasets/)." >&2; exit 1; }
+[[ -n $EXPLORE_DIR && -d $EXPLORE_DIR ]] || { echo "Set SEQDESK_EXPLORE_DIR (or SEQDESK_DATA_PATH) to the Explore storage root (it holds datasets/)." >&2; exit 1; }
 [[ -n $RUN_DIR ]] || echo "No run folder root (SEQDESK_EXPLORE_RUN_DIR / SEQDESK_PIPELINE_RUN_DIR): runs are not backed up." >&2
 
 mkdir -p "$OUT"
