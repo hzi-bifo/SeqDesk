@@ -33,10 +33,10 @@ describe('one executor interface for this server and SLURM', () => {
     expect(d.waitingTaskReason).not.toHaveBeenCalled();
     expect(reconcileRun({ run: { status: 'running' }, trace, ...evidence }).status).toBe('completed');
   });
-  it('cleanup cancels SLURM task jobs; a local run has nothing left to clean', async () => {
+  it('cleanup cancels SLURM task jobs; a local run whose process is gone leaves no SLURM call (its leftovers are found by local-cleanup)', async () => {
     const d = deps();
     await executorFor({ queueJobId: '38' }, d).cleanup({ id: 'r', runFolder: '/runs/r', queueJobId: '38' });
-    await executorFor({ queueJobId: 'local-1' }, d).cleanup({ id: 'r', runFolder: '/runs/r', queueJobId: 'local-1' });
+    await executorFor({ queueJobId: 'local-2147483646' }, d).cleanup({ id: 'r', runFolder: '/runs/r', queueJobId: 'local-2147483646' });
     expect(d.cancelLeftovers).toHaveBeenCalledTimes(1);
   });
 });

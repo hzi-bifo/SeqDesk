@@ -56,6 +56,8 @@ vi.mock("@/lib/deployment-profile/server", async () => {
   };
 });
 
+// What is left of a local run after its cancel is looked up by command line (local-cleanup.test.ts); the fake pids here have none.
+vi.mock("@/lib/pipelines/local-cleanup", () => ({ killLocalLeftovers: vi.fn(async () => []), waitForExit: vi.fn(async () => true) }));
 vi.mock("@/lib/db", () => ({
   db: mocks.db,
 }));
