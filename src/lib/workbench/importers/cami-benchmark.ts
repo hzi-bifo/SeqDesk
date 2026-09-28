@@ -55,7 +55,7 @@ export const camiInputSchema = z.object({
   role: z.literal("reads").default("reads"),
 }).strict().refine(input => input.sample < camiCatalog[input.dataset].samples, "Sample is outside this dataset");
 
-export function camiAsset(input: z.infer<typeof camiInputSchema>) {
+export function camiAsset(input: z.input<typeof camiInputSchema>) {
   const parsed = camiInputSchema.parse(input);
   const catalog = camiCatalog[parsed.dataset];
   const filename = `${parsed.dataset === "cami2-marine" ? "marmgCAMI2_" : ""}sample_${parsed.sample}_reads.tar.gz`;

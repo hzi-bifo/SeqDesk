@@ -28,7 +28,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 function serve(data = inventory, jobs: unknown[] = []) {
   fetchMock.mockImplementation((url: string) => Promise.resolve(url.startsWith("/api/workbench/") ? response({ jobs }) : response(data)));
 }
-function openMenu(name: string) { fireEvent.keyDown(screen.getByRole("button", { name, exact: true }), { key: "Enter" }); }
+function openMenu(name: string) { fireEvent.keyDown(screen.getByRole("button", { name }), { key: "Enter" }); }
 function tab(name: string | RegExp) { fireEvent.mouseDown(screen.getByRole("tab", { name }), { button: 0, ctrlKey: false }); }
 function importJob(id: string, status: string, phase = "downloading 30%") {
   return { id, providerId: "ena-fastq-accession", status, phase, error: null, updatedAt: new Date().toISOString(), finishedAt: null, request: { accession: "selected accession" } };
@@ -75,7 +75,7 @@ it("shows the store's modules and file alternatives directly, keeping every link
 
 it.each([["Use existing files", "storage"], ["Upload files", "upload"]])("opens %s directly from its card without adding files yet", async (action, mode) => {
   serve(); render(<OrderFilesClient orderId="order-a" />);
-  fireEvent.click(await screen.findByRole("button", { name: action, exact: true }));
+  fireEvent.click(await screen.findByRole("button", { name: action }));
   const dialog = screen.getByRole("dialog", { name: "Add files dialog" });
   expect(dialog.getAttribute("data-mode")).toBe(mode);
   expect(dialog.getAttribute("data-order")).toBe("order-a");
@@ -170,7 +170,7 @@ it.each(["success", "error", "cancelled"])("keeps By sample as the default when 
   render(<OrderFilesClient orderId="order-a" />);
   await screen.findByText("A_R1.fastq.gz");
   expect(screen.getByRole("tab", { name: "By sample" }).getAttribute("aria-selected")).toBe("true");
-  expect(screen.getByRole("tab", { name: "Activity", exact: true })).toBeTruthy();
+  expect(screen.getByRole("tab", { name: "Activity" })).toBeTruthy();
   expect(screen.queryByText(/in progress/)).toBeNull();
 });
 
@@ -212,7 +212,7 @@ it("removes the active indicator on completion without navigating away from Acti
   await act(async () => { render(<OrderFilesClient orderId="order-a" />); });
   serve(inventory, [importJob("job-a", "success", "complete")]);
   await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
-  expect(screen.getByRole("tab", { name: "Activity", exact: true }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByRole("tab", { name: "Activity" }).getAttribute("aria-selected")).toBe("true");
   expect(screen.getByText("Ready — files validated")).toBeTruthy();
   expect(screen.queryByText(/in progress/)).toBeNull();
   expect(screen.queryByRole("button", { name: "Stop download" })).toBeNull();

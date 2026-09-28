@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { archiveReadImport, type ArchiveReadFile } from "./archive-reads";
 
-const processing = { state: "unknown", evidence: "not_provided" } as const;
+const processing = { state: "unknown", evidence: "not_provided", details: "Processing not stated by the archive." } as const;
 const file = (filename: string, over: Partial<ArchiveReadFile> = {}): ArchiveReadFile => ({ filename, path: `/x/${filename}`, url: `https://x/${filename}`, bytes: 1, md5: "m", sha256: "s", records: 10, readNamesSha256: "n", ...over });
 const run = (files: ArchiveReadFile[], paired = true) => ({ run: "SRR1", paired, studyKey: "PRJNA1", sampleKey: "SAMN1", metadata: {}, files });
 

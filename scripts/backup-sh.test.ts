@@ -23,7 +23,7 @@ function run(env: Record<string, string>) {
   const result = spawnSync("bash", [script, "--out", path.join(root, "out")], {
     encoding: "utf8",
     env: { PATH: `${bin}:/usr/bin:/bin`, DATABASE_URL: "postgresql://seqdesk@127.0.0.1:1/seqdesk?schema=public",
-      ...Object.fromEntries(Object.entries(env).map(([k, v]) => [k, v.replace("@DATA@", data)])) },
+      ...Object.fromEntries(Object.entries(env).map(([k, v]) => [k, v.replace("@DATA@", data)])) } as unknown as NodeJS.ProcessEnv,
   });
   return result;
 }

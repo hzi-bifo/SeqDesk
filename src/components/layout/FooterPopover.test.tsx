@@ -31,7 +31,7 @@ describe("footer popover", () => {
     const trigger = screen.getByRole("button", { name: "Open notifications" });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(trigger);
-    const panel = screen.getByRole("dialog", { name: "Notifications", exact: true });
+    const panel = screen.getByRole("dialog", { name: "Notifications" });
     expect(container.contains(panel)).toBe(false);
     expect(trigger.getAttribute("aria-controls")).toBe(panel.id);
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
@@ -79,9 +79,9 @@ describe("footer popover", () => {
     render(<ConfirmDialogProvider><Harness onAction={onAction} /></ConfirmDialogProvider>);
     fireEvent.click(screen.getByRole("button", { name: "Open notifications" }));
     fireEvent.click(screen.getByRole("button", { name: "Worker action" }));
-    const confirmation = await screen.findByRole("dialog", { name: "Stop worker?", exact: true });
+    const confirmation = await screen.findByRole("dialog", { name: "Stop worker?" });
     await waitFor(() => expect(confirmation.contains(document.activeElement)).toBe(true));
-    fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel", exact: true }));
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Stop worker?" })).toBeNull());
     expect(onAction).not.toHaveBeenCalled();
   });

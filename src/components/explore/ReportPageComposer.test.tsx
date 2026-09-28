@@ -31,7 +31,7 @@ describe("visual report page composer", () => {
   });
   it("moves on drop only and keeps editable text out of the drag handle", () => {
     const { container, onMove } = setup();
-    const handle = within(screen.getByRole("region", { name: "a", exact: true })).getByRole("button", { name: "Drag to move block" });
+    const handle = within(screen.getByRole("region", { name: "a" })).getByRole("button", { name: "Drag to move block" });
     const target = container.querySelector('[data-report-block-id="b"]')!;
     const dataTransfer = transfer();
     fireEvent.dragStart(handle, { dataTransfer });

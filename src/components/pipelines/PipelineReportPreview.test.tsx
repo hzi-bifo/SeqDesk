@@ -32,7 +32,7 @@ describe("PipelineReportPreview", () => {
     render(<PipelineReportPreview file={file} onClose={close} />);
     expect(screen.getByTitle("R1 report").getAttribute("src")).toBe("/api/files/preview?path=%2Fruns%2Freport.html");
     expect(screen.getByRole("link", { name: "Download R1 report" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(close).toHaveBeenCalledTimes(1);
   });
 });

@@ -43,7 +43,7 @@ it.each([
   ["Public repositories", "SRA / ENA reads"],
 ])("filters the store by %s", (category, title) => {
   render(<RawDataSources />);
-  const filter = screen.getByRole("button", { name: category, exact: true });
+  const filter = screen.getByRole("button", { name: category });
   fireEvent.click(filter);
   expect(filter.getAttribute("aria-pressed")).toBe("true");
   expect(screen.getByRole("button", { name: "All modules" }).getAttribute("aria-pressed")).toBe("false");

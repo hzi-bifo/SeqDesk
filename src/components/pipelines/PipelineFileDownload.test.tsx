@@ -38,7 +38,7 @@ describe("PipelineFileDownload", () => {
 
   it("checks only the report before downloading and ignores repeated clicks during the check", async () => {
     let finish!: (response: Response) => void;
-    const fetchMock = vi.fn(() => new Promise<Response>(resolve => { finish = resolve; }));
+    const fetchMock = vi.fn((..._args: unknown[]) => new Promise<Response>(resolve => { finish = resolve; }));
     vi.stubGlobal("fetch", fetchMock);
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     render(<PipelineFileDownload runId="run-1" path="/runs/report.html" label="R1 report" verifyAvailability />);

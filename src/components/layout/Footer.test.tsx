@@ -429,7 +429,7 @@ describe("Footer admin activity", () => {
     fireEvent.click(screen.getByRole("button", { name: /pipeline jobs, 8 jobs active/i }));
 
     expect(screen.getByText("Pipeline jobs")).toBeTruthy();
-    const panel = screen.getByRole("dialog", { name: "Pipeline jobs", exact: true });
+    const panel = screen.getByRole("dialog", { name: "Pipeline jobs" });
     expect(container.contains(panel)).toBe(false); // Portal escapes the footer stacking context.
     expect(panel.getAttribute("data-side")).toBe("top");
     expect(screen.getByText("8 jobs active")).toBeTruthy();
@@ -463,7 +463,7 @@ describe("Footer admin activity", () => {
     fireEvent.click(screen.getByRole("button", { name: /details/i }));
 
     expect(screen.getByText("Status warnings")).toBeTruthy();
-    const panel = screen.getByRole("dialog", { name: "Admin status", exact: true });
+    const panel = screen.getByRole("dialog", { name: "Admin status" });
     expect(container.contains(panel)).toBe(false); // Portal escapes the footer stacking context.
     expect(panel.getAttribute("data-side")).toBe("top");
     expect(screen.getByText("Some background worker status could not be loaded.")).toBeTruthy();
@@ -601,7 +601,7 @@ describe("Footer admin activity", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<Footer />);
     const pipelineTrigger = await screen.findByRole("button", { name: /Pipeline jobs, / });
-    const detailsTrigger = screen.getByRole("button", { name: "details", exact: true });
+    const detailsTrigger = screen.getByRole("button", { name: "details" });
     const notificationsTrigger = screen.getByRole("button", { name: /Notifications, 1 unread/ });
     for (const [trigger, title] of [
       [detailsTrigger, "Admin status"], [notificationsTrigger, "Notifications"],
@@ -609,7 +609,7 @@ describe("Footer admin activity", () => {
     ] as const) {
       fireEvent.click(trigger);
       expect(screen.getAllByRole("dialog")).toHaveLength(1);
-      expect(screen.getByRole("dialog", { name: title, exact: true })).toBeTruthy();
+      expect(screen.getByRole("dialog", { name: title })).toBeTruthy();
       expect(trigger.getAttribute("aria-expanded")).toBe("true");
     }
     fireEvent.click(detailsTrigger);
@@ -700,7 +700,7 @@ describe("Footer admin activity", () => {
     fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
 
     expect(screen.getByText("No notifications.")).toBeTruthy();
-    const panel = screen.getByRole("dialog", { name: "Notifications", exact: true });
+    const panel = screen.getByRole("dialog", { name: "Notifications" });
     expect(container.contains(panel)).toBe(false); // Portal escapes the footer stacking context.
     expect(panel.getAttribute("data-side")).toBe("top");
   });

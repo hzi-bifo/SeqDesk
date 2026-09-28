@@ -28,17 +28,17 @@ afterEach(cleanup);
 
 function openMenu() {
   render(<AddDataMenu scope={scope} reportId="new-report" />);
-  fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
-  fireEvent.click(screen.getByRole("button", { name: "Pipeline outputs", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Add" }));
+  fireEvent.click(screen.getByRole("button", { name: "Pipeline outputs" }));
 }
 
 describe("report data source picker", () => {
   it("returns focus to its launch button after keyboard dismissal", async () => {
     render(<AddDataMenu scope={scope} outputs={{ figures: [], tables: [], analyses: [] }} />);
-    const trigger = screen.getByRole("button", { name: "Add", exact: true });
+    const trigger = screen.getByRole("button", { name: "Add" });
     trigger.focus();
     fireEvent.click(trigger);
-    expect(screen.getByRole("dialog", { name: "Add data", exact: true })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Add data" })).toBeTruthy();
     fireEvent.keyDown(document.activeElement!, { key: "Escape", code: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(trigger));
@@ -62,7 +62,7 @@ describe("report data source picker", () => {
   it("groups a described table under its pipeline, separate from metadata and HTML reports", () => {
     openMenu();
     expect(screen.getByRole("heading", { name: "Add data" })).toBeTruthy();
-    const pipeline = screen.getByRole("region", { name: "FastQC", exact: true });
+    const pipeline = screen.getByRole("region", { name: "FastQC" });
     expect(within(pipeline).getByText(source.description!)).toBeTruthy();
     expect(within(pipeline).getByText(/R1 reads · R2 mean quality/)).toBeTruthy();
     expect(within(pipeline).getByRole("link", { name: "Reports & run history" }).getAttribute("href")).toBe("/orders/imported-data-test/pipelines?pipeline=fastqc");
@@ -106,8 +106,8 @@ describe("report data source picker", () => {
   ])("waits for saved data in %s without offering misleading empty states", (tab, label) => {
     mocks.swr.mockReturnValue({ isLoading: true, mutate: mocks.mutate });
     render(<AddDataMenu scope={scope} reportId="report" />);
-    fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
-    fireEvent.click(screen.getByRole("button", { name: tab, exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: tab }));
     expect(screen.getByRole("status", { name: label })).toBeTruthy();
     expect(screen.queryByText(/No saved analysis results/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Add Samples" })).toBeNull();
@@ -121,8 +121,8 @@ describe("report data source picker", () => {
   ])("provides retry after %s fails instead of leaving a skeleton", (tab, label) => {
     mocks.swr.mockReturnValue({ error: new Error("Network unavailable"), mutate: mocks.mutate });
     render(<AddDataMenu scope={scope} reportId="report" />);
-    fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
-    fireEvent.click(screen.getByRole("button", { name: tab, exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: tab }));
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByRole("alert")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: label }));
@@ -186,7 +186,7 @@ describe("report data source picker", () => {
     const onInsertBlock = vi.fn();
     mocks.post.mockResolvedValue({ dataset: { id: "samples-table", name: "Samples" }, version: { number: 1, rowCount: 1 }, warnings: [] });
     render(<AddDataMenu scope={scope} reportId="report" outputs={{ figures: [], tables: [], analyses: [] }} onInsertBlock={onInsertBlock} />);
-    fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Add table to page" })[0]);
     await waitFor(() => expect(onInsertBlock).toHaveBeenCalledWith(expect.objectContaining({ id: "table:samples-table", type: "table", datasetId: "samples-table", download: true })));
     expect(mocks.post).toHaveBeenCalledTimes(1);
@@ -198,8 +198,8 @@ describe("report data source picker", () => {
     const onInsertBlock = vi.fn();
     mocks.swr.mockReturnValue({ data: { outputs: [{ id: "custom:table", ...source, kind: "table", table: source, templates: [], runs: [{ id: "run", runNumber: "CUSTOM-001", usage: { datasetId: "existing", state: "workspace" }, files: [] }] }] }, mutate: mocks.mutate });
     render(<AddDataMenu scope={scope} reportId="report" outputs={{ figures: [], tables: [], analyses: [] }} onInsertBlock={onInsertBlock} />);
-    fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
-    fireEvent.click(screen.getByRole("button", { name: "Pipeline outputs", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pipeline outputs" }));
     fireEvent.click(screen.getByRole("button", { name: "Add table to page" }));
     await waitFor(() => expect(onInsertBlock).toHaveBeenCalledWith(expect.objectContaining({ datasetId: "existing" })));
     expect(mocks.post).not.toHaveBeenCalled();
@@ -211,8 +211,8 @@ describe("report data source picker", () => {
     mocks.swr.mockReturnValue({ data: { outputs: [{ id: "custom:table", ...source, kind: "table", table: source, templates: [], runs: [{ id: "run", runNumber: "CUSTOM-001", usage: { datasetId: "existing", state: "workspace" }, files: [] }] }] }, mutate: mocks.mutate });
     mocks.fetch.mockResolvedValue({ dataset: { id: "existing", targetKey: scope, name: "Saved measurements", currentVersion: { number: 2, rowCount: 4 }, schema: { columns: [] } } });
     render(<AddDataMenu scope={scope} reportId="report" outputs={{ figures: [], tables: [], analyses: [] }} onInsertBlock={onInsertBlock} />);
-    fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
-    fireEvent.click(screen.getByRole("button", { name: "Pipeline outputs", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pipeline outputs" }));
     fireEvent.click(screen.getByRole("button", { name: "Create chart" }));
     await waitFor(() => expect(screen.getByRole("dialog", { name: "Chart setup" })).toBeTruthy());
     expect(mocks.fetch).toHaveBeenCalledWith("/api/explore/datasets/existing");
@@ -226,7 +226,7 @@ describe("report data source picker", () => {
   it("adds a finished analysis figure without making an analysis or run", async () => {
     const onInsertBlock = vi.fn();
     render(<AddDataMenu scope={scope} reportId="report" onInsertBlock={onInsertBlock} outputs={{ tables: [], analyses: [], figures: [{ analysisId: "a1", analysisName: "Saved analysis", figureName: "distribution", runId: "r1", runNumber: "EXP-001", format: "plotly-json", url: "/saved", thumbnailUrl: null, unchanged: false }] }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
     fireEvent.click(screen.getByRole("button", { name: "Saved analysis results" }));
     fireEvent.click(screen.getByRole("button", { name: "Add figure to page" }));
     await waitFor(() => expect(onInsertBlock).toHaveBeenCalledWith(expect.objectContaining({ id: "figure:a1:distribution", type: "figure", analysisId: "a1", figureName: "distribution" })));
@@ -235,7 +235,7 @@ describe("report data source picker", () => {
 
   it("offers file import inside the picker instead of navigating away from unsaved edits", () => {
     render(<AddDataMenu scope={scope} reportId="report" outputs={{ tables: [], analyses: [], figures: [] }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
     fireEvent.click(screen.getByRole("button", { name: "Your files" }));
     fireEvent.click(screen.getByRole("button", { name: "Choose a file" }));
     expect(screen.getByRole("dialog", { name: "Import a table" })).toBeTruthy();
@@ -249,12 +249,12 @@ describe("report data source picker", () => {
     try {
       const props = { scope, reportId: "report", outputs: { tables: [], analyses: [], figures: [] } };
       const { rerender, unmount } = render(<AddDataMenu {...props} triggerContainer={desktop} />);
-      fireEvent.click(within(desktop).getByRole("button", { name: "Add", exact: true }));
-      fireEvent.click(screen.getByRole("button", { name: "Your files", exact: true }));
+      fireEvent.click(within(desktop).getByRole("button", { name: "Add" }));
+      fireEvent.click(screen.getByRole("button", { name: "Your files" }));
       rerender(<AddDataMenu {...props} triggerContainer={null} />);
       expect(screen.getByRole("dialog", { name: "Add data" })).toBeTruthy();
       rerender(<AddDataMenu {...props} triggerContainer={mobile} />);
-      expect(screen.getByRole("button", { name: "Your files", exact: true }).getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByRole("button", { name: "Your files" }).getAttribute("aria-pressed")).toBe("true");
       expect(within(desktop).queryByRole("button", { name: "Add", hidden: true })).toBeNull();
       expect(mobile.querySelectorAll("button")).toHaveLength(1);
       expect(mocks.post).not.toHaveBeenCalled();
@@ -270,7 +270,7 @@ describe("report data source picker", () => {
     const dialog = screen.getByRole("dialog", { name: "Add to page" });
     expect(dialog).toBeTruthy();
     expect(onInsertBlock).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Close", exact: true }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
     rerender(<AddDataMenu {...props} open={false} triggerContainer={null} />);
     expect(screen.queryByRole("dialog")).toBeNull();

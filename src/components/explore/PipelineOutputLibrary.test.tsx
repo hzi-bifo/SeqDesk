@@ -24,7 +24,7 @@ describe("generic output library", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Search pipeline outputs" }), { target: { value: "unrelated" } });
     expect(screen.getByRole("status").textContent).toContain("No outputs match");
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "user tool" } });
-    fireEvent.click(screen.getByRole("button", { name: "Reports", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Reports" }));
     expect(screen.queryByRole("button", { name: "Add table" })).toBeNull();
   });
   it("offers installed matching templates without running anything", () => {
@@ -36,7 +36,7 @@ describe("generic output library", () => {
   });
   it("shows bounded table previews with human labels and units", () => {
     render(<PipelineOutputLibrary {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "Preview", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByRole("columnheader").textContent).toBe("Valuepercent");
     expect(within(dialog).getByText("5")).toBeTruthy();
@@ -45,14 +45,14 @@ describe("generic output library", () => {
     const report: PipelineOutputSource = { ...source, kind: "report", table: undefined, templates: [], runs: [{ ...source.runs[0], files: [{ ...source.runs[0].files[0], kind: "report", name: "report.html" }] }] };
     render(<PipelineOutputLibrary {...props} sources={[report]} />);
     expect(screen.queryByRole("button", { name: "Add table" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Preview", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     expect(screen.getByTitle("report.html").getAttribute("sandbox")).toBe("allow-scripts");
     expect(screen.getByRole("link", { name: "Download original file" }).getAttribute("href")).toContain("mode=download");
   });
   it("shows preview errors and retry without hiding downloads", () => {
     mocks.swr.mockReturnValue({ error: new Error("Output file is missing"), mutate: vi.fn() });
     render(<PipelineOutputLibrary {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "Preview", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Preview" }));
     expect(screen.getByRole("alert").textContent).toContain("missing");
     expect(screen.getByRole("button", { name: "Retry preview" })).toBeTruthy();
   });

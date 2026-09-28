@@ -50,7 +50,7 @@ describe("PipelineRunResultLinks", () => {
   it("offers a separate download for the Nextflow execution report", () => {
     const report: PipelineRunResultFile = { ...primary, name: "Nextflow report", path: "/runs/run-1/report.html", source: "technical" };
     render(<PipelineRunResultLinks runId="run-1" status="completed" resultFiles={[report]} />);
-    expect(screen.getByRole("link", { name: "Nextflow report", exact: true }).getAttribute("href")).toContain("/api/files/preview?");
+    expect(screen.getByRole("link", { name: "Nextflow report" }).getAttribute("href")).toContain("/api/files/preview?");
     const download = screen.getByRole("link", { name: "Download Nextflow report" });
     expect(download.getAttribute("href")).toBe("/api/pipelines/runs/run-1/file?path=%2Fruns%2Frun-1%2Freport.html&download=1");
     expect(download.hasAttribute("download")).toBe(true);
@@ -58,7 +58,7 @@ describe("PipelineRunResultLinks", () => {
 
   it("keeps report previews but hides downloads in the demo", () => {
     render(<PipelineRunResultLinks runId="run-1" downloadsDisabled status="completed" resultFiles={[primary]} />);
-    expect(screen.getByRole("link", { name: "Combined Report", exact: true })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Combined Report" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: /^Download/ })).toBeNull();
   });
 

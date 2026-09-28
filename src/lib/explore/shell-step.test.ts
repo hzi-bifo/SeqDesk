@@ -37,7 +37,7 @@ function runFolder(): string {
 }
 
 function sx(run: string, ...args: string[]) {
-  return spawnSync("python3", [helper, ...args], { cwd: run, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", SEQDESK_EXPLORE_RUN_DIR: run } });
+  return spawnSync("python3", [helper, ...args], { cwd: run, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", SEQDESK_EXPLORE_RUN_DIR: run } as unknown as NodeJS.ProcessEnv });
 }
 
 const manifest = (run: string) => JSON.parse(fs.readFileSync(path.join(run, "outputs", "manifest.json"), "utf8"));

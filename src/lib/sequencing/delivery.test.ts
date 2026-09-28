@@ -136,7 +136,8 @@ describe("sequencing delivery", () => {
           sample: {
             ...makeRead().sample,
             order: {
-              ...makeRead().sample.order,
+              id: "order-1",
+              userId: "owner-1",
               sequencingFilesPublishedAt: null,
             },
           },

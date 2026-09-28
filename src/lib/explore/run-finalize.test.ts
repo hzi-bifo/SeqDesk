@@ -54,7 +54,7 @@ describe("finalizeExploreRun", () => {
         { name: "alias", kind: "table", format: "tsv", path: "outputs/alias.tsv" },
       ] }));
       await finalizeExploreRun("run1", 0);
-      const recorded = mocks.db.exploreArtifact.upsert.mock.calls.map(([args]: [{ create: { name: string } }]) => args.create.name);
+      const recorded = mocks.db.exploreArtifact.upsert.mock.calls.map(([args]: unknown[]) => (args as { create: { name: string } }).create.name);
       expect(recorded).toEqual(["alias"]);
       expect(mocks.writeDatasetVersion).toHaveBeenCalledTimes(1);
       expect(JSON.stringify(mocks.writeDatasetVersion.mock.calls)).not.toContain("host-secret");

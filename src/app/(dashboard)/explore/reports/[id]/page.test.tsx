@@ -70,7 +70,7 @@ it("replaces loading with the editor and does not remount it for revalidation", 
   rerender(<ReportPage />);
   expect(screen.queryByRole("status")).toBeNull();
   expect(screen.getByText("Local edits: 1")).toBeTruthy();
-  expect(screen.getAllByRole("button", { name: "Done", exact: true })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "Done" })).toHaveLength(1);
 });
 
 it("shows retry instead of an endless loading state when the report request fails", () => {
@@ -86,9 +86,9 @@ it("keeps Undo and Done in the main document header while the sidebar opens and 
   render(<ReportPage />);
   const toolbar = screen.getByRole("group", { name: "Report toolbar" });
   const sidebar = screen.getByRole("complementary", { name: "Add to the page" });
-  expect(within(sidebar).queryByRole("button", { name: "Done", exact: true })).toBeNull();
+  expect(within(sidebar).queryByRole("button", { name: "Done" })).toBeNull();
   expect(within(sidebar).queryByRole("button", { name: "Undo" })).toBeNull();
-  expect(within(toolbar).getByRole("button", { name: "Done", exact: true })).toBeTruthy();
+  expect(within(toolbar).getByRole("button", { name: "Done" })).toBeTruthy();
   expect(within(toolbar).getByRole("button", { name: "Undo" })).toBeTruthy();
   expect(screen.getAllByRole("button", { name: "Hide the panel" })).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Make local edit" }));
@@ -127,10 +127,10 @@ it("focuses the mobile panel and closes it with Escape without losing local edit
   state.desktop = false;
   render(<ReportPage />);
   fireEvent.click(screen.getByRole("button", { name: "Make local edit" }));
-  const trigger = screen.getByRole("button", { name: "Open the panel", exact: true });
+  const trigger = screen.getByRole("button", { name: "Open the panel" });
   trigger.focus();
   fireEvent.click(trigger);
-  const drawer = screen.getByRole("dialog", { name: "Add to the page", exact: true });
+  const drawer = screen.getByRole("dialog", { name: "Add to the page" });
   expect(drawer.getAttribute("aria-modal")).toBe("true");
   await waitFor(() => expect(drawer.contains(document.activeElement)).toBe(true));
   fireEvent.keyDown(document.activeElement!, { key: "Escape", code: "Escape" });

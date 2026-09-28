@@ -534,7 +534,7 @@ const samples: React.ComponentProps<typeof OrderPipelineView>["samples"] = [
 // renderComponent directly to verify the default collapsed state.
 function render(ui: React.ReactElement) {
   const result = renderComponent(ui);
-  const history = screen.queryByRole("button", { name: "Run history", exact: true });
+  const history = screen.queryByRole("button", { name: "Run history" });
   if (history?.getAttribute("aria-expanded") === "false") fireEvent.click(history);
   return result;
 }
@@ -726,14 +726,14 @@ describe("OrderPipelineView", () => {
 
     expect(screen.getByText("Simulate Reads")).toBeTruthy();
     expect(screen.getByText("Generate test read files")).toBeTruthy();
-    const runAllButton = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/, exact: true });
+    const runAllButton = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ });
     await waitFor(() => expect(runAllButton.hasAttribute("disabled")).toBe(false));
     expect(screen.getByText("2 samples selected")).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Input data" })).queryByText("1 active")).toBeNull();
     expect(within(screen.getByRole("region", { name: "Input data" })).queryByText("1 completed")).toBeNull();
     expect(within(screen.getByRole("region", { name: "Input data" })).queryByText("1 failed")).toBeNull();
     expect(screen.getByText("Visible to user")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Combined Report", exact: true })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Combined Report" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Download Combined Report" }).getAttribute("href")).toBe("/api/pipelines/runs/run-1/file?path=%2Fruns%2Frun-1%2Foutput%2Fcombined.html&download=1");
     expect(within(screen.getByRole("region", { name: "Input data" })).getByText("SAMPLE_A")).toBeTruthy();
     expect(within(screen.getByRole("region", { name: "Input data" })).getByText("SAMPLE_B")).toBeTruthy();
@@ -745,7 +745,7 @@ describe("OrderPipelineView", () => {
       target: { value: "24" },
     });
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/, exact: true }).hasAttribute("disabled")).toBe(false);
+      expect(screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ }).hasAttribute("disabled")).toBe(false);
     });
     fireEvent.click(runAllButton);
 
@@ -776,7 +776,7 @@ describe("OrderPipelineView", () => {
       "/api/files/preview?path=%2Fdata%2FSAMPLE_A_R1.fastq.gz"
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Clear current result for SAMPLE_A" }));
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -845,7 +845,7 @@ describe("OrderPipelineView", () => {
       />
     );
 
-    const memberRunAllButton = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/, exact: true });
+    const memberRunAllButton = screen.getByRole("button", { name: /^Run Simulate Reads(?: again)?$/ });
     await waitFor(() =>
       expect(memberRunAllButton.hasAttribute("disabled")).toBe(false)
     );
@@ -1461,7 +1461,7 @@ describe("OrderPipelineView", () => {
     expect(
       screen.getByText(/Predict antimicrobial resistance markers with ResFinder\/PointFinder\/Kover/i)
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^Run MetaxPath(?: again)?$/, exact: true }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: /^Run MetaxPath(?: again)?$/ }).hasAttribute("disabled")).toBe(false);
   });
 
   // Build a useSWR mock that serves the standard pipeline + a custom runs payload.
@@ -1527,7 +1527,7 @@ describe("OrderPipelineView", () => {
 
     render(<OrderPipelineView orderId="order-1" pipelineId="fastqc" samples={inputSamples} isFacilityAdmin />);
 
-    const runSelected = await screen.findByRole("button", { name: "Run FastQC", exact: true });
+    const runSelected = await screen.findByRole("button", { name: "Run FastQC" });
     await waitFor(() => expect(runSelected.hasAttribute("disabled")).toBe(false));
     expect(screen.getByText("2 samples selected")).toBeTruthy();
     expect(screen.getAllByText(/Requires short reads; available data is long-read/).length).toBeGreaterThan(0);
@@ -1623,7 +1623,7 @@ describe("OrderPipelineView", () => {
       screen.getByText("Demo mode — pipeline execution is view-only")
     ).toBeTruthy();
     // Demo mode hides the run-all button entirely.
-    expect(screen.queryByRole("button", { name: /^Run Simulate Reads(?: again)?$/, exact: true })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Run Simulate Reads(?: again)?$/ })).toBeNull();
   });
 
   it("renders queued, cancelled, and unknown status badges with their detail text", () => {
@@ -2016,7 +2016,7 @@ describe("OrderPipelineView", () => {
       />
     );
 
-    const launch = await screen.findByRole("button", { name: /^Run Simulate Reads(?: again)?$/, exact: true });
+    const launch = await screen.findByRole("button", { name: /^Run Simulate Reads(?: again)?$/ });
     await waitFor(() => expect(launch.hasAttribute("disabled")).toBe(false));
     fireEvent.click(launch);
 
@@ -2041,7 +2041,7 @@ describe("OrderPipelineView", () => {
 
     // The shared preview dialog supports an accessible close control.
     const openInNewTab = screen.getByRole("link", { name: /Open in new tab/i });
-    const closeButton = within(openInNewTab.closest('[role="dialog"]')! as HTMLElement).getByRole("button", { name: "Close", exact: true });
+    const closeButton = within(openInNewTab.closest('[role="dialog"]')! as HTMLElement).getByRole("button", { name: "Close" });
     expect(closeButton).toBeTruthy();
     fireEvent.click(closeButton!);
     expect(screen.queryByText("R1 — SAMPLE_A_R1.fastq.gz")).toBeNull();
@@ -2073,16 +2073,16 @@ describe("OrderPipelineView", () => {
         `/api/pipelines/runs/run-1/file?path=${encodeURIComponent(`/runs/run-1/output/SAMPLE_A_${end}_fastqc.html`)}&download=1`
       );
     }
-    fireEvent.click(within(results).getByRole("button", { name: "R1 report", exact: true }));
+    fireEvent.click(within(results).getByRole("button", { name: "R1 report" }));
     expect(screen.getByRole("link", { name: "Download R1 report — R1 report" }).textContent).toBe("Download");
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/pipelines/runs")).toBe(false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     rerender(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[reportSample]} isFacilityAdmin isDemo />);
     expect(screen.queryByRole("link", { name: /^Download/ })).toBeNull();
     rerender(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[{ ...reportSample, read: { ...reportSample.read, filesMissing: true } }]} isFacilityAdmin />);
     expect(within(results).getAllByRole("link", { name: /^Download/ })).toHaveLength(2);
-    expect((within(results).getByRole("button", { name: "R1 report", exact: true }) as HTMLButtonElement).disabled).toBe(false);
+    expect((within(results).getByRole("button", { name: "R1 report" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("shows stale-file styling and 'Source files deleted' for missing result files", () => {
@@ -2298,7 +2298,7 @@ describe("OrderPipelineView", () => {
 
   it("labels reruns and changes to recorded settings without pretending old inputs are identical", async () => {
     renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[samples[0]]} isFacilityAdmin />);
-    expect(screen.getByRole("button", { name: "Run Simulate Reads again", exact: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Run Simulate Reads again" })).toBeTruthy();
     expect(screen.getByText(/previous reports remain in run history/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Read count"), { target: { value: "34" } });
     expect(screen.getByText("Settings differ from the saved source run.")).toBeTruthy();
@@ -2322,7 +2322,7 @@ describe("OrderPipelineView", () => {
   it("does not call imported values or results from a different pipeline a rerun", () => {
     const sample = { ...samples[0], read: { ...readA, pipelineRunId: "other-run", pipelineRunNumber: "OTHER-001", pipelineSources: { fastqc: "other-run" } } };
     renderComponent(<OrderPipelineView orderId="order-1" pipelineId="simulate-reads" samples={[sample]} isFacilityAdmin />);
-    expect(screen.getByRole("button", { name: "Run Simulate Reads", exact: true })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Run Simulate Reads" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /From run OTHER-001/ })).toBeNull();
     expect(screen.getByText("No linked run")).toBeTruthy();
     expect(screen.queryByText(/previous reports remain/)).toBeNull();

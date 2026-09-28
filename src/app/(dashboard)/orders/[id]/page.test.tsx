@@ -274,7 +274,7 @@ describe("OrderDetailPage published analysis results", () => {
     useMetadataSchema();
     currentOrderPayload = { ...orderPayload, dataOrigin: "import", status: "DRAFT" };
     await renderMetadataPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Delete", exact: true }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     const dialog = screen.getByRole("dialog", { name: "Delete sequencing data" });
     expect(within(dialog).getByText("Are you sure you want to delete this sequencing data entry? This cannot be undone.")).toBeTruthy();
     expect(within(dialog).queryByPlaceholderText("Type DELETE to confirm")).toBeNull();
@@ -291,7 +291,7 @@ describe("OrderDetailPage published analysis results", () => {
       data: { user: { id: "user-1", role: "FACILITY_ADMIN", systemRole: "ADMIN" } },
     });
     await renderMetadataPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Delete", exact: true }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
     const dialog = screen.getByRole("dialog", { name: "Delete sequencing data" });
     expect(dialog.textContent).not.toMatch(/submitted|sequencing order/i);
     expect(within(dialog).getByText(/no longer a draft \(status: COMPLETED\)/)).toBeTruthy();
