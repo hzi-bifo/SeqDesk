@@ -6,6 +6,7 @@ import { getTableKind, suggestRoles } from "@/lib/explore/dataset-kinds";
 import { createDataset, deleteDataset, freeImportName, getDatasetRecord, serializeDatasetSummary, writeDatasetVersion } from "@/lib/explore/datasets";
 import { createImportJob, finishImportJob, serializeImportJob } from "@/lib/explore/import-jobs";
 import { ImportCancelled, writeDatasetVersionStream } from "@/lib/explore/table-store";
+import { readFailureWords } from "@/lib/explore/import-words";
 import { importRoles, isStreamableTable, parseImportFile, prepareImport, previewDelimitedFile, streamDelimitedFile } from "@/lib/explore/importers/file";
 import { ExploreRouteError } from "@/lib/explore/route-error";
 import { EXPLORE_ROLES, EXPLORE_SENSITIVITIES, SENSITIVITY_RANK, type ExploreRole, type ExploreRoleMap, type ExploreSensitivity } from "@/lib/explore/types";
@@ -214,7 +215,7 @@ async function importStreamed(session: SessionLike & { user: { id: string } }, f
   }, async (error: unknown) => {
     await deleteDataset(created.id).catch(() => {});
     const cancelled = error instanceof ImportCancelled;
-    finishImportJob(job, { state: cancelled ? "cancelled" : "failed", datasetId: null, error: cancelled ? null : error instanceof Error ? error.message : String(error) });
+    finishImportJob(job, { state: cancelled ? "cancelled" : "failed", datasetId: null, error: cancelled ? null : readFailureWords(error) ?? (error instanceof Error ? error.message : String(error)) });
     throw error;
   });
   if (background) {

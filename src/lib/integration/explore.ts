@@ -37,6 +37,7 @@ import { isExploreModuleEnabled } from "@/lib/explore/module";
 import { renderReportHtml } from "@/lib/explore/report-export";
 import { changeReportChecks, getReportReview, reviewSummaries, importReportReview, recordReportVersion, ReportReviewError } from "@/lib/explore/report-review";
 import { createReport, deleteReport, ExploreReportError, getReportRecord, getReportView, listReports, renameReport, resetReport, saveReport, setShareMode, shareModeOf, shareReport, unshareReport, type ReportViewOptions } from "@/lib/explore/reports";
+import { readFailureWords } from "@/lib/explore/import-words";
 import { ExploreRouteError } from "@/lib/explore/route-error";
 import { readRunIsolation, summarizeIsolation } from "@/lib/explore/sandbox/prepare";
 import { resolveContainedPath } from "@/lib/explore/storage";
@@ -165,6 +166,7 @@ export function statusOf(error: unknown): { status: number; message: string } | 
   // A full disk or an exceeded quota while storing an upload or a table: say so instead of a generic failure.
   const code = (error as { code?: unknown } | null)?.code;
   if (code === "ENOSPC" || code === "EDQUOT") return { status: 507, message: "The server has no space left to store this. Nothing was added." };
+  if (typeof code === "string" && code.startsWith("Z_")) { const words = readFailureWords(error); if (words) return { status: 400, message: `${words}.` }; }
   if (error instanceof RevisionConflict) return { status: error.status, message: error.message };
   if (error instanceof ExploreBuildInputError) return { status: 422, message: error.message };
   if (error instanceof Error && !(error instanceof ExploreRouteError) && /Unknown kit/.test(error.message)) return { status: 400, message: error.message };
