@@ -6,7 +6,7 @@
 import { StringDecoder } from "string_decoder";
 import { coerceCell } from "../schema";
 import type { ExploreRowData } from "../types";
-import { DelimitedParseError, detectDelimiter, splitLine, uniqueColumnKeys, type DelimitedParseOptions } from "./delimited";
+import { DelimitedParseError, detectCsvDelimiter, detectDelimiter, sniffTextEncoding, splitLine, uniqueColumnKeys, type DelimitedParseOptions } from "./delimited";
 
 /**
  * Lines of a byte stream split on \n with a trailing \r removed, as text.split(/\r?\n/) does (including the final
@@ -14,10 +14,11 @@ import { DelimitedParseError, detectDelimiter, splitLine, uniqueColumnKeys, type
  * rows would otherwise make 20 million promises, which also overflows the dev server's async tracking).
  */
 export async function* streamLineBatches(source: AsyncIterable<Buffer | string>): AsyncGenerator<string[]> {
-  const decoder = new StringDecoder("utf8");
   let rest = "";
-  for await (const chunk of source) {
-    rest += typeof chunk === "string" ? chunk : decoder.write(chunk);
+  let bomChecked = false;
+  for await (const text of decodedText(source)) {
+    rest += text;
+    if (!bomChecked && rest.length) { bomChecked = true; if (rest.charCodeAt(0) === 0xfeff) rest = rest.slice(1); }
     const lines: string[] = [];
     let start = 0;
     for (let at = rest.indexOf("\n"); at >= 0; at = rest.indexOf("\n", start)) {
@@ -28,8 +29,34 @@ export async function* streamLineBatches(source: AsyncIterable<Buffer | string>)
     rest = rest.slice(start);
     if (lines.length) yield lines;
   }
-  rest += decoder.end();
   yield [rest.endsWith("\r") ? rest.slice(0, -1) : rest];
+}
+
+/**
+ * Bytes as text. The encoding is read from the first 64 KB: UTF-8 (the common case, decoded fast), UTF-16 with a
+ * byte-order mark, or a Windows-1252 export; binary content stops the read with a plain sentence.
+ */
+async function* decodedText(source: AsyncIterable<Buffer | string>): AsyncGenerator<string> {
+  let decoder: { write(chunk: Buffer): string; end(): string } | null = null;
+  const held: Buffer[] = [];
+  let heldBytes = 0;
+  const choose = () => {
+    const encoding = sniffTextEncoding(Buffer.concat(held));
+    if (encoding === "utf-8") decoder = new StringDecoder("utf8");
+    else { const text = new TextDecoder(encoding); decoder = { write: (bytes) => text.decode(bytes, { stream: true }), end: () => text.decode() }; }
+    const out = held.map((chunk) => decoder!.write(chunk)).join("");
+    held.length = 0;
+    return out;
+  };
+  for await (const chunk of source) {
+    if (typeof chunk === "string") { yield chunk; continue; }
+    if (decoder) { yield decoder.write(chunk); continue; }
+    held.push(chunk);
+    heldBytes += chunk.length;
+    if (heldBytes >= 65_536) yield choose();
+  }
+  if (!decoder && held.length) yield choose();
+  if (decoder) yield (decoder as { end(): string }).end();
 }
 
 /** Line by line (tests and small inputs); large readers use streamLineBatches. */
@@ -116,7 +143,7 @@ export async function* parseDelimitedStream(
   }
   const header = (await line(headerIndex))!.slice(options.headerLinePrefix?.length ?? 0);
   const skipped = (text: string) => text.trim() === "" || Boolean(skipPrefix && text.startsWith(skipPrefix)) || Boolean(options.hashComments && text.startsWith("#"));
-  const delimiter = !options.delimiter || options.delimiter === "auto" ? detectDelimiter(header) : options.delimiter;
+  const delimiter = !options.delimiter || options.delimiter === "auto" ? detectDelimiter(header) : options.delimiter === "csv" ? detectCsvDelimiter(header) : options.delimiter;
   const recordAt = async (start: number, initial?: string) => {
     let text = initial ?? (await line(start))!;
     let end = start;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDelimited } from "./delimited";
+import { decodeText, parseDelimited } from "./delimited";
 
 describe("parseDelimited", () => {
   it("parses a TSV with header normalization and cell coercion", () => {
@@ -112,5 +112,17 @@ describe("parseDelimited with hashComments (QIIME exports)", () => {
   it("keeps a lone #SampleID header and leaves plain files alone", () => {
     expect(parseDelimited("#SampleID\tsite\nA\tgut\n", { hashComments: true }).columns).toEqual(["SampleID", "site"]);
     expect(() => parseDelimited("# Constructed from biom file\n#OTU ID\tS1\tS2\nf\t1\t2\n")).toThrow();
+  });
+});
+
+describe("text a person exports from Excel", () => {
+  it("splits a .csv on semicolons when the header does", () => {
+    expect(parseDelimited("a;b\n1,5;2\n", { delimiter: "csv" }).rows).toEqual([{ a: "1,5", b: "2" }]);
+    expect(parseDelimited("a,b\n1;5,2\n", { delimiter: "csv" }).rows).toEqual([{ a: "1;5", b: "2" }]);
+  });
+  it("decodes Windows-1252 and UTF-16, and refuses binary", () => {
+    expect(decodeText(Buffer.from("Zürich", "latin1"))).toBe("Zürich");
+    expect(decodeText(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("α,β", "utf16le")]))).toBe("α,β");
+    expect(() => decodeText(Buffer.from([0x50, 0x4b, 0x00, 0x01]))).toThrow(/binary data/);
   });
 });

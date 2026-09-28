@@ -4,7 +4,8 @@ import type { ExploreRowData } from "../types";
 export class DelimitedParseError extends Error {}
 
 export interface DelimitedParseOptions {
-  delimiter?: "\t" | "," | ";" | "auto";
+  /** "csv": a comma unless the header line is clearly semicolon- or tab-separated (European Excel exports). */
+  delimiter?: "\t" | "," | ";" | "auto" | "csv";
   /** Lines starting with this prefix are skipped before the header. */
   skipLinesStartingWith?: string;
   /** Locate and strip a marked header after any metadata preamble, e.g. CAMI @@. */
@@ -41,6 +42,38 @@ export function detectDelimiter(headerLine: string): "\t" | "," | ";" {
   }
   if (tabs >= commas && tabs >= semis) return "\t";
   return semis > commas ? ";" : ",";
+}
+
+/** The delimiter of a .csv file: the comma, unless the header line is separated by semicolons or tabs instead. */
+export function detectCsvDelimiter(headerLine: string): "\t" | "," | ";" {
+  const found = detectDelimiter(headerLine);
+  return found === ";" || (found === "\t" && headerLine.includes("\t")) ? found : ",";
+}
+
+export type TextEncodingName = "utf-8" | "utf-16le" | "utf-16be" | "windows-1252";
+
+/**
+ * What a text table is encoded in, from its first bytes: a byte-order mark says UTF-16, bytes that are not valid
+ * UTF-8 mean a Windows/Latin-1 export (Excel's "CSV" in Western Europe), and a NUL byte means this is not text.
+ * A multi-byte character cut off at the end of the sample is not an error.
+ */
+export function sniffTextEncoding(head: Buffer): TextEncodingName {
+  if (head.length >= 2 && head[0] === 0xff && head[1] === 0xfe) return "utf-16le";
+  if (head.length >= 2 && head[0] === 0xfe && head[1] === 0xff) return "utf-16be";
+  if (head.includes(0)) throw new DelimitedParseError("This file contains binary data, not text, so it cannot be read as a table.");
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(head, { stream: true });
+    return "utf-8";
+  } catch {
+    return "windows-1252";
+  }
+}
+
+/** A whole text table as a string in its own encoding, without a byte-order mark. */
+export function decodeText(buffer: Buffer): string {
+  const encoding = sniffTextEncoding(buffer.subarray(0, 1 << 20));
+  const text = encoding === "utf-8" ? buffer.toString("utf8") : new TextDecoder(encoding).decode(buffer);
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
 /** Split one line honouring double-quoted fields (RFC 4180 style). */
@@ -128,7 +161,7 @@ export function parseDelimited(text: string, options: DelimitedParseOptions = {}
   const header = lines[headerIndex].slice(options.headerLinePrefix?.length ?? 0);
   const skipped = (line: string) => line.trim() === "" || Boolean(skipPrefix && line.startsWith(skipPrefix)) || Boolean(options.hashComments && line.startsWith("#"));
   const delimiter =
-    !options.delimiter || options.delimiter === "auto" ? detectDelimiter(header) : options.delimiter;
+    !options.delimiter || options.delimiter === "auto" ? detectDelimiter(header) : options.delimiter === "csv" ? detectCsvDelimiter(header) : options.delimiter;
   const recordAt = (start: number, initial = lines[start]) => {
     let line = initial, end = start;
     let cells = splitLine(line, delimiter);

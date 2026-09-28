@@ -63,3 +63,47 @@ describe("parseDelimitedStream", () => {
     expect(batches).toBeLessThanOrEqual(51);
   });
 });
+
+describe("text tables people export from Excel", () => {
+  const read = async (bytes: Buffer, delimiter: DelimitedParseOptions["delimiter"] = "csv") => {
+    const pieces: Buffer[] = [];
+    for (let at = 0; at < bytes.length; at += 5) pieces.push(bytes.subarray(at, at + 5));
+    const state: { header?: { columns: string[]; delimiter: string } } = {};
+    const rows = [];
+    for await (const batch of parseDelimitedStream(streamLineBatches(Readable.from(pieces)), { delimiter }, state)) rows.push(...batch);
+    return { columns: state.header?.columns ?? [], rows, delimiter: state.header?.delimiter };
+  };
+
+  it("reads a semicolon-separated .csv with decimal commas", async () => {
+    const result = await read(Buffer.from("a;b;c\n1,5;2;3\n"));
+    expect(result.delimiter).toBe(";");
+    expect(result.rows).toEqual([{ a: "1,5", b: "2", c: "3" }]);
+  });
+
+  it("keeps a plain comma .csv on commas, quoted semicolons included", async () => {
+    const result = await read(Buffer.from('a,b\n"x;y",2\n'));
+    expect(result.delimiter).toBe(",");
+    expect(result.rows).toEqual([{ a: "x;y", b: "2" }]);
+  });
+
+  it("reads Windows-1252 text instead of showing replacement characters", async () => {
+    const result = await read(Buffer.from("nom,ville\nRené,Zürich\n", "latin1"));
+    expect(result.rows).toEqual([{ nom: "René", ville: "Zürich" }]);
+  });
+
+  it("reads UTF-16 text with a byte-order mark", async () => {
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("gène\tn\nα\t1\n", "utf16le")]);
+    const result = await read(utf16, "auto");
+    expect(result.columns).toEqual(["gène", "n"]);
+    expect(result.rows).toEqual([{ gène: "α", n: "1" }]);
+  });
+
+  it("drops a UTF-8 byte-order mark in front of a quoted header", async () => {
+    const result = await read(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('"a","b"\n1,2\n')]));
+    expect(result.columns).toEqual(["a", "b"]);
+  });
+
+  it("says a binary file is not text", async () => {
+    await expect(read(Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x08, 0x00, 0x0a, 0x00]))).rejects.toThrow(/binary data/);
+  });
+});

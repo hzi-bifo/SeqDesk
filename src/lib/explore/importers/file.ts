@@ -6,7 +6,7 @@ import path from "path";
 import { createGunzip } from "zlib";
 import { parseDelimitedStream, streamLineBatches, type DelimitedStreamHeader } from "../parsers/delimited-stream";
 import { getTableKind, suggestRoles } from "../dataset-kinds";
-import { parseDelimited, uniqueColumnKeys } from "../parsers/delimited";
+import { decodeText, parseDelimited, uniqueColumnKeys } from "../parsers/delimited";
 import { coerceCell, inferSchema } from "../schema";
 import type { ExploreProvenance, ExploreRole, ExploreRoleMap, ExploreRowData, ExploreSchema, ExploreSensitivity } from "../types";
 import { applyIndivoGrammar, INDIVO_DERIVED_COLUMNS } from "./indivo-id";
@@ -98,7 +98,7 @@ export async function parseImportFile(buffer: Buffer, options: ImportFileOptions
   if (kind === "xlsx") {
     parsed = await parseXlsx(buffer, options.sheet);
   } else if (kind === "csv" || kind === "tsv" || kind === "unknown") {
-    const result = parseDelimited(buffer.toString("utf8"), { delimiter: kind === "csv" ? "," : "auto", maxRows: MAX_IMPORT_ROWS, hashComments: true });
+    const result = parseDelimited(decodeText(buffer), { delimiter: kind === "csv" ? "csv" : "auto", maxRows: MAX_IMPORT_ROWS, hashComments: true });
     parsed = { columns: result.columns, rows: result.rows, sheets: [], sheet: null, truncated: result.truncated, warnings: [] };
   } else {
     throw new Error("Unsupported file type");
@@ -193,8 +193,8 @@ export function isStreamableTable(fileName: string): boolean {
   return kind === "csv" || kind === "tsv";
 }
 
-function delimiterOf(fileName: string): "," | "auto" {
-  return fileKind(fileName.toLowerCase().replace(/\.gz$/, "")) === "csv" ? "," : "auto";
+function delimiterOf(fileName: string): "csv" | "auto" {
+  return fileKind(fileName.toLowerCase().replace(/\.gz$/, "")) === "csv" ? "csv" : "auto";
 }
 
 /**
