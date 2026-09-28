@@ -25,7 +25,7 @@ vi.mock('@/lib/pipelines/definitions', () => ({ getStepsForPipeline: () => [] })
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { failedTaskError, listDataRuns } from './pipeline-data-service';
+import { failedTaskError, listDataRuns, nextflowVersionOf } from './pipeline-data-service';
 
 const row = (id: string, status = 'completed') => ({
   id, runNumber: id.toUpperCase(), pipelineId: 'fastqc', status, executionMode: 'slurm', executionProfile: null, queueJobId: null, queueStatus: null, queueReason: null,
@@ -73,5 +73,14 @@ describe('the failed task’s own error', () => {
     const trace = 'task_id\thash\tnative_id\tprocess\ttag\tname\tstatus\texit\n1\ta7/044e64\t95761\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tFAILED\t1\n';
     expect(await failedTaskError(folder, trace)).toContain('Failed to process file ERR10419931_1.fastq.gz');
     fs.rmSync(folder, { recursive: true, force: true });
+  });
+});
+
+describe('the Nextflow version of a run', () => {
+  it('is the one Nextflow’s log gives for itself, not a plugin manager’s (Details said "Nextflow 3.14.1" on this server)', () => {
+    const log = ["Sep-28 22:39:39.700 [main] INFO  org.pf4j.DefaultPluginManager - PF4J version 3.14.1 in 'deployment' mode", 'Sep-28 22:39:39.8 [main] DEBUG nextflow.cli.Launcher - System info:', '  Version: 26.04.6 build 12646'].join('\n');
+    expect(nextflowVersionOf(log)).toBe('26.04.6');
+    expect(nextflowVersionOf(' N E X T F L O W   ~  version 26.04.6\n')).toBe('26.04.6');
+    expect(nextflowVersionOf('PF4J version 3.14.1')).toBeNull();
   });
 });

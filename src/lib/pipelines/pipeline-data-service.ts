@@ -190,11 +190,20 @@ async function readHead(file: string, bytes = 16_384): Promise<string> {
   try { const buffer = Buffer.alloc(bytes); const { bytesRead } = await handle.read(buffer, 0, bytes, 0); return buffer.subarray(0, bytesRead).toString('utf8'); } finally { await handle.close(); }
 }
 
+/**
+ * The Nextflow version a run's logs name: the console banner ("N E X T F L O W ~ version 26.04.6"), else the system
+ * block of .nextflow.log ("  Version: 26.04.6 build 12646"). A run on this server writes no banner, and the log's
+ * other "version" (PF4J version 3.14.1, a plugin's) is not Nextflow's.
+ */
+export function nextflowVersionOf(text: string): string | null {
+  return /N E X T F L O W\s+~\s+version\s+(\d+\.\d+\.\d+)/.exec(text)?.[1] ?? /^\s*Version:\s*(\d+\.\d+\.\d+)\b/m.exec(text)?.[1] ?? null;
+}
+
 /** Where the run's provenance comes from: Nextflow's own log, the conda cache and the package. */
 async function provenanceOf(run: RunRow) {
   const pkg = getPackage(run.pipelineId);
   const log = run.runFolder ? await readHead(path.join(run.runFolder, '.nextflow.log')) : '';
-  const nextflowVersion = /N E X T F L O W\s+~\s+version\s+([\d.]+)/.exec(log)?.[1] ?? /version\s+(\d+\.\d+\.\d+)/.exec(`${log}\n${run.outputTail ?? ''}`)?.[1] ?? null;
+  const nextflowVersion = nextflowVersionOf(`${log}\n${run.outputTail ?? ''}`);
   const revision = /revision:\s*([0-9a-f]{6,40})/.exec(`${log}\n${run.outputTail ?? ''}`)?.[1] ?? null;
   // Per-process environments: Nextflow's conda cache in the work folder, or the env paths its log names.
   const condaDir = run.runFolder ? path.join(run.runFolder, 'work', 'conda') : null;
