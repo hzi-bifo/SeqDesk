@@ -75,7 +75,16 @@ describe('Analysis API authorization and standalone service reuse', () => {
     expect((await POST(request('runs/other/cancel', 'POST', {}), context('runs/other/cancel'))).status).toBe(403);
     expect(mocks.details).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
   });
+  it('never serves a run file to someone who may not read the run', async () => {
+    mocks.session.mockResolvedValue({ user: { id: 'stranger' } });
+    mocks.read.mockResolvedValue({ status: 403, body: { error: 'Forbidden' } });
+    const response = await GET(request('runs/theirs/file?path=results/secret.tsv'), context('runs/theirs/file'));
+    expect(response.status).toBe(403);
+    expect(mocks.read).toHaveBeenCalledWith('theirs', { user: { id: 'stranger' } });
+    expect(mocks.file).not.toHaveBeenCalled();
+  });
   it('forces result-file downloads through the existing authorized file service', async () => {
+    mocks.read.mockResolvedValue(null);
     mocks.file.mockResolvedValue(new Response('result', { headers: { 'Content-Type': 'application/octet-stream' } }));
     const response = await GET(request('runs/run/file?path=report.html&inline=1'), context('runs/run/file'));
     expect(response.status).toBe(200);

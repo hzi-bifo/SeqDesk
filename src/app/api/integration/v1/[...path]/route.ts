@@ -52,6 +52,9 @@ async function handle(request: NextRequest, context: Context): Promise<Response>
     }
     if (path[0] === 'runs' && path.length === 3 && path[2] === 'file' && request.method === 'GET') {
       await assertProjectRun(session, path[1]);
+      // The file service checks the run's owner too; checked here first, as for runs/{id}, so no path is resolved for a stranger.
+      const denied = await assertPipelineRunReadAccess(path[1], session);
+      if (denied) return json(denied.body, denied.status);
       const target = request.nextUrl.clone();
       target.search = new URLSearchParams({ path: request.nextUrl.searchParams.get('path') || '',
         mode: request.nextUrl.searchParams.get('preview') === '1' ? 'preview' : 'download' }).toString();
