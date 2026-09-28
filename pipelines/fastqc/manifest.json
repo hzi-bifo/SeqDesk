@@ -18,7 +18,8 @@
   },
   "targets": {
     "supported": [
-      "order"
+      "order",
+      "study"
     ]
   },
   "sequencingCompatibility": {

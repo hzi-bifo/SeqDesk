@@ -1,0 +1,5 @@
+ERROR ~ Error executing process > 'NFCORE_MAG:MAG:MEGAHIT (M2_d0)'
+Process `MEGAHIT (M2_d0)` terminated with an error exit status (1)
+megahit: error while loading shared libraries: libgomp.so.1: cannot open shared object file
+Command exit status:
+  1

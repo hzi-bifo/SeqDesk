@@ -14,6 +14,7 @@ import { projectTargetIDs, assertProjectRun, assertProjectTarget, changeProjectL
 import { exploreIntegrationCapabilities, handleExploreRequest } from '@/lib/integration/explore';
 import { isExploreModuleEnabled } from '@/lib/explore/module';
 import { handleImportersRequest, IMPORTER_CAPABILITIES } from '@/lib/integration/importers';
+import { handleDataPipelinesRequest, DATA_PIPELINE_CAPABILITIES } from '@/lib/integration/pipelines';
 import packageInfo from '../../../../../../package.json';
 
 export const runtime = 'nodejs';
@@ -37,12 +38,13 @@ async function handle(request: NextRequest, context: Context): Promise<Response>
     const { path } = await context.params;
     if (path.join('/') === 'info' && request.method === 'GET') {
       return json({ apiVersion: 1, installationId: config.installationId, name: config.name, version: packageInfo.version,
-        capabilities: ['studies.read', 'runs.read', 'runs.create', 'runs.start', ...IMPORTER_CAPABILITIES,
+        capabilities: ['studies.read', 'runs.read', 'runs.create', 'runs.start', ...IMPORTER_CAPABILITIES, ...DATA_PIPELINE_CAPABILITIES,
           ...((await isExploreModuleEnabled().catch(() => false)) ? exploreIntegrationCapabilities({ eventsConfigured: process.env.SEQDESK_EXPLORE_EVENTS !== '0' }) : [])] });
     }
     const session = await integrationSession(request, config);
     if (path[0] === 'explore') return handleExploreRequest(request, session, path.slice(1), headers);
     if (path[0] === 'importers' || path[0] === 'imports') return handleImportersRequest(request, session, path, headers);
+    if (path[0] === 'data-pipelines') return handleDataPipelinesRequest(request, session, path, headers);
     const profile = getServerDeploymentProfile();
     if (path.join('/') === 'project-links' && request.method === 'POST') {
       await changeProjectLink(session, await request.json());

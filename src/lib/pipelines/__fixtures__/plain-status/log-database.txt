@@ -1,0 +1,2 @@
+ERROR ~ Kraken2 database not found: /db/kraken2/standard_2024
+Check that --kraken2_db points to an existing folder

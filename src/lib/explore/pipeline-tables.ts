@@ -21,6 +21,18 @@ export const KNOWN_PIPELINE_TABLES: Record<string, PackageOutputTable & { label:
       r2_read_count: "R2 reads", r2_avg_quality: "R2 mean quality (Phred)",
     },
   },
+  // Quality overview (reads-qc): one row per read file (R1/R2) from SeqKit.
+  "reads-qc:summary_tsv": {
+    label: "Read statistics",
+    description: "Per read file: reads, bases, length, mean quality, GC content, Q20/Q30 share and N50, from SeqKit.",
+    tableKind: "sample-summary",
+    format: "tsv",
+    sampleColumn: "sample_id",
+    columnLabels: {
+      read_end: "Read file", num_reads: "Reads", total_bases: "Bases", min_len: "Shortest", avg_len: "Mean length", max_len: "Longest",
+      avg_quality: "Mean quality (Phred)", gc_content: "GC %", q20_pct: "Q20 %", q30_pct: "Q30 %", n50: "N50",
+    },
+  },
   "metaxpath:sample_profile": {
     label: "MetaxPath per-sample profiles",
     tableKind: "taxon-profile-long",

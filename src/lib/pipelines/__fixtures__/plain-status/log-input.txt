@@ -1,0 +1,3 @@
+ERROR ~ Validation of pipeline parameters failed!
+ * --input (samplesheet.csv): Entry 4: Missing required value: short_reads_2
+ * Entry 7, 9: Missing required value: short_reads_2

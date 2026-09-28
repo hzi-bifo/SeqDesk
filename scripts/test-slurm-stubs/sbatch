@@ -1,0 +1,3 @@
+#!/bin/sh
+# STUB sbatch (test only; see README.md): accepts any script and prints a fixed job id.
+echo "4819227"

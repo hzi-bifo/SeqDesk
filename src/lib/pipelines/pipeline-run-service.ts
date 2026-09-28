@@ -341,7 +341,7 @@ function terminateDetachedLocalProcess(pid: number): void {
   }
 }
 
-async function finalizeLocalRun(
+export async function finalizeLocalRun(
   runId: string,
   pipelineId: string,
   exitCode: number | null

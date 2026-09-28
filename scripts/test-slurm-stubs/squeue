@@ -1,0 +1,9 @@
+#!/bin/sh
+# STUB squeue (test only; see README.md). Prints "%i|%T|%r|%P|%N" for the stub job.
+case "${SLURM_STUB_STATE:-pending-priority}" in
+  pending-priority)  echo "4819227|PENDING|Priority|cpu|" ;;
+  pending-resources) echo "4819227|PENDING|Resources|cpu|" ;;
+  pending-qos)       echo "4819227|PENDING|QOSMaxJobsPerUserLimit|cpu|" ;;
+  running)           echo "4819227|RUNNING|None|cpu|hpc-c17" ;;
+  *) ;; # finished jobs leave the queue
+esac

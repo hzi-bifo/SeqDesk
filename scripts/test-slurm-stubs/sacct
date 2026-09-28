@@ -1,0 +1,10 @@
+#!/bin/sh
+# STUB sacct (test only; see README.md). Prints "JobID|State|ExitCode|Reason|NodeList".
+case "${SLURM_STUB_STATE:-pending-priority}" in
+  pending-*) echo "4819227|PENDING|0:0|None|None assigned" ;;
+  running)   echo "4819227|RUNNING|0:0|None|hpc-c17" ;;
+  completed) printf '4819227|COMPLETED|0:0|None|hpc-c17\n4819227.batch|COMPLETED|0:0|None|hpc-c17\n' ;;
+  oom)       printf '4819227|OUT_OF_MEMORY|0:125|None|hpc-c17\n4819227.batch|OUT_OF_MEMORY|0:137|None|hpc-c17\n' ;;
+  timeout)   printf '4819227|TIMEOUT|0:0|None|hpc-c03\n4819227.batch|CANCELLED|0:15|None|hpc-c03\n' ;;
+  node-fail) printf '4819227|NODE_FAIL|0:0|None|hpc-c17\n4819227.batch|CANCELLED|0:143|None|hpc-c17\n' ;;
+esac

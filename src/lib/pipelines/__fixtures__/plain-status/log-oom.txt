@@ -1,0 +1,6 @@
+ERROR ~ Error executing process > 'NFCORE_MAG:MAG:MEGAHIT (M7_d3)'
+Caused by:
+  Process `MEGAHIT (M7_d3)` terminated with an error exit status (137)
+Command exit status:
+  137
+slurmstepd: error: Detected 1 oom_kill event in StepId=4819391.batch. Some of your processes may have been killed by the cgroup out-of-memory handler.

@@ -1,0 +1,6 @@
+Failed to create Conda environment
+  command: conda env create --prefix /work/conda/env-8f2 --file /pipelines/gtdbtk/environment.yml
+  status : 1
+  message:
+    CondaHTTPError: HTTP 000 CONNECTION FAILED for url <https://user:hunter2@conda.anaconda.org/t/tk-abc123SECRET/bioconda/noarch/repodata.json>
+Elapsed: 00:00:30.1
