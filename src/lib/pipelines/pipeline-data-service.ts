@@ -217,7 +217,8 @@ async function failedTaskError(runFolder: string | null, trace: string | null): 
   if (!runFolder) return null;
   // Nextflow's own log names errors the task files cannot (a time limit on the local executor, a staging failure).
   const nextflowLog = (await readTail(path.join(runFolder, '.nextflow.log'), 400))?.split(/\r?\n/)
-    .filter((line) => /ERROR|Caused by|Exception|exceeded|hasn't exited|checkIfCompleted|No such file|Missing/.test(line)).slice(0, 30).join('\n') ?? '';
+    // Nextflow's DEBUG lines name files it merely looked for ("Project manifest does not exist"); they are not errors.
+    .filter((line) => !/\] DEBUG /.test(line) && /ERROR|Caused by|Exception|exceeded|hasn't exited|checkIfCompleted|No such file|Missing/.test(line)).slice(0, 30).join('\n') ?? '';
   if (!trace) return nextflowLog || null;
   const failed = trace.split(/\r?\n/).find((line) => /\tFAILED\t/.test(line));
   const workdir = failed?.split('\t').find((cell) => /\/work\/[0-9a-f]{2}\//.test(cell));

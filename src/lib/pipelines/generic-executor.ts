@@ -764,7 +764,8 @@ function generateSlurmScript(
   const runtimeBootstrap = buildRuntimeBootstrap(settings) + buildManifestEnvExports(execution);
 
   const runName = buildNextflowRunName(runNumber, runId);
-  const nameFlag = `-name ${shellQuote(runName)}`;
+  // The run name lives in a variable: a requeued job (below) needs another one, and -name may appear only once.
+  const nameFlag = '-name "$SEQDESK_RUN_NAME"';
   // Merge manifest profiles with admin-configured profile
   const mergedProfiles = mergeProfiles(execution.profiles, settings.nextflowProfile, { skipConda: settings.skipConda });
   const profileFlag = mergedProfiles ? `-profile ${shellQuote(mergedProfiles)}` : '';
@@ -839,10 +840,11 @@ ${runtimeBootstrap}
 
 # SLURM requeues this job after its node failed (or on scontrol requeue) and runs this script again from the top.
 # Nextflow refuses a run name its history already has, so a restart resumes the same work under a name of its own.
+SEQDESK_RUN_NAME=${shellQuote(runName)}
 SEQDESK_REQUEUE_FLAGS=()
 if [ "\${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
-  SEQDESK_REQUEUE_NAME=${shellQuote(runName)}"-j\${SLURM_JOB_ID}-q\${SLURM_RESTART_COUNT}"
-  SEQDESK_REQUEUE_FLAGS=(-resume -name "$SEQDESK_REQUEUE_NAME")
+  SEQDESK_RUN_NAME="\${SEQDESK_RUN_NAME}-j\${SLURM_JOB_ID}-q\${SLURM_RESTART_COUNT}"
+  SEQDESK_REQUEUE_FLAGS=(-resume)
   echo "Requeued by SLURM (restart \${SLURM_RESTART_COUNT}); resuming at $(date)" >> "$STDOUT_LOG"
 fi
 

@@ -19,8 +19,9 @@ describe('STUB SLURM commands (test only)', () => {
   it('sbatch prints a job id', () => { expect(run('sbatch', 'running', ['--parsable', 'run.sh']).trim()).toBe('4819227'); });
   it.each([
     ['pending-priority', 'Waiting in the queue · other jobs go first', 'cancel'],
-    ['pending-resources', 'Waiting for a free node with 256 GB', 'ask-less-memory'],
-    ['pending-qos', 'Waiting: your lab already has its maximum of jobs running', 'see-jobs'],
+    // A queued card always shows Cancel; "Resources" is cores or memory, so no "less memory" offer.
+    ['pending-resources', 'Waiting for a free node with 256 GB', 'cancel'],
+    ['pending-qos', 'Waiting: your lab already has its maximum of jobs running', 'cancel'],
   ])('queued (%s) from squeue', (state, sentence, action) => {
     const [line] = parseSqueue(run('squeue', state));
     const status = plainRunStatus({ now, run: { status: 'queued', executionMode: 'slurm', queueJobId: line.jobId, queueStatus: line.state, queueReason: line.reason, askedMemory: '256 GB' } });
@@ -62,6 +63,12 @@ echo "" > "$STDERR_LOG"
     expect(script).toContain("-name 'MAG-002-cmabc-r1'");
     expect(resumeScript(runSh, '/x', null, 3)).toContain("-name 'MAG-002-cmabc-r3'");
     expect(() => resumeScript('#!/bin/bash\necho hi\n', '/x')).toThrow(/no Nextflow command/);
+  });
+  it('renames a SLURM script that keeps its run name in SEQDESK_RUN_NAME (requeue-safe scripts)', () => {
+    const current = runSh.replace('-name MAG-002-cmabc', '-name "$SEQDESK_RUN_NAME"').replace('# Run', "SEQDESK_RUN_NAME='MAG-002-cmabc'\n# Run");
+    const script = resumeScript(current, '/x', null, 2);
+    expect(script).toContain("SEQDESK_RUN_NAME='MAG-002-cmabc-r2'");
+    expect(script).toContain('-name "$SEQDESK_RUN_NAME"');
   });
   it('writes memory/time for one step, and always lets the reports be overwritten', () => {
     const config = resumeConfig(normalizeOverrides({ process: 'MEGAHIT', memory: '256 GB', time: '24 h' }));
