@@ -499,7 +499,9 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
       return { ...base, shape: 'running', word: 'Running', sentence: `${capital(stageWords(process))} ${what} · Nextflow is still noticing`, action: { kind: 'cancel', label: 'Cancel' } };
     }
     const reasonWords = slurm && run.queueReason ? slurmReasonWords(run.queueReason) : '';
-    const waiting = reasonWords ? ` · ${reasonWords.charAt(0).toLowerCase()}${reasonWords.slice(1)}` : '';
+    // Under a job limit the run's own job holds one slot while its task jobs wait: with a limit of one it never goes on.
+    const holdsSlot = /MaxJobs|GrpJobs|MaxSubmit/i.test(run.queueReason ?? '') ? ' (this run’s own job counts too; ask the admin if it does not move)' : '';
+    const waiting = reasonWords ? ` · ${reasonWords.charAt(0).toLowerCase()}${reasonWords.slice(1)}${holdsSlot}` : '';
     const left = estimate.seconds != null && elapsedSeconds != null
       ? (estimate.seconds > elapsedSeconds ? ` · ~${durationWords(estimate.seconds - elapsedSeconds)} left` : ' · taking longer than past runs')
       : ` · ${estimate.words}`;

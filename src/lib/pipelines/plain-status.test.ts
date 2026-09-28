@@ -207,6 +207,11 @@ describe('plainRunStatus', () => {
     expect([status.sentence, status.action?.kind]).toEqual(['Compute may not write its run folder (/data/e2e/runs): permission denied', 'ask-admin']);
     expect(prepareFailureWords("Failed to prepare run: ENOSPC: no space left on device, write '/x/y--id-z'")).toBe('The disk for run folders is full (/x)');
   });
+  it('a task job held by a job limit says the run’s own job counts too', () => {
+    // Real Slurm, MaxJobs=1 with limits enforced: the run's job runs, nf-RUN_FASTQC waits with AssocMaxJobsLimit.
+    const run = { status: 'running', executionMode: 'slurm', queueJobId: '117', queueStatus: 'RUNNING', queueReason: 'AssocMaxJobsLimit', outputTail: 'executor >  slurm (1)\n[ab/cdef12] RUN_FASTQC (s1) | 0 of 1', declaredSteps: 2 };
+    expect(plainRunStatus({ now, run }).sentence).toBe('Running · step 1 of 2: FastQC · waiting: your lab already has its maximum of jobs running (this run’s own job counts too; ask the admin if it does not move)');
+  });
   it('sbatch refused the job: says why, not "Failed at a step"', () => {
     // As a real Slurm 24.11 answered, the run kept the launcher's message as its error tail and has no job id.
     const drained = 'sbatch exited with code 1: sbatch: error: Batch job submission failed: Required partition not available (inactive or drain)';
