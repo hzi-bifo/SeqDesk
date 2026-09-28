@@ -155,11 +155,11 @@ export async function pipelineReadiness(targetKey: string): Promise<{ reads: str
 // ------------------------------------------------------------------ runs
 
 type RunRow = Awaited<ReturnType<typeof loadRuns>>[number];
-async function loadRuns(where: { id?: string; studyId?: string }) {
+async function loadRuns(where: { id?: string | { in: string[] }; studyId?: string }) {
   return db.pipelineRun.findMany({ where, orderBy: { createdAt: 'desc' }, take: 50, select: {
     id: true, runNumber: true, pipelineId: true, status: true, executionMode: true, executionProfile: true, queueJobId: true, queueStatus: true, queueReason: true, queueUpdatedAt: true,
     currentStep: true, queuedAt: true, startedAt: true, completedAt: true, createdAt: true, outputTail: true, errorTail: true, runFolder: true, inputSampleIds: true,
-    config: true, user: { select: { id: true, firstName: true, lastName: true, email: true } },
+    config: true, studyId: true, user: { select: { id: true, firstName: true, lastName: true, email: true } },
     artifacts: { select: { id: true, outputId: true, path: true, name: true, size: true, sampleId: true, type: true } },
     events: { where: { eventType: 'resumed' }, select: { occurredAt: true, message: true }, orderBy: { occurredAt: 'asc' } },
   } });
@@ -275,11 +275,22 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
     config: (() => { try { return JSON.parse(run.config ?? '{}'); } catch { return {}; } })() };
 }
 
+/**
+ * The study's runs for the band: the 50 newest, plus every run still active and every run a dataset in this study's
+ * Data is pinned to, however old. With 56 runs on elektra, a run that had queued for hours fell out of the newest 50:
+ * its card and its "finished" notice never came.
+ */
 export async function listDataRuns(targetKey: string) {
   const study = await findDataStudy(targetKey);
   if (!study) return [];
   const runs = await loadRuns({ studyId: study.id });
-  return Promise.all(runs.map((run) => runView(run, { targetKey })));
+  const have = new Set(runs.map((run) => run.id));
+  const active = await db.pipelineRun.findMany({ where: { studyId: study.id, status: { in: ['pending', 'queued', 'running'] } }, select: { id: true } });
+  const pinned = await db.exploreDataset.findMany({ where: { targetKey, kind: 'pipeline-table' }, select: { sourceConfig: true } });
+  const pinnedIds = pinned.flatMap((d) => { try { const ids = JSON.parse(d.sourceConfig ?? '{}').runIds; return Array.isArray(ids) ? ids.filter((v: unknown): v is string => typeof v === 'string') : []; } catch { return []; } });
+  const missing = [...new Set([...active.map((r) => r.id), ...pinnedIds])].filter((id) => !have.has(id));
+  const extra = missing.length ? (await loadRuns({ id: { in: missing } })).filter((run) => run.studyId === study.id) : [];
+  return Promise.all([...runs, ...extra].map((run) => runView(run, { targetKey })));
 }
 
 export async function getDataRun(runId: string, targetKey?: string) {
