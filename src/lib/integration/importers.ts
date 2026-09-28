@@ -44,6 +44,7 @@ import { requireTargetAccess } from '@/lib/explore/authorization';
 import { dataStudyFor } from '@/lib/pipelines/data-study';
 import { searchPdb, searchUniprot, searchZenodo, type SearchGroup } from './importer-search';
 import { handleDataSourcesRequest, isDataSourcesAdmin } from './data-sources';
+import { ncbiRequestScope } from '@/lib/workbench/importers/ncbi-client';
 import { assertMayImport, DataSourcesError, importAllowedFilter, importLimits, previewHint } from '@/lib/workbench/data-sources';
 
 export const IMPORTER_CAPABILITIES = ['imports.read', 'imports.create', 'imports.search', 'imports.sources'];
@@ -152,10 +153,11 @@ export async function handleImportersRequest(request: Request, session: Integrat
       let preview: Awaited<ReturnType<typeof provider.preview>>;
       // A preview's own failure is a plain sentence about the source or the link (not found, refused address,
       // web page instead of a file); answer 422 so the web app shows it instead of a generic server error.
-      try { preview = await provider.preview(input); }
+      const ncbiRequests = { count: 0 };
+      try { preview = await ncbiRequestScope.run(ncbiRequests, () => provider.preview(input)); }
       catch (error) { if (error instanceof ZodError) throw error; return json({ error: error instanceof Error ? error.message : 'The preview failed.' }, 422); }
       const limits = await importLimits(provider.id, preview, { phase: 'preview' });
-      const hint = await previewHint(provider.id, preview, !preflight.ok && preflight.previewOnly);
+      const hint = await previewHint(provider.id, ncbiRequests.count, !preflight.ok && preflight.previewOnly);
       return json({ preview: { ...preview, fingerprint: importPreviewFingerprint(provider.id, input, preview), limits, ...(hint ? { hint } : {}) } });
     }
     if (path[0] === 'imports' && path.length === 1 && method === 'GET') {

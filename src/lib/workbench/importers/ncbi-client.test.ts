@@ -47,3 +47,15 @@ describe("NCBI client", () => {
     expect(secondDone).toBe(true);
   });
 });
+
+describe("ncbiRequestScope", () => {
+  it("counts the NCBI requests made inside a scope", async () => {
+    const { ncbiRequestScope, ncbiJson } = await import("./ncbi-client");
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const scope = { count: 0 };
+    await ncbiRequestScope.run(scope, async () => { await ncbiJson("https://api.ncbi.nlm.nih.gov/datasets/v2/x", { source: "NCBI" }); await ncbiJson("https://api.ncbi.nlm.nih.gov/datasets/v2/y", { source: "NCBI" }); });
+    expect(scope.count).toBe(2);
+    vi.unstubAllGlobals();
+  });
+});

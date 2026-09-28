@@ -397,19 +397,20 @@ export async function importLimits(providerId: string, preview: Partial<Pick<Wor
 }
 
 /** Find data's hint: how long an NCBI preview's lookups take at today's rate, and with a key. Only when it saves > 30 s. */
-export async function previewHint(providerId: string, preview: Partial<Pick<WorkbenchImportPreview, "files" | "genomes">> & Pick<WorkbenchImportPreview, "summary">, previewOnly = false) {
+/**
+ * Find data's hint. For NCBI it counts the requests the preview really sent (`requests`, from ncbiRequestScope): at
+ * 3 a second without a key and 10 with one, the hint shows only when a key would save more than 30 s.
+ */
+export async function previewHint(providerId: string, requests: number, previewOnly = false) {
   if (previewOnly) return { kind: "dryad-preview-only" as const, sentence: "Dryad: preview only. Downloads need a Dryad account an admin adds." };
   if (sourceForProvider(providerId)?.id !== "ncbi") return null;
   const key = await ncbiApiKey();
   if (key.value) return null;
-  // What the search reads is everything it found (a BioProject's runs), not the few this preview selects.
-  const runs = new Set((preview.files ?? []).map((f) => f.runAccession)).size;
-  const count = Math.max(preview.summary.totalFound || 0, runs, preview.genomes?.length ?? 0);
-  const seconds = Math.ceil(count / ncbiRequestsPerSecond(false));
-  const withKey = Math.ceil(count / ncbiRequestsPerSecond(true));
+  const seconds = Math.ceil(requests / ncbiRequestsPerSecond(false));
+  const withKey = Math.ceil(requests / ncbiRequestsPerSecond(true));
   if (seconds - withKey <= 30) return null;
-  return { kind: "ncbi-key" as const, count, seconds, secondsWithKey: withKey,
-    sentence: `This search reads ${count} runs and will take about ${seconds} s. With an NCBI key it takes about ${withKey} s.` };
+  return { kind: "ncbi-key" as const, count: requests, seconds, secondsWithKey: withKey,
+    sentence: `This search asks NCBI ${requests} times and takes about ${seconds} s. With an NCBI key it takes about ${withKey} s.` };
 }
 
 // ---------- tests ----------

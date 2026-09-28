@@ -7,6 +7,10 @@
  * to NCBI only, never logged, and never part of an error message: errors name the source, not the address.
  */
 import { SOURCE_USER_AGENT } from "./public-record-download";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+/** Counts the NCBI requests made inside a scope (a preview), for Find data's "an NCBI key would save N s" hint. */
+export const ncbiRequestScope = new AsyncLocalStorage<{ count: number }>();
 
 export const EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 export const DATASETS_API = "https://api.ncbi.nlm.nih.gov/datasets/v2";
@@ -109,6 +113,8 @@ export async function ncbiRequest(url: string, options: {
   const attempts = Math.max(1, options.attempts ?? 2);
   for (let attempt = 1; ; attempt += 1) {
     await ncbiSlot(Boolean(key));
+    const scope = ncbiRequestScope.getStore();
+    if (scope) scope.count += 1;
     try {
       const timeout = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
       const response = await fetch(target, {

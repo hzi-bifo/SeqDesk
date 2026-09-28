@@ -124,14 +124,14 @@ describe("data sources", () => {
     await expect(importLimits("ena-fastq-accession", files(5), { phase: "start", requireConfirmation: true })).resolves.toMatchObject({ needsConfirmation: false });
   });
 
-  it("hints at an NCBI key only when it saves more than 30 s, and says Dryad is preview only", async () => {
-    const runs = (n: number) => ({ summary: { label: "", totalFound: n, selectedCount: n, capped: false, cap: n, hardMax: n }, files: Array.from({ length: n }, (_, i) => ({ runAccession: `SRR${i}`, url: "", filename: `${i}.fq` })) });
-    expect(await previewHint("ncbi-sra-runs", runs(240))).toMatchObject({ kind: "ncbi-key", seconds: 80, secondsWithKey: 24 });
-    expect(await previewHint("ncbi-sra-runs", runs(100))).toBeNull();
-    expect(await previewHint("ena-fastq-accession", runs(240))).toBeNull();
-    expect(await previewHint("dryad-dataset", runs(1), true)).toMatchObject({ kind: "dryad-preview-only" });
+  it("hints at an NCBI key only when the requests a preview sent make it more than 30 s slower, and says Dryad is preview only", async () => {
+    expect(await previewHint("ncbi-sra-runs", 240)).toMatchObject({ kind: "ncbi-key", count: 240, seconds: 80, secondsWithKey: 24,
+      sentence: "This search asks NCBI 240 times and takes about 80 s. With an NCBI key it takes about 24 s." });
+    expect(await previewHint("ncbi-sra-runs", 100)).toBeNull();
+    expect(await previewHint("ena-fastq-accession", 240)).toBeNull();
+    expect(await previewHint("dryad-dataset", 0, true)).toMatchObject({ kind: "dryad-preview-only" });
     await setSecret("ncbi-key", { apiKey: "abcdef0123456789abcdef0123456789ab" }, "x");
-    expect(await previewHint("ncbi-sra-runs", runs(240))).toBeNull();
+    expect(await previewHint("ncbi-sra-runs", 240)).toBeNull();
   });
 
   it("tests a source with a small real query and answers in one sentence with the time", async () => {
