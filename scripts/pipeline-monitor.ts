@@ -348,8 +348,12 @@ async function main() {
   }
 
   console.log(`[pipeline-monitor] running every ${interval}ms`);
-  await runOnce();
-  setInterval(runOnce, interval);
+  // One pass after the other: a pass that waits on a slow squeue/sacct must not overlap the next one.
+  for (;;) {
+    const started = Date.now();
+    await runOnce().catch((error) => console.error('[pipeline-monitor] pass failed', error));
+    await new Promise((resolve) => setTimeout(resolve, Math.max(1000, interval - (Date.now() - started))));
+  }
 }
 
 // Auto-run when executed as the monitor daemon, but not when imported by a unit

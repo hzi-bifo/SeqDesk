@@ -4,6 +4,7 @@ import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  options: [] as unknown[],
   execFile: vi.fn(),
   inferPipelineExitCode: vi.fn(),
 }));
@@ -17,7 +18,7 @@ vi.mock('child_process', () => ({
       error: Error | null,
       result?: { stdout: string; stderr: string }
     ) => void
-  ) => mocks.execFile(file, args, callback),
+  ) => { mocks.options.push(_options); return mocks.execFile(file, args, callback); },
 }));
 
 vi.mock('@/lib/pipelines/run-completion', () => ({
@@ -314,5 +315,18 @@ describe('identity-checked queue probe', () => {
 
     expect(result.outcome).toBe('terminal');
     expect(result.snapshot.state).toBe('CANCELLED');
+  });
+});
+
+describe('scheduler command timeouts', () => {
+  it('give a busy controller and accounting database time to answer', async () => {
+    // sacct took 12 s on a real Slurm under load; with 5 s a finished run waited for confirmation for ever.
+    const { readIdentityCheckedQueueSnapshot, SACCT_TIMEOUT_MS, SQUEUE_TIMEOUT_MS } = await import('./queue-probe');
+    expect(SQUEUE_TIMEOUT_MS).toBeGreaterThanOrEqual(15_000);
+    expect(SACCT_TIMEOUT_MS).toBeGreaterThanOrEqual(30_000);
+    mocks.options.length = 0;
+    mocks.execFile.mockImplementation((_file: string, _args: readonly string[], callback: (e: Error | null, r?: { stdout: string; stderr: string }) => void) => callback(null, { stdout: '', stderr: '' }));
+    await readIdentityCheckedQueueSnapshot({ jobId: '4819227', runId: 'run-1', runFolder: '/runs/run-1' });
+    expect(mocks.options).toEqual(expect.arrayContaining([expect.objectContaining({ timeout: SQUEUE_TIMEOUT_MS }), expect.objectContaining({ timeout: SACCT_TIMEOUT_MS })]));
   });
 });

@@ -8,6 +8,13 @@ import { buildSeqDeskSlurmJobName } from '@/lib/pipelines/run-directory';
 
 const execFileAsync = promisify(execFile);
 
+// A busy controller or accounting database answers in seconds, not milliseconds: with sacct taking 12 s on a real
+// Slurm, the old 5 s limit meant a finished run waited for confirmation for ever. Override with SEQDESK_SQUEUE_TIMEOUT_MS
+// and SEQDESK_SACCT_TIMEOUT_MS.
+const envMs = (name: string, fallback: number) => { const v = Number(process.env[name]); return Number.isFinite(v) && v > 0 ? v : fallback; };
+export const SQUEUE_TIMEOUT_MS = envMs('SEQDESK_SQUEUE_TIMEOUT_MS', 20_000);
+export const SACCT_TIMEOUT_MS = envMs('SEQDESK_SACCT_TIMEOUT_MS', 45_000);
+
 export type QueueSource = 'local' | 'squeue' | 'sacct' | null;
 
 export type QueueJobDetails = {
@@ -367,7 +374,7 @@ export async function readIdentityCheckedQueueSnapshot({
         '-o',
         '%i|%P|%.128j|%u|%T|%M|%D|%R|%.1024Z',
       ],
-      { timeout: 5000 }
+      { timeout: SQUEUE_TIMEOUT_MS }
     );
     const line = firstNonEmptyLine(stdout);
     if (line) {
@@ -444,7 +451,7 @@ export async function readIdentityCheckedQueueSnapshot({
         '--format=JobID,State%32,Reason,JobName%128,WorkDir%1024,Elapsed,ExitCode',
         '--noheader',
       ],
-      { timeout: 5000 }
+      { timeout: SACCT_TIMEOUT_MS }
     );
     const rows = stdout
       .split('\n')
