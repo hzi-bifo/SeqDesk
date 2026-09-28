@@ -75,11 +75,14 @@ export function serializeDatasetSummary(dataset: DatasetWithVersion): ExploreDat
 }
 
 export async function listDatasets(targetKey: string, options: { lean?: boolean } = {}): Promise<ExploreDatasetSummary[]> {
-  const datasets = await db.exploreDataset.findMany({
+  const all = await db.exploreDataset.findMany({
     where: { targetKey },
     include: { versions: { orderBy: { number: "desc" }, take: 1 } },
     orderBy: { updatedAt: "desc" },
   });
+  // A table whose import is still running has a placeholder version (0 rows, hash "pending"): it is not listed until
+  // the import has finished, so nobody picks an empty table into a recipe and a stopped import leaves nothing behind.
+  const datasets = all.filter((dataset) => dataset.versions[0]?.contentHash !== "pending");
   // Tables made before the provenance check existed get it once, a few per listing.
   let budget = 5;
   for (const dataset of datasets) {
