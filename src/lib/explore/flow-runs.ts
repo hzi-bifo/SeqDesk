@@ -652,13 +652,24 @@ export async function listHolds(flowRunId: string) {
   return holds.map((hold) => ({ id: hold.id, kind: hold.kind as HoldKind, key: hold.key, memberId: hold.memberId, createdAt: hold.createdAt.toISOString() }));
 }
 
+/** A paper-scoped hold protects a run independently of any one value in it. */
+function writerDocumentHoldKey(key: string): boolean {
+  if (!key.startsWith("writer:")) return false;
+  try {
+    const scope: unknown = JSON.parse(key.slice(7));
+    return Array.isArray(scope) && scope.length === 2 &&
+      scope.every(value => typeof value === "string" && value.trim().length > 0) &&
+      key === `writer:${JSON.stringify(scope)}`;
+  } catch { return false; }
+}
+
 export async function addHold(flowRunId: string, kind: unknown, key: unknown, actor: FlowActor) {
   if (kind !== "check" && kind !== "writer") throw flowError("invalid_request", 'kind must be "check" or "writer".');
-  if (typeof key !== "string" || !key.trim() || key.length > 2048) throw flowError("invalid_request", "key must be the check key or the value reference (at most 2,048 characters).");
+  if (typeof key !== "string" || !key.trim() || key.length > 2048) throw flowError("invalid_request", "key must be the check key, value reference or paper key (at most 2,048 characters).");
   const run = await db.exploreFlowRun.findUnique({ where: { id: flowRunId }, select: { status: true, kind: true } });
   if (!run) throw flowError("not_found", "Run not found");
   if (run.kind === "trial") throw flowError("invalid_request", "Trial runs cannot be marked or cited.");
-  if (kind === "writer" && !key.startsWith(`labdesk://value/${flowRunId}/`) && !key.startsWith(`labdesk://output/${flowRunId}/`)) throw flowError("invalid_request", "A Writer hold names a value or output of this run.");
+  if (kind === "writer" && !writerDocumentHoldKey(key) && !key.startsWith(`labdesk://value/${flowRunId}/`) && !key.startsWith(`labdesk://output/${flowRunId}/`)) throw flowError("invalid_request", "A Writer hold names a value or output of this run, or a paper scoped to a workspace.");
   const existing = await db.exploreRunHold.findUnique({ where: { flowRunId_kind_key: { flowRunId, kind, key } }, select: { id: true } });
   if (!existing) {
     try {

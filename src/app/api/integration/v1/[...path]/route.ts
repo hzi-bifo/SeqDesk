@@ -39,7 +39,7 @@ async function handle(request: NextRequest, context: Context): Promise<Response>
     if (path.join('/') === 'info' && request.method === 'GET') {
       return json({ apiVersion: 1, installationId: config.installationId, name: config.name, version: packageInfo.version,
         capabilities: ['studies.read', 'runs.read', 'runs.create', 'runs.start', ...IMPORTER_CAPABILITIES, ...DATA_PIPELINE_CAPABILITIES,
-          ...((await isExploreModuleEnabled().catch(() => false)) ? exploreIntegrationCapabilities({ eventsConfigured: process.env.SEQDESK_EXPLORE_EVENTS !== '0' }) : [])] });
+          ...((await isExploreModuleEnabled().catch(() => false)) ? [...exploreIntegrationCapabilities({ eventsConfigured: process.env.SEQDESK_EXPLORE_EVENTS !== '0' }), 'writer.retention-holds'] : [])] });
     }
     const session = await integrationSession(request, config);
     if (path[0] === 'explore') return handleExploreRequest(request, session, path.slice(1), headers);

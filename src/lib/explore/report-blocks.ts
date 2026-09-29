@@ -3,6 +3,7 @@
  * the canvas, the report page and the server share one definition.
  */
 import { z } from "zod";
+import { ReportPagesSchema } from "./report-pages";
 
 export const MAX_REPORT_BLOCKS = 60;
 
@@ -128,6 +129,12 @@ const TaxonExplorerBlockSchema = z
   })
   .strict();
 
+export const SubjectExplorerSchema = z.object({
+ version: z.literal(1), label: z.string().max(80), subject: z.string().max(200), time: z.string().max(200),
+ sample: z.string().max(200).optional(), group: z.string().max(200).optional(), taxon: z.string().max(200).optional(), count: z.string().max(200).optional(),
+ panels: z.array(z.object({id: z.string().min(1).max(120), kind: z.enum(["timeline","measurement","composition","table"]), title: z.string().max(200), column: z.string().max(200).optional(), columns: z.array(z.string().max(200)).max(60).optional(), scope: z.enum(["subject","cohort"]), events:z.array(z.object({column:z.string().max(200),label:z.string().max(200),value:z.string().max(200)}).strict()).max(20).optional(), aggregation:z.enum(["mean","pooled"]).optional(),measure:z.enum(["ra","reads"]).optional(),top:z.number().int().min(1).max(50).optional(),spacing:z.enum(["actual","equal"]).optional()}).strict()).max(12)
+}).strict();
+
 /** One subject of a long profile table: its composition over time per group. */
 const SubjectBlockSchema = z
   .object({
@@ -135,6 +142,7 @@ const SubjectBlockSchema = z
     type: z.literal("subject"),
     datasetId: z.string().min(1).max(80),
     subject: z.string().max(200).optional(),
+    explorer: SubjectExplorerSchema.optional(),
     measure: z.enum(["ra", "reads"]).optional(),
     caption: z.string().max(500).optional(),
     span: Span, size: Size,
@@ -293,6 +301,7 @@ export const ReportInputSchema = z
   .object({
     title: z.string().trim().min(1).max(200),
     blocks: z.array(ReportBlockSchema).max(MAX_REPORT_BLOCKS),
+    pages: ReportPagesSchema.optional(),
     filters: z.array(ReportFilterSchema).max(MAX_REPORT_FILTERS).optional(),
     sharing: ReportSharingSchema.optional(),
     /** The version the editor started from (updatedAt); a save against an older version is refused. */

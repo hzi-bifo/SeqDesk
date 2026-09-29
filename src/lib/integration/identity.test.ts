@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ findUnique: vi.fn() }));
-vi.mock('@/lib/db', () => ({ db: { user: { findUnique: mocks.findUnique } } }));
+const mocks = vi.hoisted(() => ({ findUnique: vi.fn(), run: vi.fn() }));
+vi.mock('@/lib/db', () => ({ db: { user: { findUnique: mocks.findUnique }, exploreFlowRun: { findUnique: mocks.run } } }));
 import { integrationSession } from './identity';
 import { integrationConfig, type IntegrationConfig } from './config';
 const config: IntegrationConfig = { installationId: 'compute-one', name: 'Lab compute',
@@ -44,4 +44,18 @@ describe('Compute identity boundary', () => {
     vi.stubEnv('SEQDESK_INTEGRATION_CONFIG', JSON.stringify({ ...config, collaborationOrigin: 'http://remote.example' }));
     expect(() => integrationConfig()).toThrow(/HTTPS/);
   });
+  it('restricts retention identities before account lookup and verifies run ownership', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ installationId: 'compute-one', workspaceId: 'lab', memberId: 'member', expiresAt: Date.now()+30000,
+      writerRetention: { documentId: 'paper-1', flowId: 'flow-1', runId: 'run-1' } })));
+    await expect(integrationSession(request(), config)).rejects.toMatchObject({status:403});
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    const hold = () => new Request('https://compute.example/api/integration/v1/explore/flow-runs/run-1/holds', {method:'POST',headers:{Authorization:`Bearer ${'b'.repeat(64)}`},body:JSON.stringify({kind:'writer',key:'writer:["lab","paper-1"]'})});
+    mocks.run.mockResolvedValue({flowId:'other'});
+    await expect(integrationSession(hold(), config)).rejects.toMatchObject({status:403});
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+    mocks.run.mockResolvedValue({flowId:'flow-1'});
+    mocks.findUnique.mockResolvedValue({id:'local',isActive:true,isDemo:false,firstName:'Lab',lastName:'User',role:'RESEARCHER',systemRole:'MEMBER'});
+    expect((await integrationSession(hold(),config)).user.id).toBe('local');
+  });
+
 });

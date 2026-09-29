@@ -39,6 +39,7 @@ export async function flowValues(flowId: string, options: { run?: string | null;
   const runId = !options.run || options.run === "current" ? flow.currentRunId : options.run;
   const loaded = runId ? await runRecords(runId) : null;
   if (options.run && options.run !== "current" && (!loaded || loaded.run.flowId !== flowId)) throw flowError("not_found", "Run not found");
+  if (loaded?.run.kind === "trial") throw flowError("invalid_request", "Trial runs cannot supply cited values.");
   const values: FeedValue[] = [];
   const withValues = new Set<string>();
   if (loaded) {
@@ -95,7 +96,7 @@ export async function artifactsIntact(stepRunId: string): Promise<boolean> {
   const stepRun = await db.exploreAnalysisRun.findUnique({ where: { id: stepRunId }, select: { runFolder: true, artifacts: { select: { path: true, checksum: true } } } });
   if (!stepRun?.runFolder) return false;
   for (const artifact of stepRun.artifacts) {
-    if (!artifact.checksum) continue;
+    if (!artifact.checksum) return false;
     const filePath = await resolveContainedPath(stepRun.runFolder, artifact.path).catch(() => null);
     if (!filePath || (await sha256File(filePath)) !== artifact.checksum) return false;
   }
@@ -109,7 +110,7 @@ export async function artifactsIntact(stepRunId: string): Promise<boolean> {
 export async function resolveValues(refs: string[], canRead: (flow: { id: string; targetKey: string }) => Promise<boolean>, options: { verify?: boolean } = {}) {
   const values: Array<FeedValue & { flowId: string; flowName: string; current: boolean; at: string | null;
     /** For a value of a run that is no longer current: the same value in the current run, and whether it differs. */
-    changed: boolean; currentValue: { ref: string; value: unknown; runId: string; runNumber: number | null } | null }> = [];
+    changed: boolean; currentValue: { ref: string; value: unknown; unit: string | null; runId: string; runNumber: number | null } | null }> = [];
   const unknown: string[] = [];
   const runs = new Map<string, Awaited<ReturnType<typeof runRecords>>>();
   const flows = new Map<string, { id: string; name: string; targetKey: string; currentRunId: string | null; readable: boolean }>();
@@ -131,19 +132,19 @@ export async function resolveValues(refs: string[], canRead: (flow: { id: string
     if (!flow.readable || !entry || !record || !value) { unknown.push(ref); continue; }
     let verified = loaded.run.status === "completed" && record.status === "completed";
     if (verified && options.verify) verified = await artifactsIntact(record.stepRunId);
-    let currentValue: { ref: string; value: unknown; runId: string; runNumber: number | null } | null = null;
+    let currentValue: { ref: string; value: unknown; unit: string | null; runId: string; runNumber: number | null } | null = null;
     if (flow.currentRunId && flow.currentRunId !== loaded.run.id) {
       if (!runs.has(flow.currentRunId)) runs.set(flow.currentRunId, await runRecords(flow.currentRunId));
       const current = runs.get(flow.currentRunId);
       const currentRecord = current?.records.get(parsed.analysisId);
       const found = currentRecord ? stepValues(current!.stepRuns.get(currentRecord.stepRunId)?.results).find((candidate) => candidate.key === parsed.key) : undefined;
-      if (current && found) currentValue = { ref: `labdesk://value/${current.run.id}/${parsed.analysisId}/${encodeURIComponent(parsed.key)}`, value: found.value, runId: current.run.id, runNumber: current.run.number };
+      if (current && found) currentValue = { ref: `labdesk://value/${current.run.id}/${parsed.analysisId}/${encodeURIComponent(parsed.key)}`, value: found.value, unit: found.unit, runId: current.run.id, runNumber: current.run.number };
     }
     values.push({
       key: `${parsed.analysisId}.${parsed.key}`, ref, stepId: parsed.analysisId, stepLabel: entry.label, metric: parsed.key, label: value.label, unit: value.unit, value: value.value,
       runId: loaded.run.id, runNumber: loaded.run.number, output: null, verified, definition: value.definition, flowId: flow.id, flowName: flow.name, current: flow.currentRunId === loaded.run.id,
       at: loaded.run.completedAt?.toISOString() ?? null,
-      changed: currentValue !== null && JSON.stringify(currentValue.value) !== JSON.stringify(value.value),
+      changed: currentValue !== null && (JSON.stringify(currentValue.value) !== JSON.stringify(value.value) || currentValue.unit !== value.unit),
       currentValue,
     });
   }

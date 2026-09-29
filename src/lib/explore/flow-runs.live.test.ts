@@ -194,6 +194,7 @@ describe.skipIf(!url)("flow runs (PostgreSQL)", () => {
     const before = (await db.exploreFlow.findUnique({ where: { id: flowId } }))!.currentRunId;
     const trial = await startFlowRun(flowId, { scope: "all", trial: true, sample: 2, actor: actor() });
     expect(trial).toMatchObject({ number: null, trialNumber: 1, kind: "trial" });
+    await expect(addHold(trial.id, "writer", 'writer:["workspace","paper"]', actor())).rejects.toMatchObject({ code: "invalid_request" });
     const stepRuns = await db.exploreAnalysisRun.findMany({ where: { flowRunId: trial.id } });
     expect(stepRuns.every((stepRun) => stepRun.trial)).toBe(true);
     const cancelled = await cancelFlowRun(trial.id);
@@ -209,8 +210,9 @@ describe.skipIf(!url)("flow runs (PostgreSQL)", () => {
     const current = (await db.exploreFlow.findUnique({ where: { id: flowId } }))!.currentRunId!;
     const citedRef = `labdesk://value/${current}/${steps.test}/n_called`;
     await expect(addHold(current, "writer", "labdesk://value/other/x/y", actor())).rejects.toMatchObject({ code: "invalid_request" });
-    await addHold(current, "writer", citedRef, actor());
-    expect((await addHold(current, "check", `labdesk://run/${current}`, actor())).map((hold) => hold.kind)).toEqual(["writer", "check"]);
+    const paperKey = `writer:${JSON.stringify([targetKey, "paper-1"])}`;
+    await addHold(current, "writer", paperKey, actor());
+    expect(await addHold(current, "writer", paperKey, actor())).toHaveLength(1);
 
     await createRevision({ analysisId: steps.test, code: "print('voom')", author: "user", authorUserId: userId });
     const run = await startFlowRun(flowId, { scope: "outOfDate", actor: actor() });
@@ -219,6 +221,10 @@ describe.skipIf(!url)("flow runs (PostgreSQL)", () => {
     expect((await db.exploreFlow.findUnique({ where: { id: flowId } }))!.currentRunId).toBe(current);
     const detail = await getFlowRunDetail(run.id);
     expect(detail).toMatchObject({ status: "completed", current: false, newer: true, superseded: false });
+    // The paper hold alone kept the old run current. Existing URI/check holds still work.
+    await addHold(current, "writer", citedRef, actor());
+    await addHold(current, "check", `labdesk://run/${current}`, actor());
+    expect(await removeHold(current, "writer", paperKey)).toHaveLength(2);
     const recipe = await getRecipeView(flowId, { canEdit: true });
     expect(recipe.flow.newerRun).toMatchObject({ id: run.id, number: run.number });
     expect(recipe.flow.currentHolds).toEqual({ checks: 1, writer: 1 });

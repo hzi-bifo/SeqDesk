@@ -1,3 +1,4 @@
+import { ReportPagesSchema, reconcileReportPages, validateReportPages, type ReportPage } from "./report-pages";
 /**
  * Reports: the final page of a scope. A report is an ordered list of blocks
  * (text, figure, table) that point at outputs by stable identity, so a re-run
@@ -179,6 +180,7 @@ export interface ReportView {
   /** True when nothing is saved yet and the blocks were assembled from the outputs. */
   draft: boolean;
   updatedAt: string | null;
+  pages?: ReportPage[];
   blocks: ResolvedReportBlock[];
   outputs: ReportOutputs;
 }
@@ -500,7 +502,10 @@ export async function getReportView(reportId: string, options: ReportViewOptions
   if (!stored) throw new ExploreReportError(404, "Report not found");
   const outputs = await collectReportOutputs(stored.targetKey, options.outputs === "scope" ? null : stored.id);
   const storedBlocks = parseStoredBlocks(stored.blocks);
-  const draft = storedBlocks.length === 0;
+  const savedPages = stored.settings && typeof stored.settings === "object" ? (stored.settings as { pages?: unknown }).pages : undefined;
+  // Explicitly saved empty pages are authored content, not an unsaved auto-generated draft.
+  const draft = storedBlocks.length === 0 && !ReportPagesSchema.safeParse(savedPages).success;
+  const reportBlocks = draft && options.suggest !== false ? suggestReportBlocks(outputs) : storedBlocks;
   return {
     id: stored.id,
     targetKey: stored.targetKey,
@@ -510,7 +515,8 @@ export async function getReportView(reportId: string, options: ReportViewOptions
     sharing: parseStoredSharing(stored.settings),
     draft,
     updatedAt: stored.updatedAt.toISOString(),
-    blocks: await resolveReportBlocks(draft && options.suggest !== false ? suggestReportBlocks(outputs) : storedBlocks, outputs, loadTableContent),
+    pages: reconcileReportPages(savedPages, reportBlocks),
+    blocks: await resolveReportBlocks(reportBlocks, outputs, loadTableContent),
     outputs,
   };
 }
@@ -529,8 +535,14 @@ export async function saveReport(reportId: string, raw: unknown, options: Report
   }
   const existing = await db.exploreReport.findUnique({ where: { id: reportId }, select: { id: true, updatedAt: true, settings: true } });
   if (!existing) throw new ExploreReportError(404, "Report not found");
-  const blocks = parsed.data.blocks as unknown as Prisma.InputJsonValue;
-  const settings = { filters: parsed.data.filters ?? [], sharing: parsed.data.sharing ?? parseStoredSharing(existing.settings) } as unknown as Prisma.InputJsonValue;
+  let blocks = parsed.data.blocks as unknown as Prisma.InputJsonValue;
+  const savedPages = existing.settings && typeof existing.settings === "object" ? (existing.settings as { pages?: unknown }).pages : undefined;
+  const pages = parsed.data.pages ?? reconcileReportPages(savedPages, parsed.data.blocks);
+  const pagesError = validateReportPages(pages, parsed.data.blocks);
+  if (pagesError) throw new ExploreReportError(400, pagesError);
+  if (parsed.data.pages && !parsed.data.expectedUpdatedAt) throw new ExploreReportError(400, "Saving pages requires expectedUpdatedAt");
+  if (parsed.data.pages) blocks = pages.flatMap(page => page.blockIds.map(id => parsed.data.blocks.find(block => block.id === id)!)) as unknown as Prisma.InputJsonValue;
+  const settings = { pages, filters: parsed.data.filters ?? [], sharing: parsed.data.sharing ?? parseStoredSharing(existing.settings) } as unknown as Prisma.InputJsonValue;
   // Two editors: the write only lands on the version the editor saw, so the
   // second save of the same version is refused instead of overwriting the first.
   const expected = parsed.data.expectedUpdatedAt ? new Date(parsed.data.expectedUpdatedAt) : null;

@@ -10,8 +10,8 @@ import { flowError } from "@/lib/integration/flow-contract";
 import { addStep, type AddStepInput } from "./recipe-edit";
 import { loadRecipe, type RecipeActor } from "./recipe";
 import { keyBetween, sortSteps } from "./recipe-order";
-import { analysisLanguageOf } from "./analyses";
 import { acceptedMethodsSentence } from "./methods-draft";
+import { analysisLanguageOf } from "./analyses";
 
 type ProposalRecord = Prisma.ExploreStepProposalGetPayload<object>;
 

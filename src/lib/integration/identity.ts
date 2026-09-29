@@ -3,9 +3,9 @@ import { db } from '@/lib/db';
 import type { IntegrationConfig } from './config';
 import { integrationAccount } from './accounts';
 
-export class IntegrationAccessError extends Error {
-  constructor(public status: number, message: string) { super(message); }
-}
+import { IntegrationAccessError } from './identity-error';
+export { IntegrationAccessError } from './identity-error';
+import { validateWriterRetentionRequest } from './writer-retention';
 export type IntegrationSession = Session & { integration: {
   authority: string; workspaceId: string; memberId: string; projectId: string;
 } };
@@ -30,6 +30,11 @@ export async function integrationSession(request: Request, config: IntegrationCo
     typeof identity.memberId !== 'string' || (identity.projectId !== undefined && typeof identity.projectId !== 'string') ||
     !Number.isFinite(identity.expiresAt) || identity.expiresAt <= Date.now()) {
     throw new IntegrationAccessError(401, 'Invalid collaboration identity.');
+  }
+  if (identity.writerRetention !== undefined) {
+    const grant = await validateWriterRetentionRequest(request, identity.workspaceId, identity.writerRetention);
+    const run = await db.exploreFlowRun.findUnique({ where: { id: grant.runId }, select: { flowId: true } });
+    if (!run || run.flowId !== grant.flowId) throw new IntegrationAccessError(403, 'The retained run does not match its Analysis flow.');
   }
   const userId = await integrationAccount(config, identity);
   if (!userId) throw new IntegrationAccessError(403, 'Your collaboration identity has no SeqDesk account mapping.');

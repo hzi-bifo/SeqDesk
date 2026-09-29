@@ -14,7 +14,7 @@ local({
 # a problem with the hook never stops the analysis.
 local({
   hook <- Sys.getenv("CONTINUALFIG_HOOK_R")
-  if (nzchar(hook) && file.exists(hook)) {
+  if (identical(Sys.getenv("CONTINUALFIG"), "on") && nzchar(hook) && file.exists(hook)) {
     tryCatch({
       env <- attach(NULL, name = "continualfig")
       sys.source(hook, envir = env)

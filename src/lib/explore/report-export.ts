@@ -1,3 +1,4 @@
+import {explorerCharts, explorerTableRows} from './explorer-charts';
 /**
  * A report as one HTML document: the page's blocks with their live data, so it
  * can be downloaded as a file or served behind a share link. The renderer is a
@@ -187,7 +188,11 @@ export function renderReportDocument(input: RenderInput): string {
   const inputRows = report.sharing?.inputRows === true;
 
   const counts = { stale: 0, missing: 0 };
-  const sections = report.blocks.map((block) => renderBlock(block, { input, filters, active, addPlot, tableOf, variables, inputTables, inputRows, counts }));
+  const render = (block: typeof report.blocks[number]) => renderBlock(block, { input, filters, active, addPlot, tableOf, variables, inputTables, inputRows, counts });
+  const sections = report.pages && report.pages.length > 1 ? report.pages.map(page => {
+    const selected = page.blockIds.flatMap(id => { const block = report.blocks.find(b => b.id === id); return block ? [block] : []; });
+    return `<section class="report-named-page" style="grid-column:1/-1;break-before:page"><h2>${escapeHtml(page.title)}</h2><div class="grid">${selected.map(render).join("")}</div></section>`;
+  }) : report.blocks.map(render);
   const provenance = renderProvenance(input.provenance ?? []);
   const headings = report.blocks.flatMap((block) =>
     block.type === "text"
@@ -599,17 +604,48 @@ function renderSubject(block: Extract<ResolvedReportBlock, { type: "subject" }>,
   const table = context.tableOf(block.datasetId);
   const title = (block.caption?.trim() || undefined) ?? `Subject${table ? `: ${table.name}` : ""}`;
   if (!table) return section(block, title, empty("This table is not in the scope any more."));
+  if (block.explorer) {
+    const config = block.explorer;
+    const records = filteredRecords(table, context.filters, context.active).map(record => record.data);
+    const subjects = [...new Set(records.map(row => String(row[config.subject] ?? "")).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+    const subject = block.subject || subjects[0] || "";
+    const panels = config.panels.map(panel => {
+      const selected = panel.scope === "cohort" ? records : records.filter(row => String(row[config.subject] ?? "") === subject);
+      const columns = panel.kind === "table" ? (panel.columns?.length ? panel.columns : table.columns.map(c=>c.key)) : [config.subject,config.time,config.group,...(panel.kind === "measurement" ? [panel.column] : panel.kind === "composition" ? [config.sample,config.taxon,config.count] : [])].filter((c): c is string=>!!c);
+      const keys = [...new Set(columns)];
+      const heading = `<h3>${escapeHtml(panel.title)}${panel.scope === "cohort" ? " · Whole cohort" : ""}</h3>`;
+      if (panel.kind !== "table") {
+        const charts = explorerCharts(selected, config, panel);
+        return heading + (charts.length ? charts.map(chart => `<h4>${escapeHtml(chart.title)}</h4>` + context.addPlot(chart.data,chart.layout,panel.kind === "composition" ? 420 : 280)).join("") : note("No chart data; check column mappings."));
+      }
+      const distinct = explorerTableRows(selected,keys);
+      return heading + `<p>${distinct.length} distinct records; first 100 shown.</p><table><thead><tr>${keys.map(c=>`<th>${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>${distinct.slice(0,100).map(row=>`<tr>${keys.map(c=>`<td>${escapeHtml(String(row[c] ?? "—"))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    }).join("");
+    return section(block,title,`<p>${escapeHtml(config.label)}: ${escapeHtml(subject)}</p>${panels}`);
+  }
   const adapted = adaptRowsForSubjectTimeline(filteredRecords(table, context.filters, context.active), table.roles, table.columns.map((column) => column.key));
   if (adapted.missingRoles.length > 0) return section(block, title, empty(`${table.name} needs the roles ${adapted.missingRoles.join(", ")} for a subject view.`));
   const counts = new Map<string, number>();
   for (const row of adapted.rows) counts.set(row.group, (counts.get(row.group) ?? 0) + 1);
   const primaryGroups = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([group]) => group);
   const overview = subjectsTable(adapted.rows, { primaryGroups });
-  const subject = block.subject && overview.patients.some((patient) => patient.patient === block.subject) ? block.subject : (overview.patients[0]?.patient ?? null);
+  const subject = block.subject || overview.patients[0]?.patient || null;
   if (!subject) return section(block, title, empty("No subject matches."));
-  const patient = overview.patients.find((entry) => entry.patient === subject)!;
+  const clinicalColumns = ["aki", "sbp", "antibiotic_treatment", "creatinine_umol_l", "crp_mg_dl"].filter(key => table.columns.some(column => column.key === key));
+  const visits = new Map<string, ExploreRowData>();
+  for (const record of filteredRecords(table, context.filters, context.active)) {
+    const row = record.data;
+    if (cellText(row[table.roles.subject ?? ""]) !== subject) continue;
+    if (!clinicalColumns.some(key => cellText(row[key]) !== "")) continue;
+    const day = cellText(row[table.roles.timepoint ?? ""]);
+    if (day) visits.set(day, row);
+  }
+  const clinicalHtml = visits.size ? `<h4>Clinical visits · ${escapeHtml(subject)}</h4><p class="note">Observed relative study days; recorded yes/no events are not treatment intervals. Not recorded does not mean zero.</p><table><thead><tr><th>Study day</th>${clinicalColumns.map(key => `<th>${escapeHtml(columnLabel(table.columns, key))}</th>`).join("")}</tr></thead><tbody>${[...visits].sort(([a],[b]) => Number(a)-Number(b)).map(([day,row]) => `<tr><td>${escapeHtml(day)}</td>${clinicalColumns.map(key => `<td>${escapeHtml(cellText(row[key]) || "Not recorded")}</td>`).join("")}</tr>`).join("")}</tbody></table>` : "";
+  const patient = overview.patients.find((entry) => entry.patient === subject);
+  if (!patient) return section(block, title, note(`No retained sequenced libraries for ${subject}.`) + clinicalHtml);
   const measure = block.measure ?? "ra";
   const parts: string[] = [`<p class="note"><strong>${escapeHtml(subject)}</strong>: ${patient.n_samples} libraries on ${patient.n_days} days, ${escapeHtml(patient.sampletypes.join(" and "))}</p>`];
+  if (clinicalHtml) parts.push(clinicalHtml);
   for (const group of primaryGroups.filter((entry) => patient.sampletypes.includes(entry))) {
     const composition = subjectComposition(adapted.rows, subject, group, context.input.curation, { primaryGroups });
     if (composition.days.length === 0) {

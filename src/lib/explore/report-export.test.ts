@@ -65,6 +65,39 @@ function input(overrides: Partial<RenderInput> = {}): RenderInput {
 }
 
 describe("renderReportDocument", () => {
+ it("exports a configured explorer using mapped fields and saved subject",()=>{
+ const value=input();value.report.blocks=[{id:"custom",type:"subject",datasetId:"d-in",subject:"S2",explorer:{version:1,label:"Device",subject:"sample_id",time:"reads",panels:[{id:"values",kind:"measurement",title:"Mapped <measurement>",column:"reads",scope:"subject"}]}}];
+ const html=renderReportDocument(value);expect(html).toContain("Device: S2");expect(html).toContain("Mapped &lt;measurement&gt;");const plots=JSON.parse(html.match(/id="plot-data">([\s\S]*?)<\/script>/)![1]);expect(plots[0].data[0].y).toEqual([3000]);
+ });
+  it("exports clinical-only visits for the selected patient without substituting another patient", () => {
+    const value = input();
+    value.report.blocks = [{id:"patient",type:"subject",datasetId:"patients",subject:"P2"}];
+    const keys = ["patient_id","visit_day","library_id","sample_type","taxon","taxon_reads","aki"];
+    value.tables.set("patients", {datasetId:"patients",name:"Patient records",roles:{subject:"patient_id",timepoint:"visit_day",sample:"library_id",group:"sample_type",taxon:"taxon",count:"taxon_reads"},columns:keys.map(key=>({key,label:key,type:"string" as const})),records:[
+      {rowIndex:0,sampleId:"L1",subjectId:"P1",key:null,data:{patient_id:"P1",visit_day:1,library_id:"L1",sample_type:"Urine",taxon:"Organism",taxon_reads:50,aki:"no"}},
+      {rowIndex:1,sampleId:null,subjectId:"P2",key:null,data:{patient_id:"P2",visit_day:7,library_id:"",sample_type:"",taxon:"",taxon_reads:null,aki:"yes"}},
+    ]});
+    const html = renderReportDocument(value);
+    expect(html).toContain("Clinical visits · P2");
+    expect(html).toContain("No retained sequenced libraries for P2");
+    expect(html).toContain("<td>yes</td>");
+    expect(html).not.toContain("<strong>P1</strong>");
+  });
+
+  it("exports named pages in order, escapes page titles and includes every block once", () => {
+    const value = input();
+    value.report.pages = [
+      { id: "results", title: "Results <checked>", blockIds: value.report.blocks.slice(1).map(b => b.id) },
+      { id: "intro", title: "Overview", blockIds: [value.report.blocks[0].id] },
+    ];
+    const html = renderReportDocument(value);
+    expect(html).toContain("Results &lt;checked&gt;");
+    expect(html.indexOf("Results &lt;checked&gt;")).toBeLessThan(html.indexOf("<h2>Overview</h2>"));
+    expect(html.match(/class="report-named-page"/g)).toHaveLength(2);
+    expect(html.match(/id="block-t1"/g)).toHaveLength(1);
+    expect(html).toContain("break-before:page");
+  });
+
   it("renders every block kind with escaped text and embedded plots", () => {
     const html = renderReportDocument(input());
     expect(html).toContain("<title>Cohort &lt;report&gt;</title>");

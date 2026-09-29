@@ -220,7 +220,8 @@ async function downloadFile(
   destination: string,
   remainingBytes: number,
   remainingExpandedBytes: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onBytes?: (bytes: number) => void
 ): Promise<{ bytes: number; md5: string; sha256: string; records: number; expandedBytes: number; readNamesSha256: string }> {
   const url = verifiedEnaDownloadUrl(file.url);
   const response = await fetch(url, {
@@ -244,6 +245,7 @@ async function downloadFile(
       }
       md5.update(chunk);
       sha256.update(chunk);
+      onBytes?.(bytes);
       callback(null, chunk);
     },
   });
@@ -313,6 +315,10 @@ export const enaFastqAccessionImporter: WorkbenchImporterProvider<EnaFastqAccess
     const downloaded: Array<WorkbenchFilePreviewItem & { readNamesSha256: string; storedFilename: string; verifiedMd5: string; sha256: string; records: number; bytes: number }> = [];
     let downloadedBytes = 0;
     let expandedBytes = 0;
+    let lastProgress = 0;
+    const downloadStarted = Date.now();
+    // Progress writes are chained so a late one never lands after the next phase.
+    let progressWrites: Promise<void> = Promise.resolve();
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
       const remainingBytes = maxDownloadBytes() - downloadedBytes;
@@ -324,14 +330,32 @@ export const enaFastqAccessionImporter: WorkbenchImporterProvider<EnaFastqAccess
       const storedFilename = `${String(index + 1).padStart(4, "0")}.fastq${file.filename.endsWith(".gz") ? ".gz" : ""}`;
       const destination = path.join(context.storage.cacheDir, storedFilename);
       assertPathInsideBase(destination, context.storage.cacheDir, "ENA FASTQ destination");
+      await progressWrites;
       await context.log(`Downloading ${file.runAccession}/${file.filename} from ENA.`);
       await context.update({
         status: "running",
         phase: "downloading",
-        progress: Math.floor((index / files.length) * 90),
+        progress: expectedBytes ? Math.floor((downloadedBytes / expectedBytes) * 90) : Math.floor((index / files.length) * 90),
         targetPath: destination,
       });
-      const result = await downloadFile(file, destination, remainingBytes, maxDownloadBytes() - expandedBytes, context.signal);
+      // Byte-level progress across the whole selection, at most once a second (as CAMI reports it).
+      const before = downloadedBytes;
+      const onBytes = (bytes: number) => {
+        if (Date.now() - lastProgress < 1000) return;
+        lastProgress = Date.now();
+        const done = before + bytes;
+        const total = Math.max(expectedBytes, done);
+        const elapsed = (Date.now() - downloadStarted) / 1000;
+        const speed = elapsed > 0 ? done / elapsed : 0;
+        const estimate = elapsed >= 10 && speed > 0 ? ` · ${(speed / 1024 ** 2).toFixed(1)} MiB/s · ~${Math.max(1, Math.ceil((total - done) / speed / 60))} min remaining` : " · estimating speed…";
+        const size = total >= 1024 ** 3 ? `${(total / 1024 ** 3).toFixed(2)} GiB` : `${(total / 1024 ** 2).toFixed(0)} MiB`;
+        const update = {
+          phase: `Downloading file ${index + 1} of ${files.length} · ${(done / 1024 ** 2).toFixed(0)} MiB / ${size} · ${total ? (done / total * 100).toFixed(1) : "0.0"}%${estimate}`,
+          progress: total ? Math.floor((done / total) * 90) : null,
+        };
+        progressWrites = progressWrites.then(() => context.update(update)).catch(() => undefined);
+      };
+      const result = await downloadFile(file, destination, remainingBytes, maxDownloadBytes() - expandedBytes, context.signal, onBytes);
       downloadedBytes += result.bytes;
       expandedBytes += result.expandedBytes;
       downloaded.push({ ...file, storedFilename, verifiedMd5: result.md5, sha256: result.sha256, records: result.records, bytes: result.bytes, readNamesSha256: result.readNamesSha256 });
@@ -369,6 +393,7 @@ export const enaFastqAccessionImporter: WorkbenchImporterProvider<EnaFastqAccess
       .createHash("sha256")
       .update(stableStringify(downloaded.map((file) => ({ path: file.storedFilename, sha256: file.sha256 }))))
       .digest("hex");
+    await progressWrites;
     await context.update({ phase: "verifying", progress: 95 });
     await context.log(`Verified ${downloaded.length} ENA FASTQ file(s).`);
     // The chosen runs with their sample attributes, offered as a Samples table next to the reads.
