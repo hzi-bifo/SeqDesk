@@ -127,6 +127,21 @@ export interface StorePipelineResponse {
   catalogs: PipelineCatalog[];
   capabilities: PipelineCapabilities | null;
   source: PipelineSourceDescriptor;
+  /**
+   * What the registry entry says for the pipeline finder and recipe steps, when it says it (explore/pipeline-record.ts):
+   * goals, typed inputs and outputs, stages, files, reference databases, size, citation(s), Methods template,
+   * changelog, licence, homepage. Absent when the entry carries none of them.
+   */
+  record?: Record<string, unknown>;
+}
+
+/** Registry entry fields the finder and recipe steps read, passed through as they are. */
+const RECORD_FIELDS = ["goals", "inputs", "outputs", "stages", "files", "references", "sizeBytes", "size", "citedBy", "signed", "citation", "citations", "methods", "answers", "incremental", "changelog", "license", "homepage", "settings", "estimate"] as const;
+
+function registryRecordFields(pipeline: RegistryPipelineEntry): Record<string, unknown> | undefined {
+  const raw = pipeline as unknown as Record<string, unknown>;
+  const picked = Object.fromEntries(RECORD_FIELDS.filter((key) => raw[key] !== undefined && raw[key] !== null).map((key) => [key, raw[key]]));
+  return Object.keys(picked).length ? picked : undefined;
 }
 
 function trimToUndefined(value: string | undefined | null): string | undefined {
@@ -296,5 +311,6 @@ export function normalizeRegistryPipeline(
     catalogs,
     capabilities,
     source,
+    ...(registryRecordFields(pipeline) ? { record: registryRecordFields(pipeline) } : {}),
   };
 }

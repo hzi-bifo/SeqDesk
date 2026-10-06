@@ -67,13 +67,18 @@ export async function readWaitingTaskReason(runFolder: string | null | undefined
 /**
  * A task job of the run that SLURM already ended badly while Nextflow has not noticed yet (it waits for the task's
  * exit file, up to exitReadTimeout): from `sacct -X -P -o JobID,JobName,State,ExitCode,WorkDir` lines. A later attempt
- * of the same task that runs or completed hides the earlier failure (Nextflow retries).
+ * of the same task that runs or completed hides the earlier failure (Nextflow retries). With the run's own job id,
+ * only task jobs submitted after it count: after a Resume the task jobs the earlier attempt left ended (cancelled
+ * with it, or the failure that stopped it) are history, not news about the attempt that runs now (seen against a
+ * simulated SLURM: a resumed run said "FastQC was cancelled outside SeqDesk" until Nextflow resubmitted FastQC).
  */
-export function endedTaskJob(sacctOutput: string, runFolder: string): { jobId: string; process: string; state: string; exitCode: string; workDir: string } | null {
+export function endedTaskJob(sacctOutput: string, runFolder: string, afterJobId?: string | null): { jobId: string; process: string; state: string; exitCode: string; workDir: string } | null {
   const work = `${path.resolve(runFolder)}/work/`;
+  const after = afterJobId && /^\d+$/.test(afterJobId) ? Number(afterJobId) : null;
   const rows = sacctOutput.split(/\r?\n/).flatMap((line) => {
     const [jobId = '', name = '', state = '', exitCode = '', workDir = ''] = line.split('|').map((field) => field.trim());
     if (!/^\d+$/.test(jobId) || !workDir || !path.resolve(workDir).startsWith(work)) return [];
+    if (after != null && Number(jobId) <= after) return [];
     return [{ jobId, name, process: name.replace(/^nf-/, '').replace(/_\(.*\)$/, ''), state: state.split(/\s+/)[0].toUpperCase(), exitCode, workDir }];
   });
   for (const row of [...rows].reverse()) {
@@ -85,12 +90,12 @@ export function endedTaskJob(sacctOutput: string, runFolder: string): { jobId: s
   return null;
 }
 
-export async function readEndedTaskJob(runFolder: string | null | undefined, since: Date | null | undefined, exec: Exec = run) {
+export async function readEndedTaskJob(runFolder: string | null | undefined, since: Date | null | undefined, exec: Exec = run, afterJobId?: string | null) {
   if (!runFolder) return null;
   try {
     const start = (since ?? new Date(Date.now() - 86_400_000)).toISOString().slice(0, 19);
     const { stdout } = await exec('sacct', ['--me', '-X', '-n', '-P', '-S', start, '-o', 'JobID,JobName%200,State,ExitCode,WorkDir%1024']);
-    return endedTaskJob(stdout, runFolder);
+    return endedTaskJob(stdout, runFolder, afterJobId);
   } catch {
     return null;
   }

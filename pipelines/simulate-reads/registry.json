@@ -76,7 +76,7 @@
       "readCount": {
         "type": "number",
         "title": "Read Count",
-        "description": "Number of reads per sample. For long-read mode this is the number of long reads.",
+        "description": "Whole number of reads per sample. Short-read modes accept 2 to 50000; long-read mode accepts 5 to 5000. Values outside the range of the chosen mode are adjusted to its nearest limit.",
         "default": 1000,
         "minimum": 2,
         "maximum": 50000
@@ -84,7 +84,7 @@
       "readLength": {
         "type": "number",
         "title": "Read Length",
-        "description": "Read length for short-read modes, or target average length for long-read mode.",
+        "description": "Whole number of bases. Short-read modes accept 25 to 300; long-read mode treats it as the target average length and accepts 500 to 30000. Values outside the range of the chosen mode are adjusted to its nearest limit.",
         "default": 150,
         "minimum": 25,
         "maximum": 30000

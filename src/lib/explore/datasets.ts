@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { computeCacheToken } from "./cache-token";
 import { computeContentHash, parseJsonObject, parseRoles, parseSchema } from "./schema";
 import { resolveExploreStorage, sanitizeSegment } from "./storage";
-import { fileStorageOf, INDEX_EVERY, readRowsFromFile, shareIdenticalData } from "./table-store";
+import { FORMAT_FILE, fileStorageOf, INDEX_EVERY, QUOTED_FORMAT, readRowsFromFile, shareIdenticalData, tsvEscape } from "./table-store";
 import { parseTargetKey } from "./target-key";
 import type {
   ExploreCell,
@@ -94,7 +94,9 @@ export async function listDatasets(targetKey: string, options: { lean?: boolean 
   // Lean: the column count instead of every column (a 10,000-column table is a megabyte of schema).
   return datasets.map((dataset) => {
     const summary = serializeDatasetSummary(dataset);
-    return options.lean ? { ...summary, columnCount: summary.schema?.columns.length ?? 0, schema: { columns: [] } } : summary;
+    // The internal sample id column is not shown or exported, so it is not counted either.
+    const shown = (summary.schema?.columns ?? []).filter((column) => !column.key.endsWith("_db_id")).length;
+    return options.lean ? { ...summary, columnCount: shown, schema: { columns: [] } } : summary;
   });
 }
 
@@ -253,12 +255,6 @@ function cellToKey(value: ExploreCell | undefined): string | null {
   return text ? text.slice(0, 200) : null;
 }
 
-function tsvEscape(value: ExploreCell): string {
-  if (value === null) return "";
-  const text = typeof value === "string" ? value : String(value);
-  return text.replace(/[\t\r\n]/g, " ");
-}
-
 /**
  * Persist a new immutable version of a dataset: rows into Postgres in batches,
  * a TSV plus schema copy on disk for kits and provenance, and the dataset's
@@ -291,6 +287,8 @@ export async function writeDatasetVersion(input: WriteVersionInput, client: Pris
 
   const columns = input.schema.columns.map((column) => column.key);
   // Written in chunks with a sparse line index, so pages of the file can be read without the database.
+  // Cells with a tab, line break or quote are quoted, so the file keeps every value as stored (rows.fmt marks the format).
+  await fs.writeFile(path.join(versionDir, FORMAT_FILE), QUOTED_FORMAT, "utf8");
   const handle = await fs.open(path.join(versionDir, "data.tsv"), "w");
   const offsets: number[] = [];
   try {

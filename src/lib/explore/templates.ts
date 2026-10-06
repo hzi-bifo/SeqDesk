@@ -8,7 +8,7 @@ import path from "path";
 import { z } from "zod";
 import { flowError } from "@/lib/integration/flow-contract";
 import { createAnalysis } from "./analyses";
-import { createFlow } from "./flows";
+import { createFlow, deleteFlow } from "./flows";
 import { getDatasetRecord } from "./datasets";
 import { db } from "@/lib/db";
 import { ensureOutputDataset } from "./recipe-edit";
@@ -16,6 +16,7 @@ import { loadRecipe, type RecipeActor } from "./recipe";
 import { parseSchema } from "./schema";
 import { checkDataset, clearFlowInputs, InputCheckSchema, saveFlowInput, type CheckResult, type InputCheck } from "./flow-inputs";
 import { ColumnRoleSchema, fillColumnParams, resolveColumns, roleColumns, rolesLine, type Resolution, type TableFacts } from "./template-columns";
+import { StepCategorySchema } from "./kits/schema";
 
 const SlotSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
@@ -36,6 +37,8 @@ const TemplateStepSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
   name: z.string().min(1).max(200),
   purpose: z.string().max(200).optional(),
+  /** The picker's method category (kits/schema.ts STEP_CATEGORIES); optional. */
+  category: StepCategorySchema.optional(),
   language: z.enum(["python", "r", "shell"]).default("python"),
   codeFile: z.string().min(1).max(200).optional(),
   kitId: z.string().min(1).max(80).optional(),
@@ -90,7 +93,7 @@ export function serializeTemplate(template: FlowTemplate) {
     id: template.id, name: template.name, description: template.description, slots: template.slots,
     inputs: template.inputs.map((input) => ({ key: input.key, label: input.label, expects: input.expects, kind: input.check.kind, columns: input.check.columns })),
     columns: template.columns.map((role) => ({ key: role.key, input: role.input, label: role.label, kind: role.kind, optional: role.optional, hint: role.hint ?? null, levels: role.levels.map((level) => ({ key: level.key, label: level.label, reference: level.reference })) })),
-    steps: template.steps.map((step) => ({ name: step.name, purpose: step.purpose ?? null, language: step.language, packages: step.packages, params: step.params })),
+    steps: template.steps.map((step) => ({ name: step.name, purpose: step.purpose ?? null, ...(step.category ? { category: step.category } : {}), language: step.language, packages: step.packages, params: step.params })),
   };
 }
 
@@ -195,9 +198,41 @@ function mappingOf(raw: unknown): Record<string, string | null> {
   return Object.fromEntries(Object.entries(value).map(([key, id]) => [key, typeof id === "string" && id ? id : null]));
 }
 
-export async function createFlowFromTemplate(input: { targetKey: string; templateId: string; name?: string | null; datasetId?: string | null; datasets?: unknown; columns?: unknown; intoFlowId?: string | null; slots: unknown; actor: RecipeActor }) {
+type FromTemplateInput = { targetKey: string; templateId: string; name?: string | null; datasetId?: string | null; datasets?: unknown; columns?: unknown; intoFlowId?: string | null; slots: unknown; actor: RecipeActor;
+  /** Idempotency id (flow_…): it becomes the new flow's id, so a repeat after a lost answer returns the flow it made. */
+  requestId?: string };
+
+/** A repeat of a finished request answers with its flow; a flow left empty by a crash is cleared and made again. */
+async function replayedFlow(input: FromTemplateInput): Promise<string | null> {
+  if (!input.requestId) return null;
+  const existing = await db.exploreFlow.findUnique({ where: { id: input.requestId }, select: { id: true, targetKey: true, createdById: true } });
+  if (!existing) return null;
+  if (existing.targetKey !== input.targetKey || existing.createdById !== input.actor.userId) throw flowError("invalid_request", "This request ID belongs to another analysis.");
+  if (await db.exploreAnalysis.count({ where: { flowId: existing.id } })) return existing.id;
+  await deleteFlow(existing.id);
+  return null;
+}
+
+export async function createFlowFromTemplate(input: FromTemplateInput) {
   const template = (await listTemplates()).find((candidate) => candidate.id === input.templateId);
   if (!template) throw flowError("not_found", "Template not found");
+  if (!input.intoFlowId) {
+    const replay = await replayedFlow(input);
+    if (replay) return replay;
+  }
+  try {
+    return await createFlowFromTemplateOnce(template, input);
+  } catch (error) {
+    // Two copies of one request racing: the loser finds the winner's flow.
+    if (input.requestId && (error as { code?: string })?.code === "P2002") {
+      const existing = await db.exploreFlow.findUnique({ where: { id: input.requestId }, select: { id: true } });
+      if (existing) return existing.id;
+    }
+    throw error;
+  }
+}
+
+async function createFlowFromTemplateOnce(template: FlowTemplate, input: FromTemplateInput) {
   if (template.inputs.length) return createFromInputs(template, input);
   if (!input.datasetId) throw flowError("invalid_request", "Choose a table of this study.");
   const dataset = await getDatasetRecord(input.datasetId);
@@ -212,7 +247,7 @@ export async function createFlowFromTemplate(input: { targetKey: string; templat
     if (!file.startsWith(`${template.dir}${path.sep}`)) throw flowError("invalid_request", "Template code must live in the template's folder.");
     code.set(step.key, await fs.readFile(file, "utf8"));
   }
-  const flow = await createFlow(input.targetKey, input.actor.userId, input.name?.trim() || template.name, template.description, input.actor.memberId ?? null);
+  const flow = await createFlow(input.targetKey, input.actor.userId, input.name?.trim() || template.name, template.description, input.actor.memberId ?? null, input.requestId);
   const stepIds = new Map<string, string>();
   for (const step of template.steps) {
     const model = await loadRecipe(flow.id);
@@ -240,7 +275,7 @@ export async function createFlowFromTemplate(input: { targetKey: string; templat
  * A template with named inputs: each maps to a table in the study's Data (or stays open, which blocks Run
  * until someone chooses one). Mapped tables must pass their check; steps get the template's params and packages.
  */
-async function createFromInputs(template: FlowTemplate, input: { targetKey: string; name?: string | null; datasets?: unknown; columns?: unknown; intoFlowId?: string | null; actor: RecipeActor }) {
+async function createFromInputs(template: FlowTemplate, input: { targetKey: string; name?: string | null; datasets?: unknown; columns?: unknown; intoFlowId?: string | null; actor: RecipeActor; requestId?: string }) {
   const given = mappingOf(input.datasets);
   const resolution = await resolveTemplateColumns(template, input.targetKey, given, input.columns);
   for (const slot of template.inputs) {
@@ -259,7 +294,7 @@ async function createFromInputs(template: FlowTemplate, input: { targetKey: stri
     code.set(step.key, await fs.readFile(file, "utf8"));
   }
   const flow = input.intoFlowId ? await emptyFlow(input.intoFlowId, input.targetKey, input.name?.trim() || null, template)
-    : await createFlow(input.targetKey, input.actor.userId, input.name?.trim() || template.name, template.description, input.actor.memberId ?? null);
+    : await createFlow(input.targetKey, input.actor.userId, input.name?.trim() || template.name, template.description, input.actor.memberId ?? null, input.requestId);
   const stepIds = new Map<string, string>();
   const uses = new Map<string, Array<{ stepId: string; alias: string }>>();
   for (const step of template.steps) {

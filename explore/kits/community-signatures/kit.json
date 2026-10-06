@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "community-signatures",
   "name": "Community signatures",
+  "category": "summarise",
   "description": "Recurring taxon combinations found by non-negative matrix factorisation of the samples-by-taxa relative-abundance matrix. Every sample is a mixture of a few signatures, each a weighted set of taxa; the outputs give the taxa behind each signature, each sample's signature shares and the mean shares per group.",
   "language": "python",
   "environment": "seqdesk-explore-python",

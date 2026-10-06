@@ -11,6 +11,7 @@ import { getAdapter, registerAdapter } from '@/lib/pipelines/adapters';
 import { mergePipelineDerivedConfig } from '@/lib/pipelines/derived-config';
 import { getPipelineEnabled } from '@/lib/pipelines/enablement';
 import { needsInlineSlurm, slurmJobSlots } from '@/lib/pipelines/slurm-limits';
+import { sbatchJobId } from '@/lib/pipelines/sbatch-output';
 import { admits, localBudget, localRunLimits, localWaitReason, localWaitWords, type LocalRunLimits } from '@/lib/pipelines/local-executor';
 import { getExecutionSettings } from '@/lib/pipelines/execution-settings';
 import {
@@ -1503,12 +1504,7 @@ export async function startPipelineRunForOperator({
         let stderrData = '';
 
         sbatchProcess.stdout.on('data', (data) => {
-          const output = data.toString();
-          stdoutData += output;
-          const match = output.trim().match(/^(\d+)/);
-          if (match) {
-            jobId = match[1];
-          }
+          stdoutData += data.toString();
         });
 
         sbatchProcess.stderr.on('data', (data) => {
@@ -1517,6 +1513,8 @@ export async function startPipelineRunForOperator({
 
         await new Promise<void>((resolve, reject) => {
           sbatchProcess.on('close', (code) => {
+            // The whole output, once sbatch has exited (a chunk may hold only part of the id).
+            jobId = sbatchJobId(stdoutData) ?? '';
             if (code === 0) {
               if (!jobId) {
                 const details = stderrData.trim() || stdoutData.trim() || 'No output captured';

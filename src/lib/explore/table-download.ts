@@ -34,9 +34,15 @@ export interface TableDownload {
   limited: "sort" | null;
 }
 
-const tsvCell = (value: unknown) => (value === null || value === undefined ? "" : String(typeof value === "object" ? JSON.stringify(value) : value).replace(/[\t\r\n]/g, " "));
-const csvCell = (value: unknown) => {
-  const text = value === null || value === undefined ? "" : String(typeof value === "object" ? JSON.stringify(value) : value);
+/** A cell as text, with its tabs, line breaks and quotes intact (matching and rebuilding a row work on this). */
+const cellText = (value: unknown) => (value === null || value === undefined ? "" : String(typeof value === "object" ? JSON.stringify(value) : value));
+/** A TSV cell: quoted when it holds a tab, line break or quote, so the value reads back exactly as stored. */
+export const tsvCell = (value: unknown) => {
+  const text = cellText(value);
+  return /[\t\r\n"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+export const csvCell = (value: unknown) => {
+  const text = cellText(value);
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 };
 
@@ -91,8 +97,8 @@ export async function openTableDownload(version: ExploreDatasetVersion, edits: E
     let cursor: string | null = null;
     for (;;) {
       const page = await fetchDatasetRows(version.id, { cursor, limit: 2000 });
-      const kept = page.rows.filter((record) => compiled.matches(header.map((key) => tsvCell(record.data[key]))));
-      if (kept.length) yield toRows(kept.map((record) => ({ rowIndex: record.rowIndex, cells: header.map((key) => tsvCell(record.data[key])) }))).map(line).join("");
+      const kept = page.rows.filter((record) => compiled.matches(header.map((key) => cellText(record.data[key]))));
+      if (kept.length) yield toRows(kept.map((record) => ({ rowIndex: record.rowIndex, cells: header.map((key) => cellText(record.data[key])) }))).map(line).join("");
       cursor = page.nextCursor;
       if (!cursor || options.signal?.aborted) break;
     }
@@ -107,7 +113,7 @@ async function sortDatabaseRows(versionId: string, header: string[], compiled: C
   for (;;) {
     const page = await fetchDatasetRows(versionId, { cursor, limit: 2000 });
     for (const record of page.rows) {
-      const cells = header.map((key) => tsvCell(record.data[key]));
+      const cells = header.map((key) => cellText(record.data[key]));
       if (!compiled.matches(cells)) continue;
       matched += 1;
       pool.push({ rowIndex: record.rowIndex, cells, key: compiled.sortKey(cells) });

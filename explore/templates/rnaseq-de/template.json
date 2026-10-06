@@ -11,6 +11,7 @@
     {
       "key": "filter",
       "name": "Filter low counts",
+      "category": "filter",
       "purpose": "Keep genes with enough reads to test.",
       "language": "python",
       "codeFile": "steps/filter.py",
@@ -25,6 +26,7 @@
     {
       "key": "normalise",
       "name": "Normalise to log CPM",
+      "category": "normalise",
       "purpose": "Make samples with different sequencing depth comparable.",
       "language": "python",
       "codeFile": "steps/normalise.py",
@@ -35,6 +37,7 @@
     {
       "key": "test",
       "name": "Test genes",
+      "category": "test",
       "purpose": "Find genes whose expression differs between the groups.",
       "language": "python",
       "codeFile": "steps/test.py",
@@ -49,6 +52,7 @@
     {
       "key": "volcano",
       "name": "Volcano plot",
+      "category": "plot",
       "purpose": "Show fold change against significance for every gene.",
       "language": "python",
       "codeFile": "steps/volcano.py",

@@ -117,6 +117,8 @@ export async function deleteFlowWithOutputs(flowId: string): Promise<FlowDeletio
   }
   const analyses = await db.exploreAnalysis.findMany({ where: { flowId }, select: { id: true } });
   const analysisIds = analyses.map((analysis) => analysis.id);
+  // Pipeline runs of its steps still going stop with the analysis (else they run on orphaned).
+  await import("./pipeline-step-runs").then((module) => module.stopPipelinesOfSteps(analysisIds)).catch((error) => console.error("[flow] could not stop the analysis's pipelines", flowId, error));
   const candidateDatasets = await flowDatasetIds(analysisIds);
   // Another flow's input or another step's code reading the table keeps it.
   const keptDatasets: string[] = [];

@@ -81,6 +81,7 @@
     {
       "key": "qc",
       "name": "Sample QC and filter",
+      "category": "filter",
       "purpose": "Drop small libraries and genes too lowly expressed to test.",
       "language": "r",
       "codeFile": "steps/01-qc-filter.R",
@@ -117,6 +118,7 @@
     {
       "key": "pca",
       "name": "Normalise and PCA",
+      "category": "normalise",
       "purpose": "Do samples separate by treatment or by cell line?",
       "language": "r",
       "codeFile": "steps/02-normalise-pca.R",
@@ -147,6 +149,7 @@
     {
       "key": "de",
       "name": "DESeq2 treated vs untreated",
+      "category": "test",
       "purpose": "Genes changed by dexamethasone, paired by cell line.",
       "language": "r",
       "codeFile": "steps/03-deseq2.R",
@@ -189,6 +192,7 @@
     {
       "key": "top",
       "name": "Top genes and heatmap",
+      "category": "plot",
       "purpose": "The strongest responders, per sample.",
       "language": "r",
       "codeFile": "steps/04-top-genes.R",

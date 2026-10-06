@@ -30,6 +30,8 @@ import { cancelRun, createAndStartRun, ExploreRunError } from "./runner";
 import { figureTrialInputs } from "./figure-trial-inputs";
 import { readRunIsolation, summarizeIsolation } from "./sandbox/prepare";
 import { parseJsonObject, parseSchema } from "./schema";
+import { pipelineReadsChanged } from "./pipeline-steps";
+import { pipelineFailureWords, preparePipelineEntries, settleFinishedPipelineStep, snapshotOf, startPipelineStep, stopPipelineStepRun, syncPipelineSteps, type PipelinePlan, type PipelineRunOptions } from "./pipeline-step-runs";
 
 export type FlowRunKind = "full" | "outOfDate" | "steps" | "trial";
 export type FlowRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -51,6 +53,9 @@ export interface PlanEntry {
   reusedFrom: { flowRunId: string; number: number | null; stepRunId: string } | null;
   /** Figure trials (figure-trial.ts): the step reads the exact input files this step run read, and runs this code. */
   figureTrial?: { inputsFrom: string; codeOverride: string | null; continualfig: "record" | "style" };
+  /** A pipeline step (explore.pipeline-steps): it starts, joins or reuses a pipeline run instead of running code. */
+  kind?: "code" | "pipeline" | "samples";
+  pipeline?: PipelinePlan;
 }
 
 export interface FlowActor {
@@ -66,6 +71,8 @@ export interface StartFlowRunInput {
   notify?: boolean;
   requestId?: string;
   actor: FlowActor;
+  /** What the starter may do with pipelines, a step's Resume, and steps that must not reuse (pipeline-step-runs.ts). */
+  pipelines?: PipelineRunOptions | null;
 }
 
 export interface StepValue {
@@ -102,6 +109,8 @@ export interface FlowRunSummary {
   environment: (EnvironmentPin & Record<string, unknown>) | null;
   headline: { key: string; label: string; value: unknown; unit: string | null } | null;
   failed: { stepId: string; stepLabel: string; words: string } | null;
+  /** The pipeline step the run waits on now, in words ("Running · step 2 of 5: DADA2 · ~20 min left"). */
+  pipeline?: { stepId: string; label: string; status: string; words: string } | null;
   startedBy: { userId: string; memberId: string | null; name: string | null };
   current: boolean;
   superseded: boolean;
@@ -259,6 +268,7 @@ export function planRun(model: RecipeModel, scope: StartFlowRunInput["scope"], c
       execute: runs,
       dependsOn: [...(model.upstream.get(step.id) ?? [])],
       reusedFrom: !runs && record && record.status === "completed" ? { flowRunId: record.reusedFrom?.flowRunId ?? record.flowRunId, number: record.reusedFrom?.number ?? record.flowRunNumber, stepRunId: record.stepRunId } : null,
+      ...(step.stepKind === "pipeline" ? { kind: "pipeline" as const } : step.stepKind === "samples" ? { kind: "samples" as const } : {}),
     };
   });
 }
@@ -284,16 +294,21 @@ export async function startFlowRun(flowId: string, input: StartFlowRunInput): Pr
   const currentRun = model.flow.currentRunId ? await runRecords(model.flow.currentRunId) : null;
   const current = currentRun?.records ?? new Map<string, StepRecord>();
   // The same states the recipe shows (recipe-view.ts), including a failure that still applies.
-  const states = computeStepStates({ model, records: current, revisionsUsed: await revisionsUsedBy(current), failedAt: await failedStepAfter(flowId, currentRun?.run ?? null, model) });
+  const states = computeStepStates({ model, records: current, revisionsUsed: await revisionsUsedBy(current), failedAt: await failedStepAfter(flowId, currentRun?.run ?? null, model), readsChanged: await pipelineReadsChanged(model, current) });
   const trial = Boolean(input.trial);
   const plan = planRun(model, input.scope, current, states);
+  // Pipeline steps are checked before anything is recorded: installed, ready and allowed for this person (a trial
+  // reads their last result instead of starting them).
+  if (plan.some((entry) => entry.kind === "pipeline")) await preparePipelineEntries({ model, plan, current, trial, options: input.pipelines });
   const executed = plan.filter((entry) => entry.execute);
   if (!executed.length) throw flowError("invalid_request", "Every step is current. Choose the steps to run again.");
+  // Choose samples steps run without code (samples-step.ts): no environment.
+  const executedCode = executed.filter((entry) => entry.kind !== "pipeline" && entry.kind !== "samples");
 
   // Each step's effective environment is fixed now. A step with extra packages uses its derived environment:
   // its build starts here and the step waits for it; a shipped base must already be built.
-  const stepPackages = new Map((await db.exploreAnalysis.findMany({ where: { id: { in: executed.map((entry) => entry.analysisId) } }, select: { id: true, packages: true } })).map((row) => [row.id, row.packages] as const));
-  for (const entry of executed) {
+  const stepPackages = new Map((await db.exploreAnalysis.findMany({ where: { id: { in: executedCode.map((entry) => entry.analysisId) } }, select: { id: true, packages: true } })).map((row) => [row.id, row.packages] as const));
+  for (const entry of executedCode) {
     const state = await resolveStepEnvironment({ environmentName: entry.environmentName, packages: stepPackages.get(entry.analysisId) });
     if (!state.derived) continue;
     if (state.status === "failed") throw flowError("environment_missing", `Could not build the environment for step ${entry.label}. Change its packages or prepare it again.\n${condaErrorExcerpt(state.error ?? state.log ?? "")}`.trim(), { environment: state.name, step: entry.analysisId });
@@ -301,11 +316,12 @@ export async function startFlowRun(flowId: string, input: StartFlowRunInput): Pr
     entry.packages = state.packages.packages.length;
     if (state.status !== "ready") await prepareEnvironmentByName(state.name);
   }
-  for (const name of new Set(executed.filter((entry) => !entry.packages).map((entry) => entry.environmentName))) {
+  for (const name of new Set(executedCode.filter((entry) => !entry.packages).map((entry) => entry.environmentName))) {
     if (!(await resolveReadyEnvironment(name))) throw flowError("environment_missing", `Environment ${name} is not built yet. A facility admin can build it under Explore environments.`, { environment: name });
   }
-  const primary = executed[0];
-  const environment = await pinEnvironment(primary.environmentName, primary.language).catch(() => null);
+  // The run's environment is its first code step's; a run of pipeline steps only has none (each pipeline keeps its own).
+  const primary = executedCode[0];
+  const environment = primary ? await pinEnvironment(primary.environmentName, primary.language).catch(() => null) : null;
   const kind: FlowRunKind = trial ? "trial" : input.scope === "all" ? "full" : input.scope === "outOfDate" ? "outOfDate" : "steps";
   const sample = trial ? Math.min(Math.max(Math.floor(input.sample ?? 2), 1), 50) : null;
 
@@ -384,10 +400,14 @@ export async function advanceFlowRun(flowRunId: string): Promise<void> {
   }
 }
 
-async function advanceOnce(flowRunId: string): Promise<void> {
+async function advanceOnce(flowRunId: string, depth = 0): Promise<void> {
   const run = await db.exploreFlowRun.findUnique({ where: { id: flowRunId } });
   if (!run || !ACTIVE_FLOW.includes(run.status)) return;
   const plan = planOf(run);
+  // Pipeline steps first follow their pipeline runs: progress, the step's tables when one finished, its words when one failed.
+  const pipelines = plan.some((entry) => entry.execute && (entry.kind === "pipeline" || entry.kind === "samples"));
+  const targetKey = pipelines ? (await db.exploreFlow.findUnique({ where: { id: run.flowId }, select: { targetKey: true } }))?.targetKey ?? "" : "";
+  const pipelineChanged = pipelines ? await syncPipelineSteps(run, plan, targetKey) : false;
   const stepRuns = await db.exploreAnalysisRun.findMany({ where: { flowRunId: run.id }, select: stepRunSelect, orderBy: { createdAt: "asc" } });
   const latest = new Map<string, StepRunLite>();
   for (const stepRun of stepRuns) latest.set(stepRun.analysisId, stepRun);
@@ -396,7 +416,8 @@ async function advanceOnce(flowRunId: string): Promise<void> {
   const failed = executed.find((entry) => latest.get(entry.analysisId)?.status === "failed");
   if (failed) {
     const stepRun = latest.get(failed.analysisId)!;
-    await failFlowRun(run, failed, failureWords(failed.label, stepRun.errorTail, stepRun.exitCode), stepRun.errorTail);
+    const words = failed.kind === "pipeline" ? pipelineFailureWords(failed.label, stepRun.results, stepRun.errorTail, failed.pipeline?.pipelineId) : failureWords(failed.label, stepRun.errorTail, stepRun.exitCode);
+    await failFlowRun(run, failed, words, stepRun.errorTail);
     return;
   }
   if (executed.some((entry) => latest.get(entry.analysisId)?.status === "cancelled")) {
@@ -411,6 +432,7 @@ async function advanceOnce(flowRunId: string): Promise<void> {
 
   let model: RecipeModel | null | undefined;
   let started = false;
+  let settledNow = false;
   for (const entry of executed) {
     if (latest.has(entry.analysisId)) continue;
     const ready = entry.dependsOn.every((dep) => {
@@ -418,6 +440,27 @@ async function advanceOnce(flowRunId: string): Promise<void> {
       return !upstream || !upstream.execute || latest.get(dep)?.status === "completed";
     });
     if (!ready) continue;
+    if (entry.kind === "samples") {
+      // The sample list is made at once from the metadata and the reads (no code, no environment).
+      const { runSamplesStep } = await import("./samples-step");
+      const result = await runSamplesStep(run, entry, targetKey, run.flowId);
+      if (!result) continue;
+      started = true;
+      settledNow = true;
+      const row = await db.exploreAnalysisRun.findUnique({ where: { id: `fr_${run.id}_${entry.analysisId}`.slice(0, 120) }, select: stepRunSelect });
+      if (row) latest.set(entry.analysisId, row);
+      continue;
+    }
+    if (entry.kind === "pipeline") {
+      // Starts (or joins, reuses, resumes) the pipeline; a pinned or reused step settles at once.
+      const result = await startPipelineStep(run, entry, targetKey);
+      if (!result) continue;
+      started = true;
+      if (result.settled) settledNow = true;
+      const row = await db.exploreAnalysisRun.findUnique({ where: { id: `fr_${run.id}_${entry.analysisId}`.slice(0, 120) }, select: stepRunSelect });
+      if (row) latest.set(entry.analysisId, row);
+      continue;
+    }
     if (entry.packages) {
       // Runs never install packages: the step waits while its environment builds, and fails with the conda error.
       const environment = await prepareEnvironmentByName(entry.environmentName);
@@ -485,9 +528,19 @@ async function advanceOnce(flowRunId: string): Promise<void> {
     data.startedAt = new Date();
   }
   const changed = becameRunning || run.doneCount !== completed.length || run.currentAnalysisId !== (running?.analysisId ?? null);
-  if (!changed) return;
-  const updated = await db.exploreFlowRun.updateMany({ where: { id: run.id, status: { in: ACTIVE_FLOW } }, data });
-  if (updated.count) await flowRunChanged(run.id, becameRunning ? "started" : "progress");
+  if (changed) {
+    const updated = await db.exploreFlowRun.updateMany({ where: { id: run.id, status: { in: ACTIVE_FLOW } }, data });
+    if (updated.count) await flowRunChanged(run.id, becameRunning ? "started" : "progress");
+  } else if (pipelineChanged) await flowRunChanged(run.id, "progress");
+  // A pipeline step that settled at once (pinned, reused, refused): the steps after it can start in this pass.
+  if (settledNow && depth < 20) await advanceOnce(flowRunId, depth + 1);
+}
+
+/** Stop a step run of a recipe run: a pipeline step's pipeline run too (unless another run waits on it). */
+async function stopStepRun(stepRunId: string): Promise<boolean> {
+  const row = await db.exploreAnalysisRun.findUnique({ where: { id: stepRunId }, select: { executionMode: true } });
+  if (row?.executionMode === "pipeline") return stopPipelineStepRun(stepRunId);
+  return cancelRun(stepRunId);
 }
 
 async function failFlowRun(run: FlowRunRecord, entry: PlanEntry, words: string, detail: string | null): Promise<void> {
@@ -498,7 +551,7 @@ async function failFlowRun(run: FlowRunRecord, entry: PlanEntry, words: string, 
   if (!updated.count) return;
   // The steps after it do not start; anything still running is stopped.
   const active = await db.exploreAnalysisRun.findMany({ where: { flowRunId: run.id, status: { in: [...ACTIVE_STEP] } }, select: { id: true } });
-  for (const stepRun of active) await cancelRun(stepRun.id).catch(() => false);
+  for (const stepRun of active) await stopStepRun(stepRun.id).catch(() => false);
   await flowRunChanged(run.id, "failed");
 }
 
@@ -506,7 +559,7 @@ async function finishCancelled(flowRunId: string): Promise<void> {
   const updated = await db.exploreFlowRun.updateMany({ where: { id: flowRunId, status: { in: ACTIVE_FLOW } }, data: { status: "cancelled", completedAt: new Date(), currentAnalysisId: null } });
   if (!updated.count) return;
   const active = await db.exploreAnalysisRun.findMany({ where: { flowRunId, status: { in: [...ACTIVE_STEP] } }, select: { id: true } });
-  for (const stepRun of active) await cancelRun(stepRun.id).catch(() => false);
+  for (const stepRun of active) await stopStepRun(stepRun.id).catch(() => false);
   await flowRunChanged(flowRunId, "cancelled");
 }
 
@@ -583,7 +636,17 @@ export async function advanceActiveFlowRuns(): Promise<void> {
 export async function cancelFlowRun(flowRunId: string): Promise<FlowRunSummary> {
   const run = await db.exploreFlowRun.findUnique({ where: { id: flowRunId } });
   if (!run) throw flowError("not_found", "Run not found");
-  if (ACTIVE_FLOW.includes(run.status)) await finishCancelled(run.id);
+  if (ACTIVE_FLOW.includes(run.status)) {
+    // A cancel that arrives after a pipeline's work finished keeps that step finished; when that was all the run
+    // had left, the run finishes instead of being cancelled.
+    const pipelineSteps = await db.exploreAnalysisRun.findMany({ where: { flowRunId, status: { in: [...ACTIVE_STEP] }, executionMode: "pipeline" }, select: { id: true } });
+    let settled = false;
+    for (const stepRun of pipelineSteps) if (await settleFinishedPipelineStep(stepRun.id).catch(() => false)) settled = true;
+    const executed = planOf(run).filter((entry) => entry.execute);
+    const done = settled ? new Set((await db.exploreAnalysisRun.findMany({ where: { flowRunId, status: "completed" }, select: { analysisId: true } })).map((row) => row.analysisId)) : new Set<string>();
+    if (settled && executed.length && executed.every((entry) => done.has(entry.analysisId))) await advanceOnce(run.id);
+    else await finishCancelled(run.id);
+  }
   return serializeFlowRunById(run.id);
 }
 
@@ -729,6 +792,8 @@ export function serializeFlowRun(run: FlowRunRecord, context: SerializeContext):
   const executed = plan.filter((entry) => entry.execute);
   const currentEntry = run.currentAnalysisId ? plan.find((entry) => entry.analysisId === run.currentAnalysisId) : undefined;
   const inputs = Array.isArray(run.inputs) && (run.inputs as unknown[]).length ? (run.inputs as unknown as Pin[]) : (context.stepRuns ?? []).flatMap((stepRun) => pinsOf(stepRun.inputPins));
+  const waitingOn = ACTIVE_FLOW.includes(run.status) ? plan.find((entry) => entry.kind === "pipeline" && entry.execute && ACTIVE_STEP.has((context.stepRuns ?? []).find((stepRun) => stepRun.analysisId === entry.analysisId)?.status ?? "")) : undefined;
+  const waitingSnapshot = waitingOn ? snapshotOf((context.stepRuns ?? []).find((stepRun) => stepRun.analysisId === waitingOn.analysisId)?.results) : null;
   return {
     id: run.id,
     flowId: run.flowId,
@@ -747,6 +812,7 @@ export function serializeFlowRun(run: FlowRunRecord, context: SerializeContext):
     preparing: ACTIVE_FLOW.includes(run.status) ? (run.preparing as FlowRunSummary["preparing"]) ?? null : null,
     headline: summary.headline ?? null,
     failed: run.status === "failed" && run.failedAnalysisId ? { stepId: run.failedAnalysisId, stepLabel: run.failedStepLabel ?? "?", words: run.failureWords ?? "" } : null,
+    pipeline: waitingOn ? { stepId: waitingOn.analysisId, label: waitingOn.label, status: waitingSnapshot?.status ?? "queued", words: waitingSnapshot?.words ?? "Starting the pipeline" } : null,
     startedBy: { userId: run.startedById, memberId: run.startedByMemberId, name: run.startedByName },
     current: context.currentRunId === run.id,
     superseded: run.status === "completed" && run.kind !== "trial" && context.currentRunId !== run.id && context.currentNumber !== null && (run.number ?? 0) < context.currentNumber,
@@ -859,7 +925,8 @@ export async function getFlowRunDetail(flowRunId: string) {
     return {
       stepId: entry.analysisId, label: entry.label, name: entry.name, status,
       stepRunId: stepRun?.id ?? null, runNumber: stepRun?.runNumber ?? null,
-      reusedFrom: !entry.execute && entry.reusedFrom ? { flowRunId: entry.reusedFrom.flowRunId, number: entry.reusedFrom.number } : null,
+      // A pipeline step that reused a finished pipeline run names the run of the recipe that ran it.
+      reusedFrom: !entry.execute && entry.reusedFrom ? { flowRunId: entry.reusedFrom.flowRunId, number: entry.reusedFrom.number } : entry.kind === "pipeline" ? snapshotOf(stepRun?.results)?.reusedFrom ?? null : null,
       revisionId: entry.revisionId,
       params: record ? paramsObject(used.get(record.revisionId)?.params) : null,
       durationMs: stepRun?.durationMs ?? null,
@@ -871,11 +938,15 @@ export async function getFlowRunDetail(flowRunId: string) {
       outputs: artifacts.filter((artifact) => artifact.runId === stepRun?.id).map((artifact) => ({ artifactId: artifact.id, name: artifact.name, kind: artifact.kind, format: artifact.format })),
       // How the step ran: "Sandboxed · no network · reads its inputs only".
       isolation: stepRun ? isolations.get(stepRun.id) ?? null : null,
+      // A pipeline step: its pipeline run in plain words (stages, samples, the error and its fix, the tables it wrote).
+      ...(entry.kind === "pipeline" ? { kind: "pipeline", pipeline: snapshotOf(stepRun?.results) } : {}),
     };
   });
   const runningEntry = plan.find((entry) => entry.execute && ACTIVE_STEP.has(latest.get(entry.analysisId)?.status ?? ""));
   const runningStep = runningEntry ? latest.get(runningEntry.analysisId) : undefined;
-  const logTail = runningEntry && runningStep?.runFolder ? { stepId: runningEntry.analysisId, label: runningEntry.label, lines: (await readTail(path.join(runningStep.runFolder, "logs", "pipeline.out"), 40)) ?? "" } : null;
+  const pipelineLog = runningEntry?.kind === "pipeline" ? snapshotOf(runningStep?.results)?.log ?? [] : [];
+  const logTail = runningEntry && runningStep?.runFolder ? { stepId: runningEntry.analysisId, label: runningEntry.label, lines: (await readTail(path.join(runningStep.runFolder, "logs", "pipeline.out"), 40)) ?? "" }
+    : runningEntry?.kind === "pipeline" && pipelineLog.length ? { stepId: runningEntry.analysisId, label: runningEntry.label, lines: pipelineLog.join("\n") } : null;
   const findings = await db.exploreRunFinding.findMany({ where: { flowRunId: run.id }, orderBy: { acceptedAt: "asc" } });
   const byStep = new Map<string, StepRunLite>();
   for (const [stepId, record] of records) { const stepRun = stepRuns.get(record.stepRunId); if (stepRun) byStep.set(stepId, stepRun); }
@@ -920,11 +991,22 @@ export async function flowRunOutputs(flowRunId: string) {
       artifactId: artifact.id, stepId, stepLabel: labelOf.get(stepId) ?? "?", name: artifact.name, title: artifact.name, kind: artifact.kind, format: artifact.format,
       url: `explore/runs/${artifact.runId}/artifacts/${artifact.id}`,
       thumbnailUrl: png ? `explore/runs/${png.runId}/artifacts/${png.id}` : null,
-      dims: version ? `${version.rowCount.toLocaleString("en-US")} rows × ${parseSchema(version.schema).columns.length} columns` : null,
+      dims: version ? `${version.rowCount.toLocaleString("en-US")} ${version.rowCount === 1 ? "row" : "rows"} × ${parseSchema(version.schema).columns.length} ${parseSchema(version.schema).columns.length === 1 ? "column" : "columns"}` : null,
       datasetId: artifact.derivedDatasetId, versionId: artifact.derivedVersionId, checksum: artifact.checksum,
       ref: `labdesk://output/${run.id}/${artifact.id}`, usedIn,
     };
   });
+  // A pipeline step's tables are versions of its declared tables (no step artifacts): listed from its run record.
+  for (const entry of plan.filter((candidate) => candidate.kind === "pipeline")) {
+    const record = records.get(entry.analysisId);
+    const snapshot = record ? snapshotOf(stepRuns.get(record.stepRunId)?.results) : null;
+    for (const output of snapshot?.outputs ?? []) {
+      if (!output.versionId) continue;
+      outputs.push({ artifactId: `pipeline-table:${output.versionId}`, stepId: entry.analysisId, stepLabel: entry.label, name: output.name, title: output.name, kind: "table", format: "tsv",
+        url: null as unknown as string, thumbnailUrl: null, dims: output.rows !== null ? `${output.rows.toLocaleString("en-US")} ${output.rows === 1 ? "row" : "rows"}` : null, datasetId: output.datasetId, versionId: output.versionId, checksum: null,
+        ref: `labdesk://output/${run.id}/pipeline-table:${output.versionId}`, usedIn: [] });
+    }
+  }
   const results = new Map([...records].map(([stepId, record]) => [stepId, stepRuns.get(record.stepRunId)?.results ?? null] as const));
   const { values } = runValues(plan, results, flow?.headlineValue ?? null);
   return { outputs, values: values.map((value) => ({ ...value, ref: `labdesk://value/${run.id}/${value.stepId}/${encodeURIComponent(value.metric)}`, runId: run.id, runNumber: run.number, output: null, verified: run.status === "completed" })) };
@@ -976,8 +1058,17 @@ export async function compareFlowRuns(aId: string, bId: string, stepId?: string 
 
   const envA = a.run.environment as { label?: string; lockDigest?: string | null; specHash?: string } | null;
   const envB = b.run.environment as { label?: string; lockDigest?: string | null; specHash?: string } | null;
-  const environment = (envA?.lockDigest ?? envA?.specHash ?? null) === (envB?.lockDigest ?? envB?.specHash ?? null) ? "same" : { from: { label: envA?.label ?? null, lockDigest: envA?.lockDigest ?? null }, to: { label: envB?.label ?? null, lockDigest: envB?.lockDigest ?? null } };
-  if (environment !== "same") words.push("the environment changed");
+  // The run's environment is the first executed step's; a step with extra packages runs in its own derived one, so a
+  // step whose environment differs between the runs is a change too, whichever step is first.
+  const stepEnvironments = planB.flatMap((entry) => {
+    const other = planA.find((candidate) => candidate.analysisId === entry.analysisId);
+    if (!other || !entry.execute || !other.execute || !entry.environmentName || !other.environmentName || other.environmentName === entry.environmentName) return [];
+    return [{ stepId: entry.analysisId, label: entry.label, from: other.environmentName, to: entry.environmentName }];
+  });
+  const topLevelChanged = (envA?.lockDigest ?? envA?.specHash ?? null) !== (envB?.lockDigest ?? envB?.specHash ?? null);
+  const environment = !topLevelChanged && !stepEnvironments.length ? "same" : { from: { label: envA?.label ?? null, lockDigest: envA?.lockDigest ?? null }, to: { label: envB?.label ?? null, lockDigest: envB?.lockDigest ?? null }, steps: stepEnvironments };
+  if (topLevelChanged) words.push("the environment changed");
+  for (const entry of stepEnvironments) words.push(`step ${entry.label} ran in another environment`);
 
   const steps = planB.map((entry) => {
     const recordA = a.records.get(entry.analysisId);

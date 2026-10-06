@@ -80,6 +80,18 @@ describe("streamed accumulators", () => {
   });
 });
 
+describe("writeDatasetVersion (database-backed tables)", () => {
+  it("writes its data.tsv quoted, so tabs, line breaks and quotes in a cell survive an export", async () => {
+    const { writeDatasetVersion } = await import("./datasets");
+    datasets.set("multi", { id: "multi", currentVersionId: null });
+    const schema = inferSchema([{ id: "a", note: "x" }]);
+    const result = await writeDatasetVersion({ datasetId: "multi", schema, rows: [{ id: "a", note: "line one\nline two" }, { id: "b", note: "tab\there" }, { id: "c", note: 'say "hi"' }], provenance: { builtAt: "", builder: "t", sources: [] }, buildSource: "import" } as never);
+    const dir = versions.get(result.versionId)!.storagePath!;
+    expect(await fs.readFile(path.join(dir, "rows.fmt"), "utf8")).toBe("quoted-v1");
+    expect(await fs.readFile(path.join(dir, "data.tsv"), "utf8")).toBe('id\tnote\na\t"line one\nline two"\nb\t"tab\there"\nc\t"say ""hi"""\n');
+  });
+});
+
 describe("writeDatasetVersionStream", () => {
   it("keeps small tables in the database and large ones in the file, with pages read back from the file", async () => {
     const { writeDatasetVersionStream, readRowsFromFile } = await import("./table-store");
@@ -127,5 +139,30 @@ describe("writeDatasetVersionStream", () => {
     await expect(writeDatasetVersionStream({ datasetId: "cancel", columns: ["gene", "s1", "s2"], rows: generate(20_000), provenance: { builtAt: "", builder: "t", sources: [] }, buildSource: "import", signal: controller.signal })).rejects.toBeInstanceOf(ImportCancelled);
     expect([...versions.values()].some((version) => version.datasetId === "cancel")).toBe(false);
     await expect(fs.access(path.join(root, "cancel", "v1"))).rejects.toThrow();
+  });
+});
+
+describe("file-only tables keep every stored value", () => {
+  it("reads tabs, line breaks, quotes and leading zeros back exactly, with and without the index", async () => {
+    const { writeDatasetVersionStream, readRowsFromFile } = await import("./table-store");
+    datasets.set("fidelity", { id: "fidelity", currentVersionId: null });
+    const tricky: Array<Record<string, string | null>> = [
+      { id: "001", note: "line one\nline two" },
+      { id: "002", note: "a\tb" },
+      { id: "003", note: 'say "hi", \r\nbye' },
+      { id: "004", note: '"starts with a quote' },
+      { id: "005", note: null },
+      { id: "006", note: "C:\\temp\\new" },
+    ];
+    const written = await writeDatasetVersionStream({ datasetId: "fidelity", columns: ["id", "note"], rows: (async function* () { yield tricky; })(), provenance: { builtAt: "", builder: "t", sources: [] }, buildSource: "import", expectedRows: 1_000_000 });
+    expect(written.fileBacked).toBe(true);
+    const dir = versions.get(written.versionId)!.storagePath!;
+    const back = await readRowsFromFile(dir, ["id", "note"], { limit: 10 });
+    expect(back.rows.map((row) => row.data)).toEqual(tricky);
+    const third = await readRowsFromFile(dir, ["id", "note"], { start: 2, limit: 2 });
+    expect(third.rows.map((row) => row.data)).toEqual([tricky[2], tricky[3]]);
+    await fs.rm(path.join(dir, "rows.idx.json"));
+    const scanned = await readRowsFromFile(dir, ["id", "note"], { start: 1, limit: 10 });
+    expect(scanned.rows.map((row) => row.data)).toEqual(tricky.slice(1));
   });
 });

@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "differential-abundance",
   "name": "Differential abundance",
+  "category": "test",
   "description": "Which taxa differ between two groups of a long taxon profile table: per-taxon Mann-Whitney U on relative abundance (zeros included), Benjamini-Hochberg q-values, prevalence and mean abundance per group, a log2 fold change, and a volcano plot. The two groups default to the two most frequent values of the group role.",
   "language": "python",
   "environment": "seqdesk-explore-python",

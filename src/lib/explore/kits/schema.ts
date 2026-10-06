@@ -4,6 +4,12 @@ import { InputRequirementsSchema } from "../table-contract";
 
 const RoleSchema = z.enum(EXPLORE_ROLES as [ExploreRole, ...ExploreRole[]]);
 
+/** What kind of method a step is, for the step picker's Method level (summarise, filter, normalise, test, plot).
+ *  Optional: a kit without one is placed by its name. Template steps use the same words. */
+export const STEP_CATEGORIES = ["summarise", "filter", "normalise", "test", "plot"] as const;
+export type StepCategory = (typeof STEP_CATEGORIES)[number];
+export const StepCategorySchema = z.enum(STEP_CATEGORIES);
+
 export const KitInputSchema = InputRequirementsSchema
   .extend({
     alias: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/, "alias must be a short snake_case identifier"),
@@ -55,6 +61,8 @@ export const KitSchema = z
     id: z.string().regex(/^[a-z0-9][a-z0-9-]{1,63}$/, "id must be lowercase letters, digits and dashes"),
     name: z.string().min(1).max(120),
     description: z.string().min(1).max(2000),
+    /** The picker's method category; optional (older kits have none). */
+    category: StepCategorySchema.optional(),
     language: z.enum(["python", "r"]),
     environment: z.string().min(1).max(120),
     entrypoint: z.string().min(1).max(120).default("analysis.py"),

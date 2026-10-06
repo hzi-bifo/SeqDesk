@@ -98,13 +98,13 @@ export async function getFlow(id: string): Promise<FlowSummary> {
 }
 
 /** Create a flow; without a name it is numbered after the flows the scope already has. */
-export async function createFlow(targetKey: string, userId: string, name?: string | null, description?: string | null, memberId?: string | null): Promise<FlowSummary> {
+export async function createFlow(targetKey: string, userId: string, name?: string | null, description?: string | null, memberId?: string | null, id?: string): Promise<FlowSummary> {
   let title = name?.trim().slice(0, 200) ?? "";
   if (!title) {
     const count = await db.exploreFlow.count({ where: { targetKey } });
     title = count ? `${DEFAULT_NAME} ${count + 1}` : DEFAULT_NAME;
   }
-  const flow = await db.exploreFlow.create({ data: { targetKey, name: title, description: description?.trim().slice(0, 2000) || null, createdById: userId, createdByMemberId: memberId ?? null }, include: flowInclude });
+  const flow = await db.exploreFlow.create({ data: { ...(id ? { id } : {}), targetKey, name: title, description: description?.trim().slice(0, 2000) || null, createdById: userId, createdByMemberId: memberId ?? null }, include: flowInclude });
   return summarize(flow);
 }
 

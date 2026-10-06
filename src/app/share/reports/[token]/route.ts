@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isExploreModuleEnabled } from "@/lib/explore/module";
 import { activeFiltersFromSearchParams, renderReportHtml } from "@/lib/explore/report-export";
-import { findSharedReport } from "@/lib/explore/reports";
+import { findSharedReport, sharedPageCacheKey } from "@/lib/explore/reports";
 import { integrationConfig, redeemViewer, viewerAllowed, viewerCookie, viewerCookieName, viewerCookieValid } from "@/lib/integration/viewer";
 
 export const runtime = "nodejs";
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
   }
   try {
-    const cacheKey = `${reportId}?${request.nextUrl.searchParams.toString()}`;
+    const cacheKey = sharedPageCacheKey(shared, request.nextUrl.searchParams.toString());
     const cached = pageCache.get(cacheKey);
     let html: string;
     if (cached && Date.now() - cached.at < PAGE_CACHE_MS) {

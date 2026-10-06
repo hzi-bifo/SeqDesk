@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "fastqc-overview",
   "name": "FastQC quality overview",
+  "category": "plot",
   "description": "Turn a saved FastQC quality summary into read-count, mean-quality and check-status figures plus a downloadable per-mate QC table. Uses the small summary table only: no FASTQ processing or database downloads.",
   "language": "python",
   "environment": "seqdesk-explore-python",

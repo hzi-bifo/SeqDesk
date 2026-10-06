@@ -48,7 +48,9 @@ function checkColumnsOnly(check: InputCheck, columns: SchemaColumn[], rowCount: 
     const id = columns.find((column) => column.type !== "number");
     if (!id) return { ok: false, sentence: "A count matrix needs a first column naming the features (genes or taxa)." };
     if (numeric.length < 2) return { ok: false, sentence: `A count matrix needs one number column per sample; this table has ${plural(numeric.length, "number column")}.` };
-    const fractional = numeric.find((column) => sample.some((row) => { const value = row[column.key]; return typeof value === "number" && (!Number.isInteger(value) || value < 0); }));
+    // CSV imports keep cells as text, so a numeric string is read as its number ("0.12" is a fraction, "7" a count); anything else that is not a number fails too.
+    const asNumber = (value: unknown) => (typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : Number.NaN);
+    const fractional = numeric.find((column) => sample.some((row) => { const value = row[column.key]; if (value === null || value === undefined || value === "") return false; const n = asNumber(value); return !Number.isInteger(n) || n < 0; }));
     if (fractional) return { ok: false, sentence: `Counts must be whole numbers of zero or more; ${fractional.key} has other values.` };
     if (missing.length) return { ok: false, sentence: `Missing column ${missing.join(", ")}.` };
     return { ok: true, sentence: `A count matrix, whole numbers: ${plural(rowCount, "row")} × ${plural(numeric.length, "sample")} ✓` };
@@ -59,9 +61,14 @@ function checkColumnsOnly(check: InputCheck, columns: SchemaColumn[], rowCount: 
     const ids = sample.map((row) => row[id]).filter((value) => value !== null && value !== undefined && value !== "");
     if (new Set(ids.map(String)).size !== ids.length) return { ok: false, sentence: `Sample ids in ${id} must be unique.` };
     const rest = check.columns.slice(1);
+    // A named column that exists but holds no value at all (an empty condition column) would only fail inside the run.
+    const emptyColumn = sample.length > 0 && sample.length >= rowCount ? rest.find((column) => sample.every((row) => { const value = row[column]; return value === null || value === undefined || (typeof value === "string" && value.trim() === ""); })) : undefined;
+    if (emptyColumn) return { ok: false, sentence: `${emptyColumn} has no values; fill it in or choose another column.` };
     return { ok: true, sentence: `Sample sheet: ${plural(rowCount, "sample")}, id ${id}${rest.length ? `, ${rest.join(" and ")}` : ""} ✓` };
   }
-  return { ok: true, sentence: `A table of ${plural(rowCount, "row")} × ${plural(columns.length, "column")} ✓` };
+  // The internal sample id column is not shown or exported, so the sentence does not count it.
+  const shownColumns = columns.filter((column) => !column.key.endsWith("_db_id")).length;
+  return { ok: true, sentence: `A table of ${plural(rowCount, "row")} × ${plural(shownColumns, "column")} ✓` };
 }
 
 /** Check one Data table against an input. */
@@ -85,10 +92,14 @@ async function rowsOf(flowId: string): Promise<InputRow[]> {
   return db.$queryRaw<InputRow[]>`SELECT "id", "flowId", "key", "label", "expects", "check", "datasetId", "templateId", "uses", "position" FROM "ExploreFlowInput" WHERE "flowId" = ${flowId} ORDER BY "position", "createdAt"`;
 }
 
-export async function saveFlowInput(input: { flowId: string; key: string; label: string; expects?: string | null; check?: InputCheck | null; datasetId: string | null; templateId?: string | null; uses?: Use[]; position?: number }) {
+export async function saveFlowInput(input: { flowId: string; key: string; label: string; expects?: string | null; check?: InputCheck | null; datasetId: string | null; templateId?: string | null; uses?: Use[]; position?: number;
+  /** A plain input (no template, nothing expected) is named after its table: remapping it renames it too. */
+  renameOnRemap?: boolean }) {
   await db.$executeRaw`INSERT INTO "ExploreFlowInput" ("id", "flowId", "key", "label", "expects", "check", "datasetId", "templateId", "uses", "position")
     VALUES (${randomUUID()}, ${input.flowId}, ${input.key}, ${input.label}, ${input.expects ?? null}, ${input.check ? JSON.stringify(input.check) : null}::jsonb, ${input.datasetId}, ${input.templateId ?? null}, ${JSON.stringify(input.uses ?? [])}::jsonb, ${input.position ?? 0})
-    ON CONFLICT ("flowId", "key") DO UPDATE SET "datasetId" = EXCLUDED."datasetId", "updatedAt" = CURRENT_TIMESTAMP`;
+    ON CONFLICT ("flowId", "key") DO UPDATE SET "datasetId" = EXCLUDED."datasetId",
+      "label" = CASE WHEN ${input.renameOnRemap === true} AND "ExploreFlowInput"."templateId" IS NULL AND "ExploreFlowInput"."expects" IS NULL THEN EXCLUDED."label" ELSE "ExploreFlowInput"."label" END,
+      "updatedAt" = CURRENT_TIMESTAMP`;
 }
 
 /** Remove every input of a flow (a blank analysis a template now fills). */
@@ -139,7 +150,9 @@ export async function attachFlowInput(input: { flowId: string; targetKey: string
     const result = await checkDataset(parsed.success ? parsed.data : { kind: "table", columns: [] }, dataset.id, input.targetKey);
     if (!result.ok) throw flowError("invalid_request", `${existing.label}: ${result.sentence}`);
   }
-  await saveFlowInput({ flowId: input.flowId, key, label: existing?.label ?? input.label?.trim() ?? dataset.name, datasetId: dataset.id, position: existing?.position ?? rows.length });
+  // A plain input is named after its table, so remapping it must not leave the old table's name on it.
+  const plain = !existing || (!existing.templateId && !existing.expects);
+  await saveFlowInput({ flowId: input.flowId, key, label: plain ? input.label?.trim() || dataset.name : existing.label, datasetId: dataset.id, position: existing?.position ?? rows.length, renameOnRemap: plain && !!existing });
   for (const use of usesOf(existing?.uses)) {
     const step = await db.exploreAnalysis.findUnique({ where: { id: use.stepId }, select: { id: true, flowId: true, currentRevisionId: true } });
     if (!step || step.flowId !== input.flowId || !step.currentRevisionId) continue;

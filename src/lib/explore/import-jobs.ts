@@ -22,6 +22,8 @@ export interface ImportJob {
   datasetId: string | null;
   error: string | null;
   warnings: string[];
+  /** The caller's own key for this import: asking again with it (a lost response, a second click) finds this job instead of starting another. */
+  requestKey: string | null;
   controller: AbortController;
 }
 
@@ -32,11 +34,19 @@ function prune(now = Date.now()) {
   for (const [id, job] of jobs) if (job.finishedAt && now - job.finishedAt > KEEP_FINISHED_MS) jobs.delete(id);
 }
 
-export function createImportJob(input: { targetKey: string; userId: string; fileName: string; sizeBytes: number; expectedRows: number | null }): ImportJob {
+export function createImportJob(input: { targetKey: string; userId: string; fileName: string; sizeBytes: number; expectedRows: number | null; requestKey?: string | null }): ImportJob {
   prune();
-  const job: ImportJob = { id: randomUUID(), ...input, state: "running", rows: 0, startedAt: Date.now(), finishedAt: null, datasetId: null, error: null, warnings: [], controller: new AbortController() };
+  const job: ImportJob = { id: randomUUID(), ...input, requestKey: input.requestKey ?? null, state: "running", rows: 0, startedAt: Date.now(), finishedAt: null, datasetId: null, error: null, warnings: [], controller: new AbortController() };
   jobs.set(job.id, job);
   return job;
+}
+
+/** The job this person already started with this key for this target, unless it ended without a table (then a new one may start). */
+export function findImportJobByKey(userId: string, targetKey: string, requestKey: string): ImportJob | null {
+  for (const job of jobs.values()) {
+    if (job.requestKey === requestKey && job.userId === userId && job.targetKey === targetKey && job.state !== "failed" && job.state !== "cancelled") return job;
+  }
+  return null;
 }
 
 export function getImportJob(id: string): ImportJob | null {

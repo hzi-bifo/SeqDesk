@@ -298,7 +298,7 @@ export function suggestReportBlocks(outputs: ReportOutputs): ReportBlock[] {
   return blocks;
 }
 
-export type ReportTableLoader = (datasetId: string, limit: number) => Promise<ReportTableContent | null>;
+export type ReportTableLoader = (datasetId: string, limit: number, versionId?: string, from?: number) => Promise<ReportTableContent | null>;
 
 /**
  * Attach live content to blocks. Figures and tables resolve only against the
@@ -372,20 +372,22 @@ export async function resolveReportBlocks(blocks: ReportBlock[], outputs: Report
       if (block.type === "view") return { ...block, table: metaOf(block.datasetId), available: Boolean(tableById.get(block.datasetId)?.views.includes(block.view)) };
       if (block.type === "taxon-explorer" || block.type === "subject" || block.type === "curated") return { ...block, table: metaOf(block.datasetId) };
       if (block.type === "run-metric") return { ...block, analysis: outputs.analyses.find((analysis) => analysis.analysisId === block.analysisId) ?? null };
-      return { ...block, table: tableById.has(block.datasetId) ? await loadTable(block.datasetId, block.rows ?? REPORT_TABLE_ROWS) : null };
+      return { ...block, table: tableById.has(block.datasetId) ? await loadTable(block.datasetId, block.rows ?? REPORT_TABLE_ROWS, block.versionId, block.from) : null };
     })
   );
 }
 
-async function loadTableContent(datasetId: string, limit: number): Promise<ReportTableContent | null> {
+async function loadTableContent(datasetId: string, limit: number, versionId?: string, from?: number): Promise<ReportTableContent | null> {
   const dataset = await db.exploreDataset.findUnique({
     where: { id: datasetId },
     include: { versions: { orderBy: { number: "desc" }, take: 1 } },
   });
   if (!dataset) return null;
-  const current = dataset.versions.find((version) => version.id === dataset.currentVersionId) ?? dataset.versions[0] ?? null;
+  // A block that kept the version a reader cited shows that version; one without follows the table's current version.
+  const pinned = versionId ? await db.exploreDatasetVersion.findFirst({ where: { id: versionId, datasetId } }) : null;
+  const current = pinned ?? dataset.versions.find((version) => version.id === dataset.currentVersionId) ?? dataset.versions[0] ?? null;
   const columns = parseSchema(current?.schema).columns.filter((column) => !column.key.endsWith("_db_id"));
-  const page = current ? await fetchDatasetRows(current.id, { limit }) : { rows: [] };
+  const page = current ? await fetchDatasetRows(current.id, { limit, ...(from && from > 1 ? { cursor: String(from - 2) } : {}) }) : { rows: [] };
   return {
     datasetId,
     name: dataset.name,
@@ -605,9 +607,17 @@ export async function findSharedReportId(token: string): Promise<string | null> 
   return report?.id ?? null;
 }
 /** The shared report behind a token with what a viewer must satisfy to read it. */
-export async function findSharedReport(token: string): Promise<{ id: string; targetKey: string; mode: ReportShareMode } | null> {
-  const report = await db.exploreReport.findFirst({ where: { shareToken: token, publishedAt: { not: null } }, select: { id: true, targetKey: true, shareMode: true } });
-  return report ? { id: report.id, targetKey: report.targetKey, mode: shareModeOf(report.shareMode) } : null;
+export async function findSharedReport(token: string): Promise<{ id: string; targetKey: string; mode: ReportShareMode; token: string; updatedAt: string } | null> {
+  const report = await db.exploreReport.findFirst({ where: { shareToken: token, publishedAt: { not: null } }, select: { id: true, targetKey: true, shareMode: true, updatedAt: true } });
+  return report ? { id: report.id, targetKey: report.targetKey, mode: shareModeOf(report.shareMode), token, updatedAt: report.updatedAt.toISOString() } : null;
+}
+
+/**
+ * The key of a cached shared page: the report's last change and its share state (token, mode) are part of it, so
+ * a page rendered before an edit, a re-share with a new token or a change from named to link sharing is never served after it.
+ */
+export function sharedPageCacheKey(shared: { id: string; mode: string; token: string; updatedAt: string }, search: string): string {
+  return [shared.id, shared.token, shared.mode, shared.updatedAt, search].join("|");
 }
 
 /** Delete a report with its analysis steps and their runs; the scope's tables stay. */

@@ -189,6 +189,15 @@ export async function buildCapsule(capsuleId: string): Promise<void> {
     for (const entry of ordered) {
       const record = loaded.records.get(entry.analysisId);
       const stepRun = record ? loaded.stepRuns.get(record.stepRunId) : undefined;
+      if (entry.kind === "pipeline") {
+        // A pipeline step: its settings and the pipeline run it used, never its work folder. The steps after it pack
+        // the tables they read from it as their inputs.
+        const revision = await db.exploreAnalysisRevision.findUnique({ where: { id: entry.revisionId } });
+        const snapshot = stepRun?.results ? (JSON.parse(stepRun.results) as { pipeline?: Record<string, unknown> }).pipeline ?? null : null;
+        await add(`steps/${entry.label}-${stepSlug(entry.name)}/pipeline.json`, `${JSON.stringify({ step: entry.name, pipeline: (revision as { pipeline?: unknown } | null)?.pipeline ?? null,
+          run: snapshot ? { pipelineRunId: snapshot.pipelineRunId ?? null, runNumber: snapshot.runNumber ?? null, outputs: snapshot.outputs ?? [] } : null }, null, 2)}\n`);
+        continue;
+      }
       if (!stepRun?.runFolder) throw new Error(`Step ${entry.label} has no run folder to pack.`);
       const analysis = analyses.find((candidate) => candidate.id === entry.analysisId);
       const language = analysis?.language ?? entry.language;
@@ -232,7 +241,7 @@ export async function buildCapsule(capsuleId: string): Promise<void> {
 
     // The environment: the spec it was built from and, when conda can list it, the explicit lock.
     // A step with extra packages ran in its derived environment (<base>+<key>): its spec is the base plus those packages.
-    const environmentNames = [...new Set(ordered.map((entry) => entry.environmentName))];
+    const environmentNames = [...new Set(ordered.filter((entry) => entry.kind !== "pipeline").map((entry) => entry.environmentName))];
     const stepPackageLines: string[] = [];
     for (const name of environmentNames) {
       const environment = await db.exploreEnvironment.findUnique({ where: { name } });

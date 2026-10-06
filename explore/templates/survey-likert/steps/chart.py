@@ -11,7 +11,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-shares = pd.DataFrame({item: pd.to_numeric(responses[item], errors="coerce").value_counts(normalize=True).reindex([1, 2, 3, 4, 5], fill_value=0) for item in items}).T
+def valid_answers(item):
+    # The same rules as the summary: only whole answers from 1 to 5 are in the share.
+    answers = pd.to_numeric(responses[item], errors="coerce")
+    return answers.where(answers.between(1, 5)).dropna()
+
+shares = pd.DataFrame({item: valid_answers(item).value_counts(normalize=True).reindex([1, 2, 3, 4, 5], fill_value=0) for item in items}).T
 fig, ax = plt.subplots(figsize=(7, 0.45 * max(len(items), 2) + 1))
 left = pd.Series(0.0, index=shares.index)
 greys = ["#b2182b", "#ef8a62", "#d9d9d9", "#67a9cf", "#2166ac"]

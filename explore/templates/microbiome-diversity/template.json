@@ -108,6 +108,7 @@
     {
       "key": "qc",
       "name": "Read-depth QC and rarefaction",
+      "category": "filter",
       "purpose": "Keep gut and tongue samples with enough reads, rarefy to an even depth.",
       "language": "python",
       "codeFile": "steps/01-qc-rarefy.py",
@@ -149,6 +150,7 @@
     {
       "key": "alpha",
       "name": "Alpha diversity",
+      "category": "summarise",
       "purpose": "Is one site richer or more even than the other?",
       "language": "python",
       "codeFile": "steps/02-alpha.py",
@@ -178,6 +180,7 @@
     {
       "key": "beta",
       "name": "Bray-Curtis PCoA and PERMANOVA",
+      "category": "test",
       "purpose": "Do the two sites differ in composition?",
       "language": "python",
       "codeFile": "steps/03-beta.py",
@@ -214,6 +217,7 @@
     {
       "key": "taxa",
       "name": "Top differing taxa",
+      "category": "test",
       "purpose": "Which taxa separate gut from tongue?",
       "language": "python",
       "codeFile": "steps/04-top-taxa.py",

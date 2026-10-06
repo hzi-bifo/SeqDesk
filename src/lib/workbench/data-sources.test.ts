@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ stored: null as string | null, db: { siteSettings: { findUnique: vi.fn(), upsert: vi.fn() } } }));
+const mocks = vi.hoisted(() => ({ stored: null as string | null, db: { siteSettings: { findUnique: vi.fn(), upsert: vi.fn(), updateMany: vi.fn(), create: vi.fn() } } }));
 vi.mock("@/lib/db", () => ({ db: mocks.db }));
 
 import {
@@ -28,6 +28,12 @@ describe("data sources", () => {
     mocks.stored = JSON.stringify({ ena: { centerName: "HZI" } });
     mocks.db.siteSettings.findUnique.mockImplementation(async () => ({ extraSettings: mocks.stored }));
     mocks.db.siteSettings.upsert.mockImplementation(async ({ update }: { update: { extraSettings: string } }) => { mocks.stored = update.extraSettings; });
+    mocks.db.siteSettings.updateMany.mockImplementation(async ({ where, data }: { where: { extraSettings: string | null }; data: { extraSettings: string } }) => {
+      if (mocks.stored !== where.extraSettings) return { count: 0 };
+      mocks.stored = data.extraSettings;
+      return { count: 1 };
+    });
+    mocks.db.siteSettings.create.mockImplementation(async ({ data }: { data: { extraSettings: string } }) => { mocks.stored = data.extraSettings; });
   });
 
   it("defaults to 250 GB per import and asks above 20 GB", async () => {
@@ -163,7 +169,38 @@ describe("Find data's connector list", () => {
     mocks.stored = null;
     mocks.db.siteSettings.findUnique.mockImplementation(async () => ({ extraSettings: mocks.stored }));
     mocks.db.siteSettings.upsert.mockImplementation(async ({ update }: { update: { extraSettings: string } }) => { mocks.stored = update.extraSettings; });
+    mocks.db.siteSettings.updateMany.mockImplementation(async ({ where, data }: { where: { extraSettings: string | null }; data: { extraSettings: string } }) => {
+      if (mocks.stored !== where.extraSettings) return { count: 0 };
+      mocks.stored = data.extraSettings;
+      return { count: 1 };
+    });
+    mocks.db.siteSettings.create.mockImplementation(async ({ data }: { data: { extraSettings: string } }) => { mocks.stored = data.extraSettings; });
   });
+  it("keeps both of two concurrent admin saves (compare-and-set, no lost update)", async () => {
+    const real = mocks.db.siteSettings.findUnique.getMockImplementation()!;
+    // Both admins read the same document before either writes.
+    let gate: (() => void) | null = null;
+    const bothRead = new Promise<void>((resolve) => { gate = resolve; });
+    let reads = 0;
+    mocks.db.siteSettings.findUnique.mockImplementation(async (...args: unknown[]) => {
+      const row = await (real as (...a: unknown[]) => Promise<unknown>)(...args);
+      reads += 1;
+      if (reads === 2) gate!();
+      if (reads <= 2) await bothRead;
+      return row;
+    });
+    await Promise.all([
+      applySettingsChange({ maxBytes: 10 * GiB, sources: { ena: { who: "admins" } } }, "Admin A"),
+      setSecret("ncbi-key", { apiKey: "a".repeat(32) }, "Admin B"),
+    ]);
+    const saved = JSON.parse(mocks.stored!);
+    expect(saved.dataSources.maxBytes).toBe(10 * GiB);
+    expect(saved.dataSources.sources.ena.who).toBe("admins");
+    expect(saved.ncbi.apiKey).toBeTruthy();
+    expect(saved.dataSources.history.map((h: { by: string }) => h.by).sort()).toEqual(["Admin A", "Admin A", "Admin B"]);
+    mocks.db.siteSettings.findUnique.mockImplementation(real);
+  });
+
   it("hides sources that are off, and admins-only sources from members", async () => {
     const { importAllowedFilter } = await import("./data-sources");
     await applySettingsChange({ sources: { structures: { enabled: false }, reference: { who: "admins" } } }, "Alex Morgan");

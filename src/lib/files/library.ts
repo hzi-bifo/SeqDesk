@@ -7,6 +7,7 @@ import { parseInputBindings } from "@/lib/explore/analyses";
 import { parseStoredBlocks } from "@/lib/explore/report-blocks";
 import { resolveContainedPath, resolveExploreStorage } from "@/lib/explore/storage";
 import { EXPLORE_SENSITIVITIES, type ExploreSensitivity } from "@/lib/explore/types";
+import { gzipMismatch } from "./gzip-name-check";
 import { canImportFileAsTable, MAX_LIBRARY_FILE_BYTES, parseStoredFileBindings, type AnalysisFileBinding, type LibraryFileSummary } from "./library-types";
 
 export class FileLibraryError extends Error {
@@ -37,6 +38,8 @@ export async function storeLibraryFile(input: { targetKey: string; file: File; c
   const originalName = cleanFileName(input.file.name);
   const buffer = Buffer.from(await input.file.arrayBuffer());
   if (buffer.length > MAX_LIBRARY_FILE_BYTES) throw new FileLibraryError(413, "Files must be 100 MB or smaller.");
+  const mismatch = gzipMismatch(originalName, buffer.subarray(0, 2));
+  if (mismatch) throw new FileLibraryError(400, mismatch);
   const storagePath = crypto.randomUUID();
   const root = await libraryRoot();
   const destination = path.join(root, storagePath);
@@ -71,8 +74,16 @@ export async function storeLibraryFileStream(input: { targetKey: string; name: s
   const out = createWriteStream(destination, { flags: "wx", mode: 0o600 });
   const hash = crypto.createHash("sha256");
   let size = 0;
+  let head = Buffer.alloc(0);
   try {
     for await (const chunk of input.body) {
+      if (head.length < 2) {
+        head = Buffer.concat([head, Buffer.from(chunk.subarray(0, 2 - head.length))]);
+        if (head.length >= 2 || chunk.byteLength >= 2) {
+          const mismatch = gzipMismatch(originalName, head);
+          if (mismatch) throw new FileLibraryError(400, mismatch);
+        }
+      }
       size += chunk.byteLength;
       if (size > maxBytes) throw new FileLibraryError(413, `Files must be ${Math.round(maxBytes / 1024 / 1024 / 1024 * 10) / 10} GB or smaller.`);
       // The request body may reuse its chunk buffers once the next chunk is read; the file gets its own copy.

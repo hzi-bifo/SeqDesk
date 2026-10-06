@@ -115,18 +115,33 @@ async function sideOf(stepRunId: string, codeOverride: string | null): Promise<S
 
 const close = (a: unknown, b: unknown) => (typeof a === "number" && typeof b === "number" ? Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b)) : JSON.stringify(a) === JSON.stringify(b));
 
+function sameFrame(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  if (a.rows !== b.rows) return false;
+  const ca = (a.columns ?? {}) as Record<string, Record<string, unknown>>;
+  const cb = (b.columns ?? {}) as Record<string, Record<string, unknown>>;
+  const shared = Object.keys(ca).filter((key) => key in cb);
+  return shared.every((key) => ["n", "sum", "min", "max"].every((field) => close(ca[key]?.[field], cb[key]?.[field])));
+}
+
 /** Whether two figure records plot the same data; null when either has no data summary to compare. Pure. */
 export function samePlottedData(before: FigureRecord | null, after: FigureRecord | null): boolean | null {
   const a = before?.data_summary as Record<string, unknown> | null | undefined;
   const b = after?.data_summary as Record<string, unknown> | null | undefined;
   if (!a || !b) return null;
-  // R (ggplot2): the plot's data frame, its rows and every numeric column both sides have.
+  // R (ggplot2): the plot's data frame, its rows and every numeric column both sides have, then each layer's own data.
   if ("rows" in a || "rows" in b) {
-    if (a.rows !== b.rows) return false;
-    const ca = (a.columns ?? {}) as Record<string, Record<string, unknown>>;
-    const cb = (b.columns ?? {}) as Record<string, Record<string, unknown>>;
-    const shared = Object.keys(ca).filter((key) => key in cb);
-    return shared.every((key) => ["n", "sum", "min", "max"].every((field) => close(ca[key]?.[field], cb[key]?.[field])));
+    if (!sameFrame(a, b)) return false;
+    // Layers that carry their own data (geom_point(data = ...)) are compared pairwise; layers only one side has are additions.
+    if (Array.isArray(a.layers) && Array.isArray(b.layers)) {
+      const count = Math.min(a.layers.length, b.layers.length);
+      for (let index = 0; index < count; index += 1) {
+        const la = a.layers[index] as Record<string, unknown>;
+        const lb = b.layers[index] as Record<string, unknown>;
+        if (la.inherited !== lb.inherited) return false;
+        if (!la.inherited && !sameFrame(la, lb)) return false;
+      }
+    }
+    return true;
   }
   // Python (matplotlib): per panel, the points and image cells and their sums.
   const pa = (a.axes ?? []) as Array<Record<string, number>>;
@@ -149,8 +164,10 @@ export function figureCheck(before: StepSide, after: StepSide) {
     const other = after.figures.find((candidate) => candidate.name === figure.name);
     return { name: figure.name, drawn: !!other, sameData: other ? samePlottedData(figure.record, other.record) : false };
   });
-  const same = values.every((value) => value.same) && tables.every((table) => table.same) && figures.every((figure) => figure.drawn && figure.sameData !== false);
-  return { same, values, tables, figures };
+  const same = values.every((value) => value.same) && tables.every((table) => table.same) && figures.every((figure) => figure.drawn && figure.sameData === true);
+  // Unknown equivalence (no data summary, e.g. a heatmap) is not proof of the same data: it is reported, never passed.
+  const unverified = figures.filter((figure) => figure.drawn && figure.sameData === null).map((figure) => figure.name);
+  return { same, values, tables, figures, unverified };
 }
 
 export async function figureTrialResult(trialRunId: string) {
@@ -181,7 +198,12 @@ export async function acceptFigureTrial(trialRunId: string, actor: FlowActor) {
   if (!trial || !meta) throw flowError("not_found", "Figure trial not found");
   if (meta.accepted) return { revision: { id: meta.accepted.revisionId, number: meta.accepted.revisionNumber }, accepted: meta.accepted, flowId: trial.flowId };
   if (trial.status !== "completed" || !result.check) throw flowError("not_completed", "Only a completed figure trial can be used.");
-  if (!result.check.same) throw flowError("invalid_request", "The trial changed the step's numbers, so it cannot replace the step's code.");
+  if (!result.check.same) {
+    const unverified = result.check.unverified.length > 0;
+    throw flowError("invalid_request", unverified
+      ? `The plotted data of ${result.check.unverified.join(", ")} could not be compared, so the trial cannot replace the step's code.`
+      : "The trial changed the step's numbers, so it cannot replace the step's code.");
+  }
   if (!code) throw flowError("invalid_request", "This trial ran the step's code as it is; there is nothing to save.");
   const who = actor.name ?? "someone";
   // Settings may have been saved since (a new revision with the same code): the rewrite still applies to that code.

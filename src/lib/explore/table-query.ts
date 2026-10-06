@@ -14,6 +14,7 @@ import { createReadStream } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { StringDecoder } from "string_decoder";
+import { formatOf, QUOTED_FORMAT, splitQuotedRow } from "./table-store";
 import type { ExploreColumn, ExploreColumnType, ExploreRowData, ExploreRowRecord } from "./types";
 
 export const FILTER_OPS = ["contains", "eq", "gt", "gte", "lt", "lte", "empty", "notempty"] as const;
@@ -172,6 +173,8 @@ export function compileQuery(header: string[], columns: ExploreColumn[], query: 
   };
 }
 
+const quotesOf = (text: string): number => { let n = 0; for (let at = text.indexOf('"'); at >= 0; at = text.indexOf('"', at + 1)) n += 1; return n; };
+
 /** The header of a version file and where the rows start; the row index (rows.idx.json) when there is one. */
 export interface FileLayout { header: string[]; index: { every: number; offsets: number[]; rows: number } | null; headerBytes: number }
 export async function readLayout(storagePath: string): Promise<FileLayout | null> {
@@ -238,6 +241,13 @@ async function forEachRow(storagePath: string, layout: FileLayout, options: Scan
   const began = Date.now();
   if (options.signal?.aborted) { stream.destroy(); return { scanned: 0, end: false, stopped: "aborted", lastIndex: null }; }
   const total = layout.index?.rows ?? Infinity;
+  // quoted-v1 files: a cell with a tab, line break or quote is in quotes, so a row can span physical lines.
+  const quoted = (await formatOf(storagePath)) === QUOTED_FORMAT;
+  const cellsOf = (line: string): string[] => {
+    const text = line.endsWith("\r") && quotesOf(line) % 2 === 0 ? line.slice(0, -1) : line;
+    return quoted && text.includes('"') ? splitQuotedRow(text) : text.split("\t");
+  };
+  let pending: string | null = null;
   let rowIndex = here.rowIndex;
   let skipHeader = here.skipHeader;
   let tail = "";
@@ -254,7 +264,8 @@ async function forEachRow(storagePath: string, layout: FileLayout, options: Scan
       let lineStart = 0;
       if (skipHeader) { lineStart = block.indexOf("\n") + 1; skipHeader = false; }
       // Raw path: only lines containing the needle are split. Rows before `start` (up to one index block) are skipped.
-      if (raw) {
+      // (A quoted file's block with a quote in it, or one that continues a row, is read row by row instead: its line breaks are not all row ends.)
+      if (raw && (!quoted || (pending === null && !block.includes('"')))) {
         const lower = block.toLowerCase();
         if (lower.length === block.length) {
           let at = rowIndex, pos = lineStart, from = lineStart;
@@ -263,7 +274,7 @@ async function forEachRow(storagePath: string, layout: FileLayout, options: Scan
             const end = block.indexOf("\n", hit);
             if (at < start) { at += 1; pos = end + 1; from = pos; continue; }
             const line = block.slice(pos, end);
-            const cells = (line.endsWith("\r") ? line.slice(0, -1) : line).split("\t");
+            const cells = cellsOf(line);
             if (at < total && raw.confirm(cells)) {
               if (raw.visitRaw(cells, at) === false) { lastIndex = at; rowIndex = at + 1; stop("limit"); break outer; }
             }
@@ -282,14 +293,19 @@ async function forEachRow(storagePath: string, layout: FileLayout, options: Scan
         // A character that changes length in lower case (a few Unicode letters): read this block line by line instead.
       }
       for (let nl = block.indexOf("\n", lineStart); nl >= 0; nl = block.indexOf("\n", lineStart)) {
-        const at = rowIndex;
-        const line = block.slice(lineStart, nl);
+        let line = block.slice(lineStart, nl);
         lineStart = nl + 1;
+        if (quoted) {
+          line = pending === null ? line : `${pending}\n${line}`;
+          if (quotesOf(line) % 2 === 1) { pending = line; continue; }
+          pending = null;
+        }
+        const at = rowIndex;
         rowIndex += 1;
         if (at >= total) break outer;
         if (at < start) continue;
         lastIndex = at;
-        if (visit((line.endsWith("\r") ? line.slice(0, -1) : line).split("\t"), at) === false) { stop("limit"); break outer; }
+        if (visit(cellsOf(line), at) === false) { stop("limit"); break outer; }
       }
       if (rowIndex >= total) break;
       if (options.signal?.aborted) { stop("aborted"); break; }
@@ -297,8 +313,8 @@ async function forEachRow(storagePath: string, layout: FileLayout, options: Scan
     }
     // A final line without a newline (files written by hand).
     if (stopped === "end" && !layout.index) {
-      const last = tail + decoder.end();
-      if (last && rowIndex >= start) { lastIndex = rowIndex; visit((last.endsWith("\r") ? last.slice(0, -1) : last).split("\t"), rowIndex); rowIndex += 1; }
+      const last = (pending === null ? "" : `${pending}\n`) + tail + decoder.end();
+      if (last && rowIndex >= start) { lastIndex = rowIndex; visit(cellsOf(last), rowIndex); rowIndex += 1; }
     }
   } finally { stream.destroy(); }
   const end = stopped === "end" || (layout.index ? rowIndex >= total : false);

@@ -41,7 +41,8 @@ const DEPS: ExecutorDeps = {
 
 /** "ended:<kind>:<process>" for a task job SLURM already ended badly while Nextflow has not noticed yet. */
 async function endedTaskReason(run: RunRef, deps: ExecutorDeps): Promise<string | null> {
-  const ended = await deps.endedTaskJob(run.runFolder, run.startedAt ?? null);
+  // Only task jobs of the attempt that runs now (submitted after the run's own job; a Resume submits a new one).
+  const ended = await deps.endedTaskJob(run.runFolder, run.startedAt ?? null, undefined, run.queueJobId);
   if (!ended) return null;
   const log = await deps.readTail(`${ended.workDir}/.command.log`).catch(() => null);
   const kind = ended.state === 'CANCELLED' || (/\*\*\* JOB \d+ ON \S+ CANCELLED AT /.test(log ?? '') && !/memory/i.test(log ?? ''))

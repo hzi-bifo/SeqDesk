@@ -32,6 +32,7 @@ import {
   assertSafeSlurmRunFolder,
   buildSlurmCompletionAttestationBlock,
   buildSlurmWrapperFinalizerBlock,
+  SLURM_WORKLOAD_WAIT,
   renderSlurmChdirDirective,
 } from './slurm-completion-attestation';
 import { NEXTFLOW_NAME_FLAG, NEXTFLOW_REQUEUE_ARGS, nextflowRequeueBlock } from './slurm-requeue';
@@ -854,7 +855,7 @@ ${nextflowRequeueBlock(runName)}
 "\${NEXTFLOW_RUNNER[@]}" run ${shellQuote(pipelineTarget.target)} \\
   ${nextflowArgs} \\
   ${NEXTFLOW_REQUEUE_ARGS} \\
-  >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
+  >> "$STDOUT_LOG" 2>> "$STDERR_LOG"${SLURM_WORKLOAD_WAIT}
 `;
 }
 

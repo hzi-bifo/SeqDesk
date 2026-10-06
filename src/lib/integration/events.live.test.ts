@@ -28,6 +28,11 @@ vi.mock("@/lib/explore/runner", async () => {
     }),
   };
 });
+// A step's environment is looked up from the environment specs on disk; the test supplies a ready, non-derived one.
+vi.mock("@/lib/explore/step-environments", async (original) => ({
+  ...(await original<typeof import("@/lib/explore/step-environments")>()),
+  resolveStepEnvironment: vi.fn(async (analysis: { environmentName: string }) => ({ name: analysis.environmentName, derived: false, status: "ready", packages: { packages: [], channels: [] } })),
+}));
 
 import { db } from "@/lib/db";
 import { createAnalysis } from "@/lib/explore/analyses";

@@ -56,7 +56,7 @@ export async function saveMethodsDraft(stepId: string, draft: MethodsDraft, acto
 }
 
 /** What an accepted methods proposal keeps on its step: the draft's revision, tokens and provenance. */
-export function acceptedMethodsSentence(values: unknown, text: string, currentRevisionId: string | null, userId: string) {
+export function acceptedMethodsSentence(values: unknown, text: string, currentRevisionId: string | null, userId: string, by?: MethodsPerson) {
   const draft = values && typeof values === "object" && !Array.isArray(values) ? values as Record<string, unknown> : null;
   return {
     text, tokens: (draft ? draft.tokens ?? [] : values ?? []) as MethodsToken[],
@@ -65,6 +65,18 @@ export function acceptedMethodsSentence(values: unknown, text: string, currentRe
     ...(draft && typeof draft.prompt === "string" && draft.prompt ? { prompt: draft.prompt } : {}),
     ...(draft && Array.isArray(draft.notVerified) && draft.notVerified.length ? { notVerified: draft.notVerified } : {}),
     ...(draft && typeof draft.model === "string" ? { model: draft.model } : {}),
-    author: "assistant", acceptedById: userId, acceptedAt: new Date().toISOString(),
+    author: "assistant", acceptedById: userId, acceptedAt: new Date().toISOString(), ...methodsAcceptedBy(by),
   };
+}
+
+/** The person who last wrote or accepted a sentence, as the lab knows them. */
+export type MethodsPerson = { memberId?: string | null; name?: string | null };
+
+/** Who saved a sentence's words, kept beside `acceptedById`/`acceptedAt` (the time of that person's edit or accept):
+ *  their collaboration member and the name SeqDesk has for them, so In words reads "Written by Amara · 12 Oct".
+ *  Sentences saved before this carry neither; the recipe view resolves those from `acceptedById`. */
+export function methodsAcceptedBy(by: MethodsPerson | undefined): { acceptedByMemberId?: string; acceptedByName?: string } {
+  const memberId = typeof by?.memberId === "string" ? by.memberId.trim().slice(0, 200) : "";
+  const name = typeof by?.name === "string" ? by.name.trim().slice(0, 200) : "";
+  return { ...(memberId ? { acceptedByMemberId: memberId } : {}), ...(name ? { acceptedByName: name } : {}) };
 }

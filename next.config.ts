@@ -104,6 +104,9 @@ const nextConfig: NextConfig = {
     if (process.env.SEQDESK_ENABLE_PUBLIC_DEMO !== "true") {
       return [
         { source: "/:path*", headers: COMPUTE_SECURITY_HEADERS },
+        // A shared-report link carries a secret token, so its page must not leak it as a referrer. Later rules win over
+        // the global one above (the route also sets this header itself).
+        { source: "/share/:path*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
         {
           // Pages only: /api and /share answer with their own Content-Security-Policy (files, reports).
           source: "/((?!api/|share/|_next/).*)",

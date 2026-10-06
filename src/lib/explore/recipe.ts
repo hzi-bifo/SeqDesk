@@ -45,6 +45,10 @@ export interface RecipeStep {
   currentRevisionId: string | null;
   revision: RecipeRevisionRecord | null;
   bindings: AnalysisInputBinding[];
+  /** code | pipeline | samples (explore.pipeline-steps); "code" on servers before the migration. */
+  stepKind: "code" | "pipeline" | "samples";
+  /** A pipeline step's configuration from its current revision (pipeline-steps.ts parses it); null otherwise. */
+  pipeline: unknown;
 }
 
 export interface DatasetInfo {
@@ -109,6 +113,14 @@ export async function loadRecipe(flowId: string, client: Client = db): Promise<R
   const revisionIds = analyses.map((analysis) => analysis.currentRevisionId).filter((id): id is string => Boolean(id));
   const revisions = revisionIds.length ? await client.exploreAnalysisRevision.findMany({ where: { id: { in: revisionIds } }, select: revisionSelect }) : [];
   const revisionById = new Map(revisions.map((revision) => [revision.id, revision] as const));
+  // stepKind and a revision's pipeline exist only after the pipeline-steps migration: read without naming them, so a
+  // client or database from before it still loads every recipe (all steps are code there).
+  const kindOf = (analysis: unknown) => { const kind = (analysis as { stepKind?: unknown }).stepKind; return kind === "pipeline" || kind === "samples" ? kind : "code"; };
+  const configured = analyses.filter((analysis) => kindOf(analysis) !== "code" && analysis.currentRevisionId).map((analysis) => analysis.currentRevisionId!);
+  const pipelineOf = new Map<string, unknown>();
+  if (configured.length) {
+    for (const revision of await client.exploreAnalysisRevision.findMany({ where: { id: { in: configured } } })) pipelineOf.set(revision.id, (revision as { pipeline?: unknown }).pipeline ?? null);
+  }
   const datasets = await client.exploreDataset.findMany({
     where: { targetKey: flow.targetKey },
     select: { id: true, name: true, kind: true, tableKind: true, roles: true, sensitivity: true, currentVersionId: true, sourceConfig: true,
@@ -142,6 +154,8 @@ export async function loadRecipe(flowId: string, client: Client = db): Promise<R
       currentRevisionId: analysis.currentRevisionId,
       revision: revision ? { ...revision, codeHash: revision.codeHash || codeHashOf(revision.code) } : null,
       bindings: parseInputBindings(revision?.inputs),
+      stepKind: kindOf(analysis),
+      pipeline: analysis.currentRevisionId ? pipelineOf.get(analysis.currentRevisionId) ?? null : null,
     };
   });
   const upstream = new Map<string, Set<string>>();
@@ -212,6 +226,8 @@ export interface StateInput {
   active?: { executing: Set<string>; running: Set<string> } | null;
   /** Steps the newest failed run (newer than the current run) failed at. */
   failedAt?: string | null;
+  /** Pipeline steps whose reads in Data changed since the run (pipeline-steps.ts pipelineReadsChanged): step → words. */
+  readsChanged?: Map<string, string> | null;
 }
 
 export interface StepStateResult {
@@ -247,7 +263,11 @@ export function computeStepStates(input: StateInput): Map<string, StepStateResul
       const diff = paramDiff(used?.params, step.revision.params);
       const codeSame = used && used.codeHash === step.revision.codeHash;
       if (codeSame && diff.length === 0) {
-        // A new revision with the same code and params (for example re-bound inputs) is judged by its inputs below.
+        // A new revision with the same code and params (for example re-bound inputs) is judged by its inputs below;
+        // one that reads other tables than the run did is out of date at once (also a table an upstream step writes).
+        const bound = step.bindings.map((binding) => `${binding.alias}=${binding.datasetId}`).sort().join("|");
+        const ran = record.inputPins.map((pin) => `${pin.alias}=${pin.datasetId}`).sort().join("|");
+        if (record.inputPins.length && bound !== ran) { own.set(step.id, { state: "outOfDate", reason: "inputChanged", paramDiff: [] }); continue; }
       } else {
         own.set(step.id, { state: "outOfDate", reason: codeSame ? "paramChanged" : "codeChanged", paramDiff: codeSame ? diff : [] });
         continue;
@@ -262,7 +282,9 @@ export function computeStepStates(input: StateInput): Map<string, StepStateResul
       if (dataset?.producer && model.upstream.get(step.id)?.has(dataset.producer)) return false;
       return Boolean(wanted && was && wanted !== was) || (!was && Boolean(wanted));
     });
-    own.set(step.id, inputChanged ? { state: "outOfDate", reason: "inputChanged", paramDiff: [] } : { state: "current", reason: null, paramDiff: [] });
+    // A pipeline step also reads the FASTQ files in Data, which are not tables: new reads make it out of date.
+    const readsChanged = !inputChanged && Boolean(input.readsChanged?.has(step.id));
+    own.set(step.id, inputChanged || readsChanged ? { state: "outOfDate", reason: "inputChanged", paramDiff: [] } : { state: "current", reason: null, paramDiff: [] });
   }
   const changed = [...own].filter(([, result]) => result.state === "outOfDate" || result.state === "notRun" || result.state === "failed").map(([id]) => id);
   const affected = downstreamOf(changed, model.upstream);

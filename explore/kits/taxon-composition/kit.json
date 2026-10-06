@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "taxon-composition",
   "name": "Taxon composition",
+  "category": "plot",
   "description": "Relative abundance composition from a long taxon profile table. Counts are converted to per-sample relative abundance, taxa on curation lists with the artifact role are removed and abundances renormalised, and the top_n taxa plus Other are drawn as stacked bars per sample (ordered by group, subject and timepoint when mapped), or as the mean composition per group for large cohorts. Also writes the long composition table and a per-taxon prevalence table.",
   "language": "python",
   "environment": "seqdesk-explore-python",

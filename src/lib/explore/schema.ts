@@ -35,6 +35,9 @@ export function coerceCell(value: unknown): ExploreCell {
   return JSON.stringify(value);
 }
 
+/** 0001 or 007: an identifier whose zeros mean something, so the column is text and shows them. */
+const LEADING_ZERO_ID = /^[-+]?0\d/;
+
 type TypeCounts = { numbers: number; booleans: number; dates: number; strings: number };
 
 function countType(counts: TypeCounts, value: ExploreCell) {
@@ -47,7 +50,7 @@ function countType(counts: TypeCounts, value: ExploreCell) {
     const lower = value.toLowerCase();
     if (lower === "true" || lower === "false") {
       counts.booleans += 1;
-    } else if (value !== "" && !Number.isNaN(Number(value)) && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(value)) {
+    } else if (value !== "" && !Number.isNaN(Number(value)) && /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(value) && !LEADING_ZERO_ID.test(value)) {
       counts.numbers += 1;
     } else if (DATE_PATTERN.test(value)) {
       counts.dates += 1;

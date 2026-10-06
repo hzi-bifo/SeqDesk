@@ -309,7 +309,7 @@ export async function buildPipelineTableDataset(
   for (const [role, column] of Object.entries(suggested)) {
     if (!roles[role as ExploreRole] && role !== "sample") roles[role as ExploreRole] = column;
   }
-  if (unmatched > 0) warnings.push(`${unmatched} rows with unknown or ambiguous sample labels were excluded.`);
+  if (unmatched > 0) warnings.push(unmatched === 1 ? "1 row with an unknown or ambiguous sample label was excluded." : `${unmatched} rows with unknown or ambiguous sample labels were excluded.`);
   const represented = new Set(rows.map(row => row.sample_db_id).filter(Boolean));
   if (represented.size && represented.size < samples.length) warnings.push(`${samples.length - represented.size} accessible samples have no usable result in this dataset.`);
 
@@ -336,7 +336,7 @@ export async function buildPipelineTableDataset(
       builtAt: new Date().toISOString(),
       builder: "pipeline-table@2",
       sources,
-      notes: [`${rows.length} rows from ${usedFiles} files`, options.runIds
+      notes: [`${rows.length} ${rows.length === 1 ? "row" : "rows"} from ${usedFiles} ${usedFiles === 1 ? "file" : "files"}`, options.runIds
         ? "Only the explicitly chosen completed runs are used."
         : "Selected results take precedence; remaining samples use their latest eligible completed run."],
     },

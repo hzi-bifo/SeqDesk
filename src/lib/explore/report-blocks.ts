@@ -30,8 +30,12 @@ const TableBlockSchema = z
     id: BlockId,
     type: z.literal("table"),
     datasetId: z.string().min(1).max(80),
+    /** The table version a reader of an earlier run cited: the page keeps showing it when the table is later rewritten. */
+    versionId: z.string().min(1).max(80).optional(),
     caption: z.string().max(500).optional(),
     rows: z.number().int().min(1).max(500).optional(),
+    /** The 1-based first row to show (a citation of a selection that starts below the top). */
+    from: z.number().int().min(1).max(100_000_000).optional(),
     /** Columns to show, in this order; absent means every column. */
     columns: z.array(z.string().min(1).max(200)).max(60).optional(),
     sort: z.object({ column: z.string().min(1).max(200), direction: z.enum(["asc", "desc"]) }).strict().optional(),

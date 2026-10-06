@@ -15,10 +15,26 @@ describe("flow input checks", () => {
     expect(result.ok).toBe(false);
     expect(result.sentence).toContain("s1");
   });
+  it("reads numeric strings as their numbers: whole ones pass, growth-assay fractions and text fail", () => {
+    expect(checkColumns({ kind: "counts", columns: [] }, counts, 2, [{ gene_id: "a", s1: "7", s2: "0" }]).ok).toBe(true);
+    expect(checkColumns({ kind: "counts", columns: [] }, counts, 2, [{ gene_id: "a", s1: "n/a", s2: "1" }]).ok).toBe(false);
+    expect(checkColumns({ kind: "counts", columns: [] }, counts, 2, [{ gene_id: "a", s1: "-3", s2: "1" }]).ok).toBe(false);
+    const result = checkColumns({ kind: "counts", columns: [] }, counts, 2, [{ gene_id: "a", s1: "0.12", s2: "7" }]);
+    expect(result.ok).toBe(false);
+    expect(result.sentence).toContain("s1");
+  });
   it("names the missing sample-sheet columns", () => {
     const result = checkColumns({ kind: "samples", columns: ["sample", "dex"] }, [{ key: "sample", type: "string" }], 2, [{ sample: "a" }, { sample: "b" }]);
     expect(result).toMatchObject({ ok: false });
     expect(result.sentence).toContain("dex");
+  });
+  it("refuses a named sample-sheet column that is empty", () => {
+    const columns = [{ key: "sample", type: "string" }, { key: "condition", type: "string" }];
+    const check = { kind: "samples" as const, columns: ["sample", "condition"] };
+    const result = checkColumns(check, columns, 2, [{ sample: "a", condition: null }, { sample: "b", condition: "" }]);
+    expect(result).toMatchObject({ ok: false });
+    expect(result.sentence).toContain("condition has no values");
+    expect(checkColumns(check, columns, 2, [{ sample: "a", condition: "x" }, { sample: "b", condition: null }]).ok).toBe(true);
   });
   it("refuses duplicate sample ids", () => {
     const result = checkColumns({ kind: "samples", columns: ["sample"] }, [{ key: "sample", type: "string" }], 2, [{ sample: "a" }, { sample: "a" }]);

@@ -445,6 +445,32 @@ describe('cancelPipelineRunForOperator', () => {
     killSpy.mockRestore();
   });
 
+  it('a cancel that arrives after a local run finished its work does not mark it cancelled', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({
+      id: 'run-1',
+      status: 'running',
+      statusSource: 'queue',
+      currentStep: 'Running',
+      queueJobId: 'local-4242',
+      runFolder: '/runs/run-1',
+    });
+    stubLocalJobActive();
+    // The wrapper wrote "Pipeline completed with exit code: 0" while the signal was on its way.
+    mocks.inferPipelineExitCode.mockReset().mockResolvedValueOnce(null).mockResolvedValue(0);
+    const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true);
+
+    const result = await cancelPipelineRunForOperator('run-1');
+
+    expect(result.status).toBe(409);
+    expect(String(result.body.error)).toMatch(/finished before the cancel arrived/);
+    const writes = mocks.db.pipelineRun.updateMany.mock.calls.map((call) => call[0]?.data ?? {});
+    expect(writes.some((data) => data.status === 'cancelled')).toBe(false);
+    // The run's own error tail is not overwritten by the refusal.
+    expect(writes.at(-1)).not.toHaveProperty('errorTail');
+    expect(writes.at(-1)).toMatchObject({ statusSource: 'queue', currentStep: 'Running' });
+    killSpy.mockRestore();
+  });
+
   it('signals a job ID that the launcher persisted immediately before cancellation claimed', async () => {
     mocks.db.pipelineRun.findUnique
       .mockResolvedValueOnce({
@@ -749,6 +775,34 @@ describe('cancelPipelineRunForOperator', () => {
         }),
       })
     );
+  });
+
+  it('cancels when squeue still says COMPLETING after scancel but sacct already says CANCELLED (real Slurm, KillWait)', async () => {
+    mocks.db.pipelineRun.findUnique.mockResolvedValue({ id: 'run-1', status: 'running', statusSource: 'launcher', currentStep: 'Running', queueJobId: '42', runFolder: '/runs/run-1' });
+    let squeueCalls = 0;
+    mocks.execFile.mockImplementation((file, args, callback) => {
+      if (file === 'squeue' && (args as string[]).includes('-j')) {
+        squeueCalls += 1;
+        callback(null, { stdout: `${squeueCalls === 1 ? 'RUNNING' : 'COMPLETING'}|None|seqdesk-run-1|/runs/run-1\n`, stderr: '' });
+        return;
+      }
+      if (file === 'sacct' && (args as string[]).includes('JobID,State')) {
+        callback(null, { stdout: '42|CANCELLED by 1000\n', stderr: '' });
+        return;
+      }
+      callback(null, { stdout: '', stderr: '' });
+    });
+    mocks.spawn.mockImplementation(() => {
+      const proc = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
+      proc.stderr = new EventEmitter();
+      queueMicrotask(() => proc.emit('close', 0));
+      return proc;
+    });
+
+    const result = await cancelPipelineRunForOperator('run-1', { queueWait: { timeoutMs: 0, pollIntervalMs: 0 } });
+
+    expect(result.status).toBe(200);
+    expect(result.body.status).toBe('cancelled');
   });
 
   it('accepts an equivalent normalized SLURM work directory', async () => {

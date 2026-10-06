@@ -10,7 +10,8 @@ import { flowError } from "@/lib/integration/flow-contract";
 import { addStep, type AddStepInput } from "./recipe-edit";
 import { loadRecipe, type RecipeActor } from "./recipe";
 import { keyBetween, sortSteps } from "./recipe-order";
-import { acceptedMethodsSentence } from "./methods-draft";
+import { acceptedMethodsSentence, methodsAcceptedBy } from "./methods-draft";
+import { proposalStepInputs } from "./proposal-inputs";
 import { analysisLanguageOf } from "./analyses";
 
 type ProposalRecord = Prisma.ExploreStepProposalGetPayload<object>;
@@ -208,26 +209,25 @@ export async function discardProposal(id: string, reason: string | null): Promis
   return serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!);
 }
 
-type ProposalInputRef = { alias?: unknown; datasetId?: unknown; from?: { stepId?: unknown; output?: unknown }; fromProposal?: { proposalId?: unknown; output?: unknown } };
-
-/** Proposal inputs as step inputs; a pencil step reading another one needs that one accepted first. */
-async function stepInputsOf(raw: Prisma.JsonValue): Promise<AddStepInput["inputs"]> {
-  const inputs: AddStepInput["inputs"] = [];
-  for (const entry of (Array.isArray(raw) ? raw : []) as ProposalInputRef[]) {
-    if (!entry || typeof entry.alias !== "string") throw flowError("invalid_request", "Each proposed input needs an alias.");
-    if (typeof entry.datasetId === "string") inputs.push({ alias: entry.alias, datasetId: entry.datasetId });
-    else if (entry.from && typeof entry.from.stepId === "string" && typeof entry.from.output === "string") inputs.push({ alias: entry.alias, from: { stepId: entry.from.stepId, output: entry.from.output } });
-    else if (entry.fromProposal && typeof entry.fromProposal.proposalId === "string" && typeof entry.fromProposal.output === "string") {
-      const upstream = await db.exploreStepProposal.findUnique({ where: { id: entry.fromProposal.proposalId }, select: { state: true, acceptedAnalysisId: true, purpose: true } });
-      if (!upstream?.acceptedAnalysisId) throw flowError("output_not_ready", `Accept "${upstream?.purpose || "the step it reads from"}" first.`, { stepId: null, output: entry.fromProposal.output, proposalId: entry.fromProposal.proposalId });
-      inputs.push({ alias: entry.alias, from: { stepId: upstream.acceptedAnalysisId, output: entry.fromProposal.output } });
-    } else throw flowError("invalid_request", `Input ${entry.alias} needs a datasetId, from or fromProposal.`);
-  }
-  return inputs;
+/** Proposal inputs as step inputs (proposal-inputs.ts): typed references pass through, names the assistant used are
+ *  resolved against the study's tables and the flow's other pencil steps; one reading another needs it accepted first. */
+async function stepInputsOf(raw: Prisma.JsonValue, proposal: { id: string; flowId: string; goal: string | null }): Promise<AddStepInput["inputs"]> {
+  const model = await loadRecipe(proposal.flowId);
+  const others = await db.exploreStepProposal.findMany({
+    where: { flowId: proposal.flowId, kind: "step", id: { not: proposal.id }, state: { in: ["pending", "accepted"] } },
+    select: { id: true, purpose: true, state: true, acceptedAnalysisId: true, outputs: true, goal: true }, orderBy: { createdAt: "desc" }, take: 200,
+  });
+  const siblings = [...others.filter((other) => other.goal === proposal.goal), ...others.filter((other) => other.goal !== proposal.goal)];
+  // Named Data inputs (flow-inputs.ts reads this table the same way).
+  const flowInputs = await db.$queryRaw<Array<{ datasetId: string | null }>>`SELECT "datasetId" FROM "ExploreFlowInput" WHERE "flowId" = ${proposal.flowId}`.catch(() => []);
+  const flowDatasetIds = new Set([...(model?.steps.flatMap((step) => step.bindings.map((binding) => binding.datasetId)) ?? []), ...flowInputs.map((input) => input.datasetId).filter((id): id is string => !!id)]);
+  return proposalStepInputs(raw, { datasets: model ? [...model.datasets.values()] : [], stepIds: new Set(model?.steps.map((step) => step.id) ?? []), flowDatasetIds, siblings });
 }
 
 export async function acceptProposal(id: string, edits: Record<string, unknown> | null, expectedRevision: number | undefined, actor: RecipeActor) {
   const proposal = await pendingOrThrow(id);
+  // A change asked for by a sentence on a step someone else checked waits for that person (sheet 94).
+  if (proposal.kind === "step-change") (await import("./sentence-change")).assertMayAccept(proposal, actor);
   if (edits && Object.keys(edits).length) await patchProposal(id, edits);
   const current = (await db.exploreStepProposal.findUnique({ where: { id } }))!;
   if (expectedRevision !== undefined) {
@@ -243,11 +243,16 @@ export async function acceptProposal(id: string, edits: Record<string, unknown> 
         after: current.laneOf ? null : current.afterAnalysisId, laneOf: current.laneOf, laneKind: current.laneOf ? "alternative" : null,
         name: short(edits?.name, 200) ?? (current.purpose || "Proposed step"), purpose: current.purpose || null,
         kitId: current.kitId, code: current.code, language: analysisLanguageOf(current.language),
-        inputs: await stepInputsOf(current.inputs), params: (current.params as Record<string, unknown> | null) ?? undefined, actor,
+        inputs: await stepInputsOf(current.inputs, current), params: (current.params as Record<string, unknown> | null) ?? undefined, actor,
       });
       await db.exploreStepProposal.update({ where: { id }, data: { acceptedAnalysisId: stepId } });
       // "Why this step": the step keeps the turn that proposed it.
       if (current.proposedByTurnId) await db.exploreAnalysis.update({ where: { id: stepId }, data: { proposedByTurnId: current.proposedByTurnId } });
+      // Sheet 94: a step drafted from a sentence typed in In words keeps that sentence as its own (a person's words).
+      if (current.text?.trim()) {
+        const created = await db.exploreAnalysis.findUnique({ where: { id: stepId }, select: { currentRevisionId: true } });
+        await db.exploreAnalysis.update({ where: { id: stepId }, data: { methodsSentence: { text: current.text.trim().slice(0, 1000), tokens: [], revisionId: created?.currentRevisionId ?? null, author: "person", acceptedById: actor.userId, acceptedAt: new Date().toISOString(), ...methodsAcceptedBy({ memberId: actor.memberId ?? null, name: (actor as { name?: string | null }).name ?? null }) } as Prisma.InputJsonValue } });
+      }
       return { proposal: serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!), stepId };
     }
     if (current.kind === "finding") {
@@ -255,9 +260,17 @@ export async function acceptProposal(id: string, edits: Record<string, unknown> 
       await db.exploreStepProposal.update({ where: { id }, data: { acceptedFindingId: finding.id } });
       return { proposal: serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!), finding: { id: finding.id, analysisId: finding.analysisId, text: finding.text, values: finding.values, caveats: finding.caveats, acceptedById: finding.acceptedById, acceptedAt: finding.acceptedAt.toISOString() } };
     }
+    if (current.kind === "step-change") {
+      // Sheet 94: a new revision of the step from its sentence (out of date, nothing runs) and the edited sentence.
+      const { applySentenceChange, tellRequester } = await import("./sentence-change");
+      const applied = await applySentenceChange(current, actor);
+      await tellRequester(current, actor, true);
+      return { proposal: serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!), stepId: applied.stepId };
+    }
     if (current.kind === "methods") {
       const analysis = await db.exploreAnalysis.findUnique({ where: { id: current.analysisId! }, select: { currentRevisionId: true } });
-      await db.exploreAnalysis.update({ where: { id: current.analysisId! }, data: { methodsSentence: acceptedMethodsSentence(current.values, current.text ?? "", analysis?.currentRevisionId ?? null, actor.userId) as Prisma.InputJsonValue } });
+      // The accepting person (member and name, when the route's actor carries them) is who the sentence is by now.
+      await db.exploreAnalysis.update({ where: { id: current.analysisId! }, data: { methodsSentence: acceptedMethodsSentence(current.values, current.text ?? "", analysis?.currentRevisionId ?? null, actor.userId, actor) as Prisma.InputJsonValue } });
       return { proposal: serializeProposal((await db.exploreStepProposal.findUnique({ where: { id } }))!), stepId: current.analysisId };
     }
     // gloss-rewrite: the new words replace the gloss's, accepted by this person.

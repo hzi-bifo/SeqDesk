@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
-  db: { siteSettings: { findUnique: vi.fn(), upsert: vi.fn() } },
+  db: { siteSettings: { findUnique: vi.fn(), upsert: vi.fn(), updateMany: vi.fn(), create: vi.fn() } },
 }));
 vi.mock("next-auth", () => ({ getServerSession: mocks.getServerSession }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
@@ -15,15 +15,23 @@ process.env.NEXTAUTH_SECRET ||= "test-secret-for-secret-store-unit-tests";
 const admin = { user: { id: "admin-1", name: "Mateus Oliveira", role: "FACILITY_ADMIN" } };
 const put = (body: unknown) => PUT(new Request("http://x/api/admin/settings/dryad", { method: "PUT", body: JSON.stringify(body) }));
 
+let stored: string | null = null;
+
 describe("/api/admin/settings/dryad", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
     vi.stubEnv("SEQDESK_DRYAD_CLIENT_ID", "");
     vi.stubEnv("SEQDESK_DRYAD_CLIENT_SECRET", "");
-    let stored: string | null = JSON.stringify({ ena: { centerName: "HZI" } });
+    stored = JSON.stringify({ ena: { centerName: "HZI" } });
     mocks.db.siteSettings.findUnique.mockImplementation(async () => ({ extraSettings: stored }));
     mocks.db.siteSettings.upsert.mockImplementation(async ({ update }: { update: { extraSettings: string } }) => { stored = update.extraSettings; });
+    mocks.db.siteSettings.updateMany.mockImplementation(async ({ where, data }: { where: { extraSettings: string | null }; data: { extraSettings: string } }) => {
+      if (stored !== where.extraSettings) return { count: 0 };
+      stored = data.extraSettings;
+      return { count: 1 };
+    });
+    mocks.db.siteSettings.create.mockImplementation(async ({ data }: { data: { extraSettings: string } }) => { stored = data.extraSettings; });
   });
 
   it("is for administrators only", async () => {
@@ -37,7 +45,7 @@ describe("/api/admin/settings/dryad", () => {
     const body = await (await put({ clientId: "client-id-1", clientSecret: "client-secret-1" })).json();
     expect(body).toMatchObject({ hasAccount: true, source: "settings", changedBy: "Mateus Oliveira" });
     expect(JSON.stringify(body)).not.toContain("client-secret-1");
-    const extra = JSON.parse(mocks.db.siteSettings.upsert.mock.calls.at(-1)![0].update.extraSettings);
+    const extra = JSON.parse(stored!);
     expect(extra.ena).toEqual({ centerName: "HZI" });
     expect(isEncrypted(extra.dryad.clientSecret)).toBe(true);
     expect(decryptSecret(extra.dryad.clientId)).toBe("client-id-1");

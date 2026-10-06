@@ -4,6 +4,7 @@ import path from 'path';
 import { promisify } from 'util';
 
 import { inferPipelineExitCode } from '@/lib/pipelines/run-completion';
+import { startedExitCode } from '@/lib/pipelines/run-started';
 import { buildSeqDeskSlurmJobName } from '@/lib/pipelines/run-directory';
 
 const execFileAsync = promisify(execFile);
@@ -288,7 +289,7 @@ export async function readIdentityCheckedQueueSnapshot({
       );
     }
 
-    const exitCode = await inferPipelineExitCode(runFolder);
+    const exitCode = await startedExitCode(runFolder, await inferPipelineExitCode(runFolder));
     if (exitCode !== null) {
       return {
         state: 'EXITED',
@@ -517,6 +518,22 @@ export async function readIdentityCheckedQueueSnapshot({
     'sacct',
     'Stored SLURM job identity was not found in squeue or sacct'
   );
+}
+
+/**
+ * The accounting state of one job (`sacct -X`), or null when sacct does not know it or fails. squeue shows a job that
+ * was scancelled as COMPLETING until its processes are gone (up to KillWait, 30 s by default, longer on a busy node),
+ * while sacct already records "CANCELLED by <uid>" at the moment of the cancel (seen on a real Slurm 23.11).
+ */
+export async function readAccountingState(jobId: string): Promise<string | null> {
+  if (!/^\d+$/.test(jobId)) return null;
+  try {
+    const { stdout } = await execFileAsync('sacct', ['-X', '-P', '-n', '-j', jobId, '-o', 'JobID,State'], { timeout: SACCT_TIMEOUT_MS });
+    const row = stdout.split('\n').map((line) => line.trim().split('|')).find(([id]) => id === jobId);
+    return row?.[1]?.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 function delay(ms: number): Promise<void> {

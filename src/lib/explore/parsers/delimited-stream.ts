@@ -13,7 +13,7 @@ import { DelimitedParseError, detectCsvDelimiter, detectDelimiter, sniffTextEnco
  * empty line), handed over one chunk's lines at a time: a promise per chunk, not per line (a table of 20 million
  * rows would otherwise make 20 million promises, which also overflows the dev server's async tracking).
  */
-export async function* streamLineBatches(source: AsyncIterable<Buffer | string>, options: { utf8?: boolean } = {}): AsyncGenerator<string[]> {
+export async function* streamLineBatches(source: AsyncIterable<Buffer | string>, options: { utf8?: boolean; keepCr?: boolean } = {}): AsyncGenerator<string[]> {
   let rest = "";
   // `utf8`: text this server wrote itself (a stored table): decoded as UTF-8 as it is, with no encoding guess.
   let bomChecked = options.utf8 === true;
@@ -24,13 +24,13 @@ export async function* streamLineBatches(source: AsyncIterable<Buffer | string>,
     let start = 0;
     for (let at = rest.indexOf("\n"); at >= 0; at = rest.indexOf("\n", start)) {
       const line = rest.slice(start, at);
-      lines.push(line.endsWith("\r") ? line.slice(0, -1) : line);
+      lines.push(line.endsWith("\r") && !options.keepCr ? line.slice(0, -1) : line);
       start = at + 1;
     }
     rest = rest.slice(start);
     if (lines.length) yield lines;
   }
-  yield [rest.endsWith("\r") ? rest.slice(0, -1) : rest];
+  yield [rest.endsWith("\r") && !options.keepCr ? rest.slice(0, -1) : rest];
 }
 
 async function* utf8Text(source: AsyncIterable<Buffer | string>): AsyncGenerator<string> {

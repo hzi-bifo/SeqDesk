@@ -16,6 +16,7 @@ import {
   assertNoReservedSlurmPathOptions,
   buildSlurmCompletionAttestationBlock,
   buildSlurmWrapperFinalizerBlock,
+  SLURM_WORKLOAD_WAIT,
   renderSlurmChdirDirective,
 } from '@/lib/pipelines/slurm-completion-attestation';
 import { NEXTFLOW_NAME_FLAG, NEXTFLOW_REQUEUE_ARGS, nextflowRequeueBlock } from '@/lib/pipelines/slurm-requeue';
@@ -441,7 +442,7 @@ ${nextflowRequeueBlock(runName)}
 "\${NEXTFLOW_RUNNER[@]}" run nf-core/mag \\
   ${nextflowArgs} \\
   ${NEXTFLOW_REQUEUE_ARGS} \\
-  >> "$STDOUT_LOG" 2>> "$STDERR_LOG"
+  >> "$STDOUT_LOG" 2>> "$STDERR_LOG"${SLURM_WORKLOAD_WAIT}
 `;
 }
 

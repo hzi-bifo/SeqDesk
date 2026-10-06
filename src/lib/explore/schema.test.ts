@@ -67,3 +67,11 @@ describe("explore content hash", () => {
     expect(computeContentHash(otherSchema, [{ a: 1, b: "x" }])).not.toBe(base);
   });
 });
+
+describe("identifiers with leading zeros", () => {
+  it("make a text column, so the zeros are shown", () => {
+    const schema = inferSchema([{ id: "0001", n: "1" }, { id: "0002", n: "2.5" }, { id: "0010", n: "0.5" }]);
+    expect(schema.columns.find((column) => column.key === "id")?.type).toBe("string");
+    expect(schema.columns.find((column) => column.key === "n")?.type).toBe("number");
+  });
+});

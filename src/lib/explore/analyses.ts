@@ -290,6 +290,10 @@ export interface CreateAnalysisInput {
   code?: string;
   /** A stable id the client chose (request idempotency). */
   id?: string;
+  /** A pipeline step (pipeline-steps.ts): its kind and the configuration its first revision keeps. Code steps leave
+   *  both out, so they never touch the columns the pipeline-steps migration adds. */
+  stepKind?: "code" | "pipeline" | "samples";
+  pipeline?: Prisma.InputJsonValue;
 }
 
 /**
@@ -357,6 +361,7 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
       laneLabel: input.laneLabel ?? null,
       purpose: input.purpose ?? null,
       ...(input.paramMeta ? { paramMeta: input.paramMeta as Prisma.InputJsonValue } : {}),
+      ...(input.stepKind && input.stepKind !== "code" ? { stepKind: input.stepKind } : {}),
     },
   });
   const revision = await client.exploreAnalysisRevision.create({
@@ -371,6 +376,7 @@ export async function createAnalysis(input: CreateAnalysisInput, generation?: { 
       author: "user",
       authorUserId: input.createdById,
       message: kit ? `Created from kit ${kit.manifest.id}` : "Created",
+      ...(input.pipeline !== undefined ? { pipeline: input.pipeline } : {}),
     },
   });
   await client.exploreAnalysis.update({ where: { id: analysis.id }, data: { currentRevisionId: revision.id } });
@@ -408,6 +414,8 @@ export interface CreateRevisionInput {
   authorMemberId?: string | null;
   message?: string | null;
   prompt?: string | null;
+  /** A pipeline step's configuration (pipeline-steps.ts); copied from the current revision when left out. */
+  pipeline?: Prisma.InputJsonValue | null;
 }
 
 /** A new revision copies whatever the caller did not change from the current one. */
@@ -434,9 +442,12 @@ export async function createRevision(input: CreateRevisionInput): Promise<Revisi
   const current = analysis.currentRevisionId
     ? await tx.exploreAnalysisRevision.findUnique({ where: { id: analysis.currentRevisionId } })
     : latest;
+  // A pipeline step's configuration travels with every revision (absent on code steps and on older databases).
+  const carried = input.pipeline !== undefined ? input.pipeline : ((current as { pipeline?: unknown } | null)?.pipeline ?? null) as Prisma.InputJsonValue | null;
   const revision = await tx.exploreAnalysisRevision.create({
     data: {
       ...(input.revisionId ? { id: input.revisionId } : {}),
+      ...(carried !== null && carried !== undefined ? { pipeline: carried } : {}),
       analysisId: analysis.id,
       number: (latest?.number ?? 0) + 1,
       code: input.code ?? current?.code ?? "",
@@ -466,10 +477,41 @@ export async function updateAnalysis(id: string, data: { name?: string; descript
   return db.exploreAnalysis.update({ where: { id }, data });
 }
 
+/**
+ * The output tables of a removed step that were made ahead of its first run (so a later step could read them) and
+ * never written: no version, nothing else reads them. They would stay in the study's Data as empty placeholders.
+ * Also those of a step removed earlier that the removed step was the last to read. A table that holds a version,
+ * or that a step or an analysis input still reads, stays.
+ */
+export async function removeUnwrittenOutputs(tx: Prisma.TransactionClient, analysisId: string, targetKey: string): Promise<string[]> {
+  const candidates = await tx.exploreDataset.findMany({
+    where: { targetKey, kind: "derived", currentVersionId: null, sourceConfig: { contains: "analysis-run" }, versions: { none: {} } },
+    select: { id: true, sourceConfig: true },
+  });
+  const removed: string[] = [];
+  for (const dataset of candidates) {
+    let config: Record<string, unknown> = {};
+    try { config = JSON.parse(dataset.sourceConfig ?? "{}") as Record<string, unknown>; } catch { continue; }
+    if (config.builder !== "analysis-run" || typeof config.analysisId !== "string") continue;
+    if (config.analysisId !== analysisId && await tx.exploreAnalysis.count({ where: { id: config.analysisId } })) continue;
+    const [readByStep, readByFlow] = await Promise.all([
+      tx.exploreAnalysisRevision.count({ where: { inputs: { contains: dataset.id } } }),
+      tx.exploreFlowInput.count({ where: { datasetId: dataset.id } }),
+    ]);
+    if (readByStep || readByFlow) continue;
+    await tx.exploreDataset.delete({ where: { id: dataset.id } });
+    removed.push(dataset.id);
+  }
+  return removed;
+}
+
 export async function deleteAnalysis(id: string, actor?: { userId: string; memberId?: string | null }) {
+  // A pipeline step's pipeline run still going stops with it (else it runs on orphaned).
+  await import("./pipeline-step-runs").then((module) => module.stopPipelinesOfSteps([id])).catch((error) => console.error("[flow] could not stop the step's pipeline", id, error));
   await db.$transaction(async (tx) => {
-    const analysis = await tx.exploreAnalysis.findUnique({ where: { id }, select: { flowId: true, name: true, createdById: true } });
+    const analysis = await tx.exploreAnalysis.findUnique({ where: { id }, select: { flowId: true, name: true, createdById: true, targetKey: true } });
     await tx.exploreAnalysis.delete({ where: { id } });
+    if (analysis) await removeUnwrittenOutputs(tx, id, analysis.targetKey);
     // Removing a step from a flow is a new recipe revision; lanes that hung off it move to the main lane.
     if (analysis?.flowId) {
       await tx.exploreAnalysis.updateMany({ where: { flowId: analysis.flowId, laneOf: id }, data: { laneOf: null, laneKind: null } });

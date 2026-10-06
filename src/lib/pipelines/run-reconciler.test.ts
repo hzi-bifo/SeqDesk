@@ -97,6 +97,11 @@ describe('the run reconciler on real SLURM evidence', () => {
     expect(queueFieldsFrom({ state: 'PENDING', reason: '(Resources)', source: 'squeue', identityVerified: true }, { slurm: true })).toEqual({ status: 'PENDING', reason: 'Resources' });
     expect(queueFieldsFrom({ state: 'RUNNING', reason: 'None', source: 'squeue', identityVerified: true }, { slurm: true, waitingTaskReason: 'AssocMaxJobsLimit' })).toEqual({ status: 'RUNNING', reason: 'AssocMaxJobsLimit' });
     expect(queueFieldsFrom({ state: 'UNKNOWN', reason: 'x', source: 'sacct', identityVerified: false }, { slurm: true })).toBeNull();
+    // Real Slurm (elektra): a job past its time limit is COMPLETING with %R "TimeLimit"; a normal end shows the node list.
+    expect(queueFieldsFrom({ state: 'COMPLETING', reason: 'TimeLimit', source: 'squeue', identityVerified: true }, { slurm: true })).toEqual({ status: 'COMPLETING', reason: 'TimeLimit' });
+    expect(queueFieldsFrom({ state: 'COMPLETING', reason: 'slurmnode', source: 'squeue', identityVerified: true }, { slurm: true })).toEqual({ status: 'COMPLETING', reason: null });
+    expect(reconcileRun({ run: { status: 'running' }, trace: { derived: null, currentStep: null, progress: null, failuresAborted: false },
+      scheduler: { state: 'COMPLETING', reason: 'TimeLimit', source: 'squeue', identityVerified: true }, slurm: true }).queue).toEqual({ status: 'COMPLETING', reason: 'TimeLimit' });
     expect(queueFieldsFrom({ state: 'RUNNING', reason: null, source: 'squeue', identityVerified: true }, { slurm: true, status: 'cancelled' })).toEqual({ status: null, reason: null });
   });
 

@@ -1497,6 +1497,9 @@ model ExploreAnalysis {
   methodsSentence   Json?    // {text, tokens, revisionId, author, acceptedById, acceptedAt}
   proposedByTurnId  String?  // the conversation turn whose proposal became this step
   packages          Json?    // extra conda packages on top of the base environment: {packages: string[], channels: string[]}
+  // What the step is (explore.pipeline-steps): own code or a kit ("code"), a SeqDesk pipeline run as one step
+  // ("pipeline", its settings in the revision's `pipeline`), or the built-in sample chooser ("samples").
+  stepKind          String   @default("code")
 
   createdBy User                      @relation("ExploreAnalysisCreator", fields: [createdById], references: [id])
   report    ExploreReport?            @relation(fields: [reportId], references: [id], onDelete: Cascade)
@@ -1525,6 +1528,9 @@ model ExploreAnalysisRevision {
   prompt       String?
   message      String?
   codeHash     String   @default("") // sha256 hex of the code
+  // A pipeline step's revision: {pipelineId, version, params, samples, outputs, presetId?, pinnedRunId?}
+  // (pipeline-steps.ts). Its code is the canonical JSON of everything but params, so a settings edit reads paramChanged.
+  pipeline     Json?
   createdAt    DateTime @default(now())
 
   analysis ExploreAnalysis      @relation(fields: [analysisId], references: [id], onDelete: Cascade)
@@ -1560,6 +1566,8 @@ model ExploreAnalysisRun {
   environmentDigest String?
   reusedFromRunId   String?
   durationMs        Int?
+  // The SeqDesk pipeline run a pipeline step started, joined or reused (PipelineRun.id); null for code steps.
+  pipelineRunId     String?
 
   flowRun   ExploreFlowRun?         @relation(fields: [flowRunId], references: [id], onDelete: SetNull)
   analysis  ExploreAnalysis         @relation(fields: [analysisId], references: [id], onDelete: Cascade)
@@ -1570,6 +1578,74 @@ model ExploreAnalysisRun {
   @@index([analysisId, createdAt])
   @@index([status])
   @@index([flowRunId])
+  @@index([pipelineRunId])
+}
+
+// Pipeline steps reuse a finished pipeline run when nothing it read changed: same study, pipeline, version and
+// input hash (settings, the reads in Data, the sample list). The row names the run started for that hash; whether
+// it can be reused follows that run's status. Never shared across studies.
+model ExplorePipelineCache {
+  id            String   @id @default(cuid())
+  targetKey     String
+  pipelineId    String
+  version       String
+  inputHash     String
+  pipelineRunId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([targetKey, pipelineId, version, inputHash])
+  @@index([pipelineRunId])
+}
+
+// A lab's named settings for a pipeline ("V4 16S"): copied into a step when used, never changing it later. A lab is
+// the collaboration workspace the integration session belongs to (labKey "<authority>|<workspaceId>").
+model ExplorePipelinePreset {
+  id             String    @id @default(cuid())
+  labKey         String
+  pipelineId     String
+  versions       Json      @default("[]") // versions it was made for; [] = any
+  params         Json      @default("{}")
+  name           String
+  note           String?
+  authorId       String
+  authorMemberId String?
+  authorName     String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  archivedAt     DateTime?
+
+  @@index([labKey, pipelineId])
+}
+
+// A member asks the admins to install a store pipeline (kind "install") or to find one that is not in the store
+// ("wanted", free text or a link). Admins decide; the asking step waits in its recipe meanwhile.
+model ExplorePipelineInstallRequest {
+  id                  String    @id @default(cuid())
+  labKey              String
+  kind                String    @default("install") // install | wanted
+  pipelineId          String?
+  version             String?
+  text                String?
+  reason              String?
+  targetKey           String?
+  flowId              String?
+  analysisId          String?   // the waiting step, when the request was made from Add a step
+  stepPosition        String?
+  requestedById       String
+  requestedByMemberId String?
+  requestedByName     String?
+  status              String    @default("pending") // pending | installed | declined | withdrawn | failed
+  decidedById         String?
+  decidedByName       String?
+  decidedAt           DateTime?
+  decisionNote        String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([labKey, status, createdAt])
+  @@index([status, createdAt])
+  @@index([pipelineId])
 }
 
 model ExploreArtifact {

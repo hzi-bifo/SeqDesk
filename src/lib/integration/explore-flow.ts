@@ -8,10 +8,11 @@ import type { NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { canManageExplore, requireTargetAccess, resolveTargetAccess } from "@/lib/explore/authorization";
 import { answerQuestion, postTurn, readConversation, updateAssistantTurn, waitForTurns, type ConversationActor } from "@/lib/explore/conversation";
-import { addStep, applyRecipeOps, listRecipeRevisions, parseRecipeOps, stepOptions, type AddStepInput } from "@/lib/explore/recipe-edit";
+import { addStep, applyRecipeOps, listRecipeRevisions, parseRecipeOps, setStepInputs, stepOptions, type AddStepInput } from "@/lib/explore/recipe-edit";
 import { getRecipeView } from "@/lib/explore/recipe-view";
 import { parseMethodsDraft, saveMethodsDraft } from "@/lib/explore/methods-draft";
 import { acceptProposal, createProposals, discardProposal, listProposals, patchProposal, pendingProposals } from "@/lib/explore/proposals";
+import { parseSentenceChange, proposeSentenceChange, tellRequester, undoSentenceChange } from "@/lib/explore/sentence-change";
 import { flowValues, resolveValues } from "@/lib/explore/values";
 import { analysisLanguageOf } from "@/lib/explore/analyses";
 import { outputLineage, plotSource, requestCapsule, serializeCapsule } from "@/lib/explore/capsules";
@@ -26,6 +27,8 @@ import { attachFlowInput, listFlowInputs } from "@/lib/explore/flow-inputs";
 import { addHold, listHolds, removeHold, cancelFlowRun, compareFlowRuns, flowRunOutputs, getFlowRunDetail, listFlowRuns, makeRunCurrent, startFlowRun, type FlowActor, type StartFlowRunInput } from "@/lib/explore/flow-runs";
 import { flowError, requestIdOf } from "./flow-contract";
 import { acceptFigureTrial, figureTrialResult, startFigureTrial } from "@/lib/explore/figure-trial";
+import { decideServerCapability } from "@/lib/authorization/api";
+import type { PipelineAccess } from "@/lib/explore/pipeline-steps";
 import type { IntegrationSession } from "./identity";
 
 export type Json = (body: unknown, status?: number) => Response;
@@ -40,6 +43,15 @@ export interface FlowRouteContext {
 export function actorOf(session: IntegrationSession): FlowActor {
   return { userId: session.user.id, memberId: session.integration.memberId || null, name: session.user.name ?? null };
 }
+
+/** What the caller's SeqDesk account may do with pipelines (pipeline steps, explore-pipelines.ts). */
+export function pipelineAccessOf(session: IntegrationSession): PipelineAccess {
+  const run = decideServerCapability(session, "analysis.run");
+  return { userId: session.user.id, canRun: run.allowed, installation: run.allowed && run.grant?.scope === "installation", canManage: canManageExplore(session) };
+}
+
+/** A lab is the collaboration workspace of the session (pipeline presets and install requests belong to it). */
+export const labKeyOf = (session: IntegrationSession) => `${session.integration.authority}|${session.integration.workspaceId}`;
 
 export async function readBody(request: Request): Promise<Record<string, unknown>> {
   const text = await request.text().catch(() => "");
@@ -102,6 +114,9 @@ async function handleRuns({ request, session, segments, json }: FlowRouteContext
         notify: body.notify === true,
         requestId: requestIdOf(body.requestId),
         actor: actorOf(session),
+        // Pipeline steps start as this person (or are refused before the run starts); `fresh` skips their reuse.
+        pipelines: { access: pipelineAccessOf(session), fresh: Array.isArray(body.fresh) ? body.fresh.filter((value): value is string => typeof value === "string").slice(0, 50) : [],
+          newSamplesOnly: Array.isArray(body.newSamplesOnly) ? body.newSamplesOnly.filter((value): value is string => typeof value === "string").slice(0, 50) : [] },
       });
       return json({ run }, 201);
     }
@@ -169,10 +184,10 @@ async function handleRuns({ request, session, segments, json }: FlowRouteContext
   return null;
 }
 
-const FLOW_HEADS = new Set(["flow-runs", "proposals", "glosses", "values", "capsules", "templates"]);
+const FLOW_HEADS = new Set(["flow-runs", "proposals", "glosses", "values", "capsules", "templates", "pipeline-presets", "pipeline-requests", "pipeline-store", "data-summary", "pipeline-references", "pipeline-settings"]);
 const FLOW_SUBS: Record<string, Set<string>> = {
-  flows: new Set(["recipe", "runs", "revisions", "step-options", "steps", "proposals", "values", "lineage", "from-template", "conversation", "inputs"]),
-  analyses: new Set(["glosses", "methods-draft"]),
+  flows: new Set(["recipe", "runs", "revisions", "step-options", "steps", "proposals", "values", "lineage", "from-template", "conversation", "inputs", "pipeline-preflight", "run-plan", "pipeline-runs", "samples-preview"]),
+  analyses: new Set(["glosses", "methods-draft", "sentence-change"]),
   artifacts: new Set(["capsule", "plot-source"]),
 };
 
@@ -193,7 +208,7 @@ export async function scopeInfo(session: IntegrationSession, targetKey: string) 
 /** The recipe as the caller may see it. */
 export async function recipeFor(session: IntegrationSession, flow: { id: string; targetKey: string }, runId?: string | null) {
   const access = await resolveTargetAccess(session, flow.targetKey);
-  return getRecipeView(flow.id, { runId, canEdit: access.level === "write", scope: await scopeInfo(session, flow.targetKey), proposals: await pendingProposals(flow.id) });
+  return getRecipeView(flow.id, { runId, canEdit: access.level === "write", scope: await scopeInfo(session, flow.targetKey), proposals: await pendingProposals(flow.id), pipelineAccess: pipelineAccessOf(session), labKey: labKeyOf(session) });
 }
 
 function parseStepInputs(raw: unknown): AddStepInput["inputs"] {
@@ -201,10 +216,12 @@ function parseStepInputs(raw: unknown): AddStepInput["inputs"] {
   if (!Array.isArray(raw) || raw.length > 20) throw flowError("invalid_request", "inputs must be a list.");
   return raw.map((entry) => {
     const input = entry as Record<string, unknown>;
-    if (!input || typeof input.alias !== "string") throw flowError("invalid_request", "Each input needs an alias.");
-    if (typeof input.datasetId === "string") return { alias: input.alias, datasetId: input.datasetId };
+    // No alias: a table the person chose in the picker; addStep places it on the kit input it fits (or its own name).
+    if (!input || (input.alias !== undefined && input.alias !== null && typeof input.alias !== "string")) throw flowError("invalid_request", "An input's alias must be text.");
+    const alias = typeof input.alias === "string" ? { alias: input.alias } : {};
+    if (typeof input.datasetId === "string") return { ...alias, datasetId: input.datasetId };
     const from = input.from as Record<string, unknown> | undefined;
-    if (from && typeof from.stepId === "string" && typeof from.output === "string") return { alias: input.alias, from: { stepId: from.stepId, output: from.output } };
+    if (from && typeof from.stepId === "string" && typeof from.output === "string") return { ...alias, from: { stepId: from.stepId, output: from.output } };
     throw flowError("invalid_request", "Each input needs a datasetId or from:{stepId,output}.");
   });
 }
@@ -235,10 +252,21 @@ async function handleRecipe({ request, session, segments, json }: FlowRouteConte
     // "Start from a template with this table" fills the blank analysis the table was added to.
     const into = typeof body.intoFlowId === "string" && body.intoFlowId ? await flowFor(session, body.intoFlowId, "write") : null;
     if (into && into.targetKey !== targetKey) throw flowError("invalid_request", "Choose an analysis of this study.");
-    const flowId = await createFlowFromTemplate({ targetKey, templateId: body.templateId, name: optionalText(body.name, 200), datasetId: typeof body.datasetId === "string" ? body.datasetId : null, datasets: body.datasets, columns: body.columns, intoFlowId: into?.id ?? null, slots: body.slots, actor: actorOf(session) });
+    const flowId = await createFlowFromTemplate({ targetKey, templateId: body.templateId, name: optionalText(body.name, 200), datasetId: typeof body.datasetId === "string" ? body.datasetId : null, datasets: body.datasets, columns: body.columns, intoFlowId: into?.id ?? null, slots: body.slots, requestId: requestIdOf(body.requestId), actor: actorOf(session) });
     await flowChanged(flowId);
     const { getFlow } = await import("@/lib/explore/flows");
     return json({ flow: await getFlow(flowId), recipe: await recipeFor(session, { id: flowId, targetKey }) }, 201);
+  }
+  // Change what an existing step reads: PUT flows/:id/steps/:stepId/inputs {"inputs":[…],"expectedRevisionId"?}.
+  if (head === "flows" && sub === "steps" && segments.length === 5 && segments[4] === "inputs" && method === "PUT") {
+    const flow = await flowFor(session, id, "write");
+    const body = await readBody(request);
+    if (!Array.isArray(body.inputs)) throw flowError("invalid_request", "inputs must be a list.");
+    const stepId = segments[3];
+    const changed = await setStepInputs(flow.id, stepId, { inputs: parseStepInputs(body.inputs), expectedRevisionId: optionalText(body.expectedRevisionId, 80) ?? undefined, actor: actorOf(session) });
+    if (changed) await flowChanged(flow.id);
+    const recipe = await recipeFor(session, flow);
+    return json({ changed, step: recipe.steps.find((step) => step.id === stepId) ?? null, recipe });
   }
   if (head !== "flows" || segments.length !== 3) return null;
   if (sub === "inputs" && method === "GET") {
@@ -277,6 +305,16 @@ async function handleRecipe({ request, session, segments, json }: FlowRouteConte
   if (sub === "steps" && method === "POST") {
     const flow = await flowFor(session, id, "write");
     const body = await readBody(request);
+    // A pipeline as a step (explore.pipeline-steps): settings checked, outputs declared, or a pinned existing run.
+    if (body.pipeline !== undefined) {
+      const { addPipelineStepFromBody } = await import("./explore-pipelines");
+      return addPipelineStepFromBody({ request, session, segments, json }, flow, body);
+    }
+    // A Choose samples step (explore.samples-steps): filters, read matching, names, columns; no code.
+    if (body.samples !== undefined) {
+      const { addSamplesStepFromBody } = await import("./explore-pipeline-records");
+      return addSamplesStepFromBody({ request, session, segments, json }, flow, body);
+    }
     const laneKind = body.laneKind === "forEach" ? "forEach" : body.laneKind === "alternative" ? "alternative" : null;
     const code = typeof body.code === "string" ? body.code : null;
     if (code && Buffer.byteLength(code, "utf8") > 512 * 1024) throw flowError("invalid_request", "The code is larger than 512 KB");
@@ -323,7 +361,24 @@ async function handleProposals({ request, session, segments, json }: FlowRouteCo
     await flowFor(session, analysis.flowId, "write");
     return json({ proposal: await saveMethodsDraft(id, parseMethodsDraft(await readBody(request)), actorOf(session)) }, 201);
   }
+  // Sheet 94 (`explore.sentence-changes`): an edited sentence asks for a change of its step; checked again here and kept in pencil.
+  if (head === "analyses" && sub === "sentence-change" && segments.length === 3 && method === "POST") {
+    const analysis = await db.exploreAnalysis.findUnique({ where: { id }, select: { flowId: true } });
+    if (!analysis?.flowId) throw flowError("not_found", "Step not found");
+    const flow = await flowFor(session, analysis.flowId, "write");
+    const proposal = await proposeSentenceChange(id, parseSentenceChange(await readBody(request)), actorOf(session));
+    await flowChanged(flow.id);
+    return json({ proposal }, 201);
+  }
   if (head !== "proposals") return null;
+  // Undo an accepted step change: the previous revision's code and settings as a new revision, and the previous sentence.
+  if (segments.length === 3 && sub === "undo" && method === "POST") {
+    const { flow } = await proposalFor(session, id, "write");
+    const result = await undoSentenceChange(id, actorOf(session));
+    await flowChanged(flow.id);
+    const recipe = await recipeFor(session, flow);
+    return json({ proposal: result.proposal, step: recipe.steps.find((step) => step.id === result.stepId) ?? null, recipe });
+  }
   if (segments.length === 2 && method === "PATCH") {
     await proposalFor(session, id, "write");
     return json({ proposal: await patchProposal(id, await readBody(request)) });
@@ -334,7 +389,7 @@ async function handleProposals({ request, session, segments, json }: FlowRouteCo
     const expected = body.expectedRevision === undefined ? undefined : Number(body.expectedRevision);
     const edits = body.edits && typeof body.edits === "object" && !Array.isArray(body.edits) ? (body.edits as Record<string, unknown>) : null;
     const result = await acceptProposal(id, edits, Number.isInteger(expected) ? expected : undefined, actorOf(session));
-    if (result.proposal.kind === "step") {
+    if (result.proposal.kind === "step" || result.proposal.kind === "step-change") {
       await flowChanged(flow.id);
       const recipe = await recipeFor(session, flow);
       return json({ proposal: result.proposal, step: recipe.steps.find((step) => step.id === result.stepId) ?? null, recipe });
@@ -342,9 +397,16 @@ async function handleProposals({ request, session, segments, json }: FlowRouteCo
     return json(result);
   }
   if (segments.length === 3 && sub === "discard" && method === "POST") {
-    await proposalFor(session, id, "write");
+    const { flow } = await proposalFor(session, id, "write");
     const body = await readBody(request);
-    return json({ proposal: await discardProposal(id, optionalText(body.reason, 500)) });
+    const proposal = await discardProposal(id, optionalText(body.reason, 500));
+    // A request declined by the person it waited for: the person who asked is told (sheet 94).
+    if (proposal.kind === "step-change") {
+      const row = await db.exploreStepProposal.findUnique({ where: { id } });
+      if (row) await tellRequester(row, actorOf(session), false);
+      await flowChanged(flow.id);
+    }
+    return json({ proposal });
   }
   return null;
 }
@@ -495,8 +557,21 @@ async function handleConversation({ request, session, segments, json }: FlowRout
   return null;
 }
 
+/** Pipeline steps, presets, install requests, the store and data summaries (explore-pipelines.ts). */
+const PIPELINE_HEADS = new Set(["pipeline-presets", "pipeline-requests", "pipeline-store", "data-summary"]);
+async function handlePipelines(context: FlowRouteContext): Promise<Response | null> {
+  // Samples steps, leaving samples out, quality, Methods, compare, Which one?, references, limits.
+  const { handlePipelineRecords, isPipelineRecordsRoute } = await import("./explore-pipeline-records");
+  if (isPipelineRecordsRoute(context.segments)) return handlePipelineRecords(context);
+  const [head, , sub, , action] = context.segments;
+  const mine = PIPELINE_HEADS.has(head) || (head === "flows" && (["pipeline-preflight", "run-plan", "pipeline-runs"].includes(sub) || (sub === "steps" && ["pipeline", "preflight", "resume"].includes(action))));
+  if (!mine) return null;
+  const { handlePipelineSteps } = await import("./explore-pipelines");
+  return handlePipelineSteps(context);
+}
+
 type Handler = (context: FlowRouteContext) => Promise<Response | null>;
-const handlers: Handler[] = [handleConversation, handleRecipe, handleRuns, handleProposals, handleGlosses, handleValues, handleCapsules];
+const handlers: Handler[] = [handleConversation, handlePipelines, handleRecipe, handleRuns, handleProposals, handleGlosses, handleValues, handleCapsules];
 
 /** The Flow routes; null when the path is not one of them. */
 export async function handleFlowRequest(context: FlowRouteContext): Promise<Response | null> {

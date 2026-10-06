@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { requireTargetAccess, type SessionLike } from "@/lib/explore/authorization";
 import { getTableKind, suggestRoles } from "@/lib/explore/dataset-kinds";
 import { createDataset, deleteDataset, freeImportName, getDatasetRecord, serializeDatasetSummary, writeDatasetVersion } from "@/lib/explore/datasets";
-import { createImportJob, finishImportJob, serializeImportJob } from "@/lib/explore/import-jobs";
+import { createImportJob, findImportJobByKey, finishImportJob, serializeImportJob } from "@/lib/explore/import-jobs";
 import { ImportCancelled, writeDatasetVersionStream } from "@/lib/explore/table-store";
 import { readFailureWords } from "@/lib/explore/import-words";
 import { importRoles, isStreamableTable, parseImportFile, prepareImport, previewDelimitedFile, streamDelimitedFile } from "@/lib/explore/importers/file";
@@ -188,13 +188,17 @@ async function importStreamed(session: SessionLike & { user: { id: string } }, f
   const inherited = fileSensitivity(storedFile);
   const sensitivity = SENSITIVITY_RANK[inherited] > SENSITIVITY_RANK[chosen] ? inherited : chosen;
   const checksum = storedFile.checksumSha256;
+  // The same request again (its response was lost, or the button was pressed twice) follows the import already started.
+  const requestKey = background ? formString(form, "requestKey", 80) : null;
+  const existing = requestKey ? findImportJobByKey(session.user.id, targetKey, requestKey) : null;
+  if (existing) return { status: 202, body: { job: serializeImportJob(existing) } };
   const created = await createDataset({
     targetKey, kind: "external", tableKind, name: await freeImportName(targetKey, formString(form, "name") ?? fileName.replace(/(\.[^.]+)?\.gz$|\.[^.]+$/i, "")),
     description: `Imported from ${fileName}`, sensitivity, roles, sourceFileId: storedFile.id,
     sourceConfig: { builder: "import", fileId: storedFile.id, fileName, checksum, idGrammar: null, idColumn: null },
     createdById: session.user.id,
   });
-  const job = createImportJob({ targetKey, userId: session.user.id, fileName, sizeBytes, expectedRows: head.rowCount });
+  const job = createImportJob({ targetKey, userId: session.user.id, fileName, sizeBytes, expectedRows: head.rowCount, requestKey });
   job.datasetId = created.id;
   const run = async () => {
     const { rows } = streamDelimitedFile(filePath, fileName, { verify: { checksum } });

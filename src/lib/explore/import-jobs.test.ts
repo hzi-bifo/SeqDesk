@@ -27,3 +27,18 @@ describe("table pages", () => {
     expect(pageRowLimit(1_000_000, 2)).toEqual({ limit: 250_000, limitedBy: null });
   });
 });
+
+describe("import requests with a key", () => {
+  it("finds the running or finished job again, but not one that ended without a table", async () => {
+    const { findImportJobByKey } = await import("./import-jobs");
+    const job = createImportJob({ targetKey: "study:k", userId: "u", fileName: "a.csv", sizeBytes: 1, expectedRows: 2, requestKey: "key-1" });
+    expect(findImportJobByKey("u", "study:k", "key-1")).toBe(job);
+    expect(findImportJobByKey("other", "study:k", "key-1")).toBeNull();
+    expect(findImportJobByKey("u", "study:other", "key-1")).toBeNull();
+    finishImportJob(job, { state: "done", datasetId: "d" });
+    expect(findImportJobByKey("u", "study:k", "key-1")).toBe(job);
+    const failed = createImportJob({ targetKey: "study:k", userId: "u", fileName: "b.csv", sizeBytes: 1, expectedRows: 2, requestKey: "key-2" });
+    finishImportJob(failed, { state: "failed", error: "bad" });
+    expect(findImportJobByKey("u", "study:k", "key-2")).toBeNull();
+  });
+});

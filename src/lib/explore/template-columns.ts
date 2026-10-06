@@ -157,13 +157,25 @@ export function resolveColumns(roles: ColumnRole[], tables: Record<string, Table
       if (best && (!role.optional || best.points >= 4)) column = best.fact.key;
       guessed = true;
     }
+    // A choice that names no column of the table is an error, not a silent fall-back to the guess.
+    if (wanted !== undefined && wanted !== "" && !table.some((fact) => fact.key === wanted)) problems.push(`${wanted} is not a column of the ${role.input} table; choose the ${role.label.toLowerCase()} column again.`);
+    else if (wanted === "" && !role.optional) problems.push(`The ${role.label.toLowerCase()} column cannot be left empty.`);
     if (column) used.add(column);
     taken.set(role.input, used);
     const fact = column ? table.find((candidate) => candidate.key === column) ?? null : null;
     const levels = role.kind === "group" ? chooseLevels(role, fact, given) : [];
     resolved.push({ key: role.key, input: role.input, label: role.label, kind: role.kind, optional: role.optional, hint: role.hint ?? null, column, guessed, options, levels });
     problems.push(...checkRole(role, fact, column, levels, counts));
+    if (role.kind === "group") {
+      for (const slot of role.levels) {
+        const chosen = given[`${role.key}.${slot.key}`];
+        if (chosen !== undefined && !options_of(fact).includes(chosen)) problems.push(`${chosen} is not a value of ${column ?? "the group column"}; choose the ${slot.label.toLowerCase()} again.`);
+      }
+    }
   }
+  // Choices for a role or level the template does not have are refused too.
+  const knownChoices = new Set(roles.flatMap((role) => [role.key, ...role.levels.map((slot) => `${role.key}.${slot.key}`)]));
+  for (const key of Object.keys(given)) if (!knownChoices.has(key)) problems.push(`${key} is not a column choice of this template.`);
   // Two roles of one table on the same column (the group is also the pairing) is a design the steps cannot fit.
   for (const input of new Set(resolved.map((role) => role.input))) {
     const columns = resolved.filter((role) => role.input === input && role.column);
@@ -177,6 +189,8 @@ export function resolveColumns(roles: ColumnRole[], tables: Record<string, Table
   }
   return { roles: roles.map((role) => resolved.find((candidate) => candidate.key === role.key)!), problems, values };
 }
+
+const options_of = (fact: ColumnFact | null): string[] => (fact?.levels ?? []).map((level) => level.value);
 
 function checkRole(role: ColumnRole, fact: ColumnFact | null, column: string | null, levels: ResolvedRole["levels"], counts: Set<string> | null): string[] {
   if (!column || !fact) return role.optional ? [] : [`Choose the ${role.label.toLowerCase()} column.`];

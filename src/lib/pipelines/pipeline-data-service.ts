@@ -22,7 +22,7 @@ import { getExecutionSettings } from './execution-settings';
 import { getPipelineDatabaseStatuses } from './database-downloads';
 import { parsePipelineConfig } from './pipeline-readiness-service';
 import { findDataStudy, linkedReadRecords, readsAndRecordsWords, readsChangeWords, readsInData, readsWords, type DataFastq, type DataReadPair, type ReadsSnapshot } from './data-study';
-import { countWorkflowProcesses, durationWords, memoryWords, plainRunStatus, redactLog, submittedTasks, type PlainStatus } from './plain-status';
+import { countWorkflowProcesses, durationWords, memoryWords, pausedSecondsOf, plainRunStatus, redactLog, stripTerminalCodes, submittedTasks, type PlainStatus } from './plain-status';
 import { runBuilder } from '@/lib/explore/build';
 import { createDataset, writeDatasetVersion } from '@/lib/explore/datasets';
 import { resolveTableSpec } from '@/lib/explore/builders/pipeline-table';
@@ -312,7 +312,8 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
   const resumedTimeLimitSeconds = resumedTime ? Number(resumedTime[1]) * ({ s: 1, m: 60, h: 3600, d: 86400 } as const)[resumedTime[2] as 's'] : null;
   // A run on this server prints no console progress: the tasks it handed to Nextflow's executor come from its own log.
   const submitted = run.status === 'running' && run.executionMode !== 'slurm' ? submittedTasks(await nextflowLogTail(run.runFolder)) : undefined;
-  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, folderMissing, pipelineChanged, softwareReason, readsChanged, slurmInline: slurm?.inline === true, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, submitted, pastSeconds: past });
+  const pausedSeconds = resumes.length ? pausedSecondsOf(run.events) : 0;
+  const status: PlainStatus = plainRunStatus({ run: { ...run, askedMemory, resumedTimeLimitSeconds, pausedSeconds, folderMissing, pipelineChanged, softwareReason, readsChanged, slurmInline: slurm?.inline === true, checkedAt: run.queueUpdatedAt, declaredSteps: Math.max(getStepsForPipeline(run.pipelineId).length, workflowProcesses) || null, askedCores: slurm?.cores ?? null, queue: slurm?.queue ?? null, timeLimitHours: slurm?.timeLimit ?? null, outputCount: outputs.length }, trace, taskError, submitted, pastSeconds: past });
   const pkg = getPackage(run.pipelineId);
   const datasets = options.targetKey ? await db.exploreDataset.findMany({ where: { targetKey: options.targetKey, kind: 'pipeline-table', sourceConfig: { contains: `"runIds":["${run.id}"]` } }, select: { id: true, name: true, sourceConfig: true, currentVersionId: true, versions: { select: { number: true }, orderBy: { number: 'desc' }, take: 1 } } }) : [];
   const person = run.user ? [run.user.firstName, run.user.lastName].filter(Boolean).join(' ') || run.user.email : null;
@@ -330,7 +331,7 @@ export async function runView(run: RunRow, options: { detail?: boolean; targetKe
     asked: slurm ? { cores: slurm.cores ?? null, memory: slurm.memory ?? null, timeHours: slurm.timeLimit ?? null, queue: slurm.queue ?? null } : null,
   };
   if (!options.detail) return base;
-  const logLines = redactLog([run.outputTail ?? '', run.errorTail ?? ''].join('\n')).split(/\r?\n/).filter((l) => l.trim()).slice(-40);
+  const logLines = stripTerminalCodes(redactLog([run.outputTail ?? '', run.errorTail ?? ''].join('\n'))).split(/\r?\n/).filter((l) => l.trim()).slice(-40);
   // The run's event log (the reconciler's transitions, resumes), for Details' History.
   return { ...base, history: historyLines(run.events), provenance: await provenanceOf(run), log: logLines, workFolder: run.runFolder ? path.join(run.runFolder, 'work') : null, queueJobId: run.queueJobId,
     config: (() => { try { return JSON.parse(run.config ?? '{}'); } catch { return {}; } })() };

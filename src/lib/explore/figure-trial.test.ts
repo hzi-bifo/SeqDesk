@@ -22,6 +22,16 @@ describe("figure records", () => {
     expect(samePlottedData({ data_summary: { axes: [{ points: 5, point_sum: 38, image_cells: 0, image_sum: 0 }] } }, { data_summary: { axes: [{ points: 5, point_sum: 38, image_cells: 0, image_sum: 0 }] } })).toBe(true);
   });
 
+  it("compares the data each layer carries, not only the plot's main data", () => {
+    const layered = (rows: number, sum: number) => ({ data_summary: { rows: 15617, columns: {}, layers: [{ rows: 15617, columns: { x: { n: 15617, sum: 1, min: 0, max: 2 } } }, { rows, columns: { x: { n: rows, sum, min: 0, max: 2 } } }] } });
+    expect(samePlottedData(layered(10, 5), layered(10, 5))).toBe(true);
+    expect(samePlottedData(layered(10, 5), layered(100, 5))).toBe(false);
+    expect(samePlottedData(layered(10, 5), layered(10, 6))).toBe(false);
+    const inherited = { data_summary: { rows: 3, columns: {}, layers: [{ rows: null, columns: {}, inherited: true }] } };
+    expect(samePlottedData(inherited, inherited)).toBe(true);
+    expect(samePlottedData(inherited, { data_summary: { rows: 3, columns: {}, layers: [{ rows: 100, columns: {} }] } })).toBe(false);
+  });
+
   it("passes the numbers check only when values, tables and plotted data are unchanged", () => {
     const side = (value: number, checksum: string, record: ReturnType<typeof rRecord> | null) => ({
       stepRunId: "s", status: "completed", code: "", errorTail: null,
@@ -30,7 +40,10 @@ describe("figure records", () => {
       figures: [{ name: "volcano", png: "p", svg: null, record }],
     });
     expect(figureCheck(side(925, "a", rRecord(10, 1)), side(925, "a", rRecord(10, 1))).same).toBe(true);
-    expect(figureCheck(side(925, "a", null), side(925, "a", rRecord(10, 1))).same).toBe(true);
+    // Unknown plotted data is not proof of sameness.
+    const unknown = figureCheck(side(925, "a", null), side(925, "a", rRecord(10, 1)));
+    expect(unknown.same).toBe(false);
+    expect(unknown.unverified).toEqual(["volcano"]);
     expect(figureCheck(side(925, "a", rRecord(10, 1)), side(924, "a", rRecord(10, 1))).same).toBe(false);
     expect(figureCheck(side(925, "a", rRecord(10, 1)), side(925, "b", rRecord(10, 1))).same).toBe(false);
     expect(figureCheck(side(925, "a", rRecord(10, 1)), side(925, "a", rRecord(9, 1))).same).toBe(false);

@@ -106,13 +106,34 @@ ${SLURM_WRAPPER_FINALIZER_FUNCTION}() {
   exit "$SEQDESK_WRAPPER_EXIT_CODE"
 }
 trap ${SLURM_WRAPPER_FINALIZER_FUNCTION} EXIT
-# scancel, the time limit and a drained node send SIGTERM to every process of the job. Without this trap the shell
-# died at once: the EXIT finalizer saw the last finished command's status (0) and attested success, and SLURM killed
-# Nextflow before it had cancelled its own nf-* jobs. With it, bash waits for the foreground Nextflow (which gets the
-# same SIGTERM) to finish shutting down, then exits 143.
-seqdesk_slurm_wrapper_terminated() { exit 143; }
+# scancel sends SIGTERM to this batch shell only, not to its children (seen on a real Slurm 23.11: Nextflow got no
+# signal, kept submitting nf-* jobs and was SIGKILLed after KillWait without cancelling them). The workload therefore
+# runs in the background (SEQDESK_WORKLOAD_PID, see SLURM_WORKLOAD_WAIT) so that this trap runs at once instead of
+# after the workload: it passes the SIGTERM on, waits for Nextflow to cancel its own jobs and shut down, then exits
+# 143 (never a success attestation). Without the trap the shell died at once and the EXIT finalizer attested success.
+SEQDESK_WORKLOAD_PID=''
+seqdesk_slurm_wrapper_term_again() { :; }
+seqdesk_slurm_wrapper_terminated() {
+  trap seqdesk_slurm_wrapper_term_again TERM
+  if [ -n "\${SEQDESK_WORKLOAD_PID:-}" ] && kill -0 "\$SEQDESK_WORKLOAD_PID" 2>/dev/null; then
+    kill -TERM "\$SEQDESK_WORKLOAD_PID" 2>/dev/null || true
+    # A second SIGTERM (SLURM repeats it) ends a wait early: wait until the workload is really gone.
+    while kill -0 "\$SEQDESK_WORKLOAD_PID" 2>/dev/null; do wait "\$SEQDESK_WORKLOAD_PID" 2>/dev/null || true; done
+  fi
+  exit 143
+}
 trap seqdesk_slurm_wrapper_terminated TERM`;
 }
+
+/**
+ * Appended to the workload command of an outer SLURM wrapper (after its redirections): run it in the background and
+ * wait for it. bash runs a trap only once the foreground command returns, but `wait` returns at once on a trapped
+ * signal, so scancel's SIGTERM reaches the workload through the TERM trap above. The exit status is the workload's,
+ * as before (set -e ends the script on a failed wait).
+ */
+export const SLURM_WORKLOAD_WAIT = ` &
+SEQDESK_WORKLOAD_PID=$!
+wait "$SEQDESK_WORKLOAD_PID"`;
 
 /**
  * Emit one shared success-attestation implementation for every outer SLURM

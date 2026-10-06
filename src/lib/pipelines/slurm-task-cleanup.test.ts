@@ -47,4 +47,12 @@ describe('leftover SLURM task jobs of a run', () => {
     expect(endedTaskJob([...lines, `41|nf-RUN_FASTQC_(ERR1)|RUNNING|0:0|${RUN}/work/cc/dd`].join('\n'), RUN)).toBeNull();
     expect(endedTaskJob(`40|nf-X_(a)|OUT_OF_MEMORY|0:125|/data/runs/other/work/aa/bb`, RUN)).toBeNull();
   });
+
+  it('after a Resume, task jobs the earlier attempt left ended are not news: only those after the run\'s own job count', () => {
+    // Attempt 1: head 38 timed out, its FastQC task 39 was cancelled with it. Resume: head 45, nothing ended yet.
+    const lines = [`38|seqdesk-run|TIMEOUT|0:0|${RUN}`, `39|nf-RUN_FASTQC_(ERR1)|CANCELLED by 504|0:15|${RUN}/work/aa/bb`, `45|seqdesk-run|RUNNING|0:0|${RUN}`];
+    expect(endedTaskJob(lines.join('\n'), RUN)).toMatchObject({ jobId: '39' });
+    expect(endedTaskJob(lines.join('\n'), RUN, '45')).toBeNull();
+    expect(endedTaskJob([...lines, `46|nf-RUN_FASTQC_(ERR1)|OUT_OF_MEMORY|0:125|${RUN}/work/cc/dd`].join('\n'), RUN, '45')).toMatchObject({ jobId: '46', state: 'OUT_OF_MEMORY' });
+  });
 });

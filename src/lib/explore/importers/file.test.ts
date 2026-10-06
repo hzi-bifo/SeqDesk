@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseImportFile, prepareImport } from "./file";
+import { cellText, parseImportFile, prepareImport } from "./file";
 
 describe("explore file import", () => {
   it("parses a TSV and applies the INDIVO grammar", async () => {
@@ -113,5 +113,14 @@ describe("large delimited files with quoted line breaks", () => {
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("workbook formulas", () => {
+  it("keep the formula text and say so when Excel stored no result", () => {
+    let uncalculated = 0;
+    expect(cellText({ formula: "2+2" }, () => { uncalculated += 1; })).toBe("=2+2");
+    expect(cellText({ formula: "1+2", result: 3 }, () => { uncalculated += 1; })).toBe(3);
+    expect(uncalculated).toBe(1);
   });
 });

@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "taxon-cooccurrence",
   "name": "Taxon co-occurrence",
+  "category": "test",
   "description": "Which taxa are found together and which exclude each other. For the most prevalent taxa of a long profile table, every pair is scored on presence across samples: phi coefficient, lift and Fisher's exact test with Benjamini-Hochberg control. The heatmap clusters taxa by their co-occurrence so groups that travel together become visible.",
   "language": "python",
   "environment": "seqdesk-explore-python",

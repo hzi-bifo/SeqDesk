@@ -47,6 +47,8 @@ import { MAX_FILE_DESCRIPTION_LENGTH, MAX_LIBRARY_FILE_BYTES, normalizeFileTags 
 import { IntegrationAccessError, type IntegrationSession } from "./identity";
 import { codeForStatus, flowError, FLOW_CAPABILITIES_BUILT } from "./flow-contract";
 import { parseParamMeta } from "@/lib/explore/recipe-view";
+import { parseMethodsMismatch } from "@/lib/explore/sentence-change";
+import { methodsAcceptedBy, type MethodsPerson } from "@/lib/explore/methods-draft";
 import { Prisma } from "@prisma/client";
 import { flowChanged, handleFlowRequest, isFlowPath } from "./explore-flow";
 import { prepareFlowRemoval } from "./events";
@@ -56,10 +58,12 @@ import { prepareFlowRemoval } from "./events";
 export const EXPLORE_INTEGRATION_CAPABILITIES = ["explore.files", "explore.datasets", "explore.reports", "explore.flows", "explore.large-tables"] as const;
 
 /** Everything /info advertises while the Explore module is on: the base surface plus the Flow features built so far. */
-export function exploreIntegrationCapabilities(options: { eventsConfigured?: boolean } = {}): string[] {
+export function exploreIntegrationCapabilities(options: { eventsConfigured?: boolean; pipelineSteps?: boolean } = {}): string[] {
   // explore.events means "this installation pushes to its collaboration server", so it needs that to be configured.
   const flow = FLOW_CAPABILITIES_BUILT.filter((capability) => capability !== "explore.events" || options.eventsConfigured);
-  return [...EXPLORE_INTEGRATION_CAPABILITIES, ...flow];
+  // explore.pipeline-steps needs the pipeline-steps migration in the database and the client (pipelineStepsAvailable).
+  // explore.samples-steps and explore.pipeline-records (sheets 96–97) ride on the same migration.
+  return [...EXPLORE_INTEGRATION_CAPABILITIES, ...flow, ...(options.pipelineSteps ? ["explore.pipeline-steps", "explore.samples-steps", "explore.pipeline-records"] : [])];
 }
 
 /** Flow pages read every flow of their study and start empty; the author composes them. */
@@ -280,8 +284,8 @@ async function loadRun(session: IntegrationSession, id: string, level: "read" | 
   return run;
 }
 
-/** A methods sentence a person accepted: kept with the code revision it describes (D32). */
-async function methodsSentenceOf(analysisId: string, raw: unknown, userId: string): Promise<Prisma.InputJsonValue | typeof Prisma.DbNull> {
+/** A methods sentence a person accepted: kept with the code revision it describes (D32), and who saved it when. */
+async function methodsSentenceOf(analysisId: string, raw: unknown, userId: string, by?: MethodsPerson): Promise<Prisma.InputJsonValue | typeof Prisma.DbNull> {
   if (raw === null) return Prisma.DbNull;
   const value = raw as { text?: unknown; tokens?: unknown; author?: unknown };
   if (!value || typeof value !== "object" || typeof value.text !== "string" || !value.text.trim()) throw flowError("invalid_request", "methodsSentence needs text.");
@@ -293,7 +297,9 @@ async function methodsSentenceOf(analysisId: string, raw: unknown, userId: strin
   return { text: value.text.trim(), tokens: (value.tokens as Prisma.InputJsonValue[] | undefined) ?? [], revisionId: analysis?.currentRevisionId ?? null, ...(revision?.codeHash ? { codeHash: revision.codeHash } : {}),
     ...(typeof extra.prompt === "string" && extra.prompt ? { prompt: extra.prompt.slice(0, 12000) } : {}),
     ...(Array.isArray(extra.notVerified) && extra.notVerified.length ? { notVerified: extra.notVerified.slice(0, 10).map((note) => String(note).slice(0, 300)) } : {}),
-    author: value.author === "assistant" ? "assistant" : "person", acceptedById: userId, acceptedAt: new Date().toISOString() };
+    author: value.author === "assistant" ? "assistant" : "person", acceptedById: userId, acceptedAt: new Date().toISOString(), ...methodsAcceptedBy(by),
+    // Sheet 94: words kept although the step does something else (◇ until the step or the words change).
+    ...(parseMethodsMismatch((raw as { mismatch?: unknown }).mismatch) ? { mismatch: parseMethodsMismatch((raw as { mismatch?: unknown }).mismatch) as Prisma.InputJsonValue } : {}) };
 }
 
 /**
@@ -722,12 +728,15 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
         const flowFields: Parameters<typeof updateAnalysis>[1] = {};
         if ("purpose" in body) flowFields.purpose = optionalString(body.purpose, 200);
         if ("paramMeta" in body) { const meta = parseParamMeta(body.paramMeta); flowFields.paramMeta = meta === null ? Prisma.DbNull : meta as Prisma.InputJsonValue; }
-        if ("methodsSentence" in body) flowFields.methodsSentence = await methodsSentenceOf(id, body.methodsSentence, session.user.id);
+        if ("methodsSentence" in body) flowFields.methodsSentence = await methodsSentenceOf(id, body.methodsSentence, session.user.id, { memberId: session.integration.memberId || null, name: session.user.name ?? null });
         await updateAnalysis(id, { ...data, ...flowFields });
         return json({ analysis: await getAnalysisDetail(id) });
       }
       if (segments.length === 2 && method === "DELETE") {
         await loadAnalysis(session, id, "write");
+        // A step of a recipe run still going stays until the run ends or is stopped (as the demo says it).
+        const busy = await db.exploreAnalysisRun.count({ where: { analysisId: id, flowRunId: { not: null }, status: { in: ["pending", "queued", "running"] } } });
+        if (busy) throw new ExploreRouteError(409, "This step is running. Stop the run before removing it.");
         await deleteAnalysis(id, { userId: session.user.id, memberId: session.integration.memberId || null });
         return json({ ok: true });
       }
@@ -797,6 +806,18 @@ export async function handleExploreRequest(request: NextRequest, session: Integr
       if (segments.length === 3 && sub === "revisions" && method === "POST") {
         const analysis = await loadAnalysis(session, id, "write");
         const body = await readJson(request);
+        // A pipeline step has settings, not code: a settings save goes through the pipeline's own checks.
+        const pipelineStep = await db.exploreAnalysis.findUnique({ where: { id } });
+        if ((pipelineStep as { stepKind?: unknown } | null)?.stepKind === "pipeline" && pipelineStep?.flowId) {
+          if (body.code !== undefined || body.inputs !== undefined || body.fileInputs !== undefined) throw new ExploreRouteError(400, "A pipeline step has no code; change its settings.", "invalid_request");
+          const { updatePipelineStep } = await import("@/lib/explore/pipeline-steps");
+          const expected = optionalString(body.expectedRevisionId, 80) ?? undefined;
+          await updatePipelineStep(pipelineStep.flowId, id, { params: body.params && typeof body.params === "object" && !Array.isArray(body.params) ? (body.params as Record<string, unknown>) : {}, replaceParams: true, expectedRevisionId: expected,
+            message: optionalString(body.message, 500), actor: { userId: session.user.id, memberId: session.integration.memberId || null } });
+          await flowChanged(pipelineStep.flowId);
+          const detail = await getAnalysisDetail(id);
+          return json({ revision: detail?.currentRevision ?? null }, 201);
+        }
         const code = typeof body.code === "string" ? body.code : undefined;
         if (code !== undefined && Buffer.byteLength(code, "utf8") > MAX_CODE_BYTES) throw new ExploreRouteError(400, "The code is larger than 512 KB");
         const expectedRevisionId = optionalString(body.expectedRevisionId, 80) ?? undefined;

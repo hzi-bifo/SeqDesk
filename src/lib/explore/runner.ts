@@ -8,7 +8,7 @@ import { writePipelineLaunchIdentity } from "@/lib/pipelines/launch-identity";
 import { preparePipelineRunDirectory } from "@/lib/pipelines/run-directory";
 import { allocateRunNumber, parseInputBindings, serializeRun, type RunSummary } from "./analyses";
 import { fetchAllDatasetRows, fetchDatasetRows, getDatasetRecord } from "./datasets";
-import { copyVersionData } from "./table-store";
+import { copyVersionData, formatOf, QUOTED_FORMAT } from "./table-store";
 import { applyEditsToRows, listActiveEdits } from "./edits";
 import { resolveReadyEnvironment } from "./environments";
 import { condaErrorExcerpt, prepareStepEnvironment, preparingWords, resolveStepEnvironment, stepEnvironmentByName, prepareEnvironmentByName } from "./step-environments";
@@ -82,9 +82,18 @@ export class ExploreRunError extends Error {
   }
 }
 
-function tsvEscape(value: ExploreCell): string {
+/**
+ * Staged inputs are one physical line per row with no quoting: the kit readers (R read.delim quote="", Python QUOTE_NONE)
+ * cannot read quoted cells. A tab or line break inside a cell therefore becomes a space, for curated and uncurated data alike.
+ */
+export function tsvEscape(value: ExploreCell): string {
   if (value === null || value === undefined) return "";
   return String(value).replace(/[\t\r\n]/g, " ");
+}
+
+/** A version file can be copied byte for byte only when it is not quoted-v1; a quoted file is re-read and flattened. */
+export async function canCopyVersionFile(storagePath: string): Promise<boolean> {
+  return (await formatOf(storagePath)) !== QUOTED_FORMAT;
 }
 
 /**
@@ -117,7 +126,7 @@ async function stageInput(runFolder: string, alias: string, datasetId: string, v
     for (const row of rows) lines.push(columns.map((key) => tsvEscape(row.data[key] ?? null)).join("\t"));
     await fs.writeFile(path.join(runFolder, relativePath), `${lines.join("\n")}\n`, "utf8");
     rowCount = rows.length;
-  } else if (!edits.length && version.storagePath && await copyVersionData(version.storagePath, path.join(runFolder, relativePath))) {
+  } else if (!edits.length && version.storagePath && await canCopyVersionFile(version.storagePath) && await copyVersionData(version.storagePath, path.join(runFolder, relativePath))) {
     // Uncurated: the version's own file is the input, byte for byte (same header and escaping), without a parse.
     rowCount = version.rowCount;
   } else {
@@ -225,6 +234,8 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     include: { revisions: { orderBy: { number: "desc" } } },
   });
   if (!analysis) throw new ExploreRunError(404, "Analysis not found");
+  // A pipeline step starts its pipeline from a run of the recipe (pipeline-step-runs.ts), never as code.
+  if ((analysis as { stepKind?: unknown }).stepKind === "pipeline") throw new ExploreRunError(409, "A pipeline step runs with the recipe: use Run recipe.");
   const revision = input.revisionId
     ? analysis.revisions.find((entry) => entry.id === input.revisionId)
     : analysis.revisions.find((entry) => entry.id === analysis.currentRevisionId) ?? analysis.revisions[0];
@@ -423,6 +434,11 @@ function submitSbatch(scriptPath: string, cwd: string): Promise<string> {
 export async function cancelRun(runId: string): Promise<boolean> {
   const run = await db.exploreAnalysisRun.findUnique({ where: { id: runId } });
   if (!run || !["pending", "queued", "running"].includes(run.status)) return false;
+  // A pipeline step run stops its pipeline run (unless another recipe run waits on it).
+  if (run.executionMode === "pipeline") {
+    const { stopPipelineStepRun } = await import("./pipeline-step-runs");
+    return stopPipelineStepRun(runId);
+  }
   const jobId = run.queueJobId ?? "";
   if (jobId.startsWith("local-")) {
     const pid = Number.parseInt(jobId.slice("local-".length), 10);

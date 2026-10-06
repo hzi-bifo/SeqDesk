@@ -80,6 +80,32 @@ function clampInt(value, fallback, min, max) {
   return parsed;
 }
 
+const READ_LIMITS = {
+  longRead: { count: [5, 5000], length: [500, 30000] },
+  short: { count: [2, 50000], length: [25, 300] },
+};
+
+/** Reads/length must be whole numbers inside the mode's range; a value outside it is an error, not a silent clamp. */
+export function requireInRange(label, value, fallback, [min, max], modeLabel) {
+  if (value == null || String(value).trim() === "") return fallback;
+  const text = String(value).trim();
+  const parsed = Number(text);
+  if (!/^-?\d+$/.test(text) || !Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${label} must be a whole number between ${min} and ${max} for ${modeLabel} (got "${text}").`);
+  }
+  return parsed;
+}
+
+export function readLimits(mode, countArg, lengthArg) {
+  const long = mode === "longRead";
+  const limits = long ? READ_LIMITS.longRead : READ_LIMITS.short;
+  const modeLabel = long ? "long-read mode" : "short-read mode";
+  return {
+    readCount: requireInRange("Read count", countArg, 1000, limits.count, modeLabel),
+    readLength: requireInRange("Read length", lengthArg, long ? 2500 : 150, limits.length, modeLabel),
+  };
+}
+
 function normalizeMode(value) {
   if (
     value === "shortReadPaired" ||
@@ -449,7 +475,27 @@ function selectTemplatePair(templatePairs, sampleId, seed) {
   return templatePairs[selectorSeed % templatePairs.length];
 }
 
-function analyzeFastqBuffer(buffer, filePath) {
+export function assertValidFastqLines(lines, filePath) {
+  const name = path.basename(filePath);
+  if (lines.length % 4 !== 0) {
+    throw new Error(`Template "${name}" is not valid FASTQ: ${lines.length} lines is not a multiple of 4.`);
+  }
+  for (let index = 0; index < lines.length; index += 4) {
+    const record = index / 4 + 1;
+    const [header, sequence, separator, quality] = lines.slice(index, index + 4);
+    if (!header.startsWith("@")) {
+      throw new Error(`Template "${name}" is not valid FASTQ: record ${record} header does not start with "@".`);
+    }
+    if (!separator.startsWith("+")) {
+      throw new Error(`Template "${name}" is not valid FASTQ: record ${record} separator does not start with "+".`);
+    }
+    if (sequence.length !== quality.length) {
+      throw new Error(`Template "${name}" is not valid FASTQ: record ${record} sequence and quality lengths differ.`);
+    }
+  }
+}
+
+export function analyzeFastqBuffer(buffer, filePath) {
   const raw = filePath.toLowerCase().endsWith(".gz")
     ? gunzipSync(buffer).toString("utf8")
     : buffer.toString("utf8");
@@ -459,6 +505,7 @@ function analyzeFastqBuffer(buffer, filePath) {
   }
 
   const lines = trimmed.split(/\r?\n/);
+  assertValidFastqLines(lines, filePath);
   const readCount = Math.floor(lines.length / 4);
   let totalLength = 0;
   let observedRecords = 0;
@@ -606,14 +653,7 @@ async function main() {
     throw new Error("Missing required arguments");
   }
 
-  const readCount =
-    mode === "longRead"
-      ? clampInt(getArg("--read-count"), 1000, 5, 5000)
-      : clampInt(getArg("--read-count"), 1000, 2, 50000);
-  const readLength =
-    mode === "longRead"
-      ? clampInt(getArg("--read-length"), 2500, 500, 30000)
-      : clampInt(getArg("--read-length"), 150, 25, 300);
+  const { readCount, readLength } = readLimits(mode, getArg("--read-count"), getArg("--read-length"));
   const insertMean = clampInt(
     getArg("--insert-mean"),
     Math.max(350, readLength * 2 + 20),

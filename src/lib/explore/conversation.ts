@@ -70,6 +70,21 @@ async function withQuestions(turns: TurnRecord[]): Promise<Turn[]> {
   return turns.map((turn) => serializeTurn(turn, questions.find((question) => question.turnId === turn.id)));
 }
 
+/** How long an assistant turn may stay `working`. The web client that asked runs the model and closes the turn; when
+ *  that page closed or lost its connection mid-turn nothing else would, and the thread would say "working" forever. */
+export const STALE_TURN_MS = 10 * 60 * 1000;
+export const STALE_TURN_TEXT = "The assistant stopped: it did not finish within 10 minutes (the page that asked may have been closed). Nothing more will arrive for this turn.";
+
+/** Close the flow's assistant turns that stayed working past STALE_TURN_MS as failed; returns how many. */
+export async function closeStaleTurns(flowId: string, now = Date.now()): Promise<number> {
+  const closed = await db.exploreFlowTurn.updateMany({
+    where: { flowId, authorKind: "assistant", status: "working", updatedAt: { lt: new Date(now - STALE_TURN_MS) } },
+    data: { status: "failed", text: STALE_TURN_TEXT },
+  });
+  if (closed.count) await conversationChanged(flowId);
+  return closed.count;
+}
+
 /**
  * A page of the conversation, oldest first: the newest `limit` turns, or those
  * before the `before` seq; with `stepId` only turns about that step; with
@@ -78,6 +93,7 @@ async function withQuestions(turns: TurnRecord[]): Promise<Turn[]> {
 export async function readConversation(flowId: string, options: { before?: number | null; after?: number | null; limit?: number; stepId?: string | null } = {}) {
   const flow = await db.exploreFlow.findUnique({ where: { id: flowId }, select: { conversationVersion: true } });
   if (!flow) throw flowError("not_found", "Flow not found");
+  await closeStaleTurns(flowId);
   const limit = Math.min(Math.max(options.limit ?? PAGE, 1), 100);
   const filter: Prisma.ExploreFlowTurnWhereInput = { flowId, ...(options.stepId ? { stepIds: { has: options.stepId } } : {}) };
   const where: Prisma.ExploreFlowTurnWhereInput = {

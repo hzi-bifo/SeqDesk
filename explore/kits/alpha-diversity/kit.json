@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "alpha-diversity",
   "name": "Alpha diversity",
+  "category": "summarise",
   "description": "Within-sample diversity from a long taxon profile table: richness, Shannon, Simpson and Pielou evenness per sample after artifact removal and renormalisation. Draws the chosen index per group and over the study timeline, and tests groups (Kruskal-Wallis) and time trends (Spearman) with Benjamini-Hochberg control.",
   "language": "python",
   "environment": "seqdesk-explore-python",

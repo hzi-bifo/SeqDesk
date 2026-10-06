@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ stored: null as string | null, db: { siteSettings: { findUnique: vi.fn(), upsert: vi.fn() } } }));
+const mocks = vi.hoisted(() => ({ stored: null as string | null, db: { siteSettings: { findUnique: vi.fn(), upsert: vi.fn(), updateMany: vi.fn(), create: vi.fn() } } }));
 vi.mock("@/lib/db", () => ({ db: mocks.db }));
 vi.mock("@/lib/modules/input-modules.server", () => ({ requireRawReadImporter: async () => undefined }));
 vi.mock("@/lib/workbench/server", () => ({
@@ -24,6 +24,12 @@ describe("integration importers/sources", () => {
     mocks.stored = null;
     mocks.db.siteSettings.findUnique.mockImplementation(async () => ({ extraSettings: mocks.stored }));
     mocks.db.siteSettings.upsert.mockImplementation(async ({ update }: { update: { extraSettings: string } }) => { mocks.stored = update.extraSettings; });
+    mocks.db.siteSettings.updateMany.mockImplementation(async ({ where, data }: { where: { extraSettings: string | null }; data: { extraSettings: string } }) => {
+      if (mocks.stored !== where.extraSettings) return { count: 0 };
+      mocks.stored = data.extraSettings;
+      return { count: 1 };
+    });
+    mocks.db.siteSettings.create.mockImplementation(async ({ data }: { data: { extraSettings: string } }) => { mocks.stored = data.extraSettings; });
   });
 
   it("lets members read the status and the history, and says whether they can manage", async () => {
@@ -37,7 +43,8 @@ describe("integration importers/sources", () => {
     expect((await call(member, "/settings", { maxBytes: 1024 })).status).toBe(403);
     expect((await call(member, "/secrets", { secret: "ncbi-key", apiKey: "abcdef0123456789abcdef0123456789ab" })).status).toBe(403);
     expect((await call(member, "/test", { source: "ena" })).status).toBe(403);
-    expect(mocks.db.siteSettings.upsert).not.toHaveBeenCalled();
+    expect(mocks.db.siteSettings.updateMany).not.toHaveBeenCalled();
+    expect(mocks.db.siteSettings.create).not.toHaveBeenCalled();
   });
 
   it("changes settings, sets secrets and tests as an admin, with the admin's name in the history", async () => {

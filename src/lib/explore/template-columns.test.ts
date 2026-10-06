@@ -47,6 +47,15 @@ describe("template column roles", () => {
     expect(resolveColumns(roles, { counts, samples: partial }).problems.join(" ")).toMatch(/2 count columns have no row in SampleName: SRR1039520, SRR1039521/);
   });
 
+  it("refuses choices that name an unknown role, column or level instead of falling back to the guess", () => {
+    const tables = { counts, samples: renamed };
+    expect(resolveColumns(roles, tables, { group: "dex" }).problems.join(" ")).toMatch(/dex is not a column of the samples table/);
+    expect(resolveColumns(roles, tables, { grup: "Treatment" }).problems.join(" ")).toMatch(/grup is not a column choice/);
+    expect(resolveColumns(roles, tables, { "group.numerator": "nope" }).problems.join(" ")).toMatch(/nope is not a value of Treatment/);
+    expect(resolveColumns(roles, tables, { sample_id: "" }).problems.join(" ")).toMatch(/cannot be left empty/);
+    expect(resolveColumns(roles, tables, { group: "Treatment", block: "" }).problems).toEqual([]);
+  });
+
   it("fills params: whole placeholders, levels, a model formula without an empty pairing and lists without blanks", () => {
     const de = rnaseq.steps.find((step: { key: string }) => step.key === "de").params;
     const top = rnaseq.steps.find((step: { key: string }) => step.key === "top").params;

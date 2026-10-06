@@ -58,6 +58,7 @@ async function parseXlsx(buffer: Buffer, sheetName: string | null | undefined): 
 
   const rows: ExploreRowData[] = [];
   let truncated = false;
+  let uncalculated = 0;
   worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
     if (rowNumber === 1) return;
     if (rows.length >= MAX_IMPORT_ROWS) {
@@ -68,7 +69,7 @@ async function parseXlsx(buffer: Buffer, sheetName: string | null | undefined): 
     let hasValue = false;
     columns.forEach((column, index) => {
       const cell = row.getCell(index + 1);
-      const value = coerceCell(cellText(cell.value));
+      const value = coerceCell(cellText(cell.value, () => { uncalculated += 1; }));
       if (value !== null) hasValue = true;
       data[column] = value;
     });
@@ -76,15 +77,17 @@ async function parseXlsx(buffer: Buffer, sheetName: string | null | undefined): 
   });
   // Several sheets and none chosen: say which one was read, so the others are not silently missing.
   const warnings = sheets.length > 1 && !sheetName ? [`This workbook has ${sheets.length} sheets (${sheets.join(", ")}); this reads “${worksheet.name}”.`] : [];
+  if (uncalculated) warnings.push(`${uncalculated} ${uncalculated === 1 ? "cell holds a formula" : "cells hold formulas"} Excel has not calculated; ${uncalculated === 1 ? "it is" : "they are"} imported as the formula text. Open and save the workbook in Excel to store the results.`);
   return { columns, rows, sheets, sheet: worksheet.name, truncated, warnings };
 }
 
-function cellText(value: unknown): unknown {
+export function cellText(value: unknown, onUncalculated?: () => void): unknown {
   if (value === null || value === undefined) return null;
   if (typeof value === "object") {
     const object = value as { richText?: Array<{ text: string }>; text?: unknown; result?: unknown; hyperlink?: string; formula?: string };
     if (Array.isArray(object.richText)) return object.richText.map((part) => part.text).join("");
     if ("result" in object) return object.result ?? null;
+    if (typeof object.formula === "string") { onUncalculated?.(); return `=${object.formula}`; }
     if ("text" in object) return object.text ?? null;
     if (value instanceof Date) return value;
   }

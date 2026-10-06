@@ -43,10 +43,47 @@ export function fileStorageOf(provenance: unknown): FileStorageInfo | null {
   return storage && storage.rows === "file" && typeof storage.index === "string" ? { rows: "file", index: storage.index } : null;
 }
 
-function tsvEscape(value: ExploreCell | undefined): string {
+/** Marks a data.tsv whose cells are quoted when they need it (tab, line break, quote), so every stored value reads back as it was written. */
+export const QUOTED_FORMAT = "quoted-v1";
+export const FORMAT_FILE = "rows.fmt";
+
+export function tsvEscape(value: ExploreCell | undefined): string {
   if (value === null || value === undefined) return "";
   const text = typeof value === "string" ? value : String(value);
-  return text.replace(/[\t\r\n]/g, " ");
+  return /[\t\r\n"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** Split one quoted-v1 row (its line breaks already rejoined) into cells. */
+export function splitQuotedRow(line: string): string[] {
+  const cells: string[] = [];
+  let at = 0;
+  while (at <= line.length) {
+    if (line[at] === '"') {
+      let text = "";
+      at += 1;
+      while (at < line.length) {
+        if (line[at] === '"') {
+          if (line[at + 1] === '"') { text += '"'; at += 2; continue; }
+          at += 1;
+          break;
+        }
+        text += line[at];
+        at += 1;
+      }
+      cells.push(text);
+      at += 1; // the tab after the closing quote
+    } else {
+      const next = line.indexOf("\t", at);
+      if (next === -1) { cells.push(line.slice(at)); break; }
+      cells.push(line.slice(at, next));
+      at = next + 1;
+    }
+  }
+  return cells;
+}
+
+export async function formatOf(dir: string): Promise<string | null> {
+  try { return (await fs.readFile(path.join(dir, FORMAT_FILE), "utf8")).trim() || null; } catch { return null; }
 }
 
 function cellToKey(value: ExploreCell | undefined): string | null {
@@ -78,6 +115,8 @@ export async function shareIdenticalData(file: string, contentHash: string, exce
     const other = path.join(twin.storagePath!, "data.tsv");
     try {
       const [mine, theirs] = await Promise.all([fs.stat(file), fs.stat(other)]);
+      // A file written before cells were quoted holds the same table in another byte format.
+      if (await formatOf(path.dirname(file)) !== await formatOf(twin.storagePath!)) continue;
       if (mine.size !== theirs.size) continue;
       if (mine.ino === theirs.ino && mine.dev === theirs.dev) return true;
       const temporary = `${file}.link`;
@@ -126,6 +165,8 @@ export interface StreamVersionResult {
  * of rows plus a few numbers per column. Cancelling (signal) removes everything written so far.
  */
 export async function writeDatasetVersionStream(input: StreamVersionInput): Promise<StreamVersionResult> {
+  // A write cancelled before it starts writes nothing.
+  if (input.signal?.aborted) throw new ImportCancelled();
   const dataset = await db.exploreDataset.findUnique({ where: { id: input.datasetId }, include: { versions: { orderBy: { number: "desc" }, take: 1 } } });
   if (!dataset) throw new Error("Dataset not found");
   const latest = dataset.versions[0] ?? null;
@@ -143,6 +184,7 @@ export async function writeDatasetVersionStream(input: StreamVersionInput): Prom
       provenance: JSON.stringify(input.provenance), storagePath: versionDir, buildSource: input.buildSource, createdById: input.createdById ?? null },
   });
   const dataFile = path.join(versionDir, "data.tsv");
+  await fs.writeFile(path.join(versionDir, FORMAT_FILE), QUOTED_FORMAT, "utf8");
   const out = createWriteStream(dataFile, { encoding: "utf8" });
   const schemaAccumulator = new SchemaAccumulator();
   const profileAccumulator = new MatrixProfileAccumulator(columns);
@@ -195,6 +237,8 @@ export async function writeDatasetVersionStream(input: StreamVersionInput): Prom
         if (input.signal?.aborted) throw new ImportCancelled();
       }
     }
+    // Rows after the last progress check may have arrived since the signal fired: the version is not kept.
+    if (input.signal?.aborted) throw new ImportCancelled();
     if (text) await writeChunk(out, text);
     await flush();
     await closeStream(out);
@@ -220,6 +264,12 @@ export async function writeDatasetVersionStream(input: StreamVersionInput): Prom
   if (!inDatabase) provenance.storage = { rows: "file", index: "rows.idx.json" };
   await fs.writeFile(path.join(versionDir, "rows.idx.json"), JSON.stringify({ every: INDEX_EVERY, offsets: index, rows: rowCount }), "utf8");
   await fs.writeFile(path.join(versionDir, "schema.json"), JSON.stringify({ schema, provenance, contentHash }, null, 2), "utf8");
+  if (input.signal?.aborted) {
+    // Cancelled while finishing: nothing becomes the current version.
+    await db.exploreDatasetVersion.delete({ where: { id: version.id } }).catch(() => {});
+    await fs.rm(versionDir, { recursive: true, force: true }).catch(() => {});
+    throw new ImportCancelled();
+  }
   const sharedData = await shareIdenticalData(dataFile, contentHash, version.id);
   await db.exploreDatasetVersion.update({ where: { id: version.id }, data: { contentHash, schema: JSON.stringify(schema), rowCount, provenance: JSON.stringify(provenance) } });
   await db.exploreDataset.update({ where: { id: dataset.id }, data: { currentVersionId: version.id } });
@@ -227,8 +277,8 @@ export async function writeDatasetVersionStream(input: StreamVersionInput): Prom
 }
 
 /** Split one data.tsv line back into a row: empty cells are null, like the rows it was written from. */
-function rowOfLine(line: string, columns: string[]): ExploreRowData {
-  const cells = line.split("\t");
+function rowOfLine(line: string, columns: string[], quoted: boolean): ExploreRowData {
+  const cells = quoted ? splitQuotedRow(line) : line.split("\t");
   const row: ExploreRowData = {};
   for (let index = 0; index < columns.length; index += 1) {
     const cell = cells[index];
@@ -264,13 +314,21 @@ export async function readRowsFromFile(storagePath: string, columns: string[], o
     position = index.offsets[block];
     rowIndex = block * index.every;
   }
+  const quoted = (await formatOf(storagePath)) === QUOTED_FORMAT;
   const stream = createReadStream(path.join(storagePath, "data.tsv"), { start: position, highWaterMark: 1 << 20 });
   const rows: ExploreRowRecord[] = [];
   let scanned = 0;
   let end = true;
   let lastIndex: number | null = null;
   try {
-    outer: for await (const lines of streamLineBatches(stream, { utf8: true })) for (const line of lines) {
+    // A quoted cell may hold line breaks: lines are joined until the quotes of the row balance.
+    let pending: string | null = null;
+    outer: for await (const physical of streamLineBatches(stream, { utf8: true, keepCr: quoted })) for (let line of physical) {
+      if (quoted && rowIndex !== -1) {
+        line = pending === null ? line : `${pending}\n${line}`;
+        if ((line.split('"').length - 1) % 2 === 1) { pending = line; continue; }
+        pending = null;
+      }
       if (rowIndex === -1) { rowIndex = 0; continue; } // header when no index
       const current = rowIndex;
       // The file ends with a newline; its last "line" is not a row.
@@ -279,7 +337,7 @@ export async function readRowsFromFile(storagePath: string, columns: string[], o
       if (current < start) continue;
       scanned += 1;
       lastIndex = current;
-      const data = rowOfLine(line, columns);
+      const data = rowOfLine(line, columns, quoted);
       if (!options.filter || options.filter(data)) rows.push({ rowIndex: current, sampleId: null, subjectId: null, key: null, data });
       if (rows.length >= options.limit || (options.scanLimit !== undefined && scanned >= options.scanLimit)) { end = false; break outer; }
     }

@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "beta-diversity",
   "name": "Beta diversity (PCoA)",
+  "category": "plot",
   "description": "Between-sample differences from a long taxon profile table: Bray-Curtis (abundance) or Jaccard (presence) distances between samples, a principal coordinates ordination coloured by group, the coordinates as a table, and PERMANOVA (pseudo-F, R2, permutation p) for the group and subject roles.",
   "language": "python",
   "environment": "seqdesk-explore-python",

@@ -69,16 +69,21 @@ export interface DataSourcesSettings {
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-async function readExtra(): Promise<Record<string, unknown>> {
+async function readExtraRaw(): Promise<{ exists: boolean; raw: string | null }> {
   const row = await db.siteSettings.findUnique({ where: { id: "singleton" }, select: { extraSettings: true } });
-  if (!row?.extraSettings) return {};
-  try { const parsed = JSON.parse(row.extraSettings); return isRecord(parsed) ? parsed : {}; } catch { return {}; }
+  return { exists: !!row, raw: row?.extraSettings ?? null };
 }
 
-async function writeExtra(extra: Record<string, unknown>) {
-  const extraSettings = JSON.stringify(extra);
-  await db.siteSettings.upsert({ where: { id: "singleton" }, update: { extraSettings }, create: { id: "singleton", extraSettings } });
+function parseExtra(raw: string | null): Record<string, unknown> {
+  if (!raw) return {};
+  try { const parsed = JSON.parse(raw); return isRecord(parsed) ? parsed : {}; } catch { return {}; }
 }
+
+async function readExtra(): Promise<Record<string, unknown>> {
+  return parseExtra((await readExtraRaw()).raw);
+}
+
+const CHANGE_ATTEMPTS = 12;
 
 export async function readDataSourcesSettings(): Promise<DataSourcesSettings> {
   try {
@@ -89,14 +94,27 @@ export async function readDataSourcesSettings(): Promise<DataSourcesSettings> {
   }
 }
 
-/** Read, change and write the data-source settings (and, when needed, the rest of the extra settings) in one step. */
+/**
+ * Read, change and write the data-source settings (and, when needed, the rest of the extra settings) in one step.
+ * The write is a compare-and-set on the document that was read: when another admin saved in between, nothing is
+ * overwritten and the change is made again on top of their save, so two concurrent saves both survive.
+ */
 async function change(mutate: (settings: DataSourcesSettings, extra: Record<string, unknown>) => void) {
-  const extra = await readExtra();
-  const settings: DataSourcesSettings = isRecord(extra.dataSources) ? { ...(extra.dataSources as DataSourcesSettings) } : {};
-  mutate(settings, extra);
-  if (settings.history && settings.history.length > HISTORY_LIMIT) settings.history = settings.history.slice(-HISTORY_LIMIT);
-  await writeExtra({ ...extra, dataSources: settings });
-  return settings;
+  for (let attempt = 0; attempt < CHANGE_ATTEMPTS; attempt += 1) {
+    const { exists, raw } = await readExtraRaw();
+    const extra = parseExtra(raw);
+    const settings: DataSourcesSettings = isRecord(extra.dataSources) ? { ...(extra.dataSources as DataSourcesSettings) } : {};
+    mutate(settings, extra);
+    if (settings.history && settings.history.length > HISTORY_LIMIT) settings.history = settings.history.slice(-HISTORY_LIMIT);
+    const extraSettings = JSON.stringify({ ...extra, dataSources: settings });
+    if (!exists) {
+      try { await db.siteSettings.create({ data: { id: "singleton", extraSettings } }); return settings; } catch { continue; }
+    }
+    const { count } = await db.siteSettings.updateMany({ where: { id: "singleton", extraSettings: raw }, data: { extraSettings } });
+    if (count === 1) return settings;
+    await new Promise((resolve) => setTimeout(resolve, Math.floor(Math.random() * 15)));
+  }
+  throw new DataSourcesError(409, "The data source settings were changed by someone else at the same moment. Try again.");
 }
 
 const audit = (settings: DataSourcesSettings, entry: HistoryEntry) => { settings.history = [...(settings.history ?? []), entry]; };

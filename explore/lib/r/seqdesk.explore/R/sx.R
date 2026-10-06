@@ -279,6 +279,16 @@ seqdesk_explore <- function() {
     }))
   }
 
+  # The plot's own data plus each layer's own data (a layer given data= no longer shows in plot$data).
+  plot_data_summary <- function(plot) {
+    summary <- data_summary(plot$data)
+    if (is.null(summary)) summary <- list(rows = 0L, columns = list())
+    layers <- lapply(plot$layers, function(layer) data_summary(layer$data))
+    layers <- lapply(layers, function(entry) if (is.null(entry)) list(rows = NA_integer_, columns = list(), inherited = TRUE) else entry)
+    summary$layers <- layers
+    summary
+  }
+
   write_figure_record <- function(name, plot, file, width, height) {
     tryCatch({
       cf <- figure_hook()
@@ -291,7 +301,7 @@ seqdesk_explore <- function() {
       }
       if (is.null(record)) record <- list(file = basename(file), tool = if (inherits(plot, "ggplot")) "ggplot2" else "grDevices", width_mm = round(width * 25.4), height_mm = round(height * 25.4), changes = list())
       record$figure <- name
-      record$data_summary <- if (inherits(plot, "ggplot")) data_summary(plot$data) else NULL
+      record$data_summary <- if (inherits(plot, "ggplot")) plot_data_summary(plot) else NULL
       jsonlite::write_json(record, target_path(name, ".figure.json"), auto_unbox = TRUE, pretty = TRUE, digits = NA, null = "null")
     }, error = function(e) message("figure record not written for ", name, " (", conditionMessage(e), ")"))
     invisible(NULL)

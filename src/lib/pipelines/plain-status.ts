@@ -41,6 +41,25 @@ export interface PlainStatus {
   elapsedSeconds: number | null;
 }
 
+/**
+ * Seconds a run stood failed or cancelled before it was resumed, from its state events ("running → failed", then
+ * "failed → running · resume 1"): the gaps a run's duration must not count.
+ */
+export function pausedSecondsOf(events: Array<{ eventType: string; occurredAt: Date | string; payload?: string | null; message?: string | null }>): number {
+  let since: number | null = null;
+  let paused = 0;
+  for (const event of events) {
+    if (event.eventType !== 'state') continue;
+    let from: string | null = null, to: string | null = null;
+    try { const parsed = JSON.parse(event.payload ?? 'null') as { from?: string; to?: string } | null; from = parsed?.from ?? null; to = parsed?.to ?? null; } catch { /* the message says it too */ }
+    if (!to) { const m = /^(\w+) → (\w+)/.exec(event.message ?? ''); from = m?.[1] ?? null; to = m?.[2] ?? null; }
+    const at = new Date(event.occurredAt).getTime();
+    if (to === 'failed' || to === 'cancelled') since = at;
+    else if (since != null && (from === 'failed' || from === 'cancelled')) { paused += Math.max(0, at - since); since = null; }
+  }
+  return Math.round(paused / 1000);
+}
+
 export interface PlainRunInput {
   status: string; // pending | queued | running | completed | failed | cancelled
   executionMode?: string | null; // local | slurm
@@ -57,6 +76,8 @@ export interface PlainRunInput {
   askedMemory?: string | null;
   /** SLURM time limit in hours. */
   timeLimitHours?: number | null;
+  /** Seconds the run stood failed or cancelled before a Resume (pausedSecondsOf): not counted in its time. */
+  pausedSeconds?: number | null;
   /** The per-step time limit a Resume set ("time 1.m"), in seconds; it wins over timeLimitHours in the time sentence. */
   resumedTimeLimitSeconds?: number | null;
   /** SLURM queue (partition) and cores asked for, for "SLURM did not take the job" and the queue sentence. */
@@ -129,6 +150,15 @@ const SECRET_PATTERNS: [RegExp, string][] = [
   [/\b((?:api[_-]?key|token|secret|password|passwd)\s*[=:]\s*)[^\s"'&]+/gi, '$1REDACTED'],
 ];
 
+/**
+ * Terminal codes out of log text: ANSI colours and the OSC 8 hyperlinks Nextflow 25 prints around each task line
+ * ("\u001b]8;;file:///…/work/31/c88a…\u0007"), even into a file (seen on a real Slurm run on elektra: the Data run's
+ * log and the pipeline step's log showed the raw codes).
+ */
+export function stripTerminalCodes(text: string): string {
+  return text.replace(/\u001b\]8;;[^\u0007\u001b]*(?:\u0007|\u001b\\)/g, '').replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '');
+}
+
 /** Strip conda channel credentials and common token shapes from log text before it leaves the server. */
 export function redactLog(text: string): string {
   let clean = stripChannelCredentials(text);
@@ -162,10 +192,30 @@ export function parseSqueue(text: string | null | undefined): SlurmLine[] {
   });
 }
 
+/**
+ * A pending reason that means the job never starts as it is: it asks for more than its queue (partition) or the lab's
+ * QOS allows for one job. SLURM keeps such a job PENDING for ever (seen on a real cluster: "-t 60:0:0" on a queue with
+ * a shorter MaxTime sat with PartitionTimeLimit), so waiting is the wrong word. Null for reasons that pass by themselves.
+ */
+export function slurmNeverStarts(reason: string | null | undefined, asked: { timeHours?: number | null; queue?: string | null } = {}): { words: string; kind: 'time' | 'size' } | null {
+  const code = (reason ?? '').replace(/[()]/g, '').trim();
+  const queue = asked.queue ? `the ${asked.queue} queue` : 'its queue';
+  if (/^PartitionTimeLimit$/i.test(code)) return { kind: 'time', words: `Won’t start: it asks for more time${asked.timeHours ? ` (${asked.timeHours} h)` : ''} than ${queue} allows` };
+  if (/MaxWallDurationPerJob/i.test(code)) return { kind: 'time', words: `Won’t start: it asks for more time${asked.timeHours ? ` (${asked.timeHours} h)` : ''} than your lab may use for one job` };
+  if (/^Partition(?:Node|Cpu)Limit$/i.test(code)) return { kind: 'size', words: `Won’t start: it asks for more cores or nodes than ${queue} allows` };
+  // A real Slurm 23.11 gives a job over its partition's MaxTime "PartitionConfig" first and "PartitionTimeLimit" only
+  // on a later scheduling pass (and sacct keeps PartitionConfig): the code does not say which limit it is.
+  if (/^PartitionConfig$/i.test(code)) return { kind: 'size', words: `Won’t start: it asks for more time, cores or memory than ${queue} allows` };
+  if (/Max(?!Jobs|Submit)\w*PerJob/i.test(code)) return { kind: 'size', words: 'Won’t start: it asks for more cores or memory than your lab may use for one job' };
+  return null;
+}
+
 /** A SLURM pending reason in words, for the card. The code itself stays in Details. */
-export function slurmReasonWords(reason: string | null | undefined, askedMemory?: string | null): string {
+export function slurmReasonWords(reason: string | null | undefined, askedMemory?: string | null, asked: { timeHours?: number | null; queue?: string | null } = {}): string {
   const code = (reason ?? '').replace(/[()]/g, '').trim();
   if (!code || code === 'None') return 'Waiting in the queue';
+  const never = slurmNeverStarts(code, asked);
+  if (never) return never.words;
   if (/^Priority$/i.test(code)) return 'Waiting in the queue · other jobs go first';
   if (/^Resources$/i.test(code)) return askedMemory ? `Waiting for a free node with ${askedMemory}` : 'Waiting for a free node';
   if (/MaxJobsPer(User|Account)|AssocMaxJobs|QOSMaxJobs|AssocGrpJobs/i.test(code)) return 'Waiting: your lab already has its maximum of jobs running';
@@ -195,6 +245,8 @@ export function slurmRefusal(text: string | null | undefined, asked: { queue?: s
     return { words: `no node in ${queue} has ${what || 'the cores and memory asked for'}`, retry: false };
   }
   if (/MaxSubmit|QOSMax|AssocMax/i.test(raw)) return { words: 'your lab already has its maximum of jobs in the queue', retry: true };
+  // Some sbatch builds print only the generic line, without the limit's name (QOSMaxSubmitJobPerUserLimit).
+  if (/violates accounting\/QOS policy/i.test(raw)) return { words: 'it is over a limit of your lab’s SLURM account (jobs in the queue, size or time)', retry: true };
   if (/Invalid account|Invalid qos|Invalid wckey/i.test(raw)) return { words: 'the SLURM account or QOS set for this server is not valid', retry: false };
   if (/Unable to contact slurm controller|Socket timed out|Connection refused|Zero Bytes were transmitted/i.test(raw)) return { words: 'the SLURM controller did not answer', retry: true };
   return { words: raw ? raw.replace(/\.$/, '') : 'sbatch did not say why', retry: false };
@@ -404,8 +456,10 @@ function errorSentence(kind: ErrorKind, process: string | null, sample: string |
       // The limit the failed attempt ran under: a Resume's own ("1 min"), else the server's hours.
       const seconds = run.resumedTimeLimitSeconds ?? (run.timeLimitHours ? run.timeLimitHours * 3600 : null);
       if (!seconds) return { sentence: `${capital(stage)} hit the time limit`, action: { kind: 'resume', label: 'Resume with more time' } };
-      const twice = seconds * 2;
-      const next = twice % 3600 === 0 ? `${twice / 3600}h` : twice >= 60 ? `${Math.ceil(twice / 60)} min` : `${twice} s`;
+      // Twice a 1 s limit (2 s) helps nobody: a short limit (under an hour) gets four times, at least a minute;
+      // hours get twice (12 h → 24 h; four times would ask a queue for days).
+      const more = seconds < 3600 ? Math.max(seconds * 4, 60) : seconds * 2;
+      const next = more % 3600 === 0 ? `${more / 3600}h` : `${Math.ceil(more / 60)} min`;
       return { sentence: `${capital(stage)} hit the ${durationWords(seconds)} time limit`, action: { kind: 'resume', label: `Resume with ${next.replace(/h$/, ' h')}`, time: next } };
     }
     case 'input': {
@@ -466,7 +520,8 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
   let failed = traced;
   const estimate = estimateOf(context.pastSeconds);
   const started = toDate(run.startedAt), ended = toDate(run.completedAt), queued = toDate(run.queuedAt);
-  const elapsedSeconds = started ? Math.round(((ended ?? now).getTime() - started.getTime()) / 1000) : null;
+  // Active time: from the first start, less the time the run stood failed or cancelled before each Resume.
+  const elapsedSeconds = started ? Math.max(0, Math.round(((ended ?? now).getTime() - started.getTime()) / 1000) - Math.max(0, Math.round(run.pausedSeconds ?? 0))) : null;
   const status = run.status.toLowerCase();
   const slurm = run.executionMode === 'slurm';
   const sacct = parseSacct(context.sacct);
@@ -555,6 +610,13 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
     return { ...base, shape: 'needs-you', word: 'Needs you', sentence, action,
       error: { kind, sentence, firstLines: lines, process: failed?.process ?? null, sample: failed?.tag ?? null, exitCode } };
   }
+  // SLURM is ending the run's job (a time limit, scancel, a node it lost): it stays COMPLETING for up to KillWait (30 s
+  // by default) and on a busy node longer. Seen on a real Slurm (elektra): without this the card fell back to
+  // "Preparing · Waiting for scheduler" between "Running" and the time-limit failure.
+  if (status === 'running' && slurm && queueState === 'COMPLETING') {
+    const why = /^TimeLimit$/i.test(run.queueReason ?? '') ? 'Hit its time limit · SLURM is stopping the job' : /^NodeFail$/i.test(run.queueReason ?? '') ? 'Its node failed · SLURM is stopping the job' : 'SLURM is ending the job · the result follows shortly';
+    return { ...base, shape: 'running', word: 'Running', sentence: why, action: { kind: 'cancel', label: 'Cancel' } };
+  }
   if (status === 'running' && (tasks.length || !slurm || queueState === 'RUNNING')) {
     const current = rows.find((row) => row.status === 'running') ?? firstOpen;
     const index = current ? rows.indexOf(current) + 1 : rows.length;
@@ -572,10 +634,13 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
       const what = kind === 'memory' ? 'ran out of memory' : kind === 'time' ? 'hit its time limit' : kind === 'cancelled' ? 'was cancelled outside SeqDesk' : kind === 'node' ? 'lost its node' : 'failed';
       return { ...base, shape: 'running', word: 'Running', sentence: `${capital(stageWords(process))} ${what} · Nextflow is still noticing`, action: { kind: 'cancel', label: 'Cancel' } };
     }
-    const reasonWords = slurm && run.queueReason ? slurmReasonWords(run.queueReason) : '';
+    const reasonWords = slurm && run.queueReason ? slurmReasonWords(run.queueReason, null, { timeHours: run.timeLimitHours, queue: run.queue }) : '';
     // Under a job limit the run's own job holds one slot while its task jobs wait: with a limit of one it never goes on.
     const holdsSlot = /MaxJobs|GrpJobs|MaxSubmit/i.test(run.queueReason ?? '') ? ' (this run’s own job counts too; ask the admin if it does not move)' : '';
-    const waiting = reasonWords ? ` · ${reasonWords.charAt(0).toLowerCase()}${reasonWords.slice(1)}${holdsSlot}` : '';
+    // A task job over a limit of its queue never starts: the run would wait for ever on it.
+    const stuck = slurm ? slurmNeverStarts(run.queueReason, { timeHours: run.timeLimitHours, queue: run.queue }) : null;
+    const waiting = stuck ? ` · the next step ${stuck.words.replace(/^Won’t start/, 'won’t start')}`
+      : reasonWords ? ` · ${reasonWords.charAt(0).toLowerCase()}${reasonWords.slice(1)}${holdsSlot}` : '';
     const left = estimate.seconds != null && elapsedSeconds != null
       ? (estimate.seconds > elapsedSeconds ? ` · ~${durationWords(estimate.seconds - elapsedSeconds)} left` : ' · taking longer than past runs')
       : ` · ${estimate.words}`;
@@ -592,7 +657,7 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
     if (/Waiting for scheduler confirmation/i.test(run.currentStep ?? '')) {
       return { ...base, shape: 'running', word: 'Running', sentence: `All steps ended · waiting for SLURM to confirm the job${slurm ? ' (SLURM is not answering)' : ''}`, action: { kind: 'cancel', label: 'Cancel' } };
     }
-    return { ...base, shape: 'running', word: 'Running', sentence: `Running${where}${waiting || left}`, action: { kind: 'cancel', label: 'Cancel' } };
+    return { ...base, shape: 'running', word: 'Running', sentence: `Running${where}${waiting || left}`, action: stuck ? { kind: 'ask-admin', label: 'Ask the admin' } : { kind: 'cancel', label: 'Cancel' } };
   }
   // A local run waiting for its share of this server (the admission queue).
   const localWait = localWaitWords(run.queueReason);
@@ -604,8 +669,16 @@ function plainRunStatusBody(context: PlainContext): PlainStatus {
   if (slurm && queue && (queueState === 'PENDING' || queueState === 'CONFIGURING' || !queueState)) {
     // A job that already ran and waits for its start time was requeued by SLURM (its node failed, or scontrol requeue).
     const requeued = /^BeginTime$/i.test((run.queueReason ?? '').replace(/[()]/g, '')) && !!run.startedAt;
-    const words = requeued ? 'SLURM put it back in the queue (its node failed or it was requeued); it resumes shortly' : slurmReasonWords(run.queueReason, [run.askedCores ? `${run.askedCores} cores` : '', run.askedMemory ? memoryWords(memoryBytes(run.askedMemory)) || run.askedMemory : ''].filter(Boolean).join(' and ') || null);
+    const words = requeued ? 'SLURM put it back in the queue (its node failed or it was requeued); it resumes shortly' : slurmReasonWords(run.queueReason, [run.askedCores ? `${run.askedCores} cores` : '', run.askedMemory ? memoryWords(memoryBytes(run.askedMemory)) || run.askedMemory : ''].filter(Boolean).join(' and ') || null, { timeHours: run.timeLimitHours, queue: run.queue });
     const waited = queued ? Math.round((now.getTime() - queued.getTime()) / 1000) : null;
+    // Over a limit of its queue or QOS the job never starts: it needs a person (the admin sets time, cores and memory).
+    const never = requeued ? null : slurmNeverStarts(run.queueReason, { timeHours: run.timeLimitHours, queue: run.queue });
+    if (never) {
+      const sentence = `${never.words}${waited != null && waited > 60 ? ` · waiting ${durationWords(waited)}` : ''}`;
+      return { ...base, shape: 'needs-you', word: 'Needs you', sentence,
+        action: never.kind === 'size' && /Mem/i.test(run.queueReason ?? '') && run.askedMemory ? { kind: 'ask-less-memory', label: 'Ask for less memory?' } : { kind: 'ask-admin', label: 'Ask the admin' },
+        error: { kind: never.kind === 'time' ? 'time' : 'unknown', sentence: never.words, firstLines: [`SLURM: ${(run.queueReason ?? '').replace(/[()]/g, '')}`], process: null, sample: null, exitCode: null } };
+    }
     return { ...base, shape: 'waiting', word: 'Queued', sentence: `${words}${waited != null && waited > 60 ? ` · waiting ${durationWords(waited)}` : ''}`,
       // Cancel is what a person can always do; "less memory" only when SLURM says memory is what it waits for.
       action: /Mem/i.test(run.queueReason ?? '') && run.askedMemory ? { kind: 'ask-less-memory', label: 'Ask for less memory?' } : { kind: 'cancel', label: 'Cancel' } };
