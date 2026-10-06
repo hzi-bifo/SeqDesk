@@ -89,6 +89,25 @@ export function eligibleArtifacts(run: SourceRun, context: BuildContext, sampleI
   return run.artifacts.filter(artifact => artifact.sampleId ? sampleIds.has(artifact.sampleId) : aggregateAllowed);
 }
 
+/**
+ * "N samples have no usable result": counted only among the samples the chosen runs were made for (a run's frozen
+ * sample list, or the sample of a per-sample artifact), never the whole study. Falls back to the scope when the runs
+ * name no samples. One sample reads "1 sample has".
+ */
+export function samplesWithoutResultWords(scopeIds: string[], represented: Set<unknown>, artifacts: Array<{ sampleId?: string | null; inputSampleIds?: string[] }>): string | null {
+  if (!represented.size) return null;
+  const inScope = new Set(scopeIds);
+  const named = new Set<string>();
+  for (const artifact of artifacts) {
+    if (artifact.sampleId) named.add(artifact.sampleId);
+    for (const id of artifact.inputSampleIds ?? []) named.add(id);
+  }
+  const expected = named.size ? [...named].filter((id) => inScope.has(id)) : scopeIds;
+  const missing = expected.filter((id) => !represented.has(id)).length;
+  if (!missing) return null;
+  return `${missing} ${missing === 1 ? "sample has" : "samples have"} no usable result in this dataset.`;
+}
+
 export function resolveTableSpec(pipelineId: string, outputId: string, explicit?: PackageOutputTable, metadata?: string | null) {
   const pkg = getPackage(pipelineId);
   const output = pkg?.manifest.outputs.find((entry) => entry.id === outputId) ?? null;
@@ -311,7 +330,8 @@ export async function buildPipelineTableDataset(
   }
   if (unmatched > 0) warnings.push(unmatched === 1 ? "1 row with an unknown or ambiguous sample label was excluded." : `${unmatched} rows with unknown or ambiguous sample labels were excluded.`);
   const represented = new Set(rows.map(row => row.sample_db_id).filter(Boolean));
-  if (represented.size && represented.size < samples.length) warnings.push(`${samples.length - represented.size} accessible samples have no usable result in this dataset.`);
+  const missingWords = samplesWithoutResultWords(samples.map((sample) => sample.id), represented, artifacts);
+  if (missingWords) warnings.push(missingWords);
 
   const labels: Record<string, string> = { ...spec.columnLabels, ...COHORT_LABELS, sample_db_id: "Sample record", sample_id: "Sample ID", pipeline_run: "Pipeline run" };
   const groups: Record<string, string> = Object.fromEntries(columnKeys.map((key) => [key, key.startsWith("sample") || key === "pipeline_run" ? "identity" : "pipeline"]));

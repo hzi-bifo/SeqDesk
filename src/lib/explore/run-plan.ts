@@ -29,6 +29,8 @@ export interface RunPlanStep {
     starts: boolean;
     /** A finished run with the same inputs is read instead ("reused from Run #2"). */
     reuses: { pipelineRunId: string; runNumber: string; flowRunNumber: number | null } | null;
+    /** It starts, but a step it reads also runs first: once that step's output is unchanged, an earlier run may be reused instead ("may reuse Run #2"). */
+    mayReuse?: boolean;
     /** The same work is already running for another recipe run: this one waits on it. */
     joins: { pipelineRunId: string; runNumber: string } | null;
     /** Why it runs: "3 samples new since Run #2", "a setting changed since Run #2", "it has not run yet". */
@@ -121,7 +123,7 @@ export async function previewRunPlan(flowId: string, scope: StartFlowRunInput["s
       if (failing?.id === "permission" && reuses && blocked?.stepId === step.id) blocked = null;
       const starts = !config.pinnedRunId && !reuses && !joins;
       if (starts && preflight?.estimate.seconds != null) { seconds += preflight.estimate.seconds; timed = true; }
-      out.pipeline = { pipelineId: config.pipelineId, name: info?.name ?? config.pipelineId, starts, reuses, joins, why, estimate: preflight?.estimate ? { seconds: preflight.estimate.seconds, words: preflight.estimate.words } : { seconds: null, words: "no estimate yet" }, samples: preflight?.estimate.samples ?? 0 };
+      out.pipeline = { pipelineId: config.pipelineId, name: info?.name ?? config.pipelineId, starts, reuses, joins, ...(starts && upstreamRuns ? { mayReuse: true } : {}), why, estimate: preflight?.estimate ? { seconds: preflight.estimate.seconds, words: preflight.estimate.words } : { seconds: null, words: "no estimate yet" }, samples: preflight?.estimate.samples ?? 0 };
       if (starts && info) {
         const [{ cpuHoursPerSample }, { newSamplesOption }, { stepReads }] = await Promise.all([import("./pipeline-limits"), import("./pipeline-step-incremental"), import("./pipeline-steps")]);
         const rate = await cpuHoursPerSample(config.pipelineId).catch(() => null);
@@ -140,8 +142,15 @@ export async function previewRunPlan(flowId: string, scope: StartFlowRunInput["s
   if (starting.length && starting.every((step) => current.get(step.stepId)?.status === "completed")) {
     const skipped = new Set(starting.map((step) => step.stepId));
     const downstream = downstreamOf([...skipped], model.upstream);
-    const ids = after.filter((step) => !skipped.has(step.stepId) && (downstream.has(step.stepId) || step.kind !== "pipeline")).map((step) => step.stepId);
-    if (ids.length) alternatives.push({ kind: "after-pipelines", scope: { steps: ids }, words: `Only the steps after it, with the result of Run #${current.get(starting[0].stepId)?.flowRunNumber ?? "?"}: ${stepsWords(placed(ids))} ${ids.length === 1 ? "reads" : "read"} the pipeline’s tables from that run; ${starting.length === 1 ? `step ${starting[0].label} stays` : "the pipeline steps stay"} out of date` });
+    // Only steps that come after the first pipeline (or read it); a step before it does not belong to "after it".
+    const firstAt = Math.min(...starting.map((step) => steps.indexOf(step)));
+    const ids = after.filter((step) => !skipped.has(step.stepId) && (downstream.has(step.stepId) || (step.kind !== "pipeline" && steps.indexOf(step) > firstAt))).map((step) => step.stepId);
+    // Omitted when no step follows the pipeline: there is nothing cheaper to offer.
+    if (ids.length) {
+      const reading = ids.every((id) => downstream.has(id));
+      const from = `with the result of Run #${current.get(starting[0].stepId)?.flowRunNumber ?? "?"}`;
+      alternatives.push({ kind: "after-pipelines", scope: { steps: ids }, words: `Only the steps after it, ${from}: ${stepsWords(placed(ids))} ${reading ? `${ids.length === 1 ? "reads" : "read"} the pipeline’s tables from that run` : ids.length === 1 ? "runs" : "run"}; ${starting.length === 1 ? `step ${starting[0].label} stays` : "the pipeline steps stay"} out of date` });
+    }
   }
   const estimate = { seconds: timed ? seconds : null, words: timed ? `about ${durationWords(seconds)}` : starting.length ? "no estimate yet" : "seconds" };
   const rest = after.filter((step) => step.kind !== "pipeline").map((step) => step.stepId);
