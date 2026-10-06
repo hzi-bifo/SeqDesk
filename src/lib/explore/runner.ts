@@ -202,6 +202,8 @@ export async function createAndStartRun(input: StartRunInput): Promise<RunSummar
     include: { revisions: { orderBy: { number: "desc" } } },
   });
   if (!analysis) throw new ExploreRunError(404, "Analysis not found");
+  // A pipeline step starts its pipeline from a run of the recipe (pipeline-step-runs.ts), never as code.
+  if ((analysis as { stepKind?: unknown }).stepKind === "pipeline") throw new ExploreRunError(409, "A pipeline step runs with the recipe: use Run recipe.");
   const revision = input.revisionId
     ? analysis.revisions.find((entry) => entry.id === input.revisionId)
     : analysis.revisions.find((entry) => entry.id === analysis.currentRevisionId) ?? analysis.revisions[0];
@@ -399,6 +401,11 @@ function submitSbatch(scriptPath: string, cwd: string): Promise<string> {
 export async function cancelRun(runId: string): Promise<boolean> {
   const run = await db.exploreAnalysisRun.findUnique({ where: { id: runId } });
   if (!run || !["pending", "queued", "running"].includes(run.status)) return false;
+  // A pipeline step run stops its pipeline run (unless another recipe run waits on it).
+  if (run.executionMode === "pipeline") {
+    const { stopPipelineStepRun } = await import("./pipeline-step-runs");
+    return stopPipelineStepRun(runId);
+  }
   const jobId = run.queueJobId ?? "";
   if (jobId.startsWith("local-")) {
     const pid = Number.parseInt(jobId.slice("local-".length), 10);

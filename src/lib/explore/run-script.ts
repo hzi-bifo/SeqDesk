@@ -51,7 +51,15 @@ export type ContinualfigMode = "record" | "style" | "off";
 
 /** Inner-script lines that enable the figure hook; the helpers (sx.figure, sx$figure) do the rest. */
 export function continualfigLines(mode: ContinualfigMode | undefined): string[] {
-  if (mode !== "record" && mode !== "style") return ['export CONTINUALFIG="off"'];
+  // The hook is always findable inside the run (its folder is part of the staged helper library), so a script that
+  // asks for it itself (Figures > Improve runs) can import continualfig / source CONTINUALFIG_HOOK_R; CONTINUALFIG
+  // stays off, so nothing is loaded or styled unless the run asks.
+  const findable = [
+    'export CONTINUALFIG_HOME="$HELPER_LIB/figure/continualfig"',
+    'export PYTHONPATH="$CONTINUALFIG_HOME/python:$PYTHONPATH"',
+    'export CONTINUALFIG_HOOK_R="$CONTINUALFIG_HOME/r/continualfig.R"',
+  ];
+  if (mode !== "record" && mode !== "style") return [...findable, 'export CONTINUALFIG="off"'];
   const lines = [
     'export CONTINUALFIG_HOME="$HELPER_LIB/figure/continualfig"',
     // continualfig calls its styled mode "on".

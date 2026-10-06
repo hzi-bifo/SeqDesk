@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "table-summary",
   "name": "Table summary",
+  "category": "summarise",
   "description": "Column-level summary statistics and distribution plots for any table. Numeric columns get count, mean, standard deviation, minimum, median and maximum; text, boolean and date columns get the number of distinct values and the most frequent value. Up to max_columns numeric columns are drawn as small-multiple histograms, coloured by the group role when the dataset maps one.",
   "language": "python",
   "environment": "seqdesk-explore-python",

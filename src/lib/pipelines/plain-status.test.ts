@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { classifyFailure, countWorkflowProcesses, durationWords, firstErrorLines, logProgress, parseSacct, prepareFailureWords, parseSqueue, plainRunStatus, redactLog, slurmReasonWords, slurmRefusal } from './plain-status';
+import { classifyFailure, countWorkflowProcesses, durationWords, firstErrorLines, logProgress, parseSacct, prepareFailureWords, parseSqueue, pausedSecondsOf, plainRunStatus, redactLog, slurmReasonWords, slurmRefusal, stripTerminalCodes } from './plain-status';
 
 const fixture = (name: string) => fs.readFileSync(path.join(__dirname, '__fixtures__', 'plain-status', name), 'utf8');
 const now = new Date('2026-09-28T12:00:00Z');
@@ -19,6 +19,9 @@ describe('scheduler lines', () => {
     expect(slurmReasonWords('QOSMaxJobsPerUserLimit')).toMatch(/maximum of jobs/);
     expect(slurmReasonWords('(ReqNodeNotAvail, UnavailableNodes:hpc-c17)')).toMatch(/down or reserved/);
     expect(slurmReasonWords(null)).toBe('Waiting in the queue');
+    // Real Slurm 23.11 (elektra): a job over the partition's MaxTime pends with PartitionConfig before PartitionTimeLimit.
+    expect(slurmReasonWords('PartitionConfig', null, { queue: 'short' })).toBe('Won’t start: it asks for more time, cores or memory than the short queue allows');
+    expect(slurmReasonWords('PartitionNodeLimit', null, { queue: 'short' })).toBe('Won’t start: it asks for more cores or nodes than the short queue allows');
   });
 });
 
@@ -43,6 +46,9 @@ describe('redaction', () => {
     const clean = redactLog(fixture('log-conda.txt'));
     expect(clean).not.toMatch(/hunter2|tk-abc123SECRET/);
     expect(redactLog('export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwx')).not.toMatch(/ghp_abc/);
+    // Nextflow 25 on a real Slurm run (elektra): OSC 8 hyperlinks and colours around a task line.
+    expect(stripTerminalCodes('[\u001b]8;;file:///runs/x/work/31/c88af4d6\u000731/c88af4\u001b]8;;\u0007] RUN_FASTQC (ERR10419931) | 1 of 1 \u001b[32m✔\u001b[0m'))
+      .toBe('[31/c88af4] RUN_FASTQC (ERR10419931) | 1 of 1 ✔');
     expect(redactLog('api_key=abc123def')).toBe('api_key=REDACTED');
   });
   it('strips Nextflow log prefixes and colours from the first lines', () => {
@@ -72,7 +78,7 @@ describe('plainRunStatus', () => {
   it('failed: time limit → Resume with twice the hours', () => {
     const status = plainRunStatus({ now, run: { status: 'failed', executionMode: 'slurm', timeLimitHours: 12, errorTail: 'slurmstepd: error: *** JOB 4819544 CANCELLED DUE TO TIME LIMIT ***' }, sacct: fixture('sacct-timeout.txt') });
     expect(status.error?.kind).toBe('time');
-    expect(status.action).toMatchObject({ kind: 'resume', label: 'Resume with 24 h', time: '24h' });
+    expect(status.action).toMatchObject({ kind: 'resume', label: 'Resume with 24 h', time: '24h' }); // hours: twice
     expect(status.sentence).toBe('A step hit the 12 h time limit');
   });
   it('failed: the time limit a Resume set is the one it hit', () => {
@@ -81,7 +87,27 @@ describe('plainRunStatus', () => {
       '1\t63/10d94b\t46\tRUN_FASTQC\tERR10419931\tRUN_FASTQC (ERR10419931)\tFAILED\t140\t1\t2026-09-28 12:08:11.000\t2026-09-28 12:08:11.000\t2026-09-28 12:08:41.000\t30s\t30s\t1.0\t2 MB\t5 MB\t0\t0'].join('\n');
     const status = plainRunStatus({ now, trace, run: { status: 'failed', executionMode: 'slurm', timeLimitHours: 1, resumedTimeLimitSeconds: 60 } });
     expect(status.error?.kind).toBe('time');
-    expect([status.sentence, status.action?.label, status.action?.time]).toEqual(['FastQC hit the 1 min time limit', 'Resume with 2 min', '2 min']);
+    expect([status.sentence, status.action?.label, status.action?.time]).toEqual(['FastQC hit the 1 min time limit', 'Resume with 4 min', '4 min']);
+    // A 1 s limit (a live test): not "Resume with 2 s" but at least a minute.
+    const short = plainRunStatus({ now, trace, run: { status: 'failed', executionMode: 'slurm', timeLimitHours: 1, resumedTimeLimitSeconds: 1 } });
+    expect([short.sentence, short.action?.label, short.action?.time]).toEqual(['FastQC hit the 1 s time limit', 'Resume with 1 min', '1 min']);
+    const half = plainRunStatus({ now, trace, run: { status: 'failed', executionMode: 'slurm', timeLimitHours: 1, resumedTimeLimitSeconds: 1800 } });
+    expect(half.action?.label).toBe('Resume with 2 h');
+  });
+  it('a resumed run counts its active time, not the time it stood failed before the Resume', () => {
+    const at = (minute: number) => new Date(Date.UTC(2026, 9, 6, 10, minute));
+    const events = [
+      { eventType: 'state', occurredAt: at(0), message: 'queued → running', payload: JSON.stringify({ from: 'queued', to: 'running' }) },
+      { eventType: 'state', occurredAt: at(5), message: 'running → failed', payload: JSON.stringify({ from: 'running', to: 'failed' }) },
+      { eventType: 'resumed', occurredAt: at(45), message: 'Resumed (1) · time 1.m', payload: null },
+      { eventType: 'state', occurredAt: at(45), message: 'failed → running · resume 1', payload: JSON.stringify({ from: 'failed', to: 'running', detail: 'resume 1' }) },
+      { eventType: 'state', occurredAt: at(50), message: 'running → cancelled', payload: null },
+      { eventType: 'state', occurredAt: at(55), message: 'cancelled → running · resume 2', payload: null },
+    ];
+    expect(pausedSecondsOf(events)).toBe(45 * 60);
+    const status = plainRunStatus({ now: at(58), run: { status: 'completed', startedAt: at(0), completedAt: at(58), pausedSeconds: pausedSecondsOf(events) } });
+    expect(status.elapsedSeconds).toBe(13 * 60);
+    expect(status.sentence).toMatch(/^Finished in 13 min/);
   });
   it('failed: input, database, software, node and unknown have their own action', () => {
     const kinds = [
@@ -134,6 +160,10 @@ describe('plainRunStatus', () => {
     expect(logProgress(tail)).toEqual({ submitted: 1, processes: [{ name: 'RUN_FASTQC', done: 0, total: 1 }, { name: 'SUMMARIZE_FASTQC', done: 0, total: 0 }], steps: 2 });
     // A redrawn block that leaves out the process not reached yet still counts both steps.
     expect(plainRunStatus({ now, run: { status: 'running', executionMode: 'slurm', queueStatus: 'RUNNING', outputTail: tail.replace('[-        ] SUMMARIZE_FASTQC         -\n', '') } }).sentence).toBe('Running · step 1 of 2: FastQC · no estimate yet');
+    // Real Slurm (elektra): after its time limit the run's job is COMPLETING for KillWait; not "Preparing".
+    expect(plainRunStatus({ now, run: { status: 'running', executionMode: 'slurm', queueJobId: '34', queueStatus: 'COMPLETING', queueReason: 'TimeLimit', currentStep: 'Waiting for scheduler', outputTail: tail } }))
+      .toMatchObject({ shape: 'running', word: 'Running', sentence: 'Hit its time limit · SLURM is stopping the job' });
+    expect(plainRunStatus({ now, run: { status: 'running', executionMode: 'slurm', queueJobId: '34', queueStatus: 'COMPLETING', queueReason: null } }).sentence).toBe('SLURM is ending the job · the result follows shortly');
     const running = plainRunStatus({ now, run: { status: 'running', executionMode: 'slurm', queueJobId: '30', queueStatus: 'RUNNING', startedAt: '2026-09-28T11:59:00Z', outputTail: tail }, trace: 'task_id\thash\n' });
     expect([running.shape, running.sentence]).toEqual(['running', 'Running · step 1 of 2: FastQC · no estimate yet']);
     // Shortened names keep no name; before any task is submitted it is still preparing.
@@ -254,6 +284,9 @@ describe('plainRunStatus', () => {
     expect(slurmRefusal('sbatch: error: Memory specification can not be satisfied\nsbatch: error: Batch job submission failed: Requested node configuration is not available', asked)?.words).toBe('no node in the cpu queue has 2 cores and 500 GB');
     expect(slurmRefusal('sbatch exited with code 1: sbatch: error: invalid partition specified: gpu\nsbatch: error: Batch job submission failed: Invalid partition name specified', { queue: 'gpu' })?.words).toBe('there is no queue called gpu on this cluster');
     expect(slurmRefusal('Failed to run sbatch: spawn sbatch ENOENT')?.words).toBe('sbatch did not say why');
+    // Real Slurm 23.11 output over a QOS submit limit; the generic line alone also reads as a limit.
+    expect(slurmRefusal("sbatch exited with code 1: sbatch: error: QOSMaxSubmitJobPerUserLimit\nsbatch: error: Batch job submission failed: Job violates accounting/QOS policy (job submit limit, user's size and/or time limits)")).toEqual({ words: 'your lab already has its maximum of jobs in the queue', retry: true });
+    expect(slurmRefusal("sbatch: error: Batch job submission failed: Job violates accounting/QOS policy (job submit limit, user's size and/or time limits)")).toEqual({ words: 'it is over a limit of your lab’s SLURM account (jobs in the queue, size or time)', retry: true });
     expect(slurmRefusal('Error executing process > FASTQC')).toBeNull();
     // A queued run's sentence says what it waits for in the same words.
     expect(plainRunStatus({ now, run: { status: 'queued', executionMode: 'slurm', queueJobId: '35', queueStatus: 'PENDING', queueReason: 'Resources', askedMemory: '4GB', askedCores: 2 } }).sentence).toBe('Waiting for a free node with 2 cores and 4 GB');

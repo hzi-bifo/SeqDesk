@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "sequencing-qc-overview",
   "name": "Sequencing QC overview",
+  "category": "summarise",
   "description": "Overview of a sequencing table: reads per sample (stacked by run when a run_id column exists), read quality and Q30 per run, a per-sample QC table with low-yield flags and a per-run table. Panels that need columns the table does not have are skipped and listed in the run notes.",
   "language": "python",
   "environment": "seqdesk-explore-python",

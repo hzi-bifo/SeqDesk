@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   resolve: vi.fn(), moduleEnabled: vi.fn(), listReports: vi.fn(), capability: vi.fn(),
   getReportRecord: vi.fn(), getReportView: vi.fn(), renderReportHtml: vi.fn(),
   listFlows: vi.fn(), createFlow: vi.fn(), getFlow: vi.fn(), getFlowRecord: vi.fn(), updateFlow: vi.fn(), deleteFlow: vi.fn(), processCleanupJobs: vi.fn(async () => ({ done: 0, failed: 0 })), pruneRuns: vi.fn(),
-  loadCanvasGraph: vi.fn(), listAnalyses: vi.fn(),
+  loadCanvasGraph: vi.fn(), listAnalyses: vi.fn(), updateAnalysis: vi.fn(), getAnalysisDetail: vi.fn(),
 }));
 vi.mock('@/lib/db', () => ({ db: {
   exploreAnalysis: { findUnique: mocks.analysisFind },
@@ -29,7 +29,7 @@ vi.mock('@/lib/explore/housekeeping', () => ({ processCleanupJobs: mocks.process
 vi.mock('@/lib/explore/canvas', () => ({ loadCanvasGraph: mocks.loadCanvasGraph }));
 vi.mock('@/lib/explore/analyses', async () => {
   const actual = await vi.importActual<typeof import('@/lib/explore/analyses')>('@/lib/explore/analyses');
-  return { ...actual, listAnalyses: mocks.listAnalyses };
+  return { ...actual, listAnalyses: mocks.listAnalyses, updateAnalysis: mocks.updateAnalysis, getAnalysisDetail: mocks.getAnalysisDetail };
 });
 import { NextRequest } from 'next/server';
 import { createFlowStudy, handleExploreRequest, listFlowStudies } from './explore';
@@ -188,5 +188,24 @@ describe('step conversation persistence', () => {
     expect(await (await call('PUT', { version: 2, state: { turns: [], draft: 'test' } })).json()).toEqual({ version: 3 });
     expect(mocks.conversationUpdate.mock.calls[0][0].where).toEqual({ analysisId: 'a1', userId: 'local', version: 2 });
     expect((await call('PUT', { version: 2, state: { draft: 'x'.repeat(800001) } })).status).toBe(400);
+  });
+});
+
+describe('methods sentence by-line', () => {
+  beforeEach(() => {
+    vi.clearAllMocks(); mocks.moduleEnabled.mockResolvedValue(true);
+    mocks.analysisFind.mockResolvedValue({ id: 'a1', targetKey: 'project:p1', currentRevisionId: null });
+    mocks.getAnalysisDetail.mockResolvedValue({ id: 'a1' });
+  });
+  it("keeps who saved a person's sentence (member and name) beside when", async () => {
+    const named = { ...session, user: { id: 'local', name: 'Amara Okafor ' } } as IntegrationSession;
+    const response = await handleExploreRequest(request('PATCH', '/x/explore/analyses/a1', { methodsSentence: { text: ' Genes were kept. ', tokens: [], author: 'person' } }), named, ['analyses', 'a1'], new Headers());
+    expect(response.status).toBe(200);
+    const saved = mocks.updateAnalysis.mock.calls[0][1].methodsSentence;
+    expect(saved).toMatchObject({ text: 'Genes were kept.', author: 'person', acceptedById: 'local', acceptedByMemberId: 'member', acceptedByName: 'Amara Okafor' });
+    expect(Date.parse(saved.acceptedAt)).toBeGreaterThan(0);
+    // Clearing the sentence clears who wrote it with it.
+    await handleExploreRequest(request('PATCH', '/x/explore/analyses/a1', { methodsSentence: null }), named, ['analyses', 'a1'], new Headers());
+    expect(mocks.updateAnalysis.mock.calls[1][1].methodsSentence).not.toHaveProperty('acceptedByName');
   });
 });

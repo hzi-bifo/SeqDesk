@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ analysisFind: vi.fn(), revisionFind: vi.fn(), updateMany: vi.fn(), create: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db: { exploreAnalysis: { findUnique: mocks.analysisFind }, exploreAnalysisRevision: { findUnique: mocks.revisionFind }, exploreStepProposal: { updateMany: mocks.updateMany, create: mocks.create } } }));
 
-import { acceptedMethodsSentence, parseMethodsDraft, saveMethodsDraft } from "./methods-draft";
+import { acceptedMethodsSentence, methodsAcceptedBy, parseMethodsDraft, saveMethodsDraft } from "./methods-draft";
 
 describe("methods drafts", () => {
   beforeEach(() => vi.clearAllMocks());
@@ -34,5 +34,15 @@ describe("methods drafts", () => {
     expect(acceptedMethodsSentence({ tokens: [{ key: "k", value: 2 }], revisionId: "rev3", codeHash: "abc", prompt: "p", notVerified: ["n"] }, "t", "rev4", "u1"))
       .toMatchObject({ text: "t", tokens: [{ key: "k", value: 2 }], revisionId: "rev3", codeHash: "abc", prompt: "p", notVerified: ["n"], author: "assistant", acceptedById: "u1" });
     expect(acceptedMethodsSentence([{ key: "x" }], "t", "rev4", "u1")).toMatchObject({ tokens: [{ key: "x" }], revisionId: "rev4" });
+  });
+
+  it("keeps who accepted the words: their member and name beside acceptedById and acceptedAt", () => {
+    const accepted = acceptedMethodsSentence({ tokens: [] }, "t", "rev4", "u1", { memberId: "m-amara", name: " Amara Okafor " }) as Record<string, unknown>;
+    expect(accepted).toMatchObject({ author: "assistant", acceptedById: "u1", acceptedByMemberId: "m-amara", acceptedByName: "Amara Okafor" });
+    expect(Number.isNaN(Date.parse(String(accepted.acceptedAt)))).toBe(false);
+    // An actor without a member or name (older routes) stores neither key.
+    expect(acceptedMethodsSentence({ tokens: [] }, "t", "rev4", "u1", { memberId: null })).not.toHaveProperty("acceptedByMemberId");
+    expect(methodsAcceptedBy({ memberId: "", name: "  " })).toEqual({});
+    expect(methodsAcceptedBy({ name: "x".repeat(300) }).acceptedByName).toHaveLength(200);
   });
 });

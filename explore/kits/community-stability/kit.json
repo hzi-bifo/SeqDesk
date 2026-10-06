@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "community-stability",
   "name": "Community stability",
+  "category": "summarise",
   "description": "How much a subject's community changes between its samples. Dissimilarity between consecutive samples of the same subject (Bray-Curtis on relative abundance or Jaccard on presence) against the time gap between them, per group, with the dissimilarity between different subjects as the baseline.",
   "language": "python",
   "environment": "seqdesk-explore-python",

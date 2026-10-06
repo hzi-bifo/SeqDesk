@@ -132,7 +132,11 @@ export function readsAndRecordsWords(pairs: DataReadPair[], records: { paired: b
   return [files, recs].filter(Boolean).join(' + ') || 'no FASTQ files';
 }
 
-export async function ensureDataStudy(input: { targetKey: string; userId: string; onlySamples?: string[] }): Promise<{ studyId: string; sampleIds: string[]; pairs: DataReadPair[] }> {
+/**
+ * `names`: Data sample id → the name a sample list gives it. The mirrored sample is called that (the pipeline's
+ * samplesheet and its tables then use the list's names); without it, the Data file's name.
+ */
+export async function ensureDataStudy(input: { targetKey: string; userId: string; onlySamples?: string[]; names?: Record<string, string> }): Promise<{ studyId: string; sampleIds: string[]; pairs: DataReadPair[] }> {
   const target = parseTargetKey(input.targetKey)!;
   const study = await dataStudyFor(input.targetKey, input.userId);
   const { pairs } = await readsInData(input.targetKey);
@@ -145,10 +149,12 @@ export async function ensureDataStudy(input: { targetKey: string; userId: string
   for (const pair of wanted) {
     const file1 = await linkDataFile(pair.r1.id, linkDir);
     const file2 = pair.r2 ? await linkDataFile(pair.r2.id, linkDir) : null;
-    let sample = existing.find((s) => s.sampleId === pair.sampleId);
+    const name = input.names?.[pair.sampleId] ?? pair.sampleId;
+    let sample = existing.find((s) => s.sampleId === name);
     if (!sample) {
-      const created = await db.sample.create({ data: { sampleId: pair.sampleId, sampleAlias: pair.sampleId, sampleTitle: pair.sampleId, studyId: study.id }, select: { id: true, sampleId: true } });
+      const created = await db.sample.create({ data: { sampleId: name, sampleAlias: name, sampleTitle: name, studyId: study.id }, select: { id: true, sampleId: true } });
       sample = { ...created, reads: [] };
+      existing.push(sample);
     }
     const same = sample.reads.find((r) => r.file1 === file1 && (r.file2 ?? null) === file2);
     if (!same) {

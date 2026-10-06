@@ -138,7 +138,8 @@ export async function syncExploreRun(
 
 async function runOnce(): Promise<void> {
   const runs = await db.exploreAnalysisRun.findMany({
-    where: { status: { in: ACTIVE } },
+    // Pipeline steps of a recipe run follow their pipeline run (advanceActiveFlowRuns below), never a code run's folder.
+    where: { status: { in: ACTIVE }, OR: [{ executionMode: null }, { executionMode: { not: "pipeline" } }] },
     select: { id: true, status: true, runFolder: true, queueJobId: true, createdAt: true, startedAt: true },
   });
   // Forget marker waits of runs that are no longer active (cancelled, finalized elsewhere).

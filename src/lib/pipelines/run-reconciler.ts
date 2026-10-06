@@ -99,6 +99,8 @@ const vanishedLocal = (snapshot: QueueSnapshot | null) => !!snapshot && snapshot
   && /exited before its canonical exit marker|belongs to another process|missing its process arguments/.test(snapshot.reason ?? '');
 
 const TERMINAL: RunStatus[] = ['completed', 'failed', 'cancelled'];
+/** squeue's %R of a COMPLETING job: why SLURM ends it, or else its node list (which is no reason). */
+const COMPLETING_REASON = /^(TimeLimit|NodeFail|JobLaunchFailure)$/i;
 const ACTIVE: RunStatus[] = ['pending', 'queued', 'running'];
 
 export function reconcileRun(input: ReconcileInput): Reconciled {
@@ -113,7 +115,9 @@ export function reconcileRun(input: ReconcileInput): Reconciled {
   if (scheduler?.identityVerified && scheduler.state) {
     const state = scheduler.state;
     const reason = state === 'PENDING' && scheduler.reason ? scheduler.reason.replace(/^\((.*)\)$/, '$1')
-      : state === 'RUNNING' && input.slurm ? (input.waitingTaskReason ?? input.endedTask ?? null) : null;
+      : state === 'RUNNING' && input.slurm ? (input.waitingTaskReason ?? input.endedTask ?? null)
+      // squeue's %R of a COMPLETING job is why SLURM ends it (TimeLimit, NodeFail) or else its node list.
+      : state === 'COMPLETING' && scheduler.reason && COMPLETING_REASON.test(scheduler.reason) ? scheduler.reason : null;
     queue = { status: state, reason };
   }
 
@@ -179,6 +183,7 @@ export function queueFieldsFrom(snapshot: QueueSnapshot | null, options: { slurm
   if (options.status === 'cancelled') return { status: null, reason: null };
   if (!snapshot?.identityVerified || !snapshot.state || snapshot.state === 'UNKNOWN') return null;
   const reason = snapshot.state === 'PENDING' && snapshot.reason ? snapshot.reason.replace(/^\((.*)\)$/, '$1')
-    : snapshot.state === 'RUNNING' && options.slurm ? options.waitingTaskReason ?? null : null;
+    : snapshot.state === 'RUNNING' && options.slurm ? options.waitingTaskReason ?? null
+    : snapshot.state === 'COMPLETING' && snapshot.reason && COMPLETING_REASON.test(snapshot.reason) ? snapshot.reason : null;
   return { status: snapshot.state, reason };
 }

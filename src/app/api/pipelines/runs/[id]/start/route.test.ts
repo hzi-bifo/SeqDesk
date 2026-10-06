@@ -624,6 +624,29 @@ describe("POST /api/pipelines/runs/[id]/start", () => {
     );
   });
 
+  it("reads the job id from sbatch's whole output, also when the pipe splits it (and with a cluster name)", async () => {
+    mocks.getExecutionSettings.mockResolvedValue({ ...defaultExecutionSettings, useSlurm: true, slurmQueue: "batch" });
+    mocks.exec.mockImplementation((cmd: string, _opts: unknown, callback: (err: Error | null, result: unknown) => void) => {
+      if (cmd.includes("command -v sbatch")) callback(null, { stdout: "/usr/bin/sbatch" });
+      else callback(new Error("not found"), null);
+    });
+    mocks.spawn.mockImplementation(() => {
+      const child = makeChildProcess();
+      process.nextTick(() => {
+        child.stdout.emit("data", "4819");
+        child.stdout.emit("data", "227;hpc\n");
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const response = await POST(makeRequest(), { params: baseParams });
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).jobId).toBe("4819227");
+    expect(mocks.db.pipelineRun.updateMany.mock.calls.some((call) => call[0]?.data?.queueJobId === "4819227")).toBe(true);
+  });
+
   it("scancels a submitted SLURM job when queue-job persistence loses to cancellation", async () => {
     mocks.getExecutionSettings.mockResolvedValue({
       ...defaultExecutionSettings,

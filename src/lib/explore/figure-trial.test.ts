@@ -39,7 +39,9 @@ describe("figure records", () => {
 
 describe("the figure hook in runs", () => {
   it("is off unless a run asks for it, and style adds the start-up hooks", () => {
-    expect(continualfigLines(undefined)).toEqual(['export CONTINUALFIG="off"']);
+    const off = continualfigLines(undefined);
+    expect(off[off.length - 1]).toBe('export CONTINUALFIG="off"');
+    expect(off.join("\n")).toContain('CONTINUALFIG_HOOK_R="$CONTINUALFIG_HOME/r/continualfig.R"');
     const record = continualfigLines("record").join("\n");
     expect(record).toContain("export CONTINUALFIG=record");
     expect(record).toContain('CONTINUALFIG_HOME="$HELPER_LIB/figure/continualfig"');

@@ -31,6 +31,7 @@ async function recordRunTransition(runId: string, from: string, to: string, sour
 }
 import { getPipelineRunTargetKey } from '@/lib/pipelines/result-files';
 import { resolveCondaEnvironmentReference } from '@/lib/pipelines/conda-environment';
+import { startedExitCode } from '@/lib/pipelines/run-started';
 import {
   isActiveQueueState,
   isCancelledQueueState,
@@ -38,6 +39,7 @@ import {
   isQueueSnapshotRetryable,
   isTerminalQueueState,
   normalizeQueueState,
+  readAccountingState,
   readIdentityCheckedQueueSnapshot,
   waitForIdentityCheckedQueueTerminal,
   type QueueSnapshot,
@@ -1098,7 +1100,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
     if (shouldFinalize) {
       let inferredExitCode: number | null = null;
       if (isCompletedQueueState || isExitedLocalState) {
-        inferredExitCode = await inferPipelineExitCode(run.runFolder);
+        inferredExitCode = await startedExitCode(run.runFolder, await inferPipelineExitCode(run.runFolder));
       }
 
       const consideredSuccessful =
@@ -1427,7 +1429,7 @@ export async function syncPipelineRunForOperator(runId: string): Promise<Pipelin
   const queueExitedLocal = normalizedQueueState === 'EXITED';
   const queueCancelled = isCancelledQueueState(normalizedQueueState);
   const queueFailed = isFailedQueueState(normalizedQueueState);
-  const inferredExitCode = await inferPipelineExitCode(run.runFolder);
+  const inferredExitCode = await startedExitCode(run.runFolder, await inferPipelineExitCode(run.runFolder));
   const queueConfirmationPending = Boolean(
     run.queueJobId && isQueueSnapshotRetryable(traceQueueSnapshot)
   );
@@ -1846,7 +1848,8 @@ export async function cancelPipelineRunForOperator(
         ? 'Running'
         : 'Waiting for scheduler';
   const releaseCancellationClaim = async (
-    message: string
+    message: string,
+    keepErrorTail = false
   ): Promise<PipelineOpsResponse> => {
     const releasedAt = new Date();
     const released = await db.pipelineRun.updateMany({
@@ -1859,7 +1862,7 @@ export async function cancelPipelineRunForOperator(
       data: {
         statusSource: restoredStatusSource,
         currentStep: restoredCurrentStep,
-        errorTail: message,
+        ...(keepErrorTail ? {} : { errorTail: message }),
         lastEventAt: releasedAt,
       },
     });
@@ -2008,7 +2011,13 @@ export async function cancelPipelineRunForOperator(
       },
       options.queueWait
     );
-    if (waitResult.outcome !== 'terminal') {
+    // After our scancel SLURM keeps the job COMPLETING while its processes stop (KillWait); accounting already says
+    // CANCELLED. Then the cancel took: say so instead of "timed out" (seen on a real Slurm, where the cancel of a
+    // running run answered 409 and the run turned cancelled moments later).
+    const cancelledInAccounting = waitResult.outcome === 'timeout' && !queueJobId.startsWith('local-')
+      && normalizeQueueState(waitResult.snapshot.state) === 'COMPLETING'
+      && isCancelledQueueState(await readAccountingState(queueJobId));
+    if (waitResult.outcome !== 'terminal' && !cancelledInAccounting) {
       return releaseCancellationClaim(
         waitResult.outcome === 'timeout'
           ? 'Cancellation timed out while the exact job was still active'
@@ -2037,6 +2046,12 @@ export async function cancelPipelineRunForOperator(
     return releaseCancellationClaim(
       'The job already reached a terminal scheduler state; waiting for lifecycle reconciliation'
     );
+  }
+
+  // A local run whose wrapper wrote "exit code: 0" finished its work before the signal reached it (the cancel came
+  // too late): it completes, it is not cancelled. A SIGTERM'd wrapper writes 143, so this is the run's own end.
+  if (claimedRun.runFolder && (queueJobId ?? '').startsWith('local-') && (await startedExitCode(claimedRun.runFolder, await inferPipelineExitCode(claimedRun.runFolder).catch(() => null))) === 0) {
+    return releaseCancellationClaim('The run finished before the cancel arrived; its outputs are being saved', true);
   }
 
   // Nextflow cancels its own task jobs when it gets the SIGTERM; any it could not reach must not keep running.

@@ -213,6 +213,19 @@ export interface PackageManifest {
   ui?: {
     sampleResult?: PipelineSampleResult;
   };
+  /* What the pipeline says about itself for recipe steps and the finder (all optional; explore/pipeline-record.ts):
+     its Methods sentence template, papers to cite, version compare metrics, whether it can add samples to its tables,
+     its per-sample stages, its quality table and thresholds, its changelog, and the data it is for. */
+  methods?: string | { template: string };
+  citations?: Array<{ id?: string; kind?: 'pipeline' | 'tool' | 'framework' | 'reference'; tool?: string; short?: string; text: string; doi?: string; url?: string }>;
+  compare?: Array<{ id: string; label: string; kind: 'rows' | 'columns' | 'qc-pass' | 'top-features'; output?: string; column?: string; top?: number }>;
+  incremental?: boolean | { allowed: boolean; merge?: Record<string, 'rows'>; reason?: string };
+  merge?: Record<string, 'rows'>;
+  perSample?: string[];
+  qc?: { output: string; sampleColumn?: string; metrics: Array<{ column: string; label?: string; min?: number; max?: number; unit?: string }> };
+  changelog?: string;
+  goals?: string[];
+  fit?: { inputs?: { reads: 'amplicon' | 'shotgun' | 'long' | 'any'; layouts?: Array<'paired' | 'single'>; soft?: boolean }; outputs?: Array<{ name: string; tableKind?: string }>; answers?: string };
 }
 
 // Samplesheet types (from YAML)

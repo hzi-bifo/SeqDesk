@@ -16,6 +16,9 @@ import type { KitInput } from "./kits/schema";
 import { computeStepStates, loadRecipe, type RecipeModel, type RecipeStep, type StepRecord } from "./recipe";
 import { parseJsonObject, parseRoles, parseSchema } from "./schema";
 import { currentRuntimeFingerprint, runtimeOfResults } from "./runtime-fingerprint";
+import { pipelineReadsChanged, type PipelineAccess } from "./pipeline-steps";
+import { pipelineParamMeta, pipelineStepViews } from "./pipeline-step-view";
+import { snapshotOf } from "./pipeline-step-runs";
 
 export interface ParamMetaEntry {
   label?: string;
@@ -41,6 +44,9 @@ export interface RecipeViewOptions {
   scope?: RecipeScopeInfo | null;
   /** Pending proposals, serialized by the proposals store. */
   proposals?: unknown[];
+  /** What the viewer may do with pipelines (pipeline steps say "Only … starts pipelines here"), and their lab (presets). */
+  pipelineAccess?: PipelineAccess | null;
+  labKey?: string | null;
 }
 
 const PARAM_META_KEYS = ["label", "unit", "min", "max", "usual", "options", "meaning", "consequence", "phrase"] as const;
@@ -171,7 +177,9 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
   // A failed run newer than the current one marks the step it failed at.
   const currentRow = current?.run ?? null;
   const failedAt = await failedStepAfter(flowId, currentRow, model);
-  const states = computeStepStates({ model, records: currentRecords, revisionsUsed: await revisionsUsedBy(currentRecords), active, failedAt });
+  // Pipeline steps also read the FASTQ files in Data: new reads since their run make them out of date.
+  const readsChanged = await pipelineReadsChanged(model, currentRecords);
+  const states = computeStepStates({ model, records: currentRecords, revisionsUsed: await revisionsUsedBy(currentRecords), active, failedAt, readsChanged });
 
   // The run before the viewed one: values that changed show "was …" (a setting changed and the step ran again).
   const previousRow = viewed?.run.number !== null && viewed?.run.number !== undefined
@@ -182,6 +190,8 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
   const kits = await kitsOf(model.steps);
   const stepIds = new Set(model.steps.map((step) => step.id));
   const viewedRecords = viewed?.records ?? new Map<string, StepRecord>();
+  // The settings and code each viewed step run used: In words states the run's values, and ◇ marks a setting changed since.
+  const viewedRevisions = await revisionsUsedBy(viewedRecords);
   const viewedPins = new Map<string, string>();
   for (const record of viewedRecords.values()) for (const pin of record.inputPins) viewedPins.set(pin.datasetId, pin.versionId);
 
@@ -224,13 +234,28 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
   const fileBindings = new Map(model.steps.map((step) => [step.id, (() => { try { const parsed = JSON.parse(step.revision?.fileInputs ?? "[]"); return Array.isArray(parsed) ? parsed as Array<{ alias?: string; fileId?: string }> : []; } catch { return []; } })()] as const));
   const fileIds = [...new Set([...fileBindings.values()].flat().map((binding) => binding.fileId).filter((id): id is string => typeof id === "string"))];
   const fileNames = new Map(fileIds.length ? (await db.managedFile.findMany({ where: { id: { in: fileIds } }, select: { id: true, originalName: true } })).map((file) => [file.id, file.originalName] as const) : []);
+  // The recipe as it is now (no run picked) shows a pipeline step that stopped since the current run where it stopped.
+  const samplesViews = new Map<string, unknown>();
+  if (model.steps.some((step) => step.stepKind === "samples")) {
+    const { samplesStepView } = await import("./samples-step");
+    for (const step of model.steps.filter((candidate) => candidate.stepKind === "samples")) {
+      const record = viewedRecords.get(step.id);
+      const results = record ? (await db.exploreAnalysisRun.findUnique({ where: { id: record.stepRunId }, select: { results: true } }).catch(() => null))?.results ?? null : null;
+      samplesViews.set(step.id, await samplesStepView(model, step, results).catch(() => null));
+    }
+  }
+  const pipelineViews = await pipelineStepViews({ model, viewed: viewedRecords, activeRunId: activeRow?.id ?? null, readsChanged, access: options.pipelineAccess ?? null, labKey: options.labKey ?? null,
+    stoppedAfter: viewed === current ? current?.run.createdAt ?? null : undefined });
+  // Who last wrote or accepted each sentence (In words: "Written by Amara · 12 Oct").
+  const sentencePeople = await methodsSentencePeople(model.steps.map((step) => step.methodsSentence));
   const steps = model.steps.map((step) => {
     const kit = step.kitId ? kits.get(step.kitId) ?? null : null;
+    const pipelineView = step.stepKind === "pipeline" ? pipelineViews.get(step.id) ?? null : null;
     const state = states.get(step.id) ?? { state: "notRun", reason: null, paramDiff: [] };
     const record = viewedRecords.get(step.id);
     const stepRun = record ? viewedStepRuns.get(record.stepRunId) : undefined;
     const params = parseJsonObject(step.revision?.params) ?? {};
-    const meta = mergeParamMeta(kitParamMeta(kit), step.paramMeta);
+    const meta = mergeParamMeta(pipelineView ? pipelineParamMeta(pipelineView.settings) : kitParamMeta(kit), step.paramMeta);
     const regions = new Set(codeRegions(step.revision?.code ?? "").map((region) => region.regionHash));
     const own = glosses.filter((gloss) => gloss.analysisId === step.id);
     const previousRecord = previous?.records.get(step.id);
@@ -281,14 +306,23 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
       paramMeta: step.paramMeta ?? null,
       state: state.state,
       stateReason: state.reason,
+      // What the step is (explore.pipeline-steps): code, a pipeline, or the sample chooser; a pipeline's details.
+      stepKind: step.stepKind,
+      // A Choose samples step: its configuration and the list as it would be made now (explore.samples-steps).
+      ...(step.stepKind === "samples" ? { samples: samplesViews.get(step.id) ?? null } : {}),
+      ...(step.stepKind !== "pipeline" && state.state === "outOfDate" && readsChanged.has(step.id) ? { stateWords: readsChanged.get(step.id) } : {}),
+      ...(step.stepKind === "pipeline" ? { pipeline: pipelineView, ...(state.state === "outOfDate" && readsChanged.has(step.id) ? { stateWords: readsChanged.get(step.id) } : {}) } : {}),
       run: record ? {
         flowRunId: record.flowRunId, number: record.flowRunNumber, stepRunId: record.stepRunId, runNumber: stepRun?.runNumber ?? null, status: record.status,
-        reusedFrom: record.reusedFrom, durationMs: stepRun?.durationMs ?? null, ledger: stepLedger(stepRun?.results), values, verified: record.status === "completed",
+        // A pipeline step that ran by reusing a finished pipeline run says which run of the recipe ran it ("reused from Run #2").
+        reusedFrom: record.reusedFrom ?? (step.stepKind === "pipeline" ? snapshotOf(stepRun?.results)?.reusedFrom ?? null : null), durationMs: stepRun?.durationMs ?? null, ledger: stepLedger(stepRun?.results), values, verified: record.status === "completed",
         // The helper that wrote the values and the finalizer that read them (null before this was recorded).
         runtime: runtimeOfResults(stepRun?.results, currentRuntimeFingerprint()),
+        // What this step run used (its revision): the settings and the code hash.
+        params: parseJsonObject(viewedRevisions.get(record.revisionId)?.params) ?? null, codeHash: viewedRevisions.get(record.revisionId)?.codeHash ?? null,
       } : null,
       glossSummary: { count: own.length, pencil: own.filter((gloss) => gloss.state === "pencil").length, stale: own.filter((gloss) => !regions.has(gloss.regionHash)).length },
-      methodsSentence: step.methodsSentence ?? null,
+      methodsSentence: methodsSentenceView(step.methodsSentence, sentencePeople),
       proposedByTurnId: step.proposedByTurnId,
     };
   });
@@ -334,3 +368,37 @@ export async function getRecipeView(flowId: string, options: RecipeViewOptions) 
 }
 
 export type RecipeView = Awaited<ReturnType<typeof getRecipeView>>;
+
+type SentencePerson = { memberId: string | null; name: string | null };
+const sentenceRecord = (raw: unknown) => (raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null);
+
+/** Sentences saved since carry the member and name of the person who wrote or accepted them; for older ones that
+ *  person is found from `acceptedById` (their lab membership and their name in SeqDesk). Names are optional: when
+ *  they cannot be read the sentence still shows, without a name. */
+export async function methodsSentencePeople(sentences: unknown[]): Promise<Map<string, SentencePerson>> {
+  const people = new Map<string, SentencePerson>();
+  const ids = [...new Set(sentences.flatMap((raw) => {
+    const s = sentenceRecord(raw);
+    return s && typeof s.acceptedById === "string" && s.acceptedById && (typeof s.acceptedByMemberId !== "string" || typeof s.acceptedByName !== "string") ? [s.acceptedById] : [];
+  }))];
+  if (!ids.length) return people;
+  try {
+    const [users, accounts] = await Promise.all([
+      db.user.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true } }),
+      db.integrationAccount.findMany({ where: { userId: { in: ids } }, select: { userId: true, memberId: true } }),
+    ]);
+    for (const user of users) people.set(user.id, { memberId: accounts.find((account) => account.userId === user.id)?.memberId ?? null, name: [user.firstName, user.lastName].filter(Boolean).join(" ").trim() || null });
+  } catch { /* The view still lists the sentences; their by-line falls back to "a person". */ }
+  return people;
+}
+
+/** The stored sentence as the view sends it: with `acceptedBy` {id, memberId, name}, the person who last wrote or
+ *  accepted the words (`acceptedAt` is when). */
+export function methodsSentenceView(raw: unknown, people: Map<string, SentencePerson>) {
+  const s = sentenceRecord(raw);
+  if (!s) return raw ?? null;
+  const id = typeof s.acceptedById === "string" ? s.acceptedById : "";
+  if (!id) return s;
+  const known = people.get(id);
+  return { ...s, acceptedBy: { id, memberId: typeof s.acceptedByMemberId === "string" ? s.acceptedByMemberId : known?.memberId ?? null, name: typeof s.acceptedByName === "string" ? s.acceptedByName : known?.name ?? null } };
+}

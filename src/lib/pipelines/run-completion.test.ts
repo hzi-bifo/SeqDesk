@@ -1432,6 +1432,20 @@ describe("run-completion", () => {
     expect(code).toBe(0);
   });
 
+  it("a resumed run's log keeps the old attempt's marker: it does not end the run that runs again", async () => {
+    // Regression (Mac local run): Resume appends to pipeline.out, so the cancelled attempt's marker stayed above the
+    // "Resuming" line and the monitor finalised the resumed run as failed two seconds after it started.
+    const runFolder = path.join(tempDir, "run-resumed");
+    const logsDir = path.join(runFolder, "logs");
+    await fs.mkdir(logsDir, { recursive: true });
+    const first = "Starting ./workflow (local) pipeline at Mon\nPipeline completed with exit code: 1 at Mon Sep 28 20:45:18 CEST 2026\n";
+    await fs.writeFile(path.join(logsDir, "pipeline.out"), `${first}Resuming ./workflow (local) pipeline at Mon Sep 28 20:45:26 CEST 2026\nUsing nextflow\n`);
+    expect(await inferPipelineExitCode(runFolder)).toBeNull();
+    // Once the resumed attempt ends, its marker (the last one) is the answer, whatever the first attempt said.
+    await fs.writeFile(path.join(logsDir, "pipeline.out"), `${first}Resuming ./workflow (local) pipeline at Mon\nPipeline completed with exit code: 0 at Mon Sep 28 20:46:00 CEST 2026\n`);
+    expect(await inferPipelineExitCode(runFolder)).toBe(0);
+  });
+
   it("falls back to the canonical marker in stderr", async () => {
     const runFolder = path.join(tempDir, "run-2b");
     const logsDir = path.join(runFolder, "logs");

@@ -59,7 +59,9 @@ describe("Flow run routes", () => {
     const response = await call("POST", "flows/f1/runs", { scope: { steps: ["s4"] }, notify: true, requestId: "flow_abcdefghijklmnopq" });
     expect(response).toEqual({ status: 201, body: { run: { id: "r1", number: 14 } } });
     expect(mocks.requireAccess).toHaveBeenCalledWith(session, "project:p1", "write");
-    expect(mocks.startFlowRun).toHaveBeenCalledWith("f1", { scope: { steps: ["s4"] }, trial: false, sample: undefined, notify: true, requestId: "flow_abcdefghijklmnopq", actor: { userId: "u1", memberId: "m1", name: "Amara Okafor" } });
+    expect(mocks.startFlowRun).toHaveBeenCalledWith("f1", expect.objectContaining({ scope: { steps: ["s4"] }, trial: false, sample: undefined, notify: true, requestId: "flow_abcdefghijklmnopq", actor: { userId: "u1", memberId: "m1", name: "Amara Okafor" } }));
+    // Pipeline steps start as the caller (explore.pipeline-steps): the run carries what the caller may do with pipelines.
+    expect(mocks.startFlowRun.mock.calls[0][1].pipelines).toEqual({ access: expect.objectContaining({ userId: "u1" }), fresh: [], newSamplesOnly: [] });
   });
 
   it("answers errors with a code", async () => {
@@ -111,7 +113,9 @@ describe("Flow recipe routes", () => {
   it("reads the recipe of the viewed run with the caller's rights and the scope's project", async () => {
     const response = await call("GET", "flows/f1/recipe?run=r7");
     expect(response.status).toBe(200);
-    expect(mocks.getRecipeView).toHaveBeenCalledWith("f1", { runId: "r7", canEdit: false, scope: { projectId: "proj1", visibility: "lab", ownerMemberId: "" }, proposals: [] });
+    expect(mocks.getRecipeView).toHaveBeenCalledWith("f1", expect.objectContaining({ runId: "r7", canEdit: false, scope: { projectId: "proj1", visibility: "lab", ownerMemberId: "" }, proposals: [] }));
+    // The recipe says what the viewer may do with pipeline steps, and which lab's presets apply.
+    expect(mocks.getRecipeView.mock.calls[0][1]).toMatchObject({ pipelineAccess: { userId: "u1" }, labKey: expect.stringContaining("|") });
   });
 
   it("validates recipe changes before applying them", async () => {

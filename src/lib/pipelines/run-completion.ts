@@ -676,10 +676,14 @@ export async function inferPipelineExitCode(runFolder: string): Promise<number |
     try {
       const content = await fs.readFile(filePath, "utf-8");
       const lines = content.split(/\r?\n/).slice(-80).join("\n");
-      const match = lines.match(marker);
-      if (match?.[1]) {
-        const parsed = Number.parseInt(match[1], 10);
-        if (!Number.isNaN(parsed)) {
+      // A resumed run appends to the same log: only the LAST marker counts, and a marker followed by a
+      // "Resuming … pipeline at" line belongs to the attempt the resume replaced (the run is running again).
+      const markers = [...lines.matchAll(new RegExp(marker.source, "gi"))];
+      const last = markers[markers.length - 1];
+      if (last?.[1]) {
+        const resumedAfter = [...lines.matchAll(/^Resuming .* pipeline at /gm)].some((m) => (m.index ?? 0) > (last.index ?? 0));
+        const parsed = Number.parseInt(last[1], 10);
+        if (!Number.isNaN(parsed) && !resumedAfter) {
           return parsed;
         }
       }

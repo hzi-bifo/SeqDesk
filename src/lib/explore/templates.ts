@@ -16,6 +16,7 @@ import { loadRecipe, type RecipeActor } from "./recipe";
 import { parseSchema } from "./schema";
 import { checkDataset, clearFlowInputs, InputCheckSchema, saveFlowInput, type CheckResult, type InputCheck } from "./flow-inputs";
 import { ColumnRoleSchema, fillColumnParams, resolveColumns, roleColumns, rolesLine, type Resolution, type TableFacts } from "./template-columns";
+import { StepCategorySchema } from "./kits/schema";
 
 const SlotSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
@@ -36,6 +37,8 @@ const TemplateStepSchema = z.object({
   key: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
   name: z.string().min(1).max(200),
   purpose: z.string().max(200).optional(),
+  /** The picker's method category (kits/schema.ts STEP_CATEGORIES); optional. */
+  category: StepCategorySchema.optional(),
   language: z.enum(["python", "r", "shell"]).default("python"),
   codeFile: z.string().min(1).max(200).optional(),
   kitId: z.string().min(1).max(80).optional(),
@@ -90,7 +93,7 @@ export function serializeTemplate(template: FlowTemplate) {
     id: template.id, name: template.name, description: template.description, slots: template.slots,
     inputs: template.inputs.map((input) => ({ key: input.key, label: input.label, expects: input.expects, kind: input.check.kind, columns: input.check.columns })),
     columns: template.columns.map((role) => ({ key: role.key, input: role.input, label: role.label, kind: role.kind, optional: role.optional, hint: role.hint ?? null, levels: role.levels.map((level) => ({ key: level.key, label: level.label, reference: level.reference })) })),
-    steps: template.steps.map((step) => ({ name: step.name, purpose: step.purpose ?? null, language: step.language, packages: step.packages, params: step.params })),
+    steps: template.steps.map((step) => ({ name: step.name, purpose: step.purpose ?? null, ...(step.category ? { category: step.category } : {}), language: step.language, packages: step.packages, params: step.params })),
   };
 }
 

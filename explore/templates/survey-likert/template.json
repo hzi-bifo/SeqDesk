@@ -10,6 +10,7 @@
     {
       "key": "summary",
       "name": "Summarise items",
+      "category": "summarise",
       "purpose": "How many answered each question and how many agree.",
       "language": "python",
       "codeFile": "steps/summary.py",
@@ -21,6 +22,7 @@
     {
       "key": "compare",
       "name": "Compare groups",
+      "category": "test",
       "purpose": "Which questions were answered differently by the groups.",
       "language": "python",
       "codeFile": "steps/compare.py",
@@ -32,6 +34,7 @@
     {
       "key": "chart",
       "name": "Chart the answers",
+      "category": "plot",
       "purpose": "Show the spread of answers for every question.",
       "language": "python",
       "codeFile": "steps/chart.py",

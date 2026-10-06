@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "cohort-overview",
   "name": "Cohort overview",
+  "category": "summarise",
   "description": "What is in a long taxon profile table: samples, subjects, specimen groups, taxa and reads, one summary row per group, one row per subject with its sampling days, and a sampling timeline (subjects against study day, coloured by group). The first page of any cohort report.",
   "language": "python",
   "environment": "seqdesk-explore-python",

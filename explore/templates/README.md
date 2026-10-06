@@ -17,5 +17,8 @@ in the params with the chosen columns (`{{a+b}}` joins two column lists).
               "outputs": [{ "name": "filtered", "kind": "table" }] }] }
 ```
 
+A step may carry `"category"`: `summarise`, `filter`, `normalise`, `test` or `plot`
+(optional; kits declare the same field in `kit.json`). The step picker groups methods by it.
+
 Step code uses the helper (`sx.input`, `sx.output`, `sx.drop`, `sx.metric`,
 `sx.figure`). The steps are tested in `explore/lib/python/tests/test_templates.py`.

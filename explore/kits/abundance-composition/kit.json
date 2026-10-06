@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "abundance-composition",
   "name": "Relative abundance composition",
+  "category": "plot",
   "description": "Plot percentage-based taxonomic profiles such as MetaPhlAn CAMI output at one taxonomic rank. Uses supplied percentages without inventing read counts or renormalising away unreported abundance.",
   "language": "python",
   "environment": "seqdesk-explore-python",

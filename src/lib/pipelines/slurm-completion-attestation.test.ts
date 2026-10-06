@@ -11,6 +11,7 @@ import {
   buildSlurmCompletionAttestationBlock,
   buildSlurmWrapperFinalizerBlock,
   renderSlurmChdirDirective,
+  SLURM_WORKLOAD_WAIT,
   WRITE_SLURM_COMPLETION_ATTESTATION_COMMAND,
 } from "./slurm-completion-attestation";
 
@@ -217,6 +218,56 @@ describe("SLURM completion attestation shell block", () => {
     } finally {
       await fs.rm(localStdout, { force: true });
       await fs.rm(localStderr, { force: true });
+      await fs.rm(runFolder, { recursive: true, force: true });
+    }
+  });
+
+  it("passes scancel's SIGTERM on to the workload when SLURM signals the batch shell only", async () => {
+    // A real Slurm 23.11 (elektra): scancel signalled only the batch shell; Nextflow, its child, got nothing, kept
+    // submitting task jobs and was SIGKILLed after KillWait without cancelling them.
+    const runFolder = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-slurm-finalizer-shell-only-"));
+    const jobId = `${process.pid}96`;
+    const localStdout = `/tmp/seqdesk-slurm-${jobId}.out`;
+    const localStderr = `/tmp/seqdesk-slurm-${jobId}.err`;
+    try {
+      await fs.mkdir(path.join(runFolder, "logs"));
+      await fs.writeFile(localStdout, "");
+      await fs.writeFile(localStderr, "");
+      const workload = `bash -c 'trap "echo cleaned >> ${path.join(runFolder, "logs", "workload")}; exit 1" TERM; sleep 60 & wait' >> "$STDOUT_LOG" 2>> "$STDERR_LOG"${SLURM_WORKLOAD_WAIT}`;
+      const script = [
+        "set -euo pipefail",
+        buildSlurmWrapperFinalizerBlock(runFolder),
+        buildSlurmCompletionAttestationBlock({ runId: "run-cancelled", runFolder }),
+        'echo "Starting" > "$STDOUT_LOG"',
+        workload,
+      ].join("\n");
+      const { spawn } = await import("node:child_process");
+      const child = spawn("bash", ["-c", script], { detached: true, env: { ...process.env, SLURM_JOB_ID: jobId, SLURMD_NODENAME: "compute-03" } });
+      const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      process.kill(child.pid!, "SIGTERM"); // the shell only, as scancel does
+      const started = Date.now();
+      expect(await exited).toBe(143);
+      expect(Date.now() - started).toBeLessThan(5000);
+      await expect(fs.readFile(path.join(runFolder, "logs", "workload"), "utf8")).resolves.toBe("cleaned\n");
+      await expect(fs.access(path.join(runFolder, "logs", `slurm-${jobId}.attestation`))).rejects.toThrow();
+      try { process.kill(-child.pid!, "SIGKILL"); } catch { /* gone */ }
+    } finally {
+      await fs.rm(localStdout, { force: true });
+      await fs.rm(localStderr, { force: true });
+      await fs.rm(runFolder, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the workload's own exit status when it runs in the background", async () => {
+    const runFolder = await fs.mkdtemp(path.join(os.tmpdir(), "seqdesk-slurm-finalizer-bg-status-"));
+    try {
+      await fs.mkdir(path.join(runFolder, "logs"));
+      const run = (body: string) => execFileAsync("bash", ["-c", ["set -euo pipefail", buildSlurmWrapperFinalizerBlock(runFolder), body, "echo after"].join("\n")], { env: { ...process.env, SLURM_JOB_ID: "" } })
+        .then(() => 0, (error: { code: number }) => error.code);
+      expect(await run(`bash -c 'exit 7' >> "$STDOUT_LOG" 2>> "$STDERR_LOG"${SLURM_WORKLOAD_WAIT}`)).toBe(7);
+      await expect(fs.readFile(path.join(runFolder, "logs", "pipeline.out"), "utf8")).resolves.toMatch(/exit code: 7 at/);
+    } finally {
       await fs.rm(runFolder, { recursive: true, force: true });
     }
   });

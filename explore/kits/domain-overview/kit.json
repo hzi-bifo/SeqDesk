@@ -2,6 +2,7 @@
   "kitVersion": 1,
   "id": "domain-overview",
   "name": "Domain overview",
+  "category": "summarise",
   "description": "How reads split between bacteria, viruses, fungi and other domains. Uses a superkingdom (domain, kingdom) column of a long profile table to summarise every sample at the top of the taxonomy, compares the domains between groups and lists the most prevalent taxa of the smaller domains, so a virome or mycobiome check needs no extra table.",
   "language": "python",
   "environment": "seqdesk-explore-python",

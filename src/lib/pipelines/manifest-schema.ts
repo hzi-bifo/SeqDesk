@@ -309,6 +309,91 @@ export const ManifestSchema = z
       })
       .strict()
       .optional(),
+    // What the pipeline says about itself for recipe steps and the finder (explore/pipeline-record.ts). All optional;
+    // a manifest without them works exactly as before.
+    methods: z
+      .union([z.string().min(1).max(2000), z.object({ template: z.string().min(1).max(2000) }).strict()])
+      .optional(),
+    citations: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(80).optional(),
+            kind: z.enum(["pipeline", "tool", "framework", "reference"]).optional(),
+            tool: z.string().min(1).max(80).optional(),
+            short: z.string().min(1).max(80).optional(),
+            text: z.string().min(1).max(1000),
+            doi: z.string().min(1).max(200).optional(),
+            url: z.string().min(1).max(500).optional(),
+          })
+          .strict()
+      )
+      .max(40)
+      .optional(),
+    compare: z
+      .array(
+        z
+          .object({
+            id: z.string().min(1).max(80),
+            label: z.string().min(1).max(120),
+            kind: z.enum(["rows", "columns", "qc-pass", "top-features"]),
+            output: z.string().min(1).max(120).optional(),
+            column: z.string().min(1).max(200).optional(),
+            top: z.number().int().min(1).max(100).optional(),
+          })
+          .strict()
+      )
+      .max(20)
+      .optional(),
+    incremental: z
+      .union([
+        z.boolean(),
+        z.object({ allowed: z.boolean(), merge: z.record(z.string().min(1), z.literal("rows")).optional(), reason: z.string().min(1).max(500).optional() }).strict(),
+      ])
+      .optional(),
+    merge: z.record(z.string().min(1), z.literal("rows")).optional(),
+    perSample: z.array(z.string().min(1).max(200)).max(60).optional(),
+    qc: z
+      .object({
+        output: z.string().min(1).max(120),
+        sampleColumn: z.string().min(1).max(120).optional(),
+        metrics: z
+          .array(
+            z
+              .object({
+                column: z.string().min(1).max(200),
+                label: z.string().min(1).max(80).optional(),
+                min: z.number().optional(),
+                max: z.number().optional(),
+                unit: z.string().min(1).max(40).optional(),
+              })
+              .strict()
+          )
+          .min(1)
+          .max(10),
+      })
+      .strict()
+      .optional(),
+    changelog: z.string().min(1).max(500).optional(),
+    goals: z.array(z.string().min(1).max(80)).max(10).optional(),
+    fit: z
+      .object({
+        inputs: z
+          .object({
+            reads: z.enum(["amplicon", "shotgun", "long", "any"]),
+            layouts: z.array(z.enum(["paired", "single"])).optional(),
+            soft: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+        outputs: z
+          .array(z.object({ name: z.string().min(1).max(120), tableKind: z.string().min(1).max(80).optional() }).strict())
+          .max(20)
+          .optional(),
+        answers: z.string().min(1).max(120).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

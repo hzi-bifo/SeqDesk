@@ -11,6 +11,7 @@ import { db } from '@/lib/db';
 import { writePipelineLaunchIdentity } from './launch-identity';
 import { finalizeLocalRun } from './pipeline-run-service';
 import { transitionEvent } from './run-reconciler';
+import { sbatchJobId } from './sbatch-output';
 
 export interface ResumeOverrides { process?: string | null; memory?: string | null; time?: string | null }
 
@@ -104,6 +105,9 @@ export async function resumePipelineRun(runId: string, input: ResumeOverrides): 
       completedAt: null, errorTail: null, queueStatus: slurm ? 'PENDING' : 'RUNNING', queueReason: null, queueUpdatedAt: new Date(), lastEventAt: new Date(), ...(slurm ? { queuedAt: new Date() } : {}) },
   });
   if (!claimed.count) return { status: 409, body: { error: 'The run is still stopping or someone else resumed it a moment ago. Try again in a few seconds.' } };
+  // Until Nextflow writes the resumed attempt's trace, the old one would show the failed attempt as this one's
+  // progress: it is kept as trace.before-resume-N.txt, and the run folder starts without one.
+  await fs.rm(path.join(run.runFolder, 'trace.txt'), { force: true }).catch(() => undefined);
   await Promise.resolve().then(() => db.pipelineRunEvent.create({ data: transitionEvent(runId, run.status, slurm ? 'queued' : 'running', 'launcher', `resume ${n}`) })).catch(() => undefined);
   await db.pipelineRunEvent.create({ data: { pipelineRunId: runId, eventType: 'resumed', status: 'info', source: 'launcher',
     message: `Resumed (${n})${overrides.memory ? ` · memory ${overrides.memory}` : ''}${overrides.time ? ` · time ${overrides.time}` : ''}${overrides.process ? ` · ${overrides.process}` : ''}`,
@@ -116,7 +120,7 @@ export async function resumePipelineRun(runId: string, input: ResumeOverrides): 
         child.stdout.on('data', (d) => { out += d; });
         child.stderr.on('data', (d) => { err += d; });
         child.on('error', reject);
-        child.on('close', (code) => { const id = /^(\d+)/.exec(out.trim())?.[1]; if (code === 0 && id) resolve(id); else reject(new Error(`sbatch refused the resume: ${(err || out).trim().slice(0, 300)}`)); });
+        child.on('close', (code) => { const id = sbatchJobId(out); if (code === 0 && id) resolve(id); else reject(new Error(`sbatch refused the resume: ${(err || out).trim().slice(0, 300)}`)); });
       });
       await writePipelineLaunchIdentity({ runFolder: run.runFolder, runId, kind: 'slurm', numericId: jobId });
       await db.pipelineRun.update({ where: { id: runId }, data: { queueJobId: jobId } });

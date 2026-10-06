@@ -20,11 +20,18 @@ export const FLOW_CAPABILITIES = [
   "explore.private",
   "explore.flow-conversation",
   "explore.packages",
+  // Pipelines as recipe steps; advertised at runtime once the database has the pipeline-steps migration.
+  "explore.pipeline-steps",
+  // The Choose samples step; samples during and after a run, quality, Methods, compare, Which one?, references, limits.
+  "explore.samples-steps",
+  "explore.pipeline-records",
+  // Words and steps, both ways (sheet 94): an edited sentence proposes a checked change of its step.
+  "explore.sentence-changes",
 ] as const;
 export type FlowCapability = (typeof FLOW_CAPABILITIES)[number];
 
 /** The Flow capabilities this build implements; `explore.events` is added at runtime when pushing is configured. */
-export const FLOW_CAPABILITIES_BUILT: readonly FlowCapability[] = ["explore.recipe", "explore.ledger", "explore.flow-runs", "explore.proposals", "explore.glosses", "explore.values", "explore.events", "explore.capsules", "explore.projects", "explore.private", "explore.flow-conversation", "explore.packages"];
+export const FLOW_CAPABILITIES_BUILT: readonly FlowCapability[] = ["explore.recipe", "explore.ledger", "explore.flow-runs", "explore.proposals", "explore.glosses", "explore.values", "explore.events", "explore.capsules", "explore.projects", "explore.private", "explore.flow-conversation", "explore.packages", "explore.sentence-changes"];
 
 export const FLOW_ERROR_CODES = [
   "invalid_request",
@@ -43,6 +50,8 @@ export const FLOW_ERROR_CODES = [
   "conversation_conflict",
   "question_answered",
   "turn_closed",
+  "reads_changed",
+  "sentence_conflict",
 ] as const;
 export type FlowErrorCode = (typeof FLOW_ERROR_CODES)[number];
 
@@ -63,6 +72,8 @@ const DEFAULT_STATUS: Record<FlowErrorCode, number> = {
   conversation_conflict: 409,
   question_answered: 409,
   turn_closed: 409,
+  reads_changed: 409,
+  sentence_conflict: 409,
 };
 
 /** A Flow API error: `{error, code, ...extra}` with the code's HTTP status. */
