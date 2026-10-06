@@ -131,7 +131,7 @@ export async function labComputeThisMonth(labKey: string | null | undefined, now
     if (counted) {
       const month = since.toLocaleString("en-US", { month: "long" });
       const rounded = Math.round(hours);
-      value = { cpuHours: rounded, runs: counted, unknownRuns: unknown, since: since.toISOString(), words: `${rounded.toLocaleString("en-US")} CPU hours used by the lab since 1 ${month}${unknown ? ` (${unknown} run${unknown === 1 ? "" : "s"} without a trace not counted)` : ""}` };
+      value = { cpuHours: rounded, runs: counted, unknownRuns: unknown, since: since.toISOString(), words: `${rounded.toLocaleString("en-US")} CPU ${rounded === 1 ? "hour" : "hours"} used by the lab since 1 ${month}${unknown ? ` (${unknown} run${unknown === 1 ? "" : "s"} without a trace not counted)` : ""}` };
     }
   }
   computeCache.set(key, { at: Date.now(), value });

@@ -145,8 +145,8 @@ const reads = (kind: ReadsKind, extra: { soft?: boolean; layouts?: Array<"paired
 
 export const RECORD_HINTS: Record<string, Hint> = {
   fastqc: {
-    methods: "Read quality was checked per sample with {pipeline} {version} and summarised with MultiQC ({samples} samples).",
-    citations: [CITATIONS.fastqc, CITATIONS.multiqc],
+    methods: "Read quality was checked per sample with {pipeline} {version} and ({samples} samples).",
+    citations: [CITATIONS.fastqc],
     compare: [{ id: "rows", label: "Samples in the summary", kind: "rows", output: "summary" }, { id: "qc", label: "Samples passing the quality line", kind: "qc-pass", output: "summary" }],
     incremental: { allowed: true, merge: { summary: "rows" } },
     perSample: ["FastQC", "FASTQC"],

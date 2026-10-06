@@ -83,7 +83,8 @@ export function fillMethods(template: string, values: MethodsValues): { text: st
     tokens.push({ token: whole, key, label, value: value ?? null, display, source });
     return display;
   });
-  return { text, tokens, missing };
+  // "1 samples" reads "1 sample" (a count of one, not 11 or 1.5).
+  return { text: text.replace(/(^|[^\d.,])1 samples\b/g, "$11 sample"), tokens, missing };
 }
 
 /** The values of a run (or of the step's settings before any run) the sentence rests on. */

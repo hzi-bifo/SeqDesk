@@ -1044,7 +1044,9 @@ export async function preflightConfig(model: RecipeModel, config: PipelineStepCo
   const durations = sampleCount ? await pastDurations(config.pipelineId, sampleCount) : [];
   const sorted = [...durations].sort((a, b) => a - b);
   const seconds = sorted.length ? sorted[Math.floor((sorted.length - 1) / 2)] : null;
-  checks.push({ id: "compute", ok: true, words: `fits on ${where}${seconds != null ? ` · about ${durationWords(seconds)}` : ""}`, detail: seconds == null ? "no estimate yet: no finished runs of this pipeline at this size" : null });
+  // Fits the server, but the study's limit of pipelines at once is reached: it waits for a free slot.
+  const slot = await import("./pipeline-limits").then((limits) => limits.pipelineCapacity(model.flow.targetKey)).catch(() => null);
+  checks.push({ id: "compute", ok: true, words: `${slot && !slot.free ? "fits; waits for a free slot on" : "fits on"} ${where}${seconds != null ? ` · about ${durationWords(seconds)}` : ""}`, detail: seconds == null ? "no estimate yet: no finished runs of this pipeline at this size" : null });
   return done(sampleCount, seconds);
 }
 
