@@ -190,7 +190,11 @@ storage probe. The documented container-based credential setup was also tested.
 A separate Chromium check signed in through the web UI and rendered the
 sequencing overview without JavaScript or server errors.
 
-The new Ubuntu x64 CI workflow has not yet run. Docker Desktop, Windows hosts,
+**GitHub validation on 6 October 2026:** the full source-build smoke test also
+passed on Ubuntu 24.04 / Linux AMD64 ([successful run](https://github.com/hzi-bifo/SeqDesk/actions/runs/37451187220)),
+including the real login and persistence checks before and after container recreation.
+
+Docker Desktop, Windows hosts,
 all other browser interactions, pipelines, and external service integrations
 remain outside this local test's evidence. The Docker-only credential setup and no-build Compose path also passed using
 the locally exported and reloaded candidate image. This verifies the image
