@@ -81,6 +81,16 @@ and both Markdown and JSON compatibility reports. Failure reports identify the
 stage that failed, so a reviewer can distinguish an OS, database, dependency,
 installation, boot, or authentication failure.
 
+## Optional Docker Compose reviewer path
+
+[Docker Compose installation](./DOCKER.md) provides a separate, application-only
+review setup. Its [workflow](.github/workflows/docker-reviewer.yml) builds from
+source and checks migrations, administrator login, the orders API, and database
+and file persistence after container recreation on Ubuntu x64. It does not
+replace the release gates above or validate pipelines and external services.
+See the Docker guide for current validation status; adding the workflow alone
+is not evidence of a passing container run.
+
 ## Scope and limitations
 
 - Linux and macOS application installs are tested. Native Windows is not

@@ -123,6 +123,11 @@ point. This does not change the deployment guidance for real SeqDesk instances.
 
 ## Install
 
+For a local reviewer evaluation with Docker and PostgreSQL, see
+**[Docker Compose installation](./DOCKER.md)**. This optional application-only
+path has a separate smoke-test workflow; pipeline execution and the in-app
+updater are outside its supported scope. See that guide for validation status.
+
 Recommended — download the public installer first so the guided prompts stay
 connected to your terminal. Installed application releases are updated later
 from **Admin → Settings → Software Updates**:

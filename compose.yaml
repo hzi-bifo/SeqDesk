@@ -1,0 +1,51 @@
+# Local reviewer installation; see DOCKER.md for the supported scope.
+services:
+  db:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: seqdesk
+      POSTGRES_DB: seqdesk
+      POSTGRES_PASSWORD: ${SEQDESK_DOCKER_DB_PASSWORD:?Run the setup command in DOCKER.md first}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U seqdesk -d seqdesk']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  app:
+    image: ${SEQDESK_DOCKER_IMAGE:-ghcr.io/hzi-bifo/seqdesk:latest}
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:${SEQDESK_DOCKER_PORT:-8000}:3000'
+    environment:
+      DATABASE_URL: postgresql://seqdesk:${SEQDESK_DOCKER_DB_PASSWORD}@db:5432/seqdesk?schema=public
+      DIRECT_URL: postgresql://seqdesk:${SEQDESK_DOCKER_DB_PASSWORD}@db:5432/seqdesk?schema=public
+      NEXTAUTH_URL: http://localhost:${SEQDESK_DOCKER_PORT:-8000}
+      NEXTAUTH_SECRET: ${SEQDESK_DOCKER_AUTH_SECRET:?Run the setup command in DOCKER.md first}
+      SEQDESK_BOOTSTRAP_ADMIN_EMAIL: reviewer@example.org
+      SEQDESK_BOOTSTRAP_ADMIN_PASSWORD: ${SEQDESK_DOCKER_ADMIN_PASSWORD:?Run the setup command in DOCKER.md first}
+      SEQDESK_BOOTSTRAP_RESEARCHER_ENABLED: 'false'
+      SEQDESK_DEPLOYMENT_PROFILE: sequencing-center
+      SEQDESK_DATA_PATH: /storage
+      SEQDESK_DISABLE_WORKER_AUTOSTART: '1'
+      SEQDESK_PIPELINES_ENABLED: 'false'
+      SEQDESK_CONDA_ENABLED: 'false'
+      SEQDESK_SLURM_ENABLED: 'false'
+      SEQDESK_AUTH_REGISTRATION: 'false'
+      SEQDESK_TELEMETRY_ENABLED: 'false'
+      SEQDESK_NOTIFICATIONS_ENABLED: 'false'
+    volumes:
+      - storage:/storage
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/auth/csrf').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 120s
+      retries: 30
+volumes:
+  database:
+  storage:

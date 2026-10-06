@@ -1,0 +1,5 @@
+# Source-build override. Use together with compose.yaml.
+services:
+  app:
+    build: .
+    image: seqdesk-reviewer:local
