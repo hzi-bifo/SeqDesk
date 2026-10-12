@@ -212,6 +212,25 @@ describe("public and demo route quick wins", () => {
       })
     );
     expect(mocks.bootstrapDemoWorkspace).toHaveBeenLastCalledWith("cookie-token", "full");
+    expect(mocks.getDemoCookieOptions).toHaveBeenLastCalledWith(false);
+    expect(mocks.getAuthSessionCookieOptions).toHaveBeenLastCalledWith(
+      expect.any(Date),
+      false
+    );
+  });
+
+  it("asks for cross-site cookies when the embed page bootstraps", async () => {
+    await postDemoBootstrap(
+      new Request("http://localhost/api/demo/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({ embedded: true }),
+      })
+    );
+    expect(mocks.getDemoCookieOptions).toHaveBeenLastCalledWith(true);
+    expect(mocks.getAuthSessionCookieOptions).toHaveBeenLastCalledWith(
+      expect.any(Date),
+      true
+    );
   });
 
   it("recovers bootstrap session creation across a concurrent reset gap", async () => {

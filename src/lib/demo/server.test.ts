@@ -951,6 +951,24 @@ describe("cookie helpers", () => {
     expect(name).toBe("next-auth.session-token");
   });
 
+  it("getDemoCookieOptions makes an embedded cookie cross-site and partitioned", () => {
+    const options = getDemoCookieOptions(true);
+    expect(options.httpOnly).toBe(true);
+    expect(options.sameSite).toBe("none");
+    expect(options.secure).toBe(true);
+    expect(options.partitioned).toBe(true);
+    expect(options.path).toBe("/");
+  });
+
+  it("getAuthSessionCookieOptions makes an embedded session cross-site and partitioned", () => {
+    const expiresAt = new Date("2099-01-01");
+    const options = getAuthSessionCookieOptions(expiresAt, true);
+    expect(options.sameSite).toBe("none");
+    expect(options.secure).toBe(true);
+    expect(options.partitioned).toBe(true);
+    expect(options.expires).toBe(expiresAt);
+  });
+
   it("getAuthSessionCookieOptions returns options with expiry", () => {
     const expiresAt = new Date("2099-01-01");
     const options = getAuthSessionCookieOptions(expiresAt);

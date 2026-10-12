@@ -26,6 +26,8 @@ export async function POST(request: Request) {
     const explicitToken =
       typeof body.workspace === "string" ? body.workspace.trim() : "";
     const demoExperience = normalizeDemoExperience(body.demoExperience);
+    // the embed page says so; its cookies must survive a cross-site iframe
+    const embedded = body.embedded === true;
     const existingToken =
       explicitToken || cookieStore.get(getDemoWorkspaceCookieName())?.value;
     let result = await bootstrapDemoWorkspace(existingToken, demoExperience);
@@ -51,12 +53,12 @@ export async function POST(request: Request) {
     response.cookies.set(
       getDemoWorkspaceCookieName(),
       result.token,
-      getDemoCookieOptions()
+      getDemoCookieOptions(embedded)
     );
     response.cookies.set(
       getAuthSessionCookieName(),
       sessionToken,
-      getAuthSessionCookieOptions(result.expiresAt)
+      getAuthSessionCookieOptions(result.expiresAt, embedded)
     );
     response.headers.set("Cache-Control", "no-store, max-age=0");
 

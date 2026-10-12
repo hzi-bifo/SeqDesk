@@ -133,6 +133,24 @@ describe("DemoBootstrapClient", () => {
     );
   });
 
+  it("tells the bootstrap when it runs embedded, and only then", async () => {
+    mocks.fetch.mockResolvedValue(bootstrapResponse(200));
+
+    render(<DemoBootstrapClient embedded demoExperience="researcher" />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(JSON.parse(mocks.fetch.mock.calls[0][1].body)).toMatchObject({ embedded: true });
+
+    cleanup();
+    mocks.fetch.mockClear();
+    render(<DemoBootstrapClient demoExperience="researcher" />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(JSON.parse(mocks.fetch.mock.calls[0][1].body).embedded).toBeUndefined();
+  });
+
   it("shows a friendly error only after all database wake-up retries fail", async () => {
     vi.useFakeTimers();
     mocks.fetch.mockImplementation(async () => databaseWakingResponse());

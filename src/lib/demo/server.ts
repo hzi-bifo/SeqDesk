@@ -1825,13 +1825,28 @@ export function getDemoWorkspaceCookieName(): string {
   return DEMO_WORKSPACE_COOKIE;
 }
 
-export function getDemoCookieOptions() {
+// Inside an iframe on another site (a landing page that shows the demo), the
+// browser only stores and sends a cookie that is SameSite=None and Secure;
+// Partitioned (CHIPS) keeps it to that one top-level site. Everywhere else the
+// demo cookies stay Lax.
+const EMBEDDED_COOKIE_ATTRIBUTES = {
+  sameSite: "none" as const,
+  secure: true,
+  partitioned: true,
+};
+
+export function getDemoCookieOptions(embedded = false) {
   return {
     httpOnly: true,
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
     path: "/",
     expires: addHours(new Date(), DEMO_SESSION_TTL_HOURS),
+    ...(embedded
+      ? EMBEDDED_COOKIE_ATTRIBUTES
+      : {
+          sameSite: "lax" as const,
+          secure: process.env.NODE_ENV === "production",
+          partitioned: false,
+        }),
   };
 }
 
@@ -1848,13 +1863,18 @@ export function getAuthSessionCookieName(): string {
     : "next-auth.session-token";
 }
 
-export function getAuthSessionCookieOptions(expiresAt: Date) {
+export function getAuthSessionCookieOptions(expiresAt: Date, embedded = false) {
   return {
     httpOnly: true,
-    sameSite: "lax" as const,
-    secure: shouldUseSecureAuthCookies(),
     path: "/",
     expires: expiresAt,
+    ...(embedded
+      ? EMBEDDED_COOKIE_ATTRIBUTES
+      : {
+          sameSite: "lax" as const,
+          secure: shouldUseSecureAuthCookies(),
+          partitioned: false,
+        }),
   };
 }
 

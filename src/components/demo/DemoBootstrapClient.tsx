@@ -150,6 +150,7 @@ export function DemoBootstrapClient({
             body: JSON.stringify({
               demoExperience,
               workspace: workspace || undefined,
+              embedded: embedded || undefined,
             }),
             signal: abortController.signal,
           });
