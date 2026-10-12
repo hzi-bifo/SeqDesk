@@ -11,6 +11,9 @@ function getDemoFrameAncestors() {
     "https://www.seqdesk.org",
     "https://seqdesk.com",
     "https://www.seqdesk.com",
+    // the Ongoing Science site shows the demo on its SeqDesk page
+    "https://ongoingscience.com",
+    "https://www.ongoingscience.com",
   ];
 
   if (process.env.NODE_ENV === "production") {
