@@ -16,6 +16,7 @@ _example/
   samplesheet.yaml   # Declarative samplesheet generation rules
   parsers/
     example.yaml     # Output file parser definitions
+  test-data/         # Minimal dummy input fixture CI runs the pipeline on (see test-data/README.md)
   README.md          # This file
 ```
 
